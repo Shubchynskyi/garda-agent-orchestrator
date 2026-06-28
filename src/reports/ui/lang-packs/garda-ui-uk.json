@@ -122,7 +122,7 @@
     "resultStatusDisabled": "Вимкнено",
     "resultStatusUnavailable": "Недоступно",
     "workflowGroupValidation": "Життєвий цикл валідації та тестування",
-    "workflowGroupReview": "Порядок рев’ю",
+    "workflowGroupReview": "Порядок рев’ю та ліміти",
     "workflowGroupScope": "Ліміти розміру задачі",
     "workflowGroupMemory": "Пам'ять проєкту",
     "workflowGroupSafety": "Захищені елементи керування",

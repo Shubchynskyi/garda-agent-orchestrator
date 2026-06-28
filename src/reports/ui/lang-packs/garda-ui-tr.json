@@ -122,7 +122,7 @@
     "resultStatusDisabled": "Devre dışı",
     "resultStatusUnavailable": "Kullanılamıyor",
     "workflowGroupValidation": "Doğrulama ve test yaşam döngüsü",
-    "workflowGroupReview": "Akışı inceleyin",
+    "workflowGroupReview": "İnceleme sırası ve sınırları",
     "workflowGroupScope": "Kapsam sınırları",
     "workflowGroupMemory": "Proje belleği",
     "workflowGroupSafety": "Korumalı kontroller",

@@ -122,7 +122,7 @@
     "resultStatusDisabled": "Dinonaktifkan",
     "resultStatusUnavailable": "Tidak tersedia",
     "workflowGroupValidation": "Siklus hidup validasi dan pengujian",
-    "workflowGroupReview": "Alur ulasan",
+    "workflowGroupReview": "Urutan dan batas ulasan",
     "workflowGroupScope": "Batasan ruang lingkup",
     "workflowGroupMemory": "Memori proyek",
     "workflowGroupSafety": "Kontrol yang dilindungi",

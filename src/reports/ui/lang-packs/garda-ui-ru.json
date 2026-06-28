@@ -122,7 +122,7 @@
     "resultStatusDisabled": "Отключено",
     "resultStatusUnavailable": "Недоступно",
     "workflowGroupValidation": "Проверки и тестовый цикл",
-    "workflowGroupReview": "Порядок ревью",
+    "workflowGroupReview": "Порядок ревью и лимиты",
     "workflowGroupScope": "Лимиты размера задачи",
     "workflowGroupMemory": "Память проекта",
     "workflowGroupSafety": "Защищённые режимы",

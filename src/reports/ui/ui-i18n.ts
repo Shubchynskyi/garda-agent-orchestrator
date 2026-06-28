@@ -209,7 +209,7 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     resultStatusDisabled: 'Disabled',
     resultStatusUnavailable: 'Unavailable',
     workflowGroupValidation: 'Validation and test lifecycle',
-    workflowGroupReview: 'Review flow',
+    workflowGroupReview: 'Review order and limits',
     workflowGroupScope: 'Scope limits',
     workflowGroupMemory: 'Project memory',
     workflowGroupSafety: 'Protected controls',

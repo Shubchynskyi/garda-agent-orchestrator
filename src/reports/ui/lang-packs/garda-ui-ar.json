@@ -122,7 +122,7 @@
     "resultStatusDisabled": "معطّل",
     "resultStatusUnavailable": "غير متاح",
     "workflowGroupValidation": "التحقق من الصحة ودورة حياة الاختبار",
-    "workflowGroupReview": "تدفق المراجعة",
+    "workflowGroupReview": "ترتيب المراجعة وحدودها",
     "workflowGroupScope": "حدود النطاق",
     "workflowGroupMemory": "ذاكرة المشروع",
     "workflowGroupSafety": "الضوابط المحمية",

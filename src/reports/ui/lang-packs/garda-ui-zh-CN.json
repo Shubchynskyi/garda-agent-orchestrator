@@ -122,7 +122,7 @@
     "resultStatusDisabled": "已禁用",
     "resultStatusUnavailable": "不可用",
     "workflowGroupValidation": "验证和测试生命周期",
-    "workflowGroupReview": "审核流程",
+    "workflowGroupReview": "审核顺序和限制",
     "workflowGroupScope": "范围限制",
     "workflowGroupMemory": "项目记忆",
     "workflowGroupSafety": "受保护的控件",

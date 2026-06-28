@@ -122,7 +122,7 @@
     "resultStatusDisabled": "নিষ্ক্রিয়",
     "resultStatusUnavailable": "অনুপলব্ধ",
     "workflowGroupValidation": "বৈধতা এবং পরীক্ষা জীবনচক্র",
-    "workflowGroupReview": "পর্যালোচনা প্রবাহ",
+    "workflowGroupReview": "পর্যালোচনার ক্রম ও সীমা",
     "workflowGroupScope": "সুযোগ সীমা",
     "workflowGroupMemory": "প্রকল্প মেমরি",
     "workflowGroupSafety": "সুরক্ষিত নিয়ন্ত্রণ",

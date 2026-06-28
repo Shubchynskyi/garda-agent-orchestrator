@@ -492,7 +492,7 @@ describe('runInit', () => {
         }
     });
 
-    it('materializes code_first_optional review_execution_policy for a fresh bundle', () => {
+    it('materializes strict_sequential review_execution_policy for a fresh bundle', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             runInit({
@@ -508,7 +508,7 @@ describe('runInit', () => {
                 'utf8'
             ));
             assert.deepEqual(workflowConfig.review_execution_policy, {
-                mode: 'code_first_optional'
+                mode: 'strict_sequential'
             });
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });

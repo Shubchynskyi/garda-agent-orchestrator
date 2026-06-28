@@ -72,7 +72,7 @@ test('handleInit forwards init-answer gitignore options into standalone init mat
     }
 });
 
-test('handleInit materializes code_first_optional review_execution_policy when bundle exists but live version does not', () => {
+test('handleInit materializes strict_sequential review_execution_policy when bundle exists but live version does not', () => {
     const repoRoot = findRepoRoot(__dirname);
     const { projectRoot, bundleRoot } = setupWorkspace(repoRoot);
     const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
@@ -95,7 +95,7 @@ test('handleInit materializes code_first_optional review_execution_policy when b
         handleInit(['--target-root', projectRoot], { name: 'garda-agent-orchestrator', version: '1.0.0' });
         const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
         assert.deepEqual(workflowConfig.review_execution_policy, {
-            mode: 'code_first_optional'
+            mode: 'strict_sequential'
         });
     } finally {
         console.log = originalConsoleLog;

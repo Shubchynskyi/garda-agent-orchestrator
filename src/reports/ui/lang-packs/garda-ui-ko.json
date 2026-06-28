@@ -122,7 +122,7 @@
     "resultStatusDisabled": "비활성화됨",
     "resultStatusUnavailable": "없는",
     "workflowGroupValidation": "검증 및 테스트 수명주기",
-    "workflowGroupReview": "검토 흐름",
+    "workflowGroupReview": "검토 순서 및 한도",
     "workflowGroupScope": "범위 제한",
     "workflowGroupMemory": "프로젝트 메모리",
     "workflowGroupSafety": "보호된 컨트롤",

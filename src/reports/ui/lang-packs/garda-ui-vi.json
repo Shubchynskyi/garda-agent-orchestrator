@@ -122,7 +122,7 @@
     "resultStatusDisabled": "Đã tắt",
     "resultStatusUnavailable": "Không có sẵn",
     "workflowGroupValidation": "Vòng đời xác nhận và thử nghiệm",
-    "workflowGroupReview": "Luồng đánh giá",
+    "workflowGroupReview": "Thứ tự và giới hạn đánh giá",
     "workflowGroupScope": "Giới hạn phạm vi",
     "workflowGroupMemory": "Bộ nhớ dự án",
     "workflowGroupSafety": "Điều khiển được bảo vệ",

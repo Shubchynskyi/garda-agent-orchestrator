@@ -14,8 +14,8 @@ export function buildInstructionEntries(): ReportInstructionEntry[] {
         },
         {
             id: 'review-execution-modes',
-            title: 'Review execution modes',
-            body: '`parallel_all` launches lanes independently. `test_after_code` makes test wait for code. `code_first_optional` makes selected specialist reviews wait for code and keeps test downstream. `strict_sequential` runs required review lanes one by one.'
+            title: 'Review execution modes and limits',
+            body: '`parallel_all` launches lanes independently. `test_after_code` makes test wait for code. `code_first_optional` makes selected specialist reviews wait for code and keeps test downstream. `strict_sequential` runs required review lanes one by one. Scope and review-cycle limits control when oversized or looping work warns, blocks, or offers a split.'
         },
         {
             id: 'workflow-guards',

@@ -14,7 +14,7 @@
     "placement": "after_compile_before_reviews"
   },
   "review_execution_policy": {
-    "mode": "code_first_optional"
+    "mode": "strict_sequential"
   },
   "orchestrator_work_policy": {
     "mode": "deny_agent_entry"

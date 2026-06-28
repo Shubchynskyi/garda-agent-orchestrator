@@ -122,7 +122,7 @@
     "resultStatusDisabled": "Deaktiviert",
     "resultStatusUnavailable": "Nicht verfügbar",
     "workflowGroupValidation": "Validierung und Testlebenszyklus",
-    "workflowGroupReview": "Überprüfungsablauf",
+    "workflowGroupReview": "Review-Reihenfolge und Limits",
     "workflowGroupScope": "Umfangsgrenzen",
     "workflowGroupMemory": "Projektspeicher",
     "workflowGroupSafety": "Geschützte Bedienelemente",

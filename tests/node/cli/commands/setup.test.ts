@@ -424,7 +424,7 @@ test('handleSetup --no-prompt preserves existing active agent files and remateri
         assert.equal(persistedAnswers.ActiveAgentFiles, 'CLAUDE.md, AGENTS.md, .antigravity/rules.md');
         assert.equal(persistedAnswers.ProviderMinimalism, 'false');
         assert.deepEqual(workflowConfig.review_execution_policy, {
-            mode: 'code_first_optional'
+            mode: 'strict_sequential'
         });
         assert.ok(fs.existsSync(path.join(workspaceRoot, 'CLAUDE.md')));
         assert.ok(fs.existsSync(path.join(workspaceRoot, 'AGENTS.md')));
@@ -1106,7 +1106,7 @@ test('handleSetup reports workflow-config template fallback when preserved refre
     }
 });
 
-test('handleSetup materializes code_first_optional review_execution_policy for a fresh workspace', async () => {
+test('handleSetup materializes strict_sequential review_execution_policy for a fresh workspace', async () => {
     const repoRoot = findRepoRoot(__dirname);
     const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-workflow-config-fresh-default-'));
@@ -1123,12 +1123,13 @@ test('handleSetup materializes code_first_optional review_execution_policy for a
 
         const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
         assert.deepEqual(workflowConfig.review_execution_policy, {
-            mode: 'code_first_optional'
+            mode: 'strict_sequential'
         });
         assert.equal(workflowConfig.compile_gate.command, UNCONFIGURED_COMPILE_GATE_COMMAND);
         assert.equal(workflowConfig.scope_budget_guard.action, 'WARN_ONLY');
         assert.equal(workflowConfig.scope_budget_guard.max_files, 20);
         assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 1500);
+        assert.equal(workflowConfig.scope_budget_guard.max_required_reviews, 5);
         assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
         assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);

@@ -492,7 +492,7 @@ test('workflow command resolves parity against --target-root instead of the call
         assert.equal(result.status, 0, 'workflow show should succeed when the target root itself is not stale');
         assert.ok(!combined.includes('Source Parity Violation: The deployed bundle is stale'));
         assert.ok(combined.includes('Mandatory full-suite: false'));
-        assert.ok(combined.includes('Review execution policy: code_first_optional'));
+        assert.ok(combined.includes('Review execution policy: strict_sequential'));
     } finally {
         fs.rmSync(callerDir, { recursive: true, force: true });
         fs.rmSync(targetDir, { recursive: true, force: true });

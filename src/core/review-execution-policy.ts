@@ -44,7 +44,7 @@ export interface ReviewLaunchPlan {
     blocked_review_dependencies: string[];
 }
 
-export const DEFAULT_REVIEW_EXECUTION_POLICY_MODE: ReviewExecutionPolicyMode = 'code_first_optional';
+export const DEFAULT_REVIEW_EXECUTION_POLICY_MODE: ReviewExecutionPolicyMode = 'strict_sequential';
 
 const REVIEW_TYPES_THAT_WAIT_FOR_CODE = new Set([
     'api',

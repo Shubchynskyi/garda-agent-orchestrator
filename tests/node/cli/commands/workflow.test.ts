@@ -1202,7 +1202,7 @@ test('workflow show keeps legacy compatibility mode when review_execution_policy
     }
 });
 
-test('workflow show uses code_first_optional as the implicit mode for a fresh bundle path without workflow-config', () => {
+test('workflow show uses strict_sequential as the implicit mode for a fresh bundle path without workflow-config', () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-workflow-fresh-show-'));
     const bundleRoot = path.join(workspaceRoot, 'custom-bundle');
     fs.mkdirSync(bundleRoot, { recursive: true });
@@ -1211,7 +1211,7 @@ test('workflow show uses code_first_optional as the implicit mode for a fresh bu
         const { result } = captureConsole(() => handleWorkflow(['show', '--bundle-root', bundleRoot, '--json'], PACKAGE_JSON));
         assert.ok(result && result.action === 'show');
         assert.equal(result.config_exists, false);
-        assert.equal(result.review_execution_policy.mode, 'code_first_optional');
+        assert.equal(result.review_execution_policy.mode, 'strict_sequential');
         assert.equal(result.review_execution_policy.configured, false);
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
@@ -1316,7 +1316,7 @@ test('workflow set with explicit --bundle-root materializes the current review_e
         ], PACKAGE_JSON));
 
         assert.ok(result && result.action === 'set');
-        assert.equal(result.review_execution_policy.mode, 'code_first_optional');
+        assert.equal(result.review_execution_policy.mode, 'strict_sequential');
         assert.equal(result.review_execution_policy.configured, true);
         const explicitConfigPath = path.join(explicitBundleRoot, 'live', 'config', 'workflow-config.json');
         assert.equal(fs.existsSync(explicitConfigPath), true);
@@ -1324,7 +1324,7 @@ test('workflow set with explicit --bundle-root materializes the current review_e
         assert.equal(parsed.full_suite_validation.enabled, true);
         assert.notEqual(parsed.full_suite_validation.command, 'npm run wrong-default');
         assert.deepEqual(parsed.review_execution_policy, {
-            mode: 'code_first_optional'
+            mode: 'strict_sequential'
         });
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });

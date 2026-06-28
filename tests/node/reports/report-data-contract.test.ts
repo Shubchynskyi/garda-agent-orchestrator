@@ -1322,7 +1322,7 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.match(report.project_memory_tab.settings_config_path, /workflow-config\.json$/u);
     assert.match(report.project_memory_tab.memory_directory_path, /project-memory$/u);
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Task execution'));
-    assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Review execution modes'));
+    assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Review execution modes and limits'));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Backups'));
     assert.equal(report.backups_tab.auto_backup.enabled, false);
     assert.equal(report.backups_tab.auto_backup.keep_latest, 10);

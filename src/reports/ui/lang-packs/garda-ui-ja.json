@@ -122,7 +122,7 @@
     "resultStatusDisabled": "無効",
     "resultStatusUnavailable": "利用不可",
     "workflowGroupValidation": "検証とテストのライフサイクル",
-    "workflowGroupReview": "レビューの流れ",
+    "workflowGroupReview": "レビュー順序と制限",
     "workflowGroupScope": "範囲の制限",
     "workflowGroupMemory": "プロジェクトメモリ",
     "workflowGroupSafety": "保護されたコントロール",

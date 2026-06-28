@@ -122,7 +122,7 @@
     "resultStatusDisabled": "Wyłączone",
     "resultStatusUnavailable": "Nie płynny",
     "workflowGroupValidation": "Cykl życia walidacji i testów",
-    "workflowGroupReview": "Przejrzyj przepływ",
+    "workflowGroupReview": "Kolejność i limity przeglądów",
     "workflowGroupScope": "Granice zakresu",
     "workflowGroupMemory": "Pamięć projektu",
     "workflowGroupSafety": "Chronione elementy sterujące",
