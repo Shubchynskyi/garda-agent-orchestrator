@@ -1,13 +1,12 @@
-import { resolveTaskResetAvailability } from '../../../core/task-reset-availability';
 import { buildUiActionDefinition } from './action-common';
 import type { UiActionDefinition } from './types';
 
-const TASK_RESET_ENABLE_CONFIRMATION_PHRASE = 'ENABLE TASK RESET';
-const TASK_DISCARD_CONFIRMATION_PHRASE = 'DISCARD TASK';
+export const TASK_RESET_REOPEN_ACTION_ID = 'task-reset-reopen';
+export const TASK_RESET_CLOSE_ACTION_ID = 'task-reset-discard';
+export const TASK_RESET_REOPEN_CONFIRMATION_PHRASE = 'RESET TASK';
+export const TASK_RESET_CLOSE_CONFIRMATION_PHRASE = 'CLOSE WITHOUT EXECUTION';
 
 export function buildUiTaskActionDefinitions(repoRoot: string, taskId: string): UiActionDefinition[] {
-    const taskResetAvailability = resolveTaskResetAvailability(repoRoot);
-    const nowUtc = new Date().toISOString();
     return [
         buildUiActionDefinition(
             repoRoot,
@@ -20,56 +19,26 @@ export function buildUiTaskActionDefinitions(repoRoot: string, taskId: string): 
         ),
         buildUiActionDefinition(
             repoRoot,
-            'task-reset-reopen',
+            TASK_RESET_REOPEN_ACTION_ID,
             'Task',
             'Reset task',
-            'Reset this task through the guarded task-reset gate and reopen it for a fresh lifecycle run.',
+            'Reset this task through the guarded task-reset gate and reopen it for a fresh lifecycle run. The local UI can temporarily prepare audited task-reset readiness for this action.',
             ['gate', 'task-reset', '--task-id', taskId, '--reopen', '--confirm', '--repo-root', repoRoot],
             {
                 mutates: true,
-                confirmationPhrase: 'RESET TASK',
-                enabled: taskResetAvailability.enabled,
-                unavailableReason: `TASK_RESET_DISABLED: ${taskResetAvailability.disabledReason || 'Task reset is not ready.'} Run the audited enable action before confirmed reset/discard.`
+                confirmationPhrase: TASK_RESET_REOPEN_CONFIRMATION_PHRASE
             }
         ),
         buildUiActionDefinition(
             repoRoot,
-            'task-reset-discard',
+            TASK_RESET_CLOSE_ACTION_ID,
             'Task',
-            'Discard task',
-            'Terminally discard this task through the guarded task-reset gate and mark it DONE after clearing runtime artifacts.',
-            ['gate', 'task-reset', '--task-id', taskId, '--discard', '--confirm', '--repo-root', repoRoot],
+            'Close without execution',
+            'Close this task as DONE through the guarded task-reset gate after clearing runtime artifacts. The local UI can temporarily prepare audited task-reset readiness for this action.',
+            ['gate', 'task-reset', '--task-id', taskId, '--to-status', 'DONE', '--confirm', '--repo-root', repoRoot],
             {
                 mutates: true,
-                confirmationPhrase: TASK_DISCARD_CONFIRMATION_PHRASE,
-                enabled: taskResetAvailability.enabled,
-                unavailableReason: `TASK_RESET_DISABLED: ${taskResetAvailability.disabledReason || 'Task reset is not ready.'} Run the audited enable action before confirmed reset/discard.`
-            }
-        ),
-        buildUiActionDefinition(
-            repoRoot,
-            'task-reset-enable-audited',
-            'Task',
-            'Enable audited task reset',
-            taskResetAvailability.configuredEnabled
-                ? 'Repair missing workflow-set audit evidence for task_reset.enabled=true.'
-                : 'Enable task reset through audited workflow set before running reset or discard.',
-            [
-                'workflow',
-                'set',
-                '--task-reset-enabled',
-                'true',
-                '--target-root',
-                repoRoot,
-                '--operator-confirmed',
-                'yes',
-                '--operator-confirmed-at-utc',
-                nowUtc
-            ],
-            {
-                mutates: true,
-                confirmationPhrase: TASK_RESET_ENABLE_CONFIRMATION_PHRASE,
-                enabled: !taskResetAvailability.enabled
+                confirmationPhrase: TASK_RESET_CLOSE_CONFIRMATION_PHRASE
             }
         ),
         buildUiActionDefinition(

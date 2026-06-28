@@ -1804,9 +1804,12 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-next-step"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-reopen"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-discard"/u);
-        assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-enable-audited"/u);
-        assert.match(fakeDocument.elements.detail.innerHTML, /data-task-reset-setting-link="workflow-safety"/u);
-        assert.match(fakeDocument.elements.detail.innerHTML, /TASK_RESET_DISABLED/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Close without execution/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /--to-status DONE/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-enable-audited"/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /data-task-reset-setting-link="workflow-safety"/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /TASK_RESET_DISABLED/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Discard task|--discard/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-stats"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Show plan/u);
         const taskResetSetting = report.workflow_config_tab.settings.find((setting) => setting.key === 'task_reset.enabled');
@@ -1839,6 +1842,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.deepEqual(storedLanguageCalls.at(-1), ['garda.ui.language', 'ru']);
         assert.match(fakeDocument.elements.detail.innerHTML, /События/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Статус полной проверки/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Закрыть без выполнения/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Отбросить|отброш/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Рекомендуемый таймаут полной проверки/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /нет недавней истории длительности полной проверки/u);
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Recommended full-suite command timeout/u);

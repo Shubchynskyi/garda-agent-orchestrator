@@ -848,15 +848,19 @@ test('local UI task actions support preview confirmation execution and audit', a
             headers: actionHeaders,
             body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'preview' })
         });
-        assert.equal(disabledResetResponse.status, 409);
+        assert.equal(disabledResetResponse.status, 200);
         const disabledReset = await disabledResetResponse.json() as {
             status: string;
-            unavailable_reason: string;
             command: string;
+            requires_confirmation: boolean;
+            confirmation_phrase: string;
         };
-        assert.equal(disabledReset.status, 'unavailable');
-        assert.match(disabledReset.unavailable_reason, /task_reset\.enabled/u);
+        assert.equal(disabledReset.status, 'previewed');
+        assert.match(disabledReset.command, /temporarily enable task_reset\.enabled/u);
         assert.match(disabledReset.command, /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
+        assert.match(disabledReset.command, /restore task_reset\.enabled=false/u);
+        assert.equal(disabledReset.requires_confirmation, true);
+        assert.equal(disabledReset.confirmation_phrase, 'RESET TASK');
         assert.deepEqual(executedCommands, []);
 
         const disabledDiscardResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
@@ -864,16 +868,33 @@ test('local UI task actions support preview confirmation execution and audit', a
             headers: actionHeaders,
             body: JSON.stringify({ action_id: 'task-reset-discard', mode: 'preview' })
         });
-        assert.equal(disabledDiscardResponse.status, 409);
+        assert.equal(disabledDiscardResponse.status, 200);
         const disabledDiscard = await disabledDiscardResponse.json() as {
             status: string;
-            unavailable_reason: string;
             command: string;
+            confirmation_phrase: string;
         };
-        assert.equal(disabledDiscard.status, 'unavailable');
-        assert.match(disabledDiscard.unavailable_reason, /task_reset\.enabled/u);
-        assert.match(disabledDiscard.command, /gate task-reset --task-id T-100 --discard --confirm --repo-root/u);
+        assert.equal(disabledDiscard.status, 'previewed');
+        assert.match(disabledDiscard.command, /temporarily enable task_reset\.enabled/u);
+        assert.match(disabledDiscard.command, /gate task-reset --task-id T-100 --to-status DONE --confirm --repo-root/u);
+        assert.equal(disabledDiscard.confirmation_phrase, 'CLOSE WITHOUT EXECUTION');
         assert.deepEqual(executedCommands, []);
+
+        const disabledResetExecuteResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'execute', confirmation: 'RESET TASK' })
+        });
+        assert.equal(disabledResetExecuteResponse.status, 200);
+        const disabledResetExecute = await disabledResetExecuteResponse.json() as { status: string; stdout: string };
+        assert.equal(disabledResetExecute.status, 'executed');
+        assert.match(disabledResetExecute.stdout, /Task reset was enabled temporarily/u);
+        assert.match(disabledResetExecute.stdout, /Task reset completed/u);
+        assert.match(disabledResetExecute.stdout, /task_reset\.enabled was restored to false/u);
+        assert.equal(executedCommands.length, 3);
+        assert.match(executedCommands[0], /workflow set --task-reset-enabled true/u);
+        assert.match(executedCommands[1], /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
+        assert.match(executedCommands[2], /workflow set --task-reset-enabled false/u);
 
         setTaskResetEnabled(repoRoot, true);
         const missingAuditResetResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
@@ -881,42 +902,36 @@ test('local UI task actions support preview confirmation execution and audit', a
             headers: actionHeaders,
             body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'preview' })
         });
-        assert.equal(missingAuditResetResponse.status, 409);
+        assert.equal(missingAuditResetResponse.status, 200);
         const missingAuditReset = await missingAuditResetResponse.json() as {
             status: string;
-            unavailable_reason: string;
+            command: string;
         };
-        assert.equal(missingAuditReset.status, 'unavailable');
-        assert.match(missingAuditReset.unavailable_reason, /TASK_RESET_DISABLED/u);
-        assert.match(missingAuditReset.unavailable_reason, /no matching audited workflow set record/u);
+        assert.equal(missingAuditReset.status, 'previewed');
+        assert.match(missingAuditReset.command, /repair audited task-reset evidence/u);
+        assert.doesNotMatch(missingAuditReset.command, /restore task_reset\.enabled=false/u);
 
         const enablePreviewResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
             headers: actionHeaders,
             body: JSON.stringify({ action_id: 'task-reset-enable-audited', mode: 'preview' })
         });
-        assert.equal(enablePreviewResponse.status, 200);
-        const enablePreview = await enablePreviewResponse.json() as {
-            status: string;
-            command: string;
-            requires_confirmation: boolean;
-            confirmation_phrase: string;
-        };
-        assert.equal(enablePreview.status, 'previewed');
-        assert.match(enablePreview.command, /workflow set --task-reset-enabled true/u);
-        assert.match(enablePreview.command, /--operator-confirmed yes --operator-confirmed-at-utc/u);
-        assert.equal(enablePreview.requires_confirmation, true);
-        assert.equal(enablePreview.confirmation_phrase, 'ENABLE TASK RESET');
+        assert.equal(enablePreviewResponse.status, 400);
+        assert.equal((await enablePreviewResponse.json() as { code: string }).code, 'unknown_task_action');
 
-        const enableExecuteResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+        const missingAuditResetExecuteResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
             headers: actionHeaders,
-            body: JSON.stringify({ action_id: 'task-reset-enable-audited', mode: 'execute', confirmation: 'ENABLE TASK RESET' })
+            body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'execute', confirmation: 'RESET TASK' })
         });
-        assert.equal(enableExecuteResponse.status, 200);
-        assert.equal((await enableExecuteResponse.json() as { status: string }).status, 'executed');
-        assert.equal(executedCommands.length, 1);
-        assert.match(executedCommands[0], /workflow set --task-reset-enabled true/u);
+        assert.equal(missingAuditResetExecuteResponse.status, 200);
+        const missingAuditResetExecute = await missingAuditResetExecuteResponse.json() as { status: string; stdout: string };
+        assert.equal(missingAuditResetExecute.status, 'executed');
+        assert.match(missingAuditResetExecute.stdout, /Audited task-reset evidence repaired/u);
+        assert.match(missingAuditResetExecute.stdout, /Task reset completed/u);
+        assert.equal(executedCommands.length, 5);
+        assert.match(executedCommands[3], /workflow set --task-reset-enabled true/u);
+        assert.match(executedCommands[4], /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
 
         writeLocalUiTaskResetAuditRecord(repoRoot);
         const resetPreviewResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
@@ -952,9 +967,9 @@ test('local UI task actions support preview confirmation execution and audit', a
         assert.equal(resetExecuteResponse.status, 200);
         const resetExecute = await resetExecuteResponse.json() as { status: string; stdout: string };
         assert.equal(resetExecute.status, 'executed');
-        assert.equal(resetExecute.stdout, 'task ok');
-        assert.equal(executedCommands.length, 2);
-        assert.match(executedCommands[1], /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
+        assert.equal(resetExecute.stdout, 'Task reset completed.');
+        assert.equal(executedCommands.length, 6);
+        assert.match(executedCommands[5], /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
 
         const discardPreviewResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
@@ -969,21 +984,21 @@ test('local UI task actions support preview confirmation execution and audit', a
             confirmation_phrase: string;
         };
         assert.equal(discardPreview.status, 'previewed');
-        assert.match(discardPreview.command, /gate task-reset --task-id T-100 --discard --confirm --repo-root/u);
+        assert.match(discardPreview.command, /gate task-reset --task-id T-100 --to-status DONE --confirm --repo-root/u);
         assert.equal(discardPreview.requires_confirmation, true);
-        assert.equal(discardPreview.confirmation_phrase, 'DISCARD TASK');
+        assert.equal(discardPreview.confirmation_phrase, 'CLOSE WITHOUT EXECUTION');
 
         const discardExecuteResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
             headers: actionHeaders,
-            body: JSON.stringify({ action_id: 'task-reset-discard', mode: 'execute', confirmation: 'DISCARD TASK' })
+            body: JSON.stringify({ action_id: 'task-reset-discard', mode: 'execute', confirmation: 'CLOSE WITHOUT EXECUTION' })
         });
         assert.equal(discardExecuteResponse.status, 200);
         const discardExecute = await discardExecuteResponse.json() as { status: string; stdout: string };
         assert.equal(discardExecute.status, 'executed');
-        assert.equal(discardExecute.stdout, 'task ok');
-        assert.equal(executedCommands.length, 3);
-        assert.match(executedCommands[2], /gate task-reset --task-id T-100 --discard --confirm --repo-root/u);
+        assert.equal(discardExecute.stdout, 'Close without execution completed.');
+        assert.equal(executedCommands.length, 7);
+        assert.match(executedCommands[6], /gate task-reset --task-id T-100 --to-status DONE --confirm --repo-root/u);
 
         const statsResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
@@ -994,8 +1009,8 @@ test('local UI task actions support preview confirmation execution and audit', a
         const stats = await statsResponse.json() as { status: string; stdout: string; audit_path: string };
         assert.equal(stats.status, 'executed');
         assert.equal(stats.stdout, 'task ok');
-        assert.equal(executedCommands.length, 4);
-        assert.match(executedCommands[3], /task T-100 stats --target-root/u);
+        assert.equal(executedCommands.length, 8);
+        assert.match(executedCommands[7], /task T-100 stats --target-root/u);
         const auditLines = fs.readFileSync(stats.audit_path, 'utf8').trim().split(/\r?\n/u);
         assert.match(auditLines[auditLines.length - 1], /"action_id":"T-100:task-stats"/u);
         assert.match(auditLines[auditLines.length - 1], /"status":"executed"/u);
@@ -1006,6 +1021,118 @@ test('local UI task actions support preview confirmation execution and audit', a
             body: JSON.stringify({ action_id: 'task-stats', mode: 'preview' })
         });
         assert.equal(unknownTaskResponse.status, 404);
+    } finally {
+        await cleanupLocalUiTestResources({ repoRoot, server });
+    }
+});
+
+test('local UI task reset one-shot restores disabled setting after reset failure', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const executedCommands: string[] = [];
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async (action) => {
+            executedCommands.push(action.command.display);
+            if (action.command.display.includes('gate task-reset')) {
+                return {
+                    exit_code: 7,
+                    signal: null,
+                    stdout: '',
+                    stderr: 'reset failed details'
+                };
+            }
+            return {
+                exit_code: 0,
+                signal: null,
+                stdout: 'workflow ok',
+                stderr: ''
+            };
+        }
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const actionHeaders = {
+            'content-type': 'application/json',
+            'origin': server.url.slice(0, -1),
+            'x-garda-action-token': actionToken
+        };
+        const response = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'execute', confirmation: 'RESET TASK' })
+        });
+        assert.equal(response.status, 500);
+        const result = await response.json() as { status: string; stdout: string; stderr: string };
+        assert.equal(result.status, 'executed');
+        assert.match(result.stdout, /Task reset was enabled temporarily/u);
+        assert.match(result.stdout, /task_reset\.enabled was restored to false/u);
+        assert.match(result.stderr, /Reset task failed with exit code 7/u);
+        assert.match(result.stderr, /reset failed details/u);
+        assert.equal(executedCommands.length, 3);
+        assert.match(executedCommands[0], /workflow set --task-reset-enabled true/u);
+        assert.match(executedCommands[1], /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
+        assert.match(executedCommands[2], /workflow set --task-reset-enabled false/u);
+    } finally {
+        await cleanupLocalUiTestResources({ repoRoot, server });
+    }
+});
+
+test('local UI task reset one-shot reports restore failure after close succeeds', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const executedCommands: string[] = [];
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async (action) => {
+            executedCommands.push(action.command.display);
+            if (action.command.display.includes('--task-reset-enabled false')) {
+                return {
+                    exit_code: 9,
+                    signal: null,
+                    stdout: '',
+                    stderr: 'restore failed details'
+                };
+            }
+            return {
+                exit_code: 0,
+                signal: null,
+                stdout: 'task ok',
+                stderr: ''
+            };
+        }
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const actionHeaders = {
+            'content-type': 'application/json',
+            'origin': server.url.slice(0, -1),
+            'x-garda-action-token': actionToken
+        };
+        const response = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                action_id: 'task-reset-discard',
+                mode: 'execute',
+                confirmation: 'CLOSE WITHOUT EXECUTION'
+            })
+        });
+        assert.equal(response.status, 500);
+        const result = await response.json() as { status: string; stdout: string; stderr: string };
+        assert.equal(result.status, 'executed');
+        assert.match(result.stdout, /Task reset was enabled temporarily/u);
+        assert.match(result.stdout, /Close without execution completed/u);
+        assert.match(result.stderr, /task_reset\.enabled restore failed with exit code 9/u);
+        assert.match(result.stderr, /restore failed details/u);
+        assert.equal(executedCommands.length, 3);
+        assert.match(executedCommands[0], /workflow set --task-reset-enabled true/u);
+        assert.match(executedCommands[1], /gate task-reset --task-id T-100 --to-status DONE --confirm --repo-root/u);
+        assert.match(executedCommands[2], /workflow set --task-reset-enabled false/u);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
     }

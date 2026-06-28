@@ -6,59 +6,17 @@ export const UI_DASHBOARD_CLIENT_TASK_DETAIL = `function reviewSummary(audit) {
   }
   return '<ul class="list">' + summary.map(item => '<li><code>' + safe(item.review_type) + '</code>: pass=' + safe(item.pass_count) + ', fail=' + safe(item.fail_count) + ', reused=' + safe(item.reused_count) + '</li>').join('') + '</ul>';
 }
-function isTaskResetEnabled() {
-  const readiness = taskResetReadiness();
-  if (readiness) {
-    return readiness.ready === true;
-  }
-  const settings = currentReport && currentReport.workflow_config_tab && currentReport.workflow_config_tab.settings
-    ? currentReport.workflow_config_tab.settings
-    : [];
-  const setting = settings.find(item => item && item.key === 'task_reset.enabled');
-  return setting && setting.value === true;
-}
-function taskResetReadiness() {
-  const settings = currentReport && currentReport.workflow_config_tab && currentReport.workflow_config_tab.settings
-    ? currentReport.workflow_config_tab.settings
-    : [];
-  const setting = settings.find(item => item && item.key === 'task_reset.enabled');
-  return setting && setting.readiness ? setting.readiness : null;
-}
-function taskResetUnavailableText() {
-  const readiness = taskResetReadiness();
-  if (!readiness) {
-    return t('taskResetUnavailable');
-  }
-  if (readiness.configured_enabled === true && readiness.audited_enablement !== true) {
-    return t('taskResetAuditUnavailable') + ' ' + (readiness.disabled_reason || '');
-  }
-  return t('taskResetUnavailable') + ' ' + (readiness.disabled_reason || '');
-}
-function taskResetEnableShortcut(action) {
-  if (!action.disabled || action.id !== 'task-reset-reopen') {
-    return '';
-  }
-  return '<div class="task-command-buttons task-reset-remediation-buttons"><button type="button" data-task-reset-setting-link="workflow-safety">' + safe(t('taskCommandEnableReset')) + '</button></div>';
-}
 function taskCommandList(taskId) {
-  const resetReadiness = taskResetReadiness();
-  const resetReady = isTaskResetEnabled();
-  const resetRemediationCommand = resetReadiness && resetReadiness.remediation_command
-    ? resetReadiness.remediation_command
-    : 'garda workflow set --target-root "." --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"';
   const commands = [
     { id: 'task-next-step', label: t('taskCommandNextStep'), description: t('taskCommandNextStepDescription'), command: 'garda next-step "' + taskId + '" --repo-root "."', mutates: true, disabled: false, unavailable: '' },
-    { id: 'task-reset-reopen', label: t('taskCommandReset'), description: t('taskCommandResetDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --reopen --confirm --repo-root "."', mutates: true, disabled: !resetReady, unavailable: taskResetUnavailableText() },
-    { id: 'task-reset-discard', label: t('taskCommandDiscard'), description: t('taskCommandDiscardDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --discard --confirm --repo-root "."', mutates: true, disabled: !resetReady, unavailable: taskResetUnavailableText() },
+    { id: 'task-reset-reopen', label: t('taskCommandReset'), description: t('taskCommandResetDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --reopen --confirm --repo-root "."', mutates: true, disabled: false, unavailable: '' },
+    { id: 'task-reset-discard', label: t('taskCommandDiscard'), description: t('taskCommandDiscardDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --to-status DONE --confirm --repo-root "."', mutates: true, disabled: false, unavailable: '' },
     { id: 'task-stats', label: t('taskCommandStats'), description: t('taskCommandStatsDescription'), command: 'garda task "' + taskId + '" stats --target-root "."', mutates: false, disabled: false, unavailable: '' },
     { id: 'task-events', label: t('taskCommandEvents'), description: t('taskCommandEventsDescription'), command: 'garda task "' + taskId + '" events --target-root "."', mutates: false, disabled: false, unavailable: '' }
   ];
-  if (!resetReady) {
-    commands.splice(3, 0, { id: 'task-reset-enable-audited', label: t('taskCommandEnableReset'), description: resetReadiness && resetReadiness.configured_enabled === true ? t('taskCommandEnableResetAuditDescription') : t('taskCommandEnableResetDescription'), command: resetRemediationCommand, mutates: true, disabled: false, unavailable: '' });
-  }
   return '<div class="task-command-list">' + commands.map(action => '<section class="task-command-card"><strong>' + safe(action.label) + '</strong><p>' + safe(action.description) + '</p><code>' + safe(action.command) + '</code>'
     + (actionsEnabled
-      ? '<div class="task-command-buttons"><button type="button" data-task-action-id="' + safe(action.id) + '" data-task-action-mode="execute"' + (action.disabled ? ' disabled' : '') + '>' + safe(action.disabled ? t('actionUnavailable') : t('run')) + '</button>' + (action.mutates ? '<span class="action-kind mutates">' + safe(t('mutatingAction')) + '</span>' : '<span class="action-kind">' + safe(t('safeAction')) + '</span>') + '</div>' + (action.disabled ? '<p class="task-action-unavailable">' + safe(action.unavailable) + '</p>' + taskResetEnableShortcut(action) : '')
+      ? '<div class="task-command-buttons"><button type="button" data-task-action-id="' + safe(action.id) + '" data-task-action-mode="execute"' + (action.disabled ? ' disabled' : '') + '>' + safe(action.disabled ? t('actionUnavailable') : t('run')) + '</button>' + (action.mutates ? '<span class="action-kind mutates">' + safe(t('mutatingAction')) + '</span>' : '<span class="action-kind">' + safe(t('safeAction')) + '</span>') + '</div>' + (action.disabled ? '<p class="task-action-unavailable">' + safe(action.unavailable) + '</p>' : '')
       : '<p class="empty">' + inlineText(t('taskCommandUnavailable')) + '</p>')
     + '</section>').join('') + '</div>';
 }
@@ -94,33 +52,11 @@ function wireTaskActionButtons(taskId) {
       await runTaskAction(taskId, actionId, mode, confirmation);
     });
   }
-  for (const button of detailNode.querySelectorAll('button[data-task-reset-setting-link]')) {
-    button.addEventListener('click', () => {
-      const tabButton = Array.from(document.querySelectorAll('nav button[data-tab]'))
-        .find(candidate => candidate.dataset.tab === 'workflow-tab' && candidate.dataset.settingGroup === 'safety');
-      if (tabButton) {
-        tabButton.click();
-      }
-      const row = document.getElementById('setting-row-task-reset-enabled');
-      if (row) {
-        if (typeof row.setAttribute === 'function' && (!row.getAttribute || row.getAttribute('tabindex') === null)) {
-          row.setAttribute('tabindex', '-1');
-        }
-        if (typeof row.scrollIntoView === 'function') {
-          row.scrollIntoView({ block: 'center' });
-        }
-        if (typeof row.focus === 'function') {
-          row.focus({ preventScroll: true });
-        }
-      }
-    });
-  }
 }
 function taskActionConfirmationPhrase(actionId) {
   if (actionId === 'task-next-step') return 'RUN TASK NEXT STEP';
   if (actionId === 'task-reset-reopen') return 'RESET TASK';
-  if (actionId === 'task-reset-discard') return 'DISCARD TASK';
-  if (actionId === 'task-reset-enable-audited') return 'ENABLE TASK RESET';
+  if (actionId === 'task-reset-discard') return 'CLOSE WITHOUT EXECUTION';
   return null;
 }
 async function runTaskAction(taskId, actionId, mode, confirmation) {
@@ -144,7 +80,7 @@ async function runTaskAction(taskId, actionId, mode, confirmation) {
     + '</section>';
   focusVisibleActionResult(node);
   const exitCode = Number.isFinite(Number(result.exit_code)) ? Number(result.exit_code) : null;
-  if (response.ok && result.status === 'executed' && (exitCode === null || exitCode === 0) && actionId === 'task-reset-enable-audited') {
+  if (response.ok && result.status === 'executed' && (exitCode === null || exitCode === 0) && (actionId === 'task-reset-reopen' || actionId === 'task-reset-discard')) {
     try {
       const reportResponse = await fetch('/api/report');
       currentReport = await reportResponse.json();
