@@ -676,6 +676,28 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(result.commands[0].command.includes('--preflight-path'));
     });
 
+    it('routes preflight refreshed after implementation compile and review phase to restart before expensive gates', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        appendEvent(repoRoot, TASK_ID, 'IMPLEMENTATION_STARTED', 'INFO');
+        seedCompilePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-coherent-cycle');
+        assert.ok(result.reason.includes('REVIEW_PHASE_STARTED'));
+        assert.ok(result.reason.includes('HANDSHAKE_DIAGNOSTICS_RECORDED'));
+        assert.ok(result.reason.includes('expensive review work'));
+        assert.ok(result.commands[0].command.includes('gate restart-coherent-cycle'));
+        assert.ok(!['compile-gate', 'build-review-context', 'prepare-reviewer-launch', 'required-reviews-check'].includes(result.next_gate));
+    });
+
     it('routes refreshed preflight after a failed completion cycle to restart-coherent-cycle', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

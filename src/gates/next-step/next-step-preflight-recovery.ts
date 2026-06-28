@@ -67,6 +67,8 @@ export interface CoherentCycleReadiness {
 }
 
 const COHERENT_CYCLE_BOUNDARY_EVENTS = new Set([
+    'IMPLEMENTATION_STARTED',
+    'REVIEW_PHASE_STARTED',
     'REVIEW_GATE_PASSED',
     'REVIEW_GATE_PASSED_WITH_OVERRIDE',
     'COMPLETION_GATE_FAILED',
@@ -331,7 +333,7 @@ export function readCoherentCycleReadiness(
 
     return {
         ready: false,
-        reason: `Latest PREFLIGHT_CLASSIFIED (seq ${latestPreflight.sequence}) is not in a coherent preflight cycle${cycleAnchor}: ${violations.join('; ')}. Run restart-coherent-cycle before compile/review/completion so completion-gate does not fail on stage sequence.`,
+        reason: `Latest PREFLIGHT_CLASSIFIED (seq ${latestPreflight.sequence}) is not in a coherent preflight cycle${cycleAnchor}: ${violations.join('; ')}. Run restart-coherent-cycle before compile/review/completion so expensive review work is not launched against stage-sequence evidence that completion-gate will reject.`,
         command: buildCoherentCycleRestartCommand(
             repoRoot,
             taskId,
