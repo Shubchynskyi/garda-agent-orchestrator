@@ -226,41 +226,6 @@ function optionalRuleValue(rule, field) {
   if (field === 'enabled') return rule.enabled === false ? 'false' : 'true';
   return rule[field] === null || rule[field] === undefined ? '' : String(rule[field]);
 }
-function renderOptionalRuleRow(rule, disabled) {
-  const ruleId = safe(rule.id || '');
-  const disabledAttr = disabled ? ' disabled' : '';
-  const baselineRule = rule.source === 'baseline';
-  const immutableTextAttr = disabled || baselineRule ? ' disabled' : '';
-  const deleteDisabledAttr = disabled || baselineRule || rule.present === false ? ' disabled' : '';
-  return '<tr data-optional-rule-id="' + ruleId + '">'
-    + '<td><code>' + ruleId + '</code></td>'
-    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'title')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'title')) + '"' + immutableTextAttr + '></td>'
-    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'prompt')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'prompt')) + '"' + immutableTextAttr + '></td>'
-    + '<td><select id="' + safe(optionalRuleInputId(rule.id, 'enabled')) + '"' + disabledAttr + '><option value="true"' + (rule.enabled !== false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOn')) + '</option><option value="false"' + (rule.enabled === false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOff')) + '</option></select></td>'
-    + '<td><div class="setting-buttons"><button type="button" data-optional-rule-action="upsert" data-optional-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('saveOptionalCheckRule')) + '</button><button type="button" data-optional-rule-action="delete" data-optional-rule-id="' + ruleId + '"' + deleteDisabledAttr + '>' + safe(t('removeOptionalCheckRule')) + '</button></div></td>'
-    + '</tr>';
-}
-function renderOptionalRulesEditor(payload, disabled) {
-  const optionalChecks = payload.optional_quality_checks || {};
-  const qualityGate = payload.quality_gate || {};
-  const rules = Array.isArray(qualityGate.rules)
-    ? qualityGate.rules
-    : (Array.isArray(optionalChecks.rules) ? optionalChecks.rules : []);
-  if (currentWorkflowSettingGroup !== 'validation') {
-    return '';
-  }
-  const disabledAttr = disabled ? ' disabled' : '';
-  const title = localizedField(settingTextPacks, 'optional-checks-enabled', 'label', 'Optional quality checks');
-  const newId = optionalRuleInputId('new', 'id');
-  const newTitle = optionalRuleInputId('new', 'title');
-  const newPrompt = optionalRuleInputId('new', 'prompt');
-  const newEnabled = optionalRuleInputId('new', 'enabled');
-  return '<section class="workflow-group workflow-setting-group optional-rules-editor"><h3>' + safe(title) + '</h3>'
-    + '<div class="workflow-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>'
-    + rules.map(rule => renderOptionalRuleRow(rule, disabled)).join('')
-    + '<tr data-optional-rule-id="new"><td><input id="' + safe(newId) + '" type="text" placeholder="custom_rule_id"' + disabledAttr + '></td><td><input id="' + safe(newTitle) + '" type="text"' + disabledAttr + '></td><td><input id="' + safe(newPrompt) + '" type="text"' + disabledAttr + '></td><td><select id="' + safe(newEnabled) + '"' + disabledAttr + '><option value="true">' + safe(t('gardaSwitchStateOn')) + '</option><option value="false">' + safe(t('gardaSwitchStateOff')) + '</option></select></td><td><div class="setting-buttons"><button type="button" data-optional-rule-action="upsert" data-optional-rule-id="new"' + (disabled ? ' disabled' : '') + '>' + safe(t('addOptionalCheckRule')) + '</button></div></td></tr>'
-    + '</tbody></table></div></section>';
-}
 async function submitOptionalRule(action, ruleId, title, prompt, enabled, confirmation, resultRenderer) {
   const response = await fetch('/api/settings', {
     method: 'POST',
@@ -274,20 +239,6 @@ async function submitOptionalRule(action, ruleId, title, prompt, enabled, confir
   if (result && result.status === 'executed') {
     await refreshSettingsPayload();
   }
-}
-function readOptionalRuleForm(ruleId) {
-  const actualId = ruleId === 'new'
-    ? (document.getElementById(optionalRuleInputId('new', 'id')) || {}).value
-    : ruleId;
-  const titleInput = document.getElementById(optionalRuleInputId(ruleId, 'title'));
-  const promptInput = document.getElementById(optionalRuleInputId(ruleId, 'prompt'));
-  const enabledInput = document.getElementById(optionalRuleInputId(ruleId, 'enabled'));
-  return {
-    id: actualId || '',
-    title: titleInput ? titleInput.value : '',
-    prompt: promptInput ? promptInput.value : '',
-    enabled: enabledInput ? enabledInput.value : 'true'
-  };
 }
 function renderValidationForecastLine(report) {
   if (currentWorkflowSettingGroup !== 'validation' || !report || !report.system_state || !report.system_state.workflow) {
@@ -324,7 +275,7 @@ function renderSettingsEditor(payload) {
     + (() => {
       const groupSettings = settings.filter(setting => settingGroupId(setting) === currentWorkflowSettingGroup);
       if (groupSettings.length === 0) return '<p class="empty">' + safe(t('noWorkflowSettings')) + '</p>';
-      return '<section class="workflow-group workflow-setting-group"><div class="workflow-table"><table><thead><tr><th>' + safe(t('configSettingColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('currentValueColumn')) + '</th><th>' + safe(t('optionsColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + groupSettings.map(setting => renderSettingRow(setting, disabled, 'workflow')).join('') + '</tbody></table></div></section>' + renderOptionalRulesEditor(payload, disabled);
+      return '<section class="workflow-group workflow-setting-group"><div class="workflow-table"><table><thead><tr><th>' + safe(t('configSettingColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('currentValueColumn')) + '</th><th>' + safe(t('optionsColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + groupSettings.map(setting => renderSettingRow(setting, disabled, 'workflow')).join('') + '</tbody></table></div></section>';
     })();
   syncWorkflowMessagesVisibility();
   for (const button of settingsEditorNode.querySelectorAll('button[data-setting-id]')) {
@@ -340,18 +291,6 @@ function renderSettingsEditor(payload) {
         return;
       }
       submitSetting(button.dataset.settingId, mode, settingSubmitValue(setting, input, controlScope), confirmation, renderWorkflowSettingResult);
-    });
-  }
-  for (const button of settingsEditorNode.querySelectorAll('button[data-optional-rule-action]')) {
-    button.addEventListener('click', () => {
-      const action = button.dataset.optionalRuleAction;
-      const ruleId = button.dataset.optionalRuleId || '';
-      const form = readOptionalRuleForm(ruleId);
-      const confirmation = window.prompt(t('typeToApplySetting') + ' "APPLY GARDA SETTING" ' + t('typeToApplySettingTail'));
-      if (confirmation === null) {
-        return;
-      }
-      submitOptionalRule(action, form.id, form.title, form.prompt, form.enabled, confirmation, renderWorkflowSettingResult);
     });
   }
 }

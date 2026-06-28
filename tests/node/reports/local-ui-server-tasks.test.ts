@@ -1537,6 +1537,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /No blockers reported/u);
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /<h3 class="task-section-title">Blockers<\/h3>/u);
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /data-validation-action-id=/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /data-optional-rule-action=/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /optional-rules-editor/u);
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Gate Timeline/u);
         report.tasks_tab.rows[1].status = 'BLOCKED';
         report.tasks_tab.rows[1].status_token = 'BLOCKED';

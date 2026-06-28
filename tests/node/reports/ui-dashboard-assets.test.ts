@@ -250,7 +250,7 @@ test('workflow setting result renderer shows optional-rule validation errors', (
     assert.match(workflowNode.innerHTML, /Optional quality-check rule prompt is required\./u);
 });
 
-test('workflow settings editor uses optional-rule labels without ordinary-doc text', () => {
+test('workflow settings editor omits optional-rule management controls', () => {
     const settingsEditorNode = {
         innerHTML: '',
         querySelectorAll: () => []
@@ -300,9 +300,12 @@ test('workflow settings editor uses optional-rule labels without ordinary-doc te
   }]
 });`, context);
 
-    assert.match(settingsEditorNode.innerHTML, /Добавить правило/u);
-    assert.match(settingsEditorNode.innerHTML, /Сохранить правило/u);
-    assert.match(settingsEditorNode.innerHTML, /Удалить правило/u);
+    assert.match(settingsEditorNode.innerHTML, /optional_quality_checks\.enabled/u);
+    assert.doesNotMatch(settingsEditorNode.innerHTML, /data-optional-rule-action=/u);
+    assert.doesNotMatch(settingsEditorNode.innerHTML, /optional-rules-editor/u);
+    assert.doesNotMatch(settingsEditorNode.innerHTML, /Добавить правило/u);
+    assert.doesNotMatch(settingsEditorNode.innerHTML, /Сохранить правило/u);
+    assert.doesNotMatch(settingsEditorNode.innerHTML, /Удалить правило/u);
     assert.doesNotMatch(settingsEditorNode.innerHTML, /Добавить документ/u);
 });
 
