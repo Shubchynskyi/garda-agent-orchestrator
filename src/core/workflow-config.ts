@@ -226,6 +226,16 @@ const LEGACY_PROJECT_MEMORY_MAINTENANCE_GENERATED_DEFAULT: ProjectMemoryMaintena
     impact_artifact_retention_days: 30
 });
 
+const LEGACY_SCOPE_BUDGET_GUARD_GENERATED_DEFAULT: ScopeBudgetGuardConfig = Object.freeze({
+    enabled: true,
+    profiles: ['strict'],
+    action: 'BLOCK_FOR_SPLIT',
+    max_files: 12,
+    max_changed_lines: 1200,
+    max_required_reviews: 5,
+    max_review_tokens: 50000
+});
+
 const LEGACY_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT: ReviewCycleGuardConfig = Object.freeze({
     enabled: true,
     action: 'BLOCK_FOR_OPERATOR_DECISION',
@@ -419,6 +429,32 @@ export function isExactLegacyProjectMemoryGeneratedDefault(input: unknown): bool
     return expectedKeys.every((key, index) => actualKeys[index] === key && input[key] === expected[key]);
 }
 
+export function isExactLegacyScopeBudgetGuardGeneratedDefault(input: unknown): boolean {
+    if (!isPlainObject(input)) {
+        return false;
+    }
+
+    const expected = LEGACY_SCOPE_BUDGET_GUARD_GENERATED_DEFAULT as unknown as Record<string, unknown>;
+    const actualKeys = Object.keys(input).sort();
+    const expectedKeys = Object.keys(expected).sort();
+    if (actualKeys.length !== expectedKeys.length) {
+        return false;
+    }
+    if (!expectedKeys.every((key, index) => actualKeys[index] === key)) {
+        return false;
+    }
+
+    return input.enabled === expected.enabled
+        && input.action === expected.action
+        && input.max_files === expected.max_files
+        && input.max_changed_lines === expected.max_changed_lines
+        && input.max_required_reviews === expected.max_required_reviews
+        && input.max_review_tokens === expected.max_review_tokens
+        && Array.isArray(input.profiles)
+        && input.profiles.length === 1
+        && input.profiles[0] === 'strict';
+}
+
 export function isExactLegacyReviewCycleGuardGeneratedDefault(input: unknown): boolean {
     if (!isPlainObject(input)) {
         return false;
@@ -461,6 +497,26 @@ function migrateLegacyProjectMemoryGeneratedDefault(
 
     const migrated = cloneJsonValue(existingConfig);
     delete migrated[projectMemoryKey];
+    return migrated;
+}
+
+function migrateLegacyScopeBudgetGuardGeneratedDefault(
+    existingConfig: Record<string, unknown> | null
+): Record<string, unknown> | null {
+    if (!isPlainObject(existingConfig)) {
+        return existingConfig;
+    }
+
+    const scopeBudgetKey = findOwnCaseInsensitiveKey(existingConfig, 'scope_budget_guard');
+    if (
+        scopeBudgetKey === undefined
+        || !isExactLegacyScopeBudgetGuardGeneratedDefault(existingConfig[scopeBudgetKey])
+    ) {
+        return existingConfig;
+    }
+
+    const migrated = cloneJsonValue(existingConfig);
+    delete migrated[scopeBudgetKey];
     return migrated;
 }
 
@@ -551,7 +607,9 @@ export function mergeWorkflowConfigWithTemplate(
 ): Record<string, unknown> {
     const existingConfigForMerge = migrateLegacyOptionalQualityChecksGeneratedDefault(
         migrateLegacyReviewCycleGuardGeneratedDefault(
-            migrateLegacyProjectMemoryGeneratedDefault(existingConfig)
+            migrateLegacyScopeBudgetGuardGeneratedDefault(
+                migrateLegacyProjectMemoryGeneratedDefault(existingConfig)
+            )
         )
     );
     const nextConfig = mergeConfig(templateConfig, existingConfigForMerge);

@@ -85,6 +85,7 @@ describe('gates/next-step review cycle guard split', () => {
         workflowConfig.full_suite_validation.enabled = false;
         workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
         workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        workflowConfig.review_cycle_guard.auto_split_enabled = false;
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });

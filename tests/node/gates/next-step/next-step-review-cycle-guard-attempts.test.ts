@@ -91,7 +91,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
                     max_failed_non_test_reviews: 15,
                     max_total_non_test_reviews: 2,
-                    excluded_review_types: ['test']
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );
@@ -160,7 +161,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
                     max_failed_non_test_reviews: 15,
                     max_total_non_test_reviews: 1,
-                    excluded_review_types: ['test']
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );
@@ -201,7 +203,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
                     max_failed_non_test_reviews: 1,
                     max_total_non_test_reviews: 15,
-                    excluded_review_types: ['test']
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );
@@ -248,7 +251,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
                     max_failed_non_test_reviews: 15,
                     max_total_non_test_reviews: 2,
-                    excluded_review_types: ['test']
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );
@@ -319,7 +323,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
                     max_failed_non_test_reviews: 15,
                     max_total_non_test_reviews: 1,
-                    excluded_review_types: ['test']
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );
@@ -360,7 +365,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
                     max_failed_non_test_reviews: 15,
                     max_total_non_test_reviews: 1,
-                    excluded_review_types: ['test']
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );
@@ -422,7 +428,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
                     max_failed_non_test_reviews: 1,
                     max_total_non_test_reviews: 15,
-                    excluded_review_types: ['test']
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );
@@ -466,7 +473,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
                     max_failed_non_test_reviews: 15,
                     max_total_non_test_reviews: 1,
-                    excluded_review_types: ['test']
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );
@@ -506,7 +514,8 @@ describe('gates/next-step review cycle guard attempts', () => {
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
                     max_failed_non_test_reviews: 1,
                     max_total_non_test_reviews: 15,
-                    excluded_review_types: ['test']
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );

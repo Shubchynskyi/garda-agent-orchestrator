@@ -108,7 +108,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('FullSuiteTimeoutBlocker: true'));
         assert.ok(output.includes('FullSuiteTimeoutRetryCount: 1'));
         assert.ok(output.includes('FullSuitePlacement: before_test_review'));
-        assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
+        assert.ok(output.includes('Scope budget guard: WARN_ONLY'));
         assert.ok(output.includes('max_reviews=5'));
         assert.ok(output.includes('ScopeBudgetGuardMaxRequiredReviews: 5'));
         assert.equal(result.scope_budget_guard.max_required_reviews, 5);
@@ -612,7 +612,13 @@ test('workflow set updates scheduled auto-backup settings with audit record', ()
 });
 
 test('workflow set maps short on off aliases to existing boolean settings', () => {
-    const bundleRoot = createBundleRoot();
+    const defaultWorkflowConfig = buildDefaultWorkflowConfig();
+    const bundleRoot = createBundleRoot({}, {
+        review_cycle_guard: {
+            ...defaultWorkflowConfig.review_cycle_guard,
+            auto_split_enabled: false
+        }
+    });
     const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
 
     try {
@@ -1062,7 +1068,7 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.ok(!parsed.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'artifact_evidence_binding'));
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review mode=standard');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
-        assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=false');
+        assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=true');
         assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
         assert.equal(parsed.task_reset_summary_line, 'Task reset: disabled');
         assert.equal(parsed.optional_quality_checks_summary_line, `Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length}`);

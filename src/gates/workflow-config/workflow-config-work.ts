@@ -474,12 +474,13 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
 
     const scopeBudgetGuard = toPlainRecord(config.scope_budget_guard);
     const defaultScopeBudgetGuard = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.scope_budget_guard as unknown as Record<string, unknown>;
+    const scopeBudgetGuardAction = String(scopeBudgetGuard?.action || '').trim().toUpperCase();
     if (
         !scopeBudgetGuard
         || !hasExactOwnKeys(defaultScopeBudgetGuard, COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS)
         || !hasExactOwnKeys(scopeBudgetGuard, COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS)
         || scopeBudgetGuard.enabled !== true
-        || String(scopeBudgetGuard.action || '').trim().toUpperCase() !== 'BLOCK_FOR_SPLIT'
+        || !['WARN_ONLY', 'BLOCK_FOR_SPLIT'].includes(scopeBudgetGuardAction)
         || !includesEvery(
             normalizeStringList(scopeBudgetGuard.profiles),
             normalizeStringList(defaultScopeBudgetGuard.profiles)
@@ -506,7 +507,7 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
             normalizeStringList(reviewCycleGuard.excluded_review_types),
             normalizeStringList(defaultReviewCycleGuard.excluded_review_types)
         )
-        || reviewCycleGuard.auto_split_enabled !== defaultReviewCycleGuard.auto_split_enabled
+        || typeof reviewCycleGuard.auto_split_enabled !== 'boolean'
     ) {
         return false;
     }

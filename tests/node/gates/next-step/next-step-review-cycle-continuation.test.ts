@@ -48,6 +48,7 @@ describe('gates/next-step review cycle continuation', () => {
         const workflowConfig = buildDefaultWorkflowConfig();
         workflowConfig.full_suite_validation.enabled = false;
         workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.review_cycle_guard.auto_split_enabled = false;
         workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
         const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
         writeJson(configPath, workflowConfig);
@@ -81,6 +82,7 @@ describe('gates/next-step review cycle continuation', () => {
         const workflowConfig = buildDefaultWorkflowConfig();
         workflowConfig.full_suite_validation.enabled = false;
         workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.review_cycle_guard.auto_split_enabled = false;
         workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
         seedStartedTask(repoRoot, TASK_ID);

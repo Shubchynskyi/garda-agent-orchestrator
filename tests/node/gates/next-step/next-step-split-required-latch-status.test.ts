@@ -147,6 +147,10 @@ describe('gates/next-step split-required latch status', () => {
         for (const filePath of changedFiles) {
             fs.writeFileSync(path.join(repoRoot, filePath), 'export const value = 1;\n', 'utf8');
         }
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.scope_budget_guard.action = 'BLOCK_FOR_SPLIT';
+        workflowConfig.scope_budget_guard.max_files = 12;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
         seedStartedTask(repoRoot, TASK_ID);
         const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
         const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
@@ -431,6 +435,7 @@ describe('gates/next-step split-required latch status', () => {
         const config = buildDefaultWorkflowConfig();
         config.full_suite_validation.enabled = false;
         config.review_execution_policy = { mode: 'code_first_optional' };
+        config.scope_budget_guard.action = 'BLOCK_FOR_SPLIT';
         config.scope_budget_guard.max_files = 999999;
         config.scope_budget_guard.max_changed_lines = 120;
         config.scope_budget_guard.max_required_reviews = 999999;
@@ -763,6 +768,10 @@ describe('gates/next-step split-required latch status', () => {
         for (const filePath of changedFiles) {
             fs.writeFileSync(path.join(repoRoot, filePath), 'export const value = 1;\n', 'utf8');
         }
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.scope_budget_guard.action = 'BLOCK_FOR_SPLIT';
+        workflowConfig.scope_budget_guard.max_files = 12;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
         writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
             taskId,
             entryMode: 'EXPLICIT_TASK_EXECUTION',

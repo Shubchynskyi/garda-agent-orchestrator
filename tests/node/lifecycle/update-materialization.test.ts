@@ -1035,8 +1035,163 @@ describe('runUpdate', () => {
                 placement: 'after_compile_before_reviews'
             });
             assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
+            assert.equal(workflowConfig.scope_budget_guard.action, 'WARN_ONLY');
+            assert.equal(workflowConfig.scope_budget_guard.max_files, 20);
+            assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 1500);
             assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
             assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
+            assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('migrates exact legacy scope-budget guard defaults during update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    scope_budget_guard: {
+                        enabled: true,
+                        profiles: ['strict'],
+                        action: 'BLOCK_FOR_SPLIT',
+                        max_files: 12,
+                        max_changed_lines: 1200,
+                        max_required_reviews: 5,
+                        max_review_tokens: 50000
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.equal(workflowConfig.scope_budget_guard.action, 'WARN_ONLY');
+            assert.equal(workflowConfig.scope_budget_guard.max_files, 20);
+            assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 1500);
+            assert.equal(workflowConfig.scope_budget_guard.max_required_reviews, 5);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('preserves custom scope-budget guard settings during update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    scope_budget_guard: {
+                        enabled: true,
+                        profiles: ['strict', 'balanced'],
+                        action: 'BLOCK_FOR_SPLIT',
+                        max_files: 7,
+                        max_changed_lines: 300,
+                        max_required_reviews: 3,
+                        max_review_tokens: 5000
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.deepEqual(workflowConfig.scope_budget_guard, {
+                enabled: true,
+                profiles: ['strict', 'balanced'],
+                action: 'BLOCK_FOR_SPLIT',
+                max_files: 7,
+                max_changed_lines: 300,
+                max_required_reviews: 3,
+                max_review_tokens: 5000
+            });
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('preserves disabled scope-budget guard settings during update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    scope_budget_guard: {
+                        enabled: false,
+                        profiles: ['strict'],
+                        action: 'BLOCK_FOR_SPLIT',
+                        max_files: 12,
+                        max_changed_lines: 1200,
+                        max_required_reviews: 5,
+                        max_review_tokens: 50000
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.deepEqual(workflowConfig.scope_budget_guard, {
+                enabled: false,
+                profiles: ['strict'],
+                action: 'BLOCK_FOR_SPLIT',
+                max_files: 12,
+                max_changed_lines: 1200,
+                max_required_reviews: 5,
+                max_review_tokens: 50000
+            });
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -1086,7 +1241,7 @@ describe('runUpdate', () => {
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
             assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
             assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
-            assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, false);
+            assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
         } finally {
             removePathRecursive(projectRoot);
         }

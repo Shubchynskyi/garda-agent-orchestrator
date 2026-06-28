@@ -678,6 +678,187 @@ test('handleSetup migrates exact legacy generated project-memory maintenance def
     }
 });
 
+test('handleSetup migrates exact legacy scope-budget guard default during refresh', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-scope-budget-legacy-default-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        fs.writeFileSync(
+            workflowConfigPath,
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm run test:full',
+                    timeout_ms: 123456,
+                    green_summary_max_lines: 7,
+                    red_failure_chunk_lines: 42,
+                    out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                },
+                scope_budget_guard: {
+                    enabled: true,
+                    profiles: ['strict'],
+                    action: 'BLOCK_FOR_SPLIT',
+                    max_files: 12,
+                    max_changed_lines: 1200,
+                    max_required_reviews: 5,
+                    max_review_tokens: 50000
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.equal(workflowConfig.scope_budget_guard.action, 'WARN_ONLY');
+        assert.equal(workflowConfig.scope_budget_guard.max_files, 20);
+        assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 1500);
+        assert.equal(workflowConfig.scope_budget_guard.max_required_reviews, 5);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('handleSetup preserves custom scope-budget guard settings during refresh', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-scope-budget-custom-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        fs.writeFileSync(
+            workflowConfigPath,
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm run test:full',
+                    timeout_ms: 123456,
+                    green_summary_max_lines: 7,
+                    red_failure_chunk_lines: 42,
+                    out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                },
+                scope_budget_guard: {
+                    enabled: true,
+                    profiles: ['strict', 'balanced'],
+                    action: 'BLOCK_FOR_SPLIT',
+                    max_files: 7,
+                    max_changed_lines: 300,
+                    max_required_reviews: 3,
+                    max_review_tokens: 5000
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.deepEqual(workflowConfig.scope_budget_guard, {
+            enabled: true,
+            profiles: ['strict', 'balanced'],
+            action: 'BLOCK_FOR_SPLIT',
+            max_files: 7,
+            max_changed_lines: 300,
+            max_required_reviews: 3,
+            max_review_tokens: 5000
+        });
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('handleSetup preserves disabled scope-budget guard settings during refresh', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-scope-budget-disabled-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        fs.writeFileSync(
+            workflowConfigPath,
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm run test:full',
+                    timeout_ms: 123456,
+                    green_summary_max_lines: 7,
+                    red_failure_chunk_lines: 42,
+                    out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                },
+                scope_budget_guard: {
+                    enabled: false,
+                    profiles: ['strict'],
+                    action: 'BLOCK_FOR_SPLIT',
+                    max_files: 12,
+                    max_changed_lines: 1200,
+                    max_required_reviews: 5,
+                    max_review_tokens: 50000
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.deepEqual(workflowConfig.scope_budget_guard, {
+            enabled: false,
+            profiles: ['strict'],
+            action: 'BLOCK_FOR_SPLIT',
+            max_files: 12,
+            max_changed_lines: 1200,
+            max_required_reviews: 5,
+            max_review_tokens: 50000
+        });
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
 test('handleSetup migrates exact legacy review-cycle guard default during refresh', async () => {
     const repoRoot = findRepoRoot(__dirname);
     const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
@@ -727,7 +908,7 @@ test('handleSetup migrates exact legacy review-cycle guard default during refres
         const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
         assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
-        assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, false);
+        assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
 
         const initReport = readInitReport(workspaceRoot);
         const refreshText = refreshOutput.join('\n');
@@ -945,8 +1126,12 @@ test('handleSetup materializes code_first_optional review_execution_policy for a
             mode: 'code_first_optional'
         });
         assert.equal(workflowConfig.compile_gate.command, UNCONFIGURED_COMPILE_GATE_COMMAND);
+        assert.equal(workflowConfig.scope_budget_guard.action, 'WARN_ONLY');
+        assert.equal(workflowConfig.scope_budget_guard.max_files, 20);
+        assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 1500);
         assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
+        assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
         assert.equal(workflowConfig.optional_quality_checks.enabled, true);
         assert.equal(workflowConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
         assert.deepEqual(

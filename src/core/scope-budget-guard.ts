@@ -38,9 +38,9 @@ export interface ScopeBudgetGuardEvaluation {
 export const DEFAULT_SCOPE_BUDGET_GUARD_CONFIG: ScopeBudgetGuardConfig = Object.freeze({
     enabled: true,
     profiles: ['strict'],
-    action: 'BLOCK_FOR_SPLIT',
-    max_files: 12,
-    max_changed_lines: 1200,
+    action: 'WARN_ONLY',
+    max_files: 20,
+    max_changed_lines: 1500,
     max_required_reviews: 5,
     max_review_tokens: 50000
 });

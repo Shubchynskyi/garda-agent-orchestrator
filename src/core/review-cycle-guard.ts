@@ -49,7 +49,7 @@ export const DEFAULT_REVIEW_CYCLE_GUARD_CONFIG: ReviewCycleGuardConfig = Object.
     max_failed_non_test_reviews: 15,
     max_total_non_test_reviews: 30,
     excluded_review_types: ['test'],
-    auto_split_enabled: false
+    auto_split_enabled: true
 });
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {

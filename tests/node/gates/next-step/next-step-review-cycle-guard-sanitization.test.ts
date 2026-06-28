@@ -89,6 +89,7 @@ describe('gates/next-step review cycle guard sanitization', () => {
                 review_cycle_guard: {
                     enabled: true,
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    auto_split_enabled: false,
                     max_failed_non_test_reviews: 1,
                     max_total_non_test_reviews: 15,
                     excluded_review_types: ['test']
@@ -142,6 +143,7 @@ describe('gates/next-step review cycle guard sanitization', () => {
                 review_cycle_guard: {
                     enabled: true,
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    auto_split_enabled: false,
                     max_failed_non_test_reviews: 1,
                     max_total_non_test_reviews: 15,
                     excluded_review_types: ['test']
@@ -191,6 +193,7 @@ describe('gates/next-step review cycle guard sanitization', () => {
                 review_cycle_guard: {
                     enabled: true,
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    auto_split_enabled: false,
                     max_failed_non_test_reviews: 1,
                     max_total_non_test_reviews: 15,
                     excluded_review_types: ['test']
@@ -221,4 +224,3 @@ describe('gates/next-step review cycle guard sanitization', () => {
     });
 
 });
-

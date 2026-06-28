@@ -650,9 +650,14 @@ export function buildReviewCycleOperatorBlock(
                 }
             ])
     );
+    const hasReviewCyclePressureViolation = evaluation.violations.some((violation) =>
+        violation.metric === 'failed_non_test_review_count'
+        || violation.metric === 'total_non_test_review_count'
+    );
     const autoSplitEnabled = evaluation.action === 'BLOCK_FOR_OPERATOR_DECISION'
         && evaluation.violations.length > 0
         && evaluation.active
+        && hasReviewCyclePressureViolation
         && evaluation.auto_split_enabled;
     const autoSplitPrompt = autoSplitEnabled
         ? materializeReviewCycleAutoSplitPrompt(repoRoot, reviewsRoot, taskId, evaluation, latestFailedReview)
