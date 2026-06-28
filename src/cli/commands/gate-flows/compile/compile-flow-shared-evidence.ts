@@ -93,11 +93,17 @@ export function hasArrayEntries(value: unknown): boolean {
     return Array.isArray(value) && value.length > 0;
 }
 
-export function buildDomainReviewSurface(triggers: ClassificationResult['triggers']): Record<string, boolean> {
+export function buildDomainReviewSurface(result: ClassificationResult): Record<string, boolean> {
+    const triggers = result.triggers;
+    const hasReviewableDiff = Array.isArray(result.changed_files)
+        ? result.changed_files.length > 0
+        : result.metrics.changed_files_count > 0;
     return {
         db: triggers.db === true || hasArrayEntries(triggers.db_project_evidence),
         security: triggers.security === true,
+        refactor: triggers.refactor_heuristic === true || (triggers.refactor_intent === true && hasReviewableDiff),
         api: triggers.api === true,
+        test: triggers.test === true,
         performance: triggers.performance === true,
         infra: triggers.infra === true,
         dependency: triggers.dependency === true

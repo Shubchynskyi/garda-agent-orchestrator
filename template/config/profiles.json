@@ -9,7 +9,12 @@
         "code": true,
         "db": "auto",
         "security": "auto",
-        "refactor": "auto"
+        "refactor": "auto",
+        "api": "auto",
+        "test": true,
+        "performance": "auto",
+        "infra": "auto",
+        "dependency": "auto"
       },
       "token_economy": {
         "enabled": true,
@@ -23,13 +28,18 @@
       }
     },
     "fast": {
-      "description": "Speed-optimised profile: shallow depth, minimal reviews, aggressive token economy.",
+      "description": "Speed-optimised profile: shallow depth, only code/test reviews by trigger, aggressive token economy.",
       "depth": 1,
       "review_policy": {
-        "code": true,
-        "db": "auto",
-        "security": "auto",
-        "refactor": false
+        "code": "auto",
+        "db": false,
+        "security": false,
+        "refactor": false,
+        "api": false,
+        "test": "auto",
+        "performance": false,
+        "infra": false,
+        "dependency": false
       },
       "token_economy": {
         "enabled": true,
@@ -47,9 +57,14 @@
       "depth": 3,
       "review_policy": {
         "code": true,
-        "db": true,
+        "db": "auto",
         "security": true,
-        "refactor": true
+        "refactor": "auto",
+        "api": "auto",
+        "test": true,
+        "performance": true,
+        "infra": "auto",
+        "dependency": "auto"
       },
       "token_economy": {
         "enabled": true,
@@ -69,7 +84,12 @@
         "code": false,
         "db": false,
         "security": false,
-        "refactor": false
+        "refactor": false,
+        "api": false,
+        "test": false,
+        "performance": false,
+        "infra": false,
+        "dependency": false
       },
       "token_economy": {
         "enabled": true,

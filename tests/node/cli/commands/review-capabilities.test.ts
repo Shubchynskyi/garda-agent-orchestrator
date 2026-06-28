@@ -155,7 +155,7 @@ test('review-capabilities defaults to show when the subcommand is omitted', () =
         assert.ok(result && result.action === 'show');
         assert.equal(result.config_exists, false);
         assert.ok(output.includes('Action: show'));
-        assert.ok(output.includes('Enabled optional reviews: none'));
+        assert.ok(output.includes('Enabled optional reviews: api, test, performance, infra, dependency'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -172,7 +172,7 @@ test('review-capabilities list aliases show', () => {
         assert.ok(result && result.action === 'show');
         assert.equal(result.config_exists, false);
         assert.ok(output.includes('Action: show'));
-        assert.ok(output.includes('Enabled optional reviews: none'));
+        assert.ok(output.includes('Enabled optional reviews: api, test, performance, infra, dependency'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

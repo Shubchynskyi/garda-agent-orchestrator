@@ -31,9 +31,9 @@ export const defaultCapabilities = {
     db: true,
     security: true,
     refactor: true,
-    api: false,
-    test: false,
-    performance: false,
-    infra: false,
-    dependency: false
+    api: true,
+    test: true,
+    performance: true,
+    infra: true,
+    dependency: true
 };

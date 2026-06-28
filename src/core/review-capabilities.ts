@@ -36,11 +36,11 @@ const REVIEW_CAPABILITY_DEFAULTS: Readonly<ReviewCapabilities> = Object.freeze({
     db: true,
     security: true,
     refactor: true,
-    api: false,
-    test: false,
-    performance: false,
-    infra: false,
-    dependency: false
+    api: true,
+    test: true,
+    performance: true,
+    infra: true,
+    dependency: true
 });
 
 const REVIEW_SKILL_CANDIDATES: Readonly<Record<string, readonly string[]>> = Object.freeze({

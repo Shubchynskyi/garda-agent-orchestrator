@@ -31,6 +31,7 @@ import {
     seedTaskQueue,
     writeCompilePassEvidence,
     writePreflight,
+    writeReceiptBackedReviewArtifact,
     runGit,
     getReviewTreeStateSha256FromFixtureContext
 } from './gates-review-reuse-fixtures';
@@ -80,7 +81,6 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
             '```'
         ].join('\n'), 'utf8');
         const codeExecution = resolveReviewerExecutionFixture(taskId, 'Qwen', 'agent:code-reviewer');
-        const testExecution = resolveReviewerExecutionFixture(taskId, 'Qwen', 'agent:test-reviewer');
 
         runEnterTaskMode({
             repoRoot,
@@ -146,7 +146,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
                 '--preflight-path', preflightPath,
                 '--repo-root', repoRoot
             ]);
-            fs.writeFileSync(path.join(reviewsRoot, `${taskId}-test.md`), [
+            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'test', 'TEST REVIEW PASSED', [
                 '# Test Review',
                 '',
                 'Validated `tests/app.test.ts` and the rerun-only scope for the fresh review cycle. This review artifact is intentionally detailed enough to satisfy the anti-triviality check while reporting no concrete failures for the updated test surface.',
@@ -159,31 +159,6 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
                 '',
                 '## Verdict',
                 'TEST REVIEW PASSED'
-            ].join('\n'), 'utf8');
-            await runCliMainWithHandling([
-                'gate',
-                'record-review-routing',
-                '--task-id', taskId,
-                '--review-type', 'test',
-                '--repo-root', repoRoot,
-                '--reviewer-execution-mode', testExecution.reviewerExecutionMode,
-                '--reviewer-identity', testExecution.reviewerIdentity,
-                ...(testExecution.reviewerFallbackReason
-                    ? ['--reviewer-fallback-reason', testExecution.reviewerFallbackReason]
-                    : [])
-            ]);
-            await runCliMainWithHandling([
-                'gate',
-                'record-review-receipt',
-                '--task-id', taskId,
-                '--review-type', 'test',
-                '--preflight-path', preflightPath,
-                '--repo-root', repoRoot,
-                '--reviewer-execution-mode', testExecution.reviewerExecutionMode,
-                '--reviewer-identity', testExecution.reviewerIdentity,
-                ...(testExecution.reviewerFallbackReason
-                    ? ['--reviewer-fallback-reason', testExecution.reviewerFallbackReason]
-                    : [])
             ]);
         } finally {
             process.chdir(previousCwd);

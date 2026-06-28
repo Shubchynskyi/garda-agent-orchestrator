@@ -303,7 +303,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
         if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
             try {
-                const domainSurface = buildDomainReviewSurface(result.triggers);
+                const domainSurface = buildDomainReviewSurface(result);
                 const resolvedProfile = resolveTaskProfileSelection(
                     orchestratorRoot,
                     rawTaskProfile,
@@ -340,6 +340,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         && (
                             guardrailDecision.profile_wanted === true
                             || guardrailDecision.decision === 'profile_forced'
+                            || guardrailDecision.decision === 'domain_triggered'
                         )
                     ) {
                         result.required_reviews[reviewType] = true;

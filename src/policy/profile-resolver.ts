@@ -141,9 +141,19 @@ const CODE_CHANGING_SAFETY_FLOORS: ReadonlyMap<string, boolean> = new Map([
  * Only these non-code categories allow profiles to relax mandatory reviews.
  */
 const LIGHTENABLE_SCOPE_CATEGORIES = new Set(['docs-only', 'test-only', 'config-only', 'audit-only']);
-const DOMAIN_SURFACE_REVIEW_TYPES = new Set(['db', 'api', 'performance', 'infra', 'dependency']);
-const TEST_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'security', 'refactor']);
-const DOCS_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'refactor']);
+const TRIGGER_GATED_AUTO_REVIEW_TYPES = new Set([
+    'db',
+    'security',
+    'refactor',
+    'api',
+    'test',
+    'performance',
+    'infra',
+    'dependency'
+]);
+const TEST_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'security', 'refactor', 'performance']);
+const DOCS_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'refactor', 'test', 'performance']);
+const LOCALIZATION_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'security', 'refactor', 'test', 'performance']);
 
 export interface ProfileReviewDecision {
     review_type: string;
@@ -229,7 +239,7 @@ function shouldLightenReviewForLocalizationOnlyScope(
 ): boolean {
     return options.localizationOnlyScope === true
         && !options.forceCodeReview
-        && TEST_ONLY_SUPPRESSIBLE_REVIEW_TYPES.has(reviewType);
+        && LOCALIZATION_ONLY_SUPPRESSIBLE_REVIEW_TYPES.has(reviewType);
 }
 
 function hasAnyDomainSurface(domainSurface: Record<string, boolean> | undefined): boolean {
@@ -441,15 +451,16 @@ export function applyProfileGuardrails(
     for (const key of Object.keys(merged)) {
         const profileValue = key in profilePolicy ? profilePolicy[key] : undefined;
         const capabilityValue = capabilities[key] ?? false;
-        const hasDomainSurfaceEvidence = options.domainSurface && Object.hasOwn(options.domainSurface, key);
+        const hasDomainSurfaceEvidence = options.domainSurface !== undefined;
         const domainSurfacePresent = hasDomainSurfaceEvidence
             ? options.domainSurface![key] === true
             : true;
-        const isDomainReview = DOMAIN_SURFACE_REVIEW_TYPES.has(key);
+        const isTriggerGatedAutoReview = TRIGGER_GATED_AUTO_REVIEW_TYPES.has(key);
         const mergedWantsReview = merged[key] === true;
         const needsDomainSurface = (
-            isDomainReview
+            isTriggerGatedAutoReview
             && mergedWantsReview
+            && profileValue !== true
             && options.forceAllDomainReviews !== true
             && hasDomainSurfaceEvidence
         );
@@ -465,7 +476,7 @@ export function applyProfileGuardrails(
         const effectiveValue = zeroDiffNoReviewableScope
             ? false
             : codeReviewExplicitlyForced || (domainSurfaceMissing || scopeLightenedExplicitReview ? false : mergedWantsReview);
-        const forcedDomainWithoutSurface = isDomainReview
+        const forcedDomainWithoutSurface = isTriggerGatedAutoReview
             && mergedWantsReview
             && options.forceAllDomainReviews === true
             && hasDomainSurfaceEvidence
@@ -483,9 +494,6 @@ export function applyProfileGuardrails(
         } else if (codeReviewExplicitlyForced) {
             decision = 'profile_forced';
             reason = `${key} review explicitly forced by task preflight override`;
-        } else if (domainSurfaceMissing) {
-            decision = 'not_applicable_no_domain_surface';
-            reason = `${key} review requested by profile '${profileName}', but no ${key} trigger or project surface evidence was found`;
         } else if (scopeLightenedExplicitReview) {
             decision = 'lightened_by_profile';
             reason = options.localizationOnlyScope === true
@@ -493,12 +501,16 @@ export function applyProfileGuardrails(
                 : scopeCategory === 'test-only'
                 ? `${key} review suppressed because scope is test-only and no source/security/control-plane trigger requires it`
                 : `${key} review lightened by profile '${profileName}' for true ${scopeCategory} scope`;
+        } else if (domainSurfaceMissing) {
+            decision = 'not_applicable_no_domain_surface';
+            reason = `${key} review requested by profile '${profileName}', but no ${key} trigger or project surface evidence was found`;
         } else if (forcedDomainWithoutSurface) {
             decision = 'profile_forced';
             reason = `${key} review explicitly forced by profile '${profileName}' even though no ${key} domain surface evidence was found`;
         } else if (
-            isDomainReview
+            isTriggerGatedAutoReview
             && mergedWantsReview
+            && profileValue !== true
             && hasDomainSurfaceEvidence
             && domainSurfacePresent
             && effectiveValue

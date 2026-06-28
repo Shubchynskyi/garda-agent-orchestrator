@@ -154,7 +154,7 @@ function writeProfilesConfig(repoRoot: string): string {
             },
             strict: {
                 depth: 3,
-                review_policy: { code: true, db: true, security: true, refactor: true },
+                review_policy: { code: true, db: 'auto', security: true, refactor: true },
                 token_economy: { enabled: true, strip_examples: false, strip_code_blocks: false, scoped_diffs: true, compact_reviewer_output: false },
                 skills: { auto_suggest: true }
             }

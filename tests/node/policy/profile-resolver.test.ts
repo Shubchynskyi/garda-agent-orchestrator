@@ -48,28 +48,68 @@ function makeTempBundle(configs: {
             balanced: {
                 description: 'Default profile.',
                 depth: 2,
-                review_policy: { code: true, db: 'auto', security: 'auto', refactor: 'auto' },
+                review_policy: {
+                    code: true,
+                    db: 'auto',
+                    security: 'auto',
+                    refactor: 'auto',
+                    api: 'auto',
+                    test: true,
+                    performance: 'auto',
+                    infra: 'auto',
+                    dependency: 'auto'
+                },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
                 skills: { auto_suggest: true }
             },
             fast: {
                 description: 'Speed-optimised.',
                 depth: 1,
-                review_policy: { code: true, db: 'auto', security: 'auto', refactor: false },
+                review_policy: {
+                    code: 'auto',
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: 'auto',
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
                 skills: { auto_suggest: false }
             },
             strict: {
                 description: 'Maximum rigour.',
                 depth: 3,
-                review_policy: { code: true, db: true, security: true, refactor: true },
+                review_policy: {
+                    code: true,
+                    db: 'auto',
+                    security: true,
+                    refactor: 'auto',
+                    api: 'auto',
+                    test: true,
+                    performance: true,
+                    infra: 'auto',
+                    dependency: 'auto'
+                },
                 token_economy: { enabled: true, strip_examples: false, strip_code_blocks: false, scoped_diffs: true, compact_reviewer_output: false },
                 skills: { auto_suggest: true }
             },
             'docs-only': {
                 description: 'Documentation-focused.',
                 depth: 1,
-                review_policy: { code: false, db: false, security: false, refactor: false },
+                review_policy: {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: false, compact_reviewer_output: true },
                 skills: { auto_suggest: false }
             }
@@ -79,7 +119,7 @@ function makeTempBundle(configs: {
 
     const defaultCapabilities = {
         code: true, db: true, security: true, refactor: true,
-        api: true, test: true, performance: true, infra: false, dependency: true
+        api: true, test: true, performance: true, infra: true, dependency: true
     };
 
     const defaultTokenEconomy = {
@@ -142,11 +182,78 @@ test('loadProfilesData loads valid profiles', () => {
     }
 });
 
+test('shipped template profiles and review capabilities use profile-driven review defaults', () => {
+    const repoRoot = process.cwd();
+    const profiles = JSON.parse(
+        fs.readFileSync(path.join(repoRoot, 'template', 'config', 'profiles.json'), 'utf8')
+    ) as { built_in_profiles: Record<string, { review_policy: Record<string, unknown> }> };
+    const capabilities = JSON.parse(
+        fs.readFileSync(path.join(repoRoot, 'template', 'config', 'review-capabilities.json'), 'utf8')
+    ) as Record<string, boolean>;
+
+    assert.deepEqual(capabilities, {
+        code: true,
+        db: true,
+        security: true,
+        refactor: true,
+        api: true,
+        test: true,
+        performance: true,
+        infra: true,
+        dependency: true
+    });
+    assert.deepEqual(profiles.built_in_profiles.balanced.review_policy, {
+        code: true,
+        db: 'auto',
+        security: 'auto',
+        refactor: 'auto',
+        api: 'auto',
+        test: true,
+        performance: 'auto',
+        infra: 'auto',
+        dependency: 'auto'
+    });
+    assert.deepEqual(profiles.built_in_profiles.fast.review_policy, {
+        code: 'auto',
+        db: false,
+        security: false,
+        refactor: false,
+        api: false,
+        test: 'auto',
+        performance: false,
+        infra: false,
+        dependency: false
+    });
+    assert.deepEqual(profiles.built_in_profiles.strict.review_policy, {
+        code: true,
+        db: 'auto',
+        security: true,
+        refactor: 'auto',
+        api: 'auto',
+        test: true,
+        performance: true,
+        infra: 'auto',
+        dependency: 'auto'
+    });
+    assert.deepEqual(profiles.built_in_profiles['docs-only'].review_policy, {
+        code: false,
+        db: false,
+        security: false,
+        refactor: false,
+        api: false,
+        test: false,
+        performance: false,
+        infra: false,
+        dependency: false
+    });
+});
+
 
 test('loadReviewCapabilities returns defaults for missing file', () => {
     const caps = loadReviewCapabilities('/nonexistent/review-capabilities.json');
     assert.equal(caps.code, true);
-    assert.equal(caps.api, false);
+    assert.equal(caps.api, true);
+    assert.equal(caps.infra, true);
 });
 
 test('loadReviewCapabilities reads config values', () => {
@@ -447,7 +554,7 @@ test('resolveEffectivePolicy: docs-only profile allows code=false for non-code t
 test('resolveEffectivePolicy: profileOverride selects different profile', () => {
     const bundleRoot = makeTempBundle({});
     try {
-        const policy = resolveEffectivePolicy(bundleRoot, { profileOverride: 'strict' });
+        const policy = resolveEffectivePolicy(bundleRoot, { profileOverride: 'strict', isCodeChangingTask: false });
         assert.equal(policy.profile_name, 'strict');
         assert.equal(policy.depth, 3);
         assert.equal(policy.review_policy.db, true);
@@ -558,7 +665,7 @@ test('resolveEffectivePolicy: config token_economy numeric fields preserved', ()
     }
 });
 
-test('resolveEffectivePolicy: fast profile respects review capabilities for non-code tasks', () => {
+test('resolveEffectivePolicy: fast profile disables non-code domain reviews', () => {
     const bundleRoot = makeTempBundle({
         reviewCapabilities: {
             code: true, db: false, security: true, refactor: true,
@@ -569,13 +676,14 @@ test('resolveEffectivePolicy: fast profile respects review capabilities for non-
         const policy = resolveEffectivePolicy(bundleRoot, { profileOverride: 'fast', isCodeChangingTask: false });
         assert.equal(policy.review_policy.db, false);
         assert.equal(policy.review_policy.refactor, false);
-        assert.equal(policy.review_policy.security, true);
+        assert.equal(policy.review_policy.security, false);
+        assert.equal(policy.review_policy.test, false);
     } finally {
         cleanUp(bundleRoot);
     }
 });
 
-test('resolveEffectivePolicy: strict profile overrides all reviews to true', () => {
+test('resolveEffectivePolicy: strict profile requires selected reviews and leaves domain reviews capability-driven', () => {
     const bundleRoot = makeTempBundle({
         reviewCapabilities: {
             code: true, db: false, security: false, refactor: false,
@@ -583,17 +691,19 @@ test('resolveEffectivePolicy: strict profile overrides all reviews to true', () 
         }
     });
     try {
-        const policy = resolveEffectivePolicy(bundleRoot, { profileOverride: 'strict' });
+        const policy = resolveEffectivePolicy(bundleRoot, { profileOverride: 'strict', isCodeChangingTask: false });
         assert.equal(policy.review_policy.code, true);
-        assert.equal(policy.review_policy.db, true);
+        assert.equal(policy.review_policy.db, false);
         assert.equal(policy.review_policy.security, true);
-        assert.equal(policy.review_policy.refactor, true);
+        assert.equal(policy.review_policy.refactor, false);
+        assert.equal(policy.review_policy.performance, true);
+        assert.equal(policy.review_policy.test, true);
     } finally {
         cleanUp(bundleRoot);
     }
 });
 
-test('resolveEffectivePolicy: strict profile suppresses domain reviews without domain surface evidence', () => {
+test('resolveEffectivePolicy: strict profile suppresses auto domain reviews without domain surface evidence', () => {
     const bundleRoot = makeTempBundle({
         reviewCapabilities: {
             code: true, db: true, security: true, refactor: true,
@@ -614,10 +724,11 @@ test('resolveEffectivePolicy: strict profile suppresses domain reviews without d
         });
         assert.equal(policy.review_policy.code, true);
         assert.equal(policy.review_policy.security, true);
-        assert.equal(policy.review_policy.refactor, true);
+        assert.equal(policy.review_policy.refactor, false);
+        assert.equal(policy.review_policy.test, true);
+        assert.equal(policy.review_policy.performance, true);
         assert.equal(policy.review_policy.db, false);
         assert.equal(policy.review_policy.api, false);
-        assert.equal(policy.review_policy.performance, false);
         assert.equal(policy.review_policy.dependency, false);
         const dbDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'db');
         const apiDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'api');
@@ -626,7 +737,8 @@ test('resolveEffectivePolicy: strict profile suppresses domain reviews without d
         assert.equal(dbDecision?.decision, 'not_applicable_no_domain_surface');
         assert.equal(dbDecision?.effective_value, false);
         assert.equal(apiDecision?.decision, 'not_applicable_no_domain_surface');
-        assert.equal(performanceDecision?.decision, 'not_applicable_no_domain_surface');
+        assert.equal(performanceDecision?.decision, 'profile_forced');
+        assert.equal(performanceDecision?.effective_value, true);
         assert.equal(dependencyDecision?.decision, 'not_applicable_no_domain_surface');
     } finally {
         cleanUp(bundleRoot);
@@ -669,7 +781,7 @@ test('resolveEffectivePolicy: explicit all-domain override keeps strict domain r
         assert.equal(policy.review_policy.api, true);
         assert.equal(policy.review_policy.performance, true);
         assert.equal(policy.review_policy.dependency, true);
-        assert.equal(policy.review_policy.infra, false);
+        assert.equal(policy.review_policy.infra, true);
         const dbDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'db');
         const apiDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'api');
         const performanceDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'performance');
@@ -998,7 +1110,7 @@ test('applyProfileGuardrails: docs-only scope keeps security review for sensitiv
 });
 
 test('applyProfileGuardrails: test-only scope suppresses profile-forced code security and refactor reviews', () => {
-    const profile: ProfileReviewPolicy = { code: true, db: true, security: true, refactor: true };
+    const profile: ProfileReviewPolicy = { code: true, db: true, security: true, refactor: true, test: true };
     const caps: ReviewCapabilities = {
         code: true, db: true, security: true, refactor: true,
         api: false, test: true, performance: false, infra: false, dependency: false

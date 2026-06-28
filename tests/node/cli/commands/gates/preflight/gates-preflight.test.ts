@@ -128,7 +128,17 @@ function seedStrictProfileConfig(repoRoot: string): void {
             balanced: {
                 description: 'Balanced',
                 depth: 2,
-                review_policy: { code: true, db: 'auto', security: 'auto', refactor: 'auto' },
+                review_policy: {
+                    code: true,
+                    db: 'auto',
+                    security: 'auto',
+                    refactor: 'auto',
+                    api: 'auto',
+                    test: true,
+                    performance: 'auto',
+                    infra: 'auto',
+                    dependency: 'auto'
+                },
                 token_economy: {
                     enabled: true,
                     strip_examples: true,
@@ -141,7 +151,17 @@ function seedStrictProfileConfig(repoRoot: string): void {
             strict: {
                 description: 'Strict',
                 depth: 3,
-                review_policy: { code: true, db: true, security: true, refactor: true },
+                review_policy: {
+                    code: true,
+                    db: 'auto',
+                    security: true,
+                    refactor: 'auto',
+                    api: 'auto',
+                    test: true,
+                    performance: true,
+                    infra: 'auto',
+                    dependency: 'auto'
+                },
                 token_economy: {
                     enabled: true,
                     strip_examples: false,
@@ -578,10 +598,11 @@ describe('cli/commands/gates — preflight', () => {
         assert.deepEqual(payload.triggers.db_project_evidence, []);
         assert.equal(payload.required_reviews.code, true);
         assert.equal(payload.required_reviews.security, true);
-        assert.equal(payload.required_reviews.refactor, true);
+        assert.equal(payload.required_reviews.refactor, false);
+        assert.equal(payload.required_reviews.test, true);
         assert.equal(payload.required_reviews.db, false);
         assert.equal(payload.required_reviews.api, false);
-        assert.equal(payload.required_reviews.performance, false);
+        assert.equal(payload.required_reviews.performance, true);
         assert.equal(payload.required_reviews.dependency, false);
         assert.equal(
             payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'db')?.decision,
@@ -634,13 +655,17 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(payload.required_reviews.security, false);
         assert.equal(payload.required_reviews.refactor, false);
         assert.equal(payload.required_reviews.test, false);
-        for (const reviewType of ['code', 'security', 'refactor']) {
+        for (const reviewType of ['code', 'security']) {
             const decision = payload.profile_guardrails.decisions.find(
                 (entry: Record<string, unknown>) => entry.review_type === reviewType
             );
             assert.equal(decision?.decision, 'lightened_by_profile');
             assert.match(String(decision?.reason || ''), /docs-only/);
         }
+        assert.equal(
+            payload.profile_guardrails.decisions.find((entry: Record<string, unknown>) => entry.review_type === 'refactor')?.decision,
+            'not_applicable_no_domain_surface'
+        );
         assert.deepEqual(payload.budget_forecast.required_reviews, []);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -745,10 +770,14 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(payload.profile_selection.effective_profile, 'strict');
         assert.equal(payload.required_reviews.code, true);
         assert.equal(payload.required_reviews.security, true);
-        assert.equal(payload.required_reviews.refactor, true);
+        assert.equal(payload.required_reviews.refactor, false);
+        assert.equal(payload.required_reviews.test, true);
+        assert.equal(payload.required_reviews.performance, true);
         assert.ok(payload.budget_forecast.required_reviews.includes('code'));
         assert.ok(payload.budget_forecast.required_reviews.includes('security'));
-        assert.ok(payload.budget_forecast.required_reviews.includes('refactor'));
+        assert.equal(payload.budget_forecast.required_reviews.includes('refactor'), false);
+        assert.ok(payload.budget_forecast.required_reviews.includes('test'));
+        assert.ok(payload.budget_forecast.required_reviews.includes('performance'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -884,8 +913,8 @@ describe('cli/commands/gates — preflight', () => {
         for (const reviewType of ['security', 'refactor']) {
             const decision = byReviewType.get(reviewType) as Record<string, unknown> | undefined;
             assert.equal(decision?.effective_value, false);
-            assert.equal(decision?.decision, 'not_required_by_preflight');
-            assert.match(String(decision?.reason || ''), new RegExp(`required_reviews\\.${reviewType}=false`));
+            assert.equal(decision?.decision, 'not_applicable_no_domain_surface');
+            assert.match(String(decision?.reason || ''), /no .* trigger or project surface evidence/);
         }
         assert.equal((byReviewType.get('code') as Record<string, unknown> | undefined)?.effective_value, true);
         assert.equal((byReviewType.get('test') as Record<string, unknown> | undefined)?.effective_value, true);
@@ -1045,7 +1074,7 @@ describe('cli/commands/gates — preflight', () => {
         seedInitAnswers(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
-        const taskSummary = 'Finish protected-manifest and completion regression fixture cleanup from checkpoint';
+        const taskSummary = 'Finish refactor protected-manifest and completion regression fixture cleanup from checkpoint';
         runEnterTaskMode({
             repoRoot,
             taskId,

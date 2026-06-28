@@ -529,7 +529,7 @@ test('review-capabilities show resolves parity against --target-root instead of 
         const combined = (result.stdout || '') + (result.stderr || '');
         assert.equal(result.status, 0, 'review-capabilities show should succeed when the target root itself is not stale');
         assert.ok(!combined.includes('Source Parity Violation: The deployed bundle is stale'));
-        assert.ok(combined.includes('Enabled optional reviews: none'));
+        assert.ok(combined.includes('Enabled optional reviews: api, test, performance, infra, dependency'));
     } finally {
         fs.rmSync(callerDir, { recursive: true, force: true });
         fs.rmSync(targetDir, { recursive: true, force: true });
