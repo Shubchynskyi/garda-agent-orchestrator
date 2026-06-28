@@ -20,6 +20,8 @@ import {
     seedCompilePass,
     writeGitAutoPreflight,
     seedGitAutoCompilePass,
+    writeStagedPreflight,
+    seedStagedCompilePass,
     seedReviewGatePass,
     seedDocImpactPass,
     seedCompletionPass,
@@ -737,6 +739,148 @@ describe('gates/next-step', () => {
         assert.equal(text.includes('gate compile-gate'), false);
 
         assert.equal(text.includes('gate full-suite-validation'), false);
+
+    });
+
+    it('allows completed staged-scope closeout after the staged diff is committed', () => {
+
+        const repoRoot = makeTempRepo();
+
+        initGitRepo(repoRoot);
+
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writeStagedPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+
+        seedStagedCompilePass(repoRoot, TASK_ID);
+
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        materializeFinalCloseout(repoRoot, TASK_ID);
+
+        runGitFixtureCommand(repoRoot, ['commit', '-m', 'complete staged task']);
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.status, 'READY', result.reason);
+
+        assert.equal(result.next_gate, 'task-audit-summary');
+
+        assert.match(result.reason, /final closeout artifacts are not materialized/i);
+
+        assert.doesNotMatch(result.reason, /post-DONE workspace drift/i);
+
+    });
+
+    it('blocks completed staged-scope closeout on same-path worktree drift after DONE', () => {
+
+        const repoRoot = makeTempRepo();
+
+        initGitRepo(repoRoot);
+
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writeStagedPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+
+        seedStagedCompilePass(repoRoot, TASK_ID);
+
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        materializeFinalCloseout(repoRoot, TASK_ID);
+
+        runGitFixtureCommand(repoRoot, ['commit', '-m', 'complete staged task']);
+
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const postDoneDrift = 3;\n', 'utf8');
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.status, 'BLOCKED');
+
+        assert.equal(result.next_gate, 'post-done-drift');
+
+        assert.match(result.reason, /Tracked post-DONE workspace drift/);
+
+        assert.match(result.reason, /src\/app\.ts/);
+
+    });
+
+    it('blocks completed staged-scope closeout on doc-impact audited drift after DONE', () => {
+
+        const repoRoot = makeTempRepo();
+
+        initGitRepo(repoRoot);
+
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writeStagedPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+
+        seedStagedCompilePass(repoRoot, TASK_ID);
+
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI\n\nDocumented closeout.\n', 'utf8');
+
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), {
+            task_id: TASK_ID,
+            decision: 'DOCS_UPDATED',
+            status: 'PASSED',
+            outcome: 'PASS',
+            docs_updated: ['docs/cli-reference.md'],
+            behavior_changed: false,
+            changelog_updated: false
+        });
+
+        appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED');
+
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        materializeFinalCloseout(repoRoot, TASK_ID);
+
+        fs.appendFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '\nPost-DONE drift.\n', 'utf8');
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.status, 'BLOCKED');
+
+        assert.equal(result.next_gate, 'post-done-drift');
+
+        assert.match(result.reason, /changed audited closeout extra scope/);
+
+        assert.match(result.reason, /docs\/cli-reference\.md/);
 
     });
 

@@ -133,6 +133,55 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
         });
 
+        it('preserves staged preflight scope hashes in final closeout when worktree content differs', () => {
+            fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            initGitRepo(tmpDir);
+            fs.appendFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const stagedValue = 2;\n', 'utf8');
+            execFileSync('git', ['add', 'src/app.ts'], { cwd: tmpDir, stdio: 'ignore' });
+            const stagedSnapshot = getWorkspaceSnapshot(tmpDir, 'git_staged_only', false, []);
+            fs.appendFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const unstagedSibling = 3;\n', 'utf8');
+            const worktreeSnapshot = getWorkspaceSnapshot(tmpDir, 'explicit_changed_files', true, ['src/app.ts']);
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                task_id: TASK_ID,
+                detection_source: stagedSnapshot.detection_source,
+                include_untracked: stagedSnapshot.include_untracked,
+                use_staged: stagedSnapshot.use_staged,
+                changed_files: stagedSnapshot.changed_files,
+                metrics: {
+                    changed_lines_total: stagedSnapshot.changed_lines_total,
+                    changed_files_sha256: stagedSnapshot.changed_files_sha256,
+                    scope_content_sha256: stagedSnapshot.scope_content_sha256,
+                    scope_sha256: stagedSnapshot.scope_sha256
+                },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.implementation_summary.audited_scope_provenance?.use_staged, true);
+            assert.equal(
+                result.final_closeout.implementation_summary.audited_scope_provenance?.scope_content_sha256,
+                stagedSnapshot.scope_content_sha256
+            );
+            assert.equal(result.final_closeout.implementation_summary.scope_content_sha256, stagedSnapshot.scope_content_sha256);
+            assert.notEqual(result.final_closeout.implementation_summary.scope_content_sha256, worktreeSnapshot.scope_content_sha256);
+        });
+
         it('blocks final closeout when tracked post-DONE drift is outside audited scope', () => {
             fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
             fs.writeFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
@@ -274,6 +323,70 @@ describe('gates/task-audit-summary', () => {
             const blocker = result.blockers.find((entry) => entry.gate === 'post-done-drift');
             assert.ok(blocker);
             assert.match(blocker.reason, /changed audited closeout content/);
+            assert.match(blocker.reason, /docs\/cli-reference\.md/);
+        });
+
+        it('blocks staged-scope final closeout when post-DONE drift changes a doc-impact audited file', () => {
+            fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+            fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            initGitRepo(tmpDir);
+            fs.appendFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const stagedValue = 2;\n', 'utf8');
+            execFileSync('git', ['add', 'src/app.ts'], { cwd: tmpDir, stdio: 'ignore' });
+            const stagedSnapshot = getWorkspaceSnapshot(tmpDir, 'git_staged_only', false, []);
+            fs.writeFileSync(path.join(tmpDir, 'docs', 'cli-reference.md'), '# CLI\n\nDocumented closeout.\n', 'utf8');
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                task_id: TASK_ID,
+                detection_source: stagedSnapshot.detection_source,
+                include_untracked: stagedSnapshot.include_untracked,
+                use_staged: stagedSnapshot.use_staged,
+                changed_files: stagedSnapshot.changed_files,
+                metrics: {
+                    changed_lines_total: stagedSnapshot.changed_lines_total,
+                    changed_files_sha256: stagedSnapshot.changed_files_sha256,
+                    scope_content_sha256: stagedSnapshot.scope_content_sha256,
+                    scope_sha256: stagedSnapshot.scope_sha256
+                },
+                required_reviews: {}
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'DOCS_UPDATED',
+                behavior_changed: false,
+                changelog_updated: false,
+                docs_updated: ['docs/cli-reference.md']
+            });
+
+            const ready = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            synchronizeFinalCloseoutArtifacts(ready);
+            fs.appendFileSync(path.join(tmpDir, 'docs', 'cli-reference.md'), '\nPost-DONE drift.\n', 'utf8');
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'BLOCKED');
+            const blocker = result.blockers.find((entry) => entry.gate === 'post-done-drift');
+            assert.ok(blocker);
+            assert.match(blocker.reason, /changed audited closeout extra scope/);
             assert.match(blocker.reason, /docs\/cli-reference\.md/);
         });
 

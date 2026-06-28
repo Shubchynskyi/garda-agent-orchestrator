@@ -28,6 +28,9 @@ import {
     getWorkspaceSnapshotCached,
     type WorkspaceSnapshot
 } from '../workspace/workspace-snapshot-cache';
+import {
+    evaluateStagedPostDoneAuditedScope
+} from '../task-audit/task-audit-summary-drift';
 
 export interface NextStepFinalReportSummary {
     closeout_json_path: string;
@@ -223,6 +226,17 @@ export function readPostDoneWorkspaceDriftDecision(
                 `${describePathList(unexpectedFiles)}. ` +
                 'Do not reopen stale lifecycle gates automatically. Commit or isolate the already-completed task diff, or explicitly reopen/reset the task before running classify, compile, review, full-suite, or completion gates again.'
         };
+    }
+    const stagedScopeDecision = evaluateStagedPostDoneAuditedScope({
+        repoRoot,
+        auditedFiles: auditedChangedFiles,
+        currentChangedFiles,
+        finalCloseoutJsonPath
+    });
+    if (stagedScopeDecision) {
+        return stagedScopeDecision.blocked
+            ? { blocked: true, reason: stagedScopeDecision.reason }
+            : { blocked: false, reason: stagedScopeDecision.reason };
     }
     const closeout = safeReadJson(finalCloseoutJsonPath);
     const implementationSummary = isPlainRecord(closeout?.implementation_summary) ? closeout.implementation_summary : null;

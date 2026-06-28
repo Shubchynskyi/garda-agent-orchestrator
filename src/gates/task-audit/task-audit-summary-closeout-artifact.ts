@@ -16,6 +16,7 @@ import type {
     FinalCloseoutReviewTimingAuditSummary
 } from './task-audit-summary';
 import type {
+    FinalCloseoutAuditedScopeProvenance,
     FinalCloseoutChangeMetrics,
     FinalCloseoutDocsSummary,
     FinalCloseoutOptionalSkillsSummary,
@@ -39,6 +40,7 @@ export interface BuildFinalCloseoutArtifactInput {
     finalCloseoutMarkdownPath: string;
     finalUserReportPath: string;
     currentCycle: TaskCycleBindingSnapshot | null;
+    preflight: Record<string, unknown> | null;
     taskMode: Record<string, unknown> | null;
     pathMode: string | null;
     reviewVerdicts: Record<string, string>;
@@ -107,6 +109,121 @@ function normalizeStringArray(value: unknown): string[] {
     return value
         .map((entry) => String(entry || '').trim())
         .filter(Boolean);
+}
+
+function normalizeOptionalSha256(value: unknown): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+    return isRecord(value) ? value : null;
+}
+
+function readPreflightChangedFiles(preflight: Record<string, unknown> | null): string[] {
+    const changedFiles = Array.isArray(preflight?.changed_files)
+        ? preflight.changed_files
+        : [];
+    return [...new Set(changedFiles
+        .map((entry) => toPosix(String(entry || '').trim()))
+        .filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right));
+}
+
+function inferUseStaged(detectionSource: string | null, explicitValue: unknown): boolean | null {
+    if (typeof explicitValue === 'boolean') {
+        return explicitValue;
+    }
+    if (!detectionSource) {
+        return null;
+    }
+    return detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked';
+}
+
+function inferIncludeUntracked(detectionSource: string | null, explicitValue: unknown): boolean | null {
+    if (typeof explicitValue === 'boolean') {
+        return explicitValue;
+    }
+    if (!detectionSource) {
+        return null;
+    }
+    return detectionSource !== 'git_staged_only';
+}
+
+function buildAuditedScopeProvenance(input: {
+    repoRoot: string;
+    preflight: Record<string, unknown> | null;
+    currentCycle: TaskCycleBindingSnapshot | null;
+    fallbackChangedFiles: string[];
+    fallbackSnapshot: ReturnType<typeof getWorkspaceSnapshotCached> | null;
+    closeoutExtraSnapshot: ReturnType<typeof getWorkspaceSnapshotCached> | null;
+}): FinalCloseoutAuditedScopeProvenance | null {
+    const metrics = readRecord(input.preflight?.metrics);
+    const detectionSource = typeof input.preflight?.detection_source === 'string' && input.preflight.detection_source.trim()
+        ? input.preflight.detection_source.trim().toLowerCase()
+        : input.fallbackSnapshot?.detection_source ?? null;
+    const preflightChangedFiles = readPreflightChangedFiles(input.preflight);
+    const changedFiles = preflightChangedFiles.length > 0
+        ? preflightChangedFiles
+        : [...new Set(input.fallbackChangedFiles.map((entry) => toPosix(entry)).filter(Boolean))]
+            .sort((left, right) => left.localeCompare(right));
+    const changedFilesSha256 = normalizeOptionalSha256(metrics?.changed_files_sha256)
+        ?? input.currentCycle?.scope_binding?.changed_files_sha256
+        ?? input.fallbackSnapshot?.changed_files_sha256
+        ?? null;
+    const scopeContentSha256 = normalizeOptionalSha256(metrics?.scope_content_sha256)
+        ?? input.currentCycle?.scope_binding?.scope_content_sha256
+        ?? input.fallbackSnapshot?.scope_content_sha256
+        ?? null;
+    const scopeSha256 = normalizeOptionalSha256(metrics?.scope_sha256)
+        ?? input.currentCycle?.scope_binding?.scope_sha256
+        ?? input.fallbackSnapshot?.scope_sha256
+        ?? null;
+    if (!detectionSource && changedFiles.length === 0 && !changedFilesSha256 && !scopeContentSha256 && !scopeSha256) {
+        return null;
+    }
+    const domainScopeFingerprints = readRecord(metrics?.domain_scope_fingerprints) as FinalCloseoutAuditedScopeProvenance['domain_scope_fingerprints'];
+    return {
+        source: metrics ? 'preflight' : 'workspace_snapshot',
+        detection_source: detectionSource,
+        use_staged: inferUseStaged(detectionSource, input.preflight?.use_staged),
+        include_untracked: inferIncludeUntracked(detectionSource, input.preflight?.include_untracked),
+        changed_files: changedFiles,
+        changed_files_sha256: changedFilesSha256,
+        scope_content_sha256: scopeContentSha256,
+        scope_sha256: scopeSha256,
+        domain_scope_fingerprints: domainScopeFingerprints ?? (
+            input.fallbackSnapshot
+                ? buildDomainScopeFingerprints({
+                    repoRoot: input.repoRoot,
+                    detectionSource: input.fallbackSnapshot.detection_source,
+                    includeUntracked: !!input.fallbackSnapshot.include_untracked,
+                    changedFiles: input.fallbackSnapshot.changed_files
+                })
+                : null
+        ),
+        closeout_extra_scope: input.closeoutExtraSnapshot
+            ? {
+                changed_files: input.closeoutExtraSnapshot.changed_files,
+                changed_files_sha256: input.closeoutExtraSnapshot.changed_files_sha256,
+                scope_content_sha256: input.closeoutExtraSnapshot.scope_content_sha256,
+                scope_sha256: input.closeoutExtraSnapshot.scope_sha256,
+                domain_scope_fingerprints: buildDomainScopeFingerprints({
+                    repoRoot: input.repoRoot,
+                    detectionSource: input.closeoutExtraSnapshot.detection_source,
+                    includeUntracked: !!input.closeoutExtraSnapshot.include_untracked,
+                    changedFiles: input.closeoutExtraSnapshot.changed_files
+                })
+            }
+            : null,
+        compile_gate_scope_binding: input.currentCycle?.scope_binding
+            ? {
+                changed_files_sha256: input.currentCycle.scope_binding.changed_files_sha256,
+                scope_content_sha256: input.currentCycle.scope_binding.scope_content_sha256,
+                scope_sha256: input.currentCycle.scope_binding.scope_sha256
+            }
+            : null
+    };
 }
 
 function normalizeForecastExcludedReasons(value: unknown): Record<string, number> {
@@ -206,6 +323,51 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
     }
     const plannedChangedFiles = readTaskModePlannedChangedFiles(input.taskMode);
     const dirtyWorkspaceBaselineChangedFiles = readTaskModeDirtyWorkspaceBaselineChangedFiles(input.taskMode);
+    const preflightChangedFiles = readPreflightChangedFiles(input.preflight);
+    const preflightChangedFileSet = new Set(preflightChangedFiles);
+    const closeoutExtraFiles = input.changedFiles
+        .map((entry) => toPosix(entry))
+        .filter((entry) => entry && !preflightChangedFileSet.has(entry))
+        .sort((left, right) => left.localeCompare(right));
+    let closeoutExtraSnapshot: ReturnType<typeof getWorkspaceSnapshotCached> | null = null;
+    if (closeoutExtraFiles.length > 0) {
+        try {
+            closeoutExtraSnapshot = getWorkspaceSnapshotCached(input.repoRoot, 'explicit_changed_files', true, closeoutExtraFiles, {
+                noCache: true,
+                readOnly: true
+            });
+        } catch {
+            closeoutExtraSnapshot = null;
+        }
+    }
+    const auditedScopeProvenance = buildAuditedScopeProvenance({
+        repoRoot: input.repoRoot,
+        preflight: input.preflight,
+        currentCycle: input.currentCycle,
+        fallbackChangedFiles: input.changedFiles,
+        fallbackSnapshot: closeoutScopeSnapshot,
+        closeoutExtraSnapshot
+    });
+    const stagedAuditedScope = auditedScopeProvenance?.use_staged === true;
+    const implementationChangedFilesSha256 = stagedAuditedScope
+        ? auditedScopeProvenance.changed_files_sha256
+        : closeoutScopeSnapshot?.changed_files_sha256 ?? null;
+    const implementationScopeContentSha256 = stagedAuditedScope
+        ? auditedScopeProvenance.scope_content_sha256
+        : closeoutScopeSnapshot?.scope_content_sha256 ?? null;
+    const implementationScopeSha256 = stagedAuditedScope
+        ? auditedScopeProvenance.scope_sha256
+        : closeoutScopeSnapshot?.scope_sha256 ?? null;
+    const implementationDomainScopeFingerprints = stagedAuditedScope
+        ? auditedScopeProvenance.domain_scope_fingerprints
+        : closeoutScopeSnapshot
+            ? buildDomainScopeFingerprints({
+                repoRoot: input.repoRoot,
+                detectionSource: closeoutScopeSnapshot.detection_source,
+                includeUntracked: !!closeoutScopeSnapshot.include_untracked,
+                changedFiles: closeoutScopeSnapshot.changed_files
+            })
+            : null;
 
     const projectMemory = buildFinalCloseoutProjectMemorySummary(input.projectMemoryImpactEvidence) as FinalCloseoutProjectMemorySummary;
     const knownNonBlockingSignals = collectKnownNonBlockingSignals({
@@ -254,17 +416,11 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
             review_verdicts: input.reviewVerdicts,
             docs_updated: input.docsSummary.decision === 'DOCS_UPDATED',
             changed_files: input.changedFiles,
-            changed_files_sha256: closeoutScopeSnapshot?.changed_files_sha256 ?? null,
-            scope_content_sha256: closeoutScopeSnapshot?.scope_content_sha256 ?? null,
-            scope_sha256: closeoutScopeSnapshot?.scope_sha256 ?? null,
-            domain_scope_fingerprints: closeoutScopeSnapshot
-                ? buildDomainScopeFingerprints({
-                    repoRoot: input.repoRoot,
-                    detectionSource: closeoutScopeSnapshot.detection_source,
-                    includeUntracked: !!closeoutScopeSnapshot.include_untracked,
-                    changedFiles: closeoutScopeSnapshot.changed_files
-                })
-                : null,
+            changed_files_sha256: implementationChangedFilesSha256,
+            scope_content_sha256: implementationScopeContentSha256,
+            scope_sha256: implementationScopeSha256,
+            domain_scope_fingerprints: implementationDomainScopeFingerprints,
+            audited_scope_provenance: auditedScopeProvenance,
             change_metrics: input.changeMetrics,
             changed_files_count: input.changedFilesCount,
             changed_lines_total: input.changedLinesTotal,

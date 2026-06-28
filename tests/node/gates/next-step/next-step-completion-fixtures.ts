@@ -620,6 +620,70 @@ export function seedGitAutoCompilePass(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
 }
 
+export function writeStagedPreflight(
+    repoRoot: string,
+    taskId: string,
+    requiredReviews: Record<string, boolean>
+): string {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+    const domainScopeFingerprints = buildDomainScopeFingerprints({
+        repoRoot,
+        detectionSource: snapshot.detection_source,
+        includeUntracked: snapshot.include_untracked,
+        changedFiles: snapshot.changed_files
+    });
+    writeJson(preflightPath, {
+        task_id: taskId,
+        detection_source: snapshot.detection_source,
+        include_untracked: snapshot.include_untracked,
+        use_staged: snapshot.use_staged,
+        mode: 'FULL_PATH',
+        scope_category: 'code',
+        metrics: {
+            changed_lines_total: snapshot.changed_lines_total,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256,
+            domain_scope_fingerprints: domainScopeFingerprints
+        },
+        required_reviews: requiredReviews,
+        changed_files: snapshot.changed_files,
+        review_execution_policy: {
+            mode: 'code_first_optional',
+            visible_summary_line: 'Review execution policy: code_first_optional'
+        }
+    });
+    appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+        output_path: normalizeForTimeline(preflightPath)
+    });
+    seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+    return preflightPath;
+}
+
+export function seedStagedCompilePass(repoRoot: string, taskId: string): void {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
+        timestamp_utc: new Date().toISOString(),
+        task_id: taskId,
+        event_source: 'compile-gate',
+        status: 'PASSED',
+        outcome: 'PASS',
+        preflight_path: preflightPath.replace(/\\/g, '/'),
+        preflight_hash_sha256: fileSha256(preflightPath),
+        scope_detection_source: snapshot.detection_source,
+        scope_include_untracked: snapshot.include_untracked,
+        scope_changed_files: snapshot.changed_files,
+        scope_changed_files_count: snapshot.changed_files_count,
+        scope_changed_lines_total: snapshot.changed_lines_total,
+        scope_changed_files_sha256: snapshot.changed_files_sha256,
+        scope_content_sha256: snapshot.scope_content_sha256,
+        scope_sha256: snapshot.scope_sha256
+    });
+    appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
+}
+
 export function buildReviewContextScopeFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const preflight = fs.existsSync(preflightPath)
@@ -1313,4 +1377,3 @@ afterEach(() => {
     }
     tempRoots = [];
 });
-

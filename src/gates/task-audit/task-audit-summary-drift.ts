@@ -1,9 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildBundleRelativePath } from '../../core/constants';
+import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from '../preflight/classify-change';
 import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
-import { toPosix } from '../shared/helpers';
+import { stringSha256, toPosix } from '../shared/helpers';
 import {
     type BlockerEntry,
     type FinalCloseoutDocsSummary,
@@ -14,6 +15,11 @@ const INTERNAL_CHANGELOG_PATH = buildBundleRelativePath('live/docs/changes/CHANG
 const PROJECT_MEMORY_ROOT = buildBundleRelativePath('live/docs/project-memory/');
 const BUNDLE_RUNTIME_ROOT = buildBundleRelativePath('runtime/');
 const BUNDLE_LIVE_ROOT = buildBundleRelativePath('live/');
+
+export interface StagedPostDoneScopeDecision {
+    blocked: boolean;
+    reason: string;
+}
 
 export function buildAuditedChangedFiles(
     repoRoot: string,
@@ -67,6 +73,260 @@ function isInternalCloseoutEvidencePath(normalizedPath: string): boolean {
         || normalizedPath.startsWith(PROJECT_MEMORY_ROOT);
 }
 
+function readFinalCloseoutImplementationSummary(finalCloseoutJsonPath: string): Record<string, unknown> | null {
+    const closeout = safeReadJson(finalCloseoutJsonPath);
+    return closeout && typeof closeout.implementation_summary === 'object' && !Array.isArray(closeout.implementation_summary)
+        ? closeout.implementation_summary as Record<string, unknown>
+        : null;
+}
+
+function readFinalCloseoutAuditedScopeProvenance(finalCloseoutJsonPath: string): Record<string, unknown> | null {
+    const implementationSummary = readFinalCloseoutImplementationSummary(finalCloseoutJsonPath);
+    const provenance = implementationSummary?.audited_scope_provenance;
+    return provenance && typeof provenance === 'object' && !Array.isArray(provenance)
+        ? provenance as Record<string, unknown>
+        : null;
+}
+
+function normalizeChangedFiles(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return [...new Set(value.map((entry) => toPosix(String(entry || '').trim())).filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right));
+}
+
+function isStagedScopeProvenance(provenance: Record<string, unknown> | null): boolean {
+    if (!provenance) {
+        return false;
+    }
+    if (provenance.use_staged === true) {
+        return true;
+    }
+    const detectionSource = String(provenance.detection_source || '').trim().toLowerCase();
+    return detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked';
+}
+
+function normalizeOptionalHash(value: unknown): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
+function changedFilesSha256(changedFiles: string[]): string | null {
+    return stringSha256([...new Set(changedFiles.map((entry) => toPosix(entry)).filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right))
+        .join('\n'));
+}
+
+function readUnstagedChangedFiles(repoRoot: string, auditedFiles: string[]): string[] {
+    if (auditedFiles.length === 0) {
+        return [];
+    }
+    const result = spawnSyncWithTimeout('git', [
+        '-C',
+        String(repoRoot),
+        'diff',
+        '--name-only',
+        '--diff-filter=ACDMRTUXB',
+        '--',
+        ...auditedFiles
+    ], {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+        maxBuffer: 10 * 1024 * 1024
+    });
+    if (result.status !== 0 || result.timedOut || result.error) {
+        const reason = result.timedOut
+            ? `git diff timed out after ${DEFAULT_GIT_TIMEOUT_MS}ms`
+            : result.error
+                ? String(result.error)
+                : String(result.stderr || result.stdout || `exit status ${result.status}`).trim();
+        throw new Error(reason);
+    }
+    return [...new Set(String(result.stdout || '')
+        .split(/\r?\n/u)
+        .map((entry) => toPosix(entry.trim()))
+        .filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right));
+}
+
+function evaluateCloseoutExtraScope(options: {
+    repoRoot: string;
+    provenance: Record<string, unknown> | null;
+}): StagedPostDoneScopeDecision | null {
+    const extraScope = options.provenance?.closeout_extra_scope;
+    if (!extraScope || typeof extraScope !== 'object' || Array.isArray(extraScope)) {
+        return null;
+    }
+    const extraRecord = extraScope as Record<string, unknown>;
+    const extraFiles = normalizeChangedFiles(extraRecord.changed_files);
+    if (extraFiles.length === 0) {
+        return null;
+    }
+    const expectedChangedFilesSha256 = normalizeOptionalHash(extraRecord.changed_files_sha256);
+    const expectedScopeContentSha256 = normalizeOptionalHash(extraRecord.scope_content_sha256);
+    if (!expectedChangedFilesSha256 && !expectedScopeContentSha256) {
+        return null;
+    }
+
+    let currentExtraSnapshot: ReturnType<typeof getWorkspaceSnapshotCached>;
+    try {
+        currentExtraSnapshot = getWorkspaceSnapshotCached(options.repoRoot, 'explicit_changed_files', true, extraFiles, {
+            noCache: true,
+            readOnly: true
+        });
+    } catch (error) {
+        return {
+            blocked: true,
+            reason:
+                'Unable to inspect audited post-DONE closeout extra scope: ' +
+                `${error instanceof Error ? error.message : String(error)}. ` +
+                'Do not report final closeout as ready until workspace drift can be inspected or the task is explicitly reopened/reset.'
+        };
+    }
+
+    const violations = [
+        expectedChangedFilesSha256 && currentExtraSnapshot.changed_files_sha256 !== expectedChangedFilesSha256
+            ? 'closeout extra changed_files_sha256 differs from materialized final closeout'
+            : '',
+        expectedScopeContentSha256 && currentExtraSnapshot.scope_content_sha256 !== expectedScopeContentSha256
+            ? 'closeout extra scope_content_sha256 differs from materialized final closeout'
+            : ''
+    ].filter(Boolean);
+    if (violations.length === 0) {
+        return { blocked: false, reason: 'Audited closeout extra scope still matches after DONE.' };
+    }
+    return {
+        blocked: true,
+        reason:
+            'Tracked post-DONE workspace drift changed audited closeout extra scope: ' +
+            `${extraFiles.join(', ')} (${violations.join('; ')}). ` +
+            'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
+    };
+}
+
+export function evaluateStagedPostDoneAuditedScope(options: {
+    repoRoot: string;
+    auditedFiles: string[];
+    currentChangedFiles: string[];
+    finalCloseoutJsonPath: string;
+}): StagedPostDoneScopeDecision | null {
+    const provenance = readFinalCloseoutAuditedScopeProvenance(options.finalCloseoutJsonPath);
+    if (!isStagedScopeProvenance(provenance)) {
+        return null;
+    }
+
+    const implementationFiles = normalizeChangedFiles(provenance?.changed_files);
+    const implementationSet = new Set(implementationFiles);
+    const currentImplementationFiles = options.currentChangedFiles
+        .map((entry) => toPosix(entry))
+        .filter((entry) => implementationSet.has(entry))
+        .sort((left, right) => left.localeCompare(right));
+    const expectedChangedFilesSha256 = normalizeOptionalHash(provenance?.changed_files_sha256);
+    const actualImplementationFilesSha256 = changedFilesSha256(implementationFiles);
+    if (expectedChangedFilesSha256 && actualImplementationFilesSha256 && actualImplementationFilesSha256 !== expectedChangedFilesSha256) {
+        return {
+            blocked: true,
+            reason:
+                'Tracked post-DONE workspace drift changed audited staged scope file identity: ' +
+                `${implementationFiles.join(', ')}. ` +
+                'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
+        };
+    }
+
+    let unstagedChangedFiles: string[];
+    try {
+        unstagedChangedFiles = readUnstagedChangedFiles(options.repoRoot, implementationFiles);
+    } catch (error) {
+        return {
+            blocked: true,
+            reason:
+                'Unable to inspect audited post-DONE staged scope drift for the completed task closeout: ' +
+                `${error instanceof Error ? error.message : String(error)}. ` +
+                'Do not report final closeout as ready until workspace drift can be inspected or the task is explicitly reopened/reset.'
+        };
+    }
+    if (unstagedChangedFiles.length > 0) {
+        return {
+            blocked: true,
+            reason:
+                'Tracked post-DONE workspace drift changed audited staged implementation content: ' +
+                `${unstagedChangedFiles.join(', ')}. ` +
+                'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
+        };
+    }
+    const extraScopeDecision = evaluateCloseoutExtraScope({
+        repoRoot: options.repoRoot,
+        provenance
+    });
+    if (extraScopeDecision?.blocked) {
+        return extraScopeDecision;
+    }
+
+    const detectionSource = String(provenance?.detection_source || 'git_staged_only').trim().toLowerCase() || 'git_staged_only';
+    const includeUntracked = typeof provenance?.include_untracked === 'boolean'
+        ? provenance.include_untracked
+        : detectionSource !== 'git_staged_only';
+    let stagedSnapshot: ReturnType<typeof getWorkspaceSnapshotCached>;
+    try {
+        stagedSnapshot = getWorkspaceSnapshotCached(options.repoRoot, detectionSource, includeUntracked, [], {
+            noCache: true,
+            readOnly: true
+        });
+    } catch (error) {
+        return {
+            blocked: true,
+            reason:
+                'Unable to inspect audited post-DONE staged scope for the completed task closeout: ' +
+                `${error instanceof Error ? error.message : String(error)}. ` +
+                'Do not report final closeout as ready until workspace drift can be inspected or the task is explicitly reopened/reset.'
+        };
+    }
+
+    if (stagedSnapshot.changed_files.length === 0) {
+        if (currentImplementationFiles.length === 0) {
+            return {
+                blocked: false,
+                reason: extraScopeDecision?.reason || 'Audited staged scope has been committed or cleaned after DONE.'
+            };
+        }
+        return {
+            blocked: true,
+            reason:
+                'Tracked post-DONE workspace drift changed audited staged implementation content: ' +
+                `${currentImplementationFiles.join(', ')}. ` +
+                'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
+        };
+    }
+
+    const expectedScopeContentSha256 = normalizeOptionalHash(provenance?.scope_content_sha256);
+    const stagedChangedFilesSha256 = normalizeOptionalHash(stagedSnapshot.changed_files_sha256);
+    const stagedScopeContentSha256 = normalizeOptionalHash(stagedSnapshot.scope_content_sha256);
+    const stagedViolations = [
+        expectedChangedFilesSha256 && stagedChangedFilesSha256 !== expectedChangedFilesSha256
+            ? 'staged changed_files_sha256 differs from completed preflight'
+            : '',
+        expectedScopeContentSha256 && stagedScopeContentSha256 !== expectedScopeContentSha256
+            ? 'staged scope_content_sha256 differs from completed preflight'
+            : ''
+    ].filter(Boolean);
+    if (stagedViolations.length > 0) {
+        return {
+            blocked: true,
+            reason:
+                'Tracked post-DONE workspace drift changed audited staged implementation content: ' +
+                `${implementationFiles.join(', ')} (${stagedViolations.join('; ')}). ` +
+                'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
+        };
+    }
+
+    return {
+        blocked: false,
+        reason: extraScopeDecision?.reason || 'Audited staged scope still matches the completed preflight after DONE.'
+    };
+}
+
 export function buildPostDoneWorkspaceDriftBlocker(
     repoRoot: string,
     auditedChangedFiles: string[],
@@ -94,6 +354,27 @@ export function buildPostDoneWorkspaceDriftBlocker(
         };
     }
     const auditedSet = new Set(auditedChangedFiles.map((entry) => toPosix(entry)).filter(Boolean));
+    const unexpectedFiles = [...new Set(currentChangedFiles.filter((entry) => !auditedSet.has(entry)))].sort();
+    if (unexpectedFiles.length > 0) {
+        return {
+            gate: 'post-done-drift',
+            reason:
+                'Tracked post-DONE workspace drift exists outside the completed task closeout scope: ' +
+                `${unexpectedFiles.join(', ')}. ` +
+                'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
+        };
+    }
+    const stagedScopeDecision = evaluateStagedPostDoneAuditedScope({
+        repoRoot,
+        auditedFiles: [...auditedSet].sort(),
+        currentChangedFiles,
+        finalCloseoutJsonPath
+    });
+    if (stagedScopeDecision) {
+        return stagedScopeDecision.blocked
+            ? { gate: 'post-done-drift', reason: stagedScopeDecision.reason }
+            : null;
+    }
     const auditedScopeBlocker = buildPostDoneAuditedScopeDriftBlocker(
         repoRoot,
         [...auditedSet].sort(),
@@ -105,25 +386,13 @@ export function buildPostDoneWorkspaceDriftBlocker(
     if (currentChangedFiles.length === 0) {
         return null;
     }
-
-    const unexpectedFiles = [...new Set(currentChangedFiles.filter((entry) => !auditedSet.has(entry)))].sort();
-    if (unexpectedFiles.length === 0) {
-        return buildPostDoneSameScopeDriftBlocker(
-            repoRoot,
-            auditedChangedFiles,
-            preflightChangedFiles,
-            preflight,
-            finalCloseoutJsonPath
-        );
-    }
-
-    return {
-        gate: 'post-done-drift',
-        reason:
-            'Tracked post-DONE workspace drift exists outside the completed task closeout scope: ' +
-            `${unexpectedFiles.join(', ')}. ` +
-            'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
-    };
+    return buildPostDoneSameScopeDriftBlocker(
+        repoRoot,
+        auditedChangedFiles,
+        preflightChangedFiles,
+        preflight,
+        finalCloseoutJsonPath
+    );
 }
 
 function buildPostDoneSameScopeDriftBlocker(
@@ -207,10 +476,7 @@ function buildPostDoneAuditedScopeDriftBlocker(
     if (auditedFiles.length === 0) {
         return null;
     }
-    const closeout = safeReadJson(finalCloseoutJsonPath);
-    const implementationSummary = closeout && typeof closeout.implementation_summary === 'object'
-        ? closeout.implementation_summary as Record<string, unknown>
-        : null;
+    const implementationSummary = readFinalCloseoutImplementationSummary(finalCloseoutJsonPath);
     const expectedScopeContentSha256 = typeof implementationSummary?.scope_content_sha256 === 'string'
         ? implementationSummary.scope_content_sha256.trim().toLowerCase()
         : '';

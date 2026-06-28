@@ -572,6 +572,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         finalCloseoutMarkdownPath,
         finalUserReportPath,
         currentCycle,
+        preflight,
         taskMode,
         pathMode,
         reviewVerdicts,

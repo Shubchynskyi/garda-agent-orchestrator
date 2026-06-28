@@ -111,11 +111,36 @@ export interface FinalCloseoutImplementationSummary {
     scope_content_sha256?: string | null;
     scope_sha256?: string | null;
     domain_scope_fingerprints?: DomainScopeFingerprints | null;
+    audited_scope_provenance?: FinalCloseoutAuditedScopeProvenance | null;
     change_metrics?: FinalCloseoutChangeMetrics;
     changed_files_count: number;
     changed_lines_total: number;
     scope_category: string | null;
     active_profile: string | null;
+}
+
+export interface FinalCloseoutAuditedScopeProvenance {
+    source: 'preflight' | 'workspace_snapshot';
+    detection_source: string | null;
+    use_staged: boolean | null;
+    include_untracked: boolean | null;
+    changed_files: string[];
+    changed_files_sha256: string | null;
+    scope_content_sha256: string | null;
+    scope_sha256: string | null;
+    domain_scope_fingerprints: DomainScopeFingerprints | null;
+    closeout_extra_scope?: {
+        changed_files: string[];
+        changed_files_sha256: string | null;
+        scope_content_sha256: string | null;
+        scope_sha256: string | null;
+        domain_scope_fingerprints: DomainScopeFingerprints | null;
+    } | null;
+    compile_gate_scope_binding?: {
+        changed_files_sha256: string | null;
+        scope_content_sha256: string | null;
+        scope_sha256: string | null;
+    } | null;
 }
 
 export interface FinalCloseoutOptionalSkillsSummary {
