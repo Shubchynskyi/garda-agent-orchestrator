@@ -105,7 +105,7 @@ function formatQualityRulePackVersion(value) {
   if (!match) {
     return text;
   }
-  return match[1] + '-' + match[2] + '-' + match[3] + (match[4] ? ' (T-' + match[4] + ')' : '');
+  return match[1] + '-' + match[2] + '-' + match[3];
 }
 function formatUiTimestamp(value) {
   const text = String(value || '').trim();
@@ -310,6 +310,12 @@ function applyLanguage() {
   }
   if (currentWorkflowSettingResult) {
     renderWorkflowSettingResult(currentWorkflowSettingResult);
+  }
+  if (currentProfilesPayload) {
+    renderProfiles(currentProfilesPayload);
+  }
+  if (currentProfileActionResult) {
+    renderProfileResult(currentProfileActionResult);
   }
   if (currentActionResult) {
     renderActionResult(currentActionResult);

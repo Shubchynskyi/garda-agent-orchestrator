@@ -206,6 +206,24 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(saveBuiltIn.proposed_value.source, 'built_in');
         assert.equal(JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).built_in_profiles.balanced.depth, 1);
 
+        const localizedCreateResponse = await fetch(`${server.url}api/profiles`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                operation: 'create',
+                mode: 'execute',
+                profile_name: 'ьестовый',
+                copy_from: 'balanced',
+                description: 'Localized profile',
+                confirmation: 'APPLY PROFILE CHANGE'
+            })
+        });
+        assert.equal(localizedCreateResponse.status, 200);
+        const localizedData = JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')) as {
+            user_profiles: Record<string, unknown>;
+        };
+        assert.ok(Object.hasOwn(localizedData.user_profiles, 'ьестовый'));
+
         const resetResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
             headers: actionHeaders,

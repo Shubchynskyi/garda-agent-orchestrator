@@ -1,5 +1,6 @@
 /** Browser-side dashboard script fragment (profiles). */
-export const UI_DASHBOARD_CLIENT_PROFILES = `function profilePolicyValue(profile, reviewType) {
+export const UI_DASHBOARD_CLIENT_PROFILES = `let currentProfileTabName = '';
+function profilePolicyValue(profile, reviewType) {
   const policy = profile && profile.review_policy && Object.prototype.hasOwnProperty.call(profile.review_policy, reviewType)
     ? profile.review_policy[reviewType]
     : 'auto';
@@ -11,6 +12,11 @@ function profilePolicyFromSubmitValue(value) {
   if (value === 'required') return true;
   if (value === 'disabled') return false;
   return 'auto';
+}
+function profilePolicyClass(value) {
+  if (value === 'required') return 'profile-policy-required';
+  if (value === 'disabled') return 'profile-policy-disabled';
+  return 'profile-policy-auto';
 }
 function profileInputId(profileName, field) {
   return 'profile-' + String(profileName || 'new').replace(/[^a-z0-9_-]/gi, '-') + '-' + field;
@@ -53,9 +59,12 @@ function renderProfilePolicyGrid(profile, disabled) {
     return '<p class="empty">' + safe(t('availableReviewTypes')) + ': -</p>';
   }
   return '<div class="profile-policy-grid">'
-    + reviewTypes.map(reviewType => '<label><span>' + safe(reviewType.label || reviewType.id) + '</span>'
-      + renderProfilePolicySelect(profile.name, reviewType.id, profilePolicyValue(profile, reviewType.id), disabled)
-      + '</label>').join('')
+    + reviewTypes.map(reviewType => {
+      const policyValue = profilePolicyValue(profile, reviewType.id);
+      return '<label class="' + profilePolicyClass(policyValue) + '"><span>' + safe(reviewType.label || reviewType.id) + '</span>'
+        + renderProfilePolicySelect(profile.name, reviewType.id, policyValue, disabled)
+        + '</label>';
+    }).join('')
     + '</div>';
 }
 function renderAddProfileForm(payload, disabled) {
@@ -70,6 +79,55 @@ function renderAddProfileForm(payload, disabled) {
     + '<label><span>' + safe(t('descriptionColumn')) + '</span><input id="profile-new-description" type="text"' + disabledAttr + '></label>'
     + '<label><span>' + safe(t('profileDepth')) + '</span><select id="profile-new-depth"' + disabledAttr + '><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>'
     + '<button type="button" data-profile-action="create"' + (disabled ? ' disabled' : '') + '>' + safe(t('addProfile')) + '</button>'
+    + '</section>';
+}
+function orderedProfiles(profiles) {
+  const list = Array.isArray(profiles) ? profiles : [];
+  return [
+    ...list.filter(profile => profile.source === 'user'),
+    ...list.filter(profile => profile.source === 'built_in')
+  ];
+}
+function resolveProfileTabName(payload, profiles) {
+  const ordered = orderedProfiles(profiles);
+  if (ordered.some(profile => profile.name === currentProfileTabName)) {
+    return currentProfileTabName;
+  }
+  const activeProfile = payload && payload.active_profile ? payload.active_profile : '';
+  if (ordered.some(profile => profile.name === activeProfile)) {
+    currentProfileTabName = activeProfile;
+    return currentProfileTabName;
+  }
+  currentProfileTabName = ordered.length > 0 ? ordered[0].name : '';
+  return currentProfileTabName;
+}
+function renderProfileTabButton(profile, selected) {
+  const sourceLabel = profile.source === 'built_in' ? t('profileSourceBuiltIn') : t('profileSourceUser');
+  const badges = '<span class="profile-tab-badges">'
+    + badge(sourceLabel, 'profile-source', profile.source === 'built_in' ? 'profile-source-built-in' : 'profile-source-user')
+    + (profile.active ? badge(t('active'), 'profile-active', 'profile-active') : '')
+    + '</span>';
+  return '<button type="button" class="profile-tab-button' + (selected ? ' active' : '') + '" role="tab" aria-selected="' + (selected ? 'true' : 'false') + '" data-profile-tab="' + safe(profile.name) + '">'
+    + '<span class="profile-tab-name">' + safe(profile.name) + '</span>'
+    + badges
+    + '</button>';
+}
+function renderProfileTabGroup(title, profiles, selectedName, emptyText) {
+  return '<section class="profile-tab-group"><h3>' + safe(title) + '</h3>'
+    + (profiles.length > 0
+      ? '<div class="profile-tab-list" role="tablist" aria-label="' + safe(title) + '">'
+        + profiles.map(profile => renderProfileTabButton(profile, profile.name === selectedName)).join('')
+        + '</div>'
+      : '<p class="empty">' + safe(emptyText) + '</p>')
+    + '</section>';
+}
+function renderProfileTabs(profiles, selectedName) {
+  const list = Array.isArray(profiles) ? profiles : [];
+  const userProfiles = list.filter(profile => profile.source === 'user');
+  const builtInProfiles = list.filter(profile => profile.source === 'built_in');
+  return '<section class="profile-tab-groups">'
+    + renderProfileTabGroup(t('profileUserProfiles'), userProfiles, selectedName, t('profileNoUserProfiles'))
+    + renderProfileTabGroup(t('profileBuiltInProfiles'), builtInProfiles, selectedName, t('profileNoBuiltInProfiles'))
     + '</section>';
 }
 function renderProfileCard(profile, disabled) {
@@ -123,6 +181,13 @@ async function submitProfileAction(payload, confirmation) {
   const result = await response.json();
   renderProfileResult(result);
   if (result && result.status === 'executed') {
+    if (payload && payload.operation === 'delete') {
+      if (currentProfileTabName === result.profile_name) {
+        currentProfileTabName = '';
+      }
+    } else if (result.profile_name) {
+      currentProfileTabName = result.profile_name;
+    }
     await refreshProfilesPayload();
   }
 }
@@ -157,6 +222,26 @@ function attachProfileActionHandlers() {
     });
   }
 }
+function attachProfileTabHandlers() {
+  for (const button of profilesNode.querySelectorAll('button[data-profile-tab]')) {
+    button.addEventListener('click', () => {
+      currentProfileTabName = button.dataset.profileTab || '';
+      if (currentProfilesPayload) {
+        renderProfiles(currentProfilesPayload);
+      }
+    });
+  }
+}
+function attachProfilePolicyVisualHandlers() {
+  for (const select of profilesNode.querySelectorAll('.profile-policy-grid select')) {
+    select.addEventListener('change', () => {
+      const label = select.closest('label');
+      if (!label) return;
+      label.classList.remove('profile-policy-required', 'profile-policy-auto', 'profile-policy-disabled');
+      label.classList.add(profilePolicyClass(select.value));
+    });
+  }
+}
 function renderProfiles(payload) {
   currentProfilesPayload = payload;
   setPanelConfigPath(profilesConfigPathNode, payload && payload.config_path ? payload.config_path : '');
@@ -170,16 +255,16 @@ function renderProfiles(payload) {
     ? '<p class="empty">' + safe(t('profileEditsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('settingEditsDisabledTail')) + '</p>'
     : '';
   const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
-  const userProfiles = profiles.filter(profile => profile.source === 'user');
-  const builtInProfiles = profiles.filter(profile => profile.source === 'built_in');
+  const selectedName = resolveProfileTabName(payload, profiles);
+  const selectedProfile = profiles.find(profile => profile.name === selectedName) || null;
   profilesNode.innerHTML = disabledNotice
     + renderAddProfileForm(payload, disabled)
-    + '<section class="profile-section"><h3>' + safe(t('profileUserProfiles')) + '</h3>'
-    + (userProfiles.length > 0 ? userProfiles.map(profile => renderProfileCard(profile, disabled)).join('') : '<p class="empty">' + safe(t('profileNoUserProfiles')) + '</p>')
-    + '</section>'
-    + '<section class="profile-section"><h3>' + safe(t('profileBuiltInProfiles')) + '</h3>'
-    + (builtInProfiles.length > 0 ? builtInProfiles.map(profile => renderProfileCard(profile, disabled)).join('') : '<p class="empty">' + safe(t('profileNoBuiltInProfiles')) + '</p>')
+    + renderProfileTabs(profiles, selectedName)
+    + '<section class="profile-selected-panel" role="tabpanel">'
+    + (selectedProfile ? renderProfileCard(selectedProfile, disabled) : '<p class="empty">' + safe(t('profileNoBuiltInProfiles')) + '</p>')
     + '</section>';
+  attachProfileTabHandlers();
+  attachProfilePolicyVisualHandlers();
   attachProfileActionHandlers();
 }
 async function refreshProfilesPayload() {

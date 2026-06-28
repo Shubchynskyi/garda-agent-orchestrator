@@ -9,7 +9,6 @@ export function formatQualityRulePackVersion(value: string | null | undefined): 
     if (!match) {
         return text;
     }
-    const [, year, month, day, taskNumber] = match;
-    const taskSuffix = taskNumber ? ` (T-${taskNumber})` : '';
-    return `${year}-${month}-${day}${taskSuffix}`;
+    const [, year, month, day] = match;
+    return `${year}-${month}-${day}`;
 }

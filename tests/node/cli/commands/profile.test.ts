@@ -463,6 +463,17 @@ test('profile create accepts valid kebab-case names', () => {
     assert.ok(data.user_profiles['my-profile-2']);
 });
 
+test('profile create accepts localized lowercase profile names', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    captureConsole(() => handleProfile([
+        'create', 'ьестовый',
+        '--bundle-root', bundleRoot,
+        '--description', 'Localized profile'
+    ], PACKAGE_JSON));
+    const data = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'profiles.json'), 'utf8'));
+    assert.ok(data.user_profiles['ьестовый']);
+});
+
 test('profile create rejects names starting with digit', () => {
     const bundleRoot = createTempBundleWithProfiles();
     assert.throws(

@@ -111,6 +111,15 @@ tr.selected { background: #eef8f6; }
 .profile-add-row label, .profile-fields label, .profile-policy-grid label { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 12px; }
 .profile-add-row input, .profile-add-row select, .profile-fields input, .profile-fields select, .profile-policy-grid select { width: 100%; min-width: 0; }
 .profile-section { display: grid; gap: 10px; margin-top: 14px; }
+.profile-tab-groups { display: grid; gap: 10px; min-width: 0; }
+.profile-tab-group { display: grid; gap: 7px; min-width: 0; }
+.profile-tab-list { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.profile-tab-button { flex: 1 1 168px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; width: auto; max-width: 260px; min-width: 0; min-height: 56px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.profile-tab-button.active { border-color: var(--accent); background: #eef8f6; color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent); }
+.profile-tab-name { font-weight: 700; overflow-wrap: anywhere; }
+.profile-tab-badges { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.profile-tab-badges .badge { min-width: 0; min-height: 20px; padding: 2px 6px; }
+.profile-selected-panel { display: grid; gap: 10px; min-width: 0; }
 .profile-card { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .profile-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; min-width: 0; }
 .profile-card h3 { margin: 0; overflow-wrap: anywhere; }
@@ -121,6 +130,13 @@ tr.selected { background: #eef8f6; }
 .profile-policy-grid { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 8px; }
 .profile-policy-grid label { padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fbfcfe; }
 .profile-policy-grid span { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
+.profile-policy-grid label.profile-policy-required { border-color: #9fd6b5; background: #eaf7ee; }
+.profile-policy-grid label.profile-policy-auto { border-color: #b9cdf7; background: #eef4ff; }
+.profile-policy-grid label.profile-policy-disabled { border-color: #d4dae3; background: #f3f5f7; }
+.profile-policy-grid label.profile-policy-disabled span { color: var(--muted); }
+.profile-policy-grid label.profile-policy-required select { border-color: #7bc99b; }
+.profile-policy-grid label.profile-policy-auto select { border-color: #9cb9ee; }
+.profile-policy-grid label.profile-policy-disabled select { border-color: #c6ccd6; color: var(--muted); }
 .profile-source-built-in { background: #eef2ff; color: #3442a0; }
 .profile-source-user { background: #eaf7ee; color: #176333; }
 .profile-active { background: #e6f4fb; color: #1f5f82; }

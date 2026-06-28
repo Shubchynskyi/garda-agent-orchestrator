@@ -21,7 +21,8 @@ export const TOKEN_ECONOMY_FIELDS = Object.freeze([
     'compact_reviewer_output'
 ]);
 
-const PROFILE_NAME_PATTERN = /^[a-z](?:[a-z0-9\-]*[a-z0-9])?$/;
+const PROFILE_NAME_PATTERN = /^\p{L}(?:[\p{L}\p{Nd}-]*[\p{L}\p{Nd}])?$/u;
+const PROFILE_NAME_UPPERCASE_PATTERN = /[\p{Lu}\p{Lt}]/u;
 
 export function validateProfilesIntegrity(data: ProfilesData): string[] {
     const issues: string[] = [];
@@ -50,10 +51,10 @@ export function validateProfilesIntegrity(data: ProfilesData): string[] {
 }
 
 export function assertValidProfileName(name: string): void {
-    if (!PROFILE_NAME_PATTERN.test(name) || name.length > 64) {
+    if (!PROFILE_NAME_PATTERN.test(name) || PROFILE_NAME_UPPERCASE_PATTERN.test(name) || Array.from(name).length > 64) {
         throw new Error(
             `Invalid profile name '${name}'. ` +
-            'Profile names must start with a lowercase letter, contain only lowercase letters, digits, and hyphens, ' +
+            'Profile names must start with a lowercase or uncased Unicode letter, contain only lowercase or uncased Unicode letters, digits, and hyphens, ' +
             'must not end with a hyphen, and be 1–64 characters.'
         );
     }

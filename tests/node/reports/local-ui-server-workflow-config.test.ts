@@ -106,7 +106,8 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal(list.optional_quality_checks.enabled, true);
         assert.equal(list.quality_gate.enabled, true);
         assert.equal(list.quality_gate.baseline_version, list.quality_gate.shipped_baseline_version);
-        assert.match(list.quality_gate.baseline_version_label, /^\d{4}-\d{2}-\d{2} \(T-\d+\)$/u);
+        assert.match(list.quality_gate.baseline_version_label, /^\d{4}-\d{2}-\d{2}$/u);
+        assert.doesNotMatch(list.quality_gate.baseline_version_label, /\(T-\d+\)/u);
         assert.equal(list.quality_gate.baseline_version_label, list.quality_gate.shipped_baseline_version_label);
         assert.ok(list.quality_gate.baseline_rule_count >= 7);
         assert.equal(list.quality_gate.custom_rule_count, 0);

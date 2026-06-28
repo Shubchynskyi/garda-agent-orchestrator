@@ -731,7 +731,7 @@ test('buildReportDataContract surfaces stale quality baseline diagnostics in Sys
     );
     assert.equal(
         (report.system_state.quality_baseline.value as { installed_baseline_label: string }).installed_baseline_label,
-        '2026-06-25 (T-842)'
+        '2026-06-25'
     );
 });
 
@@ -801,8 +801,10 @@ test('buildSystemStateReport treats missing installed quality baseline evidence 
         };
         assert.equal(report.system_state.quality_baseline.status, 'attention', variant);
         assert.equal(value.installed_baseline_version, variant === 'rules' ? shippedBaselineVersion : null, variant);
-        assert.match(value.installed_baseline_label, variant === 'rules' ? /^\d{4}-\d{2}-\d{2} \(T-\d+\)$/u : /^-$/u, variant);
-        assert.match(value.shipped_baseline_label, /^\d{4}-\d{2}-\d{2} \(T-\d+\)$/u, variant);
+        assert.match(value.installed_baseline_label, variant === 'rules' ? /^\d{4}-\d{2}-\d{2}$/u : /^-$/u, variant);
+        assert.match(value.shipped_baseline_label, /^\d{4}-\d{2}-\d{2}$/u, variant);
+        assert.doesNotMatch(value.installed_baseline_label, /\(T-\d+\)/u, variant);
+        assert.doesNotMatch(value.shipped_baseline_label, /\(T-\d+\)/u, variant);
         assert.equal(value.shipped_baseline_rule_count, shippedRuleCount, variant);
         assert.equal(value.custom_rule_count, 0, variant);
 
@@ -1334,7 +1336,8 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.equal(report.quality_gate_tab.enabled, true);
     assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'missing');
     assert.equal(report.quality_gate_tab.baseline_version, report.quality_gate_tab.shipped_baseline_version);
-    assert.match(report.quality_gate_tab.baseline_version_label, /^\d{4}-\d{2}-\d{2} \(T-\d+\)$/u);
+    assert.match(report.quality_gate_tab.baseline_version_label, /^\d{4}-\d{2}-\d{2}$/u);
+    assert.doesNotMatch(report.quality_gate_tab.baseline_version_label, /\(T-\d+\)/u);
     assert.equal(report.quality_gate_tab.baseline_version_label, report.quality_gate_tab.shipped_baseline_version_label);
     assert.ok(report.quality_gate_tab.rules.some((rule) => (
         rule.id === 'code_simplification'

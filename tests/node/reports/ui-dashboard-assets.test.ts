@@ -481,8 +481,8 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                 enabled: true,
                 baseline_version: '2026-06-27.t846',
                 shipped_baseline_version: '2026-06-27.t846',
-                baseline_version_label: '2026-06-27 (T-846)',
-                shipped_baseline_version_label: '2026-06-27 (T-846)',
+                baseline_version_label: '2026-06-27',
+                shipped_baseline_version_label: '2026-06-27',
                 baseline_rule_count: 1,
                 custom_rule_count: 1,
                 deleted_baseline_rule_count: 1,
@@ -575,7 +575,8 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.equal(context.qualityGateConfigPathNode.textContent, '');
     assert.match(qualityGateNode.innerHTML, /Установленный набор правил/u);
     assert.match(qualityGateNode.innerHTML, /Поставляемый набор правил/u);
-    assert.match(qualityGateNode.innerHTML, /2026-06-27 \(T-846\)/u);
+    assert.match(qualityGateNode.innerHTML, /2026-06-27/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /\(T-846\)/u);
     assert.match(qualityGateNode.innerHTML, /Изменено локально/u);
     assert.match(qualityGateNode.innerHTML, /Пользовательское/u);
     assert.match(qualityGateNode.innerHTML, /Отключено/u);
@@ -732,8 +733,9 @@ test('system state renders quality baseline diagnostics with localized labels', 
     assert.match(systemStateNode.innerHTML, /Установленные правила качества/u);
     assert.match(systemStateNode.innerHTML, /Установленный набор правил/u);
     assert.match(systemStateNode.innerHTML, /Поставляемый набор правил/u);
-    assert.match(systemStateNode.innerHTML, /2026-06-25 \(T-842\)/u);
-    assert.match(systemStateNode.innerHTML, /2026-06-27 \(T-846\)/u);
+    assert.match(systemStateNode.innerHTML, /2026-06-25/u);
+    assert.match(systemStateNode.innerHTML, /2026-06-27/u);
+    assert.doesNotMatch(systemStateNode.innerHTML, /\(T-842\)|\(T-846\)/u);
     assert.doesNotMatch(systemStateNode.innerHTML, /2026-06-25\.t842/u);
     assert.match(systemStateNode.innerHTML, /Отсутствующие поставляемые правила/u);
     assert.match(systemStateNode.innerHTML, /duplicated_logic_contracts/u);
@@ -746,8 +748,8 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
         enabled: true,
         baseline_version: '2026-06-27.t846',
         shipped_baseline_version: '2026-06-27.t846',
-        baseline_version_label: '2026-06-27 (T-846)',
-        shipped_baseline_version_label: '2026-06-27 (T-846)',
+        baseline_version_label: '2026-06-27',
+        shipped_baseline_version_label: '2026-06-27',
         baseline_rule_count: 1,
         custom_rule_count: 1,
         deleted_baseline_rule_count: 0,
@@ -798,7 +800,7 @@ test('profiles tab renders required auto disabled policy controls without trigge
     const html = renderProfilesHtml({
         status: 'present',
         config_path: 'garda-agent-orchestrator/live/config/profiles.json',
-        active_profile: 'balanced',
+        active_profile: 'custom-review',
         unavailable: [],
         review_types: [
             { id: 'code', label: 'Code' },
@@ -810,7 +812,7 @@ test('profiles tab renders required auto disabled policy controls without trigge
                 name: 'custom-review',
                 source: 'user',
                 protected: false,
-                active: false,
+                active: true,
                 description: 'Custom profile',
                 depth: 2,
                 review_policy: {
@@ -823,7 +825,7 @@ test('profiles tab renders required auto disabled policy controls without trigge
                 name: 'balanced',
                 source: 'built_in',
                 protected: true,
-                active: true,
+                active: false,
                 description: 'Default profile',
                 depth: 2,
                 review_policy: {
@@ -835,6 +837,25 @@ test('profiles tab renders required auto disabled policy controls without trigge
         ]
     }, true);
 
+    const addProfileIndex = html.indexOf('class="profile-add-row"');
+    const userProfileTabIndex = html.indexOf('data-profile-tab="custom-review"');
+    const builtInProfileTabIndex = html.indexOf('data-profile-tab="balanced"');
+    const selectedProfileIndex = html.indexOf('data-profile-name="custom-review"');
+    assert.ok(addProfileIndex >= 0, 'Expected add-profile row to render first.');
+    assert.ok(userProfileTabIndex >= 0, 'Expected user profile tab to render.');
+    assert.ok(builtInProfileTabIndex >= 0, 'Expected built-in profile tab to render.');
+    assert.ok(selectedProfileIndex >= 0, 'Expected selected profile card to render.');
+    assert.ok(addProfileIndex < userProfileTabIndex, 'Expected add-profile row before profile tabs.');
+    assert.ok(userProfileTabIndex < builtInProfileTabIndex, 'Expected user profile tabs before built-in profile tabs.');
+    assert.ok(builtInProfileTabIndex < selectedProfileIndex, 'Expected selected profile editor after local profile tabs.');
+    assert.doesNotMatch(html, /data-profile-name="balanced"/u);
+    assert.match(html, /class="profile-tab-button active"[^>]*data-profile-tab="custom-review"/u);
+    assert.match(html, /<label class="profile-policy-required">[\s\S]*id="profile-custom-review-review-code"/u);
+    assert.match(html, /<label class="profile-policy-auto">[\s\S]*id="profile-custom-review-review-test"/u);
+    assert.match(html, /<label class="profile-policy-disabled">[\s\S]*id="profile-custom-review-review-performance"/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.profile-policy-grid label\.profile-policy-required/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.profile-policy-grid label\.profile-policy-auto/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.profile-policy-grid label\.profile-policy-disabled/u);
     assert.match(html, /id="profile-custom-review-review-code"[\s\S]*<option value="required" selected>[\s\S]*?<\/option>[\s\S]*<option value="auto">[\s\S]*?<\/option>[\s\S]*<option value="disabled">[\s\S]*?<\/option>/u);
     assert.match(html, /id="profile-custom-review-review-test"[\s\S]*<option value="required">[\s\S]*?<\/option>[\s\S]*<option value="auto" selected>[\s\S]*?<\/option>[\s\S]*<option value="disabled">[\s\S]*?<\/option>/u);
     assert.match(html, /id="profile-custom-review-review-performance"[\s\S]*<option value="required">[\s\S]*?<\/option>[\s\S]*<option value="auto">[\s\S]*?<\/option>[\s\S]*<option value="disabled" selected>[\s\S]*?<\/option>/u);
