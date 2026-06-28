@@ -511,7 +511,12 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
             normalizePath(preflightPath),
             taskModeEvidence.evidence_path,
             compileCommandsPath,
-            compileOutputFiltersPath
+            compileOutputFiltersPath,
+            {
+                requiresOperatorConfirmation:
+                    taskModeEvidence.orchestrator_work === true
+                    || taskModeEvidence.workflow_config_work === true
+            }
         )
         : null;
     const reviewCycleRecoveryRelevant = resolvedTaskId

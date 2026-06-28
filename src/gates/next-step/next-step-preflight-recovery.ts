@@ -327,6 +327,9 @@ export function readCoherentCycleReadiness(
     const outputFiltersPath = typeof compileEvidence?.output_filters_path === 'string' && compileEvidence.output_filters_path.trim()
         ? compileEvidence.output_filters_path.trim()
         : getDefaultOutputFiltersPath(repoRoot);
+    const taskModePayload = taskModePath ? safeReadJson(taskModePath) : null;
+    const requiresOperatorConfirmation = isPlainRecord(taskModePayload)
+        && (taskModePayload.orchestrator_work === true || taskModePayload.workflow_config_work === true);
     const cycleAnchor = latestBoundary
         ? ` after latest ${latestBoundary.event_type} (seq ${latestBoundary.sequence})`
         : '';
@@ -340,7 +343,8 @@ export function readCoherentCycleReadiness(
             normalizePath(preflightPath),
             taskModePath,
             commandsPath,
-            outputFiltersPath
+            outputFiltersPath,
+            { requiresOperatorConfirmation }
         )
     };
 }

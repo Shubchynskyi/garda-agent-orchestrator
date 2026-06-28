@@ -13,7 +13,8 @@ export function buildCoherentCycleRestartCommand(
     preflightPath: string,
     taskModePath: string | null,
     commandsPath: string | null,
-    outputFiltersPath: string | null
+    outputFiltersPath: string | null,
+    options: { requiresOperatorConfirmation?: boolean } = {}
 ): string {
     const cliPrefix = isOrchestratorSourceCheckout(repoRoot)
         ? getSourceCliCommand()
@@ -32,6 +33,10 @@ export function buildCoherentCycleRestartCommand(
     }
     if (outputFiltersPath) {
         parts.push(`--output-filters-path ${quotePowerShellCliValue(outputFiltersPath)}`);
+    }
+    if (options.requiresOperatorConfirmation === true) {
+        parts.push('--operator-confirmed yes');
+        parts.push(`--operator-confirmed-at-utc ${quotePowerShellCliValue('<ISO-8601 timestamp>')}`);
     }
     return parts.join(' ');
 }

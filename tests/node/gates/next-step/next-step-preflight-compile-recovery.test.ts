@@ -676,6 +676,39 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(result.commands[0].command.includes('--preflight-path'));
     });
 
+    it('prints operator confirmation placeholders for protected coherent-cycle restart commands', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Restart protected coherent cycle',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'restart-coherent-cycle');
+        assert.ok(command.includes('gate restart-coherent-cycle'));
+        assert.ok(command.includes('--operator-confirmed yes'));
+        assert.ok(command.includes("--operator-confirmed-at-utc '<ISO-8601 timestamp>'"));
+    });
+
     it('routes preflight refreshed after implementation compile and review phase to restart before expensive gates', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

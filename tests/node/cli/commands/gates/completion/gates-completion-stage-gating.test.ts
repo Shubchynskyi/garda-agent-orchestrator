@@ -409,6 +409,117 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    test('protected completion coherent-cycle recovery command includes operator placeholders', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-protected-recovery-command';
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'src', 'gates', 'completion'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'gates', 'completion', 'completion.ts'),
+            'export const protectedCompletionFixture = true;\n',
+            'utf8'
+        );
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/gates/completion/completion.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Protected recovery command needs operator placeholders',
+            plannedChangedFiles: ['src/gates/completion/completion.ts'],
+            orchestratorWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString()
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Review phase started.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: code-review',
+            { skill_id: 'code-review', trigger_reason: 'required_review' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Reference loaded: garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+            {
+                skill_id: 'code-review',
+                reference_path: 'garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+                trigger_reason: 'review_skill'
+            }
+        );
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'New preflight started for a later protected cycle.',
+            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
+        );
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        const command = String((completionResult as Record<string, unknown>).coherent_cycle_restart_command || '');
+
+        assert.equal(completionResult.outcome, 'FAIL');
+        assert.match(command, /restart-coherent-cycle/);
+        assert.match(command, /--operator-confirmed yes/);
+        assert.match(command, /--operator-confirmed-at-utc '<ISO-8601 timestamp>'/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     test('fails completion gate when the latest cycle has review evidence but no same-cycle implementation or compile', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-recovery-missing-prereq';
