@@ -20,11 +20,13 @@ import {
 import {
     buildUiActionsPayload,
     buildUiCleanupPayload,
+    buildUiProfilePayload,
     buildUiSettingsPayload,
     handleUiActionRequest,
     handleUiCleanupRunPostRequest,
     handleUiCleanupSettingsPostRequest,
     handleUiCleanupTaskPurgePostRequest,
+    handleUiProfilesPostRequest,
     handleUiSettingRequest,
     handleUiTaskActionRequest,
     sendApiError,
@@ -677,6 +679,12 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
             });
             return;
         }
+        if (request.method === 'POST' && pathname === '/api/profiles') {
+            handleUiProfilesPostRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
+                sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_profile_request');
+            });
+            return;
+        }
         if (request.method === 'POST' && pathname === '/api/ordinary-docs') {
             handleOrdinaryDocsPostRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
                 sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_ordinary_docs_request');
@@ -759,6 +767,10 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         }
         if (pathname === '/api/settings') {
             sendJson(response, 200, buildUiSettingsPayload(resolvedRepoRoot, options.actionsEnabled));
+            return;
+        }
+        if (pathname === '/api/profiles') {
+            sendJson(response, 200, buildUiProfilePayload(resolvedRepoRoot, options.actionsEnabled));
             return;
         }
         if (pathname === '/api/cleanup-settings') {

@@ -7,6 +7,7 @@ import { UI_DASHBOARD_CLIENT_CLEANUP } from './dashboard-client-cleanup';
 import { UI_DASHBOARD_CLIENT_INSTRUCTIONS } from './dashboard-client-instructions';
 import { UI_DASHBOARD_CLIENT_QUALITY_GATE } from './dashboard-client-quality-gate';
 import { UI_DASHBOARD_CLIENT_PROJECT_MEMORY } from './dashboard-client-project-memory';
+import { UI_DASHBOARD_CLIENT_PROFILES } from './dashboard-client-profiles';
 import { UI_DASHBOARD_CLIENT_POLISH } from './dashboard-client-polish';
 import { UI_DASHBOARD_CLIENT_SESSION_ACTIONS } from './dashboard-client-session-actions';
 import { UI_DASHBOARD_CLIENT_TASK_DETAIL } from './dashboard-client-task-detail';
@@ -20,6 +21,7 @@ export function buildDashboardClientScript(options: DashboardClientPreludeOption
         UI_DASHBOARD_CLIENT_TASKS,
         UI_DASHBOARD_CLIENT_WORKFLOW,
         UI_DASHBOARD_CLIENT_QUALITY_GATE,
+        UI_DASHBOARD_CLIENT_PROFILES,
         UI_DASHBOARD_CLIENT_INIT_SETTINGS,
         UI_DASHBOARD_CLIENT_PROJECT_MEMORY,
         UI_DASHBOARD_CLIENT_BACKUPS,

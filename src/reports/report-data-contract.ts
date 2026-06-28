@@ -24,6 +24,11 @@ export type {
     ReportTaskQualityChecklistLatest,
     ReportTaskQualityChecklist,
     ReportQualityGateTab,
+    ReportProfileSource,
+    ReportProfileReviewPolicyValue,
+    ReportProfileReviewType,
+    ReportProfileRow,
+    ReportProfilesTab,
     ReportInstructionEntry,
     ReportValueRow,
     ReportCommandInfo,
@@ -45,6 +50,7 @@ export type {
 export { readCanonicalActiveQueueRows } from './report-data/task-queue';
 export { buildWorkflowConfigTab } from './report-data/workflow-config-tab';
 export { buildQualityGateTab } from './report-data/quality-gate-tab';
+export { buildProfilesTab } from './report-data/profiles-tab';
 export { buildInitSettingsTab } from './report-data/init-settings-tab';
 export { buildProjectMemoryTab } from './report-data/project-memory-tab';
 export { buildBackupsTab } from './report-data/backups-tab';

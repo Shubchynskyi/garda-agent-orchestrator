@@ -278,6 +278,38 @@ export interface ReportQualityGateTab {
     unavailable: ReportDataUnavailableEntry[];
 }
 
+export type ReportProfileSource = 'built_in' | 'user';
+export type ReportProfileReviewPolicyValue = boolean | 'auto';
+
+export interface ReportProfileReviewType {
+    id: string;
+    label: string;
+}
+
+export interface ReportProfileRow {
+    name: string;
+    source: ReportProfileSource;
+    active: boolean;
+    protected: boolean;
+    description: string;
+    depth: number;
+    review_policy: Record<string, ReportProfileReviewPolicyValue>;
+    token_economy: Record<string, boolean>;
+    skills: Record<string, boolean>;
+}
+
+export interface ReportProfilesTab {
+    config_path: string;
+    config_exists: boolean;
+    status: 'present' | 'missing' | 'invalid';
+    active_profile: string | null;
+    review_types: ReportProfileReviewType[];
+    profiles: ReportProfileRow[];
+    built_in_profile_names: string[];
+    user_profile_names: string[];
+    unavailable: ReportDataUnavailableEntry[];
+}
+
 export interface ReportInstructionEntry {
     id: string;
     title: string;
@@ -450,6 +482,7 @@ export interface ReportDataContract {
     };
     workflow_config_tab: ReportWorkflowConfigTab;
     quality_gate_tab: ReportQualityGateTab;
+    profiles_tab: ReportProfilesTab;
     init_settings_tab: ReportInitSettingsTab;
     project_memory_tab: ReportProjectMemoryTab;
     backups_tab: ReportBackupsTab;

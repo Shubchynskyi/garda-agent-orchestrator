@@ -41,6 +41,7 @@ export function writeLocalUiRepoFixture(repoRoot: string): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(buildDefaultWorkflowConfig(), null, 2));
+    writeLocalUiProfilesFixture(repoRoot);
     const pathsConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
     fs.writeFileSync(pathsConfigPath, JSON.stringify({
         ordinary_doc_paths: ['CHANGELOG.md']
@@ -89,6 +90,118 @@ export function writeLocalUiRepoFixture(repoRoot: string): void {
     for (const fileName of ['README.md', 'compact.md', 'context.md', 'stack.md', 'architecture.md', 'module-map.md', 'commands.md', 'conventions.md', 'decisions.md', 'risks.md']) {
         fs.writeFileSync(path.join(memoryRoot, fileName), `# ${fileName}\n\nMemory for ${fileName}.\n`);
     }
+}
+
+export function buildLocalUiProfilesFixture(): Record<string, unknown> {
+    return {
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Default profile',
+                depth: 2,
+                review_policy: {
+                    code: true,
+                    db: 'auto',
+                    security: 'auto',
+                    refactor: 'auto',
+                    api: 'auto',
+                    test: true,
+                    performance: 'auto',
+                    infra: 'auto',
+                    dependency: 'auto'
+                },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            },
+            fast: {
+                description: 'Fast profile',
+                depth: 1,
+                review_policy: {
+                    code: 'auto',
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: 'auto',
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: false }
+            },
+            strict: {
+                description: 'Strict profile',
+                depth: 3,
+                review_policy: {
+                    code: true,
+                    db: 'auto',
+                    security: true,
+                    refactor: 'auto',
+                    api: 'auto',
+                    test: true,
+                    performance: true,
+                    infra: 'auto',
+                    dependency: 'auto'
+                },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: false,
+                    strip_code_blocks: false,
+                    scoped_diffs: true,
+                    compact_reviewer_output: false
+                },
+                skills: { auto_suggest: true }
+            },
+            'docs-only': {
+                description: 'Docs profile',
+                depth: 1,
+                review_policy: {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: false,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: false }
+            }
+        },
+        user_profiles: {}
+    };
+}
+
+export function writeLocalUiProfilesFixture(repoRoot: string): void {
+    const liveConfigDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    const templateConfigDir = path.join(repoRoot, 'garda-agent-orchestrator', 'template', 'config');
+    const fixture = buildLocalUiProfilesFixture();
+    fs.mkdirSync(liveConfigDir, { recursive: true });
+    fs.mkdirSync(templateConfigDir, { recursive: true });
+    fs.writeFileSync(path.join(liveConfigDir, 'profiles.json'), JSON.stringify(fixture, null, 2), 'utf8');
+    fs.writeFileSync(path.join(templateConfigDir, 'profiles.json'), JSON.stringify(fixture, null, 2), 'utf8');
 }
 
 export function writeLocalUiTaskQueue(repoRoot: string, taskId: string, title: string): void {

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import * as vm from 'node:vm';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../src/core/constants';
 import { UI_DASHBOARD_CLIENT_CORE } from '../../../src/reports/ui/dashboard/dashboard-client-core';
+import { UI_DASHBOARD_CLIENT_PROFILES } from '../../../src/reports/ui/dashboard/dashboard-client-profiles';
 import { UI_DASHBOARD_CLIENT_QUALITY_GATE } from '../../../src/reports/ui/dashboard/dashboard-client-quality-gate';
 import { UI_DASHBOARD_CLIENT_SESSION_ACTIONS } from '../../../src/reports/ui/dashboard/dashboard-client-session-actions';
 import { UI_DASHBOARD_CLIENT_WORKFLOW } from '../../../src/reports/ui/dashboard/dashboard-client-workflow';
@@ -85,6 +86,44 @@ function renderQualityGateHtml(
 
     vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\n${UI_DASHBOARD_CLIENT_QUALITY_GATE}\nrenderQualityGate(null);`, context);
     return qualityGateNode.innerHTML;
+}
+
+function renderProfilesHtml(
+    profilesTab: Record<string, unknown>,
+    actionsEnabled: boolean,
+    initialLanguage = 'en'
+): string {
+    const profilesNode = {
+        innerHTML: '',
+        querySelectorAll: () => []
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => [],
+            getElementById: () => null
+        },
+        window: {
+            localStorage: null,
+            prompt: () => null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        fallbackLanguage: 'en',
+        initialLanguage,
+        profilesNode,
+        profilesStatusNode: { innerHTML: '' },
+        profilesConfigPathNode: { textContent: '' },
+        currentProfilesPayload: null,
+        actionToken: 'test-token',
+        fetch: async () => ({ json: async () => ({}) })
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\n${UI_DASHBOARD_CLIENT_PROFILES}\nrenderProfiles(${JSON.stringify({
+        enabled: actionsEnabled,
+        ...profilesTab
+    })});`, context);
+    return profilesNode.innerHTML;
 }
 
 test('local UI dashboard renders packaged style and client assets', () => {
@@ -750,4 +789,51 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
     assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-custom_focus-prompt')), false);
     assert.equal(htmlTagHasDisabled(htmlTagById(html, 'select', 'optional-rule-custom_focus-enabled')), false);
     assert.equal(htmlTagHasDisabled(htmlButtonByRuleAction(html, 'custom_focus', 'delete')), false);
+});
+
+test('profiles tab renders required auto disabled policy controls without trigger editors', () => {
+    const html = renderProfilesHtml({
+        status: 'present',
+        config_path: 'garda-agent-orchestrator/live/config/profiles.json',
+        active_profile: 'balanced',
+        unavailable: [],
+        review_types: [
+            { id: 'code', label: 'Code' },
+            { id: 'test', label: 'Test' },
+            { id: 'performance', label: 'Performance' }
+        ],
+        profiles: [
+            {
+                name: 'custom-review',
+                source: 'user',
+                protected: false,
+                active: false,
+                description: 'Custom profile',
+                depth: 2,
+                review_policy: {
+                    code: true,
+                    test: 'auto',
+                    performance: false
+                }
+            },
+            {
+                name: 'balanced',
+                source: 'built_in',
+                protected: true,
+                active: true,
+                description: 'Default profile',
+                depth: 2,
+                review_policy: {
+                    code: true,
+                    test: true,
+                    performance: 'auto'
+                }
+            }
+        ]
+    }, true);
+
+    assert.match(html, /id="profile-custom-review-review-code"[\s\S]*<option value="required" selected>[\s\S]*?<\/option>[\s\S]*<option value="auto">[\s\S]*?<\/option>[\s\S]*<option value="disabled">[\s\S]*?<\/option>/u);
+    assert.match(html, /id="profile-custom-review-review-test"[\s\S]*<option value="required">[\s\S]*?<\/option>[\s\S]*<option value="auto" selected>[\s\S]*?<\/option>[\s\S]*<option value="disabled">[\s\S]*?<\/option>/u);
+    assert.match(html, /id="profile-custom-review-review-performance"[\s\S]*<option value="required">[\s\S]*?<\/option>[\s\S]*<option value="auto">[\s\S]*?<\/option>[\s\S]*<option value="disabled" selected>[\s\S]*?<\/option>/u);
+    assert.doesNotMatch(html, /data-profile-trigger|profileTrigger|review_trigger/u);
 });

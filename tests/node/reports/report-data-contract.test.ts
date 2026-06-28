@@ -102,20 +102,51 @@ function writePathsConfig(repoRoot: string): void {
 
 function writeProfilesConfig(repoRoot: string): void {
     const profilesPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json');
+    const templateProfilesPath = path.join(repoRoot, 'garda-agent-orchestrator', 'template', 'config', 'profiles.json');
     fs.mkdirSync(path.dirname(profilesPath), { recursive: true });
-    fs.writeFileSync(profilesPath, JSON.stringify({
+    fs.mkdirSync(path.dirname(templateProfilesPath), { recursive: true });
+    const balancedProfile = {
+        description: 'Default profile',
+        depth: 2,
+        review_policy: {
+            code: true,
+            db: 'auto',
+            security: 'auto',
+            refactor: 'auto',
+            api: 'auto',
+            test: true,
+            performance: 'auto',
+            infra: 'auto',
+            dependency: 'auto'
+        },
+        token_economy: {
+            enabled: true,
+            strip_examples: true,
+            strip_code_blocks: true,
+            scoped_diffs: true,
+            compact_reviewer_output: true
+        },
+        skills: { auto_suggest: true }
+    };
+    const profiles = {
         version: 1,
         active_profile: 'balanced',
         built_in_profiles: {
-            balanced: {},
-            fast: {},
-            strict: {},
-            'docs-only': {}
+            balanced: balancedProfile
         },
         user_profiles: {
-            'custom-review': {}
+            'custom-review': {
+                ...balancedProfile,
+                description: 'Custom review profile',
+                review_policy: {
+                    ...balancedProfile.review_policy,
+                    security: true
+                }
+            }
         }
-    }, null, 2));
+    };
+    fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2));
+    fs.writeFileSync(templateProfilesPath, JSON.stringify(profiles, null, 2));
 }
 
 function writePartialTaskTimeline(repoRoot: string, taskId: string): void {
@@ -1255,6 +1286,7 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     const repoRoot = makeTempRepo();
     writeTaskMd(repoRoot);
     writeWorkflowConfig(repoRoot);
+    writeProfilesConfig(repoRoot);
     writeInitAndProjectMemory(repoRoot);
 
     const report = buildReportDataContract({
@@ -1284,6 +1316,20 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.deepEqual(report.tasks_tab.rows.map((row) => row.task_id), ['T-100', 'T-101']);
     assert.equal(report.tasks_tab.rows[0].detail.detail_status, 'skipped');
     assert.equal(report.workflow_config_tab.status, 'present');
+    assert.equal(report.profiles_tab.status, 'present');
+    assert.equal(report.profiles_tab.active_profile, 'balanced');
+    assert.ok(report.profiles_tab.review_types.some((reviewType) => reviewType.id === 'test'));
+    assert.ok(report.profiles_tab.profiles.some((profile) => (
+        profile.name === 'balanced'
+        && profile.source === 'built_in'
+        && profile.protected
+        && profile.review_policy.code === true
+    )));
+    assert.ok(report.profiles_tab.profiles.some((profile) => (
+        profile.name === 'custom-review'
+        && profile.source === 'user'
+        && !profile.protected
+    )));
     assert.equal(report.quality_gate_tab.status, 'present');
     assert.equal(report.quality_gate_tab.enabled, true);
     assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'missing');
@@ -1550,6 +1596,20 @@ test('buildReportSnapshotFingerprint changes when workflow config audit log chan
         before_sha256: 'before',
         after_sha256: 'after'
     })}\n`, 'utf8');
+    const after = buildReportSnapshotFingerprint(repoRoot);
+    assert.notEqual(before, after);
+});
+
+test('buildReportSnapshotFingerprint changes when profiles config changes', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeProfilesConfig(repoRoot);
+    const before = buildReportSnapshotFingerprint(repoRoot);
+    const profilesPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json');
+    const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as { active_profile: string };
+    profiles.active_profile = 'custom-review';
+    fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2));
     const after = buildReportSnapshotFingerprint(repoRoot);
     assert.notEqual(before, after);
 });

@@ -4,6 +4,7 @@ import { buildBackupsTab } from './backups-tab';
 import { buildInitSettingsTab } from './init-settings-tab';
 import { buildInstructionEntries } from './instructions-tab';
 import { buildProjectMemoryTab } from './project-memory-tab';
+import { buildProfilesTab } from './profiles-tab';
 import { buildQualityGateTab } from './quality-gate-tab';
 import { readCanonicalActiveQueueRows } from './task-queue';
 import { buildSystemStateReport } from './system-state';
@@ -43,12 +44,14 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
         eventsRoot,
         workflowConfigTab
     });
+    const profilesTab = buildProfilesTab(repoRoot);
     const initSettingsTab = buildInitSettingsTab(repoRoot);
     const projectMemoryTab = buildProjectMemoryTab(repoRoot, workflowConfigTab);
     const backupsTab = buildBackupsTab(repoRoot);
     const unavailable = [
         ...queue.unavailable,
         ...workflowConfigTab.unavailable,
+        ...profilesTab.unavailable,
         ...initSettingsTab.unavailable,
         ...projectMemoryTab.unavailable,
         ...backupsTab.unavailable,
@@ -74,6 +77,7 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
         },
         workflow_config_tab: workflowConfigTab,
         quality_gate_tab: qualityGateTab,
+        profiles_tab: profilesTab,
         init_settings_tab: initSettingsTab,
         project_memory_tab: projectMemoryTab,
         backups_tab: backupsTab,

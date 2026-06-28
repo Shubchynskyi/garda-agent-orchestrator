@@ -52,6 +52,9 @@ refreshActionsPayload().catch(error => {
 refreshSettingsPayload().catch(error => {
   settingsEditorNode.innerHTML = '<p class="error">' + safe(error && error.message ? error.message : error) + '</p>';
 });
+refreshProfilesPayload().catch(error => {
+  profilesNode.innerHTML = '<p class="error">' + safe(error && error.message ? error.message : error) + '</p>';
+});
 refreshBackupsSettingsEditor().catch(() => undefined);
 refreshCleanupSettingsPayload().catch(error => {
   cleanupSettingsNode.innerHTML = '<p class="error">' + safe(error && error.message ? error.message : error) + '</p>';

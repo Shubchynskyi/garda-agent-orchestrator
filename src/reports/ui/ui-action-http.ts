@@ -10,6 +10,10 @@ import {
     formatPublicAction
 } from './actions/registry';
 import {
+    buildUiProfilesPayload,
+    handleUiProfileRequest
+} from './actions/profile-actions';
+import {
     handleUiCleanupRunRequest,
     handleUiCleanupSettingsRequest,
     handleUiCleanupTaskPurgeRequest
@@ -54,6 +58,10 @@ export function buildUiCleanupPayload(repoRoot: string, actionsEnabled: boolean)
     return buildUiCleanupSettingsPayload(repoRoot, actionsEnabled);
 }
 
+export function buildUiProfilePayload(repoRoot: string, actionsEnabled: boolean): Record<string, unknown> {
+    return buildUiProfilesPayload(repoRoot, actionsEnabled);
+}
+
 export async function handleUiActionRequest(
     request: http.IncomingMessage,
     response: http.ServerResponse,
@@ -80,6 +88,15 @@ export async function handleUiSettingRequest(
     options: LocalUiServerRuntimeOptions
 ): Promise<void> {
     return handleUiWorkflowSettingRequest(request, response, repoRoot, options);
+}
+
+export async function handleUiProfilesPostRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    repoRoot: string,
+    options: LocalUiServerRuntimeOptions
+): Promise<void> {
+    return handleUiProfileRequest(request, response, repoRoot, options);
 }
 
 export async function handleUiCleanupSettingsPostRequest(
