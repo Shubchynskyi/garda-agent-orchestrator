@@ -221,6 +221,44 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('build-review-context'));
     });
 
+    it('routes zero-diff dependency lockfile split children to audited no-op before review context preparation', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": {} }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'package-lock.json'), '{ "lockfileVersion": 3 }\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+        const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        taskMode.planned_changed_files = ['package-lock.json'];
+        writeJson(taskModePath, taskMode);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'empty';
+        preflight.zero_diff_guard = {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true
+        };
+        preflight.profile_guardrails = {
+            zero_diff_no_reviewable_scope: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-no-op');
+        assert.ok(result.reason.includes('audited no-op evidence'));
+        assert.ok(result.commands[0].command.includes('gate record-no-op'));
+        assert.ok(result.commands[0].command.includes('--classification "AUDIT_ONLY"'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
+    });
+
     it('continues to required reviews check after current zero-diff no-op evidence exists', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);

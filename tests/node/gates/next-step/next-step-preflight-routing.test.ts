@@ -424,6 +424,75 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(!command.includes('<task summary>'));
     });
 
+    it('adds changed dependency lockfile siblings to planned manifest classify-change commands', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": {} }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'package-lock.json'), '{ "lockfileVersion": 3 }\n', 'utf8');
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Update dependency manifest',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['package.json']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": { "left-pad": "1.3.0" } }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'package-lock.json'), '{ "lockfileVersion": 3, "packages": {} }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'sibling-drift.ts'), 'export const siblingDrift = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "package.json"'));
+        assert.ok(command.includes('--changed-file "package-lock.json"'));
+        assert.ok(!command.includes('src/sibling-drift.ts'));
+    });
+
+    it('adds changed dependency manifest siblings to planned lockfile classify-change commands', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": {} }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'package-lock.json'), '{ "lockfileVersion": 3 }\n', 'utf8');
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Close lockfile split child after manifest remediation',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['package-lock.json']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": { "left-pad": "1.3.0" } }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "package-lock.json"'));
+        assert.ok(command.includes('--changed-file "package.json"'));
+        assert.ok(!command.includes('CHANGELOG.md'));
+    });
+
     it('blocks planned-scope preflight until the planned files have a materialized diff', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
@@ -510,6 +579,73 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(command.includes('--changed-file "src/app.ts"'));
         assert.ok(!command.includes('CHANGELOG.md'));
         assert.ok(!command.includes('<path>'));
+    });
+
+    it('refreshes planned dependency manifest scope with changed lockfile siblings', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": {} }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'package-lock.json'), '{ "lockfileVersion": 3 }\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh package manifest and lockfile',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['package.json']
+        }));
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['package.json'] });
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": { "left-pad": "1.3.0" } }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'package-lock.json'), '{ "lockfileVersion": 3, "packages": {} }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.reason, /missing from preflight: \[package-lock\.json\]/);
+        assert.ok(command.includes('--changed-file "package.json"'));
+        assert.ok(command.includes('--changed-file "package-lock.json"'));
+        assert.ok(!command.includes('CHANGELOG.md'));
+    });
+
+    it('refreshes planned dependency lockfile scope with changed manifest siblings', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": {} }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'package-lock.json'), '{ "lockfileVersion": 3 }\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh lockfile split child after manifest remediation',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['package-lock.json']
+        }));
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['package-lock.json'] });
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": { "left-pad": "1.3.0" } }\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.reason, /missing from preflight: \[package\.json\]/);
+        assert.ok(command.includes('--changed-file "package-lock.json"'));
+        assert.ok(command.includes('--changed-file "package.json"'));
+        assert.ok(!command.includes('CHANGELOG.md'));
     });
 
     it('includes related test changes when refreshing planned source scope', () => {

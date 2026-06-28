@@ -27,6 +27,9 @@ import {
 import {
     resolveBundleRootForTarget
 } from '../../core/constants';
+import {
+    expandDependencyManifestLockfileScope
+} from '../scope/dependency-manifest-lockfile-scope';
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -156,9 +159,10 @@ function expandDirectoryPlaceholdersForCommand(repoRoot: string, scopeFiles: str
             return !isPlainDirectoryPlaceholder(repoRoot, entry);
         });
     }
+    const atomicScopeFiles = expandDependencyManifestLockfileScope(normalizedScopeFiles, currentChangedFiles);
 
     const expanded = new Set<string>();
-    for (const scopeFile of normalizedScopeFiles) {
+    for (const scopeFile of atomicScopeFiles) {
         if (currentChangedFiles.includes(scopeFile)) {
             expanded.add(scopeFile);
         }

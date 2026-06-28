@@ -33,6 +33,9 @@ import {
     mergeTaskOwnedMetadataRefreshFiles
 } from './next-step-task-owned-metadata';
 import {
+    isDependencyManifestLockfileRelatedToAny
+} from '../scope/dependency-manifest-lockfile-scope';
+import {
     buildCompileEvidenceDocsOnlyExtensionReadiness,
     buildDocsOnlyDeltaReadiness,
     describePathList,
@@ -123,6 +126,9 @@ function buildCurrentDomainScopeFingerprints(params: {
 }
 
 function isRelatedToPlannedScope(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
+    if (isDependencyManifestLockfileRelatedToAny(changedFile, plannedChangedFiles)) {
+        return true;
+    }
     const normalizedChangedFile = normalizePath(changedFile);
     const [changedTopLevel] = normalizedChangedFile.split('/');
     if (!changedTopLevel || normalizedChangedFile === changedTopLevel) {
