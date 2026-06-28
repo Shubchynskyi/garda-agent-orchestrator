@@ -66,6 +66,54 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
     }
 
+    function prepareProtectedCoherentRestartFixture(taskId: string): {
+        repoRoot: string;
+        taskId: string;
+        preflightPath: string;
+        commandsPath: string;
+        outputFiltersPath: string;
+    } {
+        const repoRoot = createTempRepo();
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        writeProtectedControlPlaneManifest(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            `${taskId}-protected-restart`
+        );
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart a protected coherent cycle after recovery routing',
+            orchestratorWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString()
+        });
+        assert.equal(taskModeResult.exitCode, 0, taskModeResult.outputLines.join('\n'));
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts']
+        });
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        return {
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        };
+    }
+
     async function prepareApprovedWorkflowConfigRestartFixture(options: {
         taskId: string;
         workflowConfigPath: string;
@@ -370,6 +418,49 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.equal(refreshedTaskModeArtifact.orchestrator_work, true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects protected coherent-cycle restart without operator confirmation', async () => {
+        const fixture = prepareProtectedCoherentRestartFixture('T-903a-restart-coherent-cycle-missing-approval');
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot: fixture.repoRoot,
+            taskId: fixture.taskId,
+            preflightPath: fixture.preflightPath,
+            commandsPath: fixture.commandsPath,
+            outputFiltersPath: fixture.outputFiltersPath,
+            emitMetrics: false
+        });
+        const output = restartResult.outputLines.join('\n');
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE, output);
+        assert.match(output, /COHERENT_CYCLE_RESTART_FAILED/);
+        assert.match(output, /enter-task-mode --orchestrator-work requires explicit operator confirmation/);
+        assert.match(output, /--operator-confirmed yes/);
+        assert.match(output, /--operator-confirmed-at-utc "<ISO-8601 timestamp>"/);
+
+        fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects protected coherent-cycle restart with stale operator confirmation', async () => {
+        const fixture = prepareProtectedCoherentRestartFixture('T-903a-restart-coherent-cycle-stale-approval');
+        const staleConfirmation = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot: fixture.repoRoot,
+            taskId: fixture.taskId,
+            preflightPath: fixture.preflightPath,
+            commandsPath: fixture.commandsPath,
+            outputFiltersPath: fixture.outputFiltersPath,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: staleConfirmation,
+            emitMetrics: false
+        });
+        const output = restartResult.outputLines.join('\n');
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE, output);
+        assert.match(output, /COHERENT_CYCLE_RESTART_FAILED/);
+        assert.match(output, /enter-task-mode --orchestrator-work operator confirmation is stale/);
+
+        fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
     });
 
     it('restarts a coherent cycle for same-task workflow-config work without laundering the baseline hash', async () => {
