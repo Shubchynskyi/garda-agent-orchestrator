@@ -64,6 +64,35 @@ const MOVED_PROJECT_LOCAL_RULE_IDS = Object.freeze([
     'gate_routing_self_regression'
 ]);
 
+const CUSTOM_GARDA_RULE_IDS = Object.freeze([
+    'custom_garda_classifier_intent_edge_cases',
+    'custom_garda_config_materialization_parity',
+    'custom_garda_control_plane_action_safety',
+    'custom_garda_artifact_evidence_binding',
+    'custom_garda_gate_routing_self_regression'
+]);
+
+function buildTestQualityRule(id: string): ReturnType<typeof buildDefaultWorkflowConfig>['optional_quality_checks']['rules'][number] {
+    return {
+        id,
+        title: `Rule ${id}`,
+        prompt: `Check ${id}.`,
+        enabled: true
+    };
+}
+
+function writeStaleMovedRuleWorkflowConfig(fixture: ReturnType<typeof createGateFixture>): void {
+    const configPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+    const config = buildDefaultWorkflowConfig();
+    config.optional_quality_checks.baseline_version = '2026-06-26.t843';
+    config.optional_quality_checks.rules = [
+        ...config.optional_quality_checks.rules,
+        ...MOVED_PROJECT_LOCAL_RULE_IDS.map(buildTestQualityRule),
+        ...CUSTOM_GARDA_RULE_IDS.map(buildTestQualityRule)
+    ];
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
 function buildPassAnswers(): Array<Record<string, unknown>> {
     return DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({
         rule_id: rule.id,
@@ -430,6 +459,51 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.status, 'CONFIG_ERROR');
             assert.equal(artifact.outcome, 'FAIL');
             assert.ok(artifact.violations.some((violation) => violation.includes('Missing answer')));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('explains stale materialized rule-set mismatch before unknown moved-rule answers', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-stale-moved-rules' });
+        try {
+            writeStaleMovedRuleWorkflowConfig(fixture);
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answers = [
+                ...buildPassAnswers(),
+                ...MOVED_PROJECT_LOCAL_RULE_IDS.map((ruleId) => ({
+                    rule_id: ruleId,
+                    status: 'PASS',
+                    answer: `Answered moved rule ${ruleId}.`
+                }))
+            ];
+
+            const result = runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersJson: JSON.stringify(answers),
+                emitMetrics: false
+            });
+
+            assert.notEqual(result.exitCode, 0);
+            assert.ok(result.outputLines.includes('QUALITY_CHECKLIST_CONFIG_ERROR'));
+            const artifactPathLine = result.outputLines.find((line) => line.startsWith('QualityChecklistArtifactPath: '));
+            assert.ok(artifactPathLine);
+            const artifact = JSON.parse(fs.readFileSync(artifactPathLine.replace('QualityChecklistArtifactPath: ', ''), 'utf8'));
+            const diagnostic = String(artifact.violations[0] || '');
+
+            assert.equal(artifact.status, 'CONFIG_ERROR');
+            assert.match(diagnostic, /baseline_version '2026-06-26\.t843' differs from shipped '2026-06-27\.t846'/u);
+            assert.match(diagnostic, /classifier_intent_edge_cases/u);
+            assert.match(diagnostic, /custom_garda_classifier_intent_edge_cases/u);
+            assert.match(diagnostic, /Canonical enabled quality-check rule ids/u);
+            assert.match(diagnostic, /deprecated or moved ids are not accepted/u);
+            assert.equal(artifact.rules.some((rule: { id: string }) => rule.id === 'classifier_intent_edge_cases'), false);
+            assert.equal(artifact.rules.some((rule: { id: string }) => rule.id === 'custom_garda_classifier_intent_edge_cases'), true);
+            assert.ok(artifact.violations.some((violation: string) => (
+                violation.includes("Answer references unknown or disabled quality-check rule 'classifier_intent_edge_cases'")
+            )));
         } finally {
             fixture.cleanup();
         }

@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+    formatOptionalQualityChecksRuleSetDiagnostics,
     getWorkflowConfigPath,
     normalizeOptionalQualityChecksConfig,
     type OptionalQualityCheckRule
@@ -286,6 +287,7 @@ function readChecklistRules(repoRoot: string): {
     rules: QualityChecklistRuleArtifact[];
     enabled: boolean;
     violation: string | null;
+    ruleSetDiagnostic: string | null;
 } {
     const workflowConfigPath = getWorkflowConfigPath(joinOrchestratorPath(repoRoot, ''));
     if (!fs.existsSync(workflowConfigPath) || !fs.statSync(workflowConfigPath).isFile()) {
@@ -294,7 +296,8 @@ function readChecklistRules(repoRoot: string): {
             workflowConfigSha256: null,
             rules: [],
             enabled: false,
-            violation: `Workflow config not found: ${normalizePath(workflowConfigPath)}.`
+            violation: `Workflow config not found: ${normalizePath(workflowConfigPath)}.`,
+            ruleSetDiagnostic: null
         };
     }
     const workflowConfig = readJsonRecord(workflowConfigPath);
@@ -304,7 +307,8 @@ function readChecklistRules(repoRoot: string): {
             workflowConfigSha256: fileSha256(workflowConfigPath),
             rules: [],
             enabled: false,
-            violation: `Workflow config is not valid JSON object: ${normalizePath(workflowConfigPath)}.`
+            violation: `Workflow config is not valid JSON object: ${normalizePath(workflowConfigPath)}.`,
+            ruleSetDiagnostic: null
         };
     }
     const configuredDuplicateRuleIds = findConfiguredDuplicateRuleIds(workflowConfig.optional_quality_checks);
@@ -321,7 +325,8 @@ function readChecklistRules(repoRoot: string): {
         enabled: optionalQualityChecks.enabled,
         violation: duplicateRuleIds.length > 0
             ? `Workflow config has duplicate quality-check rule id(s): ${duplicateRuleIds.map((id) => `'${id}'`).join(', ')}.`
-            : null
+            : null,
+        ruleSetDiagnostic: formatOptionalQualityChecksRuleSetDiagnostics(workflowConfig.optional_quality_checks)
     };
 }
 
@@ -407,6 +412,9 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
     ].filter(Boolean);
     if ((status === 'PASS' || status === 'WARN') && actionsRequired.length > 0) {
         status = 'ACTION_REQUIRED';
+    }
+    if (status === 'CONFIG_ERROR' && config.ruleSetDiagnostic) {
+        violations.unshift(config.ruleSetDiagnostic);
     }
 
     return {

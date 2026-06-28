@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+    formatOptionalQualityChecksRuleSetDiagnostics,
     normalizeOptionalQualityChecksConfig
 } from '../../core/workflow-config';
 import {
@@ -169,6 +170,8 @@ export function readQualityChecklistReadiness(options: {
     workflowConfig: Record<string, unknown> | null;
 }): NextStepQualityChecklistReadiness {
     const hasOptionalQualityChecksConfig = options.workflowConfig?.optional_quality_checks !== undefined;
+    const ruleSetDiagnostic = formatOptionalQualityChecksRuleSetDiagnostics(options.workflowConfig?.optional_quality_checks);
+    const ruleSetDiagnosticSuffix = ruleSetDiagnostic ? ` ${ruleSetDiagnostic}` : '';
     const optionalQualityChecks = normalizeOptionalQualityChecksConfig(options.workflowConfig?.optional_quality_checks);
     const required = preflightHasChangedFiles(options.preflight);
     const changedFilesCount = preflightChangedFilesCount(options.preflight);
@@ -206,7 +209,7 @@ export function readQualityChecklistReadiness(options: {
             ready: false,
             evidenceStatus: 'missing',
             effect: 'missing',
-            reason: 'Optional quality checks are enabled and the current changed-file preflight has no quality checklist evidence yet.',
+            reason: 'Optional quality checks are enabled and the current changed-file preflight has no quality checklist evidence yet.' + ruleSetDiagnosticSuffix,
             artifactPath,
             changedFilesCount
         });
@@ -324,6 +327,9 @@ export function readQualityChecklistReadiness(options: {
                     : countArray(artifact.actions_taken) > 0
                         ? 'helped'
                     : 'passed';
+    const configErrorDetails = status === 'CONFIG_ERROR'
+        ? formatQualityChecklistActions(artifact.violations)
+        : null;
     return buildQualityChecklistReadiness({
         enabled,
         required,
@@ -333,7 +339,8 @@ export function readQualityChecklistReadiness(options: {
         effect,
         reason:
             `Quality checklist evidence is current with status ${formatNextStepInlineValue(status)} at ` +
-            `${formatNextStepInlineValue(toRepoDisplayPath(options.repoRoot, artifactPath))}.`,
+            `${formatNextStepInlineValue(toRepoDisplayPath(options.repoRoot, artifactPath))}.` +
+            (configErrorDetails ? ` Violations: ${configErrorDetails}.` : ''),
         artifactPath,
         artifact,
         changedFilesCount

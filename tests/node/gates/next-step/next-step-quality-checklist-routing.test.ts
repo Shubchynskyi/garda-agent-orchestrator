@@ -33,8 +33,33 @@ const T839_DERIVED_QUALITY_ACTIONS = Object.freeze([
     'Require current audited no-op evidence before full-suite, review-context, or reviewer-launch routing.'
 ]);
 
+const MOVED_PROJECT_LOCAL_RULE_IDS = Object.freeze([
+    'classifier_intent_edge_cases',
+    'config_materialization_parity',
+    'control_plane_action_safety',
+    'artifact_evidence_binding',
+    'gate_routing_self_regression'
+]);
+
+const CUSTOM_GARDA_RULE_IDS = Object.freeze([
+    'custom_garda_classifier_intent_edge_cases',
+    'custom_garda_config_materialization_parity',
+    'custom_garda_control_plane_action_safety',
+    'custom_garda_artifact_evidence_binding',
+    'custom_garda_gate_routing_self_regression'
+]);
+
 function workflowConfigPath(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+}
+
+function buildTestQualityRule(id: string): ReturnType<typeof buildDefaultWorkflowConfig>['optional_quality_checks']['rules'][number] {
+    return {
+        id,
+        title: `Rule ${id}`,
+        prompt: `Check ${id}.`,
+        enabled: true
+    };
 }
 
 function writeWorkflowConfig(repoRoot: string, options: {
@@ -49,6 +74,22 @@ function writeWorkflowConfig(repoRoot: string, options: {
     if (options.fullSuitePlacement) {
         config.full_suite_validation.placement = options.fullSuitePlacement;
     }
+    config.review_execution_policy = { mode: 'parallel_all' };
+    config.project_memory_maintenance.enabled = false;
+    config.project_memory_maintenance.mode = 'check';
+    writeJson(workflowConfigPath(repoRoot), config);
+}
+
+function writeStaleMovedRuleWorkflowConfig(repoRoot: string): void {
+    const config = buildDefaultWorkflowConfig();
+    config.optional_quality_checks.enabled = true;
+    config.optional_quality_checks.baseline_version = '2026-06-26.t843';
+    config.optional_quality_checks.rules = [
+        ...config.optional_quality_checks.rules,
+        ...MOVED_PROJECT_LOCAL_RULE_IDS.map(buildTestQualityRule),
+        ...CUSTOM_GARDA_RULE_IDS.map(buildTestQualityRule)
+    ];
+    config.full_suite_validation.enabled = false;
     config.review_execution_policy = { mode: 'parallel_all' };
     config.project_memory_maintenance.enabled = false;
     config.project_memory_maintenance.mode = 'check';
@@ -123,6 +164,23 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.commands[0].label, 'Run quality checklist');
         assert.ok(result.commands[0].command.includes('gate quality-checklist'));
         assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+    });
+
+    it('includes canonical rule ids when stale moved rule config needs checklist answers', () => {
+        const repoRoot = makeTempRepo();
+        writeStaleMovedRuleWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.match(result.reason, /baseline_version '2026-06-26\.t843' differs from shipped '2026-06-27\.t846'/u);
+        assert.match(result.reason, /classifier_intent_edge_cases/u);
+        assert.match(result.reason, /custom_garda_classifier_intent_edge_cases/u);
+        assert.match(result.reason, /Canonical enabled quality-check rule ids/u);
+        assert.match(result.reason, /deprecated or moved ids are not accepted/u);
+        assert.ok(result.commands[0].command.includes('gate quality-checklist'));
     });
 
     it('routes missing quality checklist before after-compile full-suite recovery', () => {

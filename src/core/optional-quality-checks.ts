@@ -19,6 +19,18 @@ export interface OptionalQualityChecksMergeOptions {
     preserveMovedProjectRulesAsCustom?: boolean;
 }
 
+export interface OptionalQualityChecksRuleSetDiagnostics {
+    hasMismatch: boolean;
+    staleBaselineVersion: boolean;
+    installedBaselineVersion: string;
+    shippedBaselineVersion: string;
+    rawEnabledRuleIds: string[];
+    canonicalEnabledRuleIds: string[];
+    droppedEnabledRuleIds: string[];
+    movedEnabledRuleIds: string[];
+    suggestedCustomRuleIds: string[];
+}
+
 export const OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE = 'режим опциональных проверок включен, проверь в garda ui перед стартом';
 export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-06-27.t846';
 
@@ -213,6 +225,34 @@ function normalizeOptionalQualityCheckRules(input: unknown): OptionalQualityChec
         .filter((rule): rule is OptionalQualityCheckRule => rule !== null);
 }
 
+function normalizeRawEnabledRuleIds(input: unknown): string[] {
+    if (!isPlainObject(input) || !Array.isArray(input.rules)) {
+        return [];
+    }
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const rule of input.rules) {
+        if (!isPlainObject(rule) || rule.enabled === false) {
+            continue;
+        }
+        const id = typeof rule.id === 'string' ? rule.id.trim().toLowerCase() : '';
+        if (!id || seen.has(id)) {
+            continue;
+        }
+        seen.add(id);
+        result.push(id);
+    }
+    return result;
+}
+
+function formatRuleIdList(ruleIds: readonly string[], maxItems = 20): string {
+    const preview = ruleIds.slice(0, maxItems).join(', ');
+    const remainder = ruleIds.length > maxItems
+        ? `, +${ruleIds.length - maxItems} more`
+        : '';
+    return preview ? `${preview}${remainder}` : '<none>';
+}
+
 function mergeOptionalQualityCheckRulesWithBaseline(
     existingRules: readonly OptionalQualityCheckRule[],
     baselineRules: readonly OptionalQualityCheckRule[],
@@ -327,6 +367,73 @@ export function normalizeOptionalQualityChecksConfig(input: unknown): OptionalQu
             ? normalizedRules
             : cloneJsonValue(defaultConfig.rules)
     };
+}
+
+export function buildOptionalQualityChecksRuleSetDiagnostics(input: unknown): OptionalQualityChecksRuleSetDiagnostics {
+    const defaultConfig = buildDefaultOptionalQualityChecksConfig();
+    const rawBaselineVersion = isPlainObject(input)
+        ? getOptionalQualityChecksBaselineVersion(input)
+        : '';
+    const installedBaselineVersion = rawBaselineVersion || defaultConfig.baseline_version;
+    const normalized = normalizeOptionalQualityChecksConfig(input);
+    const rawEnabledRuleIds = normalizeRawEnabledRuleIds(input);
+    const canonicalEnabledRuleIds = normalized.rules
+        .filter((rule) => rule.enabled)
+        .map((rule) => rule.id);
+    const canonicalEnabledRuleIdSet = new Set(canonicalEnabledRuleIds);
+    const droppedEnabledRuleIds = rawEnabledRuleIds
+        .filter((ruleId) => !canonicalEnabledRuleIdSet.has(ruleId));
+    const movedEnabledRuleIds = droppedEnabledRuleIds
+        .filter((ruleId) => DEPRECATED_OPTIONAL_QUALITY_CHECK_BASELINE_RULE_IDS.has(ruleId));
+    const suggestedCustomRuleIds = [...new Set(movedEnabledRuleIds
+        .map((ruleId) => MOVED_GARDA_OPTIONAL_QUALITY_CHECK_CUSTOM_RULE_BY_OLD_ID.get(ruleId)?.id)
+        .filter((ruleId): ruleId is string => Boolean(ruleId)))];
+    const staleBaselineVersion = Boolean(rawBaselineVersion)
+        && rawBaselineVersion !== defaultConfig.baseline_version;
+
+    return {
+        hasMismatch: staleBaselineVersion
+            || droppedEnabledRuleIds.length > 0
+            || rawEnabledRuleIds.length !== canonicalEnabledRuleIds.length,
+        staleBaselineVersion,
+        installedBaselineVersion,
+        shippedBaselineVersion: defaultConfig.baseline_version,
+        rawEnabledRuleIds,
+        canonicalEnabledRuleIds,
+        droppedEnabledRuleIds,
+        movedEnabledRuleIds,
+        suggestedCustomRuleIds
+    };
+}
+
+export function formatOptionalQualityChecksRuleSetDiagnostics(input: unknown): string | null {
+    const diagnostics = buildOptionalQualityChecksRuleSetDiagnostics(input);
+    if (!diagnostics.hasMismatch) {
+        return null;
+    }
+    const parts: string[] = [];
+    if (diagnostics.staleBaselineVersion) {
+        parts.push(
+            `Quality-checklist workflow config baseline_version '${diagnostics.installedBaselineVersion}' differs from shipped '${diagnostics.shippedBaselineVersion}'.`
+        );
+    }
+    if (diagnostics.droppedEnabledRuleIds.length > 0) {
+        parts.push(
+            `Enabled rule ids that normalize away from the current rule set: ${formatRuleIdList(diagnostics.droppedEnabledRuleIds)}.`
+        );
+    }
+    if (diagnostics.suggestedCustomRuleIds.length > 0) {
+        parts.push(
+            `Use canonical custom rule ids instead of moved baseline ids: ${formatRuleIdList(diagnostics.suggestedCustomRuleIds)}.`
+        );
+    }
+    parts.push(
+        `Canonical enabled quality-check rule ids: ${formatRuleIdList(diagnostics.canonicalEnabledRuleIds)}.`
+    );
+    parts.push(
+        'Run Garda update/materialization to refresh live workflow-config, or answer using only the canonical enabled rule ids; deprecated or moved ids are not accepted as current answers.'
+    );
+    return parts.join(' ');
 }
 
 export function mergeOptionalQualityChecksWithBaseline(
