@@ -575,6 +575,31 @@ describe('cli/commands/gates — task-start', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('rejects orchestrator-work task mode with an invalid operator confirmation timestamp format', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-invalid-confirm-time';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+
+        assert.throws(
+            () => runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Reject invalid operator approval timestamp format for protected planned scope',
+                orchestratorWork: true,
+                operatorConfirmed: 'yes',
+                operatorConfirmedAtUtc: 'not-a-timestamp',
+                plannedChangedFiles: ['.github/agents/orchestrator.md']
+            }),
+            /--operator-confirmed-at-utc must be a valid ISO-8601 timestamp/
+        );
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('rejects orchestrator-work task mode without operator confirmation', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900planned-protected-operator-confirm';
