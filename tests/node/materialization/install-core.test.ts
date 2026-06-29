@@ -7,7 +7,8 @@ import { runInstall } from '../../../src/materialization/install';
 import {
     getLegacyUninstallBackupGitignoreEntry,
     UNINSTALL_BACKUP_GITIGNORE_COMMENT,
-    getUninstallBackupGitignoreEntry
+    getUninstallBackupGitignoreEntry,
+    buildCommitGuardManagedBlock
 } from '../../../src/materialization/content-builders';
 import {
     findRepoRoot,
@@ -19,6 +20,22 @@ import {
 
 describe('runInstall — core deploy and invariants', () => {
     const repoRoot = findRepoRoot();
+
+    function getLegacyBundleNameFixture(): string {
+        return ['ai', 'agent', 'orchestrator'].join('-');
+    }
+
+    function buildLegacyCommitGuardBlock(): string {
+        const legacyBundleName = getLegacyBundleNameFixture();
+        return [
+            `# ${legacyBundleName}:commit-guard-start`,
+            'if [ -n "${CODEX_HOME:-}" ]; then',
+            `  echo "  node ${legacyBundleName}/bin/garda.js gate human-commit --operator-confirmed yes --message \\"<message>\\""`,
+            '  exit 1',
+            'fi',
+            `# ${legacyBundleName}:commit-guard-end`
+        ].join('\n');
+    }
 
     it('deploys TASK.md and creates entrypoint files', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
@@ -593,6 +610,55 @@ describe('runInstall — core deploy and invariants', () => {
             );
             assert.ok(hookContent.includes('commit-guard'));
             assert.ok(hookContent.includes('GARDA_ALLOW_COMMIT'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('replaces legacy commit guard hook blocks instead of leaking stale helper paths', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const hookPath = path.join(projectRoot, '.git', 'hooks', 'pre-commit');
+            const legacyBundleName = getLegacyBundleNameFixture();
+            fs.mkdirSync(path.dirname(hookPath), { recursive: true });
+            fs.writeFileSync(
+                hookPath,
+                [
+                    '#!/usr/bin/env bash',
+                    '',
+                    buildLegacyCommitGuardBlock(),
+                    '',
+                    'echo "user hook remains"'
+                ].join('\n'),
+                'utf8'
+            );
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'true',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            const result = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            const hookContent = fs.readFileSync(hookPath, 'utf8');
+            const expectedGuard = buildCommitGuardManagedBlock();
+            assert.ok(result.preCommitHookUpdated);
+            assert.ok(hookContent.includes(expectedGuard));
+            assert.ok(hookContent.includes('echo "user hook remains"'));
+            assert.ok(!hookContent.includes(legacyBundleName));
+            assert.ok(!hookContent.includes(`${legacyBundleName}/bin/garda.js`));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

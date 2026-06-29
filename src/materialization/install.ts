@@ -82,6 +82,40 @@ function escapeRegex(text: string): string {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const LEGACY_COMMIT_GUARD_BUNDLE_NAMES = Object.freeze([
+    ['ai', 'agent', 'orchestrator'].join('-'),
+    ['agent', 'orchestrator'].join('-')
+]);
+
+function getCommitGuardManagedBlockPattern(global = false): RegExp {
+    const markerPairs = [
+        [COMMIT_GUARD_START, COMMIT_GUARD_END],
+        ...LEGACY_COMMIT_GUARD_BUNDLE_NAMES.map((bundleName) => [
+            `# ${bundleName}:commit-guard-start`,
+            `# ${bundleName}:commit-guard-end`
+        ])
+    ];
+    return new RegExp(
+        markerPairs
+            .map(([startMarker, endMarker]) => (
+                `${escapeRegex(startMarker)}[\\s\\S]*?${escapeRegex(endMarker)}`
+            ))
+            .join('|'),
+        global ? 'gm' : 'm'
+    );
+}
+
+function replaceCommitGuardManagedBlocks(content: string, managedBlock: string): string {
+    let inserted = false;
+    return content.replace(getCommitGuardManagedBlockPattern(true), function () {
+        if (inserted) {
+            return '';
+        }
+        inserted = true;
+        return managedBlock;
+    });
+}
+
 export function runInstall(options: RunInstallOptions) {
     const {
         targetRoot,
@@ -829,9 +863,7 @@ export function applyCommitGuardHook(
 
     const hookPath = path.join(targetRoot, '.git', 'hooks', 'pre-commit');
     const managedBlock = buildCommitGuardManagedBlock();
-    const pattern = new RegExp(
-        `${escapeRegex(COMMIT_GUARD_START)}[\\s\\S]*?${escapeRegex(COMMIT_GUARD_END)}`, 'm'
-    );
+    const pattern = getCommitGuardManagedBlockPattern();
 
     if (!pathExists(hookPath)) {
         if (!enabled) return false;
@@ -849,7 +881,7 @@ export function applyCommitGuardHook(
 
     if (enabled) {
         if (pattern.test(content)) {
-            updatedContent = content.replace(pattern, managedBlock);
+            updatedContent = replaceCommitGuardManagedBlocks(content, managedBlock);
         } else if (!content.trim()) {
             updatedContent = '#!/usr/bin/env bash\n\n' + managedBlock + '\n';
         } else {

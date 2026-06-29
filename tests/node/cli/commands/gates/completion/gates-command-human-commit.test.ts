@@ -10,6 +10,9 @@ import {
     getNodeHumanCommitCommand
 } from '../../../../../../src/materialization/command-constants';
 import {
+    buildCommitGuardManagedBlock
+} from '../../../../../../src/materialization/content-builders';
+import {
     runHumanCommitCommand} from '../../../../../../src/cli/commands/gates';
 import * as childProcess from 'node:child_process';
 
@@ -20,6 +23,25 @@ import {
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
+function getLegacyBundleNameFixture(): string {
+    return ['ai', 'agent', 'orchestrator'].join('-');
+}
+
+function writeCommitGuardHook(repoRoot: string): void {
+    const hookPath = path.join(repoRoot, '.git', 'hooks', 'pre-commit');
+    fs.mkdirSync(path.dirname(hookPath), { recursive: true });
+    fs.writeFileSync(hookPath, `#!/usr/bin/env bash\n\n${buildCommitGuardManagedBlock()}\n`, 'utf8');
+    fs.chmodSync(hookPath, 0o755);
+}
+
+function restoreProcessEnvValue(key: string, value: string | undefined): void {
+    if (typeof value === 'undefined') {
+        delete process.env[key];
+        return;
+    }
+    process.env[key] = value;
 }
 
 
@@ -107,12 +129,16 @@ describe('gates command human commit', () => {
 
     it('pins human-commit operator confirmation command surfaces', () => {
         const expectedCommand = 'human-commit --operator-confirmed yes --message';
+        const legacyBundleName = getLegacyBundleNameFixture();
+        const guardBlock = buildCommitGuardManagedBlock();
         const helpOutput = stripAnsi(buildGateHelpText('human-commit', path.resolve('.')));
         const cliReference = fs.readFileSync(path.resolve('docs/cli-reference.md'), 'utf8');
         const templateCommands = fs.readFileSync(path.resolve('template/docs/agent-rules/40-commands.md'), 'utf8');
         const liveCommandsPath = path.resolve('garda-agent-orchestrator/live/docs/agent-rules/40-commands.md');
 
         assert.ok(getNodeHumanCommitCommand().includes('human-commit --operator-confirmed yes --message "<message>"'));
+        assert.ok(guardBlock.includes('node garda-agent-orchestrator/bin/garda.js gate human-commit --operator-confirmed yes'));
+        assert.ok(!guardBlock.includes(legacyBundleName));
         assert.ok(helpOutput.includes('gate human-commit --operator-confirmed yes --message "<commit message>"'));
         assert.ok(cliReference.includes('garda gate human-commit --operator-confirmed yes --message "<message>"'));
         assert.ok(templateCommands.includes(`gate ${expectedCommand} "<message>"`));
@@ -121,6 +147,51 @@ describe('gates command human commit', () => {
             const liveCommands = fs.readFileSync(liveCommandsPath, 'utf8');
             assert.ok(liveCommands.includes(`gate ${expectedCommand} "<message>"`));
             assert.ok(liveCommands.includes('operator answers `Do you want me to commit now? (yes/no)` with yes'));
+        }
+    });
+
+    it('lets Codex human-commit bypass the installed commit guard while direct git commit stays blocked', async () => {
+        const repoRoot = createTempRepo();
+        const previousCodexHome = process.env.CODEX_HOME;
+        try {
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            writeCommitGuardHook(repoRoot);
+            runGit(repoRoot, ['add', '.']);
+
+            const blockedCommit = childProcess.spawnSync('git', ['commit', '-m', 'test: blocked codex commit'], {
+                cwd: repoRoot,
+                windowsHide: true,
+                encoding: 'utf8',
+                stdio: ['ignore', 'pipe', 'pipe'],
+                env: { ...process.env, CODEX_HOME: path.join(repoRoot, '.codex') }
+            });
+            const blockedOutput = `${blockedCommit.stdout || ''}\n${blockedCommit.stderr || ''}`;
+
+            assert.notEqual(blockedCommit.status, 0);
+            assert.match(blockedOutput, /Commit blocked: agent commit guard is enabled/);
+            assert.match(blockedOutput, /node garda-agent-orchestrator\/bin\/garda\.js gate human-commit --operator-confirmed yes/);
+            assert.ok(!blockedOutput.includes(getLegacyBundleNameFixture()));
+
+            process.env.CODEX_HOME = path.join(repoRoot, '.codex');
+            const exitCode = await runHumanCommitCommand([
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', new Date().toISOString(),
+                '--message', 'test: codex human commit'
+            ], { cwd: repoRoot });
+            const logResult = childProcess.spawnSync('git', ['log', '--oneline', '-1'], {
+                cwd: repoRoot,
+                windowsHide: true,
+                encoding: 'utf8',
+                stdio: ['ignore', 'pipe', 'ignore']
+            });
+
+            assert.equal(exitCode, 0);
+            assert.match(logResult.stdout, /test: codex human commit/);
+        } finally {
+            restoreProcessEnvValue('CODEX_HOME', previousCodexHome);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
         }
     });
 
