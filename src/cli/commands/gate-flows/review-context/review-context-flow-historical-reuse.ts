@@ -437,7 +437,7 @@ export async function tryReuseReviewEvidence(options: {
             reviewerIdentity: evidence.reviewerIdentity,
             reason: (
                 evidence.testOnlyDeltaContextMismatch
-                    ? `accepted: non-test review reused because ${testOnlyDeltaReuseEligibility.reason}; full-diff fallback context changed, but non-test code scope matches prior independent PASS review`
+                    ? `accepted: non-test review reused because ${testOnlyDeltaReuseEligibility.reason}; review context changed only by test delta, but non-test code scope matches prior independent PASS review`
                     : evidence.remediationPreservedScopeMismatch
                     ? `accepted: non-test review reused because ${evidence.remediationPreservedScopeMismatchReason}; classified remediation preserved this review type despite context/scope hash changes`
                     : evidence.contextHashMatches
