@@ -81,6 +81,35 @@ test('collectLargeModuleReport ranks source, test, and declaration size with tas
     }
 });
 
+test('collectLargeModuleReport avoids short stem false positives in task follow-up hints', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'large-module-report-'));
+    try {
+        writeFile(
+            path.join(tmpDir, 'TASK.md'),
+            [
+                '| ID | Status | Priority | Area | Title | Model | Date | Profile | Notes |',
+                '| T-729-1 | 🟦 TODO | P2 | workflow/review-catalog-schema | Introduce canonical review catalog definitions | gpt-5.5 | 2026-06-05 | strict | Keep new review types inactive by default. |',
+                '| T-900 | 🟦 TODO | P2 | materialization/init-split | Split materialization init facade | gpt-5.5 | 2026-06-05 | strict | Follow-up for `src/materialization/init.ts`. |'
+            ].join('\n') + '\n'
+        );
+        writeFile(path.join(tmpDir, 'src', 'materialization', 'init.ts'), makeLines(9, 'init line'));
+
+        const report = collectLargeModuleReport(tmpDir, { fileLimit: 5, declarationLimit: 5 });
+        const initEntry = report.top_source_files.find((entry) =>
+            entry.relative_path === 'src/materialization/init.ts'
+        );
+
+        assert.deepEqual(initEntry?.owner_tasks, [{
+            task_id: 'T-900',
+            status: '🟦 TODO',
+            title: 'Split materialization init facade'
+        }]);
+        assert.equal(initEntry?.todo_follow_up_exists, true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('collectLargeModuleReport marks over-budget next-step modules with diagnostic exception reason', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'large-module-report-'));
     try {
@@ -88,7 +117,8 @@ test('collectLargeModuleReport marks over-budget next-step modules with diagnost
             path.join(tmpDir, 'TASK.md'),
             [
                 '| ID | Status | Priority | Area | Title | Model | Date | Profile | Notes |',
-                '| T-725-4 | 🟦 TODO | P3 | workflow/next-step-review-artifact-reader-split | Split review artifact reader | gpt-5.5 | 2026-06-05 | balanced | Follow-up for `src/gates/next-step/next-step-review-artifact-readers.ts`. |'
+                '| T-725-4 | 🟦 TODO | P3 | workflow/next-step-review-artifact-reader-split | Split review artifact reader | gpt-5.5 | 2026-06-05 | balanced | Follow-up for `src/gates/next-step/next-step-review-artifact-readers.ts`. |',
+                '| T-800 | 🟦 TODO | P3 | workflow/next-step-owned-helper-split | Split owned next-step helper | gpt-5.5 | 2026-06-05 | balanced | Follow-up for `src/gates/next-step/next-step-owned-helper.ts`. |'
             ].join('\n') + '\n'
         );
         writeFile(
@@ -107,6 +137,10 @@ test('collectLargeModuleReport marks over-budget next-step modules with diagnost
             path.join(tmpDir, 'src', 'gates', 'next-step', 'next-step-broad-helper.ts'),
             makeLines(701, 'helper line')
         );
+        writeFile(
+            path.join(tmpDir, 'src', 'gates', 'next-step', 'next-step-owned-helper.ts'),
+            makeLines(701, 'owned helper line')
+        );
 
         const report = collectLargeModuleReport(tmpDir, { fileLimit: 5, declarationLimit: 5 });
         const modules = new Map(
@@ -115,7 +149,7 @@ test('collectLargeModuleReport marks over-budget next-step modules with diagnost
         const expectedReason = 'Report-only budget exception: keep a concrete decomposition follow-up before raising this diagnostic threshold.';
 
         assert.equal(report.next_step_module_budget.status, 'OVER_BUDGET');
-        assert.equal(report.next_step_module_budget.over_budget_count, 4);
+        assert.equal(report.next_step_module_budget.over_budget_count, 5);
         assert.equal(modules.get('src/gates/next-step/next-step.ts')?.line_budget, 4500);
         assert.equal(modules.get('src/gates/next-step/next-step.ts')?.budget_status, 'OVER_BUDGET');
         assert.equal(modules.get('src/gates/next-step/next-step.ts')?.exception_reason, expectedReason);
@@ -142,6 +176,16 @@ test('collectLargeModuleReport marks over-budget next-step modules with diagnost
         assert.equal(modules.get('src/gates/next-step/next-step-broad-helper.ts')?.budget_status, 'OVER_BUDGET');
         assert.equal(modules.get('src/gates/next-step/next-step-broad-helper.ts')?.exception_reason, expectedReason);
         assert.equal(modules.get('src/gates/next-step/next-step-broad-helper.ts')?.todo_follow_up_exists, false);
+        assert.equal(modules.get('src/gates/next-step/next-step-owned-helper.ts')?.budget_status, 'OVER_BUDGET');
+        assert.deepEqual(modules.get('src/gates/next-step/next-step-owned-helper.ts')?.owner_tasks, [{
+            task_id: 'T-800',
+            status: '🟦 TODO',
+            title: 'Split owned next-step helper'
+        }]);
+        assert.equal(
+            modules.get('src/gates/next-step/next-step-owned-helper.ts')?.exception_reason,
+            'Report-only budget exception: tracked by T-800; keep this helper visible until the decomposition follow-up completes.'
+        );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

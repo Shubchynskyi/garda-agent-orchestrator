@@ -214,8 +214,28 @@ function buildTaskSearchTerms(relativePath: string): string[] {
     const basename = path.basename(relativePath).toLowerCase();
     const extension = path.extname(basename);
     const stem = extension ? basename.slice(0, -extension.length) : basename;
-    const terms = [normalized, basename, stem].filter((value) => value.length > 0);
+    const terms = [normalized, basename].filter((value) => value.length > 0);
+    if (shouldUseStemTaskSearchTerm(stem)) {
+        terms.push(stem);
+    }
     return Array.from(new Set(terms));
+}
+
+function shouldUseStemTaskSearchTerm(stem: string): boolean {
+    if (stem.length < 6) return false;
+    return !new Set(['next-step']).has(stem);
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function taskRowMatchesSearchTerm(rowText: string, term: string): boolean {
+    if (term.includes('/') || term.includes('.')) {
+        return rowText.includes(term);
+    }
+    const boundaryPattern = new RegExp(`(^|[^a-z0-9-])${escapeRegExp(term)}([^a-z0-9-]|$)`, 'iu');
+    return boundaryPattern.test(rowText);
 }
 
 function isOpenFollowUp(status: string): boolean {
@@ -226,7 +246,7 @@ function resolveOwnerTasks(relativePath: string, taskQueue: readonly TaskQueueEn
     const terms = buildTaskSearchTerms(relativePath);
     const matches: LargeModuleTaskReference[] = [];
     for (const task of taskQueue) {
-        if (!terms.some((term) => task.row_text.includes(term))) continue;
+        if (!terms.some((term) => taskRowMatchesSearchTerm(task.row_text, term))) continue;
         matches.push({
             task_id: task.task_id,
             status: task.status,
@@ -336,12 +356,20 @@ function mergeNextStepBudgetFollowUp(
     return [matchingFollowUp, ...ownerTasks.filter((task) => task.task_id !== followUp.task_id)].slice(0, 8);
 }
 
+function formatTaskIdList(tasks: readonly LargeModuleTaskReference[]): string {
+    return tasks.map((task) => task.task_id).join(', ');
+}
+
 function buildNextStepBudgetExceptionReason(
     relativePath: string,
     overBudget: boolean,
     ownerTasks: readonly LargeModuleTaskReference[]
 ): string | null {
     if (!overBudget) return null;
+    const openOwnerTasks = ownerTasks.filter((task) => isOpenFollowUp(task.status));
+    if (openOwnerTasks.length > 0) {
+        return `Report-only budget exception: tracked by ${formatTaskIdList(openOwnerTasks)}; keep this helper visible until the decomposition follow-up completes.`;
+    }
     const followUp = NEXT_STEP_HELPER_BUDGET_FOLLOW_UPS[relativePath];
     if (followUp) {
         if (!ownerTasks.some((task) => task.task_id === followUp.task_id)) {
