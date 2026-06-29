@@ -53,7 +53,13 @@ export {
 };
 
 export function runGit(repoRoot: string, args: string[]): void {
-    const result = childProcessModule.spawnSync('git', args, {
+    const result = childProcessModule.spawnSync('git', [
+        '-c',
+        'core.autocrlf=false',
+        '-c',
+        'core.safecrlf=false',
+        ...args
+    ], {
         cwd: repoRoot,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe']

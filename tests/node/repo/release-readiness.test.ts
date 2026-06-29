@@ -222,6 +222,72 @@ function buildCiWorkflow(options: BuildCiWorkflowOptions = {}): string {
     ].filter(Boolean).join('\n');
 }
 
+function buildSecurityWorkflow(): string {
+    return [
+        'npm-audit:',
+        '  steps:',
+        '    - uses: actions/checkout@v6',
+        '    - uses: actions/setup-node@v6',
+        '    - run: npm audit --audit-level=high --no-fund',
+        'osv-scan:',
+        '  uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.0',
+        '  with:',
+        '    scan-args: |',
+        '      --lockfile=package-lock.json'
+    ].join('\n');
+}
+
+function buildSecretScanningWorkflow(): string {
+    return [
+        'gitleaks:',
+        '  steps:',
+        '    - uses: actions/checkout@v6',
+        '    - name: Run gitleaks',
+        '      uses: gitleaks/gitleaks-action@v2',
+        '      env:',
+        '        GITLEAKS_CONFIG: .gitleaks.toml'
+    ].join('\n');
+}
+
+function buildSbomWorkflow(): string {
+    return [
+        'sbom:',
+        '  steps:',
+        '    - uses: actions/checkout@v6',
+        '    - uses: actions/setup-node@v6',
+        '    - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json',
+        '    - uses: actions/upload-artifact@v4',
+        '      with:',
+        '        if-no-files-found: error'
+    ].join('\n');
+}
+
+function buildBranchProtectionDoc(): string {
+    return [
+        '# Branch Protection',
+        '',
+        '## Release Security Required Checks',
+        '',
+        '| Check | Label | Branch-protection guidance | Rationale |',
+        '|---|---|---|---|',
+        '| `CI` / release validation matrix | `blocking` | Required | Fixture release validation. |',
+        '| `Security / npm audit` | `blocking` | Required | Fixture dependency audit. |',
+        '| `Secret Scanning / Gitleaks` | `blocking` | Required | Fixture secret scanning. |',
+        '| `Security / OSV Vulnerability Scan` | `informational` | Optional required check | Fixture OSV scan. |',
+        '| `SBOM / Generate SBOM` | `informational` | Optional required check | Fixture SBOM artifact. |',
+        '',
+        '## GitHub Action pinning decision',
+        '',
+        'Actions remain version-tag pinned and intentionally not SHA-pinned at this time. This does not replace future provenance or release-signing work.',
+        '',
+        '## Update-source policy reporting',
+        '',
+        '- NPM_REGISTRY_INTEGRITY_RECORDED',
+        '- TRUSTED_GIT_NO_RELEASE_SIGNATURE',
+        '- TRUST_OVERRIDE_UNVERIFIED'
+    ].join('\n');
+}
+
 function createReadinessFixture(openChecklistItem?: string): string {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-release-readiness-'));
 
@@ -261,7 +327,7 @@ function createReadinessFixture(openChecklistItem?: string): string {
     writeFile(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n');
     writeFile(path.join(repoRoot, 'docs', 'assets', 'garda-github-social-preview.png'), 'fixture image\n');
     writeFile(path.join(repoRoot, 'docs', 'architecture.md'), '# Architecture\n');
-    writeFile(path.join(repoRoot, 'docs', 'branch-protection.md'), '# Branch Protection\n');
+    writeFile(path.join(repoRoot, 'docs', 'branch-protection.md'), buildBranchProtectionDoc());
     writeFile(path.join(repoRoot, 'docs', 'compatibility-matrix.md'), '# Compatibility Matrix\n');
     writeFile(path.join(repoRoot, 'docs', 'configuration.md'), '# Configuration\n');
     writeFile(path.join(repoRoot, 'docs', 'control-plane-isolation.md'), '# Control Plane Isolation\n');
@@ -302,6 +368,9 @@ function createReadinessFixture(openChecklistItem?: string): string {
         path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
         buildCiWorkflow()
     );
+    writeFile(path.join(repoRoot, '.github', 'workflows', 'security.yml'), buildSecurityWorkflow());
+    writeFile(path.join(repoRoot, '.github', 'workflows', 'secret-scanning.yml'), buildSecretScanningWorkflow());
+    writeFile(path.join(repoRoot, '.github', 'workflows', 'sbom.yml'), buildSbomWorkflow());
 
     initializeGitIndex(repoRoot);
 
@@ -323,7 +392,284 @@ test('release readiness passes when package, CI, docs, security, and checklist c
         assert.match(output, /Package smoke: npm run test:packaging remains an explicit validate:release step/);
         assert.match(output, /Readiness alignment:/);
         assert.match(output, /Unused-symbol enforcement: quality includes typecheck:unused/);
+        assert.match(output, /security-ci: existing release-security CI checks are present and labelled blocking or informational/);
+        assert.match(output, /Release-security baseline: readiness labels npm audit and gitleaks as blocking/);
         assert.doesNotMatch(output, /Security\/audit proof:/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when residual release-security workflow evidence is missing', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        fs.unlinkSync(path.join(repoRoot, '.github', 'workflows', 'security.yml'));
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.match(output, /blocking: security\.yml npm audit high-severity gate present=false/);
+        assert.ok(
+            result.violations.includes('security-ci: existing release-security CI checks are present and labelled blocking or informational')
+        );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when release-security labels or policy decisions are undocumented', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(path.join(repoRoot, 'docs', 'branch-protection.md'), '# Branch Protection\n');
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /informational: branch protection required-check guidance labels retained security checks=false/);
+        assert.match(output, /informational: GitHub Action pinning decision documented=false/);
+        assert.match(output, /informational: update-source policy reporting statuses documented=false/);
+        assert.ok(
+            result.violations.includes('security-ci: existing release-security CI checks are present and labelled blocking or informational')
+        );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects commented release-security workflow commands', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'security.yml'),
+            [
+                'npm-audit:',
+                '  steps:',
+                '    - run: |',
+                '        # npm audit --audit-level=high --no-fund',
+                'osv-scan:',
+                '  with:',
+                '    scan-args: |',
+                '      --lockfile=package-lock.json',
+                '  # uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.0'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /blocking: security\.yml npm audit high-severity gate present=false/);
+        assert.match(output, /informational: security\.yml OSV lockfile scan present=false/);
+        assert.ok(result.violations.some(v => v.startsWith('security-ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects commented release-security action uses', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'secret-scanning.yml'),
+            [
+                'gitleaks:',
+                '  steps:',
+                '    - name: Run gitleaks',
+                '      # uses: gitleaks/gitleaks-action@v2',
+                '      env:',
+                '        GITLEAKS_CONFIG: .gitleaks.toml'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /blocking: secret-scanning\.yml gitleaks gate present=false/);
+        assert.ok(result.violations.some(v => v.startsWith('security-ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects commented OSV lockfile argument', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'security.yml'),
+            [
+                'npm-audit:',
+                '  steps:',
+                '    - uses: actions/checkout@v6',
+                '    - uses: actions/setup-node@v6',
+                '    - run: npm audit --audit-level=high --no-fund',
+                'osv-scan:',
+                '  uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.0',
+                '  with:',
+                '    scan-args: |',
+                '      # --lockfile=package-lock.json'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /informational: security\.yml OSV lockfile scan present=false/);
+        assert.ok(result.violations.some(v => v.startsWith('security-ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects commented gitleaks config', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'secret-scanning.yml'),
+            [
+                'gitleaks:',
+                '  steps:',
+                '    - uses: actions/checkout@v6',
+                '    - name: Run gitleaks',
+                '      uses: gitleaks/gitleaks-action@v2',
+                '      env:',
+                '        # GITLEAKS_CONFIG: .gitleaks.toml'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /blocking: secret-scanning\.yml gitleaks gate present=false/);
+        assert.ok(result.violations.some(v => v.startsWith('security-ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects commented SBOM artifact failure policy', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'sbom.yml'),
+            [
+                'sbom:',
+                '  steps:',
+                '    - uses: actions/checkout@v6',
+                '    - uses: actions/setup-node@v6',
+                '    - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json',
+                '    - uses: actions/upload-artifact@v4',
+                '      with:',
+                '        # if-no-files-found: error'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /informational: sbom\.yml CycloneDX artifact generation present=false/);
+        assert.ok(result.violations.some(v => v.startsWith('security-ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects misplaced OSV lockfile argument outside OSV scan args', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'security.yml'),
+            [
+                'npm-audit:',
+                '  steps:',
+                '    - uses: actions/checkout@v6',
+                '    - uses: actions/setup-node@v6',
+                '    - run: npm audit --audit-level=high --no-fund',
+                'osv-scan:',
+                '  uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.0',
+                '  with:',
+                '    scan-args: |',
+                '      --recursive .',
+                'unrelated:',
+                '  steps:',
+                '    - run: |',
+                '        --lockfile=package-lock.json'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /informational: security\.yml OSV lockfile scan present=false/);
+        assert.ok(result.violations.some(v => v.startsWith('security-ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects misplaced gitleaks config outside gitleaks step', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'secret-scanning.yml'),
+            [
+                'gitleaks:',
+                '  steps:',
+                '    - uses: actions/checkout@v6',
+                '    - name: Run gitleaks',
+                '      uses: gitleaks/gitleaks-action@v2',
+                '    - name: Unrelated env',
+                '      env:',
+                '        GITLEAKS_CONFIG: .gitleaks.toml',
+                '      run: echo unrelated'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /blocking: secret-scanning\.yml gitleaks gate present=false/);
+        assert.ok(result.violations.some(v => v.startsWith('security-ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects misplaced SBOM artifact failure policy outside upload step', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'sbom.yml'),
+            [
+                'sbom:',
+                '  steps:',
+                '    - uses: actions/checkout@v6',
+                '    - uses: actions/setup-node@v6',
+                '    - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json',
+                '    - uses: actions/upload-artifact@v4',
+                '      with:',
+                '        name: sbom-cyclonedx',
+                '    - name: Unrelated upload policy',
+                '      with:',
+                '        if-no-files-found: error',
+                '      run: echo unrelated'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /informational: sbom\.yml CycloneDX artifact generation present=false/);
+        assert.ok(result.violations.some(v => v.startsWith('security-ci:')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

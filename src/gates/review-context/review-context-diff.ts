@@ -151,7 +151,7 @@ function runGitTextCommand(
         });
         const status = typeof result.status === 'number' ? result.status : null;
         const stdout = normalizeSpawnText(result.stdout);
-        const stderr = normalizeSpawnText(result.stderr).slice(0, 8000).trim() || null;
+        const stderr = normalizeGitDiagnosticStderr(normalizeSpawnText(result.stderr)).slice(0, 8000).trim() || null;
         const maxBufferHit = isSpawnMaxBufferError(result.error);
         const output = boundText(stdout, maxChars, maxBufferHit);
         if (result.timedOut) {
@@ -180,6 +180,13 @@ function normalizeSpawnText(value: unknown): string {
         return value.toString('utf8');
     }
     return '';
+}
+
+function normalizeGitDiagnosticStderr(stderr: string): string {
+    return stderr
+        .split(/\r?\n/u)
+        .filter((line) => !/^warning: in the working copy of '.+', LF will be replaced by CRLF the next time Git touches it$/u.test(line.trim()))
+        .join('\n');
 }
 
 function isSpawnMaxBufferError(error: unknown): boolean {

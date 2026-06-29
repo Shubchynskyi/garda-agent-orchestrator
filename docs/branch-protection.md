@@ -30,6 +30,43 @@ in the GitHub repository.
 | **Require branches to be up to date before merging** | ✅ Enabled | Ensures the PR branch includes the latest target commits. |
 | **Status checks that are required** | `ci` (the main CI workflow) | At minimum, the primary build/test workflow must pass. |
 
+### Release Security Required Checks
+
+Use the existing security workflows as the release-security baseline; do
+not add a duplicate security pipeline for release branches. Label every
+retained check as either `blocking` or `informational` so branch
+protection and release-readiness diagnostics stay explicit.
+
+| Check | Label | Branch-protection guidance | Rationale |
+|---|---|---|---|
+| `CI` / release validation matrix | `blocking` | Required | Proves build, test shards, package smoke, release readiness, and lifecycle smoke. |
+| `Security / npm audit` | `blocking` | Required | Fails on high or critical production dependency advisories. |
+| `Secret Scanning / Gitleaks` | `blocking` | Required | Prevents committed secrets from reaching protected branches. |
+| `Security / OSV Vulnerability Scan` | `informational` | Optional required check | Keeps SARIF-backed vulnerability visibility; make it required only when the team accepts upstream advisory noise as merge-blocking. |
+| `SBOM / Generate SBOM` | `informational` | Optional required check | Produces the CycloneDX artifact for release evidence; artifact absence is still surfaced by the workflow itself. |
+
+### GitHub Action pinning decision
+
+The CI and security workflows remain version-tag pinned (`actions/*@v6`,
+`actions/upload-artifact@v4`, `gitleaks/gitleaks-action@v2`, and
+`google/osv-scanner-action/...@v2.3.0`) and are intentionally not SHA-pinned
+at this time. This is an operator-maintainability tradeoff,
+not a provenance guarantee. Release-sensitive operators should review
+action update diffs before broadening branch protection, and this
+decision does not replace future provenance or release-signing work.
+
+### Update-source policy reporting
+
+Release updates report the update-source trust policy separately from
+PR-time branch protection. The readiness baseline expects these statuses
+to remain visible:
+
+| Status | Label | Meaning |
+|---|---|---|
+| `NPM_REGISTRY_INTEGRITY_RECORDED` | `informational` | Preferred npm update path recorded exact package and registry integrity metadata. |
+| `TRUSTED_GIT_NO_RELEASE_SIGNATURE` | `informational` | Allowlisted git source passed trust policy, but no release signature was verified. |
+| `TRUST_OVERRIDE_UNVERIFIED` | `informational` | Operator override bypassed trusted-source enforcement and must stay local/dev recovery only. |
+
 ### Required Reviews
 
 | Setting | Recommended value | Rationale |

@@ -146,6 +146,89 @@ function workflowJobHasRunStep(block: string | null, command: string): boolean {
     return runScripts.some((script) => scriptHasExecutableCommand(script, command));
 }
 
+function workflowHasUseStep(workflowText: string, actionReference: string): boolean {
+    for (const line of workflowText.split(/\r?\n/u)) {
+        const match = /^\s*(?:-\s*)?uses:\s*(.+?)\s*$/u.exec(line);
+        if (!match) {
+            continue;
+        }
+        if (stripYamlQuotes(match[1].trim()) === actionReference) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function getYamlKeyBlock(block: string | null, key: string): string | null {
+    if (block === null) {
+        return null;
+    }
+    const lines = block.split(/\r?\n/u);
+    const keyPattern = new RegExp(`^(\\s*)${key}:\\s*(?:[|>][+-]?)?\\s*$`, 'u');
+    const keyIndex = lines.findIndex((line) => keyPattern.test(line));
+    if (keyIndex === -1) {
+        return null;
+    }
+    const keyIndent = keyPattern.exec(lines[keyIndex])![1].length;
+    let endIndex = lines.length;
+    for (let index = keyIndex + 1; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (line.trim() && line.match(/^\s*/u)![0].length <= keyIndent) {
+            endIndex = index;
+            break;
+        }
+    }
+    return lines.slice(keyIndex, endIndex).join('\n');
+}
+
+function getWorkflowUseStepBlock(workflowText: string, actionReference: string): string | null {
+    const lines = workflowText.split(/\r?\n/u);
+
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        const usesMatch = /^(\s*)(?:-\s*)?uses:\s*(.+?)\s*$/u.exec(line);
+        if (!usesMatch || stripYamlQuotes(usesMatch[2].trim()) !== actionReference) {
+            continue;
+        }
+
+        const usesIndent = usesMatch[1].length;
+        const inlineStepMatch = /^(\s*)-\s+uses:/u.exec(line);
+        let stepStart = inlineStepMatch ? index : -1;
+        let stepIndent = inlineStepMatch ? inlineStepMatch[1].length : -1;
+        for (let previousIndex = index - 1; stepStart === -1 && previousIndex >= 0; previousIndex -= 1) {
+            const previousLine = lines[previousIndex];
+            const previousStep = /^(\s*)-\s+/u.exec(previousLine);
+            if (previousStep && previousStep[1].length < usesIndent) {
+                stepStart = previousIndex;
+                stepIndent = previousStep[1].length;
+            }
+        }
+        if (stepStart === -1) {
+            return null;
+        }
+
+        let stepEnd = lines.length;
+        for (let nextIndex = stepStart + 1; nextIndex < lines.length; nextIndex += 1) {
+            const nextLine = lines[nextIndex];
+            if (nextLine.trim() && nextLine.match(/^\s*/u)![0].length <= stepIndent) {
+                stepEnd = nextIndex;
+                break;
+            }
+        }
+        return lines.slice(stepStart, stepEnd).join('\n');
+    }
+
+    return null;
+}
+
+function blockHasNonCommentLine(block: string | null, expectedLine: string): boolean {
+    return (block || '').split(/\r?\n/u)
+        .some((line) => {
+            const trimmed = line.trim();
+            return trimmed !== '' && !trimmed.startsWith('#') && trimmed === expectedLine;
+        });
+}
+
 function scriptHasExecutableCommand(script: string, command: string): boolean {
     let hereDocTerminator: string | null = null;
 
@@ -261,6 +344,66 @@ function validateCiRuntimeMatrixContract(ciWorkflow: string): { passed: boolean;
             `smoke node-version=${smokeNodeVersions.join(', ') || 'missing'}`,
             `smoke os=${smokeOsVersions.join(', ') || 'missing'}`
         ]
+    };
+}
+
+function validateSecurityCiBaselineContract(repoRoot: string): { passed: boolean; details: string[] } {
+    const securityWorkflow = readTextFileIfExists(path.join(repoRoot, '.github', 'workflows', 'security.yml')) || '';
+    const secretScanningWorkflow = readTextFileIfExists(path.join(repoRoot, '.github', 'workflows', 'secret-scanning.yml')) || '';
+    const sbomWorkflow = readTextFileIfExists(path.join(repoRoot, '.github', 'workflows', 'sbom.yml')) || '';
+    const branchProtection = readTextFileIfExists(path.join(repoRoot, 'docs', 'branch-protection.md')) || '';
+
+    const npmAuditBlocking = extractWorkflowRunScripts(securityWorkflow)
+        .some((script) => scriptHasExecutableCommand(script, 'npm audit --audit-level=high --no-fund'));
+    const osvScanJob = getWorkflowJobBlock(securityWorkflow, 'osv-scan');
+    const osvScanArgsBlock = getYamlKeyBlock(getYamlKeyBlock(osvScanJob, 'with'), 'scan-args');
+    const osvInformational = workflowHasUseStep(
+        osvScanJob || '',
+        'google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.0'
+    )
+        && blockHasNonCommentLine(osvScanArgsBlock, '--lockfile=package-lock.json');
+    const gitleaksStep = getWorkflowUseStepBlock(secretScanningWorkflow, 'gitleaks/gitleaks-action@v2');
+    const gitleaksBlocking = gitleaksStep !== null
+        && blockHasNonCommentLine(getYamlKeyBlock(gitleaksStep, 'env'), 'GITLEAKS_CONFIG: .gitleaks.toml');
+    const uploadArtifactStep = getWorkflowUseStepBlock(sbomWorkflow, 'actions/upload-artifact@v4');
+    const sbomInformational = extractWorkflowRunScripts(sbomWorkflow)
+        .some((script) => scriptHasExecutableCommand(script, 'npx --yes @cyclonedx/cyclonedx-npm'))
+        && uploadArtifactStep !== null
+        && blockHasNonCommentLine(getYamlKeyBlock(uploadArtifactStep, 'with'), 'if-no-files-found: error');
+    const requiredCheckGuidance = [
+        'Release Security Required Checks',
+        '| `CI` / release validation matrix | `blocking` |',
+        '| `Security / npm audit` | `blocking` |',
+        '| `Secret Scanning / Gitleaks` | `blocking` |',
+        '| `Security / OSV Vulnerability Scan` | `informational` |',
+        '| `SBOM / Generate SBOM` | `informational` |'
+    ].every((marker) => branchProtection.includes(marker));
+    const actionPinningDecision = [
+        'GitHub Action pinning decision',
+        'version-tag pinned',
+        'not SHA-pinned',
+        'future provenance or release-signing work'
+    ].every((marker) => branchProtection.includes(marker));
+    const updateSourcePolicyReporting = [
+        'Update-source policy reporting',
+        'NPM_REGISTRY_INTEGRITY_RECORDED',
+        'TRUSTED_GIT_NO_RELEASE_SIGNATURE',
+        'TRUST_OVERRIDE_UNVERIFIED'
+    ].every((marker) => branchProtection.includes(marker));
+
+    const checks = [
+        { passed: npmAuditBlocking, detail: 'blocking: security.yml npm audit high-severity gate present' },
+        { passed: osvInformational, detail: 'informational: security.yml OSV lockfile scan present' },
+        { passed: gitleaksBlocking, detail: 'blocking: secret-scanning.yml gitleaks gate present' },
+        { passed: sbomInformational, detail: 'informational: sbom.yml CycloneDX artifact generation present' },
+        { passed: requiredCheckGuidance, detail: 'informational: branch protection required-check guidance labels retained security checks' },
+        { passed: actionPinningDecision, detail: 'informational: GitHub Action pinning decision documented' },
+        { passed: updateSourcePolicyReporting, detail: 'informational: update-source policy reporting statuses documented' }
+    ];
+
+    return {
+        passed: checks.every((check) => check.passed),
+        details: checks.map((check) => `${check.detail}=${check.passed}`)
     };
 }
 
@@ -424,6 +567,16 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         ciRuntimeMatrix.details
     );
 
+    const securityCiBaseline = validateSecurityCiBaselineContract(normalizedRoot);
+    pushCheck(
+        checks,
+        violations,
+        'security-ci',
+        'existing release-security CI checks are present and labelled blocking or informational',
+        securityCiBaseline.passed,
+        securityCiBaseline.details
+    );
+
     const cliReference = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'cli-reference.md')) || '';
     const runMethods = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'run-methods.md')) || '';
     const platformDocs = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'node-platform-foundation.md')) || '';
@@ -462,7 +615,8 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         'Package smoke: npm run test:packaging remains an explicit validate:release step for pack, install, and CLI invoke proof.',
         'Update/runtime alignment: CI workflow is configured for setup, update git, doctor, and uninstall smoke across Linux, Windows, and macOS.',
         'Unused-symbol enforcement: quality includes typecheck:unused with --noUnusedLocals and --noUnusedParameters before lint, coverage, and production npm audit.',
-        'Security/audit alignment: quality includes production npm audit and security/SBOM/threat-model docs are present in source, package files, and MANIFEST.'
+        'Security/audit alignment: quality includes production npm audit and security/SBOM/threat-model docs are present in source, package files, and MANIFEST.',
+        'Release-security baseline: readiness labels npm audit and gitleaks as blocking, OSV and SBOM as informational, and reports action-pinning plus update-source provenance policy without adding a duplicate security pipeline.'
     ];
 
     return {

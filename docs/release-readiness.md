@@ -18,3 +18,4 @@ queues and must not be treated as publish blockers by release validation.
 - [x] Release-readiness validation uses git-tracked checklist state instead of local task queues.
 - [x] CI smoke validation accepts multiline lifecycle run scripts without weakening matrix checks.
 - [x] Release preflight runs a short runtime-contract smoke suite before the expensive full proof.
+- [x] Residual release-security baseline labels existing security checks as blocking or informational and reports action-pinning and update-source policy diagnostics without adding a duplicate pipeline.
