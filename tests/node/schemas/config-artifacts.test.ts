@@ -712,13 +712,13 @@ test('validateProfilesConfig rejects user profile name conflicting with built-in
 test('validateOptionalSkillSelectionPolicyConfig validates the tracked template', () => {
     const normalized = validateOptionalSkillSelectionPolicyConfig(readTemplateConfig('optional-skill-selection-policy'));
     assert.equal(normalized.version, 1);
-    assert.equal(normalized.mode, 'advisory');
+    assert.equal(normalized.mode, 'optional');
 });
 
 test('validateManagedConfigByName handles optional-skill-selection-policy', () => {
     const config = readTemplateConfig('optional-skill-selection-policy');
     const result = validateManagedConfigByName('optional-skill-selection-policy', config);
-    assert.equal(result.mode, 'advisory');
+    assert.equal(result.mode, 'optional');
 });
 
 test('validateProfilesConfig rejects empty built_in_profiles', () => {

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import {
     buildOptionalSkillSelectionArtifact,
     buildCurrentCycleOptionalSkillActivationIndex,
+    buildMandatoryCurrentCycleOptionalSkillActivationIndex,
     computeOptionalSkillSelectionFingerprint,
     computeOptionalSkillTaskTextSha256,
     getOptionalSkillSelectionGateViolations,
@@ -69,12 +70,31 @@ function computeFileSha256(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
-test('readOptionalSkillSelectionPolicyConfig falls back to advisory defaults when config is absent', () => {
+test('readOptionalSkillSelectionPolicyConfig falls back to optional defaults when config is absent', () => {
     const bundleRoot = makeBundleRoot();
     try {
         const config = readOptionalSkillSelectionPolicyConfig(bundleRoot);
         assert.equal(config.version, 1);
-        assert.equal(config.mode, 'advisory');
+        assert.equal(config.mode, 'optional');
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('readOptionalSkillSelectionPolicyConfig normalizes legacy policy aliases', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const policyPath = path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json');
+
+        fs.writeFileSync(policyPath, JSON.stringify({ version: 1, mode: 'advisory' }, null, 2), 'utf8');
+        assert.equal(readOptionalSkillSelectionPolicyConfig(bundleRoot).mode, 'optional');
+
+        fs.writeFileSync(policyPath, JSON.stringify({ version: 1, mode: 'required' }, null, 2), 'utf8');
+        assert.equal(readOptionalSkillSelectionPolicyConfig(bundleRoot).mode, 'mandatory');
+
+        fs.writeFileSync(policyPath, JSON.stringify({ version: 1, mode: 'strict' }, null, 2), 'utf8');
+        assert.equal(readOptionalSkillSelectionPolicyConfig(bundleRoot).mode, 'mandatory');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -105,7 +125,7 @@ test('buildOptionalSkillSelectionArtifact selects matching installed optional sk
             changedPaths: ['src/api/orders.ts']
         });
 
-        assert.equal(artifact.payload.policy_mode, 'advisory');
+        assert.equal(artifact.payload.policy_mode, 'optional');
         assert.equal(artifact.payload.decision, 'selected_installed_skills');
         assert.deepEqual(artifact.payload.selected_installed_skills.map((entry) => entry.id), ['node-backend']);
         assert.match(
@@ -645,6 +665,14 @@ test('getOptionalSkillSelectionGateViolations ignores baseline skill loads under
                 event_type: 'TASK_MODE_ENTERED'
             }),
             JSON.stringify({
+                timestamp_utc: new Date(Date.parse(artifact.payload.timestamp_utc) + 500).toISOString(),
+                event_type: 'SKILL_SELECTED',
+                details: {
+                    skill_id: 'node-backend',
+                    trigger_reason: 'optional_skill_selection'
+                }
+            }),
+            JSON.stringify({
                 timestamp_utc: new Date(Date.parse(artifact.payload.timestamp_utc) + 1000).toISOString(),
                 event_type: 'SKILL_REFERENCE_LOADED',
                 details: {
@@ -775,6 +803,179 @@ test('getOptionalSkillSelectionGateViolations allows reference loads inside the 
     }
 });
 
+test('getOptionalSkillSelectionGateViolations rejects mandatory selected skills without current-cycle activation telemetry', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'mandatory' }, null, 2),
+            'utf8'
+        );
+
+        writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+
+        const violations = getOptionalSkillSelectionGateViolations(bundleRoot, 'T-149');
+
+        assert.ok(violations.some((entry) => entry.includes('current-cycle activation evidence for selected optional skill(s): node-backend')));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('getOptionalSkillSelectionGateViolations rejects mandatory activation backfilled after implementation starts', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'mandatory' }, null, 2),
+            'utf8'
+        );
+
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        const artifactTimestampMs = Date.parse(artifact.payload.timestamp_utc);
+        const eventsPath = path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl');
+        fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
+        const eventLine = (
+            offsetMs: number,
+            eventType: string,
+            taskSequence: number,
+            details?: Record<string, unknown>
+        ) => JSON.stringify({
+            timestamp_utc: new Date(artifactTimestampMs + offsetMs).toISOString(),
+            event_type: eventType,
+            ...(details ? { details } : {}),
+            integrity: {
+                task_sequence: taskSequence
+            }
+        });
+        fs.writeFileSync(eventsPath, [
+            eventLine(-1000, 'TASK_MODE_ENTERED', 1),
+            eventLine(100, 'PREFLIGHT_CLASSIFIED', 2),
+            eventLine(500, 'IMPLEMENTATION_STARTED', 3),
+            eventLine(1000, 'SKILL_SELECTED', 4, {
+                skill_id: 'node-backend',
+                trigger_reason: 'optional_skill_selection'
+            })
+        ].join('\n') + '\n', 'utf8');
+
+        const violations = getOptionalSkillSelectionGateViolations(bundleRoot, 'T-149', {
+            taskEventsPath: eventsPath
+        });
+
+        assert.ok(violations.some((entry) => entry.includes('activation was recorded too late for selected optional skill(s): node-backend')));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('getOptionalSkillSelectionGateViolations rejects mandatory activation reused across later preflight refresh', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'mandatory' }, null, 2),
+            'utf8'
+        );
+
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        const artifactTimestampMs = Date.parse(artifact.payload.timestamp_utc);
+        const selectionFingerprintSha256 = artifact.payload.selection_fingerprint_sha256
+            || computeOptionalSkillSelectionFingerprint(artifact.payload);
+        const eventsPath = path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl');
+        fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
+        const eventLine = (
+            offsetMs: number,
+            eventType: string,
+            taskSequence: number,
+            details?: Record<string, unknown>
+        ) => JSON.stringify({
+            timestamp_utc: new Date(artifactTimestampMs + offsetMs).toISOString(),
+            event_type: eventType,
+            ...(details ? { details } : {}),
+            integrity: {
+                task_sequence: taskSequence
+            }
+        });
+        fs.writeFileSync(eventsPath, [
+            eventLine(-1000, 'TASK_MODE_ENTERED', 1),
+            eventLine(100, 'PREFLIGHT_CLASSIFIED', 2),
+            eventLine(200, 'SKILL_SELECTED', 3, {
+                skill_id: 'node-backend',
+                trigger_reason: 'optional_skill_selection',
+                optional_skill_selection_fingerprint_sha256: selectionFingerprintSha256
+            }),
+            eventLine(1000, 'PREFLIGHT_CLASSIFIED', 4)
+        ].join('\n') + '\n', 'utf8');
+
+        const activationIndex = buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, {
+            timelinePath: eventsPath,
+            exists: true,
+            invalidJson: false,
+            eventTypes: new Set(['TASK_MODE_ENTERED', 'PREFLIGHT_CLASSIFIED', 'SKILL_SELECTED']),
+            latestTaskModeEnteredTimestampUtc: new Date(artifactTimestampMs - 1000).toISOString(),
+            latestTaskModeEnteredTaskSequence: 1,
+            latestCycleBoundaryTimestampUtc: new Date(artifactTimestampMs + 1000).toISOString(),
+            latestCycleBoundaryTaskSequence: 4,
+            latestImplementationStartedTimestampUtc: null,
+            latestImplementationStartedTaskSequence: null,
+            optionalSkillActivations: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: new Date(artifactTimestampMs + 200).toISOString(),
+                    eventSequence: 3,
+                    selectionFingerprintSha256
+                }
+            ],
+            optionalSkillReferenceLoads: []
+        });
+        assert.equal(activationIndex.has('node-backend'), true);
+        const mandatoryActivationIndex = buildMandatoryCurrentCycleOptionalSkillActivationIndex(artifact.payload, {
+            timelinePath: eventsPath,
+            exists: true,
+            invalidJson: false,
+            eventTypes: new Set(['TASK_MODE_ENTERED', 'PREFLIGHT_CLASSIFIED', 'SKILL_SELECTED']),
+            latestTaskModeEnteredTimestampUtc: new Date(artifactTimestampMs - 1000).toISOString(),
+            latestTaskModeEnteredTaskSequence: 1,
+            latestCycleBoundaryTimestampUtc: new Date(artifactTimestampMs + 1000).toISOString(),
+            latestCycleBoundaryTaskSequence: 4,
+            latestImplementationStartedTimestampUtc: null,
+            latestImplementationStartedTaskSequence: null,
+            optionalSkillActivations: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: new Date(artifactTimestampMs + 200).toISOString(),
+                    eventSequence: 3,
+                    selectionFingerprintSha256
+                }
+            ],
+            optionalSkillReferenceLoads: []
+        });
+        assert.equal(mandatoryActivationIndex.has('node-backend'), false);
+
+        const violations = getOptionalSkillSelectionGateViolations(bundleRoot, 'T-149', {
+            taskEventsPath: eventsPath
+        });
+
+        assert.ok(violations.some((entry) => entry.includes('current-cycle activation evidence for selected optional skill(s): node-backend')));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('getOptionalSkillSelectionGateViolations rejects selected optional skill loads that occur before activation telemetry', () => {
     const bundleRoot = makeBundleRoot();
     try {
@@ -878,6 +1079,14 @@ test('getOptionalSkillSelectionGateViolations ignores prior-cycle optional skill
             JSON.stringify({
                 timestamp_utc: new Date(Date.parse(artifact.payload.timestamp_utc) - 1000).toISOString(),
                 event_type: 'PREFLIGHT_STARTED'
+            }),
+            JSON.stringify({
+                timestamp_utc: new Date(Date.parse(artifact.payload.timestamp_utc) - 500).toISOString(),
+                event_type: 'SKILL_SELECTED',
+                details: {
+                    skill_id: 'node-backend',
+                    trigger_reason: 'optional_skill_selection'
+                }
             })
         ].join('\n') + '\n', 'utf8');
 

@@ -20,6 +20,7 @@ import { resolveTaskProfileSelection } from '../../../../policy/task-profile-sel
 import { detectCodeChanged } from '../../../../gates/preflight/preflight-code-change';
 import {
     buildOptionalSkillSelectionArtifact,
+    isMandatoryOptionalSkillSelectionPolicyMode,
     isOptionalSkillSelectionPolicyConfigured,
     readOptionalSkillSelectionPolicyConfig,
     writeOptionalSkillSelectionArtifact
@@ -665,7 +666,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     };
                 }
             } catch (error: unknown) {
-                if (optionalSkillPolicyMode === 'required' || optionalSkillPolicyMode === 'strict') {
+                if (isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillPolicyMode)) {
                     throw error;
                 }
                 result.optional_skill_selection = {
@@ -700,7 +701,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     )
                     : null;
             } catch (error: unknown) {
-                if (optionalSkillPolicyMode !== 'required' && optionalSkillPolicyMode !== 'strict') {
+                if (!isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillPolicyMode)) {
                     optionalSkillSelection = null;
                     result.optional_skill_selection = {
                         artifact_path: normalizeOptionalPath(path.join(orchestratorRoot, 'runtime', 'reviews', `${resolvedTaskId}-optional-skill-selection.json`)),
@@ -717,7 +718,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             }
             if (optionalSkillSelection) {
                 optionalSkillSelectionArtifactPath = normalizeOptionalPath(optionalSkillSelection.artifactPath);
-            } else if (optionalSkillPolicyMode === 'required' || optionalSkillPolicyMode === 'strict') {
+            } else if (isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillPolicyMode)) {
                 removeArtifactIfExists(outputPath);
                 throw new Error('Optional skill selection artifact is required for the current policy mode, but no current-cycle artifact could be materialized.');
             }

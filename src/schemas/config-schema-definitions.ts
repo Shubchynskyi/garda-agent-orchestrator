@@ -290,7 +290,7 @@ export const optionalSkillSelectionPolicySchema: Record<string, unknown> = Objec
         version: { type: 'integer', minimum: 1 },
         mode: {
             type: 'string',
-            enum: ['off', 'advisory', 'required', 'strict']
+            enum: ['off', 'optional', 'mandatory', 'advisory', 'required', 'strict']
         }
     },
     required: ['version', 'mode'],

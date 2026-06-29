@@ -12,12 +12,15 @@ import {
 
 export const OPTIONAL_SKILL_SELECTION_POLICY_MODES = Object.freeze([
     'off',
+    'optional',
+    'mandatory',
     'advisory',
     'required',
     'strict'
 ] as const);
 
 export type OptionalSkillSelectionPolicyMode = typeof OPTIONAL_SKILL_SELECTION_POLICY_MODES[number];
+export type CanonicalOptionalSkillSelectionPolicyMode = 'off' | 'optional' | 'mandatory';
 
 export const OPTIONAL_SKILL_AS_IS_REASONS = Object.freeze([
     'policy_off',
@@ -151,6 +154,7 @@ export interface OptionalSkillSelectionActivationEvidence {
     triggerReason: string | null;
     timestampUtc: string | null;
     selectionFingerprintSha256?: string | null;
+    eventSequence?: number | null;
 }
 
 export interface OptionalSkillSelectionTimelineEvidence {
@@ -159,14 +163,18 @@ export interface OptionalSkillSelectionTimelineEvidence {
     invalidJson: boolean;
     eventTypes: Set<string>;
     latestTaskModeEnteredTimestampUtc: string | null;
+    latestTaskModeEnteredTaskSequence?: number | null;
     latestCycleBoundaryTimestampUtc: string | null;
+    latestCycleBoundaryTaskSequence?: number | null;
+    latestImplementationStartedTimestampUtc?: string | null;
+    latestImplementationStartedTaskSequence?: number | null;
     optionalSkillActivations: OptionalSkillSelectionActivationEvidence[];
     optionalSkillReferenceLoads: OptionalSkillSelectionReferenceLoadEvidence[];
 }
 
 export const DEFAULT_POLICY_CONFIG: OptionalSkillSelectionPolicyConfig = Object.freeze({
     version: 1,
-    mode: 'advisory'
+    mode: 'optional'
 });
 
 export const MAX_SELECTED_SKILLS = 2;
@@ -182,6 +190,21 @@ export const COMMON_SIGNAL_STOP_WORDS = new Set([
 
 export function normalizeText(value: unknown): string {
     return String(value || '').trim().toLowerCase();
+}
+
+export function normalizeOptionalSkillSelectionPolicyMode(value: unknown): CanonicalOptionalSkillSelectionPolicyMode {
+    const mode = normalizeText(value || DEFAULT_POLICY_CONFIG.mode);
+    if (mode === 'off') {
+        return 'off';
+    }
+    if (mode === 'mandatory' || mode === 'required' || mode === 'strict') {
+        return 'mandatory';
+    }
+    return 'optional';
+}
+
+export function isMandatoryOptionalSkillSelectionPolicyMode(value: unknown): boolean {
+    return normalizeOptionalSkillSelectionPolicyMode(value) === 'mandatory';
 }
 
 export function uniqueSorted(items: string[]): string[] {

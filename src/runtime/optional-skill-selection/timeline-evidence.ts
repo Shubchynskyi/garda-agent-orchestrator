@@ -15,6 +15,40 @@ import {
     toTimestampMs
 } from './types';
 
+interface TimelinePoint {
+    timestampUtc: string | null;
+    taskSequence: number | null;
+}
+
+export interface OptionalSkillActivationPoint {
+    timestampMs: number;
+    eventSequence: number | null;
+}
+
+function readTaskEventSequence(event: Record<string, unknown>): number | null {
+    const integrity = event.integrity;
+    if (!integrity || typeof integrity !== 'object' || Array.isArray(integrity)) {
+        return null;
+    }
+    const value = Number((integrity as Record<string, unknown>).task_sequence);
+    return Number.isFinite(value) ? value : null;
+}
+
+function selectLatestTimelinePoint(current: TimelinePoint, next: TimelinePoint): TimelinePoint {
+    if (next.taskSequence !== null && current.taskSequence !== null) {
+        return next.taskSequence >= current.taskSequence ? next : current;
+    }
+    if (next.taskSequence !== null && current.taskSequence === null) {
+        return next;
+    }
+    if (next.taskSequence === null && current.taskSequence !== null) {
+        return current;
+    }
+    return selectLatestTimestamp(current.timestampUtc, next.timestampUtc) === next.timestampUtc
+        ? next
+        : current;
+}
+
 export function readOptionalSkillSelectionTimelineEvidence(
     bundleRoot: string,
     taskId: string,
@@ -26,8 +60,9 @@ export function readOptionalSkillSelectionTimelineEvidence(
     const eventTypes = new Set<string>();
     const optionalSkillActivations: OptionalSkillSelectionActivationEvidence[] = [];
     const optionalSkillReferenceLoads: OptionalSkillSelectionReferenceLoadEvidence[] = [];
-    let latestTaskModeEnteredTimestampUtc: string | null = null;
-    let latestCycleBoundaryTimestampUtc: string | null = null;
+    let latestTaskModeEntered: TimelinePoint = { timestampUtc: null, taskSequence: null };
+    let latestCycleBoundary: TimelinePoint = { timestampUtc: null, taskSequence: null };
+    let latestImplementationStarted: TimelinePoint = { timestampUtc: null, taskSequence: null };
 
     if (!pathExists(resolvedTaskEventsPath)) {
         return {
@@ -35,8 +70,12 @@ export function readOptionalSkillSelectionTimelineEvidence(
             exists: false,
             invalidJson: false,
             eventTypes,
-            latestTaskModeEnteredTimestampUtc,
-            latestCycleBoundaryTimestampUtc,
+            latestTaskModeEnteredTimestampUtc: latestTaskModeEntered.timestampUtc,
+            latestTaskModeEnteredTaskSequence: latestTaskModeEntered.taskSequence,
+            latestCycleBoundaryTimestampUtc: latestCycleBoundary.timestampUtc,
+            latestCycleBoundaryTaskSequence: latestCycleBoundary.taskSequence,
+            latestImplementationStartedTimestampUtc: latestImplementationStarted.timestampUtc,
+            latestImplementationStartedTaskSequence: latestImplementationStarted.taskSequence,
             optionalSkillActivations,
             optionalSkillReferenceLoads
         };
@@ -57,20 +96,19 @@ export function readOptionalSkillSelectionTimelineEvidence(
         }
         const eventType = String(parsedLine.event_type || '').trim().toUpperCase();
         const eventTimestampUtc = String(parsedLine.timestamp_utc || '').trim() || null;
+        const taskSequence = readTaskEventSequence(parsedLine);
+        const timelinePoint = { timestampUtc: eventTimestampUtc, taskSequence };
         if (eventType) {
             eventTypes.add(eventType);
         }
         if (eventType === 'TASK_MODE_ENTERED') {
-            latestTaskModeEnteredTimestampUtc = selectLatestTimestamp(
-                latestTaskModeEnteredTimestampUtc,
-                eventTimestampUtc
-            );
+            latestTaskModeEntered = selectLatestTimelinePoint(latestTaskModeEntered, timelinePoint);
         }
         if (eventType === 'TASK_MODE_ENTERED' || eventType === 'PREFLIGHT_STARTED' || eventType === 'PREFLIGHT_CLASSIFIED') {
-            latestCycleBoundaryTimestampUtc = selectLatestTimestamp(
-                latestCycleBoundaryTimestampUtc,
-                eventTimestampUtc
-            );
+            latestCycleBoundary = selectLatestTimelinePoint(latestCycleBoundary, timelinePoint);
+        }
+        if (eventType === 'IMPLEMENTATION_STARTED') {
+            latestImplementationStarted = selectLatestTimelinePoint(latestImplementationStarted, timelinePoint);
         }
         const details = parsedLine.details;
         if (eventType === 'SKILL_SELECTED' && details && typeof details === 'object' && !Array.isArray(details)) {
@@ -81,6 +119,7 @@ export function readOptionalSkillSelectionTimelineEvidence(
                     skillId: String(detailRecord.skill_id || '').trim() || null,
                     triggerReason: triggerReason || null,
                     timestampUtc: eventTimestampUtc,
+                    eventSequence: taskSequence,
                     selectionFingerprintSha256: String(detailRecord.optional_skill_selection_fingerprint_sha256 || '').trim() || null
                 });
             }
@@ -123,8 +162,12 @@ export function readOptionalSkillSelectionTimelineEvidence(
         exists: true,
         invalidJson,
         eventTypes,
-        latestTaskModeEnteredTimestampUtc,
-        latestCycleBoundaryTimestampUtc,
+        latestTaskModeEnteredTimestampUtc: latestTaskModeEntered.timestampUtc,
+        latestTaskModeEnteredTaskSequence: latestTaskModeEntered.taskSequence,
+        latestCycleBoundaryTimestampUtc: latestCycleBoundary.timestampUtc,
+        latestCycleBoundaryTaskSequence: latestCycleBoundary.taskSequence,
+        latestImplementationStartedTimestampUtc: latestImplementationStarted.timestampUtc,
+        latestImplementationStartedTaskSequence: latestImplementationStarted.taskSequence,
         optionalSkillActivations,
         optionalSkillReferenceLoads
     };
@@ -199,6 +242,130 @@ export function buildCurrentCycleOptionalSkillActivationIndex(
         if (previousTimestampMs === undefined || timestampMs > previousTimestampMs) {
             activationIndex.set(skillId, timestampMs);
         }
+    }
+    return activationIndex;
+}
+
+function getCurrentCycleBoundaryPoint(
+    payload: OptionalSkillSelectionArtifact,
+    timelineEvidence: OptionalSkillSelectionTimelineEvidence
+): OptionalSkillActivationPoint | null {
+    const cycleBoundaryTimestampMs = toTimestampMs(
+        timelineEvidence.latestCycleBoundaryTimestampUtc
+        || timelineEvidence.latestTaskModeEnteredTimestampUtc
+        || payload.timestamp_utc
+    );
+    if (cycleBoundaryTimestampMs === null) {
+        return null;
+    }
+    return {
+        timestampMs: cycleBoundaryTimestampMs,
+        eventSequence: timelineEvidence.latestCycleBoundaryTaskSequence
+            ?? timelineEvidence.latestTaskModeEnteredTaskSequence
+            ?? null
+    };
+}
+
+function didActivationOccurBeforeCycleBoundary(
+    activation: OptionalSkillActivationPoint,
+    cycleBoundary: OptionalSkillActivationPoint
+): boolean {
+    if (activation.eventSequence !== null && cycleBoundary.eventSequence !== null) {
+        return activation.eventSequence < cycleBoundary.eventSequence;
+    }
+    return activation.timestampMs < cycleBoundary.timestampMs;
+}
+
+export function getCurrentImplementationStartPoint(
+    payload: OptionalSkillSelectionArtifact,
+    timelineEvidence: OptionalSkillSelectionTimelineEvidence
+): OptionalSkillActivationPoint | null {
+    const implementationTimestampMs = toTimestampMs(timelineEvidence.latestImplementationStartedTimestampUtc);
+    if (implementationTimestampMs === null) {
+        return null;
+    }
+    const implementationSequence = timelineEvidence.latestImplementationStartedTaskSequence ?? null;
+    const cycleBoundarySequence = timelineEvidence.latestCycleBoundaryTaskSequence ?? null;
+    if (
+        implementationSequence !== null
+        && cycleBoundarySequence !== null
+        && implementationSequence < cycleBoundarySequence
+    ) {
+        return null;
+    }
+
+    const cycleBoundaryTimestampMs = toTimestampMs(
+        timelineEvidence.latestCycleBoundaryTimestampUtc
+        || timelineEvidence.latestTaskModeEnteredTimestampUtc
+        || payload.timestamp_utc
+    );
+    if (
+        (implementationSequence === null || cycleBoundarySequence === null)
+        && cycleBoundaryTimestampMs !== null
+        && implementationTimestampMs < cycleBoundaryTimestampMs
+    ) {
+        return null;
+    }
+
+    return {
+        timestampMs: implementationTimestampMs,
+        eventSequence: implementationSequence
+    };
+}
+
+export function didActivationOccurAfterImplementationStart(
+    activation: OptionalSkillActivationPoint,
+    implementationStart: OptionalSkillActivationPoint
+): boolean {
+    if (activation.eventSequence !== null && implementationStart.eventSequence !== null) {
+        return activation.eventSequence >= implementationStart.eventSequence;
+    }
+    return activation.timestampMs > implementationStart.timestampMs;
+}
+
+export function buildFreshCurrentCycleOptionalSkillActivationPointIndex(
+    payload: OptionalSkillSelectionArtifact,
+    timelineEvidence: OptionalSkillSelectionTimelineEvidence
+): Map<string, OptionalSkillActivationPoint> {
+    const activationIndex = new Map<string, OptionalSkillActivationPoint>();
+    const cycleBoundary = getCurrentCycleBoundaryPoint(payload, timelineEvidence);
+    for (const activation of getCurrentCycleOptionalSkillActivations(payload, timelineEvidence)) {
+        const skillId = String(activation.skillId || '').trim();
+        const timestampMs = toTimestampMs(activation.timestampUtc);
+        if (!skillId || timestampMs === null) {
+            continue;
+        }
+        const eventSequence = activation.eventSequence ?? null;
+        const activationPoint = { timestampMs, eventSequence };
+        if (cycleBoundary && didActivationOccurBeforeCycleBoundary(activationPoint, cycleBoundary)) {
+            continue;
+        }
+        const previous = activationIndex.get(skillId);
+        if (!previous) {
+            activationIndex.set(skillId, activationPoint);
+            continue;
+        }
+        const isNewer = eventSequence !== null && previous.eventSequence !== null
+            ? eventSequence > previous.eventSequence
+            : timestampMs > previous.timestampMs;
+        if (isNewer) {
+            activationIndex.set(skillId, activationPoint);
+        }
+    }
+    return activationIndex;
+}
+
+export function buildMandatoryCurrentCycleOptionalSkillActivationIndex(
+    payload: OptionalSkillSelectionArtifact,
+    timelineEvidence: OptionalSkillSelectionTimelineEvidence
+): Map<string, number> {
+    const implementationStart = getCurrentImplementationStartPoint(payload, timelineEvidence);
+    const activationIndex = new Map<string, number>();
+    for (const [skillId, activation] of buildFreshCurrentCycleOptionalSkillActivationPointIndex(payload, timelineEvidence)) {
+        if (implementationStart && didActivationOccurAfterImplementationStart(activation, implementationStart)) {
+            continue;
+        }
+        activationIndex.set(skillId, activation.timestampMs);
     }
     return activationIndex;
 }

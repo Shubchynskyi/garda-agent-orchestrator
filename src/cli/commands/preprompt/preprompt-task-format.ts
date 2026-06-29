@@ -1,4 +1,5 @@
 import type { ProjectMemoryBrief } from './preprompt-task-context';
+import { isMandatoryOptionalSkillSelectionPolicyMode } from '../../../runtime/optional-skill-selection';
 
 export function buildPrepromptHelpText(): string {
     return [
@@ -106,7 +107,7 @@ export function getOptionalSkillTaskStartBlocker(result: Record<string, unknown>
     if (!policyMode) {
         return blocker;
     }
-    if (policyMode !== 'required' && policyMode !== 'strict') {
+    if (!isMandatoryOptionalSkillSelectionPolicyMode(policyMode)) {
         return null;
     }
     return blocker;

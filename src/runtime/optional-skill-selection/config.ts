@@ -5,6 +5,7 @@ import { validateManagedConfigByName } from '../../schemas/config-artifacts';
 import {
     type OptionalSkillSelectionPolicyConfig,
     DEFAULT_POLICY_CONFIG,
+    normalizeOptionalSkillSelectionPolicyMode,
     toPortableBundlePath
 } from './types';
 
@@ -53,6 +54,6 @@ export function readOptionalSkillSelectionPolicyConfig(bundleRoot: string): Opti
     const validated = readValidatedConfig(configPath) as Record<string, unknown>;
     return {
         version: Number(validated.version || DEFAULT_POLICY_CONFIG.version),
-        mode: String(validated.mode || DEFAULT_POLICY_CONFIG.mode) as OptionalSkillSelectionPolicyConfig['mode']
+        mode: normalizeOptionalSkillSelectionPolicyMode(validated.mode || DEFAULT_POLICY_CONFIG.mode)
     };
 }

@@ -13,6 +13,8 @@ import {
     MAX_SELECTED_SKILLS,
     MAX_RECOMMENDED_PACKS,
     computeOptionalSkillSelectionFingerprint,
+    isMandatoryOptionalSkillSelectionPolicyMode,
+    normalizeOptionalSkillSelectionPolicyMode,
     resolvePortableRepoPath,
     toPortableBundlePath,
     toTimestampMs
@@ -21,6 +23,10 @@ import {
 import {
     readOptionalSkillSelectionTimelineEvidence,
     buildCurrentCycleOptionalSkillActivationIndex,
+    buildMandatoryCurrentCycleOptionalSkillActivationIndex,
+    buildFreshCurrentCycleOptionalSkillActivationPointIndex,
+    getCurrentImplementationStartPoint,
+    didActivationOccurAfterImplementationStart,
     getCurrentCycleOptionalSkillReferenceLoads
 } from './timeline-evidence';
 
@@ -82,7 +88,9 @@ export function collectOptionalSkillReferenceLoadViolations(
                 .filter(Boolean)
             : []
     );
-    const activationIndex = buildCurrentCycleOptionalSkillActivationIndex(payload, resolvedTimelineEvidence);
+    const activationIndex = isMandatoryOptionalSkillSelectionPolicyMode(policyMode)
+        ? buildMandatoryCurrentCycleOptionalSkillActivationIndex(payload, resolvedTimelineEvidence)
+        : buildCurrentCycleOptionalSkillActivationIndex(payload, resolvedTimelineEvidence);
     const violations: string[] = [];
     for (const referenceLoad of getCurrentCycleOptionalSkillReferenceLoads(payload, resolvedTimelineEvidence)) {
         if (policyMode === 'off') {
@@ -128,6 +136,7 @@ export function getOptionalSkillSelectionArtifactViolations(
         expectedPreflightSha256?: string | null;
         expectedTaskTextSha256?: string | null;
         expectedPolicyMode?: OptionalSkillSelectionPolicyMode | null;
+        enforceMandatorySelection?: boolean;
         validateAgainstCurrentHeadlines?: boolean;
         validateAgainstCurrentInventory?: boolean;
         loadedHeadlinesCache?: {
@@ -143,7 +152,8 @@ export function getOptionalSkillSelectionArtifactViolations(
     const { payload } = artifact;
     const schemaVersion = Number(payload.schema_version || 0);
     const eventSource = String(payload.event_source || '').trim();
-    const policyMode = String(payload.policy_mode || '').trim() as OptionalSkillSelectionPolicyMode;
+    const rawPolicyMode = String(payload.policy_mode || '').trim() as OptionalSkillSelectionPolicyMode;
+    const policyMode = normalizeOptionalSkillSelectionPolicyMode(rawPolicyMode) as OptionalSkillSelectionPolicyMode;
     const decision = String(payload.decision || '').trim() as OptionalSkillSelectionDecision;
     const expectedArtifactPath = getOptionalSkillSelectionArtifactPath(bundleRoot, payload.task_id);
     const validateAgainstCurrentHeadlines = options.validateAgainstCurrentHeadlines !== false;
@@ -172,11 +182,11 @@ export function getOptionalSkillSelectionArtifactViolations(
         violations.push("Optional skill selection artifact event_source must equal 'optional-skill-selection'.");
     }
 
-    if (!OPTIONAL_SKILL_SELECTION_POLICY_MODES.includes(policyMode)) {
-        violations.push(`Optional skill selection policy mode '${policyMode}' is invalid.`);
+    if (!OPTIONAL_SKILL_SELECTION_POLICY_MODES.includes(rawPolicyMode)) {
+        violations.push(`Optional skill selection policy mode '${rawPolicyMode}' is invalid.`);
     }
     const expectedPolicyMode = String(options.expectedPolicyMode || '').trim() as OptionalSkillSelectionPolicyMode;
-    if (expectedPolicyMode && policyMode !== expectedPolicyMode) {
+    if (expectedPolicyMode && policyMode !== normalizeOptionalSkillSelectionPolicyMode(expectedPolicyMode)) {
         violations.push(`Optional skill selection artifact must match the current policy mode '${expectedPolicyMode}'.`);
     }
     if (!allowedDecisions.has(decision)) {
@@ -332,10 +342,14 @@ export function getOptionalSkillSelectionArtifactViolations(
     if (decision === 'as_is' && !payload.as_is_reason) {
         violations.push("Decision 'as_is' requires an explicit as_is_reason.");
     }
-    if (policyMode === 'strict' && selectedSkills.length === 0 && !payload.as_is_reason) {
-        violations.push("Policy mode 'strict' requires an explicit as_is_reason whenever no optional skill is selected.");
+    if (options.enforceMandatorySelection === true && isMandatoryOptionalSkillSelectionPolicyMode(policyMode)) {
+        if (decision !== 'selected_installed_skills') {
+            violations.push("Policy mode 'mandatory' requires decision 'selected_installed_skills'.");
+        }
+        if (selectedSkills.length === 0) {
+            violations.push("Policy mode 'mandatory' requires at least one selected installed optional skill.");
+        }
     }
-
     if (validateAgainstCurrentInventory) {
         for (const recommendedPack of recommendedMissingPacks) {
             const currentPack = currentOptionalPacksById.get(String(recommendedPack.id || '').trim());
@@ -421,7 +435,7 @@ export function getOptionalSkillSelectionGateViolations(
         return [];
     }
     const policyConfig = readOptionalSkillSelectionPolicyConfig(bundleRoot);
-    const requireMaterializedArtifact = policyConfig.mode === 'required' || policyConfig.mode === 'strict';
+    const requireMaterializedArtifact = isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode);
     const artifact = readOptionalSkillSelectionArtifact(bundleRoot, taskId);
     if (!artifact) {
         if (!requireMaterializedArtifact) {
@@ -437,6 +451,7 @@ export function getOptionalSkillSelectionGateViolations(
         expectedPreflightPath: options.expectedPreflightPath || null,
         expectedPreflightSha256: options.expectedPreflightSha256 || null,
         expectedPolicyMode: policyConfig.mode,
+        enforceMandatorySelection: true,
         loadedHeadlinesCache: options.loadedHeadlinesCache || null
     };
     if (Object.prototype.hasOwnProperty.call(options, 'expectedTaskTextSha256')) {
@@ -466,13 +481,51 @@ export function getOptionalSkillSelectionGateViolations(
                 asIsReason: fallbackAsIsReason
             })
         };
+    const timelineEvidence = options.timelineEvidence
+        || readOptionalSkillSelectionTimelineEvidence(bundleRoot, taskId, options.taskEventsPath || null);
+    const mandatoryActivationViolations: string[] = [];
+    if (isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode)) {
+        if (timelineEvidence.invalidJson) {
+            mandatoryActivationViolations.push(
+                'Mandatory optional skill selection requires readable current task timeline evidence before implementation.'
+            );
+        } else {
+            const activationPointIndex = buildFreshCurrentCycleOptionalSkillActivationPointIndex(enforcementPayload, timelineEvidence);
+            const implementationStart = getCurrentImplementationStartPoint(enforcementPayload, timelineEvidence);
+            const selectedActivationSkillIds = (Array.isArray(enforcementPayload.selected_installed_skills)
+                ? enforcementPayload.selected_installed_skills
+                    .map((entry) => String(entry.id || '').trim())
+                    .filter(Boolean)
+                : []);
+            const missingActivationSkillIds = selectedActivationSkillIds.filter((skillId) => !activationPointIndex.has(skillId));
+            const lateActivationSkillIds = implementationStart
+                ? selectedActivationSkillIds.filter((skillId) => {
+                    const activation = activationPointIndex.get(skillId);
+                    return activation ? didActivationOccurAfterImplementationStart(activation, implementationStart) : false;
+                })
+                : [];
+            if (missingActivationSkillIds.length > 0) {
+                mandatoryActivationViolations.push(
+                    `Mandatory optional skill selection requires current-cycle activation evidence for selected optional skill(s): ${missingActivationSkillIds.join(', ')}.`
+                );
+            }
+            if (lateActivationSkillIds.length > 0) {
+                mandatoryActivationViolations.push(
+                    `Mandatory optional skill selection requires selected optional skill activation before implementation starts; activation was recorded too late for selected optional skill(s): ${lateActivationSkillIds.join(', ')}.`
+                );
+            }
+        }
+    }
 
-    return collectOptionalSkillReferenceLoadViolations(
-        bundleRoot,
-        taskId,
-        policyConfig.mode,
-        enforcementPayload,
-        options.taskEventsPath || null,
-        options.timelineEvidence || null
-    );
+    return [
+        ...mandatoryActivationViolations,
+        ...collectOptionalSkillReferenceLoadViolations(
+            bundleRoot,
+            taskId,
+            policyConfig.mode,
+            enforcementPayload,
+            options.taskEventsPath || null,
+            timelineEvidence
+        )
+    ];
 }

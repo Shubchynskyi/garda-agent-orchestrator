@@ -90,6 +90,9 @@ import {
 } from '../task-mode/task-mode';
 import {
     buildCurrentCycleOptionalSkillActivationIndex,
+    buildMandatoryCurrentCycleOptionalSkillActivationIndex,
+    isMandatoryOptionalSkillSelectionPolicyMode,
+    normalizeOptionalSkillSelectionPolicyMode,
     readOptionalSkillSelectionArtifact,
     readOptionalSkillSelectionTimelineEvidence
 } from '../../runtime/optional-skill-selection';
@@ -1136,10 +1139,10 @@ function buildOptionalSkillTaskStartInstruction(input: {
     if (input.selectedSkillIds.length > 0) {
         const skillList = input.selectedSkillIds.join(', ');
         if (input.pendingActivationSkillIds.length > 0 && input.activationCommands.length > 0) {
-            if (input.policyMode === 'required' || input.policyMode === 'strict') {
+            if (isMandatoryOptionalSkillSelectionPolicyMode(input.policyMode)) {
                 return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the required chosen role/skill.`;
             }
-            return `Selected advisory optional skill(s): ${skillList}. If you use the selected skill, run the activation command(s) before implementation so the timeline records that choice; otherwise continue with the normal navigator command.`;
+            return `Selected optional skill(s): ${skillList}. If you use the selected skill, run the activation command(s) before implementation so the timeline records that choice; otherwise continue with the normal navigator command.`;
         }
         if (input.pendingActivationSkillIds.length === 0) {
             return `Selected optional skill(s): ${skillList}. Current-cycle activation evidence is present; continue with the normal navigator command.`;
@@ -1147,9 +1150,15 @@ function buildOptionalSkillTaskStartInstruction(input: {
         return `Selected optional skill(s): ${skillList}. Rerun the navigator until classify-change materializes current-cycle selection evidence, then activate the selected skill before implementation.`;
     }
     if (input.recommendedMissingPackIds.length > 0) {
+        if (isMandatoryOptionalSkillSelectionPolicyMode(input.policyMode)) {
+            return `Mandatory optional skill selection found missing pack recommendation(s): ${input.recommendedMissingPackIds.join(', ')}. Install a recommended pack, create or choose an installed specialist skill, then rerun classify-change and activation before implementation.`;
+        }
         return `No installed optional skill is selected; missing pack recommendation(s): ${input.recommendedMissingPackIds.join(', ')}. Inspect the compact skill catalog before implementation and either install/select a pack through the supported flow or proceed with the recorded no-specialized-skill decision.`;
     }
     const reason = input.asIsReason || 'generic_context_sufficient';
+    if (isMandatoryOptionalSkillSelectionPolicyMode(input.policyMode)) {
+        return `Mandatory optional skill selection has no installed specialist skill selected (reason: ${reason}). Install or create a relevant specialist skill, choose it for this task, then rerun classify-change and activation before implementation.`;
+    }
     const catalogHint = input.skillCatalogPath ? ` Compact catalog: ${input.skillCatalogPath}.` : '';
     return `No specialized optional skill selected; current-cycle evidence records as_is (${reason}). Inspect the compact skill catalog if that looks wrong; otherwise this is the explicit no-specialized-skill-needed decision.${catalogHint}`;
 }
@@ -1176,7 +1185,8 @@ function buildOptionalSkillSelectionSummary(
     const artifactPayload = artifact?.payload || null;
     const selectedSkillIds = readStringArrayFromObjects(artifactPayload?.selected_installed_skills, 'id');
     const recommendedMissingPackIds = readStringArrayFromObjects(artifactPayload?.recommended_missing_packs, 'id');
-    const policyMode = String(preflightOptionalRecord.policy_mode || artifactPayload?.policy_mode || '').trim() || null;
+    const rawPolicyMode = String(preflightOptionalRecord.policy_mode || artifactPayload?.policy_mode || '').trim();
+    const policyMode = rawPolicyMode ? normalizeOptionalSkillSelectionPolicyMode(rawPolicyMode) : null;
     const decision = String(preflightOptionalRecord.decision || artifactPayload?.decision || '').trim() || null;
     const asIsReason = String(artifactPayload?.as_is_reason || '').trim() || null;
     const visibleSummaryLine = String(preflightOptionalRecord.visible_summary_line || artifactPayload?.visible_summary_line || '').trim() || null;
@@ -1189,7 +1199,9 @@ function buildOptionalSkillSelectionSummary(
         : null;
     const timelineInvalidJson = timelineEvidence?.invalidJson === true;
     const activationIndex = artifactPayload && timelineEvidence && !timelineEvidence.invalidJson
-        ? buildCurrentCycleOptionalSkillActivationIndex(artifactPayload, timelineEvidence)
+        ? isMandatoryOptionalSkillSelectionPolicyMode(policyMode)
+            ? buildMandatoryCurrentCycleOptionalSkillActivationIndex(artifactPayload, timelineEvidence)
+            : buildCurrentCycleOptionalSkillActivationIndex(artifactPayload, timelineEvidence)
         : new Map<string, number>();
     const activatedSkillIds = selectedSkillIds.filter((skillId) => activationIndex.has(skillId));
     const pendingActivationSkillIds = decision === 'selected_installed_skills'
@@ -1233,7 +1245,7 @@ function getPendingOptionalSkillActivationCommand(
     if (optionalSkillSelection.timeline_invalid_json) {
         return null;
     }
-    if (optionalSkillSelection.policy_mode !== 'required' && optionalSkillSelection.policy_mode !== 'strict') {
+    if (!isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillSelection.policy_mode)) {
         return null;
     }
     const pendingSkillId = optionalSkillSelection.pending_activation_skill_ids[0];
@@ -1242,6 +1254,36 @@ function getPendingOptionalSkillActivationCommand(
     }
     const command = optionalSkillSelection.activation_commands[0] || null;
     return command ? { skillId: pendingSkillId, command } : null;
+}
+
+function getMandatoryOptionalSkillRemediationCommand(
+    optionalSkillSelection: NextStepOptionalSkillSelectionSummary | null,
+    cliPrefix: string,
+    taskText: string
+): { label: string; command: string; reason: string } | null {
+    if (!optionalSkillSelection || !isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillSelection.policy_mode)) {
+        return null;
+    }
+    if (optionalSkillSelection.decision === 'selected_installed_skills') {
+        return null;
+    }
+    const recommendedPackId = optionalSkillSelection.recommended_missing_pack_ids[0] || null;
+    if (recommendedPackId) {
+        return {
+            label: `Install optional skill pack ${recommendedPackId}`,
+            command: `${cliPrefix} skills add ${quoteCommandValue(recommendedPackId)} --target-root "."`,
+            reason:
+                `Mandatory optional skill selection recommended missing pack ${formatNextStepInlineValue(recommendedPackId)}, ` +
+                'but no installed specialist skill is selected. Install or create an appropriate specialist skill, then rerun classify-change and activate the selected skill before implementation.'
+        };
+    }
+    return {
+        label: 'Inspect specialist skill suggestions',
+        command: `${cliPrefix} skills suggest --task-text ${quoteCommandValue(taskText)} --target-root "."`,
+        reason:
+            `Mandatory optional skill selection produced decision ${formatNextStepInlineValue(optionalSkillSelection.decision || 'unknown')} ` +
+            'without an installed specialist skill. Install or create an appropriate specialist skill, choose it for this task, then rerun classify-change and activate it before implementation.'
+    };
 }
 
 function buildResult(params: {
@@ -2259,10 +2301,31 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         });
     }
 
+    const mandatoryOptionalSkillRemediation = getMandatoryOptionalSkillRemediationCommand(
+        optionalSkillSelectionSummary,
+        cliPrefix,
+        taskEntry?.title || taskId
+    );
+    if (mandatoryOptionalSkillRemediation) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'optional-skill-remediation',
+            title: 'Resolve mandatory optional-skill selection before implementation.',
+            reason: mandatoryOptionalSkillRemediation.reason,
+            commands: [
+                buildCommand(
+                    mandatoryOptionalSkillRemediation.label,
+                    mandatoryOptionalSkillRemediation.command
+                )
+            ]
+        });
+    }
+
     if (
         optionalSkillSelectionSummary?.decision === 'selected_installed_skills'
         && optionalSkillSelectionSummary.timeline_invalid_json
-        && (optionalSkillSelectionSummary.policy_mode === 'required' || optionalSkillSelectionSummary.policy_mode === 'strict')
+        && isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillSelectionSummary.policy_mode)
     ) {
         return buildResult({
             ...resultBase,

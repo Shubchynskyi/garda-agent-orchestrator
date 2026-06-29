@@ -255,7 +255,7 @@ export function validateSkillPacksConfig(input: unknown): Record<string, unknown
     return normalized;
 }
 
-const VALID_OPTIONAL_SKILL_SELECTION_POLICY_MODES = new Set(['off', 'advisory', 'required', 'strict']);
+const VALID_OPTIONAL_SKILL_SELECTION_POLICY_MODES = new Set(['off', 'optional', 'mandatory', 'advisory', 'required', 'strict']);
 
 export function validateOptionalSkillSelectionPolicyConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'optional-skill-selection-policy');

@@ -6,7 +6,10 @@ import * as childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
-import { computeOptionalSkillTaskTextSha256 } from '../../../../src/runtime/optional-skill-selection';
+import {
+    computeOptionalSkillSelectionFingerprint,
+    computeOptionalSkillTaskTextSha256
+} from '../../../../src/runtime/optional-skill-selection';
 import { runCliWithCapturedOutput } from './gate-test-helpers';
 import {
     createTempRepo,
@@ -19,7 +22,7 @@ import {
 function seedNodeBackendOptionalSkillFixture(
     bundleRoot: string,
     options: {
-        policyMode?: 'advisory' | 'required' | 'strict' | 'off' | null;
+        policyMode?: 'optional' | 'mandatory' | 'advisory' | 'required' | 'strict' | 'off' | null;
         includePersistedHeadlines?: boolean;
     } = {}
 ): void {
@@ -112,7 +115,7 @@ function writeSelectedNodeBackendOptionalSkillArtifact(
     repoRoot: string,
     taskId: string,
     options: {
-        policyMode: 'advisory' | 'required' | 'strict';
+        policyMode: 'optional' | 'mandatory' | 'advisory' | 'required' | 'strict';
         preflightPath: string;
     }
 ): void {
@@ -152,6 +155,32 @@ function writeSelectedNodeBackendOptionalSkillArtifact(
             headlines_sha256: null,
             visible_summary_line: 'Optional skills: node-backend (reason: task_text+paths)'
         }, null, 2),
+        'utf8'
+    );
+}
+
+function appendOptionalSkillActivationEvent(repoRoot: string, taskId: string, skillId = 'node-backend'): void {
+    const artifactPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'reviews',
+        `${taskId}-optional-skill-selection.json`
+    );
+    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+    const timestampUtc = new Date(Date.parse(String(artifact.timestamp_utc || new Date().toISOString())) + 1000).toISOString();
+    const eventsPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
+    fs.appendFileSync(
+        eventsPath,
+        `${JSON.stringify({
+            timestamp_utc: timestampUtc,
+            event_type: 'SKILL_SELECTED',
+            details: {
+                skill_id: skillId,
+                trigger_reason: 'optional_skill_selection'
+            }
+        })}\n`,
         'utf8'
     );
 }
@@ -202,7 +231,7 @@ test('preprompt task --json shows optional skill selection preview from headline
         const diagnostics = payload.diagnostics as Record<string, unknown>;
         const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
         assert.equal(optionalSkills.artifact_present, false);
-        assert.equal(optionalSkills.policy_mode, 'advisory');
+        assert.equal(optionalSkills.policy_mode, 'optional');
         assert.equal(optionalSkills.decision, 'selected_installed_skills');
         assert.deepEqual(optionalSkills.selected_installed_skills, ['node-backend']);
         assert.deepEqual(optionalSkills.selected_installed_skill_paths, [
@@ -220,7 +249,7 @@ test('preprompt task --json shows optional skill selection preview from headline
     }
 });
 
-test('preprompt task --json keeps current advisory optional-skill activation guidance non-blocking', async () => {
+test('preprompt task --json keeps current optional-skill activation guidance non-blocking', async () => {
     const repoRoot = createTempRepo();
     const taskId = 'T-149';
     try {
@@ -258,11 +287,11 @@ test('preprompt task --json keeps current advisory optional-skill activation gui
         const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
         const diagnostics = payload.diagnostics as Record<string, unknown>;
         const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
-        assert.equal(optionalSkills.policy_mode, 'advisory');
+        assert.equal(optionalSkills.policy_mode, 'optional');
         assert.equal(optionalSkills.selected_installed_skill_activation_ready, true);
         assert.match(
             String(optionalSkills.task_start_instruction || ''),
-            /Selected advisory optional skill\(s\): node-backend/
+            /Selected optional skill\(s\): node-backend/
         );
         assert.match(
             String(optionalSkills.task_start_instruction || ''),
@@ -281,7 +310,61 @@ test('preprompt task --json keeps current advisory optional-skill activation gui
     }
 });
 
-test('preprompt task --json keeps current required optional-skill activation guidance mandatory', async () => {
+test('preprompt task --json treats legacy required policy as mandatory activation guidance', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/api/orders.ts']
+        });
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedNodeBackendOptionalSkillFixture(bundleRoot, {
+            policyMode: 'required',
+            includePersistedHeadlines: true
+        });
+        writeSelectedNodeBackendOptionalSkillArtifact(repoRoot, taskId, {
+            policyMode: 'required',
+            preflightPath
+        });
+        appendOptionalSkillActivationEvent(repoRoot, taskId);
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const diagnostics = payload.diagnostics as Record<string, unknown>;
+        const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
+        assert.equal(optionalSkills.policy_mode, 'mandatory');
+        assert.equal(optionalSkills.selected_installed_skill_activation_ready, true);
+        assert.match(
+            String(optionalSkills.task_start_instruction || ''),
+            /Selected optional skill\(s\): node-backend/
+        );
+        assert.match(
+            String(optionalSkills.task_start_instruction || ''),
+            /Run the activation command\(s\) before implementation so the timeline records the required chosen role\/skill/
+        );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json keeps stale mandatory optional-skill activation blocked after preflight refresh', async () => {
     const repoRoot = createTempRepo();
     const taskId = 'T-149';
     try {
@@ -310,24 +393,46 @@ test('preprompt task --json keeps current required optional-skill activation gui
             preflightPath
         });
 
+        const artifactPath = path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-optional-skill-selection.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+        const artifactTimestampMs = Date.parse(String(artifact.timestamp_utc));
+        const eventsPath = path.join(bundleRoot, 'runtime', 'task-events', `${taskId}.jsonl`);
+        fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
+        const eventLine = (
+            offsetMs: number,
+            eventType: string,
+            details?: Record<string, unknown>
+        ) => JSON.stringify({
+            timestamp_utc: new Date(artifactTimestampMs + offsetMs).toISOString(),
+            event_type: eventType,
+            ...(details ? { details } : {})
+        });
+        fs.writeFileSync(eventsPath, [
+            eventLine(1000, 'SKILL_SELECTED', {
+                skill_id: 'node-backend',
+                trigger_reason: 'optional_skill_selection',
+                optional_skill_selection_fingerprint_sha256: computeOptionalSkillSelectionFingerprint(
+                    artifact as Parameters<typeof computeOptionalSkillSelectionFingerprint>[0]
+                )
+            }),
+            eventLine(2000, 'PREFLIGHT_CLASSIFIED', {
+                output_path: preflightPath.replace(/\\/g, '/')
+            })
+        ].join('\n') + '\n', 'utf8');
+
         const result = await runCliWithCapturedOutput(
             ['preprompt', 'task', '--task-id', taskId, '--json'],
             { cwd: repoRoot }
         );
 
-        assert.equal(result.exitCode, 0);
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
         const diagnostics = payload.diagnostics as Record<string, unknown>;
         const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
-        assert.equal(optionalSkills.policy_mode, 'required');
-        assert.equal(optionalSkills.selected_installed_skill_activation_ready, true);
+        assert.equal(optionalSkills.policy_mode, 'mandatory');
         assert.match(
-            String(optionalSkills.task_start_instruction || ''),
-            /Selected optional skill\(s\): node-backend/
-        );
-        assert.match(
-            String(optionalSkills.task_start_instruction || ''),
-            /Run the activation command\(s\) before implementation so the timeline records the required chosen role\/skill/
+            String(optionalSkills.blocker || ''),
+            /current-cycle activation evidence for selected optional skill\(s\): node-backend/
         );
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -436,7 +541,7 @@ test('preprompt task --json blocks required optional-skill policy until the curr
         const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
         const diagnostics = payload.diagnostics as Record<string, unknown>;
         const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
-        assert.equal(optionalSkills.policy_mode, 'required');
+        assert.equal(optionalSkills.policy_mode, 'mandatory');
         assert.equal(optionalSkills.artifact_present, false);
         assert.equal(optionalSkills.decision, 'selected_installed_skills');
         assert.deepEqual(optionalSkills.selected_installed_skills, ['node-backend']);
@@ -550,7 +655,7 @@ test('preprompt task --json keeps advisory optional-skill preview available when
         const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
         const diagnostics = payload.diagnostics as Record<string, unknown>;
         const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
-        assert.equal(optionalSkills.policy_mode, 'advisory');
+        assert.equal(optionalSkills.policy_mode, 'optional');
         assert.equal(optionalSkills.blocker, null);
         assert.equal(optionalSkills.decision, 'selected_installed_skills');
         assert.deepEqual(optionalSkills.selected_installed_skills, ['node-backend']);
@@ -671,7 +776,7 @@ test('preprompt task --json derives optional-skill preview from task-mode planne
         const commands = payload.commands as Record<string, unknown>;
         const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
         assert.equal(optionalSkills.artifact_present, false);
-        assert.equal(optionalSkills.policy_mode, 'advisory');
+        assert.equal(optionalSkills.policy_mode, 'optional');
         assert.equal(optionalSkills.blocker, null);
         assert.equal(optionalSkills.decision, 'selected_installed_skills');
         assert.deepEqual(optionalSkills.selected_installed_skills, ['node-backend']);
@@ -1162,7 +1267,7 @@ test('preprompt task --json reports a blocker when an existing optional-skill ar
         const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
         const diagnostics = payload.diagnostics as Record<string, unknown>;
         const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
-        assert.match(String(optionalSkills.blocker || ''), /current policy mode 'strict'/i);
+        assert.match(String(optionalSkills.blocker || ''), /current policy mode 'mandatory'/i);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

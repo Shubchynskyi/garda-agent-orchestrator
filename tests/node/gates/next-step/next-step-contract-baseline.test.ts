@@ -214,7 +214,7 @@ function seedStrictDecompositionDecision(repoRoot: string, taskId: string): void
 function seedOptionalSkillSelectionPreflight(
     repoRoot: string,
     taskId: string,
-    options: { policyMode?: 'advisory' | 'required' | 'strict'; skillId?: string; skillPath?: string } = {}
+    options: { policyMode?: 'optional' | 'mandatory' | 'advisory' | 'required' | 'strict'; skillId?: string; skillPath?: string } = {}
 ): void {
     const policyMode = options.policyMode || 'advisory';
     const skillId = options.skillId || 'node-backend';
@@ -404,7 +404,7 @@ describe('next-step refactor contract baseline', () => {
         assert.equal(result.optional_skill_selection?.decision, 'selected_installed_skills');
         assert.deepEqual(result.optional_skill_selection?.selected_skill_ids, ['node-backend']);
         assert.match(result.optional_skill_selection?.task_start_instruction || '', /Run the activation command/i);
-        assert.match(text, /^OptionalSkillDecision: policy=advisory; decision=selected_installed_skills;/mu);
+        assert.match(text, /^OptionalSkillDecision: policy=optional; decision=selected_installed_skills;/mu);
         assert.match(text, /^OptionalSkillSelected: node-backend$/mu);
         assert.match(text, /gate activate-optional-skill --task-id "T-CONTRACT-1" --skill-id "node-backend"/u);
     });
@@ -505,7 +505,7 @@ describe('next-step refactor contract baseline', () => {
         assert.equal(result.next_gate, 'compile-gate');
         assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, ['node-backend']);
         assert.match(text, /^OptionalSkillPendingActivation: node-backend$/mu);
-        assert.match(text, /Selected advisory optional skill\(s\): node-backend/u);
+        assert.match(text, /Selected optional skill\(s\): node-backend/u);
         assert.match(result.commands[0]?.command || '', /gate compile-gate/u);
     });
 
@@ -534,12 +534,12 @@ describe('next-step refactor contract baseline', () => {
         assert.match(result.optional_skill_selection?.task_start_instruction || '', /Current-cycle activation evidence is present/i);
     });
 
-    it('keeps selected optional-skill activation satisfied across unchanged preflight refresh', () => {
+    it('keeps advisory selected optional-skill activation satisfied across unchanged preflight refresh', () => {
         const repoRoot = makeContractRepo();
         fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
         seedStartedTask(repoRoot, TASK_ID);
-        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'required' });
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'advisory' });
         seedStrictDecompositionDecision(repoRoot, TASK_ID);
 
         const optionalSkillArtifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-optional-skill-selection.json`);
@@ -591,6 +591,36 @@ describe('next-step refactor contract baseline', () => {
         assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, []);
         assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
         assert.match(result.optional_skill_selection?.task_start_instruction || '', /Current-cycle activation evidence is present/i);
+    });
+
+    it('requires fresh mandatory optional-skill activation after preflight refresh', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'required' });
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const optionalSkillArtifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-optional-skill-selection.json`);
+        const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
+        appendEvent(repoRoot, TASK_ID, 'SKILL_SELECTED', {
+            skill_id: 'node-backend',
+            trigger_reason: 'optional_skill_selection',
+            optional_skill_selection_fingerprint_sha256: optionalSkillArtifact.selection_fingerprint_sha256
+        }, '2026-01-01T00:00:06.000Z');
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
+            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`))
+        }, '2026-01-01T00:00:08.000Z');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'activate-optional-skill');
+        assert.deepEqual(result.optional_skill_selection?.activated_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, ['node-backend']);
+        assert.match(text, /^OptionalSkillPendingActivation: node-backend$/mu);
+        assert.match(result.optional_skill_selection?.task_start_instruction || '', /Run the activation command/i);
     });
 
     it('does not trust optional-skill activation evidence from a malformed task timeline', () => {
@@ -704,9 +734,83 @@ describe('next-step refactor contract baseline', () => {
         assert.deepEqual(result.optional_skill_selection?.recommended_missing_pack_ids, ['telegram-bot']);
         assert.match(result.optional_skill_selection?.task_start_instruction || '', /missing pack recommendation\(s\): telegram-bot/i);
         assert.match(result.optional_skill_selection?.task_start_instruction || '', /compact skill catalog/i);
-        assert.match(text, /^OptionalSkillDecision: policy=advisory; decision=recommended_missing_packs;/mu);
+        assert.match(text, /^OptionalSkillDecision: policy=optional; decision=recommended_missing_packs;/mu);
         assert.match(text, /^OptionalSkillRecommendedMissingPacks: telegram-bot$/mu);
         assert.match(text, /^OptionalSkillCatalog: garda-agent-orchestrator\/live\/config\/skills-headlines\.json$/mu);
         assert.match(text, /^OptionalSkillTaskStartInstruction: .*compact skill catalog/mu);
+    });
+
+    it('routes mandatory missing-pack decisions to optional-skill remediation before compile', () => {
+        const repoRoot = makeContractRepo();
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const optionalSkillArtifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: TASK_ID,
+            timestamp_utc: '2026-01-01T00:00:04.000Z',
+            policy_mode: 'mandatory',
+            decision: 'recommended_missing_packs',
+            selected_installed_skills: [],
+            recommended_missing_packs: [
+                {
+                    id: 'telegram-bot',
+                    pack: 'telegram-bot',
+                    reason_codes: ['task_signals'],
+                    matches: { task_signals: ['telegram bot'], changed_path_signals: [] }
+                }
+            ],
+            as_is_reason: 'no_relevant_installed_skill',
+            task_text_present: true,
+            task_text_sha256: 'fixture-task-text',
+            changed_paths: ['src/bot/telegram.ts'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: 'fixture-preflight',
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: 'fixture-headlines',
+            visible_summary_line: 'Optional skills: recommended_missing_packs (packs: telegram-bot, reason: task_text)'
+        };
+        writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            scope_category: 'code',
+            changed_files: ['src/bot/telegram.ts'],
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            optional_skill_selection: {
+                artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
+                policy_mode: 'mandatory',
+                decision: 'recommended_missing_packs',
+                visible_summary_line: 'Optional skills: recommended_missing_packs (packs: telegram-bot, reason: task_text)'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
+            output_path: normalizeForTimeline(preflightPath)
+        }, '2026-01-01T00:00:04.500Z');
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'optional-skill-remediation');
+        assert.equal(result.commands.length, 1);
+        assert.equal(result.commands[0]?.label, 'Install optional skill pack telegram-bot');
+        assert.match(result.commands[0]?.command || '', /skills add "telegram-bot" --target-root "\."/u);
+        assert.match(result.reason, /Install or create an appropriate specialist skill/u);
+        assert.match(text, /^OptionalSkillDecision: policy=mandatory; decision=recommended_missing_packs;/mu);
+        assert.match(text, /Resolve mandatory optional-skill selection/u);
     });
 });

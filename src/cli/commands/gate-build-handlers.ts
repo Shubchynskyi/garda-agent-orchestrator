@@ -8,6 +8,7 @@ import {
 import {
     computeOptionalSkillTaskTextSha256,
     getOptionalSkillSelectionArtifactViolations,
+    isMandatoryOptionalSkillSelectionPolicyMode,
     isOptionalSkillSelectionPolicyConfigured,
     readOptionalSkillSelectionArtifact,
     readOptionalSkillSelectionPolicyConfig
@@ -211,7 +212,7 @@ async function runActivateOptionalSkillCommand(options: ParsedOptionsRecord) {
     }
 
     const artifactViolations = getOptionalSkillSelectionArtifactViolations(orchestratorRoot, artifact, {
-        requireMaterializedArtifact: policyConfig.mode === 'required' || policyConfig.mode === 'strict',
+        requireMaterializedArtifact: isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode),
         expectedPreflightPath: preflightPath,
         expectedPreflightSha256: preflightSha256,
         expectedTaskTextSha256: computeOptionalSkillTaskTextSha256(String(currentTaskText || '')),

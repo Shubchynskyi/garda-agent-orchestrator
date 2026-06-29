@@ -1852,7 +1852,7 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('skips selection of skills with missing SKILL.md during classify-change in required mode', () => {
+    it('materializes mandatory remediation evidence when a matching skill is missing SKILL.md', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-149-preflight-cleanup';
         seedTaskQueue(repoRoot, taskId);
@@ -1907,18 +1907,18 @@ describe('cli/commands/gates — preflight', () => {
             emitMetrics: false
         });
 
-        // Skill without SKILL.md is silently excluded; preflight succeeds with as_is.
+        // Skill without SKILL.md is excluded; classify-change still materializes evidence so next-step can route remediation.
         assert.match(result.outputText, /"mode": "FULL_PATH"/);
         assert.equal(fs.existsSync(preflightPath), true);
         const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         const optionalSkillSelection = preflightPayload.optional_skill_selection as Record<string, unknown>;
-        assert.equal(optionalSkillSelection.policy_mode, 'required');
+        assert.equal(optionalSkillSelection.policy_mode, 'mandatory');
         assert.equal(optionalSkillSelection.decision, 'as_is');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('keeps classify-change non-blocking in advisory mode when skill has no SKILL.md', () => {
+    it('keeps classify-change non-blocking in optional mode when skill has no SKILL.md', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-149-preflight-advisory';
         seedTaskQueue(repoRoot, taskId);
@@ -1980,7 +1980,7 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(fs.existsSync(preflightPath), true);
         const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         const optionalSkillSelection = preflightPayload.optional_skill_selection as Record<string, unknown>;
-        assert.equal(optionalSkillSelection.policy_mode, 'advisory');
+        assert.equal(optionalSkillSelection.policy_mode, 'optional');
         assert.equal(optionalSkillSelection.decision, 'as_is');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

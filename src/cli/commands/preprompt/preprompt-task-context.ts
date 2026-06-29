@@ -21,13 +21,17 @@ import { getWorkspaceSnapshot } from '../../../gates/compile/compile-gate';
 import { readAgentInitStateSafe } from '../../../runtime/agent-init-state';
 import {
     buildOptionalSkillSelectionArtifact,
+    buildCurrentCycleOptionalSkillActivationIndex,
+    buildMandatoryCurrentCycleOptionalSkillActivationIndex,
     computeOptionalSkillTaskTextSha256,
     getOptionalSkillSelectionArtifactViolations,
     getOptionalSkillSelectionArtifactPath,
+    isMandatoryOptionalSkillSelectionPolicyMode,
     isOptionalSkillSelectionPolicyConfigured,
     loadOptionalSkillSelectionHeadlinesCache,
     readOptionalSkillSelectionArtifact,
-    readOptionalSkillSelectionPolicyConfig
+    readOptionalSkillSelectionPolicyConfig,
+    readOptionalSkillSelectionTimelineEvidence
 } from '../../../runtime/optional-skill-selection';
 import { readActiveProfileHint } from '../../../validators/task-command';
 import { formatStatusSnapshotCompact, getStatusSnapshot } from '../../../validators/status';
@@ -461,17 +465,23 @@ function buildOptionalSkillTaskStartInstruction(input: {
     if (input.selectedSkillIds.length > 0) {
         const skillList = input.selectedSkillIds.join(', ');
         if (input.activationReady && input.activationCommands.length > 0) {
-            if (input.policyMode === 'required' || input.policyMode === 'strict') {
+            if (isMandatoryOptionalSkillSelectionPolicyMode(input.policyMode)) {
                 return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the required chosen role/skill.`;
             }
-            return `Selected advisory optional skill(s): ${skillList}. If you use the selected skill, run the activation command(s) before implementation so the timeline records that choice; otherwise continue with the normal navigator command.`;
+            return `Selected optional skill(s): ${skillList}. If you use the selected skill, run the activation command(s) before implementation so the timeline records that choice; otherwise continue with the normal navigator command.`;
         }
         return `Selected optional skill(s): ${skillList}. Materialize the current-cycle selection artifact with classify-change before implementation, then activate the selected skill.`;
     }
     if (input.recommendedMissingPackIds.length > 0) {
+        if (isMandatoryOptionalSkillSelectionPolicyMode(input.policyMode)) {
+            return `Mandatory optional skill selection found missing pack recommendation(s): ${input.recommendedMissingPackIds.join(', ')}. Install a recommended pack, create or choose an installed specialist skill, then rerun classify-change and activation before implementation.`;
+        }
         return `No installed optional skill is selected; missing pack recommendation(s): ${input.recommendedMissingPackIds.join(', ')}. Inspect the compact skill catalog before implementation and either install/select a pack through the supported flow or proceed with the recorded no-specialized-skill decision.`;
     }
     const reason = input.asIsReason || 'generic_context_sufficient';
+    if (isMandatoryOptionalSkillSelectionPolicyMode(input.policyMode)) {
+        return `Mandatory optional skill selection has no installed specialist skill selected (reason: ${reason}). Install or create a relevant specialist skill, choose it for this task, then rerun classify-change and activation before implementation.`;
+    }
     const catalogHint = input.headlinesPath
         ? ` Compact catalog: ${input.headlinesPath}.`
         : '';
@@ -576,9 +586,13 @@ export function buildOptionalSkillsDiagnostics(
                 expectedTaskTextSha256,
                 expectedPolicyMode: policyConfig.mode,
                 loadedHeadlinesCache
-            });
-        const policyMode = preview.payload.policy_mode;
-        const requiresMaterializedArtifact = policyMode === 'required' || policyMode === 'strict';
+        });
+        const policyMode = policyConfig.mode;
+        const isMandatoryPolicy = isMandatoryOptionalSkillSelectionPolicyMode(policyMode);
+        const requiresMaterializedArtifact = isMandatoryPolicy;
+        const selectedSkillIds = preview.payload.selected_installed_skills.map((entry) => entry.id);
+        const selectedSkillPaths = preview.payload.selected_installed_skills.map((entry) => entry.allowed_skill_path);
+        const recommendedPackIds = preview.payload.recommended_missing_packs.map((entry) => entry.id);
         const activationReady = (
             preview.payload.selected_installed_skills.length > 0
             && currentCycleArtifact !== null
@@ -592,24 +606,48 @@ export function buildOptionalSkillsDiagnostics(
             : activationArtifactViolations.length > 0
                 ? activationArtifactViolations.join(' ')
                 : 'Optional skill activation requires a current materialized selection artifact bound to the current preflight.';
+        const timelineEvidence = currentCycleArtifact && currentArtifactViolations.length === 0
+            ? readOptionalSkillSelectionTimelineEvidence(bundleRoot, taskId)
+            : null;
+        const activationIndex = currentCycleArtifact && timelineEvidence && !timelineEvidence.invalidJson
+            ? isMandatoryPolicy
+                ? buildMandatoryCurrentCycleOptionalSkillActivationIndex(currentCycleArtifact.payload, timelineEvidence)
+                : buildCurrentCycleOptionalSkillActivationIndex(currentCycleArtifact.payload, timelineEvidence)
+            : new Map<string, number>();
+        const missingActivationSkillIds = selectedSkillIds.filter((skillId) => !activationIndex.has(skillId));
+        const mandatorySelectionBlocker = isMandatoryPolicy && preview.payload.decision !== 'selected_installed_skills'
+            ? preview.payload.decision === 'recommended_missing_packs'
+                ? `Mandatory optional skill selection requires an installed specialist skill before implementation. Install a recommended pack (${recommendedPackIds.join(', ')}), create or choose an installed specialist skill, then rerun classify-change and activation.`
+                : 'Mandatory optional skill selection requires an installed specialist skill before implementation. Install or create a relevant specialist skill, choose it for this task, then rerun classify-change and activation.'
+            : null;
+        const mandatoryActivationBlocker = isMandatoryPolicy
+            && currentCycleArtifact !== null
+            && currentArtifactViolations.length === 0
+            && selectedSkillIds.length > 0
+            && missingActivationSkillIds.length > 0
+            ? timelineEvidence?.invalidJson === true
+                ? 'Mandatory optional skill selection requires readable current task timeline evidence before implementation.'
+                : `Mandatory optional skill selection requires current-cycle activation evidence for selected optional skill(s): ${missingActivationSkillIds.join(', ')}.`
+            : null;
         let blocker: string | null = null;
-        if (requiresMaterializedArtifact && currentCycleArtifact === null) {
+        if (mandatorySelectionBlocker) {
+            blocker = mandatorySelectionBlocker;
+        } else if (requiresMaterializedArtifact && currentCycleArtifact === null) {
             blocker = 'Optional skill selection policy requires a materialized current-cycle selection artifact. Re-run classify-change for this task cycle before implementation.';
         } else if (requiresMaterializedArtifact && currentArtifactViolations.length > 0) {
             blocker = currentArtifactViolations.join(' ');
+        } else if (mandatoryActivationBlocker) {
+            blocker = mandatoryActivationBlocker;
         } else if (activationArtifactViolations.length > 0) {
             blocker = activationArtifactViolations.join(' ');
         } else if (previewViolations.length > 0) {
             blocker = previewViolations.join(' ');
         }
-        const selectedSkillIds = preview.payload.selected_installed_skills.map((entry) => entry.id);
-        const selectedSkillPaths = preview.payload.selected_installed_skills.map((entry) => entry.allowed_skill_path);
         const activationCommands = activationReady
             ? preview.payload.selected_installed_skills.map((entry) => (
                 buildOptionalSkillActivationCommand(repoRoot, taskId, entry.id)
             ))
             : [];
-        const recommendedPackIds = preview.payload.recommended_missing_packs.map((entry) => entry.id);
         const skillCatalogPath = preview.payload.headlines_path
             ? preview.payload.headlines_path.replace(/\\/g, '/')
             : toPortableRepoPath(targetRoot, path.join(bundleRoot, 'live', 'config', 'skills-headlines.json'));
