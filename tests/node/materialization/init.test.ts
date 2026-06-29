@@ -787,6 +787,45 @@ describe('runInit', () => {
         }
     });
 
+    it('preserves optional skill selection policy values and custom fields on reinit', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const policyPath = path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json');
+            fs.writeFileSync(policyPath, JSON.stringify({
+                version: 1,
+                mode: 'mandatory',
+                local_note: 'keep local policy metadata'
+            }, null, 2), 'utf8');
+
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const materializedConfig = JSON.parse(fs.readFileSync(policyPath, 'utf8'));
+            assert.equal(materializedConfig.mode, 'mandatory');
+            assert.equal(materializedConfig.local_note, 'keep local policy metadata');
+            assert.equal(result.optionalSkillSelectionPolicyConfigMergeStatus, 'existing_values_preserved_and_missing_keys_filled');
+
+            const report = fs.readFileSync(result.initReportPath, 'utf8');
+            assert.ok(report.includes('Optional skill selection policy config sync policy: preserve existing live values and fill missing keys from template.'));
+            assert.ok(report.includes('Optional skill selection policy config merge status: existing_values_preserved_and_missing_keys_filled'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('fails when another live lifecycle operation lock exists', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

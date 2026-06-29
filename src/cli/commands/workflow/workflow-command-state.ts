@@ -40,7 +40,8 @@ export function resolveWorkflowRoots(options: ParsedOptionsRecord): WorkflowComm
     return {
         targetRoot,
         bundleRoot,
-        configPath: path.join(bundleRoot, 'live', 'config', 'workflow-config.json')
+        configPath: path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+        optionalSkillSelectionPolicyPath: path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json')
     };
 }
 

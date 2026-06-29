@@ -118,6 +118,10 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Task reset: disabled'));
         assert.ok(output.includes('Auto backup: disabled interval_days=1 keep_latest=10'));
         assert.ok(output.includes(`Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length}`));
+        assert.equal(result.optional_skill_selection_policy.mode, 'optional');
+        assert.equal(result.optional_skill_selection_policy.effective_mode, 'optional');
+        assert.equal(result.optional_skill_selection_policy.status, 'missing');
+        assert.ok(output.includes('Specialist-skill selection: optional status=missing'));
         assert.ok(output.includes('TaskResetEnabled: false'));
         assert.ok(output.includes('AutoBackupEnabled: false'));
         assert.ok(output.includes('OptionalQualityChecksEnabled: true'));
@@ -125,6 +129,46 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes(`OptionalQualityChecksRuleIds: ${defaultOptionalQualityCheckRuleIds()}`));
         assert.ok(output.includes('OptionalQualityCheckRule: code_simplification enabled=true title=Code simplification'));
         assert.ok(output.includes('OptionalQualityCheckRule: test_verification_scope enabled=true title=Test and verification scope'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set updates optional skill selection policy without rewriting workflow config', () => {
+    const bundleRoot = createBundleRoot();
+    const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    const policyPath = path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json');
+    const beforeWorkflowConfig = fs.readFileSync(workflowConfigPath, 'utf8');
+    fs.writeFileSync(policyPath, JSON.stringify({
+        version: 1,
+        mode: 'required',
+        local_note: 'preserve me'
+    }, null, 2), 'utf8');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-skill-selection-mode', 'mandatory',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.deepEqual(result.requested_fields, ['optional_skill_selection_policy.mode']);
+        assert.deepEqual(result.changed_fields, ['optional_skill_selection_policy.mode']);
+        assert.equal(result.optional_skill_selection_policy.mode, 'mandatory');
+        assert.equal(result.optional_skill_selection_policy.effective_mode, 'mandatory');
+        assert.ok(output.includes('Specialist-skill selection: mandatory'));
+
+        const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8'));
+        assert.equal(policy.mode, 'mandatory');
+        assert.equal(policy.local_note, 'preserve me');
+        assert.equal(fs.readFileSync(workflowConfigPath, 'utf8'), beforeWorkflowConfig);
+        assert.ok(result.audit_path);
+        const auditLines = fs.readFileSync(path.join(bundleRoot, 'runtime', 'workflow-config-audit.jsonl'), 'utf8').trim().split(/\r?\n/u);
+        const latestAudit = JSON.parse(auditLines[auditLines.length - 1]);
+        assert.deepEqual(latestAudit.changed_fields, ['optional_skill_selection_policy.mode']);
+        assert.match(latestAudit.config_path, /optional-skill-selection-policy\.json$/u);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -986,6 +1030,7 @@ test('workflow help describes project-memory update as the default policy', () =
     assert.ok(helpText.includes('--optional-checks on|off|--optional-checks-enabled true|false'));
     assert.ok(helpText.includes('Short aliases map exactly to existing boolean settings'));
     assert.ok(helpText.includes('workflow set --optional-checks on --operator-confirmed yes --operator-confirmed-at-utc'));
+    assert.ok(helpText.includes('workflow set --optional-skill-selection-mode mandatory'));
     assert.ok(helpText.includes('workflow set --garda-self-guard on'));
     assert.ok(helpText.includes('workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('Task reset mutations are disabled by default'));
@@ -1066,12 +1111,16 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.optional_quality_checks.rules[0].id, 'code_simplification');
         assert.ok(parsed.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'test_verification_scope'));
         assert.ok(!parsed.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'artifact_evidence_binding'));
+        assert.equal(parsed.optional_skill_selection_policy.mode, 'optional');
+        assert.equal(parsed.optional_skill_selection_policy.effective_mode, 'optional');
+        assert.equal(parsed.optional_skill_selection_policy.status, 'missing');
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review mode=standard');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
         assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=true');
         assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
         assert.equal(parsed.task_reset_summary_line, 'Task reset: disabled');
         assert.equal(parsed.optional_quality_checks_summary_line, `Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length}`);
+        assert.equal(parsed.optional_skill_selection_policy_summary_line, 'Specialist-skill selection: optional status=missing');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -1372,6 +1421,23 @@ test('workflow set rejects invalid project memory maintenance modes', () => {
                 '--project-memory-mode', 'audit'
             ], PACKAGE_JSON),
             /--project-memory-mode must be one of/
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set rejects invalid optional skill selection policy modes', () => {
+    const bundleRoot = createBundleRoot();
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--optional-skill-selection-mode', 'always'
+            ], PACKAGE_JSON),
+            /--optional-skill-selection-mode must be one of/
         );
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });

@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Modo de seleccion de habilidades especializadas",
+    "description": "Controla si la seleccion de habilidades especializadas al iniciar una tarea esta desactivada, es orientativa u obligatoria. Los valores heredados advisory/required/strict se muestran con seguridad y se guardan como modos canonicos.",
+    "options": {
+      "off": {
+        "label": "Desactivado",
+        "description": "No sugiere ni exige habilidades especializadas al iniciar la tarea."
+      },
+      "optional": {
+        "label": "Opcional",
+        "description": "Muestra sugerencias de habilidades especializadas y paquetes recomendados sin bloquear el trabajo normal."
+      },
+      "mandatory": {
+        "label": "Obligatorio",
+        "description": "Exige una habilidad especializada instalada antes de iniciar la implementacion cuando la politica selecciona una."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Regla opcional de control de calidad",
     "description": "Añade, actualiza o elimina una regla opcional y consultiva de control de calidad mediante la ruta auditada de configuración del flujo de trabajo."

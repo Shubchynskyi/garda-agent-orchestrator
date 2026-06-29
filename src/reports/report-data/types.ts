@@ -16,6 +16,10 @@ import type {
     WorkflowSettingOption,
     WorkflowSettingValueType
 } from '../workflow-setting-metadata';
+import type {
+    CanonicalOptionalSkillSelectionPolicyMode,
+    OptionalSkillSelectionPolicyMode
+} from '../../runtime/optional-skill-selection';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
 export const DEFAULT_REPORT_MAX_DETAILED_TASKS = 0;
@@ -163,6 +167,14 @@ export interface ReportWorkflowConfigTab {
     status: 'present' | 'missing' | 'invalid';
     settings: ReportWorkflowSetting[];
     optional_quality_checks: WorkflowConfigData['optional_quality_checks'];
+    optional_skill_selection_policy: {
+        config_path: string;
+        config_exists: boolean;
+        status: 'present' | 'missing' | 'invalid';
+        mode: OptionalSkillSelectionPolicyMode;
+        effective_mode: CanonicalOptionalSkillSelectionPolicyMode;
+        unavailable: ReportDataUnavailableEntry[];
+    };
     unavailable: ReportDataUnavailableEntry[];
 }
 

@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Uzman beceri secim modu",
+    "description": "Gorev baslangicinda uzman beceri eslestirmesinin kapali, tavsiye niteliginde veya zorunlu olmasini denetler. Eski advisory/required/strict degerleri guvenle gosterilir ve kaydedilirken kanonik modlara yazilir.",
+    "options": {
+      "off": {
+        "label": "Kapali",
+        "description": "Gorev baslangicinda uzman beceri onermez veya zorunlu kilmaz."
+      },
+      "optional": {
+        "label": "Istege bagli",
+        "description": "Uzman beceri onerilerini ve onerilen paketleri normal gorev calismasini engellemeden gosterir."
+      },
+      "mandatory": {
+        "label": "Zorunlu",
+        "description": "Politika bir kurulu uzman beceriyi sectiginde implementasyon baslamadan once onu zorunlu kilar."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "İsteğe bağlı kalite kontrol kuralı",
     "description": "Denetlenen workflow ayarı yolu üzerinden bir danışma niteliğindeki isteğe bağlı kalite kontrol kuralını ekler, günceller veya kaldırır."

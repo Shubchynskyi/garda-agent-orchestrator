@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Tryb wyboru umiejetnosci specjalistycznych",
+    "description": "Steruje tym, czy dopasowanie umiejetnosci specjalistycznych przy starcie zadania jest wylaczone, doradcze czy obowiazkowe. Starsze wartosci advisory/required/strict sa bezpiecznie pokazywane i zapisywane jako tryby kanoniczne.",
+    "options": {
+      "off": {
+        "label": "Wylaczone",
+        "description": "Nie sugeruje ani nie wymaga umiejetnosci specjalistycznych przy starcie zadania."
+      },
+      "optional": {
+        "label": "Opcjonalne",
+        "description": "Pokazuje sugestie umiejetnosci specjalistycznych i rekomendowane pakiety bez blokowania zwyklej pracy."
+      },
+      "mandatory": {
+        "label": "Obowiazkowe",
+        "description": "Wymaga wybranej zainstalowanej umiejetnosci specjalistycznej przed rozpoczeciem implementacji, gdy polityka ja wybierze."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Opcjonalna reguła kontroli jakości",
     "description": "Dodaje, aktualizuje lub usuwa jedną doradczą opcjonalną regułę kontroli jakości przez audytowaną ścieżkę ustawień workflow."

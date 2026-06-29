@@ -50,6 +50,7 @@ export function buildUiSettingsPayload(repoRoot: string, actionsEnabled: boolean
         enabled: actionsEnabled,
         settings: buildUiSettingDefinitions(repoRoot),
         optional_quality_checks: workflowConfigTab.optional_quality_checks,
+        optional_skill_selection_policy: workflowConfigTab.optional_skill_selection_policy,
         quality_gate: qualityGateTab
     };
 }

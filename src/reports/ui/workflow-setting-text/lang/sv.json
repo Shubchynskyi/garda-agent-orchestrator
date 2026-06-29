@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Lage for specialist-skill-val",
+    "description": "Styr om specialist-skill-matchning vid uppgiftsstart ar avstangd, radgivande eller obligatorisk. Legacy-vardena advisory/required/strict visas sakert och sparas som kanoniska lagen.",
+    "options": {
+      "off": {
+        "label": "Av",
+        "description": "Foreslar inte och kraver inte specialist-skills vid uppgiftsstart."
+      },
+      "optional": {
+        "label": "Valfritt",
+        "description": "Visar forslag pa specialist-skills och rekommenderade paket utan att blockera vanligt uppgiftsarbete."
+      },
+      "mandatory": {
+        "label": "Obligatoriskt",
+        "description": "Kraver en vald installerad specialist-skill innan implementation startar nar policyn valjer en."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Valfri kvalitetskontrollregel",
     "description": "Lägger till, uppdaterar eller tar bort en rådgivande valfri kvalitetskontrollregel via den granskade workflow-inställningsvägen."

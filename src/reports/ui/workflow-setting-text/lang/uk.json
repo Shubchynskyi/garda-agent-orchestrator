@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Режим вибору specialist-skill",
+    "description": "Керує тим, чи буде підбір specialist-skill на старті задачі вимкненим, рекомендаційним або обовязковим. Застарілі advisory/required/strict значення безпечно показуються і під час збереження записуються як канонічні режими.",
+    "options": {
+      "off": {
+        "label": "Вимкнено",
+        "description": "Не пропонує і не вимагає specialist-skill на старті задачі."
+      },
+      "optional": {
+        "label": "Необовязково",
+        "description": "Показує пропозиції specialist-skill і рекомендовані пакети, не блокуючи звичайну роботу над задачею."
+      },
+      "mandatory": {
+        "label": "Обовязково",
+        "description": "Вимагає вибраний встановлений specialist-skill до початку реалізації, якщо policy matching його вибрав."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Правило опціональної перевірки якості",
     "description": "Додає, оновлює або видаляє одне рекомендаційне правило опціональної перевірки якості через перевірений шлях налаштувань workflow."

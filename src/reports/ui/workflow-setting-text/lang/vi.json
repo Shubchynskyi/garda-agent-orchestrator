@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Che do chon ky nang chuyen biet",
+    "description": "Dieu khien viec khop ky nang chuyen biet khi bat dau tac vu la tat, tu van hay bat buoc. Gia tri cu advisory/required/strict duoc hien thi an toan va duoc ghi thanh che do chuan khi luu.",
+    "options": {
+      "off": {
+        "label": "Tat",
+        "description": "Khong goi y hoac bat buoc ky nang chuyen biet khi bat dau tac vu."
+      },
+      "optional": {
+        "label": "Tuy chon",
+        "description": "Hien goi y ky nang chuyen biet va goi khuyen nghi ma khong chan cong viec tac vu thong thuong."
+      },
+      "mandatory": {
+        "label": "Bat buoc",
+        "description": "Yeu cau ky nang chuyen biet da cai dat truoc khi bat dau implementation khi chinh sach chon ky nang do."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Quy tắc kiểm tra chất lượng tùy chọn",
     "description": "Thêm, cập nhật hoặc xóa một quy tắc kiểm tra chất lượng tùy chọn mang tính tư vấn qua đường dẫn cài đặt workflow đã được kiểm toán."

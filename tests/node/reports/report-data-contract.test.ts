@@ -91,6 +91,15 @@ function writeWorkflowConfig(repoRoot: string): void {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
+function writeOptionalSkillSelectionPolicy(repoRoot: string, mode: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'optional-skill-selection-policy.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({
+        version: 1,
+        mode
+    }, null, 2));
+}
+
 function writePathsConfig(repoRoot: string): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -547,6 +556,9 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.ok(tab.settings.length > 0);
     assert.equal(tab.optional_quality_checks.enabled, true);
     assert.ok(tab.optional_quality_checks.rules.some((rule) => rule.id === 'code_simplification'));
+    assert.equal(tab.optional_skill_selection_policy.mode, 'optional');
+    assert.equal(tab.optional_skill_selection_policy.effective_mode, 'optional');
+    assert.equal(tab.optional_skill_selection_policy.status, 'missing');
     const compileGate = tab.settings.find((setting) => setting.key === 'compile_gate.command');
     assert.ok(compileGate);
     assert.equal(compileGate.label, 'Compile-gate command');
@@ -574,6 +586,13 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.equal(optionalChecksEnabled.value, true);
     assert.equal(optionalChecksEnabled.label, 'Optional quality checks');
     assert.match(optionalChecksEnabled.command, /garda workflow set --optional-checks-enabled <true\|false>/);
+    const optionalSkillSelectionMode = tab.settings.find((setting) => setting.key === 'optional_skill_selection_policy.mode');
+    assert.ok(optionalSkillSelectionMode);
+    assert.equal(optionalSkillSelectionMode.value, 'optional');
+    assert.equal(optionalSkillSelectionMode.value_type, 'enum');
+    assert.equal(optionalSkillSelectionMode.flag, '--optional-skill-selection-mode');
+    assert.match(optionalSkillSelectionMode.command, /garda workflow set --optional-skill-selection-mode <off\|optional\|mandatory>/);
+    assert.ok(optionalSkillSelectionMode.options.some((option) => option.value === 'mandatory'));
     const fullSuiteTimeoutBlocker = tab.settings.find((setting) => setting.key === 'full_suite_validation.timeout_blocker');
     assert.ok(fullSuiteTimeoutBlocker);
     assert.equal(fullSuiteTimeoutBlocker.value, true);
@@ -654,6 +673,27 @@ test('buildWorkflowConfigTab preserves unknown legacy enum-list values with diag
     assert.ok(excludedReviewTypes);
     assert.ok(excludedReviewTypes.options.some((option) => option.value === 'Legacy-Review' && option.description.includes('legacy')));
     assert.ok(!excludedReviewTypes.options.some((option) => option.value === 'legacy-review'));
+});
+
+test('buildWorkflowConfigTab displays legacy optional skill selection policy modes safely', () => {
+    const repoRoot = makeTempRepo();
+    writeWorkflowConfig(repoRoot);
+    writeOptionalSkillSelectionPolicy(repoRoot, 'required');
+
+    const tab = buildWorkflowConfigTab(repoRoot);
+
+    assert.equal(tab.optional_skill_selection_policy.mode, 'required');
+    assert.equal(tab.optional_skill_selection_policy.effective_mode, 'mandatory');
+    assert.equal(tab.optional_skill_selection_policy.status, 'present');
+    const setting = tab.settings.find((candidate) => candidate.key === 'optional_skill_selection_policy.mode');
+    assert.ok(setting);
+    assert.equal(setting.value, 'required');
+    assert.ok(setting.options.some((option) => (
+        option.value === 'required'
+        && option.label.includes('legacy')
+        && option.description.includes('mandatory')
+    )));
+    assert.ok(setting.options.some((option) => option.value === 'mandatory'));
 });
 
 test('buildReportDataContract exposes quality gate baseline and custom rule status', () => {

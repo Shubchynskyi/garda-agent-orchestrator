@@ -20,6 +20,11 @@ export const OPTIONAL_SKILL_SELECTION_POLICY_MODES = Object.freeze([
 ] as const);
 
 export type OptionalSkillSelectionPolicyMode = typeof OPTIONAL_SKILL_SELECTION_POLICY_MODES[number];
+export const CANONICAL_OPTIONAL_SKILL_SELECTION_POLICY_MODES = Object.freeze([
+    'off',
+    'optional',
+    'mandatory'
+] as const);
 export type CanonicalOptionalSkillSelectionPolicyMode = 'off' | 'optional' | 'mandatory';
 
 export const OPTIONAL_SKILL_AS_IS_REASONS = Object.freeze([

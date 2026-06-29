@@ -19,7 +19,11 @@ import {
 import { normalizeReviewExecutionPolicyMode } from '../../../core/review-execution-policy';
 import { normalizeScopeBudgetGuardConfig } from '../../../core/scope-budget-guard';
 import { normalizeReviewCycleGuardConfig } from '../../../core/review-cycle-guard';
-import { validateWorkflowConfig } from '../../../schemas/config-artifacts';
+import { validateManagedConfigByName, validateWorkflowConfig } from '../../../schemas/config-artifacts';
+import {
+    DEFAULT_POLICY_CONFIG,
+    type CanonicalOptionalSkillSelectionPolicyMode
+} from '../../../runtime/optional-skill-selection';
 import {
     cloneOrchestratorWorkPolicyConfig,
     cloneAutoBackupConfig,
@@ -48,6 +52,7 @@ import {
     parseReviewTypeList,
     parseScopeBudgetAction,
     parseGardaSelfGuardMode,
+    parseOptionalSkillSelectionPolicyMode,
     requireWorkflowSetOperatorConfirmation,
     resolveBooleanSettingOption,
     validateWorkflowCompileGateCommand
@@ -169,6 +174,66 @@ function deleteOptionalCheckRule(
     return nextRules;
 }
 
+function serializeManagedConfig(config: Record<string, unknown>): string {
+    return JSON.stringify(config, null, 2) + '\n';
+}
+
+function readOptionalSkillSelectionPolicyForSet(policyPath: string): {
+    exists: boolean;
+    validatedConfig: Record<string, unknown> | null;
+    serializedConfig: string | null;
+} {
+    if (!fs.existsSync(policyPath) || !fs.statSync(policyPath).isFile()) {
+        return {
+            exists: false,
+            validatedConfig: null,
+            serializedConfig: null
+        };
+    }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(fs.readFileSync(policyPath, 'utf8'));
+    } catch (error: unknown) {
+        throw new Error(
+            `Optional skill selection policy at '${policyPath}' is not valid JSON: ${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+    try {
+        const validatedConfig = validateManagedConfigByName(
+            'optional-skill-selection-policy',
+            parsed
+        ) as Record<string, unknown>;
+        return {
+            exists: true,
+            validatedConfig,
+            serializedConfig: serializeManagedConfig(validatedConfig)
+        };
+    } catch (error: unknown) {
+        throw new Error(
+            `Optional skill selection policy at '${policyPath}' is invalid: ${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+}
+
+function buildNextOptionalSkillSelectionPolicyConfig(
+    currentConfig: Record<string, unknown> | null,
+    mode: CanonicalOptionalSkillSelectionPolicyMode
+): Record<string, unknown> {
+    const baseConfig = currentConfig
+        ? JSON.parse(JSON.stringify(currentConfig)) as Record<string, unknown>
+        : { ...DEFAULT_POLICY_CONFIG };
+    if (!Number.isInteger(Number(baseConfig.version))) {
+        baseConfig.version = DEFAULT_POLICY_CONFIG.version;
+    }
+    baseConfig.mode = mode;
+    return validateManagedConfigByName('optional-skill-selection-policy', baseConfig) as Record<string, unknown>;
+}
+
+function writeOptionalSkillSelectionPolicyConfig(policyPath: string, config: Record<string, unknown>): void {
+    fs.mkdirSync(path.dirname(policyPath), { recursive: true });
+    fs.writeFileSync(policyPath, serializeManagedConfig(config), 'utf8');
+}
+
 export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const roots = resolveWorkflowRoots(options);
     const state = readWorkflowConfigState(roots.configPath, roots.bundleRoot);
@@ -187,6 +252,11 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     ) as WorkflowConfigData['full_suite_validation'];
     const nextCompileGate = normalizeCompileGateConfig(nextConfig.compile_gate);
     const changedFields: string[] = [];
+    const optionalSkillSelectionPolicyFields: string[] = [];
+    let optionalSkillSelectionPolicyExists = false;
+    let optionalSkillSelectionPolicyCurrentSerialized: string | null = null;
+    let optionalSkillSelectionPolicyNextConfig: Record<string, unknown> | null = null;
+    let optionalSkillSelectionPolicyNextSerialized: string | null = null;
     const fullSuiteEnabledSetting = resolveBooleanSettingOption({
         parsedOptions: options,
         canonicalKey: 'fullSuiteEnabled',
@@ -528,6 +598,19 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     }
     nextConfig.optional_quality_checks = nextOptionalQualityChecks;
 
+    if (typeof options.optionalSkillSelectionMode === 'string') {
+        const mode = parseOptionalSkillSelectionPolicyMode(options.optionalSkillSelectionMode);
+        const currentPolicy = readOptionalSkillSelectionPolicyForSet(roots.optionalSkillSelectionPolicyPath);
+        optionalSkillSelectionPolicyExists = currentPolicy.exists;
+        optionalSkillSelectionPolicyCurrentSerialized = currentPolicy.serializedConfig;
+        optionalSkillSelectionPolicyNextConfig = buildNextOptionalSkillSelectionPolicyConfig(
+            currentPolicy.validatedConfig,
+            mode
+        );
+        optionalSkillSelectionPolicyNextSerialized = serializeManagedConfig(optionalSkillSelectionPolicyNextConfig);
+        optionalSkillSelectionPolicyFields.push('optional_skill_selection_policy.mode');
+    }
+
     const nextOrchestratorWorkPolicy = cloneOrchestratorWorkPolicyConfig(
         normalizeOrchestratorWorkPolicyConfig(
             nextConfig.orchestrator_work_policy ?? buildDefaultWorkflowConfig().orchestrator_work_policy
@@ -539,7 +622,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     }
     nextConfig.orchestrator_work_policy = nextOrchestratorWorkPolicy;
 
-    if (changedFields.length === 0) {
+    if (changedFields.length === 0 && optionalSkillSelectionPolicyFields.length === 0) {
         throw new Error(
             "Workflow setting flags are required for 'workflow set'. "
             + 'Use --compile-gate-command, --full-suite-enabled, --full-suite-command, --full-suite-timeout-ms, '
@@ -548,7 +631,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             + '--full-suite-out-of-scope-failure-policy, --full-suite-placement, --review-execution-policy, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
             + '--task-reset-enabled, --auto-backup-* flags, --optional-checks-enabled, '
-            + '--optional-check-rule-* flags, '
+            + '--optional-check-rule-* flags, --optional-skill-selection-mode, '
             + 'their short on/off aliases, or --garda-self-guard.'
         );
     }
@@ -567,11 +650,18 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const currentSerialized = JSON.stringify(currentValidated, null, 2) + '\n';
     const nextValidated = normalizeWorkflowFileConfig(validateWorkflowConfig(nextConfig) as WorkflowFileConfigData);
     const nextSerialized = JSON.stringify(nextValidated, null, 2) + '\n';
-    const changed = !state.exists || nextSerialized !== currentSerialized;
-    const requestedFields = [...changedFields];
-    const actualChangedFields = changed
-        ? resolveActualChangedFields(requestedFields, currentValidated, nextValidated, state.exists)
+    const workflowConfigChanged = changedFields.length > 0 && (!state.exists || nextSerialized !== currentSerialized);
+    const optionalSkillSelectionPolicyChanged = optionalSkillSelectionPolicyFields.length > 0
+        && (!optionalSkillSelectionPolicyExists || optionalSkillSelectionPolicyNextSerialized !== optionalSkillSelectionPolicyCurrentSerialized);
+    const changed = workflowConfigChanged || optionalSkillSelectionPolicyChanged;
+    const requestedFields = [...changedFields, ...optionalSkillSelectionPolicyFields];
+    const actualWorkflowConfigChangedFields = workflowConfigChanged
+        ? resolveActualChangedFields(changedFields, currentValidated, nextValidated, state.exists)
         : [];
+    const actualChangedFields = [
+        ...actualWorkflowConfigChangedFields,
+        ...(optionalSkillSelectionPolicyChanged ? optionalSkillSelectionPolicyFields : [])
+    ];
     const actualChangedFieldSet = new Set(actualChangedFields);
     const noopFields = requestedFields.filter((field) => !actualChangedFieldSet.has(field));
 
@@ -589,14 +679,26 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         if (!safeSelfGuardHardening) {
             requireWorkflowSetOperatorConfirmation(options);
         }
-        writeWorkflowConfig(roots.configPath, nextValidated);
-        auditPath = writeWorkflowConfigAuditRecord(
-            roots.bundleRoot,
-            roots.configPath,
-            actualChangedFields,
-            currentSerialized,
-            nextSerialized
-        );
+        if (workflowConfigChanged) {
+            writeWorkflowConfig(roots.configPath, nextValidated);
+            auditPath = writeWorkflowConfigAuditRecord(
+                roots.bundleRoot,
+                roots.configPath,
+                actualWorkflowConfigChangedFields,
+                currentSerialized,
+                nextSerialized
+            );
+        }
+        if (optionalSkillSelectionPolicyChanged && optionalSkillSelectionPolicyNextConfig && optionalSkillSelectionPolicyNextSerialized) {
+            writeOptionalSkillSelectionPolicyConfig(roots.optionalSkillSelectionPolicyPath, optionalSkillSelectionPolicyNextConfig);
+            auditPath = writeWorkflowConfigAuditRecord(
+                roots.bundleRoot,
+                roots.optionalSkillSelectionPolicyPath,
+                optionalSkillSelectionPolicyFields,
+                optionalSkillSelectionPolicyCurrentSerialized ?? '',
+                optionalSkillSelectionPolicyNextSerialized
+            );
+        }
         protectedManifestPath = refreshWorkflowProtectedManifest(resolveProtectedManifestRefreshRoot(roots));
     } else if (taskResetAuditRepairRequested) {
         requireWorkflowSetOperatorConfirmation(options);
@@ -615,7 +717,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         ...buildWorkflowShowResult(roots, {
             rawConfig: nextValidated,
             config: nextValidated,
-            exists: state.exists || changed,
+            exists: state.exists || workflowConfigChanged,
             missingReviewExecutionPolicyMode: null
         }),
         action: 'set',

@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "전문 스킬 선택 모드",
+    "description": "작업 시작 시 전문 스킬 매칭을 끄거나, 권고로 두거나, 필수로 둘지 제어합니다. 기존 advisory/required/strict 값은 안전하게 표시되고 저장 시 표준 모드로 기록됩니다.",
+    "options": {
+      "off": {
+        "label": "꺼짐",
+        "description": "작업 시작 시 전문 스킬을 제안하거나 요구하지 않습니다."
+      },
+      "optional": {
+        "label": "선택",
+        "description": "일반 작업을 막지 않고 전문 스킬 제안과 추천 팩을 표시합니다."
+      },
+      "mandatory": {
+        "label": "필수",
+        "description": "정책 매칭이 설치된 전문 스킬을 선택하면 구현 시작 전에 해당 스킬을 요구합니다."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "선택적 품질 점검 규칙",
     "description": "감사되는 워크플로 설정 경로를 통해 권고용 선택적 품질 점검 규칙 하나를 추가, 업데이트 또는 제거합니다."

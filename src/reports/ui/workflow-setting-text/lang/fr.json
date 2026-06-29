@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Mode de selection des competences specialistes",
+    "description": "Controle si la selection des competences specialistes au demarrage de tache est desactivee, consultative ou obligatoire. Les valeurs historiques advisory/required/strict sont affichees sans risque puis enregistrees en modes canoniques.",
+    "options": {
+      "off": {
+        "label": "Desactive",
+        "description": "Ne suggere ni n exige de competences specialistes au demarrage de la tache."
+      },
+      "optional": {
+        "label": "Facultatif",
+        "description": "Affiche des suggestions de competences specialistes et de packs recommandes sans bloquer le travail courant."
+      },
+      "mandatory": {
+        "label": "Obligatoire",
+        "description": "Exige une competence specialiste installee avant le debut de l implementation lorsque la politique en selectionne une."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Règle facultative de contrôle qualité",
     "description": "Ajoute, met à jour ou retire une règle consultative facultative de contrôle qualité via le parcours audité des paramètres de workflow."

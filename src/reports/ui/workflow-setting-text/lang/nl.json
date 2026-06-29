@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Specialistische-skillselectiemodus",
+    "description": "Bepaalt of specialistische skillmatching bij taakstart uit, adviserend of verplicht is. Legacywaarden advisory/required/strict worden veilig getoond en bij opslaan naar canonieke modi geschreven.",
+    "options": {
+      "off": {
+        "label": "Uit",
+        "description": "Stelt geen specialistische skills voor en vereist ze niet bij taakstart."
+      },
+      "optional": {
+        "label": "Optionele modus",
+        "description": "Toont specialistische-skillvoorstellen en aanbevolen pakketten zonder normaal taakwerk te blokkeren."
+      },
+      "mandatory": {
+        "label": "Verplicht",
+        "description": "Vereist een geselecteerde geinstalleerde specialistische skill voordat implementatie start wanneer het beleid er een selecteert."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Optionele kwaliteitscontroleregel",
     "description": "Voegt een adviserende optionele kwaliteitscontroleregel toe, werkt die bij of verwijdert die via het gecontroleerde workflow-instellingenpad."

@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "专家技能选择模式",
+    "description": "控制任务启动时的专家技能匹配是关闭、建议还是强制。旧的 advisory/required/strict 值会安全显示，并在保存时写入为规范模式。",
+    "options": {
+      "off": {
+        "label": "关闭",
+        "description": "任务启动时不建议也不要求专家技能。"
+      },
+      "optional": {
+        "label": "可选",
+        "description": "显示专家技能建议和推荐包，但不阻塞普通任务工作。"
+      },
+      "mandatory": {
+        "label": "强制",
+        "description": "当策略匹配选中已安装的专家技能时，要求在实现开始前使用该技能。"
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "可选质量检查规则",
     "description": "通过已审计的工作流设置路径添加、更新或移除一条建议性的可选质量检查规则。"

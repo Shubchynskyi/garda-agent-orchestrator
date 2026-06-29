@@ -1,6 +1,7 @@
 import {
     UNCONFIGURED_COMPILE_GATE_COMMAND
 } from '../../../core/constants';
+import * as fs from 'node:fs';
 import {
     REVIEW_EXECUTION_POLICY_MODES,
     buildReviewExecutionPolicySummaryLine,
@@ -29,6 +30,13 @@ import {
     normalizeReviewCycleGuardConfig,
     type ReviewCycleGuardConfig
 } from '../../../core/review-cycle-guard';
+import { validateManagedConfigByName } from '../../../schemas/config-artifacts';
+import {
+    DEFAULT_POLICY_CONFIG,
+    normalizeOptionalSkillSelectionPolicyMode,
+    type CanonicalOptionalSkillSelectionPolicyMode,
+    type OptionalSkillSelectionPolicyMode
+} from '../../../runtime/optional-skill-selection';
 import {
     bold,
     cyan,
@@ -54,6 +62,8 @@ import type {
     WorkflowSetResult,
     WorkflowShowResult
 } from './workflow-command-types';
+
+type WorkflowOptionalSkillSelectionPolicyView = WorkflowCommandResultBase['optional_skill_selection_policy'];
 
 export function buildMandatoryFullSuiteLine(config: { full_suite_validation: WorkflowConfigData['full_suite_validation'] }): string {
     const guidance = buildFullSuitePerformanceGuidance(config.full_suite_validation.command);
@@ -128,6 +138,57 @@ export function buildOptionalQualityChecksLine(config: OptionalQualityChecksConf
     return `Optional quality checks: ${config.enabled ? 'enabled' : 'disabled'} baseline=${config.baseline_version} rules=${config.rules.length} enabled_rules=${enabledRules}`;
 }
 
+function readOptionalSkillSelectionPolicyView(
+    roots: WorkflowCommandRoots
+): WorkflowOptionalSkillSelectionPolicyView {
+    if (!fs.existsSync(roots.optionalSkillSelectionPolicyPath) || !fs.statSync(roots.optionalSkillSelectionPolicyPath).isFile()) {
+        return {
+            config_path: roots.optionalSkillSelectionPolicyPath,
+            config_exists: false,
+            status: 'missing',
+            mode: DEFAULT_POLICY_CONFIG.mode,
+            effective_mode: normalizeOptionalSkillSelectionPolicyMode(DEFAULT_POLICY_CONFIG.mode),
+            invalid_reason: null
+        };
+    }
+    try {
+        const parsed = JSON.parse(fs.readFileSync(roots.optionalSkillSelectionPolicyPath, 'utf8')) as unknown;
+        const validated = validateManagedConfigByName(
+            'optional-skill-selection-policy',
+            parsed
+        ) as Record<string, unknown>;
+        const mode = String(validated.mode || DEFAULT_POLICY_CONFIG.mode) as OptionalSkillSelectionPolicyMode;
+        return {
+            config_path: roots.optionalSkillSelectionPolicyPath,
+            config_exists: true,
+            status: 'present',
+            mode,
+            effective_mode: normalizeOptionalSkillSelectionPolicyMode(mode),
+            invalid_reason: null
+        };
+    } catch (error: unknown) {
+        const mode = DEFAULT_POLICY_CONFIG.mode;
+        return {
+            config_path: roots.optionalSkillSelectionPolicyPath,
+            config_exists: true,
+            status: 'invalid',
+            mode,
+            effective_mode: normalizeOptionalSkillSelectionPolicyMode(mode) as CanonicalOptionalSkillSelectionPolicyMode,
+            invalid_reason: error instanceof Error ? error.message : String(error)
+        };
+    }
+}
+
+export function buildOptionalSkillSelectionPolicyLine(config: WorkflowOptionalSkillSelectionPolicyView): string {
+    const statusSuffix = config.status === 'present'
+        ? ''
+        : ` status=${config.status}`;
+    const effectiveSuffix = config.mode === config.effective_mode
+        ? ''
+        : ` effective=${config.effective_mode}`;
+    return `Specialist-skill selection: ${config.mode}${effectiveSuffix}${statusSuffix}`;
+}
+
 export function buildOrchestratorWorkPolicyLine(config: OrchestratorWorkPolicyConfig): string {
     const selfGuard = config.mode === 'deny_agent_entry' ? 'on' : 'off';
     return `Garda self-guard: ${selfGuard} (${config.mode})`;
@@ -157,6 +218,7 @@ export function buildWorkflowShowResult(
             state.config.optional_quality_checks ?? buildDefaultWorkflowConfig().optional_quality_checks
         )
     );
+    const optionalSkillSelectionPolicy = readOptionalSkillSelectionPolicyView(roots);
     const orchestratorWorkPolicy = cloneOrchestratorWorkPolicyConfig(
         normalizeOrchestratorWorkPolicyConfig(
             state.config.orchestrator_work_policy ?? buildDefaultWorkflowConfig().orchestrator_work_policy
@@ -178,6 +240,7 @@ export function buildWorkflowShowResult(
         task_reset: taskReset,
         auto_backup: autoBackup,
         optional_quality_checks: optionalQualityChecks,
+        optional_skill_selection_policy: optionalSkillSelectionPolicy,
         orchestrator_work_policy: orchestratorWorkPolicy,
         visible_summary_line: buildMandatoryFullSuiteLine(state.config),
         compile_gate_summary_line: buildCompileGateLine({ compile_gate: compileGate }),
@@ -188,6 +251,7 @@ export function buildWorkflowShowResult(
         task_reset_summary_line: buildTaskResetLine(taskReset),
         auto_backup_summary_line: buildAutoBackupLine(autoBackup),
         optional_quality_checks_summary_line: buildOptionalQualityChecksLine(optionalQualityChecks),
+        optional_skill_selection_policy_summary_line: buildOptionalSkillSelectionPolicyLine(optionalSkillSelectionPolicy),
         orchestrator_work_policy_summary_line: buildOrchestratorWorkPolicyLine(orchestratorWorkPolicy)
     };
 }
@@ -238,6 +302,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     const taskReset = result.task_reset;
     const autoBackup = result.auto_backup;
     const optionalQualityChecks = result.optional_quality_checks;
+    const optionalSkillSelectionPolicy = result.optional_skill_selection_policy;
     const orchestratorWorkPolicy = result.orchestrator_work_policy;
     const lines: string[] = [];
     lines.push('GARDA_WORKFLOW');
@@ -260,6 +325,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push(result.task_reset_summary_line);
     lines.push(result.auto_backup_summary_line);
     lines.push(result.optional_quality_checks_summary_line);
+    lines.push(result.optional_skill_selection_policy_summary_line);
     lines.push(result.orchestrator_work_policy_summary_line);
     lines.push('');
     lines.push('Compile gate');
@@ -325,6 +391,13 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     for (const rule of optionalQualityChecks.rules) {
         lines.push(`OptionalQualityCheckRule: ${rule.id} enabled=${rule.enabled !== false} title=${rule.title}`);
     }
+    lines.push(`OptionalSkillSelectionPolicyMode: ${optionalSkillSelectionPolicy.mode}`);
+    lines.push(`OptionalSkillSelectionPolicyEffectiveMode: ${optionalSkillSelectionPolicy.effective_mode}`);
+    lines.push(`OptionalSkillSelectionPolicyStatus: ${optionalSkillSelectionPolicy.status}`);
+    lines.push(`OptionalSkillSelectionPolicyPath: ${optionalSkillSelectionPolicy.config_path}`);
+    if (optionalSkillSelectionPolicy.invalid_reason) {
+        lines.push(`OptionalSkillSelectionPolicyInvalidReason: ${optionalSkillSelectionPolicy.invalid_reason}`);
+    }
     lines.push(`GardaSelfGuard: ${orchestratorWorkPolicy.mode === 'deny_agent_entry' ? 'on' : 'off'}`);
     lines.push(`OrchestratorWorkPolicy: ${orchestratorWorkPolicy.mode}`);
     lines.push('');
@@ -341,6 +414,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Tip: run "workflow set --auto-backup on|off --auto-backup-interval-days 1 --auto-backup-keep-latest 10 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change scheduled backup maintenance after operator approval.');
     lines.push('Tip: run "workflow set --optional-checks on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change optional quality-check availability after operator approval.');
     lines.push('Tip: run "workflow set --optional-check-rule-id <id> --optional-check-rule-title <title> --optional-check-rule-prompt <prompt> --optional-check-rule-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to add or update an optional quality-check rule.');
+    lines.push('Tip: run "workflow set --optional-skill-selection-mode off|optional|mandatory --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change task-start specialist-skill selection after operator approval.');
     lines.push('Tip: run "workflow set --garda-self-guard on|off" to control agent self-entry into protected orchestrator work; off requires explicit operator approval.');
     return colorizeWorkflowHumanOutput(lines.join('\n'));
 }

@@ -3,7 +3,14 @@ import * as path from 'node:path';
 import { buildDefaultWorkflowConfig, type WorkflowConfigData } from '../../core/workflow-config';
 import { resolveTaskResetAvailability } from '../../core/task-reset-availability';
 import { joinOrchestratorPath, toPosix } from '../../gates/shared/helpers';
-import { validateWorkflowConfig } from '../../schemas/config-artifacts';
+import { validateManagedConfigByName, validateWorkflowConfig } from '../../schemas/config-artifacts';
+import {
+    CANONICAL_OPTIONAL_SKILL_SELECTION_POLICY_MODES,
+    DEFAULT_POLICY_CONFIG,
+    normalizeOptionalSkillSelectionPolicyMode,
+    type CanonicalOptionalSkillSelectionPolicyMode,
+    type OptionalSkillSelectionPolicyMode
+} from '../../runtime/optional-skill-selection';
 import {
     EXCLUDED_REVIEW_TYPE_LEGACY_OPTION_DESCRIPTION,
     getKnownReviewTypeLabel,
@@ -20,6 +27,16 @@ import type { ReportDataUnavailableEntry, ReportWorkflowConfigTab, ReportWorkflo
 
 const KNOWN_REVIEW_TYPES: readonly string[] = KNOWN_REVIEW_TYPE_IDS;
 const FALLBACK_PROFILE_IDS = ['balanced', 'fast', 'strict', 'docs-only'];
+const OPTIONAL_SKILL_SELECTION_POLICY_KEY = 'optional_skill_selection_policy.mode';
+
+interface OptionalSkillSelectionPolicyReportState {
+    config_path: string;
+    config_exists: boolean;
+    status: 'present' | 'missing' | 'invalid';
+    mode: OptionalSkillSelectionPolicyMode;
+    effective_mode: CanonicalOptionalSkillSelectionPolicyMode;
+    unavailable: ReportDataUnavailableEntry[];
+}
 
 function getConfigValue(config: WorkflowConfigData, key: string): unknown {
     return key.split('.').reduce<unknown>((current, part) => {
@@ -37,6 +54,52 @@ function getRawConfigValue(rawConfig: unknown, key: string): unknown {
         }
         return (current as Record<string, unknown>)[part];
     }, rawConfig);
+}
+
+function optionalSkillSelectionPolicyPath(repoRoot: string): string {
+    return joinOrchestratorPath(path.resolve(repoRoot), path.join('live', 'config', 'optional-skill-selection-policy.json'));
+}
+
+function buildOptionalSkillSelectionPolicyReportState(repoRoot: string): OptionalSkillSelectionPolicyReportState {
+    const configPath = optionalSkillSelectionPolicyPath(repoRoot);
+    if (!fs.existsSync(configPath) || !fs.statSync(configPath).isFile()) {
+        return {
+            config_path: toPosix(configPath),
+            config_exists: false,
+            status: 'missing',
+            mode: DEFAULT_POLICY_CONFIG.mode,
+            effective_mode: normalizeOptionalSkillSelectionPolicyMode(DEFAULT_POLICY_CONFIG.mode),
+            unavailable: []
+        };
+    }
+    try {
+        const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as unknown;
+        const validated = validateManagedConfigByName(
+            'optional-skill-selection-policy',
+            parsed
+        ) as Record<string, unknown>;
+        const mode = String(validated.mode || DEFAULT_POLICY_CONFIG.mode) as OptionalSkillSelectionPolicyMode;
+        return {
+            config_path: toPosix(configPath),
+            config_exists: true,
+            status: 'present',
+            mode,
+            effective_mode: normalizeOptionalSkillSelectionPolicyMode(mode),
+            unavailable: []
+        };
+    } catch (error: unknown) {
+        return {
+            config_path: toPosix(configPath),
+            config_exists: true,
+            status: 'invalid',
+            mode: DEFAULT_POLICY_CONFIG.mode,
+            effective_mode: normalizeOptionalSkillSelectionPolicyMode(DEFAULT_POLICY_CONFIG.mode),
+            unavailable: [{
+                scope: 'optional-skill-selection-policy',
+                reason: error instanceof Error ? error.message : String(error)
+            }]
+        };
+    }
 }
 
 function normalizeStringList(value: unknown): string[] {
@@ -129,7 +192,47 @@ function appendUnknownCurrentValues(
     return unknownOptions.length > 0 ? [...options, ...unknownOptions] : options;
 }
 
+function buildOptionalSkillSelectionPolicyOptions(currentValue: unknown): WorkflowSettingOption[] {
+    const options: WorkflowSettingOption[] = CANONICAL_OPTIONAL_SKILL_SELECTION_POLICY_MODES.map((mode) => {
+        switch (mode) {
+            case 'off':
+                return {
+                    value: mode,
+                    label: 'Off',
+                    description: 'Specialist-skill matching is disabled for task start.'
+                };
+            case 'mandatory':
+                return {
+                    value: mode,
+                    label: 'Mandatory',
+                    description: 'Selected installed specialist skills are required before implementation starts.'
+                };
+            default:
+                return {
+                    value: mode,
+                    label: 'Optional',
+                    description: 'Specialist-skill suggestions are shown without blocking ordinary task work.'
+                };
+        }
+    });
+    const rawCurrent = typeof currentValue === 'string' ? currentValue.trim().toLowerCase() : '';
+    if (!rawCurrent || options.some((option) => option.value === rawCurrent)) {
+        return options;
+    }
+    return [
+        ...options,
+        {
+            value: rawCurrent,
+            label: `${rawCurrent} (legacy)`,
+            description: `Legacy policy value preserved from the current config; effective mode is ${normalizeOptionalSkillSelectionPolicyMode(rawCurrent)}.`
+        }
+    ];
+}
+
 function buildWorkflowSettingOptions(repoRoot: string, key: string, currentValue: unknown, fallbackOptions: WorkflowSettingOption[]): WorkflowSettingOption[] {
+    if (key === OPTIONAL_SKILL_SELECTION_POLICY_KEY) {
+        return buildOptionalSkillSelectionPolicyOptions(currentValue);
+    }
     if (key === 'review_cycle_guard.excluded_review_types') {
         return buildReviewTypeOptions(repoRoot, currentValue);
     }
@@ -171,8 +274,12 @@ function buildWorkflowCommand(
 function resolveWorkflowSettingValue(
     config: WorkflowConfigData,
     rawConfig: unknown,
-    definition: { key: string; value_type: WorkflowSettingValueType }
+    definition: { key: string; value_type: WorkflowSettingValueType },
+    optionalSkillSelectionPolicy: OptionalSkillSelectionPolicyReportState
 ): unknown {
+    if (definition.key === OPTIONAL_SKILL_SELECTION_POLICY_KEY) {
+        return optionalSkillSelectionPolicy.mode;
+    }
     const value = getConfigValue(config, definition.key);
     const rawValue = getRawConfigValue(rawConfig, definition.key);
     return definition.value_type === 'enum_list' && Array.isArray(rawValue)
@@ -180,12 +287,18 @@ function resolveWorkflowSettingValue(
         : value;
 }
 
-function buildWorkflowSetting(repoRoot: string, config: WorkflowConfigData, rawConfig: unknown, key: string): ReportWorkflowSetting {
+function buildWorkflowSetting(
+    repoRoot: string,
+    config: WorkflowConfigData,
+    rawConfig: unknown,
+    key: string,
+    optionalSkillSelectionPolicy: OptionalSkillSelectionPolicyReportState
+): ReportWorkflowSetting {
     const definition = getWorkflowSettingDefinition(key);
     if (!definition) {
         throw new Error(`Missing local UI workflow setting metadata for ${key}.`);
     }
-    const value = resolveWorkflowSettingValue(config, rawConfig, definition);
+    const value = resolveWorkflowSettingValue(config, rawConfig, definition, optionalSkillSelectionPolicy);
     const options = buildWorkflowSettingOptions(repoRoot, key, value, definition.options);
     const setting: ReportWorkflowSetting = {
         id: definition.id,
@@ -217,12 +330,24 @@ function buildWorkflowSetting(repoRoot: string, config: WorkflowConfigData, rawC
     return setting;
 }
 
-function buildWorkflowSettings(repoRoot: string, config: WorkflowConfigData, rawConfig: unknown = config): ReportWorkflowSetting[] {
-    return WORKFLOW_SETTING_DEFINITIONS.map((definition) => buildWorkflowSetting(repoRoot, config, rawConfig, definition.key));
+function buildWorkflowSettings(
+    repoRoot: string,
+    config: WorkflowConfigData,
+    rawConfig: unknown = config,
+    optionalSkillSelectionPolicy = buildOptionalSkillSelectionPolicyReportState(repoRoot)
+): ReportWorkflowSetting[] {
+    return WORKFLOW_SETTING_DEFINITIONS.map((definition) => buildWorkflowSetting(
+        repoRoot,
+        config,
+        rawConfig,
+        definition.key,
+        optionalSkillSelectionPolicy
+    ));
 }
 
 export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTab {
     const configPath = joinOrchestratorPath(path.resolve(repoRoot), path.join('live', 'config', 'workflow-config.json'));
+    const optionalSkillSelectionPolicy = buildOptionalSkillSelectionPolicyReportState(repoRoot);
     const unavailable: ReportDataUnavailableEntry[] = [];
     if (!fs.existsSync(configPath) || !fs.statSync(configPath).isFile()) {
         const config = buildDefaultWorkflowConfig();
@@ -230,9 +355,13 @@ export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTa
             config_path: toPosix(configPath),
             config_exists: false,
             status: 'missing',
-            settings: buildWorkflowSettings(repoRoot, config),
+            settings: buildWorkflowSettings(repoRoot, config, config, optionalSkillSelectionPolicy),
             optional_quality_checks: config.optional_quality_checks,
-            unavailable: [{ scope: 'workflow-config', reason: 'Workflow config file missing; default values are shown.' }]
+            optional_skill_selection_policy: optionalSkillSelectionPolicy,
+            unavailable: [
+                { scope: 'workflow-config', reason: 'Workflow config file missing; default values are shown.' },
+                ...optionalSkillSelectionPolicy.unavailable
+            ]
         };
     }
 
@@ -249,9 +378,10 @@ export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTa
             config_path: toPosix(configPath),
             config_exists: true,
             status: 'present',
-            settings: buildWorkflowSettings(repoRoot, config, parsed),
+            settings: buildWorkflowSettings(repoRoot, config, parsed, optionalSkillSelectionPolicy),
             optional_quality_checks: config.optional_quality_checks,
-            unavailable
+            optional_skill_selection_policy: optionalSkillSelectionPolicy,
+            unavailable: [...unavailable, ...optionalSkillSelectionPolicy.unavailable]
         };
     } catch (error: unknown) {
         const config = buildDefaultWorkflowConfig();
@@ -259,12 +389,13 @@ export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTa
             config_path: toPosix(configPath),
             config_exists: true,
             status: 'invalid',
-            settings: buildWorkflowSettings(repoRoot, config),
+            settings: buildWorkflowSettings(repoRoot, config, config, optionalSkillSelectionPolicy),
             optional_quality_checks: config.optional_quality_checks,
+            optional_skill_selection_policy: optionalSkillSelectionPolicy,
             unavailable: [{
                 scope: 'workflow-config',
                 reason: error instanceof Error ? error.message : String(error)
-            }]
+            }, ...optionalSkillSelectionPolicy.unavailable]
         };
     }
 }

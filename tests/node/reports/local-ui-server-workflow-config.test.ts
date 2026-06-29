@@ -60,6 +60,11 @@ test('local UI settings use guarded workflow commands with preview confirmation 
                     enabled: boolean;
                 }>;
             };
+            optional_skill_selection_policy: {
+                mode: string;
+                effective_mode: string;
+                status: string;
+            };
             quality_gate: {
                 enabled: boolean;
                 baseline_version: string;
@@ -103,6 +108,14 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.ok(list.settings.some((setting) => setting.id === 'project-memory-max-compact-summary-chars'));
         assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
         assert.ok(list.settings.some((setting) => setting.id === 'optional-checks-enabled'));
+        const skillSelectionSetting = list.settings.find((setting) => setting.id === 'optional-skill-selection-mode');
+        assert.ok(skillSelectionSetting);
+        assert.equal(skillSelectionSetting.key, 'optional_skill_selection_policy.mode');
+        assert.equal(skillSelectionSetting.current_value, 'optional');
+        assert.ok(skillSelectionSetting.options.some((option) => option.value === 'mandatory'));
+        assert.equal(list.optional_skill_selection_policy.mode, 'optional');
+        assert.equal(list.optional_skill_selection_policy.effective_mode, 'optional');
+        assert.equal(list.optional_skill_selection_policy.status, 'missing');
         assert.equal(list.optional_quality_checks.enabled, true);
         assert.equal(list.quality_gate.enabled, true);
         assert.equal(list.quality_gate.baseline_version, list.quality_gate.shipped_baseline_version);
@@ -191,6 +204,24 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.match(optionalRulePreview.command, /--optional-check-rule-title "Custom focus"/u);
         assert.match(optionalRulePreview.command, /--optional-check-rule-prompt "Check custom concern\."/u);
         assert.match(optionalRulePreview.command, /--optional-check-rule-enabled true/u);
+
+        const skillSelectionPreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'optional-skill-selection-mode', mode: 'preview', value: 'mandatory' })
+        });
+        assert.equal(skillSelectionPreviewResponse.status, 200);
+        const skillSelectionPreview = await skillSelectionPreviewResponse.json() as {
+            key: string;
+            proposed_value: string;
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(skillSelectionPreview.key, 'optional_skill_selection_policy.mode');
+        assert.equal(skillSelectionPreview.proposed_value, 'mandatory');
+        assert.deepEqual(skillSelectionPreview.changed_keys, ['optional_skill_selection_policy.mode']);
+        assert.match(skillSelectionPreview.command, /workflow set --optional-skill-selection-mode mandatory/u);
+        assert.match(skillSelectionPreview.command, /--operator-confirmed yes --operator-confirmed-at-utc/u);
 
         const optionalRuleDeletePreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',

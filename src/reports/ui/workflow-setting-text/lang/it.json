@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Modalita di selezione skill specialistiche",
+    "description": "Controlla se il matching delle skill specialistiche all avvio del task e disattivato, consultivo o obbligatorio. I valori legacy advisory/required/strict sono mostrati in sicurezza e salvati come modalita canoniche.",
+    "options": {
+      "off": {
+        "label": "Disattivato",
+        "description": "Non suggerisce ne richiede skill specialistiche all avvio del task."
+      },
+      "optional": {
+        "label": "Facoltativo",
+        "description": "Mostra suggerimenti di skill specialistiche e pacchetti consigliati senza bloccare il lavoro ordinario."
+      },
+      "mandatory": {
+        "label": "Obbligatorio",
+        "description": "Richiede una skill specialistica installata prima dell implementazione quando la policy ne seleziona una."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Regola opzionale di controllo qualità",
     "description": "Aggiunge, aggiorna o rimuove una regola opzionale e consultiva di controllo qualità tramite il percorso auditato delle impostazioni del workflow."

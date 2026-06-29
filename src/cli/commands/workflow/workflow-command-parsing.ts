@@ -27,6 +27,12 @@ import {
     type OutOfScopeFailurePolicy
 } from '../../../gates/full-suite/full-suite-validation';
 import { validateCompileGateCommand } from '../../../gates/compile/compile-gate';
+import {
+    OPTIONAL_SKILL_SELECTION_POLICY_MODES,
+    normalizeOptionalSkillSelectionPolicyMode,
+    type CanonicalOptionalSkillSelectionPolicyMode,
+    type OptionalSkillSelectionPolicyMode
+} from '../../../runtime/optional-skill-selection';
 import type {
     ParsedOptionsRecord,
     ResolvedWorkflowBooleanSetting
@@ -159,6 +165,16 @@ export function parseProjectMemoryReadStrategy(value: string): ProjectMemoryRead
         throw new Error(`--project-memory-read-strategy must be one of: ${PROJECT_MEMORY_READ_STRATEGIES.join(', ')}.`);
     }
     return normalized as ProjectMemoryReadStrategy;
+}
+
+export function parseOptionalSkillSelectionPolicyMode(value: string): CanonicalOptionalSkillSelectionPolicyMode {
+    const normalized = value.trim().toLowerCase();
+    if (!OPTIONAL_SKILL_SELECTION_POLICY_MODES.includes(normalized as OptionalSkillSelectionPolicyMode)) {
+        throw new Error(
+            `--optional-skill-selection-mode must be one of: ${OPTIONAL_SKILL_SELECTION_POLICY_MODES.join(', ')}.`
+        );
+    }
+    return normalizeOptionalSkillSelectionPolicyMode(normalized);
 }
 
 export function parseGardaSelfGuardMode(value: string): OrchestratorWorkPolicyMode {

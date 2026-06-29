@@ -8,6 +8,7 @@ import { REVIEW_EXECUTION_POLICY_MODES, describeReviewExecutionPolicy } from '..
 import { SCOPE_BUDGET_GUARD_ACTIONS } from '../core/scope-budget-guard';
 import { REVIEW_CYCLE_GUARD_ACTIONS } from '../core/review-cycle-guard';
 import { OUT_OF_SCOPE_FAILURE_POLICIES } from '../gates/full-suite/full-suite-validation';
+import { CANONICAL_OPTIONAL_SKILL_SELECTION_POLICY_MODES } from '../runtime/optional-skill-selection';
 import { EXCLUDED_REVIEW_TYPES_SETTING_DESCRIPTION } from './review-type-setting-text';
 
 export type WorkflowSettingValueType = 'boolean' | 'enum' | 'enum_list' | 'integer' | 'string' | 'string_list';
@@ -176,6 +177,29 @@ const projectMemoryReadStrategyOptions: WorkflowSettingOption[] = PROJECT_MEMORY
     description: 'Read the memory index first and open detailed files only when the index points to them.'
 }));
 
+const optionalSkillSelectionPolicyOptions: WorkflowSettingOption[] = CANONICAL_OPTIONAL_SKILL_SELECTION_POLICY_MODES.map((mode) => {
+    switch (mode) {
+        case 'off':
+            return {
+                value: mode,
+                label: 'Off',
+                description: 'Do not suggest or require specialist skills at task start.'
+            };
+        case 'mandatory':
+            return {
+                value: mode,
+                label: 'Mandatory',
+                description: 'Require a selected installed specialist skill before implementation starts when policy matching selects one.'
+            };
+        default:
+            return {
+                value: mode,
+                label: 'Optional',
+                description: 'Show specialist-skill suggestions and recommended packs without blocking ordinary task work.'
+            };
+    }
+});
+
 export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] = Object.freeze([
     {
         id: 'full-suite-enabled',
@@ -200,6 +224,15 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
             'Agents run the configured advisory self-check rules before compile, review, or full-suite work when checklist evidence is needed.',
             'The optional quality-checklist gate is skipped without replacing mandatory compile, review, or full-suite gates.'
         )
+    },
+    {
+        id: 'optional-skill-selection-mode',
+        key: 'optional_skill_selection_policy.mode',
+        label: 'Specialist-skill selection mode',
+        description: 'Controls whether task start keeps specialist-skill matching off, advisory, or mandatory. Legacy advisory/required/strict values are displayed safely and rewritten to canonical modes when saved.',
+        flag: '--optional-skill-selection-mode',
+        value_type: 'enum',
+        options: optionalSkillSelectionPolicyOptions
     },
     {
         id: 'compile-gate-command',

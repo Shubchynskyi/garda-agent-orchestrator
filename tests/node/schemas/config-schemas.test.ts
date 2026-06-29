@@ -263,6 +263,16 @@ test('template optional-skill-selection-policy.json validates against schema', (
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('optional-skill-selection-policy schema preserves local extension keys', () => {
+    const data = readTemplateConfig('optional-skill-selection-policy.json') as Record<string, unknown>;
+    const clone = {
+        ...data,
+        local_note: 'keep local policy metadata'
+    };
+    const result = validateAgainstSchema(clone, optionalSkillSelectionPolicySchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
 test('garda.config schema allows omitting optional-skill-selection-policy for backward-compatible bundles', () => {
     const data = readTemplateConfig('garda.config.json') as Record<string, unknown>;
     const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
@@ -939,6 +949,24 @@ test('gate validate-config succeeds when optional-skill-selection-policy is omit
         const rootConfig = JSON.parse(fs.readFileSync(rootConfigPath, 'utf8')) as Record<string, unknown>;
         delete ((rootConfig.configs as Record<string, unknown>)['optional-skill-selection-policy']);
         fs.writeFileSync(rootConfigPath, JSON.stringify(rootConfig, null, 2), 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
+        ], { cwd: NEUTRAL_CWD });
+        assert.equal(result.exitCode, 0, result.errors.join('\n'));
+        assert.ok(result.logs.some((line) => line.includes('CONFIG_VALIDATION_PASSED')));
+    } finally {
+        cleanupTempBundleRoot(tmpDir);
+    }
+});
+
+test('gate validate-config accepts optional-skill-selection-policy local extension keys', async () => {
+    const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
+    try {
+        const policyPath = path.join(configDir, 'optional-skill-selection-policy.json');
+        const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as Record<string, unknown>;
+        policy.local_note = 'keep local policy metadata';
+        fs.writeFileSync(policyPath, JSON.stringify(policy, null, 2), 'utf8');
 
         const result = await runCliWithCapturedOutput([
             'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'

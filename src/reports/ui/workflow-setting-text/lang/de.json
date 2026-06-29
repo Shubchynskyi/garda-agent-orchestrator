@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Spezialisten-Skill-Auswahlmodus",
+    "description": "Steuert, ob Spezialisten-Skill-Matching beim Task-Start aus, beratend oder verpflichtend ist. Legacy-Werte advisory/required/strict werden sicher angezeigt und beim Speichern in kanonische Modi geschrieben.",
+    "options": {
+      "off": {
+        "label": "Aus",
+        "description": "Beim Task-Start werden keine Spezialisten-Skills vorgeschlagen oder verlangt."
+      },
+      "optional": {
+        "label": "Optionaler Modus",
+        "description": "Zeigt Spezialisten-Skill-Vorschlaege und empfohlene Pakete, ohne normale Task-Arbeit zu blockieren."
+      },
+      "mandatory": {
+        "label": "Verpflichtend",
+        "description": "Verlangt einen ausgewaehlten installierten Spezialisten-Skill vor Implementierungsbeginn, wenn das Policy-Matching einen auswaehlt."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Optionale Qualitätsprüfregel",
     "description": "Fügt eine beratende optionale Qualitätsprüfregel über den auditierten Workflow-Einstellungspfad hinzu, aktualisiert oder entfernt sie."

@@ -13,6 +13,10 @@ import type {
 } from '../../../core/workflow-config';
 import type { ScopeBudgetGuardConfig } from '../../../core/scope-budget-guard';
 import type { ReviewCycleGuardConfig } from '../../../core/review-cycle-guard';
+import type {
+    CanonicalOptionalSkillSelectionPolicyMode,
+    OptionalSkillSelectionPolicyMode
+} from '../../../runtime/optional-skill-selection';
 
 export type ParsedOptionsRecord = Record<string, string | boolean | string[] | undefined>;
 
@@ -42,6 +46,7 @@ export interface WorkflowCommandRoots {
     targetRoot: string;
     bundleRoot: string;
     configPath: string;
+    optionalSkillSelectionPolicyPath: string;
 }
 
 export interface ResolvedWorkflowBooleanSetting {
@@ -71,6 +76,14 @@ export interface WorkflowCommandResultBase {
     task_reset: TaskResetConfig;
     auto_backup: AutoBackupConfig;
     optional_quality_checks: OptionalQualityChecksConfig;
+    optional_skill_selection_policy: {
+        config_path: string;
+        config_exists: boolean;
+        status: 'present' | 'missing' | 'invalid';
+        mode: OptionalSkillSelectionPolicyMode;
+        effective_mode: CanonicalOptionalSkillSelectionPolicyMode;
+        invalid_reason: string | null;
+    };
     orchestrator_work_policy: OrchestratorWorkPolicyConfig;
     visible_summary_line: string;
     compile_gate_summary_line: string;
@@ -81,6 +94,7 @@ export interface WorkflowCommandResultBase {
     task_reset_summary_line: string;
     auto_backup_summary_line: string;
     optional_quality_checks_summary_line: string;
+    optional_skill_selection_policy_summary_line: string;
     orchestrator_work_policy_summary_line: string;
 }
 
@@ -167,6 +181,7 @@ export const WORKFLOW_SET_DEFINITIONS = {
     '--optional-check-rule-prompt': { key: 'optionalCheckRulePrompt', type: 'string' },
     '--optional-check-rule-enabled': { key: 'optionalCheckRuleEnabled', type: 'string' },
     '--optional-check-rule-delete': { key: 'optionalCheckRuleDelete', type: 'string' },
+    '--optional-skill-selection-mode': { key: 'optionalSkillSelectionMode', type: 'string' },
     '--garda-self-guard': { key: 'gardaSelfGuard', type: 'string' },
     '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
     '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' }

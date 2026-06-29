@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Modo de selecao de habilidades especialistas",
+    "description": "Controla se a correspondencia de habilidades especialistas no inicio da tarefa fica desativada, consultiva ou obrigatoria. Valores legados advisory/required/strict sao exibidos com seguranca e salvos como modos canonicos.",
+    "options": {
+      "off": {
+        "label": "Desativado",
+        "description": "Nao sugere nem exige habilidades especialistas no inicio da tarefa."
+      },
+      "optional": {
+        "label": "Opcional",
+        "description": "Mostra sugestoes de habilidades especialistas e pacotes recomendados sem bloquear o trabalho normal da tarefa."
+      },
+      "mandatory": {
+        "label": "Obrigatorio",
+        "description": "Exige uma habilidade especialista instalada antes do inicio da implementacao quando a politica seleciona uma."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Regra opcional de verificação de qualidade",
     "description": "Adiciona, atualiza ou remove uma regra opcional consultiva de verificação de qualidade pelo caminho auditado de configurações do workflow."

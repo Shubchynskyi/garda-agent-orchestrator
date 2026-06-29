@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "Mode pemilihan skill spesialis",
+    "description": "Mengatur apakah pencocokan skill spesialis saat tugas dimulai dimatikan, bersifat saran, atau wajib. Nilai lama advisory/required/strict ditampilkan aman dan ditulis ulang ke mode kanonis saat disimpan.",
+    "options": {
+      "off": {
+        "label": "Mati",
+        "description": "Tidak menyarankan atau mewajibkan skill spesialis saat tugas dimulai."
+      },
+      "optional": {
+        "label": "Opsional",
+        "description": "Menampilkan saran skill spesialis dan paket rekomendasi tanpa memblokir pekerjaan tugas biasa."
+      },
+      "mandatory": {
+        "label": "Wajib",
+        "description": "Mewajibkan skill spesialis terpasang yang dipilih sebelum implementasi dimulai saat kebijakan memilihnya."
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "Aturan pemeriksaan kualitas opsional",
     "description": "Menambah, memperbarui, atau menghapus satu aturan pemeriksaan kualitas opsional yang bersifat advisori melalui jalur pengaturan workflow yang diaudit."

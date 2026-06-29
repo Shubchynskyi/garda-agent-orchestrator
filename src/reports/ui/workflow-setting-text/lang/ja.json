@@ -385,6 +385,24 @@
       }
     }
   },
+  "optional-skill-selection-mode": {
+    "label": "専門スキル選択モード",
+    "description": "タスク開始時の専門スキル照合をオフ、助言、必須のどれにするかを制御します。従来の advisory/required/strict 値は安全に表示され、保存時に正規モードへ書き換えられます。",
+    "options": {
+      "off": {
+        "label": "オフ",
+        "description": "タスク開始時に専門スキルを提案または要求しません。"
+      },
+      "optional": {
+        "label": "任意",
+        "description": "通常のタスク作業をブロックせず、専門スキル提案と推奨パックを表示します。"
+      },
+      "mandatory": {
+        "label": "必須",
+        "description": "ポリシー照合でインストール済み専門スキルが選ばれた場合、実装開始前にその利用を要求します。"
+      }
+    }
+  },
   "optional-check-rule-management": {
     "label": "任意の品質チェックルール",
     "description": "監査済みのワークフロー設定経路で、助言用の任意品質チェックルールを1件追加、更新、または削除します。"

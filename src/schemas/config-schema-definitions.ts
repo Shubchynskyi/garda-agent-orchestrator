@@ -284,7 +284,7 @@ export const optionalSkillSelectionPolicySchema: Record<string, unknown> = Objec
     $schema: 'http://json-schema.org/draft-07/schema#',
     $id: 'garda-agent-orchestrator/optional-skill-selection-policy.schema.json',
     title: 'Optional Skill Selection Policy',
-    description: 'Repo-local policy controlling preprompt-time optional skill selection.',
+    description: 'Repo-local policy controlling preprompt-time optional skill selection. Unknown local extension fields are preserved.',
     type: 'object',
     properties: {
         version: { type: 'integer', minimum: 1 },
@@ -294,7 +294,7 @@ export const optionalSkillSelectionPolicySchema: Record<string, unknown> = Objec
         }
     },
     required: ['version', 'mode'],
-    additionalProperties: false
+    additionalProperties: true
 });
 
 export const isolationModeSchema: Record<string, unknown> = Object.freeze({
