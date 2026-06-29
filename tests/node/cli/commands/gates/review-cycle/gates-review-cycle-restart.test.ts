@@ -321,6 +321,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });
@@ -1937,6 +1938,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             emitMetrics: false
         });
         assert.equal(reviewGateResult.exitCode, 0, reviewGateResult.outputLines.join('\n'));

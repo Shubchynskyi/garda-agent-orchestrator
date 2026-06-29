@@ -463,6 +463,179 @@ async function seedPromptBoundReviewFixture(options: {
 
 
 describe('gates command required reviews', () => {
+    it('fails required reviews gate when authorship attestation is false for a mandatory review', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-false-authorship-attestation';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-false-authorship-attestation.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject false delegated review authorship attestation'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":false}',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.equal(evidence.review_authorship_attestation.status, 'FAILED');
+        assert.deepEqual(evidence.review_authorship_attestation.false_review_types, ['code']);
+        assert.ok(result.outputLines.some((line) => line.includes('Review authorship attestation is false for mandatory review types: code')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails required reviews gate when authorship attestation is missing for a mandatory review', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-missing-authorship-attestation';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-missing-authorship-attestation.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject missing delegated review authorship attestation'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.equal(evidence.review_authorship_attestation.status, 'MISSING');
+        assert.deepEqual(evidence.review_authorship_attestation.missing_review_types, ['code']);
+        assert.ok(result.outputLines.some((line) => line.includes('Review authorship attestation is missing for required review types: code')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails required reviews gate when skip-review tries to bypass mandatory authorship attestation', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-skip-authorship-attestation';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-skip-authorship-attestation.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject skipped delegated review authorship attestation'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            skipReviews: 'code',
+            skipReason: 'Tiny code change override requested by regression test.',
+            reviewAuthorshipAttestationJson: '{"code":true}',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.equal(evidence.review_authorship_attestation.status, 'FAILED');
+        assert.deepEqual(evidence.review_authorship_attestation.required_review_types, ['code']);
+        assert.deepEqual(evidence.review_authorship_attestation.skipped_review_types, ['code']);
+        assert.ok(result.outputLines.some((line) => line.includes('Review authorship attestation cannot be skipped for required review types: code')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails required reviews gate when a preflight-defaulted required review artifact is missing', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-defaulted-verdicts-missing-artifact';

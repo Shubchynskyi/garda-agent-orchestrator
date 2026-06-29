@@ -126,12 +126,12 @@ test('local UI server skips all fetch-forbidden configured local ports', async (
     writeRepo(repoRoot);
     const server = await startLocalUiServer({
         repoRoot,
-        portStart: 4190,
-        portEnd: 4191
+        portStart: 6665,
+        portEnd: 6670
     });
     try {
         assert.equal(server.host, DEFAULT_UI_HOST);
-        assert.equal(server.port, 4191);
+        assert.equal(server.port, 6670);
         const response = await fetch(server.url);
         assert.equal(response.status, 200);
         await response.text();

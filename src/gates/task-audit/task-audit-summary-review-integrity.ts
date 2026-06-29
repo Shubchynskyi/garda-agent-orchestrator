@@ -508,7 +508,7 @@ function collectReviewIntegrityIssues(options: {
 export function buildReviewIntegrityAttestation(options: {
     requiredReviews: Record<string, boolean>; reviewsRoot: string; taskId: string; scopeCategory: string | null; preflightSha256?: string | null;
     reviewTrustSummary: FinalCloseoutReviewTrustSummary | null; repoRoot?: string | null; currentPreflight?: Record<string, unknown> | null;
-    timelineEvents?: readonly ReviewReuseTelemetryEventLike[];
+    timelineEvents?: readonly ReviewReuseTelemetryEventLike[]; initialIssues?: string[];
 }): FinalCloseoutReviewIntegrityAttestation {
     return withReviewArtifactReadBarrier(options.reviewsRoot, () => buildReviewIntegrityAttestationUnlocked(options));
 }
@@ -516,7 +516,7 @@ export function buildReviewIntegrityAttestation(options: {
 function buildReviewIntegrityAttestationUnlocked(options: {
     requiredReviews: Record<string, boolean>; reviewsRoot: string; taskId: string; scopeCategory: string | null; preflightSha256?: string | null;
     reviewTrustSummary: FinalCloseoutReviewTrustSummary | null; repoRoot?: string | null; currentPreflight?: Record<string, unknown> | null;
-    timelineEvents?: readonly ReviewReuseTelemetryEventLike[];
+    timelineEvents?: readonly ReviewReuseTelemetryEventLike[]; initialIssues?: string[];
 }): FinalCloseoutReviewIntegrityAttestation {
     const requiredReviewTypes = collectKnownRequiredReviewTypes(options.requiredReviews);
     const unsafeRequiredReviewTypeIssues = collectUnsafeRequiredReviewTypeIssues(options.requiredReviews);
@@ -538,7 +538,10 @@ function buildReviewIntegrityAttestationUnlocked(options: {
         currentPreflight: options.currentPreflight,
         timelineEvents: options.timelineEvents,
         strictVerification,
-        initialIssues: unsafeRequiredReviewTypeIssues
+        initialIssues: [
+            ...unsafeRequiredReviewTypeIssues,
+            ...(options.initialIssues || [])
+        ]
     });
     const issueText = observedIssues.join('\n').toLowerCase();
     const sameAgentFallbackObserved = issueText.includes('same_agent_fallback') || issueText.includes('self-scoped');
@@ -645,4 +648,86 @@ function buildReviewIntegrityAttestationUnlocked(options: {
             `Completion allowed: ${completionAllowed ? 'yes' : 'no'}. Reason: ${reason}`
         ]
     };
+}
+
+function stringArrayField(source: Record<string, unknown>, field: string): string[] {
+    const value = source[field];
+    return Array.isArray(value)
+        ? value.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+}
+
+export function collectReviewAuthorshipAttestationIssues(
+    reviewGate: Record<string, unknown> | null,
+    requiredReviews: Record<string, boolean>
+): string[] {
+    const requiredReviewTypes = collectKnownRequiredReviewTypes(requiredReviews);
+    if (requiredReviewTypes.length === 0) {
+        return [];
+    }
+    const attestation = isPlainRecord(reviewGate?.review_authorship_attestation)
+        ? reviewGate.review_authorship_attestation as Record<string, unknown>
+        : null;
+    if (!attestation) {
+        return [
+            `review authorship attestation missing for required review lanes: ${requiredReviewTypes.join(', ')}`
+        ];
+    }
+    const status = normalizeTrustToken(attestation.status);
+    const issues = new Set<string>();
+    const attestationValues = isPlainRecord(attestation.attestations)
+        ? attestation.attestations as Record<string, unknown>
+        : {};
+    const requiredTypeSet = new Set(requiredReviewTypes);
+    const derivedMissingTypes: string[] = [];
+    const derivedFalseTypes: string[] = [];
+    const derivedNonBooleanTypes: string[] = [];
+    const derivedUnknownTypes = Object.keys(attestationValues)
+        .map((entry) => entry.trim().toLowerCase())
+        .filter((entry) => entry && !requiredTypeSet.has(entry));
+    for (const reviewType of requiredReviewTypes) {
+        if (!Object.hasOwn(attestationValues, reviewType)) {
+            derivedMissingTypes.push(reviewType);
+            continue;
+        }
+        const value = attestationValues[reviewType];
+        if (value === false) {
+            derivedFalseTypes.push(reviewType);
+        } else if (value !== true) {
+            derivedNonBooleanTypes.push(reviewType);
+        }
+    }
+    const falseTypes = stringArrayField(attestation, 'false_review_types');
+    const missingTypes = stringArrayField(attestation, 'missing_review_types');
+    const unknownTypes = stringArrayField(attestation, 'unknown_review_types');
+    const nonBooleanTypes = stringArrayField(attestation, 'non_boolean_review_types');
+    const hasDerivedIssues =
+        derivedMissingTypes.length > 0 ||
+        derivedFalseTypes.length > 0 ||
+        derivedNonBooleanTypes.length > 0 ||
+        derivedUnknownTypes.length > 0;
+    if (status === 'PASSED' && hasDerivedIssues) {
+        issues.add('review authorship attestation status is PASSED but the payload does not cover current required review lanes');
+    } else if (status === 'MISSING') {
+        const missingReviewList = missingTypes.length > 0 ? missingTypes.join(', ') : requiredReviewTypes.join(', ');
+        issues.add(`review authorship attestation missing for required review lanes: ${missingReviewList}`);
+    } else if (status !== 'PASSED') {
+        issues.add(`review authorship attestation status is ${status || 'UNKNOWN'}`);
+    }
+    for (const reviewType of [...new Set([...falseTypes, ...derivedFalseTypes])]) {
+        issues.add(`${reviewType}: review authorship attestation is false; delegated reviewer authorship is not honestly attested`);
+    }
+    for (const reviewType of [...new Set([...missingTypes, ...derivedMissingTypes])]) {
+        issues.add(`${reviewType}: review authorship attestation is missing`);
+    }
+    for (const reviewType of [...new Set([...unknownTypes, ...derivedUnknownTypes])]) {
+        issues.add(`${reviewType}: review authorship attestation contains an unknown review type`);
+    }
+    for (const reviewType of [...new Set([...nonBooleanTypes, ...derivedNonBooleanTypes])]) {
+        issues.add(`${reviewType}: review authorship attestation value is not boolean`);
+    }
+    for (const violation of stringArrayField(attestation, 'violations')) {
+        issues.add(`review authorship attestation violation: ${violation}`);
+    }
+    return [...issues].sort((left, right) => left.localeCompare(right));
 }

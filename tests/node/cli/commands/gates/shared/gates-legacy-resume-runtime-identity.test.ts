@@ -1076,6 +1076,7 @@ describe('cli/commands/gates', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });
@@ -1256,6 +1257,7 @@ describe('cli/commands/gates', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });

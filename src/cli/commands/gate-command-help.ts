@@ -308,8 +308,8 @@ function buildReviewGateHelpEntries(
     return {
         'required-reviews-check': {
             ...createSingleUsageEntry(
-                'Validate that every required current-cycle review artifact and receipt is present and clean.',
-                `${cliPrefix} gate required-reviews-check --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                'Validate that every required current-cycle review artifact and receipt is present and clean; when required reviews exist, include a strict boolean authorship attestation JSON object. Leave false unless you personally observed real delegated subagent review output/receipt; true after self-authored, fabricated, substituted, absent, or uncertain review provenance is a critical workflow violation.',
+                `${cliPrefix} gate required-reviews-check --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --review-authorship-attestation-json '{"code":false}' --repo-root "."`,
                 true
             )
         },

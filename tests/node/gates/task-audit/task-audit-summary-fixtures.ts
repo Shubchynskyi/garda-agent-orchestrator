@@ -512,6 +512,21 @@ export function writeCurrentIndependentReviewFixture(options: {
         preflight_hash_sha256: options.preflightSha256,
         required_reviews: { [reviewType]: true },
         verdicts: { [reviewType]: passToken },
+        review_authorship_attestation: {
+            schema_version: 1,
+            status: 'PASSED',
+            required_review_types: [reviewType],
+            attested_review_types: [reviewType],
+            skipped_review_types: [],
+            attestations: { [reviewType]: true },
+            false_review_types: [],
+            missing_review_types: [],
+            unknown_review_types: [],
+            non_boolean_review_types: [],
+            violations: [],
+            honesty_prompt: [],
+            visible_summary_line: `Review authorship attestation: passed for ${reviewType}.`
+        },
         review_checks: {
             [reviewType]: {
                 ...makeIndependentReviewGateCheck(

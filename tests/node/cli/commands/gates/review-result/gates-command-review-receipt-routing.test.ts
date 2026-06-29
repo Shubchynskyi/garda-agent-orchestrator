@@ -797,6 +797,7 @@ describe('gates command review receipt - routing', () => {
             preflightPath,
             taskModePath: customTaskModePath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });
@@ -1738,6 +1739,7 @@ describe('gates command review receipt - routing', () => {
             preflightPath,
             taskModePath: customTaskModePath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });

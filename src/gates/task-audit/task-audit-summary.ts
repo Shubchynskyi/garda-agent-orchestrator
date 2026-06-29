@@ -31,6 +31,7 @@ import {
     type FinalCloseoutChangeMetrics,
     type FinalReportContract,
     buildReviewIntegrityAttestation,
+    collectReviewAuthorshipAttestationIssues,
     readDocImpactSummary,
     readReviewTrustSummary,
     readReviewTrustSummaryFromReviewGate,
@@ -315,6 +316,10 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             scopeCategory,
             preflightSha256
         );
+        const reviewAuthorshipAttestationIssues = collectReviewAuthorshipAttestationIssues(
+            reviewGate,
+            requiredReviews
+        );
         const hasRequiredReviews = Object.values(requiredReviews).some((value) => value);
         const reviewTrustSummary = reviewGateTrustSummary
             ?? receiptReviewTrustSummary
@@ -330,7 +335,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             reviewTrustSummary,
             repoRoot,
             currentPreflight: preflight,
-            timelineEvents: events
+            timelineEvents: events,
+            initialIssues: reviewAuthorshipAttestationIssues
         });
         const reviewAttemptSummary = buildReviewAttemptSummary({
             reviewsRoot,

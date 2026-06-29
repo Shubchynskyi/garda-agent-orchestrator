@@ -162,7 +162,7 @@ export function resolvePostReviewCloseoutRoute(
                 : 'Run required reviews check.',
             reason: options.requiredReviews.zeroDiffNoReviewCloseout
                 ? 'Profile-forced reviews were suppressed because the current preflight is BASELINE_ONLY with no reviewable diff; required-reviews-check must validate audited no-op evidence before closeout.'
-                : 'All required review artifacts appear present, but the review gate has not validated them.',
+                : 'All required review artifacts appear present, but the review gate has not validated them. If the command includes --review-authorship-attestation-json, leave each value false unless you personally observed real delegated subagent review output and receipt for that lane; change a lane to true only for that case. False is correct when reviewer launch, authorship, or receipt provenance is absent, self-authored, fabricated, substituted, or uncertain.',
             commands: [options.requiredReviews.command]
         };
     }

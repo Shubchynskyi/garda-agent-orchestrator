@@ -458,6 +458,7 @@ describe('gates command required reviews', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });
@@ -468,6 +469,8 @@ describe('gates command required reviews', () => {
         assert.equal(result.outputLines[0], 'REVIEW_GATE_PASSED');
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'required-reviews-check');
+        assert.equal(evidence.review_authorship_attestation.status, 'PASSED');
+        assert.deepEqual(evidence.review_authorship_attestation.attestations, { code: true });
         assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => (
             event.event_type === 'STATUS_CHANGED'
             && event.details
@@ -533,6 +536,7 @@ describe('gates command required reviews', () => {
             repoRoot,
             taskId,
             preflightPath,
+            reviewAuthorshipAttestationJson: '{"code":true,"test":true}',
             outputFiltersPath,
             emitMetrics: false
         });
@@ -678,6 +682,7 @@ describe('gates command required reviews', () => {
             taskId,
             preflightPath,
             testReviewVerdict: 'TEST REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"test":true}',
             outputFiltersPath,
             emitMetrics: false
         });
@@ -866,6 +871,7 @@ describe('gates command required reviews', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });
@@ -936,6 +942,7 @@ describe('gates command required reviews', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             emitMetrics: false
         });
 
@@ -1071,6 +1078,7 @@ describe('gates command required reviews', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });

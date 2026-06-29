@@ -6,8 +6,7 @@ import * as path from 'node:path';
 import { handleCompletionGate } from '../../../../../../src/cli/commands/gate-task-handlers';
 import {
     runCompileGateCommand,
-    runDocImpactGateCommand,
-    runRequiredReviewsCheckCommand
+    runDocImpactGateCommand
 } from '../../../../../../src/cli/commands/gates';
 import { runCliMain } from '../../../../../../src/cli/main';
 
@@ -19,6 +18,7 @@ import {
     loadPostPreflightRulePack,
     readTaskQueueStatusFromTaskFile,
     readTaskTimelineEvents,
+    runRequiredReviewsCheckCommand,
     runEnterTaskMode,
     runHandshakeForTask,
     runShellSmokeForTask,

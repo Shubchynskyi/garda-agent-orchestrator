@@ -1166,6 +1166,7 @@ describe('cli/commands/gates', () => {
             preflightPath,
             taskModePath: customTaskModePath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });

@@ -14,6 +14,177 @@ import {
 } from './required-reviews-check-evidence';
 import { validateReviewArtifactGateEligibility } from './required-reviews-check-trust';
 
+export const REVIEW_AUTHORSHIP_ATTESTATION_PROMPT = [
+    'Answer true only if this review output and receipt came from a real delegated subagent.',
+    'Answer false if the reviewer was not launched, the main agent authored/substituted/fabricated the review output or receipt, or authorship is uncertain.',
+    'False is allowed and protects the user; true after self-authored or fabricated review evidence is a critical workflow violation.',
+    'Answer only booleans keyed by required review type; do not include explanations or unknown review types.'
+] as const;
+
+export interface ReviewAuthorshipAttestation {
+    schema_version: 1;
+    status: 'NOT_REQUIRED' | 'MISSING' | 'PASSED' | 'FAILED';
+    required_review_types: string[];
+    attested_review_types: string[];
+    skipped_review_types: string[];
+    attestations: Record<string, boolean>;
+    false_review_types: string[];
+    missing_review_types: string[];
+    unknown_review_types: string[];
+    non_boolean_review_types: string[];
+    violations: string[];
+    honesty_prompt: readonly string[];
+    visible_summary_line: string;
+}
+
+function getRequiredReviewTypesForAuthorshipAttestation(
+    requiredReviews: Record<string, boolean>,
+    skipReviews: string[]
+): { requiredTypes: string[]; skippedTypes: string[] } {
+    const skipSet = new Set(skipReviews.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean));
+    const requiredTypes: string[] = [];
+    const skippedTypes: string[] = [];
+    for (const [reviewType] of REVIEW_CONTRACTS) {
+        if (requiredReviews[reviewType] !== true) {
+            continue;
+        }
+        requiredTypes.push(reviewType);
+        if (skipSet.has(reviewType)) {
+            skippedTypes.push(reviewType);
+        }
+    }
+    return { requiredTypes, skippedTypes };
+}
+
+function parseReviewAuthorshipAttestationJson(
+    value: unknown,
+    violations: string[]
+): Record<string, unknown> | null {
+    if (value == null || (typeof value === 'string' && !value.trim())) {
+        return null;
+    }
+    let parsed = value;
+    if (typeof value === 'string') {
+        try {
+            parsed = JSON.parse(value);
+        } catch {
+            violations.push('Review authorship attestation JSON is invalid; provide an object like {"code":true}.');
+            return {};
+        }
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        violations.push('Review authorship attestation must be a strict JSON object keyed by required review type.');
+        return {};
+    }
+    return parsed as Record<string, unknown>;
+}
+
+export function buildReviewAuthorshipAttestation(
+    requiredReviews: Record<string, boolean>,
+    value: unknown,
+    skipReviews: string[] = []
+): ReviewAuthorshipAttestation {
+    const { requiredTypes, skippedTypes } = getRequiredReviewTypesForAuthorshipAttestation(requiredReviews, skipReviews);
+    const base = {
+        schema_version: 1 as const,
+        required_review_types: requiredTypes,
+        skipped_review_types: skippedTypes,
+        honesty_prompt: REVIEW_AUTHORSHIP_ATTESTATION_PROMPT
+    };
+    if (requiredTypes.length === 0) {
+        return {
+            ...base,
+            status: 'NOT_REQUIRED',
+            attested_review_types: [],
+            attestations: {},
+            false_review_types: [],
+            missing_review_types: [],
+            unknown_review_types: [],
+            non_boolean_review_types: [],
+            violations: [],
+            visible_summary_line: 'Review authorship attestation: not required.'
+        };
+    }
+
+    const violations: string[] = [];
+    if (skippedTypes.length > 0) {
+        violations.push(
+            `Review authorship attestation cannot be skipped for required review types: ${skippedTypes.join(', ')}. ` +
+            'Answer false when a delegated reviewer was not launched; false or missing mandatory lanes fail this gate.'
+        );
+    }
+    const parsed = parseReviewAuthorshipAttestationJson(value, violations);
+    if (parsed == null) {
+        violations.push(
+            `Review authorship attestation is missing for required review types: ${requiredTypes.join(', ')}.`
+        );
+        return {
+            ...base,
+            status: 'MISSING',
+            attested_review_types: [],
+            attestations: {},
+            false_review_types: [],
+            missing_review_types: requiredTypes,
+            unknown_review_types: [],
+            non_boolean_review_types: [],
+            violations,
+            visible_summary_line:
+                `Review authorship attestation: missing for required review types ${requiredTypes.join(', ')}.`
+        };
+    }
+
+    const requiredTypeSet = new Set(requiredTypes);
+    const attestations: Record<string, boolean> = {};
+    const unknownTypes: string[] = [];
+    const nonBooleanTypes: string[] = [];
+    for (const [rawReviewType, rawAttestation] of Object.entries(parsed)) {
+        const reviewType = rawReviewType.trim().toLowerCase();
+        if (!requiredTypeSet.has(reviewType)) {
+            unknownTypes.push(rawReviewType);
+            continue;
+        }
+        if (typeof rawAttestation !== 'boolean') {
+            nonBooleanTypes.push(reviewType);
+            continue;
+        }
+        attestations[reviewType] = rawAttestation;
+    }
+
+    const missingTypes = requiredTypes.filter((reviewType) => !(reviewType in attestations));
+    const falseTypes = requiredTypes.filter((reviewType) => attestations[reviewType] === false);
+    if (unknownTypes.length > 0) {
+        violations.push(`Review authorship attestation contains unknown review types: ${unknownTypes.sort().join(', ')}.`);
+    }
+    if (nonBooleanTypes.length > 0) {
+        violations.push(`Review authorship attestation values must be booleans for: ${nonBooleanTypes.sort().join(', ')}.`);
+    }
+    if (missingTypes.length > 0) {
+        violations.push(`Review authorship attestation is missing required review types: ${missingTypes.join(', ')}.`);
+    }
+    if (falseTypes.length > 0) {
+        violations.push(
+            `Review authorship attestation is false for mandatory review types: ${falseTypes.join(', ')}. ` +
+            'Fresh delegated reviewer output/receipt is not honestly attested for those lanes.'
+        );
+    }
+
+    const status = violations.length > 0 ? 'FAILED' : 'PASSED';
+    return {
+        ...base,
+        status,
+        attested_review_types: Object.keys(attestations).sort(),
+        attestations,
+        false_review_types: falseTypes,
+        missing_review_types: missingTypes,
+        unknown_review_types: unknownTypes.sort(),
+        non_boolean_review_types: nonBooleanTypes.sort(),
+        violations,
+        visible_summary_line: status === 'PASSED'
+            ? `Review authorship attestation: passed for ${requiredTypes.join(', ')}.`
+            : `Review authorship attestation: failed for ${requiredTypes.join(', ')}.`
+    };
+}
+
 export interface CheckRequiredReviewsOptions {
     validatedPreflight: {
         errors: string[];

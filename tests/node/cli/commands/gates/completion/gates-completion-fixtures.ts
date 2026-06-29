@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto';
 
 import {
     runEnterTaskModeCommand,
-    runLoadRulePackCommand
+    runLoadRulePackCommand,
+    runRequiredReviewsCheckCommand as runRequiredReviewsCheckCommandBase
 } from '../../../../../../src/cli/commands/gates';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { buildReviewTreeState } from '../../../../../../src/gates/review/review-tree-state';
@@ -476,6 +477,32 @@ function writeCompilePassEvidence(repoRoot: string, taskId: string, preflightPat
     appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', {
         preflight_path: preflightPath.replace(/\\/g, '/'),
         preflight_hash_sha256: preflightHashSha256
+    });
+}
+
+function buildPassedReviewAuthorshipAttestationJson(preflightPath: string): string | undefined {
+    if (!fs.existsSync(preflightPath)) {
+        return undefined;
+    }
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const requiredReviews = preflight.required_reviews && typeof preflight.required_reviews === 'object' && !Array.isArray(preflight.required_reviews)
+        ? preflight.required_reviews as Record<string, unknown>
+        : {};
+    const attestations = Object.fromEntries(
+        Object.entries(requiredReviews)
+            .filter(([, required]) => required === true)
+            .map(([reviewType]) => [reviewType, true])
+    );
+    return Object.keys(attestations).length > 0 ? JSON.stringify(attestations) : undefined;
+}
+
+function runRequiredReviewsCheckCommand(
+    options: Parameters<typeof runRequiredReviewsCheckCommandBase>[0]
+): ReturnType<typeof runRequiredReviewsCheckCommandBase> {
+    return runRequiredReviewsCheckCommandBase({
+        ...options,
+        reviewAuthorshipAttestationJson: options.reviewAuthorshipAttestationJson
+            ?? buildPassedReviewAuthorshipAttestationJson(String(options.preflightPath || ''))
     });
 }
 
@@ -1255,6 +1282,7 @@ export {
     writePreflight,
     appendPreflightClassifiedEvent,
     writeCompilePassEvidence,
+    runRequiredReviewsCheckCommand,
     prepareReviewDiffFixture,
     writeReceiptBackedReviewArtifact,
     writeCleanReviewArtifact,

@@ -28,6 +28,7 @@ export {
 } from './task-audit-summary-review-trust';
 export {
     buildReviewIntegrityAttestation,
+    collectReviewAuthorshipAttestationIssues,
     type FinalCloseoutReviewIntegrityAttestation
 } from './task-audit-summary-review-integrity';
 

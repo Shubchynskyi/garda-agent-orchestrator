@@ -880,7 +880,16 @@ function seedReviewGatePass(repoRoot: string, taskId: string, passedReviewTypes:
         ...(passedReviewTypes.length > 0
             ? {
                 required_reviews: requiredReviews,
-                review_checks: reviewChecks
+                review_checks: reviewChecks,
+                review_authorship_attestation: {
+                    status: 'PASSED',
+                    required_reviews: requiredReviews,
+                    required_review_types: passedReviewTypes,
+                    attested_review_types: passedReviewTypes,
+                    attestations: Object.fromEntries(passedReviewTypes.map((reviewType) => [reviewType, true])),
+                    skipped_reviews: {},
+                    violations: []
+                }
             }
             : {})
     });

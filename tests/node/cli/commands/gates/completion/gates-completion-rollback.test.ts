@@ -7,8 +7,7 @@ import { syncTaskQueueStatus } from '../../../../../../src/cli/commands/gate-flo
 import { handleCompletionGate } from '../../../../../../src/cli/commands/gate-task-handlers';
 import {
     runCompileGateCommand,
-    runDocImpactGateCommand,
-    runRequiredReviewsCheckCommand
+    runDocImpactGateCommand
 } from '../../../../../../src/cli/commands/gates';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 
@@ -22,6 +21,7 @@ import {
     loadPostPreflightRulePack,
     readTaskQueueStatusFromTaskFile,
     readTaskTimelineEvents,
+    runRequiredReviewsCheckCommand,
     runEnterTaskMode,
     runHandshakeForTask,
     runShellSmokeForTask,

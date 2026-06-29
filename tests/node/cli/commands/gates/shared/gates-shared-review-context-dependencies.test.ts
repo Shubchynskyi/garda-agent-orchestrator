@@ -903,6 +903,7 @@ describe('cli/commands/gates', () => {
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
             testReviewVerdict: 'TEST REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true,"test":true}',
             outputFiltersPath,
             emitMetrics: false
         });

@@ -30,6 +30,9 @@ import {
 import {
     expandDependencyManifestLockfileScope
 } from '../scope/dependency-manifest-lockfile-scope';
+import {
+    REVIEW_CONTRACTS
+} from '../required-reviews/required-reviews-check';
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -512,9 +515,33 @@ export function buildRequiredReviewsCheckCommand(
     preflightCommandPath: string,
     taskModePath: string | null
 ): string {
-    return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'required-reviews-check', [
+    const parts = [
         `--preflight-path "${preflightCommandPath}"`
-    ], taskModePath);
+    ];
+    const attestationPlaceholder = buildReviewAuthorshipAttestationFailClosedDefault(repoRoot, preflightCommandPath);
+    if (attestationPlaceholder) {
+        parts.push(`--review-authorship-attestation-json ${quoteCommandValue(attestationPlaceholder)}`);
+    }
+    return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'required-reviews-check', parts, taskModePath);
+}
+
+function buildReviewAuthorshipAttestationFailClosedDefault(repoRoot: string, preflightCommandPath: string): string | null {
+    try {
+        const preflightPath = path.resolve(repoRoot, preflightCommandPath);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const requiredReviews = isPlainRecord(preflight.required_reviews)
+            ? preflight.required_reviews
+            : {};
+        const requiredReviewTypes = REVIEW_CONTRACTS
+            .map(([reviewType]) => reviewType)
+            .filter((reviewType) => requiredReviews[reviewType] === true);
+        if (requiredReviewTypes.length === 0) {
+            return null;
+        }
+        return JSON.stringify(Object.fromEntries(requiredReviewTypes.map((reviewType) => [reviewType, false])));
+    } catch {
+        return null;
+    }
 }
 
 export function buildCompletionGateCommand(

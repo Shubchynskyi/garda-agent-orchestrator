@@ -30,6 +30,27 @@ import {
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint
 } from '../../../../src/gates/review-reuse';
+import {
+    collectReviewAuthorshipAttestationIssues
+} from '../../../../src/gates/task-audit/task-audit-summary-review-integrity';
+
+function passedReviewAuthorshipAttestation(...reviewTypes: string[]): Record<string, unknown> {
+    return {
+        schema_version: 1,
+        status: 'PASSED',
+        required_review_types: reviewTypes,
+        attested_review_types: reviewTypes,
+        skipped_review_types: [],
+        attestations: Object.fromEntries(reviewTypes.map((reviewType) => [reviewType, true])),
+        false_review_types: [],
+        missing_review_types: [],
+        unknown_review_types: [],
+        non_boolean_review_types: [],
+        violations: [],
+        honesty_prompt: [],
+        visible_summary_line: `Review authorship attestation: passed for ${reviewTypes.join(', ')}.`
+    };
+}
 
 
 describe('gates/task-audit-summary', () => {
@@ -157,6 +178,101 @@ describe('gates/task-audit-summary', () => {
             assert.equal(summary?.completion_policy, 'INDEPENDENT_REVIEW_ATTESTED');
             assert.equal(staleSummary, null);
             assert.equal(missingRoutingPolicySummary, null);
+        });
+
+        it('surfaces review authorship attestation failures as review integrity issues', () => {
+            const issues = collectReviewAuthorshipAttestationIssues(
+                {
+                    task_id: TASK_ID,
+                    status: 'FAILED',
+                    outcome: 'FAIL',
+                    required_reviews: { code: true },
+                    review_authorship_attestation: {
+                        schema_version: 1,
+                        status: 'FAILED',
+                        required_review_types: ['code'],
+                        attestations: { code: false },
+                        false_review_types: ['code'],
+                        missing_review_types: [],
+                        unknown_review_types: [],
+                        non_boolean_review_types: [],
+                        violations: [
+                            'Review authorship attestation is false for mandatory review types: code.'
+                        ]
+                    }
+                },
+                { code: true }
+            );
+
+            assert.ok(issues.some((issue) => issue.includes('code: review authorship attestation is false')));
+            assert.ok(issues.some((issue) => issue.includes('review authorship attestation violation')));
+        });
+
+        it('surfaces a missing review authorship attestation block as a review integrity issue', () => {
+            const issues = collectReviewAuthorshipAttestationIssues(
+                {
+                    task_id: TASK_ID,
+                    status: 'PASSED',
+                    outcome: 'PASS',
+                    required_reviews: { code: true }
+                },
+                { code: true }
+            );
+
+            assert.deepEqual(issues, [
+                'review authorship attestation missing for required review lanes: code'
+            ]);
+        });
+
+        it('surfaces missing lanes even when review authorship attestation status claims passed', () => {
+            const issues = collectReviewAuthorshipAttestationIssues(
+                {
+                    task_id: TASK_ID,
+                    status: 'PASSED',
+                    outcome: 'PASS',
+                    required_reviews: { code: true },
+                    review_authorship_attestation: {
+                        schema_version: 1,
+                        status: 'PASSED',
+                        required_review_types: ['code'],
+                        attestations: {},
+                        false_review_types: [],
+                        missing_review_types: [],
+                        unknown_review_types: [],
+                        non_boolean_review_types: [],
+                        violations: []
+                    }
+                },
+                { code: true }
+            );
+
+            assert.ok(issues.includes('code: review authorship attestation is missing'));
+        });
+
+        it('surfaces not-required authorship attestation when current review lanes are required', () => {
+            const issues = collectReviewAuthorshipAttestationIssues(
+                {
+                    task_id: TASK_ID,
+                    status: 'PASSED',
+                    outcome: 'PASS',
+                    required_reviews: { code: true },
+                    review_authorship_attestation: {
+                        schema_version: 1,
+                        status: 'NOT_REQUIRED',
+                        required_review_types: [],
+                        attestations: {},
+                        false_review_types: [],
+                        missing_review_types: [],
+                        unknown_review_types: [],
+                        non_boolean_review_types: [],
+                        violations: []
+                    }
+                },
+                { code: true }
+            );
+
+            assert.ok(issues.includes('review authorship attestation status is NOT_REQUIRED'));
+            assert.ok(issues.includes('code: review authorship attestation is missing'));
         });
 
         describe('final closeout review integrity enforced output', () => {
@@ -505,6 +621,7 @@ describe('gates/task-audit-summary', () => {
                             code: 'REVIEW PASSED',
                             test: 'TEST REVIEW PASSED'
                         },
+                        review_authorship_attestation: passedReviewAuthorshipAttestation('code', 'test'),
                         review_checks: {
                             code: makeIndependentReviewGateCheck('REVIEW PASSED', 'agent:historical-code-reviewer'),
                             test: makeIndependentReviewGateCheck('TEST REVIEW PASSED', 'agent:fresh-test-reviewer')
@@ -691,6 +808,7 @@ describe('gates/task-audit-summary', () => {
                         preflight_hash_sha256: preflightSha256,
                         required_reviews: { code: true },
                         verdicts: { code: 'REVIEW PASSED' },
+                        review_authorship_attestation: passedReviewAuthorshipAttestation('code'),
                         review_checks: {
                             code: {
                                 ...makeIndependentReviewGateCheck('REVIEW PASSED', reviewerIdentity),

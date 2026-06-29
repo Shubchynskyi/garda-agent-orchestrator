@@ -104,6 +104,22 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
     });
 
+    it('adds fail-closed review authorship attestation JSON to required-reviews-check when reviews are required', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'required-reviews-check');
+        assert.ok(command.includes('--review-authorship-attestation-json'));
+        assert.ok(command.includes('{"code":false}'));
+        assert.match(result.reason, /change a lane to true only/i);
+    });
+
     it('reports stale source runtime before required reviews check without hiding the intended gate', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

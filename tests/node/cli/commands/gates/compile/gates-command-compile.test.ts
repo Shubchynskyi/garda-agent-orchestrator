@@ -1135,6 +1135,7 @@ describe('cli/commands/gates compile and post-preflight', () => {
             taskId,
             preflightPath: refreshedPreflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             emitMetrics: false
         });
         assert.equal(reviewResult.exitCode, 0, JSON.stringify(reviewResult, null, 2));

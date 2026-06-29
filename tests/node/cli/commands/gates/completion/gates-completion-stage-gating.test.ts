@@ -5,8 +5,7 @@ import * as path from 'node:path';
 
 import {
     runCompileGateCommand,
-    runDocImpactGateCommand,
-    runRequiredReviewsCheckCommand
+    runDocImpactGateCommand
 } from '../../../../../../src/cli/commands/gates';
 import { runCompletionGate } from '../../../../../../src/gates/completion';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
@@ -19,6 +18,7 @@ import {
     initializeGitRepo,
     loadTaskEntryRulePack,
     loadPostPreflightRulePack,
+    runRequiredReviewsCheckCommand,
     runEnterTaskMode,
     runHandshakeForTask,
     runShellSmokeForTask,

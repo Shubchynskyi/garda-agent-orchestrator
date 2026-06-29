@@ -185,6 +185,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
             testReviewVerdict: 'TEST REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true,"test":true}',
             outputFiltersPath,
             emitMetrics: false
         });

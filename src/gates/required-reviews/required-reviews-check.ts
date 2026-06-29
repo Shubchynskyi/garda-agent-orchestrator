@@ -14,8 +14,11 @@ export {
     validateReviewArtifactGateEligibility
 } from './required-reviews-check-trust';
 export {
+    REVIEW_AUTHORSHIP_ATTESTATION_PROMPT,
+    buildReviewAuthorshipAttestation,
     checkRequiredReviews,
     detectZeroDiffFromPreflight,
+    type ReviewAuthorshipAttestation,
     type CheckRequiredReviewsOptions,
     type ZeroDiffReviewGuardResult,
     validateZeroDiffForReviewGate

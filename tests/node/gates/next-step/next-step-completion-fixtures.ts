@@ -1103,6 +1103,21 @@ export function writeStrictIndependentCodeReviewEvidence(repoRoot: string, taskI
         preflight_hash_sha256: preflightSha256,
         required_reviews: { code: true },
         verdicts: { code: 'REVIEW PASSED' },
+        review_authorship_attestation: {
+            schema_version: 1,
+            status: 'PASSED',
+            required_review_types: ['code'],
+            attested_review_types: ['code'],
+            skipped_review_types: [],
+            attestations: { code: true },
+            false_review_types: [],
+            missing_review_types: [],
+            unknown_review_types: [],
+            non_boolean_review_types: [],
+            violations: [],
+            honesty_prompt: [],
+            visible_summary_line: 'Review authorship attestation: passed for code.'
+        },
         review_checks: {
             code: {
                 required: true,
@@ -1270,7 +1285,22 @@ export function seedReviewGatePass(repoRoot: string, taskId: string): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-review-gate.json`), {
         task_id: taskId,
         status: 'PASSED',
-        outcome: 'PASS'
+        outcome: 'PASS',
+        review_authorship_attestation: {
+            schema_version: 1,
+            status: 'PASSED',
+            required_review_types: ['code'],
+            attested_review_types: ['code'],
+            skipped_review_types: [],
+            attestations: { code: true },
+            false_review_types: [],
+            missing_review_types: [],
+            unknown_review_types: [],
+            non_boolean_review_types: [],
+            violations: [],
+            honesty_prompt: [],
+            visible_summary_line: 'Review authorship attestation: passed for code.'
+        }
     });
     appendEvent(repoRoot, taskId, 'REVIEW_GATE_PASSED');
 }

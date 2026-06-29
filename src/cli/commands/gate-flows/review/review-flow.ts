@@ -15,6 +15,7 @@ import {
 import { appendMandatoryTaskEvent } from '../../../../gate-runtime/task-events';
 import { assessDocImpact } from '../../../../gates/doc-impact/doc-impact';
 import {
+    buildReviewAuthorshipAttestation,
     checkRequiredReviews,
     parseSkipReviews,
     resolveExpectedReviewVerdicts,
@@ -119,6 +120,7 @@ export interface RequiredReviewsCheckCommandOptions {
     reviewEvidencePath?: string;
     overrideArtifactPath?: string;
     noOpArtifactPath?: string;
+    reviewAuthorshipAttestationJson?: unknown;
     emitMetrics?: unknown;
 }
 
@@ -138,6 +140,7 @@ interface ReviewEvidenceContext extends Record<string, unknown> {
     skip_reason: string;
     override_artifact: string | null;
     artifact_evidence: ReviewArtifactsAuditResult;
+    review_authorship_attestation?: ReturnType<typeof buildReviewAuthorshipAttestation>;
     zero_diff_guard?: unknown;
     selected_budget_tier?: string | null;
     output_telemetry?: OutputTelemetry;
@@ -467,6 +470,13 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     if (skipCode && !required.code) {
         errors.push('Code review override was requested but code review is not required by preflight.');
     }
+    const reviewAuthorshipAttestation = buildReviewAuthorshipAttestation(
+        required,
+        options.reviewAuthorshipAttestationJson,
+        skipReviewsList
+    );
+    const reviewAuthorshipAttestationForEvidence = reviewAuthorshipAttestation;
+    errors.push(...reviewAuthorshipAttestation.violations);
 
     const reviewArtifactsMap: Record<string, {
         path: string;
@@ -651,6 +661,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         skip_reason: skipReason,
         override_artifact: normalizeOptionalPath(overrideArtifactPath),
         artifact_evidence: artifactEvidence,
+        review_authorship_attestation: reviewAuthorshipAttestationForEvidence,
         zero_diff_guard: zeroDiffGuard,
         selected_budget_tier: null
     };
@@ -702,6 +713,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
             output_filters_path: normalizeOptionalPath(outputFiltersPath),
             compile_gate: compileGateEvidence,
             artifact_evidence: artifactEvidence,
+            review_authorship_attestation: reviewAuthorshipAttestationForEvidence,
             violations: allViolations,
             ...failureTelemetry
         };
@@ -716,6 +728,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
                     skip_reason: skipReason,
                     compile_gate: compileGateEvidence,
                     artifact_evidence: artifactEvidence,
+                    review_authorship_attestation: reviewAuthorshipAttestationForEvidence,
                     violations: allViolations
                 });
             } catch (error: unknown) {
@@ -778,6 +791,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         compile_gate: compileGateEvidence,
         override_artifact: normalizeOptionalPath(overrideArtifactPath),
         artifact_evidence: artifactEvidence,
+        review_authorship_attestation: reviewAuthorshipAttestationForEvidence,
         ...successTelemetry
     };
     appendMetricsIfEnabled(repoRoot, metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
@@ -806,7 +820,8 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
                     skip_reason: skipReason,
                     compile_gate: compileGateEvidence,
                     override_artifact: normalizeOptionalPath(overrideArtifactPath),
-                    artifact_evidence: artifactEvidence
+                    artifact_evidence: artifactEvidence,
+                    review_authorship_attestation: reviewAuthorshipAttestationForEvidence
                 }
             );
         } catch (error: unknown) {

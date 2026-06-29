@@ -1471,6 +1471,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                 repoRoot,
                 taskId,
                 preflightPath,
+                reviewAuthorshipAttestationJson: '{"code":true}',
                 emitMetrics: false
             }).exitCode, 0);
             assert.equal(runDocImpactGateCommand({

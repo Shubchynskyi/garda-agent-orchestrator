@@ -628,6 +628,7 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             repoRoot: workspaceRoot,
             taskId: TASK_ID,
             preflightPath,
+            reviewAuthorshipAttestationJson: '{"test":true}',
             emitMetrics: false
         }), 'required-reviews-check');
 
