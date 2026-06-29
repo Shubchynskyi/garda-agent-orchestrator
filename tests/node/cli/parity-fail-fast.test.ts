@@ -367,8 +367,8 @@ test('remote-source setup remains blocked on target parity drift', () => {
         assert.ok(combined.includes('mutating lifecycle commands must not run'));
         assert.ok(combined.includes('Source Parity Violation: The deployed bundle is stale'));
     } finally {
-        fs.rmSync(callerDir, { recursive: true, force: true });
-        fs.rmSync(targetDir, { recursive: true, force: true });
+        fs.rmSync(callerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        fs.rmSync(targetDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
 });
 

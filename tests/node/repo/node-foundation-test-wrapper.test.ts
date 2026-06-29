@@ -17,6 +17,8 @@ const mutableChildProcess = require('node:child_process') as typeof childProcess
     spawn: typeof childProcess.spawn;
     spawnSync: typeof childProcess.spawnSync;
 };
+const DEFAULT_SHARDED_NODE_TEST_ARGS = ['--test'];
+const EXPECTED_MAX_GROUPED_SHARD_FILES = 32;
 
 function createBuildResultFixture(extraTestCount = 0): { buildResult: BuildResult; cleanup: () => void; } {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-node-foundation-tests-'));
@@ -53,6 +55,14 @@ function createBuildResultFixture(extraTestCount = 0): { buildResult: BuildResul
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
     };
+}
+
+function addCompiledTestFile(buildResult: BuildResult, relativePath: string): string {
+    const compiledPath = path.join(buildResult.buildRoot, ...relativePath.split('/'));
+    fs.mkdirSync(path.dirname(compiledPath), { recursive: true });
+    fs.writeFileSync(compiledPath, 'void 0;\n', 'utf8');
+    buildResult.copiedFiles.push(relativePath);
+    return compiledPath;
 }
 
 function createCompletingNodeTestChild(output = 'ok\n'): childProcess.ChildProcess {
@@ -203,11 +213,11 @@ test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shard
         assert.equal(exitCode, 7);
         assert.equal(observedShardArgs.length, 2);
         assert.deepEqual(observedShardArgs[0], [
-            '--test',
+            ...DEFAULT_SHARDED_NODE_TEST_ARGS,
             path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js')
         ]);
         assert.deepEqual(observedShardArgs[1], [
-            '--test',
+            ...DEFAULT_SHARDED_NODE_TEST_ARGS,
             path.join(buildResult.buildRoot, 'tests', 'node', 'repo', 'build-root-serialization.test.js')
         ]);
     } finally {
@@ -217,6 +227,244 @@ test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shard
         } else {
             process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = originalShardEnv;
         }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests limits shard process concurrency from CLI option', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture(2);
+    const originalArgv = process.argv;
+    const originalShardEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    let activeShards = 0;
+    let maxActiveShards = 0;
+    let spawnedShardCount = 0;
+    const observedShardArgs: string[][] = [];
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '4',
+            '--garda-shard-concurrency',
+            '2'
+        ];
+        delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
+            spawnedShardCount += 1;
+            activeShards += 1;
+            maxActiveShards = Math.max(maxActiveShards, activeShards);
+            observedShardArgs.push(Array.from(args));
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, { stdout, stderr });
+            setTimeout(() => {
+                stdout.end(`ok ${spawnedShardCount}\n`);
+                stderr.end();
+                activeShards -= 1;
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            }, 10);
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.equal(spawnedShardCount, 4);
+        assert.equal(maxActiveShards, 2);
+        assert.ok(observedShardArgs.every((args) => !args.includes('--garda-shard-concurrency')));
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = originalShardEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests preserves explicit node test concurrency for shards', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const observedShardArgs: string[][] = [];
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2',
+            '--test-concurrency',
+            '3'
+        ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
+            observedShardArgs.push(Array.from(args));
+            return createCompletingNodeTestChild();
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.equal(observedShardArgs.length, 2);
+        assert.ok(observedShardArgs.every((args) => args.includes('--test-concurrency')));
+        assert.ok(observedShardArgs.every((args) => args.includes('3')));
+    } finally {
+        process.argv = originalArgv;
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests runs contention-sensitive tests after parallel shards', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const serialTestPath = addCompiledTestFile(
+        buildResult,
+        'tests/node/gate-runtime/task-events-locks.test.js'
+    );
+    const observedShardArgs: string[][] = [];
+    let activeShards = 0;
+    let maxActiveShards = 0;
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2'
+        ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
+            const observedArgs = Array.from(args);
+            observedShardArgs.push(observedArgs);
+            activeShards += 1;
+            maxActiveShards = Math.max(maxActiveShards, activeShards);
+            if (observedArgs.includes(serialTestPath)) {
+                assert.equal(activeShards, 1, 'serial test must not overlap active parallel shards');
+            }
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, { stdout, stderr });
+            setTimeout(() => {
+                stdout.end('ok\n');
+                stderr.end();
+                activeShards -= 1;
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            }, observedArgs.includes(serialTestPath) ? 1 : 20);
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.equal(observedShardArgs.length, 3);
+        assert.equal(maxActiveShards, 2);
+        assert.equal(observedShardArgs[0].includes(serialTestPath), false);
+        assert.equal(observedShardArgs[1].includes(serialTestPath), false);
+        assert.deepEqual(observedShardArgs[2], [...DEFAULT_SHARDED_NODE_TEST_ARGS, serialTestPath]);
+    } finally {
+        process.argv = originalArgv;
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests schedules heavy tests as isolated shards with default shard concurrency', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const durationFile = path.join(buildResult.repoRoot, 'duration-telemetry.json');
+    const isolatedTestPath = addCompiledTestFile(
+        buildResult,
+        'tests/node/repo/dynamic-heavy.test.js'
+    );
+    const observedShardArgs: string[][] = [];
+    let activeShards = 0;
+    let maxActiveShards = 0;
+
+    fs.writeFileSync(durationFile, `${JSON.stringify({
+        schema_version: 1,
+        updated_at_utc: new Date(0).toISOString(),
+        entries: {
+            'tests/node/repo/dynamic-heavy.test.ts': {
+                file: 'tests/node/repo/dynamic-heavy.test.ts',
+                duration_ms: 75000,
+                samples: 2,
+                updated_at_utc: new Date(0).toISOString()
+            }
+        }
+    }, null, 2)}\n`, 'utf8');
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2',
+            '--garda-duration-file',
+            durationFile
+        ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
+            const observedArgs = Array.from(args);
+            observedShardArgs.push(observedArgs);
+            activeShards += 1;
+            maxActiveShards = Math.max(maxActiveShards, activeShards);
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, { stdout, stderr });
+            setTimeout(() => {
+                stdout.end('ok\n');
+                stderr.end();
+                activeShards -= 1;
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            }, observedArgs.includes(isolatedTestPath) ? 1 : 20);
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.equal(observedShardArgs.length, 3);
+        assert.equal(maxActiveShards, 2);
+        assert.ok(observedShardArgs.slice(0, 2).every((args) => !args.includes(isolatedTestPath)));
+        assert.deepEqual(observedShardArgs[2], [...DEFAULT_SHARDED_NODE_TEST_ARGS, isolatedTestPath]);
+    } finally {
+        process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
         mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
         mutableChildProcess.spawn = originalSpawn;
@@ -964,11 +1212,11 @@ test('runNodeFoundationTests balances shards with duration telemetry before size
         assert.equal(exitCode, 0);
         assert.equal(observedShardArgs.length, 2);
         assert.deepEqual(observedShardArgs[0], [
-            '--test',
+            ...DEFAULT_SHARDED_NODE_TEST_ARGS,
             path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js')
         ]);
         assert.deepEqual(observedShardArgs[1], [
-            '--test',
+            ...DEFAULT_SHARDED_NODE_TEST_ARGS,
             path.join(buildResult.buildRoot, 'tests', 'node', 'repo', 'build-root-serialization.test.js'),
             path.join(buildResult.buildRoot, ...buildResult.copiedFiles[2].split('/'))
         ]);
@@ -1092,6 +1340,10 @@ test('runNodeFoundationTests auto-shards when the compiled test command would be
         assert.equal(exitCode, 0);
         assert.ok(observedShardArgs.length > 1, `Expected auto-sharding, got ${observedShardArgs.length} shard(s).`);
         assert.ok(observedShardArgs.every((args) => args[0] === '--test'));
+        assert.ok(
+            observedShardArgs.every((args) => args.length <= EXPECTED_MAX_GROUPED_SHARD_FILES + 1),
+            `Expected grouped shards to contain at most ${EXPECTED_MAX_GROUPED_SHARD_FILES} files.`
+        );
     } finally {
         process.argv = originalArgv;
         if (originalShardEnv === undefined) {

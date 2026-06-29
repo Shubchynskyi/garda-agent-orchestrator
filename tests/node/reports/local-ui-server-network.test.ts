@@ -124,14 +124,24 @@ test('local UI server skips browser-unsafe ports in configured local ranges', as
 test('local UI server skips all fetch-forbidden configured local ports', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
+    let firstSafePort = 0;
+    for (let port = 6670; port <= 7200; port += 1) {
+        const candidate = await reserveSpecificPort(port);
+        if (candidate) {
+            firstSafePort = port;
+            await closeNetServer(candidate);
+            break;
+        }
+    }
+    assert.notEqual(firstSafePort, 0, 'expected at least one bindable safe local UI test port after fetch-forbidden range');
     const server = await startLocalUiServer({
         repoRoot,
         portStart: 6665,
-        portEnd: 6670
+        portEnd: firstSafePort
     });
     try {
         assert.equal(server.host, DEFAULT_UI_HOST);
-        assert.equal(server.port, 6670);
+        assert.equal(server.port, firstSafePort);
         const response = await fetch(server.url);
         assert.equal(response.status, 200);
         await response.text();

@@ -14,6 +14,9 @@ import {
     resolveDelegatedLauncherTrustEvidence
 } from '../../../src/bin/garda';
 
+const DELEGATION_HARNESS_TIMEOUT_MS = 60_000;
+const DELEGATED_PROCESS_EXIT_TIMEOUT_MS = 30_000;
+
 function writeFile(filePath: string, content: string): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content, 'utf8');
@@ -78,7 +81,7 @@ function spawnHarnessSync(
         stdio: ['ignore', 'pipe', 'pipe'],
         encoding: 'utf8',
         env,
-        timeout: 5000
+        timeout: DELEGATION_HARNESS_TIMEOUT_MS
     });
 }
 
@@ -96,7 +99,7 @@ function waitForStdout(child: childProcess.ChildProcess, expected: string): Prom
         let output = '';
         const timeout = setTimeout(() => {
             reject(new Error(`Timed out waiting for stdout: ${expected}`));
-        }, 5000);
+        }, DELEGATION_HARNESS_TIMEOUT_MS);
         child.stdout?.on('data', (chunk: Buffer) => {
             output += chunk.toString('utf8');
             if (output.includes(expected)) {
@@ -117,7 +120,8 @@ function isProcessAlive(pid: number): boolean {
 }
 
 async function waitForProcessExit(pid: number): Promise<boolean> {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    const deadline = Date.now() + DELEGATED_PROCESS_EXIT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
         if (!isProcessAlive(pid)) {
             return true;
         }

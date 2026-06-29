@@ -24,6 +24,7 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
 
     while (true) {
         try {
+            fs.mkdirSync(path.dirname(lockPath), { recursive: true });
             const lockId = createLockId();
             fs.mkdirSync(lockPath);
             try {
@@ -129,6 +130,7 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
 
     while (true) {
         try {
+            fs.mkdirSync(path.dirname(lockPath), { recursive: true });
             const lockId = createLockId();
             fs.mkdirSync(lockPath);
             try {

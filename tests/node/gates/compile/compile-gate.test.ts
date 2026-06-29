@@ -1,6 +1,5 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 
 import {
     getCompileCommandProfile,
@@ -14,6 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../../src/core/constants';
+import { initGitRepo } from '../git-fixtures';
 
 describe('gates/compile-gate', () => {
     describe('getCompileCommandProfile', () => {
@@ -281,13 +281,8 @@ describe('gates/compile-gate', () => {
 
             try {
                 fs.mkdirSync(srcDir, { recursive: true });
-                execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-                execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-                execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
-
                 fs.writeFileSync(changedFilePath, 'export const value = 1;\n', 'utf8');
-                execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
-                execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+                initGitRepo(repoRoot);
 
                 fs.writeFileSync(changedFilePath, 'export const value = 2;\n', 'utf8');
 
@@ -306,13 +301,8 @@ describe('gates/compile-gate', () => {
 
             try {
                 fs.mkdirSync(srcDir, { recursive: true });
-                execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-                execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-                execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
-
                 fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export const value = 1;\n', 'utf8');
-                execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
-                execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+                initGitRepo(repoRoot);
 
                 fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export const value = 2;\n', 'utf8');
                 fs.mkdirSync(path.join(repoRoot, '.scripts-build.lock'), { recursive: true });

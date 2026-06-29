@@ -877,6 +877,11 @@ function isBrowserUnsafePort(port: number): boolean {
     return BROWSER_UNSAFE_PORTS.has(port);
 }
 
+function isUnavailableLocalUiPortError(error: Error): boolean {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'EADDRINUSE' || code === 'EACCES' || code === 'EPERM';
+}
+
 export async function startLocalUiServer(options: StartLocalUiServerOptions): Promise<LocalUiServer> {
     const host = options.host || DEFAULT_UI_HOST;
     if (host !== DEFAULT_UI_HOST) {
@@ -941,7 +946,7 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
             } catch (error: unknown) {
                 lastError = error instanceof Error ? error : new Error(String(error));
                 await closeServer(server).catch(() => undefined);
-                if (candidateIsExplicitPort || !('code' in (lastError as Error & { code?: string })) || (lastError as Error & { code?: string }).code !== 'EADDRINUSE') {
+                if (candidateIsExplicitPort || !isUnavailableLocalUiPortError(lastError)) {
                     throw lastError;
                 }
             }

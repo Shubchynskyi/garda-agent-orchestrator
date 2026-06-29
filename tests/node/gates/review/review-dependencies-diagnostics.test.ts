@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -13,6 +12,7 @@ import {
 } from '../../../../src/gates/review/review-dependencies';
 import { type RuntimeReviewerIdentity } from '../../../../src/gates/review/reviewer-routing';
 import { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
+import { initGitRepo } from '../git-fixtures';
 
 
 function writeJson(filePath: string, value: unknown): void {
@@ -77,17 +77,12 @@ function createHistoricalLaneDomainReviewDependencyFixture(options: {
     runtimeReviewerIdentity: RuntimeReviewerIdentity;
 } {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-dependency-lane-domain-'));
-    execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
-    execFileSync('git', [
-        '-c',
-        'user.name=Garda Test',
-        '-c',
-        'user.email=garda-test@example.invalid',
-        'commit',
-        '--allow-empty',
-        '-m',
-        'init'
-    ], { cwd: repoRoot, stdio: 'ignore' });
+    initGitRepo(repoRoot, {
+        allowEmptyCommit: true,
+        gitignoreContent: null,
+        initialCommitMessage: 'init',
+        stageAll: false
+    });
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
     fs.mkdirSync(reviewsRoot, { recursive: true });
     const taskId = options.taskId;
@@ -515,4 +510,3 @@ test('review dependency diagnostics reject historical upstream PASS when lane-do
         fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
     }
 });
-

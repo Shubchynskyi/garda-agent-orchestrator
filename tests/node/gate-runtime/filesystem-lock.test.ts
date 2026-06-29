@@ -1018,6 +1018,40 @@ test('releaseFilesystemLock restores replacement lock if owner changes during re
     }
 });
 
+test('acquireFilesystemLock retries when a fresh lock is reclaimed before owner metadata write', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-owner-metadata-race.lock');
+    const realFs = require('node:fs');
+    const originalWriteFileSync = realFs.writeFileSync;
+    let interceptedMetadataWrite = false;
+
+    try {
+        realFs.writeFileSync = function (...args: unknown[]) {
+            const filePath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+            if (!interceptedMetadataWrite && filePath === path.resolve(path.join(lockPath, 'owner.json'))) {
+                interceptedMetadataWrite = true;
+                fs.rmSync(lockPath, { recursive: true, force: true });
+                const error = new Error('simulated owner metadata race') as NodeJS.ErrnoException;
+                error.code = 'ENOENT';
+                throw error;
+            }
+            return originalWriteFileSync.apply(realFs, args as [fs.PathOrFileDescriptor, string | NodeJS.ArrayBufferView, fs.WriteFileOptions?]);
+        };
+
+        const { handle, telemetry } = acquireFilesystemLock(lockPath, { retryMs: 1, timeoutMs: 1000 });
+        try {
+            assert.equal(interceptedMetadataWrite, true, 'metadata write race should be exercised');
+            assert.ok(telemetry.retries >= 1, 'acquire should retry after the owner metadata race');
+            assert.ok(fs.existsSync(path.join(lockPath, 'owner.json')));
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+    } finally {
+        realFs.writeFileSync = originalWriteFileSync;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 
 test('scanTaskEventLocks reports empty when no locks exist', () => {
     const tmp = mkTmpDir();
@@ -1528,4 +1562,3 @@ test('acquireFilesystemLock cleans up lock directory when metadata write fails',
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
-
