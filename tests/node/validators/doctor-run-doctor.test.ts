@@ -237,6 +237,35 @@ test('runDoctor reports the shared stale reviews-index lock in review-artifact d
     }
 });
 
+test('runDoctor fails when forbidden reviewer scratch artifacts are left at the repository root', () => {
+    const ws = createDoctorWorkspace();
+    writeDoctorFixtureFile(path.join(ws.tmpDir, 'Review-Output.md'), '# Review output\n');
+
+    try {
+        const result = runDoctor({
+            targetRoot: ws.tmpDir,
+            sourceOfTruth: 'Claude'
+        });
+        assert.equal(result.rootScratchArtifactEvidence.passed, false);
+        assert.deepEqual(
+            result.rootScratchArtifactEvidence.found.map((entry) => entry.name),
+            ['Review-Output.md']
+        );
+        assert.deepEqual(
+            result.rootScratchArtifactEvidence.found.map((entry) => entry.expected_name),
+            ['review-output.md']
+        );
+        assert.equal(result.passed, false);
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Root Reviewer Scratch Artifacts'));
+        assert.ok(output.includes('Review-Output.md'));
+        assert.ok(output.includes('runtime/tmp/reviews/<task-id>/<review-type>/'));
+    } finally {
+        ws.cleanup();
+    }
+});
+
 
 test('runDoctor includes provider compliance result when activeAgentFiles provided', () => {
     const ws = createDoctorWorkspace();

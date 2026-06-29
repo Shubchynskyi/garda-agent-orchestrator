@@ -206,6 +206,12 @@ function formatDoctorFailureSummary(result: DoctorResult): string[] {
     if (!result.permissionEvidence.passed) {
         blockers.push('Permission checks failed for one or more workspace paths.');
     }
+    if (!result.rootScratchArtifactEvidence.passed) {
+        blockers.push(
+            'Repository root contains ' + result.rootScratchArtifactEvidence.found.length +
+            ' forbidden reviewer scratch artifact(s).'
+        );
+    }
     if (!result.partialStateEvidence.passed) {
         blockers.push('Partial lifecycle state detected.');
     }
@@ -244,6 +250,8 @@ function formatDoctorFailureSummary(result: DoctorResult): string[] {
         pushProjectCommandsRecoveryAction(actionLines, result);
     } else if (!result.runtimeMismatchEvidence.passed) {
         actionLines.push('Inspect runtime compatibility diagnostics, then rerun doctor.');
+    } else if (!result.rootScratchArtifactEvidence.passed) {
+        actionLines.push('Move or remove root reviewer scratch files after preserving any needed review output under runtime/tmp/reviews.');
     } else if (!result.partialStateEvidence.passed) {
         actionLines.push('Rerun update/rollback/setup instead of deleting lifecycle sentinels or locks manually.');
     } else {
@@ -532,6 +540,18 @@ export function formatDoctorResult(result: DoctorResult): string {
             lines.push('  ' + pf.path + ' (' + pf.kind + '): ' + (pf.error || 'not accessible'));
         }
         lines.push('  Fix: Ensure the current user has read/write access to the listed paths.');
+        lines.push('');
+    }
+
+    if (!result.rootScratchArtifactEvidence.passed) {
+        lines.push('Root Reviewer Scratch Artifacts');
+        lines.push('  Status: FAIL');
+        lines.push('  Root: ' + result.rootScratchArtifactEvidence.checked_root);
+        lines.push('  ForbiddenNames: ' + result.rootScratchArtifactEvidence.forbidden_names.join(', '));
+        for (const entry of result.rootScratchArtifactEvidence.found) {
+            lines.push('  - ' + entry.path + ' kind=' + entry.kind);
+        }
+        lines.push('  Fix: Preserve needed review output, then move scratch files into runtime/tmp/reviews/<task-id>/<review-type>/ or remove them.');
         lines.push('');
     }
 

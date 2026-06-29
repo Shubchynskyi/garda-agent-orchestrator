@@ -8,7 +8,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { NODE_ENGINE_RANGE } from '../../../src/core/constants';
-import type { DoctorResult } from '../../../src/validators/doctor';
+import {
+    FORBIDDEN_ROOT_REVIEW_SCRATCH_FILES,
+    type DoctorResult
+} from '../../../src/validators/doctor';
 
 // ── Default evidence block reused by every fake-result factory ────────────
 
@@ -22,6 +25,13 @@ export const DEFAULT_NEW_EVIDENCE = {
     permissionEvidence: {
         passed: true,
         checks: [] as unknown[]
+    },
+    rootScratchArtifactEvidence: {
+        passed: true,
+        checked_root: '/tmp/test',
+        forbidden_names: FORBIDDEN_ROOT_REVIEW_SCRATCH_FILES,
+        found: [] as unknown[],
+        violations: [] as string[]
     },
     partialStateEvidence: {
         passed: true,

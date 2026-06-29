@@ -36,6 +36,10 @@ import {
     type PermissionCheckEvidence
 } from './doctor/doctor-permissions';
 import {
+    checkRootScratchArtifacts,
+    type RootScratchArtifactEvidence
+} from './doctor/doctor-root-scratch';
+import {
     collectManifestEvidence
 } from './doctor/doctor-manifest';
 import {
@@ -67,6 +71,12 @@ export {
     type PermissionCheckEvidence,
     type PermissionCheckEntry
 } from './doctor/doctor-permissions';
+export {
+    FORBIDDEN_ROOT_REVIEW_SCRATCH_FILES,
+    checkRootScratchArtifacts,
+    type RootScratchArtifactEvidence,
+    type RootScratchArtifactEntry
+} from './doctor/doctor-root-scratch';
 export {
     collectManifestEvidence,
     type ManifestEvidence
@@ -235,6 +245,7 @@ export interface DoctorResult {
     protectedManifestAssessment: ProtectedManifestAssessment | null;
     runtimeMismatchEvidence: RuntimeMismatchEvidence;
     permissionEvidence: PermissionCheckEvidence;
+    rootScratchArtifactEvidence: RootScratchArtifactEvidence;
     partialStateEvidence: PartialStateEvidence;
     rollbackHealthEvidence: RollbackHealthEvidence;
     taskHistoryLedgerSummary: TaskHistoryLedgerScanSummary;
@@ -300,6 +311,8 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
 
     const permissionEvidence = checkPermissions(targetRoot);
 
+    const rootScratchArtifactEvidence = checkRootScratchArtifacts(targetRoot);
+
     const partialStateEvidence = checkPartialState(targetRoot);
 
     const rollbackHealthEvidence = checkRollbackHealth(targetRoot);
@@ -329,6 +342,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         && protectedManifestOk
         && runtimeMismatchEvidence.passed
         && permissionEvidence.passed
+        && rootScratchArtifactEvidence.passed
         && partialStateEvidence.passed
         && rollbackHealthEvidence.passed
         && profileHealthOk;
@@ -353,6 +367,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         protectedManifestAssessment: protectedManifestAssessment,
         runtimeMismatchEvidence: runtimeMismatchEvidence,
         permissionEvidence: permissionEvidence,
+        rootScratchArtifactEvidence: rootScratchArtifactEvidence,
         partialStateEvidence: partialStateEvidence,
         rollbackHealthEvidence: rollbackHealthEvidence,
         taskHistoryLedgerSummary: taskHistoryLedgerSummary,
