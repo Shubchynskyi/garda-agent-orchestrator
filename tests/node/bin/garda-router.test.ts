@@ -13,6 +13,10 @@ import {
     resolveDelegatedLauncherTarget
 } from '../../../src/bin/garda';
 
+const ROUTER_TEMP_CLEANUP_MAX_RETRIES = 10;
+const ROUTER_TEMP_CLEANUP_RETRY_DELAY_MS = 100;
+const ROUTER_CHILD_DRAIN_TIMEOUT_MS = 1_000;
+
 function writeFile(filePath: string, content: string): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content, 'utf8');
@@ -69,6 +73,46 @@ function waitForChildExit(child: childProcess.ChildProcess): Promise<void> {
     });
 }
 
+async function drainKilledChild(child: childProcess.ChildProcess | null): Promise<void> {
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+        return;
+    }
+
+    const drained = new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const cleanup = (): void => {
+            clearTimeout(timer);
+            child.off('error', onError);
+            child.off('exit', onExit);
+        };
+        const onError = (error: Error): void => {
+            cleanup();
+            reject(error);
+        };
+        const onExit = (): void => {
+            cleanup();
+            resolve();
+        };
+        timer = setTimeout(() => {
+            cleanup();
+            reject(new Error('Timed out waiting for router lock diagnostic child process to exit after kill'));
+        }, ROUTER_CHILD_DRAIN_TIMEOUT_MS);
+        child.once('error', onError);
+        child.once('exit', onExit);
+    });
+    child.kill();
+    await drained;
+}
+
+function cleanupRouterTempRoot(tempRoot: string): void {
+    fs.rmSync(tempRoot, {
+        recursive: true,
+        force: true,
+        maxRetries: ROUTER_TEMP_CLEANUP_MAX_RETRIES,
+        retryDelay: ROUTER_TEMP_CLEANUP_RETRY_DELAY_MS
+    });
+}
+
 test('global launcher delegates to source checkout in current workspace', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-source-'));
     try {
@@ -86,7 +130,7 @@ test('global launcher delegates to source checkout in current workspace', () => 
 
         assert.equal(delegatedCli, path.join(sourceRoot, 'bin', 'garda.js'));
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -109,7 +153,7 @@ test('global launcher delegates to deployed bundle when workspace contains manag
 
         assert.equal(delegatedCli, path.join(bundleRoot, 'bin', 'garda.js'));
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -142,7 +186,7 @@ test('global launcher ignores default-named deployed bundles outside the workspa
         assert.equal(evidence.current_runtime.package_version, '1.0.0');
         assert.equal(evidence.delegated_runtime, null);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -175,7 +219,7 @@ test('global launcher ignores default-named source checkouts outside the workspa
         assert.equal(evidence.current_runtime.package_version, '1.0.0');
         assert.equal(evidence.delegated_runtime, null);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -200,7 +244,7 @@ test('global launcher delegates to preferred deployed bundle when fallback candi
 
         assert.equal(delegatedCli, path.join(preferredBundleRoot, 'bin', 'garda.js'));
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -232,7 +276,7 @@ test('global launcher ignores GARDA_BUNDLE_NAME and uses the fixed deployed bund
         } else {
             process.env.GARDA_BUNDLE_NAME = previousBundleName;
         }
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -266,7 +310,7 @@ test('global launcher does not infer non-default deployed bundle directories', (
         }
         assert.deepEqual(diagnostics, []);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -292,7 +336,7 @@ test('global launcher ignores ambiguous custom deployed bundle candidates', () =
 
         assert.equal(delegatedCli, null);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -315,7 +359,7 @@ test('global launcher does not delegate when cwd is inside a non-default deploye
 
         assert.equal(delegatedCli, null);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -340,7 +384,7 @@ test('global launcher respects explicit --target-root when cwd is outside the wo
 
         assert.equal(delegatedCli, path.join(bundleRoot, 'bin', 'garda.js'));
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -359,7 +403,7 @@ test('local source launcher does not delegate to itself', () => {
 
         assert.equal(delegatedCli, null);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -380,7 +424,7 @@ test('local deployed bundle launcher does not redirect to source checkout', () =
 
         assert.equal(delegatedCli, null);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -397,7 +441,7 @@ test('getRuntimeCandidates prefers dist runtime over .node-build when both exist
             path.join(tempRoot, '.node-build', 'src')
         ]);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -412,7 +456,7 @@ test('getRuntimeCandidates falls back to .node-build when dist runtime is absent
             path.join(tempRoot, '.node-build', 'src')
         ]);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -428,7 +472,7 @@ test('getRuntimeCandidates excludes .node-build for deployed bundle roots', () =
             path.join(tempRoot, 'dist', 'src')
         ]);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -441,7 +485,7 @@ test('getRuntimeCandidates does not use .node-build-only deployed bundle roots',
         const candidates = getRuntimeCandidates(tempRoot);
         assert.deepEqual(candidates, []);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -465,7 +509,7 @@ test('loadCliMainModule fails corrupt deployed dist instead of falling back to .
             /definitely-missing-runtime-module/
         );
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -508,10 +552,8 @@ test('loadCliMainModule waits for source checkout dist build lock before loading
         } else {
             process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS = previousTimeout;
         }
-        if (child && child.exitCode === null) {
-            child.kill();
-        }
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        await drainKilledChild(child);
+        cleanupRouterTempRoot(tempRoot);
     }
 });
 
@@ -556,6 +598,6 @@ test('loadCliMainModule enforces one runtime lock timeout budget per candidate',
         } else {
             process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS = previousTimeout;
         }
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupRouterTempRoot(tempRoot);
     }
 });
