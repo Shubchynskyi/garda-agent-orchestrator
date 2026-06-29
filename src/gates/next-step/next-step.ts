@@ -3313,6 +3313,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     'Restart/supersede orphaned delegated reviewer launch',
                     buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, reviewCycleTaskIntent, taskModePath)
                 ),
+                recoverFailedLaunch: buildCommand(
+                    'Restart/supersede failed delegated reviewer launch',
+                    buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, reviewCycleTaskIntent, taskModePath)
+                ),
                 recordInvocation: buildCommand(
                     'Record delegated reviewer launch attestation',
                     buildRecordReviewerInvocationCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, launchArtifactPath, taskModePath)

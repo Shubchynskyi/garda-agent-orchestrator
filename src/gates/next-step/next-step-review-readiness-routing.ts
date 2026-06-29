@@ -10,6 +10,7 @@ export type DelegatedReviewLaunchArtifactState =
     'missing_or_invalid'
     | 'prepared'
     | 'delegation_started'
+    | 'provider_failed'
     | 'orphaned'
     | 'launched';
 
@@ -65,6 +66,7 @@ export interface DelegatedReviewReadinessRouteOptions {
         recordDelegationStarted: DelegatedReviewReadinessCommand;
         completeLaunch: DelegatedReviewReadinessCommand;
         recoverOrphanedLaunch: DelegatedReviewReadinessCommand;
+        recoverFailedLaunch: DelegatedReviewReadinessCommand;
         recordInvocation: DelegatedReviewReadinessCommand;
         recordResult: DelegatedReviewReadinessCommand;
     };
@@ -101,6 +103,7 @@ export function resolveDelegatedReviewReadinessRoute(
             options.launchArtifactState === 'launched'
             || options.launchArtifactState === 'prepared'
             || options.launchArtifactState === 'delegation_started'
+            || options.launchArtifactState === 'provider_failed'
             || options.launchArtifactState === 'orphaned'
             || (
                 options.launchArtifactState === 'missing_or_invalid'
@@ -179,6 +182,21 @@ export function resolveDelegatedReviewReadinessRoute(
                     `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +
                     `${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
                 commands: [options.commands.recoverOrphanedLaunch]
+            };
+        }
+
+        if (options.launchArtifactState === 'provider_failed') {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'restart-review-cycle',
+                title: `Recover failed '${options.reviewType}' delegated reviewer launch.`,
+                reason:
+                    `Required review '${options.reviewType}' has delegated reviewer start evidence, but the provider recorded a failed launch before review output was available. ` +
+                    `Treat this as a failed delegated reviewer launch: do not complete the old launch, do not reuse the failed reviewer session, and do not fabricate review output. ` +
+                    `Restart or supersede the review cycle so a fresh delegated reviewer gets new launch/input evidence. ` +
+                    `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +
+                    `${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
+                commands: [options.commands.recoverFailedLaunch]
             };
         }
 

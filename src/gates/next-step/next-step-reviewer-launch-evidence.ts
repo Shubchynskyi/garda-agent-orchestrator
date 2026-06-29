@@ -32,6 +32,13 @@ import type {
 
 const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
 const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
+const PROVIDER_FAILED_ATTESTATION_STATES = new Set(['provider_failed', 'launch_failed', 'delegation_failed']);
+const REVIEWER_PROVIDER_FAILURE_EVENT_TYPES = new Set([
+    'REVIEWER_PROVIDER_FAILED',
+    'REVIEWER_LAUNCH_FAILED',
+    'REVIEWER_DELEGATION_FAILED',
+    'REVIEWER_PROVIDER_LAUNCH_FAILED'
+]);
 
 export interface CurrentReviewerLaunchArtifactEvidence {
     state: DelegatedReviewLaunchArtifactState;
@@ -289,6 +296,79 @@ function hasControllerResumeAfterSequence(lines: string[], sequence: number | nu
             }
             const taskSequence = getEventTaskSequence(event);
             if (taskSequence != null && taskSequence > sequence) {
+                return true;
+            }
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return false;
+}
+
+function hasMatchingReviewerProviderFailureTelemetry(options: {
+    lines: string[];
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    plannedReviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+    providerInvocationId: string;
+    delegationStartedAtUtc: string;
+    delegationStartedSequence: number | null;
+}): boolean {
+    if (options.delegationStartedSequence == null) {
+        return false;
+    }
+    const normalizedReviewContextSha256 = options.reviewContextSha256.toLowerCase();
+    const normalizedRoutingEventSha256 = options.routingEventSha256.toLowerCase();
+    for (let index = options.lines.length - 1; index >= 0; index -= 1) {
+        try {
+            const event = JSON.parse(options.lines[index]) as Record<string, unknown>;
+            const eventType = String(event.event_type || '').trim();
+            if (!REVIEWER_PROVIDER_FAILURE_EVENT_TYPES.has(eventType)) {
+                continue;
+            }
+            const taskSequence = getEventTaskSequence(event);
+            if (taskSequence == null || taskSequence <= options.delegationStartedSequence) {
+                continue;
+            }
+            const details = isPlainRecord(event.details) ? event.details : {};
+            const detailsProviderInvocationId = getArtifactStringField(
+                details,
+                'provider_invocation_id',
+                'providerInvocationId',
+                'controller_invocation_id',
+                'controllerInvocationId'
+            );
+            const outcome = String(event.outcome || details.outcome || '').trim().toUpperCase();
+            const failureReason = getArtifactStringField(
+                details,
+                'provider_failure_reason',
+                'providerFailureReason',
+                'failure_reason',
+                'failureReason',
+                'error',
+                'error_message',
+                'errorMessage'
+            );
+            if (
+                String(details.task_id || details.taskId || '').trim() === options.taskId
+                && String(details.review_type || details.reviewType || '').trim() === options.reviewType
+                && String(details.reviewer_execution_mode || details.reviewerExecutionMode || '').trim() === 'delegated_subagent'
+                && reviewerIdentityMatchesDelegatedLaunchCycle({
+                    observedIdentity: String(details.reviewer_session_id || details.reviewer_identity || '').trim(),
+                    expectedIdentity: options.reviewerIdentity,
+                    taskId: options.taskId,
+                    reviewType: options.reviewType,
+                    plannedReviewerIdentity: options.plannedReviewerIdentity
+                })
+                && String(details.review_context_sha256 || details.reviewContextSha256 || '').trim().toLowerCase() === normalizedReviewContextSha256
+                && String(details.routing_event_sha256 || details.routingEventSha256 || '').trim().toLowerCase() === normalizedRoutingEventSha256
+                && detailsProviderInvocationId === options.providerInvocationId
+                && String(details.delegation_started_at_utc || details.delegationStartedAtUtc || '').trim() === options.delegationStartedAtUtc
+                && (outcome === 'FAIL' || outcome === 'ERROR' || Boolean(failureReason))
+            ) {
                 return true;
             }
         } catch {
@@ -624,6 +704,12 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
             ) {
                 artifactState = 'delegation_started';
             } else if (
+                evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+                && PROVIDER_FAILED_ATTESTATION_STATES.has(attestationState)
+                && hasDelegationStartedEvidence(launchArtifact)
+            ) {
+                artifactState = 'provider_failed';
+            } else if (
                 evidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
                 && attestationState === 'launched'
                 && hasCompletedReviewerLaunchEvidence(launchArtifact)
@@ -689,13 +775,13 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 getArtifactStringField(launchArtifact, 'review_output_path', 'reviewOutputPath')
             );
             let orphanedReason: string | null = null;
-            if (artifactState === 'delegation_started' && reviewOutputPath && !fileExists(reviewOutputPath)) {
-                const delegationStartedAtUtc = getArtifactStringField(
-                    launchArtifact,
-                    'delegation_started_at_utc',
-                    'delegationStartedAtUtc'
-                );
-                const matchingDelegationStarted = findMatchingReviewerDelegationStartedTelemetry({
+            const delegationStartedAtUtc = getArtifactStringField(
+                launchArtifact,
+                'delegation_started_at_utc',
+                'delegationStartedAtUtc'
+            );
+            const matchingDelegationStarted = artifactState === 'delegation_started' || artifactState === 'provider_failed'
+                ? findMatchingReviewerDelegationStartedTelemetry({
                     lines,
                     taskId,
                     reviewType: state.reviewType,
@@ -713,15 +799,51 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                         'controllerInvocationId'
                     ),
                     delegationStartedAtUtc
-                });
+                })
+                : null;
+            if (
+                artifactState === 'delegation_started'
+                && hasMatchingReviewerProviderFailureTelemetry({
+                    lines,
+                    taskId,
+                    reviewType: state.reviewType,
+                    reviewerIdentity,
+                    plannedReviewerIdentity,
+                    reviewContextSha256: matchedReviewContextSha256,
+                    routingEventSha256,
+                    providerInvocationId: getArtifactStringField(
+                        launchArtifact,
+                        'provider_invocation_id',
+                        'providerInvocationId',
+                        'controller_invocation_id',
+                        'controllerInvocationId'
+                    ),
+                    delegationStartedAtUtc,
+                    delegationStartedSequence: matchingDelegationStarted?.taskSequence ?? null
+                })
+            ) {
+                artifactState = 'provider_failed';
+            }
+            if (artifactState === 'delegation_started' && reviewOutputPath && !fileExists(reviewOutputPath)) {
                 if (hasControllerResumeAfterSequence(lines, matchingDelegationStarted?.taskSequence ?? null)) {
                     artifactState = 'orphaned';
                     orphanedReason = 'controller_resume_after_delegation_start_with_missing_review_output';
                 }
             }
+            if (artifactState === 'provider_failed') {
+                const hasStartedTelemetry = matchingDelegationStarted != null;
+                if (!hasStartedTelemetry) {
+                    continue;
+                }
+            }
             let launchInputArtifactPath: string | null = null;
             let launchInputArtifactSha256: string | null = null;
-            if (artifactState === 'prepared' || artifactState === 'delegation_started' || artifactState === 'orphaned') {
+            if (
+                artifactState === 'prepared'
+                || artifactState === 'delegation_started'
+                || artifactState === 'provider_failed'
+                || artifactState === 'orphaned'
+            ) {
                 launchInputArtifactPath = resolveReviewerLaunchArtifactPathFromTelemetry(
                     repoRoot,
                     getArtifactStringField(
@@ -937,8 +1059,10 @@ export function buildReviewerReadinessChainSummary(
         ? 'blocked until routing'
         : launchArtifactState === 'prepared'
             ? 'prepared'
-            : launchArtifactState === 'delegation_started'
-                ? 'delegation started'
+        : launchArtifactState === 'delegation_started'
+            ? 'delegation started'
+            : launchArtifactState === 'provider_failed'
+                ? 'provider failed'
                 : launchArtifactState === 'orphaned'
                     ? 'orphaned'
                     : launchArtifactState === 'launched'
@@ -952,6 +1076,8 @@ export function buildReviewerReadinessChainSummary(
         ? 'attested'
         : launchArtifactState === 'launched'
             ? 'missing current-cycle attestation'
+            : launchArtifactState === 'provider_failed'
+                ? 'blocked until launch recovery'
             : launchArtifactState === 'orphaned'
                 ? 'blocked until launch recovery'
                 : launchArtifactState === 'delegation_started'

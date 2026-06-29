@@ -134,6 +134,10 @@ test('resolveDelegatedReviewDecisionRoute preserves missing routing recovery bef
                 label: 'Restart/supersede orphaned delegated reviewer launch',
                 command: 'node bin/garda.js gate restart-review-cycle --task-id "T-1"'
             },
+            recoverFailedLaunch: {
+                label: 'Restart/supersede failed delegated reviewer launch',
+                command: 'node bin/garda.js gate restart-review-cycle --task-id "T-1"'
+            },
             recordInvocation: {
                 label: 'Record delegated reviewer launch attestation',
                 command: 'node bin/garda.js gate record-reviewer-invocation --task-id "T-1"'
