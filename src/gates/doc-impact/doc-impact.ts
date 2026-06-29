@@ -10,6 +10,42 @@ export const VALID_DOC_IMPACT_DECISIONS: readonly string[] = Object.freeze([
     'NO_DOC_UPDATES'
 ]);
 
+function normalizeDecisionShape(value: string): string {
+    return value.replace(/[^A-Z0-9]+/g, '');
+}
+
+function suggestDocImpactDecision(decision: string): string | null {
+    const shape = normalizeDecisionShape(decision);
+    if (/^(DOCS?|DOCUMENTS?|DOCUMENTATION)UPDATE(?:D|S)?(?:COMPLETE)?$/.test(shape)) return 'DOCS_UPDATED';
+    if (/^NO(DOCS?|DOCUMENTS?|DOCUMENTATION)UPDATE(?:D|S)?(?:COMPLETE)?$/.test(shape)) return 'NO_DOC_UPDATES';
+    return null;
+}
+
+function buildUnknownDecisionViolation(decision: string): string {
+    const validValues = VALID_DOC_IMPACT_DECISIONS.join(', ');
+    const suggestedDecision = suggestDocImpactDecision(decision);
+    if (suggestedDecision === 'DOCS_UPDATED') {
+        return (
+            `Unknown decision '${decision}'. Valid values: ${validValues}. ` +
+            'Did you mean --decision "DOCS_UPDATED"? Pair it with --docs-updated <path> ' +
+            'for each user-facing doc and set --changelog-updated true when the changelog changed.'
+        );
+    }
+    if (suggestedDecision === 'NO_DOC_UPDATES') {
+        return (
+            `Unknown decision '${decision}'. Valid values: ${validValues}. ` +
+            'Did you mean --decision "NO_DOC_UPDATES"? Use it only when no user-facing docs changed ' +
+            'with --behavior-changed false --changelog-updated false, or provide internal closeout evidence ' +
+            'for internal-only behavior changes.'
+        );
+    }
+    return (
+        `Unknown decision '${decision}'. Valid values: ${validValues}. ` +
+        'Use --decision "DOCS_UPDATED" with --docs-updated <path> for user-facing documentation changes, ' +
+        'or --decision "NO_DOC_UPDATES" only when no user-facing docs changed.'
+    );
+}
+
 /**
  * Validate preflight for doc-impact gate.
  */
@@ -202,9 +238,7 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
 
     // Reject unknown decision values (fail-closed).
     if (!VALID_DOC_IMPACT_DECISIONS.includes(decision)) {
-        errors.push(
-            `Unknown decision '${decision}'. Valid values: ${VALID_DOC_IMPACT_DECISIONS.join(', ')}.`
-        );
+        errors.push(buildUnknownDecisionViolation(decision));
     }
 
     if (!rationale || rationale.length < 12) {

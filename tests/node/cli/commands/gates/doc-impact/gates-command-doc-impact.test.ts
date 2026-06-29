@@ -58,6 +58,34 @@ describe('cli/commands/gates doc-impact', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('reports actionable repair guidance for near-miss decision values', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-902-near-miss';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+
+        const result = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'DOC_UPDATES_COMPLETE',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            docsUpdated: ['docs/cli-reference.md'],
+            rationale: 'Documentation changed and should use the canonical enum.',
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'DOC_IMPACT_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes("Unknown decision 'DOC_UPDATES_COMPLETE'")));
+        assert.ok(result.outputLines.some((line) => line.includes('Did you mean --decision "DOCS_UPDATED"')));
+        assert.ok(result.outputLines.some((line) => line.includes('--docs-updated <path>')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('records internal doc-impact closeout evidence without user-facing docs_updated paths', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-902-internal-closeout';

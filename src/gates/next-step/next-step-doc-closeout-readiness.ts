@@ -442,6 +442,7 @@ export function buildDocImpactCommand(
 export function buildDocImpactCompatibilityHint(): string {
     return [
         'Compatible doc-impact choices:',
+        'Decision values are exact: --decision "DOCS_UPDATED" or --decision "NO_DOC_UPDATES"; use --docs-updated only with DOCS_UPDATED.',
         'no user-facing docs -> --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false;',
         'docs only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated false plus --docs-updated for each user-facing doc;',
         'changelog/docs maintenance only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true plus --docs-updated "CHANGELOG.md";',

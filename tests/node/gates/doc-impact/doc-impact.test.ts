@@ -425,6 +425,48 @@ describe('gates/doc-impact', () => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 
+        it('suggests DOCS_UPDATED repair for near-miss documentation decisions', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'DOC_UPDATES_COMPLETE',
+                behaviorChanged: false,
+                changelogUpdated: false,
+                sensitiveReviewed: false,
+                docsUpdated: ['docs/guide.md'],
+                rationale: 'Documentation changed and should use the canonical enum.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some(v => v.includes("Unknown decision 'DOC_UPDATES_COMPLETE'")));
+            assert.ok(result.violations.some(v => v.includes('Did you mean --decision "DOCS_UPDATED"')));
+            assert.ok(result.violations.some(v => v.includes('--docs-updated <path>')));
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('suggests NO_DOC_UPDATES repair for near-miss no-doc decisions', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'NO_DOC_UPDATES_COMPLETE',
+                behaviorChanged: false,
+                changelogUpdated: false,
+                sensitiveReviewed: false,
+                docsUpdated: [],
+                rationale: 'No public documentation changed and should use the canonical enum.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some(v => v.includes("Unknown decision 'NO_DOC_UPDATES_COMPLETE'")));
+            assert.ok(result.violations.some(v => v.includes('Did you mean --decision "NO_DOC_UPDATES"')));
+            assert.ok(result.violations.some(v => v.includes('--behavior-changed false --changelog-updated false')));
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
         it('fails when decision is empty (normalizes to NO_DOC_UPDATES via default, not unknown)', () => {
             const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
             const preflightPath = createPreflight(tmpDir);

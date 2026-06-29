@@ -79,6 +79,8 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
         assert.ok(result.reason.includes('Completion requires an explicit docs decision.'));
         assert.ok(result.reason.includes('Compatible doc-impact choices:'));
+        assert.ok(result.reason.includes('Decision values are exact: --decision "DOCS_UPDATED" or --decision "NO_DOC_UPDATES"'));
+        assert.ok(result.reason.includes('use --docs-updated only with DOCS_UPDATED'));
         assert.ok(result.reason.includes('no user-facing docs -> --decision "NO_DOC_UPDATES"'));
         assert.ok(result.reason.includes('docs only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated false'));
         assert.ok(result.reason.includes('changelog/docs maintenance only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true'));
