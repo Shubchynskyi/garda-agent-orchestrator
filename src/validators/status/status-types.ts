@@ -46,6 +46,7 @@ export interface StatusSnapshot extends CliStatusSnapshot {
     timelineTaskCount: number;
     timelineHealthy: number;
     timelineWarnings: string[];
+    timelineWarningDetails?: TimelineSummary['warningDetails'];
     parityResult: SourceBundleParityResult;
     providerComplianceResult: ProviderComplianceResult | null;
     protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null;

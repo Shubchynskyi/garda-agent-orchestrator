@@ -654,6 +654,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         timelineTaskCount: timelineSummary.taskCount,
         timelineHealthy: timelineSummary.healthy,
         timelineWarnings: timelineSummary.warnings,
+        timelineWarningDetails: timelineSummary.warningDetails,
         parityResult,
         providerComplianceResult,
         protectedManifestEvidence,

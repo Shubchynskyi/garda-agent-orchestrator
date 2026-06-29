@@ -98,6 +98,102 @@ describe('gates/task-audit-summary', () => {
             assert.equal(rulePackGate.status, 'PASS');
         });
 
+        it('surfaces partial task-cycle diagnostics from status timeline warnings', () => {
+            fs.writeFileSync(
+                path.join(tmpDir, 'TASK.md'),
+                [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    `| ${TASK_ID} | 🟨 IN_PROGRESS | P1 | runtime | Partial task | codex | 2026-06-29 | balanced | partial lifecycle |`,
+                    ''
+                ].join('\n'),
+                'utf8'
+            );
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' }
+            ]);
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'INCOMPLETE');
+            assert.equal(result.task_cycle_diagnostics?.status, 'PARTIAL');
+            assert.equal(result.task_cycle_diagnostics?.timeline_warning_kind, 'INCOMPLETE');
+            assert.equal(result.task_cycle_diagnostics?.task_status, 'IN_PROGRESS');
+            assert.ok(result.task_cycle_diagnostics?.missing_lifecycle_events.includes('RULE_PACK_LOADED'));
+            assert.ok(result.task_cycle_diagnostics?.message?.includes('workspace readiness is evaluated separately'));
+            assert.equal(result.blockers.some((blocker) => blocker.gate === 'task-cycle-diagnostics'), false);
+            assert.equal(result.final_closeout.task_cycle_diagnostics?.status, 'PARTIAL');
+
+            const rendered = formatTaskAuditSummaryText(result);
+            assert.ok(rendered.includes('TaskCycleDiagnostics: Task-cycle diagnostic: status=PARTIAL'));
+            const finalMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+            assert.ok(finalMarkdown.includes('Task-cycle diagnostic: status=PARTIAL'));
+        });
+
+        it('surfaces corrupt task-cycle diagnostics without treating them as missing lifecycle events', () => {
+            fs.writeFileSync(
+                path.join(tmpDir, 'TASK.md'),
+                [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    `| ${TASK_ID} | 🟨 IN_PROGRESS | P1 | runtime | Corrupt task | codex | 2026-06-29 | balanced | diagnostic lifecycle |`,
+                    ''
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(eventsDir, `${TASK_ID}.jsonl`),
+                JSON.stringify({
+                    timestamp_utc: '2026-06-29T10:00:00.000Z',
+                    task_id: TASK_ID,
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Task mode entered.',
+                    details: {},
+                    integrity: {
+                        schema_version: 1,
+                        task_sequence: 1,
+                        prev_event_sha256: null,
+                        event_sha256: '0'.repeat(64)
+                    }
+                }) + '\n',
+                'utf8'
+            );
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.task_cycle_diagnostics?.status, 'DIAGNOSTIC');
+            assert.equal(result.task_cycle_diagnostics?.timeline_warning_kind, 'INTEGRITY_FAILED');
+            assert.equal(result.task_cycle_diagnostics?.task_status, 'IN_PROGRESS');
+            assert.deepEqual(result.task_cycle_diagnostics?.missing_lifecycle_events, []);
+            assert.ok(result.task_cycle_diagnostics?.message?.includes('workspace readiness is evaluated separately'));
+            assert.ok(result.task_cycle_diagnostics?.repair_guidance?.includes('tampered/corrupt evidence'));
+            assert.equal(result.blockers.some((blocker) => blocker.gate === 'task-cycle-diagnostics'), false);
+            assert.equal(result.final_closeout.task_cycle_diagnostics?.status, 'DIAGNOSTIC');
+
+            const rendered = formatTaskAuditSummaryText(result);
+            assert.ok(rendered.includes('TaskCycleDiagnostics: Task-cycle diagnostic: status=DIAGNOSTIC'));
+            const finalMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+            assert.ok(finalMarkdown.includes('Task-cycle diagnostic: status=DIAGNOSTIC'));
+        });
+
         it('includes project-memory-impact gate and final closeout project memory status', () => {
             writeProjectMemoryWorkflowConfig(tmpDir);
             seedProjectMemory(tmpDir);

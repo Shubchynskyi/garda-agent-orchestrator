@@ -208,7 +208,9 @@ function detectBlockingReasons(
     if (missingEvents.length > 0) {
         reasons.push({
             reason_code: 'TIMELINE_INCOMPLETE',
-            description: `Task timeline is missing ${missingEvents.length} mandatory event(s): ${missingEvents.join(', ')}.`,
+            description:
+                `Task timeline is missing ${missingEvents.length} mandatory event(s): ${missingEvents.join(', ')}. ` +
+                'This is a task-cycle stall diagnostic; workspace readiness is evaluated separately.',
             remediation: 'Re-run the appropriate gate commands to emit the missing events.'
         });
     }
@@ -408,6 +410,7 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
         }
         if (inProgress.length > 0) {
             summaryLines.push(`In-progress tasks with gate issues: ${inProgress.length}`);
+            summaryLines.push('Task-cycle stalls are task-level diagnostics; workspace readiness is reported separately by status.');
         }
         if (lockObservations.length > 0) {
             summaryLines.push(`Task-event locks observed: ${lockObservations.length}.`);

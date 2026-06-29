@@ -73,6 +73,7 @@ import {
     readReviewExecutionPolicyModeFromCurrentCycleTimeline
 } from './task-audit-summary-review-timing-audit';
 import type {
+    FinalCloseoutTaskCycleDiagnostics,
     PointInTimeSnapshot,
     TaskAuditSummaryOptions,
     TaskAuditSummaryResult
@@ -86,6 +87,7 @@ export type {
     FinalCloseoutProjectMemorySummary,
     FinalCloseoutReviewTimingAuditEntry,
     FinalCloseoutReviewTimingAuditSummary,
+    FinalCloseoutTaskCycleDiagnostics,
     PointInTimeSnapshot,
     TaskAuditSummaryOptions,
     TaskAuditSummaryResult
@@ -93,6 +95,46 @@ export type {
 
 const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no committable changes are present.';
 const NO_COMMIT_CONFIRMATION_MESSAGE = 'No commit confirmation required.';
+
+function buildTaskCycleDiagnostics(options: {
+    taskId: string;
+    workspaceStatusSnapshot: ReturnType<typeof getStatusSnapshot>;
+}): FinalCloseoutTaskCycleDiagnostics {
+    const warningDetails = options.workspaceStatusSnapshot.timelineWarningDetails || [];
+    const matchingDetails = warningDetails.filter((detail) => detail.task_id === options.taskId);
+    const preferred = matchingDetails.find((detail) => detail.kind === 'INCOMPLETE') ?? matchingDetails[0] ?? null;
+    const workspaceReady = options.workspaceStatusSnapshot.readyForTasks === true;
+
+    if (!preferred) {
+        return {
+            status: 'NONE',
+            task_status: null,
+            timeline_warning_kind: null,
+            missing_lifecycle_events: [],
+            message: null,
+            repair_guidance: null,
+            timeline_path: null,
+            workspace_ready_for_tasks: workspaceReady,
+            visible_summary_line: `Task-cycle diagnostics: none; workspace_ready=${workspaceReady}`
+        };
+    }
+
+    const status = preferred.kind === 'INCOMPLETE' ? 'PARTIAL' : 'DIAGNOSTIC';
+    const taskStatus = preferred.task_status || null;
+    return {
+        status,
+        task_status: taskStatus,
+        timeline_warning_kind: preferred.kind,
+        missing_lifecycle_events: preferred.kind === 'INCOMPLETE' ? preferred.details.slice() : [],
+        message: preferred.message,
+        repair_guidance: preferred.repair_guidance,
+        timeline_path: preferred.timeline_path,
+        workspace_ready_for_tasks: workspaceReady,
+        visible_summary_line:
+            `Task-cycle diagnostic: status=${status}; task_status=${taskStatus || 'unknown'}; ` +
+            `timeline=${preferred.kind}; workspace_ready=${workspaceReady}; action=${preferred.repair_guidance}`
+    };
+}
 
 function buildFinalCloseoutChangeMetrics(options: {
     repoRoot: string;
@@ -379,6 +421,10 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         blockers.push(completionReviewOrderBlocker);
     }
     const tokenEconomy = buildTokenEconomySummary(safeTaskId, events, repoRoot, reviewsRoot);
+    const taskCycleDiagnostics = buildTaskCycleDiagnostics({
+        taskId: safeTaskId,
+        workspaceStatusSnapshot
+    });
     const evidence = reviewSnapshot.evidence;
     const hasFailedGate = gates.some((g) => g.status === 'FAIL');
     const failedGateNames = gates.filter((g) => g.status === 'FAIL').map((g) => g.gate);
@@ -598,6 +644,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         reviewExecutionPolicyMode,
         projectMemoryImpactEvidence,
         tokenEconomy,
+        taskCycleDiagnostics,
         workspaceStatusSnapshot,
         commitCommandTemplate,
         commitCommandSuggestion
@@ -621,6 +668,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         evidence,
         blockers,
         point_in_time_snapshot: pointInTimeSnapshot,
+        task_cycle_diagnostics: taskCycleDiagnostics,
         review_attempt_summary: reviewAttemptSummary,
         final_report_contract: finalReportContract,
         final_closeout: finalCloseout

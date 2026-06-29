@@ -13,7 +13,8 @@ import type {
     FinalCloseoutArtifact,
     FinalCloseoutFullSuiteTimeoutSummary,
     FinalCloseoutProjectMemorySummary,
-    FinalCloseoutReviewTimingAuditSummary
+    FinalCloseoutReviewTimingAuditSummary,
+    FinalCloseoutTaskCycleDiagnostics
 } from './task-audit-summary';
 import type {
     FinalCloseoutAuditedScopeProvenance,
@@ -60,6 +61,7 @@ export interface BuildFinalCloseoutArtifactInput {
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode;
     projectMemoryImpactEvidence: ProjectMemoryImpactLifecycleEvidence;
     tokenEconomy: FinalCloseoutArtifact['token_economy'];
+    taskCycleDiagnostics: FinalCloseoutTaskCycleDiagnostics;
     workspaceStatusSnapshot: StatusSnapshot;
     commitCommandTemplate: string;
     commitCommandSuggestion: string;
@@ -445,6 +447,7 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
         project_memory: projectMemory,
         known_non_blocking_signals: knownNonBlockingSignals,
         token_economy: input.tokenEconomy,
+        task_cycle_diagnostics: input.taskCycleDiagnostics,
         task_queue_status_contract: buildTaskQueueStatusContract(input.taskId),
         agent_report: {
             assistant_language: input.workspaceStatusSnapshot.assistantLanguage,

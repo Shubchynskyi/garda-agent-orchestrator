@@ -660,13 +660,16 @@ function buildTimelineWarningDetail(input: TimelineIssueInput): TimelineWarningD
 
     const repairGuidance = buildTimelineRepairGuidance(kind, input.taskId, input.timelinePath, input.taskStatus);
     const boundedDetails = buildBoundedIssueDetails(details);
+    const statusLayerNote = input.statusSurface === true
+        ? ' Note: task-cycle diagnostic; workspace readiness is evaluated separately.'
+        : '';
     return {
         task_id: input.taskId,
         file_name: input.fileName,
         kind,
         details: boundedDetails.details,
         details_omitted_count: boundedDetails.omittedCount,
-        message: `${kind} timeline: ${input.fileName} (${shortenIssueDetails(details)}). Repair: ${repairGuidance}`,
+        message: `${kind} timeline: ${input.fileName} (${shortenIssueDetails(details)}). Repair: ${repairGuidance}.${statusLayerNote}`,
         repair_guidance: repairGuidance,
         timeline_path: input.timelinePath.replace(/\\/g, '/'),
         task_status: input.taskStatus || null

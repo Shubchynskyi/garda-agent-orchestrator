@@ -270,6 +270,10 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         lines.push(closeout.token_economy.visible_summary_line);
     }
 
+    if (closeout.task_cycle_diagnostics && closeout.task_cycle_diagnostics.status !== 'NONE') {
+        lines.push(closeout.task_cycle_diagnostics.visible_summary_line);
+    }
+
     lines.push((closeout.task_queue_status_contract || buildTaskQueueStatusContract(closeout.task_id)).visible_summary_line);
     lines.push('');
     lines.push(buildAgentReportBlock({
@@ -335,6 +339,10 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
 
     if (summary.scope_category) {
         lines.push(`ScopeCategory: ${summary.scope_category}`);
+    }
+
+    if (summary.task_cycle_diagnostics && summary.task_cycle_diagnostics.status !== 'NONE') {
+        lines.push(`TaskCycleDiagnostics: ${summary.task_cycle_diagnostics.visible_summary_line}`);
     }
 
     lines.push(`TaskModeAuthorization: ${formatTaskModeAuthorizationSummary(summary.final_closeout.implementation_summary)}`);
@@ -509,6 +517,9 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     if (summary.final_closeout.token_economy?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.token_economy.visible_summary_line}`);
+    }
+    if (summary.final_closeout.task_cycle_diagnostics && summary.final_closeout.task_cycle_diagnostics.status !== 'NONE') {
+        lines.push(`  ${summary.final_closeout.task_cycle_diagnostics.visible_summary_line}`);
     }
     lines.push(`  ${(summary.final_closeout.task_queue_status_contract || buildTaskQueueStatusContract(summary.task_id)).visible_summary_line}`);
     lines.push('FinalReportOrder:');

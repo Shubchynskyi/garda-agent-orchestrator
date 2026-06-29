@@ -183,6 +183,13 @@ test('getWhyBlocked detects IN_PROGRESS task with missing timeline events', () =
         const analysed = result.in_progress_tasks[0];
         assert.equal(analysed.task.id, 'T-010');
         assert.ok(analysed.missing_events.length > 0, 'Expected missing events for incomplete timeline');
+        const timelineReason = analysed.blocking_reasons.find(function (reason) {
+            return reason.reason_code === 'TIMELINE_INCOMPLETE';
+        });
+        assert.ok(timelineReason?.description.includes('task-cycle stall diagnostic'));
+        assert.ok(result.summary_lines.includes(
+            'Task-cycle stalls are task-level diagnostics; workspace readiness is reported separately by status.'
+        ));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

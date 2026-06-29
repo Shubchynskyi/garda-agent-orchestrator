@@ -1205,10 +1205,14 @@ test('getStatusSnapshot warns about incomplete task timelines', () => {
 
         const snapshot = getStatusSnapshot(tmpDir);
         const output = formatStatusSnapshot(snapshot);
+        assert.equal(snapshot.readyForTasks, true);
         assert.equal(snapshot.timelineTaskCount, 1);
         assert.equal(snapshot.timelineHealthy, 0);
+        assert.equal(snapshot.timelineWarningDetails?.length, 1);
+        assert.equal(snapshot.timelineWarningDetails?.[0]?.kind, 'INCOMPLETE');
         assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('INCOMPLETE timeline: T-001.jsonl')));
         assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('Repair: resume T-001 with node bin/garda.js next-step "T-001" --repo-root "."')));
+        assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('task-cycle diagnostic; workspace readiness is evaluated separately')));
         assert.ok(output.includes('TaskTimelines: 0/1 complete'));
     } finally {
         cleanupStatusTempDir(tmpDir);

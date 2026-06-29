@@ -57,6 +57,7 @@ export interface FinalCloseoutArtifact {
     project_memory?: FinalCloseoutProjectMemorySummary | null;
     known_non_blocking_signals?: KnownNonBlockingSignal[];
     token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
+    task_cycle_diagnostics?: FinalCloseoutTaskCycleDiagnostics;
     task_queue_status_contract?: TaskQueueStatusContract;
     agent_report?: {
         assistant_language: string | null;
@@ -67,6 +68,18 @@ export interface FinalCloseoutArtifact {
     commit_command_template: string;
     commit_command_suggestion: string;
     commit_question: string;
+}
+
+export interface FinalCloseoutTaskCycleDiagnostics {
+    status: 'NONE' | 'PARTIAL' | 'DIAGNOSTIC';
+    task_status: string | null;
+    timeline_warning_kind: string | null;
+    missing_lifecycle_events: string[];
+    message: string | null;
+    repair_guidance: string | null;
+    timeline_path: string | null;
+    workspace_ready_for_tasks: boolean;
+    visible_summary_line: string;
 }
 
 export interface FinalCloseoutFullSuiteTimeoutSummary {
@@ -110,6 +123,7 @@ export interface TaskAuditSummaryResult {
     evidence: EvidenceArtifact[];
     blockers: BlockerEntry[];
     point_in_time_snapshot: PointInTimeSnapshot;
+    task_cycle_diagnostics?: FinalCloseoutTaskCycleDiagnostics;
     review_attempt_summary?: ReviewAttemptSummary | null;
     final_report_contract: FinalReportContract;
     final_closeout: FinalCloseoutArtifact;
