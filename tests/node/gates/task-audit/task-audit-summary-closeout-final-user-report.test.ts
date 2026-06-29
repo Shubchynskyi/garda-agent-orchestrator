@@ -161,7 +161,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(!renderedReport.includes('Operator Question:'));
             assert.match(
                 renderedReport.trimEnd(),
-                /Review Timing Warning:\nWARNING: suspicious or insufficiently verified review timing\/evidence detected for db\(too_short_without_strong_provider_evidence\)\..*\n\nAdvisory Notes:\nnone$/u
+                /Review Timing Warning:\nWARNING: review accepted, but timing looked unusual; operator may double-check\.\n\nAdvisory Notes:\nnone$/u
             );
         });
 

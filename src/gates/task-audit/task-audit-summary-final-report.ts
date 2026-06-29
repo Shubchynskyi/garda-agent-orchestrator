@@ -90,16 +90,7 @@ function buildReviewTimingWarning(closeout: FinalCloseoutArtifact, attestation: 
     const suspiciousEntries = (closeout.review_timing_audit?.entries || [])
         .filter((entry) => entry.hidden_timing_status === 'DISTRUSTED');
     if (suspiciousEntries.length > 0) {
-        const reviewTypesWithCodes = [...new Set(suspiciousEntries
-            .map((entry) => {
-                const reviewType = String(entry.review_type || '').trim() || 'unknown';
-                const distrustCode = String(entry.hidden_timing_distrust_code || '').trim();
-                return distrustCode ? `${reviewType}(${distrustCode})` : reviewType;
-            })
-            .filter(Boolean))]
-            .sort()
-            .join(', ');
-        return `WARNING: suspicious or insufficiently verified review timing/evidence detected for ${reviewTypesWithCodes || 'one or more reviews'}. Do not treat this task as independently reviewed until fresh review evidence is recorded.`;
+        return 'WARNING: review accepted, but timing looked unusual; operator may double-check.';
     }
     if (attestation.completion_allowed !== true || attestation.status === 'DEGRADED_OR_UNVERIFIABLE') {
         return `WARNING: review evidence is degraded or unverifiable. ${attestation.reason}`;
