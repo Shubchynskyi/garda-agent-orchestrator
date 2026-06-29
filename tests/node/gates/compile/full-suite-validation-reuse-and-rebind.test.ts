@@ -847,6 +847,71 @@ describe('gates/full-suite-validation', () => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
+        it('ignores nested timeout fixture failures before the explicit failing tests list', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-fixture-before-failing-list-'));
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const trustedLogDir = path.join(tempDir, '.node-build', 'test-shard-logs', 'run-1');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(trustedLogDir, { recursive: true });
+            const shardLogPath = path.join(trustedLogDir, 'shard-01-of-02.log');
+            fs.writeFileSync(shardLogPath, [
+                '✔ preserves timeout fixture output in passing tests (1.0000ms)',
+                '✖ real test failure (1.0000ms)',
+                'NODE_FOUNDATION_TEST_SHARD_TIMEOUT 1/2 pid=100 elapsed_ms=759 last_output_age_ms=758 log=.node-build/test-shard-logs/run-1/shard-01-of-02.log cleanup=child_kill_sigkill',
+                ...Array.from({ length: 30 }, (_unused, index) => `fixture filler ${index}`),
+                '✖ failing tests:',
+                'test at .node-build\\tests\\node\\validators\\release-readiness.test.js:42:9',
+                '✖ release readiness fails when package files include node test build output (10.0000ms)',
+                '  Error: EACCES: permission denied, open ".git/config"',
+                '# fail 1',
+                'NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=' + shardLogPath
+            ].join('\n'), 'utf8');
+            const result: FullSuiteValidationResult = {
+                status: 'FAILED',
+                enabled: true,
+                command: 'npm run test:sharded',
+                exit_code: 1,
+                timed_out: false,
+                output_artifact_path: path.join(reviewsDir, 'T-FIXTURE-BEFORE-FAILING-LIST-full-suite-output.log'),
+                compact_summary: [],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: []
+            };
+
+            const evidence = persistFullSuiteFailureEvidence({
+                repoRoot: tempDir,
+                reviewsRoot: reviewsDir,
+                taskId: 'T-FIXTURE-BEFORE-FAILING-LIST',
+                result,
+                outputLines: [
+                    `NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${trustedLogDir}`,
+                    `NODE_FOUNDATION_TEST_SHARD_LOG 1/2 ${shardLogPath}`,
+                    `NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=${shardLogPath}`
+                ],
+                maxLogChars: 220
+            });
+
+            assert.ok(evidence);
+            assert.notEqual(evidence.failure_kind, 'process_hang');
+            assert.notEqual(evidence.top_failures[0].kind, 'process_hang');
+            assert.equal(evidence.top_failures[0].test_name, 'release readiness fails when package files include node test build output');
+            assert.equal(evidence.top_failures[0].file_path, '.node-build/tests/node/validators/release-readiness.test.js');
+            assert.equal(evidence.top_failures[0].line, 42);
+            assert.doesNotMatch(evidence.top_failures[0].summary, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT/u);
+            assert.doesNotMatch(evidence.top_failures[0].summary, /real test failure/u);
+            const copiedArtifact = fs.readFileSync(evidence.copied_logs[0].artifact_path, 'utf8');
+            assert.match(copiedArtifact, /release readiness fails/u);
+            assert.doesNotMatch(copiedArtifact, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT/u);
+            const summary = JSON.parse(fs.readFileSync(String(evidence.summary_artifact_path), 'utf8'));
+            assert.notEqual(summary.failure_kind, 'process_hang');
+            assert.equal(summary.top_failures[0].test_name, 'release readiness fails when package files include node test build output');
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
         it('classifies shard timeout diagnostics as process hangs', () => {
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-process-hang-'));
             const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');

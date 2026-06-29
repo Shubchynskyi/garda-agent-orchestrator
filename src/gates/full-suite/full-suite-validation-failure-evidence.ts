@@ -288,7 +288,27 @@ function findFailureAnchorOffsetBy(content: string, predicate: (line: string) =>
     return null;
 }
 
+function findExplicitFailingTestsMarkerOffset(content: string): number | null {
+    let offset = 0;
+    for (const line of content.split(/\r?\n/u)) {
+        offset += line.length + 1;
+        if (/^✖ failing tests:?$/u.test(line.trim())) {
+            return offset;
+        }
+    }
+    return null;
+}
+
 function findFailureAnchorOffset(content: string): number | null {
+    const explicitFailureListOffset = findExplicitFailingTestsMarkerOffset(content);
+    if (explicitFailureListOffset !== null) {
+        const explicitFailureList = content.slice(explicitFailureListOffset);
+        const explicitAnchorOffset = findFailureAnchorOffsetBy(explicitFailureList, lineLooksLikePrimaryFailureAnchor)
+            ?? findFailureAnchorOffsetBy(explicitFailureList, lineLooksLikeFailureAnchor);
+        if (explicitAnchorOffset !== null) {
+            return explicitFailureListOffset + explicitAnchorOffset;
+        }
+    }
     return findFailureAnchorOffsetBy(content, lineLooksLikePrimaryFailureAnchor)
         ?? findFailureAnchorOffsetBy(content, lineLooksLikeFailureAnchor);
 }
@@ -314,6 +334,26 @@ function buildTruncatedCopiedContent(redactedContent: string, maxLogChars: numbe
 }
 
 function collectTopFailuresFromLines(options: {
+    lines: string[];
+    source: FullSuiteTopFailure['source'];
+    sourcePath: string | null;
+    artifactPath: string | null;
+    seenKeys: Set<string>;
+}): FullSuiteTopFailure[] {
+    const explicitFailureListIndex = options.lines.findIndex((line) => /^✖ failing tests:?$/u.test(line.trim()));
+    if (explicitFailureListIndex >= 0) {
+        const explicitFailures = collectTopFailuresFromCandidateLines({
+            ...options,
+            lines: options.lines.slice(explicitFailureListIndex + 1)
+        });
+        if (explicitFailures.length > 0) {
+            return explicitFailures;
+        }
+    }
+    return collectTopFailuresFromCandidateLines(options);
+}
+
+function collectTopFailuresFromCandidateLines(options: {
     lines: string[];
     source: FullSuiteTopFailure['source'];
     sourcePath: string | null;
