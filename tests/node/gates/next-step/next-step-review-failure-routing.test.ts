@@ -1042,6 +1042,33 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('compile-gate'));
     });
 
+    it('routes failed-review remediation through current startup evidence before stale preflight refresh', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+
+        const missingHandshake = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingHandshake.next_gate, 'handshake-diagnostics', missingHandshake.reason);
+        assert.match(missingHandshake.reason, /latest startup rule-pack event/);
+        assert.match(missingHandshake.reason, /no HANDSHAKE_DIAGNOSTICS_RECORDED event exists after them/);
+        assert.equal(missingHandshake.commands[0].command.includes('gate classify-change'), false);
+
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-handshake.json`), { task_id: TASK_ID, status: 'PASS' });
+        appendEvent(repoRoot, TASK_ID, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+        const missingShellSmoke = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingShellSmoke.next_gate, 'shell-smoke-preflight', missingShellSmoke.reason);
+        assert.match(missingShellSmoke.reason, /latest HANDSHAKE_DIAGNOSTICS_RECORDED event/);
+        assert.equal(missingShellSmoke.commands[0].command.includes('gate classify-change'), false);
+    });
+
     it('does not treat non-verdict fail-token mentions as failed review verdicts', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
