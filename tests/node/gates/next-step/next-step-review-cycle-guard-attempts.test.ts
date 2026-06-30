@@ -635,7 +635,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         assert.ok(result.reason.includes('timeline_integrity=1>0'));
     });
 
-    it('ignores stale failed review records whose lane scope no longer matches the current preflight', () => {
+    it('blocks cumulative review churn across changing scope hashes', () => {
         const repoRoot = makeTempRepo();
         writeJson(
             path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
@@ -654,28 +654,74 @@ describe('gates/next-step review cycle guard attempts', () => {
                 review_cycle_guard: {
                     enabled: true,
                     action: 'BLOCK_FOR_OPERATOR_DECISION',
-                    max_failed_non_test_reviews: 1,
-                    max_total_non_test_reviews: 15,
-                    excluded_review_types: ['test']
+                    max_failed_non_test_reviews: 15,
+                    max_total_non_test_reviews: 30,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
                 }
             }
         );
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { includeDomainScopeFingerprints: true });
-        for (let index = 0; index < 2; index += 1) {
+        const preflight = JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8'));
+        const currentCodeScopeSha256 = preflight.metrics.domain_scope_fingerprints.legacy.code_review_scope_sha256;
+        const currentReviewScopeSha256 = preflight.metrics.domain_scope_fingerprints.legacy.review_scope_sha256;
+        for (let index = 0; index < 48; index += 1) {
+            const scopeBucket = index % 20;
             appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
                 review_type: 'code',
-                reviewer_identity: `agent:stale-code-${index}`,
-                review_context_sha256: sha256Text(`stale-code-context-${index}`),
-                code_scope_sha256: 'a'.repeat(64),
-                summary: `stale finding ${index}`
+                reviewer_identity: `agent:t0043-code-${index}`,
+                review_context_sha256: sha256Text(`t0043-code-context-${index}`),
+                code_scope_sha256: scopeBucket === 0 ? currentCodeScopeSha256 : sha256Text(`t0043-scope-${scopeBucket}`),
+                reused_existing_review: [5, 17, 31].includes(index),
+                summary: `T-004-3 failed code review attempt ${index}`
+            });
+        }
+        for (let index = 0; index < 6; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+                review_type: 'test',
+                reviewer_identity: `agent:t0043-test-${index}`,
+                review_context_sha256: sha256Text(`t0043-test-context-${index}`),
+                review_scope_sha256: currentReviewScopeSha256,
+                summary: `T-004-3 excluded test review attempt ${index}`
             });
         }
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
 
-        assert.equal(result.next_gate, 'compile-gate');
-        assert.equal(result.review_cycle_block, null);
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('failed_non_test_review_count=48>15'));
+        assert.ok(result.reason.includes('total_non_test_review_count=48>30'));
+        assert.ok(result.reason.includes('cumulative_total_attempts=54'));
+        assert.ok(result.reason.includes('cumulative_non_test_reviews=48'));
+        assert.ok(result.reason.includes('current_scope_non_test_reviews=3'));
+        assert.ok(result.reason.includes('fresh_non_test_reviews=45'));
+        assert.ok(result.reason.includes('reused_non_test_reviews=3'));
+        assert.ok(result.reason.includes('fresh_reused_by_type=code:fresh=45,reused=3|test:fresh=6,reused=0'));
+        assert.ok(result.reason.includes('top_scope_hashes_by_type=code:unique=20'));
+        assert.equal(result.review_cycle_block?.cumulative_total_non_test_review_count, 48);
+        assert.equal(result.review_cycle_block?.current_scope_total_non_test_review_count, 3);
+        assert.equal(result.review_cycle_block?.fresh_non_test_review_count, 45);
+        assert.equal(result.review_cycle_block?.reused_non_test_review_count, 3);
+        assert.equal(result.review_cycle_block?.scope_hash_count_by_review_type.code, 20);
+        assert.deepEqual(result.review_cycle_block?.current_scope_counts_by_review_type.code, {
+            total: 3,
+            passed: 0,
+            failed: 3,
+            pending: 0
+        });
+        assert.deepEqual(result.review_cycle_block?.counts_by_review_type.code, {
+            total: 48,
+            passed: 0,
+            failed: 48,
+            pending: 0
+        });
+        assert.equal(result.review_cycle_block?.counts_by_review_type.test, undefined);
+        assert.equal(result.review_cycle_block?.latest_failed_review?.summary, 'T-004-3 failed code review attempt 47');
+        assert.ok(text.includes('ReviewCycleCumulativeCounts: total_non_test_reviews=48; failed_non_test_reviews=48; fresh_non_test_reviews=45; reused_non_test_reviews=3'));
+        assert.ok(text.includes('ReviewCycleCurrentScopeCounts: total_non_test_reviews=3; failed_non_test_reviews=3'));
+        assert.ok(text.includes('"code": unique=20'));
     });
 
 });

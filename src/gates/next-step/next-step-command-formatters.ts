@@ -106,6 +106,16 @@ export function formatNextStepText(result: NextStepResult): string {
             `excluded_review_types=${formatNextStepInlineList(block.excluded_review_types)}`
         );
         lines.push(
+            `ReviewCycleCumulativeCounts: total_non_test_reviews=${block.cumulative_total_non_test_review_count}; ` +
+            `failed_non_test_reviews=${block.cumulative_failed_non_test_review_count}; ` +
+            `fresh_non_test_reviews=${block.fresh_non_test_review_count}; ` +
+            `reused_non_test_reviews=${block.reused_non_test_review_count}`
+        );
+        lines.push(
+            `ReviewCycleCurrentScopeCounts: total_non_test_reviews=${block.current_scope_total_non_test_review_count}; ` +
+            `failed_non_test_reviews=${block.current_scope_failed_non_test_review_count}`
+        );
+        lines.push(
             `ReviewCycleLimits: max_total_non_test_reviews=${block.max_total_non_test_reviews}; ` +
             `max_failed_non_test_reviews=${block.max_failed_non_test_reviews}`
         );
@@ -116,6 +126,39 @@ export function formatNextStepText(result: NextStepResult): string {
         } else {
             for (const [reviewType, counts] of countEntries) {
                 lines.push(`  ${formatNextStepInlineValue(reviewType)}: total=${counts.total}; passed=${counts.passed}; failed=${counts.failed}; pending=${counts.pending}`);
+            }
+        }
+        const currentScopeEntries = Object.entries(block.current_scope_counts_by_review_type);
+        lines.push('ReviewCycleCurrentScopeCountsByType:');
+        if (currentScopeEntries.length === 0) {
+            lines.push('  none');
+        } else {
+            for (const [reviewType, counts] of currentScopeEntries) {
+                lines.push(`  ${formatNextStepInlineValue(reviewType)}: total=${counts.total}; passed=${counts.passed}; failed=${counts.failed}; pending=${counts.pending}`);
+            }
+        }
+        const freshReuseEntries = Object.entries(block.fresh_reused_by_review_type);
+        lines.push('ReviewCycleFreshReuseByType:');
+        if (freshReuseEntries.length === 0) {
+            lines.push('  none');
+        } else {
+            for (const [reviewType, counts] of freshReuseEntries) {
+                lines.push(`  ${formatNextStepInlineValue(reviewType)}: fresh=${counts.fresh}; reused=${counts.reused}`);
+            }
+        }
+        const scopeHashEntries = Object.entries(block.top_scope_hashes_by_review_type);
+        lines.push('ReviewCycleTopScopeHashesByType:');
+        if (scopeHashEntries.length === 0) {
+            lines.push('  none');
+        } else {
+            for (const [reviewType, scopeHashes] of scopeHashEntries) {
+                const uniqueCount = block.scope_hash_count_by_review_type[reviewType] ?? scopeHashes.length;
+                const topScopeHashes = scopeHashes
+                    .map((entry) =>
+                        `${entry.scope_hash}:total=${entry.total};failed=${entry.failed};passed=${entry.passed};pending=${entry.pending};fresh=${entry.fresh};reused=${entry.reused};current_scope=${entry.current_scope}`
+                    )
+                    .join(', ');
+                lines.push(`  ${formatNextStepInlineValue(reviewType)}: unique=${uniqueCount}; top=${topScopeHashes || 'none'}`);
             }
         }
         if (block.latest_failed_review) {

@@ -1,10 +1,21 @@
 /** Browser-side dashboard script fragment (task-detail). */
 export const UI_DASHBOARD_CLIENT_TASK_DETAIL = `function reviewSummary(audit) {
-  const summary = audit && audit.review_attempt_summary && (audit.review_attempt_summary.by_type || audit.review_attempt_summary.review_types);
+  const attempts = audit && audit.review_attempt_summary;
+  const summary = attempts && (attempts.by_type || attempts.review_types);
   if (!summary || summary.length === 0) {
     return '<p class="empty">' + safe(t('noReviewAttempts')) + '</p>';
   }
-  return '<ul class="list">' + summary.map(item => '<li><code>' + safe(item.review_type) + '</code>: pass=' + safe(item.pass_count) + ', fail=' + safe(item.fail_count) + ', reused=' + safe(item.reused_count) + '</li>').join('') + '</ul>';
+  const cycle = attempts
+    ? '<p class="empty">total=' + safe(attempts.total_attempts || 0)
+      + '; non-test=' + safe(attempts.total_non_test_attempts || 0)
+      + '; current-scope non-test=' + safe(attempts.current_scope_non_test_attempts || 0)
+      + '; fresh non-test=' + safe(attempts.fresh_non_test_attempts || 0)
+      + '; reused non-test=' + safe(attempts.reused_non_test_attempts || 0) + '</p>'
+    : '';
+  const scopes = attempts && attempts.top_scope_hashes_by_review_type
+    ? '<ul class="list">' + Object.entries(attempts.top_scope_hashes_by_review_type).map(([reviewType, hashes]) => '<li><code>' + safe(reviewType) + '</code>: scope hashes=' + safe((attempts.scope_hash_count_by_review_type && attempts.scope_hash_count_by_review_type[reviewType]) || (Array.isArray(hashes) ? hashes.length : 0)) + '</li>').join('') + '</ul>'
+    : '';
+  return cycle + '<ul class="list">' + summary.map(item => '<li><code>' + safe(item.review_type) + '</code>: pass=' + safe(item.pass_count) + ', fail=' + safe(item.fail_count) + ', reused=' + safe(item.reused_count) + '</li>').join('') + '</ul>' + scopes;
 }
 function taskCommandList(taskId) {
   const commands = [

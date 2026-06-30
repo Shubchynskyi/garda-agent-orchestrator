@@ -953,6 +953,28 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     }
                 ],
                 review_attempt_summary: {
+                    total_attempts: 3,
+                    total_non_test_attempts: 2,
+                    current_scope_non_test_attempts: 1,
+                    fresh_non_test_attempts: 1,
+                    reused_non_test_attempts: 1,
+                    scope_hash_count_by_review_type: {
+                        code: 2
+                    },
+                    top_scope_hashes_by_review_type: {
+                        code: [
+                            {
+                                scope_hash: 'a'.repeat(64),
+                                total: 1,
+                                pass: 1,
+                                fail: 0,
+                                missing_or_invalid: 0,
+                                fresh: 1,
+                                reused: 0,
+                                current_scope: true
+                            }
+                        ]
+                    },
                     by_type: [
                         {
                             review_type: 'code',
@@ -1799,6 +1821,11 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-full-suite-validation\.json/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-quality-checklist\.json/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /post-done-drift: blocked item/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /non-test=2/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /current-scope non-test=1/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /fresh non-test=1/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /reused non-test=1/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /scope hashes=2/u);
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Audit status/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /blocked item/u);
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /\[object Object\]/u);

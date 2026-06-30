@@ -11,7 +11,7 @@ import {
 import {
     evaluateReviewCycleGuard,
     normalizeReviewCycleGuardConfig,
-    type ReviewCycleGuardEvaluation
+    type ReviewCycleGuardEvaluation as CoreReviewCycleGuardEvaluation
 } from '../../core/review-cycle-guard';
 import {
     buildDefaultWorkflowConfig
@@ -35,6 +35,11 @@ import {
     normalizePath
 } from '../shared/helpers';
 import {
+    getReviewLaneScopeSha256,
+    normalizeDomainScopeFingerprints,
+    type DomainScopeFingerprints
+} from '../scope/domain-scope-fingerprints';
+import {
     parseTaskQueueEntriesFromContent
 } from './next-step-task-queue';
 import {
@@ -48,13 +53,47 @@ import {
 } from './next-step-split-required-latch';
 import {
     readCurrentReviewCyclePreflightFingerprints,
-    reviewCycleAttemptMatchesCurrentScope,
-    type DomainScopeFingerprints
+    reviewCycleAttemptMatchesCurrentScope
 } from './next-step-review-cycle-scope';
 
-export type {
-    ReviewCycleGuardEvaluation
-};
+export interface ReviewCycleAttemptCountSummary {
+    total: number;
+    failed: number;
+    passed: number;
+    pending: number;
+}
+
+export interface ReviewCycleFreshReuseSummary {
+    fresh: number;
+    reused: number;
+}
+
+export interface ReviewCycleScopeHashSummary extends ReviewCycleAttemptCountSummary, ReviewCycleFreshReuseSummary {
+    scope_hash: string;
+    current_scope: boolean;
+}
+
+export interface ReviewCycleAttemptDiagnostics {
+    cumulative_total_attempt_count: number;
+    cumulative_total_non_test_review_count: number;
+    cumulative_failed_non_test_review_count: number;
+    current_scope_total_attempt_count: number;
+    current_scope_total_non_test_review_count: number;
+    current_scope_failed_non_test_review_count: number;
+    fresh_non_test_review_count: number;
+    reused_non_test_review_count: number;
+    current_scope_counts_by_review_type: Record<string, ReviewCycleAttemptCountSummary>;
+    fresh_reused_by_review_type: Record<string, ReviewCycleFreshReuseSummary>;
+    scope_hash_count_by_review_type: Record<string, number>;
+    top_scope_hashes_by_review_type: Record<string, ReviewCycleScopeHashSummary[]>;
+}
+
+export interface ReviewCycleGuardEvaluation extends CoreReviewCycleGuardEvaluation {
+    current_scope_total_non_test_review_count: number;
+    current_scope_failed_non_test_review_count: number;
+    current_scope_counts_by_review_type: Record<string, ReviewCycleAttemptCountSummary>;
+    attempt_diagnostics: ReviewCycleAttemptDiagnostics;
+}
 
 export interface NextStepReviewCycleLatestFailedReview {
     review_type: string;
@@ -79,6 +118,16 @@ export interface NextStepReviewCycleBlock {
     total_non_test_review_count: number;
     failed_non_test_review_count: number;
     counts_by_review_type: Record<string, { total: number; failed: number; passed: number; pending: number }>;
+    cumulative_total_non_test_review_count: number;
+    cumulative_failed_non_test_review_count: number;
+    current_scope_total_non_test_review_count: number;
+    current_scope_failed_non_test_review_count: number;
+    current_scope_counts_by_review_type: Record<string, ReviewCycleAttemptCountSummary>;
+    fresh_non_test_review_count: number;
+    reused_non_test_review_count: number;
+    fresh_reused_by_review_type: Record<string, ReviewCycleFreshReuseSummary>;
+    scope_hash_count_by_review_type: Record<string, number>;
+    top_scope_hashes_by_review_type: Record<string, ReviewCycleScopeHashSummary[]>;
     excluded_review_types: string[];
     latest_failed_review: NextStepReviewCycleLatestFailedReview | null;
     choices: string[];
@@ -100,8 +149,17 @@ export interface ReviewCycleGuardReadEvaluationResult {
     latestFailedReview: NextStepReviewCycleLatestFailedReview | null;
 }
 
+interface ReviewCycleGuardReadAttempt {
+    reviewType: string;
+    failed: boolean;
+    passed: boolean;
+    reused: boolean;
+    scopeHash: string | null;
+    currentScope: boolean;
+}
+
 interface ReviewCycleGuardReadResult {
-    attempts: { reviewType: string; failed: boolean; passed: boolean }[];
+    attempts: ReviewCycleGuardReadAttempt[];
     timelineValid: boolean;
     latestFailedReview: NextStepReviewCycleLatestFailedReview | null;
 }
@@ -193,6 +251,31 @@ function getTimelineReviewerIdentity(details: Record<string, unknown> | null): s
 
 function getTimelineReviewContextSha256(details: Record<string, unknown> | null): string {
     return String(details?.review_context_sha256 || details?.reviewContextSha256 || '').trim().toLowerCase();
+}
+
+function normalizeReviewCycleScopeHash(value: unknown): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
+function getTimelineReviewScopeHash(details: Record<string, unknown> | null): string | null {
+    return normalizeReviewCycleScopeHash(details?.review_scope_sha256 ?? details?.reviewScopeSha256);
+}
+
+function getTimelineCodeScopeHash(details: Record<string, unknown> | null): string | null {
+    return normalizeReviewCycleScopeHash(details?.code_scope_sha256 ?? details?.codeScopeSha256);
+}
+
+function getReviewCycleAttemptScopeHash(
+    reviewType: string,
+    details: Record<string, unknown> | null
+): string | null {
+    const normalizedReviewType = reviewType.trim().toLowerCase();
+    const detailFingerprints = normalizeDomainScopeFingerprints(details?.domain_scope_fingerprints);
+    return getReviewLaneScopeSha256(normalizedReviewType, detailFingerprints)
+        || (normalizedReviewType === 'test'
+        ? getTimelineReviewScopeHash(details)
+        : getTimelineCodeScopeHash(details) || getTimelineReviewScopeHash(details));
 }
 
 function getTimelineReviewFailure(eventType: string, details: Record<string, unknown> | null, outcome: string | null): boolean | null {
@@ -315,7 +398,14 @@ function readReviewCycleGuardAttempts(
         };
     }
 
-    const attemptsByKey = new Map<string, { reviewType: string; failed: boolean; passed: boolean }>();
+    const attemptsByKey = new Map<string, {
+        reviewType: string;
+        failed: boolean;
+        passed: boolean;
+        reused: boolean;
+        scopeHash: string | null;
+        currentScope: boolean;
+    }>();
     const verdictCache = new Map<string, boolean>();
     const excludedReviewTypes = new Set(reviewCycleGuardConfig.excluded_review_types.map((entry) => entry.trim().toLowerCase()).filter(Boolean));
     let malformedReviewCycleEvent = false;
@@ -354,9 +444,6 @@ function readReviewCycleGuardAttempts(
             }
             return reviewCycleGuardConfig.action === 'BLOCK_FOR_OPERATOR_DECISION' && !guardLimitExceeded;
         }
-        if (!reviewCycleAttemptMatchesCurrentScope(reviewType, event.details, currentPreflightFingerprints)) {
-            return false;
-        }
         const reviewerIdentity = getTimelineReviewerIdentity(event.details);
         const reviewContextSha256 = getTimelineReviewContextSha256(event.details);
         const key = reviewerIdentity && reviewContextSha256
@@ -372,6 +459,9 @@ function readReviewCycleGuardAttempts(
             timelineFailure === false
             || (event.outcome === 'PASS' && !hasReviewArtifactPath)
         );
+        const reused = event.details?.reused_existing_review === true || event.details?.reusedExistingReview === true;
+        const scopeHash = getReviewCycleAttemptScopeHash(reviewType, event.details);
+        const currentScope = reviewCycleAttemptMatchesCurrentScope(reviewType, event.details, currentPreflightFingerprints);
         const existing = attemptsByKey.get(key);
         const existingFailed = Boolean(existing?.failed);
         const existingPassed = Boolean(existing?.passed);
@@ -380,7 +470,10 @@ function readReviewCycleGuardAttempts(
         attemptsByKey.set(key, {
             reviewType,
             failed: nextFailed,
-            passed: nextPassed
+            passed: nextPassed,
+            reused: Boolean(existing?.reused || reused),
+            scopeHash: existing?.scopeHash || scopeHash,
+            currentScope: Boolean(existing?.currentScope || currentScope)
         });
         const countedReviewType = reviewType.trim().toLowerCase();
         const countsTowardGuard = countedReviewType && !excludedReviewTypes.has(countedReviewType);
@@ -438,6 +531,245 @@ function readReviewCycleGuardAttempts(
     };
 }
 
+function createReviewCycleAttemptCountSummary(): ReviewCycleAttemptCountSummary {
+    return { total: 0, failed: 0, passed: 0, pending: 0 };
+}
+
+function recordReviewCycleAttemptCount(
+    summary: ReviewCycleAttemptCountSummary,
+    attempt: ReviewCycleGuardReadAttempt
+): void {
+    summary.total += 1;
+    if (attempt.failed) {
+        summary.failed += 1;
+    } else if (attempt.passed) {
+        summary.passed += 1;
+    } else {
+        summary.pending += 1;
+    }
+}
+
+function createReviewCycleFreshReuseSummary(): ReviewCycleFreshReuseSummary {
+    return { fresh: 0, reused: 0 };
+}
+
+function recordReviewCycleFreshReuse(
+    summary: ReviewCycleFreshReuseSummary,
+    attempt: ReviewCycleGuardReadAttempt
+): void {
+    if (attempt.reused) {
+        summary.reused += 1;
+    } else {
+        summary.fresh += 1;
+    }
+}
+
+function sortReviewCycleCountRecord<T>(record: Record<string, T>): Record<string, T> {
+    return Object.fromEntries(
+        Object.entries(record).sort(([left], [right]) => left.localeCompare(right))
+    );
+}
+
+function buildReviewCycleAttemptDiagnostics(
+    attempts: ReviewCycleGuardReadAttempt[],
+    excludedReviewTypes: string[]
+): ReviewCycleAttemptDiagnostics {
+    const excluded = new Set(excludedReviewTypes.map((entry) => entry.trim().toLowerCase()).filter(Boolean));
+    const currentScopeCountsByType = new Map<string, ReviewCycleAttemptCountSummary>();
+    const freshReusedByType = new Map<string, ReviewCycleFreshReuseSummary>();
+    const scopeHashCountsByType = new Map<string, Map<string, {
+        total: number;
+        failed: number;
+        passed: number;
+        pending: number;
+        fresh: number;
+        reused: number;
+    }>>();
+    let freshNonTestReviewCount = 0;
+    let reusedNonTestReviewCount = 0;
+    let cumulativeTotalNonTestReviewCount = 0;
+    let cumulativeFailedNonTestReviewCount = 0;
+    let currentScopeTotalAttemptCount = 0;
+    let currentScopeTotalNonTestReviewCount = 0;
+    let currentScopeFailedNonTestReviewCount = 0;
+
+    for (const attempt of attempts) {
+        const reviewType = attempt.reviewType.trim().toLowerCase();
+        if (!reviewType) {
+            continue;
+        }
+        const countsTowardGuard = !excluded.has(reviewType);
+        const freshReused = freshReusedByType.get(reviewType) || createReviewCycleFreshReuseSummary();
+        recordReviewCycleFreshReuse(freshReused, attempt);
+        freshReusedByType.set(reviewType, freshReused);
+        if (countsTowardGuard) {
+            cumulativeTotalNonTestReviewCount += 1;
+            if (attempt.failed) {
+                cumulativeFailedNonTestReviewCount += 1;
+            }
+            if (attempt.reused) {
+                reusedNonTestReviewCount += 1;
+            } else {
+                freshNonTestReviewCount += 1;
+            }
+        }
+
+        if (!attempt.scopeHash) {
+            if (attempt.currentScope) {
+                currentScopeTotalAttemptCount += 1;
+                if (countsTowardGuard) {
+                    const currentScopeCounts = currentScopeCountsByType.get(reviewType) || createReviewCycleAttemptCountSummary();
+                    recordReviewCycleAttemptCount(currentScopeCounts, attempt);
+                    currentScopeCountsByType.set(reviewType, currentScopeCounts);
+                    currentScopeTotalNonTestReviewCount += 1;
+                    if (attempt.failed) {
+                        currentScopeFailedNonTestReviewCount += 1;
+                    }
+                }
+            }
+            continue;
+        }
+        let scopeHashCounts = scopeHashCountsByType.get(reviewType);
+        if (!scopeHashCounts) {
+            scopeHashCounts = new Map();
+            scopeHashCountsByType.set(reviewType, scopeHashCounts);
+        }
+        const scopeCounts = scopeHashCounts.get(attempt.scopeHash) || {
+            total: 0,
+            failed: 0,
+            passed: 0,
+            pending: 0,
+            fresh: 0,
+            reused: 0
+        };
+        scopeCounts.total += 1;
+        if (attempt.failed) {
+            scopeCounts.failed += 1;
+        } else if (attempt.passed) {
+            scopeCounts.passed += 1;
+        } else {
+            scopeCounts.pending += 1;
+        }
+        if (attempt.reused) {
+            scopeCounts.reused += 1;
+        } else {
+            scopeCounts.fresh += 1;
+        }
+        scopeHashCounts.set(attempt.scopeHash, scopeCounts);
+
+        if (attempt.currentScope) {
+            currentScopeTotalAttemptCount += 1;
+            if (countsTowardGuard) {
+                const currentScopeCounts = currentScopeCountsByType.get(reviewType) || createReviewCycleAttemptCountSummary();
+                recordReviewCycleAttemptCount(currentScopeCounts, attempt);
+                currentScopeCountsByType.set(reviewType, currentScopeCounts);
+                currentScopeTotalNonTestReviewCount += 1;
+                if (attempt.failed) {
+                    currentScopeFailedNonTestReviewCount += 1;
+                }
+            }
+        }
+    }
+
+    const sortedScopeHashCountEntries = [...scopeHashCountsByType.entries()]
+        .sort(([left], [right]) => left.localeCompare(right));
+    const scopeHashCountByReviewType = Object.fromEntries(
+        sortedScopeHashCountEntries.map(([reviewType, scopeHashCounts]) => [reviewType, scopeHashCounts.size])
+    );
+    const topScopeHashesByReviewType = Object.fromEntries(
+        sortedScopeHashCountEntries
+            .map(([reviewType, scopeHashCounts]) => [
+                reviewType,
+                [...scopeHashCounts.entries()]
+                    .sort(([leftHash, leftCounts], [rightHash, rightCounts]) =>
+                        rightCounts.total - leftCounts.total || leftHash.localeCompare(rightHash)
+                    )
+                    .slice(0, 5)
+                    .map(([scopeHash, counts]) => ({
+                        scope_hash: scopeHash,
+                        total: counts.total,
+                        failed: counts.failed,
+                        passed: counts.passed,
+                        pending: counts.pending,
+                        fresh: counts.fresh,
+                        reused: counts.reused,
+                        current_scope: attempts.some((attempt) =>
+                            attempt.reviewType.trim().toLowerCase() === reviewType
+                            && attempt.scopeHash === scopeHash
+                            && attempt.currentScope
+                        )
+                    }))
+            ])
+    );
+
+    return {
+        cumulative_total_attempt_count: attempts.length,
+        cumulative_total_non_test_review_count: cumulativeTotalNonTestReviewCount,
+        cumulative_failed_non_test_review_count: cumulativeFailedNonTestReviewCount,
+        current_scope_total_attempt_count: currentScopeTotalAttemptCount,
+        current_scope_total_non_test_review_count: currentScopeTotalNonTestReviewCount,
+        current_scope_failed_non_test_review_count: currentScopeFailedNonTestReviewCount,
+        fresh_non_test_review_count: freshNonTestReviewCount,
+        reused_non_test_review_count: reusedNonTestReviewCount,
+        current_scope_counts_by_review_type: sortReviewCycleCountRecord(Object.fromEntries(currentScopeCountsByType.entries())),
+        fresh_reused_by_review_type: sortReviewCycleCountRecord(Object.fromEntries(freshReusedByType.entries())),
+        scope_hash_count_by_review_type: scopeHashCountByReviewType,
+        top_scope_hashes_by_review_type: topScopeHashesByReviewType
+    };
+}
+
+function formatReviewCycleAttemptDiagnosticsSummary(diagnostics: ReviewCycleAttemptDiagnostics): string | null {
+    if (diagnostics.cumulative_total_attempt_count === 0) {
+        return null;
+    }
+    const freshReusedText = Object.entries(diagnostics.fresh_reused_by_review_type)
+        .map(([reviewType, counts]) => `${reviewType}:fresh=${counts.fresh},reused=${counts.reused}`)
+        .join('|');
+    const scopeHashText = Object.entries(diagnostics.top_scope_hashes_by_review_type)
+        .map(([reviewType, scopeHashes]) => {
+            const topScopeHashes = scopeHashes
+                .map((counts) =>
+                    `${counts.scope_hash}:total=${counts.total},failed=${counts.failed},passed=${counts.passed},pending=${counts.pending},fresh=${counts.fresh},reused=${counts.reused},current_scope=${counts.current_scope}`
+                )
+                .join('|');
+            const uniqueCount = diagnostics.scope_hash_count_by_review_type[reviewType] ?? scopeHashes.length;
+            return `${reviewType}:unique=${uniqueCount}${topScopeHashes ? `[top=${topScopeHashes}]` : ''}`;
+        })
+        .join('; ');
+
+    return [
+        `cumulative_total_attempts=${diagnostics.cumulative_total_attempt_count}`,
+        `cumulative_non_test_reviews=${diagnostics.cumulative_total_non_test_review_count}`,
+        `current_scope_non_test_reviews=${diagnostics.current_scope_total_non_test_review_count}`,
+        `fresh_non_test_reviews=${diagnostics.fresh_non_test_review_count}`,
+        `reused_non_test_reviews=${diagnostics.reused_non_test_review_count}`,
+        freshReusedText ? `fresh_reused_by_type=${freshReusedText}` : null,
+        scopeHashText ? `top_scope_hashes_by_type=${scopeHashText}` : null
+    ].filter((entry): entry is string => Boolean(entry)).join('; ');
+}
+
+function extendReviewCycleGuardEvaluation(
+    evaluation: CoreReviewCycleGuardEvaluation,
+    currentScopeEvaluation: CoreReviewCycleGuardEvaluation,
+    diagnostics: ReviewCycleAttemptDiagnostics,
+    appendDiagnosticsSummary: boolean
+): ReviewCycleGuardEvaluation {
+    const diagnosticsSummary = appendDiagnosticsSummary
+        ? formatReviewCycleAttemptDiagnosticsSummary(diagnostics)
+        : null;
+    return {
+        ...evaluation,
+        should_block: evaluation.should_block || currentScopeEvaluation.should_block,
+        summary_line: diagnosticsSummary
+            ? `${evaluation.summary_line}; ${diagnosticsSummary}`
+            : evaluation.summary_line,
+        current_scope_total_non_test_review_count: diagnostics.current_scope_total_non_test_review_count,
+        current_scope_failed_non_test_review_count: diagnostics.current_scope_failed_non_test_review_count,
+        current_scope_counts_by_review_type: diagnostics.current_scope_counts_by_review_type,
+        attempt_diagnostics: diagnostics
+    };
+}
+
 export function readReviewCycleGuardEvaluation(
     repoRoot: string,
     eventsRoot: string,
@@ -459,11 +791,13 @@ export function readReviewCycleGuardEvaluation(
     }
     const reviewCycleGuardConfig = normalizeReviewCycleGuardConfig(rawReviewCycleGuard);
     if (!reviewCycleGuardConfig.enabled) {
+        const diagnostics = buildReviewCycleAttemptDiagnostics([], reviewCycleGuardConfig.excluded_review_types);
+        const evaluation = evaluateReviewCycleGuard(reviewCycleGuardConfig, {
+            attempts: [],
+            timelineValid: true
+        });
         return {
-            evaluation: evaluateReviewCycleGuard(reviewCycleGuardConfig, {
-                attempts: [],
-                timelineValid: true
-            }),
+            evaluation: extendReviewCycleGuardEvaluation(evaluation, evaluation, diagnostics, false),
             latestFailedReview: null
         };
     }
@@ -475,14 +809,31 @@ export function readReviewCycleGuardEvaluation(
         reviewCycleGuardConfig,
         readCurrentReviewCyclePreflightFingerprints(eventsRoot, taskId)
     );
+    const evaluation = evaluateReviewCycleGuard(
+        reviewCycleGuardConfig,
+        {
+            attempts: reviewCycleAttempts.attempts,
+            timelineValid: reviewCycleAttempts.timelineValid
+        }
+    );
+    const currentScopeEvaluation = evaluateReviewCycleGuard(
+        reviewCycleGuardConfig,
+        {
+            attempts: reviewCycleAttempts.attempts.filter((attempt) => attempt.currentScope),
+            timelineValid: reviewCycleAttempts.timelineValid
+        }
+    );
+    const diagnostics = buildReviewCycleAttemptDiagnostics(
+        reviewCycleAttempts.attempts,
+        reviewCycleGuardConfig.excluded_review_types
+    );
 
     return {
-        evaluation: evaluateReviewCycleGuard(
-            reviewCycleGuardConfig,
-            {
-                attempts: reviewCycleAttempts.attempts,
-                timelineValid: reviewCycleAttempts.timelineValid
-            }
+        evaluation: extendReviewCycleGuardEvaluation(
+            evaluation,
+            currentScopeEvaluation,
+            diagnostics,
+            evaluation.violations.length > 0 || currentScopeEvaluation.violations.length > 0
         ),
         latestFailedReview: reviewCycleAttempts.latestFailedReview
     };
@@ -677,6 +1028,16 @@ export function buildReviewCycleOperatorBlock(
         total_non_test_review_count: evaluation.total_non_test_review_count,
         failed_non_test_review_count: evaluation.failed_non_test_review_count,
         counts_by_review_type: countsByReviewType,
+        cumulative_total_non_test_review_count: evaluation.attempt_diagnostics.cumulative_total_non_test_review_count,
+        cumulative_failed_non_test_review_count: evaluation.attempt_diagnostics.cumulative_failed_non_test_review_count,
+        current_scope_total_non_test_review_count: evaluation.current_scope_total_non_test_review_count,
+        current_scope_failed_non_test_review_count: evaluation.current_scope_failed_non_test_review_count,
+        current_scope_counts_by_review_type: evaluation.current_scope_counts_by_review_type,
+        fresh_non_test_review_count: evaluation.attempt_diagnostics.fresh_non_test_review_count,
+        reused_non_test_review_count: evaluation.attempt_diagnostics.reused_non_test_review_count,
+        fresh_reused_by_review_type: evaluation.attempt_diagnostics.fresh_reused_by_review_type,
+        scope_hash_count_by_review_type: evaluation.attempt_diagnostics.scope_hash_count_by_review_type,
+        top_scope_hashes_by_review_type: evaluation.attempt_diagnostics.top_scope_hashes_by_review_type,
         excluded_review_types: evaluation.excluded_review_types,
         latest_failed_review: latestFailedReview,
         choices: [...REVIEW_CYCLE_OPERATOR_CHOICES],

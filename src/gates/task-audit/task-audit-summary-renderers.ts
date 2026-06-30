@@ -88,7 +88,11 @@ function buildLocalizedOptionalSkillsSummary(
 
 function getReviewAttemptSummaryLine(summary: ReviewAttemptSummary | null | undefined): string | null {
     const visibleSummaryLine = String(summary?.visible_summary_line || '').trim();
-    return visibleSummaryLine || null;
+    const reviewCycleSummaryLine = String(summary?.review_cycle_summary_line || '').trim();
+    if (visibleSummaryLine && reviewCycleSummaryLine) {
+        return `${visibleSummaryLine}; ${reviewCycleSummaryLine}`;
+    }
+    return visibleSummaryLine || reviewCycleSummaryLine || null;
 }
 
 function formatTaskModeAuthorizationSummary(

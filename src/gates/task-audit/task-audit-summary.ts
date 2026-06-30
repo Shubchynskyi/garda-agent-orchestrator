@@ -14,7 +14,8 @@ import {
 import { readOptionalSkillSelectionTimelineEvidence } from '../../runtime/optional-skill-selection';
 import {
     isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
-    loadFullSuiteValidationConfig
+    loadFullSuiteValidationConfig,
+    resolveWorkflowConfigPath
 } from '../full-suite/full-suite-validation';
 import {
     PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
@@ -24,6 +25,7 @@ import {
     loadReviewExecutionPolicyConfig,
     resolveReviewExecutionPolicyModeFromPreflight
 } from '../../core/review-execution-policy';
+import { normalizeReviewCycleGuardConfig } from '../../core/review-cycle-guard';
 import { getStatusSnapshot } from '../../validators';
 import {
     buildUnavailableRequiredReviewTrustSummary,
@@ -95,6 +97,23 @@ export type {
 
 const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no committable changes are present.';
 const NO_COMMIT_CONFIRMATION_MESSAGE = 'No commit confirmation required.';
+
+function readReviewCycleExcludedReviewTypes(repoRoot: string): string[] {
+    const configPath = resolveWorkflowConfigPath(repoRoot);
+    if (!fs.existsSync(configPath) || !fs.statSync(configPath).isFile()) {
+        return normalizeReviewCycleGuardConfig(undefined).excluded_review_types;
+    }
+    let rawConfig: unknown;
+    try {
+        rawConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch {
+        return normalizeReviewCycleGuardConfig(undefined).excluded_review_types;
+    }
+    const config = rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
+        ? rawConfig as Record<string, unknown>
+        : {};
+    return normalizeReviewCycleGuardConfig(config.review_cycle_guard).excluded_review_types;
+}
 
 function buildTaskCycleDiagnostics(options: {
     taskId: string;
@@ -209,6 +228,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
     const liveFullSuiteValidationEnabled = loadFullSuiteValidationConfig(repoRoot).enabled;
     const liveReviewExecutionPolicyMode = loadReviewExecutionPolicyConfig(repoRoot).mode;
+    const reviewCycleExcludedReviewTypes = readReviewCycleExcludedReviewTypes(repoRoot);
     const taskMetadata = readTaskQueueMetadata(repoRoot, safeTaskId);
     const taskPath = path.join(repoRoot, 'TASK.md');
     const taskFileExists = fs.existsSync(taskPath) && fs.statSync(taskPath).isFile();
@@ -383,7 +403,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         const reviewAttemptSummary = buildReviewAttemptSummary({
             reviewsRoot,
             taskId: safeTaskId,
-            timelineEvents: events
+            timelineEvents: events,
+            currentPreflight: preflight,
+            excludedReviewTypes: reviewCycleExcludedReviewTypes
         });
         const reviewTimingAudit = buildReviewTimingAuditSummary(reviewsRoot, safeTaskId, events);
         return {

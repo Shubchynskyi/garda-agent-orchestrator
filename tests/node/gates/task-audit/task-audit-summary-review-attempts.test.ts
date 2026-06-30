@@ -164,6 +164,170 @@ describe('gates/task-audit-summary', () => {
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review attempts: total=3; code(pass=1, fail=1, reused=0, missing/invalid=0); test(pass=1, fail=0, reused=1, missing/invalid=0)'));
         });
 
+        it('reports cumulative and current-scope review-cycle diagnostics in audit and closeout summaries', () => {
+            writeWorkflowConfig(tmpDir, false);
+            const currentCodeScopeSha256 = '1'.repeat(64);
+            const currentReviewScopeSha256 = '2'.repeat(64);
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED' },
+                { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' },
+                { event_type: 'COMPILE_GATE_PASSED' },
+                { event_type: 'REVIEW_PHASE_STARTED' },
+                { event_type: 'REVIEW_GATE_PASSED' },
+                { event_type: 'DOC_IMPACT_ASSESSED' },
+                { event_type: 'COMPLETION_GATE_PASSED' }
+            ]);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: {
+                    changed_lines_total: 24,
+                    domain_scope_fingerprints: {
+                        schema_version: 1,
+                        detection_source: 'explicit_changed_files',
+                        include_untracked: true,
+                        use_staged: false,
+                        domains: {},
+                        legacy: {
+                            review_scope_sha256: currentReviewScopeSha256,
+                            code_scope_sha256: currentCodeScopeSha256,
+                            non_test_review_scope_sha256: currentCodeScopeSha256,
+                            code_review_scope_sha256: currentCodeScopeSha256
+                        }
+                    }
+                },
+                required_reviews: { code: false, test: false }
+            });
+
+            for (let index = 0; index < 4; index += 1) {
+                appendIntegrityEvent(eventsDir, TASK_ID, {
+                    event_type: 'REVIEW_RECORDED',
+                    details: {
+                        review_type: 'code',
+                        code_scope_sha256: index < 2 ? currentCodeScopeSha256 : createHash('sha256').update(`old-code-scope-${index}`).digest('hex'),
+                        reused_existing_review: index === 3
+                    }
+                });
+            }
+            appendIntegrityEvent(eventsDir, TASK_ID, {
+                event_type: 'REVIEW_RECORDED',
+                details: {
+                    review_type: 'test',
+                    review_scope_sha256: currentReviewScopeSha256,
+                    reused_existing_review: true
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.review_attempt_summary?.total_attempts, 5);
+            assert.equal(result.review_attempt_summary?.total_non_test_attempts, 4);
+            assert.equal(result.review_attempt_summary?.current_scope_non_test_attempts, 2);
+            assert.equal(result.review_attempt_summary?.fresh_non_test_attempts, 3);
+            assert.equal(result.review_attempt_summary?.reused_non_test_attempts, 1);
+            assert.equal(result.review_attempt_summary?.scope_hash_count_by_review_type?.code, 3);
+            assert.deepEqual(result.review_attempt_summary?.current_scope_counts_by_review_type?.code, {
+                total: 2,
+                pass: 0,
+                fail: 0,
+                missing_or_invalid: 2
+            });
+            assert.equal(result.final_closeout.review_attempt_summary?.current_scope_non_test_attempts, 2);
+            assert.ok(formatTaskAuditSummaryText(result).includes('Review cycle attempts: total=5; non_test=4; current_scope_non_test=2; fresh_non_test=3; reused_non_test=1; scope_hashes_by_type=code=3, test=1'));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review cycle attempts: total=5; non_test=4; current_scope_non_test=2; fresh_non_test=3; reused_non_test=1; scope_hashes_by_type=code=3, test=1'));
+        });
+
+        it('uses workflow review-cycle exclusions for audit and closeout non-test attempt totals', () => {
+            writeWorkflowConfig(tmpDir, false);
+            const workflowConfigPath = path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+            const reviewCycleGuard = workflowConfig.review_cycle_guard as Record<string, unknown>;
+            reviewCycleGuard.excluded_review_types = ['test', 'performance'];
+            fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+
+            const currentCodeScopeSha256 = '3'.repeat(64);
+            const currentReviewScopeSha256 = '4'.repeat(64);
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED' },
+                { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' },
+                { event_type: 'COMPILE_GATE_PASSED' },
+                { event_type: 'REVIEW_PHASE_STARTED' },
+                { event_type: 'REVIEW_GATE_PASSED' },
+                { event_type: 'DOC_IMPACT_ASSESSED' },
+                { event_type: 'COMPLETION_GATE_PASSED' }
+            ]);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: {
+                    changed_lines_total: 24,
+                    domain_scope_fingerprints: {
+                        schema_version: 1,
+                        detection_source: 'explicit_changed_files',
+                        include_untracked: true,
+                        use_staged: false,
+                        domains: {},
+                        legacy: {
+                            review_scope_sha256: currentReviewScopeSha256,
+                            code_scope_sha256: currentCodeScopeSha256,
+                            non_test_review_scope_sha256: currentCodeScopeSha256,
+                            code_review_scope_sha256: currentCodeScopeSha256
+                        }
+                    }
+                },
+                required_reviews: { code: false, performance: false, test: false }
+            });
+
+            for (const reviewType of ['code', 'code', 'performance', 'test']) {
+                appendIntegrityEvent(eventsDir, TASK_ID, {
+                    event_type: 'REVIEW_RECORDED',
+                    details: {
+                        review_type: reviewType,
+                        code_scope_sha256: reviewType === 'test' ? undefined : currentCodeScopeSha256,
+                        review_scope_sha256: reviewType === 'test' ? currentReviewScopeSha256 : undefined
+                    }
+                });
+            }
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.review_attempt_summary?.total_attempts, 4);
+            assert.equal(result.review_attempt_summary?.total_non_test_attempts, 2);
+            assert.equal(result.review_attempt_summary?.current_scope_non_test_attempts, 2);
+            assert.equal(result.review_attempt_summary?.fresh_non_test_attempts, 2);
+            assert.equal(result.review_attempt_summary?.reused_non_test_attempts, 0);
+            assert.deepEqual(result.review_attempt_summary?.current_scope_counts_by_review_type, {
+                code: {
+                    total: 2,
+                    pass: 0,
+                    fail: 0,
+                    missing_or_invalid: 2
+                }
+            });
+            assert.deepEqual(result.review_attempt_summary?.scope_hash_count_by_review_type, {
+                code: 1,
+                performance: 1,
+                test: 1
+            });
+            assert.equal(result.final_closeout.review_attempt_summary?.total_non_test_attempts, 2);
+            assert.ok(formatTaskAuditSummaryText(result).includes('Review cycle attempts: total=4; non_test=2; current_scope_non_test=2; fresh_non_test=2; reused_non_test=0; scope_hashes_by_type=code=1, performance=1, test=1'));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review cycle attempts: total=4; non_test=2; current_scope_non_test=2; fresh_non_test=2; reused_non_test=0; scope_hashes_by_type=code=1, performance=1, test=1'));
+        });
+
         it('summarizes code security refactor and test attempts in stable compact order', () => {
             writeWorkflowConfig(tmpDir, false);
             writeIntegrityEventSequence(eventsDir, TASK_ID, [
