@@ -697,6 +697,84 @@ test('runNodeFoundationTests accepts cross-platform shard options and writes sha
     }
 });
 
+test('runNodeFoundationTests starts the next shard when a worker slot opens', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture(2);
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    let spawnedShardCount = 0;
+    let slowShardOpen = false;
+    let thirdShardStartedBeforeSlowClosed = false;
+    let closeSlowShard: (() => void) | null = null;
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '3',
+            '--garda-shard-concurrency',
+            '2'
+        ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, _args: readonly string[] = []) => {
+            spawnedShardCount += 1;
+            const shardNumber = spawnedShardCount;
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, { stdout, stderr });
+            const closeShard = () => {
+                stdout.end(`shard ${shardNumber}\n`);
+                stderr.end();
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            };
+
+            if (shardNumber === 2) {
+                let slowShardClosed = false;
+                slowShardOpen = true;
+                closeSlowShard = () => {
+                    if (slowShardClosed) {
+                        return;
+                    }
+                    slowShardClosed = true;
+                    slowShardOpen = false;
+                    closeShard();
+                };
+                setTimeout(() => closeSlowShard?.(), 50);
+                return events;
+            }
+
+            if (shardNumber === 3 && slowShardOpen) {
+                thirdShardStartedBeforeSlowClosed = true;
+                setImmediate(() => {
+                    closeShard();
+                    closeSlowShard?.();
+                });
+                return events;
+            }
+
+            setImmediate(closeShard);
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.ok(spawnedShardCount >= 3);
+        assert.equal(thirdShardStartedBeforeSlowClosed, true);
+    } finally {
+        process.argv = originalArgv;
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
 test('runNodeFoundationTests times out a hung shard and records cleanup diagnostics', async () => {
     const { PassThrough } = require('node:stream') as typeof import('node:stream');
     const { buildResult, cleanup } = createBuildResultFixture();

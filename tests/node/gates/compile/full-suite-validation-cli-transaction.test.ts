@@ -896,10 +896,9 @@ describe('gates/full-suite-validation', () => {
                 helperScript,
                 [
                     'const buildScriptsTimeout = Number(process.env.GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS);',
-                    'const shardTimeout = Number(process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS);',
                     'if (!Number.isSafeInteger(buildScriptsTimeout) || buildScriptsTimeout <= 100) process.exit(41);',
-                    'if (!Number.isSafeInteger(shardTimeout) || shardTimeout <= 100) process.exit(42);',
-                    'setTimeout(() => { process.stdout.write(`forecast timeout pass ${buildScriptsTimeout} ${shardTimeout}\\n`); process.exit(0); }, 250);'
+                    'if (process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS) process.exit(42);',
+                    'setTimeout(() => { process.stdout.write(`forecast timeout pass ${buildScriptsTimeout}\\n`); process.exit(0); }, 250);'
                 ].join('\n'),
                 'utf8'
             );
@@ -949,6 +948,67 @@ describe('gates/full-suite-validation', () => {
             const history = fs.readFileSync(resolveFullSuiteDurationHistoryPath(tempDir), 'utf8');
             assert.match(history, /T-FORECAST-TIMEOUT/);
             fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation preserves explicit shard idle timeout overrides', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-shard-timeout-env-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'assert-shard-timeout-env.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'const buildScriptsTimeout = Number(process.env.GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS);',
+                    'const shardTimeout = Number(process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS);',
+                    'if (!Number.isSafeInteger(buildScriptsTimeout) || buildScriptsTimeout < 30000) process.exit(41);',
+                    'if (shardTimeout !== 777) process.exit(42);',
+                    'process.stdout.write(`explicit shard timeout ${shardTimeout}\\n`);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 10,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                    placement: 'after_compile_before_reviews'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-SHARD-TIMEOUT-ENV-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-SHARD-TIMEOUT-ENV',
+                changed_files: ['src/changed.ts']
+            });
+
+            const originalShardTimeout = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = '777';
+            try {
+                const result = await runCliWithCapturedOutput([
+                    'gate', 'full-suite-validation',
+                    '--task-id', 'T-SHARD-TIMEOUT-ENV',
+                    '--preflight-path', preflightPath,
+                    '--repo-root', tempDir
+                ], { cwd: repoRoot });
+
+                assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            } finally {
+                if (originalShardTimeout === undefined) {
+                    delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+                } else {
+                    process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = originalShardTimeout;
+                }
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
         });
 
         it('gate full-suite-validation retries timed-out commands according to timeout retry policy', async () => {

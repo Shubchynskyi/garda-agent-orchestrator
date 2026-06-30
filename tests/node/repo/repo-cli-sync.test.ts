@@ -204,6 +204,48 @@ test('syncRepoCliEntrypoint strips test-build source map footer from repo launch
     }
 });
 
+test('syncRepoCliEntrypoint falls back to lock when fast no-op launcher read is busy', () => {
+    const fixture = createRepoCliFixture();
+    let busyReads = 0;
+    let lockAcquires = 0;
+
+    try {
+        fs.writeFileSync(fixture.repoCliPath, fixture.desiredContent, 'utf8');
+
+        const repoCliPath = syncRepoCliEntrypoint(fixture.compiledRoot, fixture.repoRoot, {
+            chmodSync: fs.chmodSync.bind(fs),
+            existsSync: fs.existsSync.bind(fs),
+            mkdirSync: ((filePath: fs.PathLike, options?: fs.Mode | fs.MakeDirectoryOptions | null) => {
+                if (String(filePath).endsWith('.garda-cli-sync.lock')) {
+                    lockAcquires += 1;
+                }
+                return fs.mkdirSync(filePath, options);
+            }) as typeof fs.mkdirSync,
+            readFileSync: ((filePath: fs.PathOrFileDescriptor, options?: Parameters<typeof fs.readFileSync>[1]) => {
+                if (String(filePath) === fixture.repoCliPath && busyReads === 0) {
+                    busyReads += 1;
+                    const error = new Error('launcher temporarily busy') as NodeJS.ErrnoException;
+                    error.code = 'EPERM';
+                    throw error;
+                }
+                return fs.readFileSync(filePath, options);
+            }) as typeof fs.readFileSync,
+            readdirSync: fs.readdirSync.bind(fs),
+            renameSync: fs.renameSync.bind(fs),
+            rmSync: fs.rmSync.bind(fs),
+            statSync: fs.statSync.bind(fs),
+            writeFileSync: fs.writeFileSync.bind(fs)
+        });
+
+        assert.equal(repoCliPath, fixture.repoCliPath);
+        assert.equal(fs.readFileSync(fixture.repoCliPath, 'utf8'), fixture.desiredContent);
+        assert.equal(busyReads, 1);
+        assert.equal(lockAcquires, 1);
+    } finally {
+        fs.rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('syncRepoCliEntrypoint serializes concurrent workers without leaving temp files', async () => {
     const fixture = createRepoCliFixture();
     const buildModulePath = path.resolve(__dirname, '../../../scripts/node-foundation/build.js');

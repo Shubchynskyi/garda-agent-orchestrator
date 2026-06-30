@@ -1271,15 +1271,25 @@ async function runShardedNodeTestProcesses(
         + `isolated_files=${executionPlan.isolatedFiles.length} serial_files=${executionPlan.serialFiles.length}`
     ));
     const results: NodeTestShardResult[] = [];
-    for (let startIndex = 0; startIndex < scheduledShards.length; startIndex += shardConcurrency) {
-        const batch = scheduledShards.slice(startIndex, startIndex + shardConcurrency);
-        const batchResults = await Promise.all(batch.map((shardFiles, batchIndex) => {
-            const shardIndex = startIndex + batchIndex;
-            return runNodeTestShard(repoRoot, optionArgs, shardFiles, shardIndex, totalShardCount, shardLogDir, runtimeConfig);
-        }));
-        results.push(...batchResults);
-        for (const result of batchResults) {
+    const scheduledResults: NodeTestShardResult[] = new Array(scheduledShards.length);
+    let nextShardIndex = 0;
+    const workerCount = scheduledShards.length === 0 ? 0 : shardConcurrency;
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (true) {
+            const shardIndex = nextShardIndex;
+            nextShardIndex += 1;
+            if (shardIndex >= scheduledShards.length) {
+                return;
+            }
+            const shardFiles = scheduledShards[shardIndex];
+            const result = await runNodeTestShard(repoRoot, optionArgs, shardFiles, shardIndex, totalShardCount, shardLogDir, runtimeConfig);
+            scheduledResults[shardIndex] = result;
             diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
+        }
+    }));
+    for (const result of scheduledResults) {
+        if (result) {
+            results.push(result);
         }
     }
     for (let index = 0; index < executionPlan.serialFiles.length; index += 1) {

@@ -5,6 +5,7 @@ import * as osModule from 'node:os';
 import * as pathModule from 'node:path';
 import * as childProcessModule from 'node:child_process';
 
+import { runGitFixtureCommand } from '../git-fixtures';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { buildReviewContext, getRulePack, toNonNegativeInt, resolveContextOutputPath, resolveScopedDiffMetadataPath } from '../../../../src/gates/review-context/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate';
@@ -53,18 +54,13 @@ export {
 };
 
 export function runGit(repoRoot: string, args: string[]): void {
-    const result = childProcessModule.spawnSync('git', [
+    runGitFixtureCommand(repoRoot, [
         '-c',
         'core.autocrlf=false',
         '-c',
         'core.safecrlf=false',
         ...args
-    ], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe']
-    });
-    assertModule.equal(result.status, 0, String(result.stderr || result.error || 'git command failed'));
+    ]);
 }
 
 export function sha256Text(text: string): string {

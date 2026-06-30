@@ -234,6 +234,11 @@ function hasConcreteFailedTest(failure: FullSuiteTopFailure): boolean {
     return !!failure.test_name?.trim();
 }
 
+function isCommandTimeoutFailure(failure: FullSuiteTopFailure): boolean {
+    return failure.kind === 'timeout'
+        && /^(?:Process|Command) timed out after \d+\s*ms\.?$/iu.test(failure.summary);
+}
+
 function getTopFailurePriority(failure: FullSuiteTopFailure): number {
     if (hasConcreteFailedTest(failure)) {
         const kindPriority: Record<FullSuiteFailureKind, number> = {
@@ -244,6 +249,9 @@ function getTopFailurePriority(failure: FullSuiteTopFailure): number {
             unknown: 10
         };
         return 100 + kindPriority[failure.kind];
+    }
+    if (isCommandTimeoutFailure(failure)) {
+        return 45;
     }
     const infrastructurePriority: Record<FullSuiteFailureKind, number> = {
         process_hang: 50,

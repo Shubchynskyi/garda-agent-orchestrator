@@ -950,6 +950,46 @@ describe('gates/full-suite-validation', () => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
+        it('prioritizes command timeout over nested lock-timeout fixture output', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-command-timeout-priority-'));
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const result: FullSuiteValidationResult = {
+                status: 'WARNED',
+                enabled: true,
+                command: 'npm run test:sharded',
+                exit_code: 1,
+                timed_out: true,
+                output_artifact_path: path.join(reviewsDir, 'T-COMMAND-TIMEOUT-PRIORITY-full-suite-output.log'),
+                compact_summary: [],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: []
+            };
+
+            const evidence = persistFullSuiteFailureEvidence({
+                repoRoot: tempDir,
+                reviewsRoot: reviewsDir,
+                taskId: 'T-COMMAND-TIMEOUT-PRIORITY',
+                result,
+                outputLines: [
+                    'GARDA_CLI_FAILED',
+                    'Timed out acquiring file lock: runtime/reviews/T-904z-lock-code-receipt.json.lock; waited_ms=4; timeout_ms=5000; retries=0; wait_strategy=immediate_fail',
+                    'GARDA_CLI_FAILED',
+                    'Process timed out after 600000 ms.'
+                ],
+                maxCopiedLogs: 0
+            });
+
+            assert.ok(evidence);
+            assert.equal(evidence.failure_kind, 'timeout');
+            assert.equal(evidence.top_failures[0].summary, 'Process timed out after 600000 ms.');
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
         it('bounds summary evidence lines copied from failure output', () => {
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-bounded-summary-'));
             const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');

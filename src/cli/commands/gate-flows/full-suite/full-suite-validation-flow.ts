@@ -80,24 +80,25 @@ function readPositiveIntegerEnv(name: string): number | null {
     return Number.isSafeInteger(parsedValue) && parsedValue > 0 ? parsedValue : null;
 }
 
-function resolvePropagatedTimeoutEnvValue(name: string, timeoutMs: number): string {
+function resolvePropagatedMinimumTimeoutEnvValue(name: string, timeoutMs: number): string {
     const inheritedTimeoutMs = readPositiveIntegerEnv(name);
     return String(Math.max(timeoutMs, inheritedTimeoutMs || 0));
 }
 
 function buildFullSuiteValidationCommandEnv(timeoutMs: number): NodeJS.ProcessEnv {
-    return {
+    const env: NodeJS.ProcessEnv = {
         GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME: '1',
         GARDA_NODE_FOUNDATION_TEST_PREBUILT: '1',
-        [BUILD_SCRIPTS_PROCESS_TIMEOUT_MS_ENV]: resolvePropagatedTimeoutEnvValue(
+        [BUILD_SCRIPTS_PROCESS_TIMEOUT_MS_ENV]: resolvePropagatedMinimumTimeoutEnvValue(
             BUILD_SCRIPTS_PROCESS_TIMEOUT_MS_ENV,
-            timeoutMs
-        ),
-        [NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV]: resolvePropagatedTimeoutEnvValue(
-            NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV,
             timeoutMs
         )
     };
+    const inheritedShardTimeoutMs = readPositiveIntegerEnv(NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV);
+    if (inheritedShardTimeoutMs !== null) {
+        env[NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV] = String(inheritedShardTimeoutMs);
+    }
+    return env;
 }
 
 function resolveEffectiveFullSuiteValidationConfig(

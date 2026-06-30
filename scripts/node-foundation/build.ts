@@ -499,6 +499,17 @@ function fileContentMatches(filePath: string, expectedContent: Buffer, fileSyste
     return currentContent !== null && Buffer.compare(currentContent, expectedContent) === 0;
 }
 
+function fileContentMatchesOrContended(filePath: string, expectedContent: Buffer, fileSystem: RepoCliSyncFsLike): boolean {
+    try {
+        return fileContentMatches(filePath, expectedContent, fileSystem);
+    } catch (error: unknown) {
+        if (isRetryableCliSyncError(error)) {
+            return false;
+        }
+        throw error;
+    }
+}
+
 function collectCliCompanionFiles(rootPath: string, fileSystem: RepoCliSyncFsLike): string[] {
     if (!fileSystem.existsSync(rootPath)) {
         return [];
@@ -542,7 +553,10 @@ function cliCompanionDirectoryMatches(
         const compiledPath = path.join(compiledCompanionDirectory, ...relativePath.split('/'));
         const repoPath = path.join(repoCompanionDirectory, ...relativePath.split('/'));
         const compiledContent = readFileIfExists(compiledPath, fileSystem);
-        if (compiledContent === null || !fileContentMatches(repoPath, normalizeRepoCliEntrypointContent(compiledContent), fileSystem)) {
+        if (
+            compiledContent === null
+            || !fileContentMatchesOrContended(repoPath, normalizeRepoCliEntrypointContent(compiledContent), fileSystem)
+        ) {
             return false;
         }
     }
@@ -641,7 +655,7 @@ function replaceRepoCliEntrypoint(repoCliPath: string, desiredContent: Buffer, f
     for (let attempt = 0; attempt <= REPO_CLI_SYNC_MAX_RETRIES; attempt += 1) {
         const tempCliPath = makeTempCliPath(repoCliPath);
         try {
-            if (fileContentMatches(repoCliPath, desiredContent, fileSystem)) {
+            if (fileContentMatchesOrContended(repoCliPath, desiredContent, fileSystem)) {
                 ensureExecutableMode(repoCliPath, fileSystem);
                 return;
             }
@@ -656,7 +670,7 @@ function replaceRepoCliEntrypoint(repoCliPath: string, desiredContent: Buffer, f
         } catch (error: unknown) {
             safeUnlink(tempCliPath, fileSystem);
 
-            if (fileContentMatches(repoCliPath, desiredContent, fileSystem)) {
+            if (fileContentMatchesOrContended(repoCliPath, desiredContent, fileSystem)) {
                 ensureExecutableMode(repoCliPath, fileSystem);
                 return;
             }
@@ -708,7 +722,7 @@ export function syncRepoCliEntrypoint(compiledRoot: string, repoRoot: string, fi
         : normalizeRepoCliEntrypointContent(compiledCliContentForCheck);
     if (
         desiredCliContentForCheck !== null
-        && fileContentMatches(repoCliPath, desiredCliContentForCheck, fileSystem)
+        && fileContentMatchesOrContended(repoCliPath, desiredCliContentForCheck, fileSystem)
         && cliCompanionDirectoryMatches(compiledCompanionDirectory, repoCompanionDirectory, fileSystem)
     ) {
         ensureExecutableMode(repoCliPath, fileSystem);
