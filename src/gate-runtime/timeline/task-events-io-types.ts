@@ -20,6 +20,8 @@ export interface AppendTaskEventOptions {
     allowForeignHostStaleRecovery?: unknown;
     preWriteDelayMs?: unknown;
     aggregateMaxLines?: unknown;
+    runtimeWritesMode?: unknown;
+    lowNoiseRuntimeWrites?: unknown;
 }
 
 export interface TaskEventIntegrity {

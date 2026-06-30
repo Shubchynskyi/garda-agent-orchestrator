@@ -413,6 +413,63 @@ test('appendTaskEvent creates chain with correct integrity', () => {
     }
 });
 
+test('appendTaskEvent low-noise mode keeps canonical task events but skips aggregate timeline and summary writes', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-low-noise-'));
+    try {
+        const appendResult = appendTaskEvent(
+            tempDir,
+            'T-LOW',
+            'TASK_MODE_ENTERED',
+            'PASS',
+            'Task mode entered',
+            { task_id: 'T-LOW' },
+            { passThru: true, lowNoiseRuntimeWrites: true }
+        );
+
+        assert.equal(appendResult?.commit_status, 'committed');
+        assert.equal(appendResult?.canonical_committed, true);
+        assert.equal(appendResult?.lock_telemetry?.aggregate_append_mode, 'skipped_low_noise');
+        assert.deepEqual(appendResult?.derived_warnings, []);
+
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const eventFile = path.join(eventsRoot, 'T-LOW.jsonl');
+        assert.ok(fs.existsSync(eventFile));
+        assert.equal(inspectTaskEventFile(eventFile, 'T-LOW').status, 'PASS');
+        assert.equal(fs.existsSync(path.join(eventsRoot, 'all-tasks.jsonl')), false);
+        assert.equal(fs.existsSync(path.join(eventsRoot, '.timeline-summary.json')), false);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEventAsync low-noise mode keeps canonical task events but skips aggregate timeline and summary writes', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-async-low-noise-'));
+    try {
+        const appendResult = await appendTaskEventAsync(
+            tempDir,
+            'T-LOW-ASYNC',
+            'TASK_MODE_ENTERED',
+            'PASS',
+            'Task mode entered',
+            { task_id: 'T-LOW-ASYNC' },
+            { passThru: true, lowNoiseRuntimeWrites: true }
+        );
+
+        assert.equal(appendResult?.commit_status, 'committed');
+        assert.equal(appendResult?.canonical_committed, true);
+        assert.equal(appendResult?.lock_telemetry?.aggregate_append_mode, 'skipped_low_noise');
+
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const eventFile = path.join(eventsRoot, 'T-LOW-ASYNC.jsonl');
+        assert.ok(fs.existsSync(eventFile));
+        assert.equal(inspectTaskEventFile(eventFile, 'T-LOW-ASYNC').status, 'PASS');
+        assert.equal(fs.existsSync(path.join(eventsRoot, 'all-tasks.jsonl')), false);
+        assert.equal(fs.existsSync(path.join(eventsRoot, '.timeline-summary.json')), false);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('appendTaskEvent rejects invalid task ids before writing task or aggregate timelines', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-invalid-task-id-'));
     try {

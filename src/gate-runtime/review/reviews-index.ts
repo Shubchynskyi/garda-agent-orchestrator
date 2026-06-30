@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { writeFileAtomically } from '../../core/filesystem';
 import { KNOWN_REVIEW_ARTIFACT_SUFFIXES } from '../../core/task-ids';
 import { inspectFilesystemLock, withFilesystemLock } from '../task-events-locking';
+import { isLowNoiseRuntimeWritesEnabled } from '../derived-runtime-writes';
 
 // Bounded metadata cache for runtime/reviews artifacts.
 // Avoids full readdirSync scans growing linearly with historical
@@ -44,6 +45,7 @@ export type ReviewsIndexMutationStatus =
     | 'updated'
     | 'skipped_unparseable_name'
     | 'skipped_missing_artifact'
+    | 'skipped_low_noise'
     | 'failed';
 
 export interface ReviewsIndexMutationResult {
@@ -402,7 +404,7 @@ export function loadIndex(
             }
         }
 
-        if (options.readOnly) {
+        if (options.readOnly || isLowNoiseRuntimeWritesEnabled()) {
             return {
                 index: rebuildIndex(reviewsDir),
                 source: 'rebuilt' as const

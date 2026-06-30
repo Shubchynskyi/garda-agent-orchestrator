@@ -49,6 +49,7 @@ export interface NextStepFullSuiteValidationRoutingOptions {
     gatePassed: boolean;
     timeoutBlockerExhausted: boolean;
     timeoutRepairTaskProposal: string | null;
+    timeoutRepairTaskMaterialized?: boolean;
     timedOutRetryAvailable: boolean;
     transientRetryEvidenceAvailable: boolean;
     transientRetryEvidenceReason: string | null;
@@ -114,14 +115,16 @@ export function shouldRunFullSuiteBeforeTestReview(
 function resolveAfterCompileBeforeReviewsRoute(
     options: NextStepFullSuiteValidationRoutingOptions
 ): NextStepFullSuiteValidationRoute | null {
-    if (options.gateStatus === 'FAIL') {
-        if (options.timeoutBlockerExhausted) {
-            return buildTimeoutBlockerRepairRoute(
-                options,
-                'Create full-suite timeout repair task before reviewer launch.',
-                'Do not launch independent reviewers until the timeout blocker is resolved or an audited repair task is materialized.'
-            );
-        }
+    const timeoutBlockerResolvedByRepairTask = isTimeoutBlockerResolvedByRepairTask(options);
+    if (options.timeoutBlockerExhausted && !timeoutBlockerResolvedByRepairTask) {
+        return buildTimeoutBlockerRepairRoute(
+            options,
+            'Create full-suite timeout repair task before reviewer launch.',
+            'Do not launch independent reviewers until the timeout blocker is resolved or an audited repair task is materialized.'
+        );
+    }
+
+    if (options.gateStatus === 'FAIL' && !timeoutBlockerResolvedByRepairTask) {
         if (options.timedOutRetryAvailable) {
             return buildRetryRoute(
                 options,
@@ -160,7 +163,7 @@ function resolveAfterCompileBeforeReviewsRoute(
         };
     }
 
-    if (!options.gatePassed) {
+    if (!options.gatePassed && !timeoutBlockerResolvedByRepairTask) {
         const interruptedRoute = buildInterruptedRunRecoveryRoute(
             options,
             'Recover interrupted full-suite validation run.',
@@ -193,14 +196,16 @@ function resolveAfterCompileBeforeReviewsRoute(
 function resolveBeforeTestReviewRoute(
     options: NextStepFullSuiteValidationRoutingOptions
 ): NextStepFullSuiteValidationRoute | null {
-    if (options.gateStatus === 'FAIL') {
-        if (options.timeoutBlockerExhausted) {
-            return buildTimeoutBlockerRepairRoute(
-                options,
-                'Create full-suite timeout repair task before launching test review.',
-                'Do not launch the mandatory test reviewer until the timeout blocker is resolved or an audited repair task is materialized.'
-            );
-        }
+    const timeoutBlockerResolvedByRepairTask = isTimeoutBlockerResolvedByRepairTask(options);
+    if (options.timeoutBlockerExhausted && !timeoutBlockerResolvedByRepairTask) {
+        return buildTimeoutBlockerRepairRoute(
+            options,
+            'Create full-suite timeout repair task before launching test review.',
+            'Do not launch the mandatory test reviewer until the timeout blocker is resolved or an audited repair task is materialized.'
+        );
+    }
+
+    if (options.gateStatus === 'FAIL' && !timeoutBlockerResolvedByRepairTask) {
         if (options.timedOutRetryAvailable) {
             return buildRetryRoute(
                 options,
@@ -239,7 +244,7 @@ function resolveBeforeTestReviewRoute(
         };
     }
 
-    if (!options.gatePassed) {
+    if (!options.gatePassed && !timeoutBlockerResolvedByRepairTask) {
         const interruptedRoute = buildInterruptedRunRecoveryRoute(
             options,
             'Recover interrupted full-suite validation run.',
@@ -375,6 +380,12 @@ function formatProcessCandidates(candidates: Array<{
 
 function redactDiagnosticText(text: string): string {
     return redactSecretText(text);
+}
+
+function isTimeoutBlockerResolvedByRepairTask(
+    options: NextStepFullSuiteValidationRoutingOptions
+): boolean {
+    return options.timeoutBlockerExhausted && options.timeoutRepairTaskMaterialized === true;
 }
 
 function buildRetryRoute(

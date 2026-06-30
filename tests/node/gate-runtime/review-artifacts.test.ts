@@ -193,6 +193,57 @@ test('writeReviewArtifactText reports review index update status', () => {
     }
 });
 
+test('writeReviewArtifactText low-noise mode writes artifacts but skips opportunistic review index persistence', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-low-noise-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const artifactPath = path.join(reviewsDir, 'T-011-low-noise-code.md');
+    const previousEnv = process.env.GARDA_LOW_NOISE_RUNTIME_WRITES;
+
+    try {
+        const result = writeReviewArtifactText(
+            artifactPath,
+            'REVIEW PASSED\n',
+            { lowNoiseRuntimeWrites: true }
+        );
+
+        assert.equal(result.index_update_status, 'skipped_low_noise');
+        assert.equal(fs.readFileSync(artifactPath, 'utf8'), 'REVIEW PASSED\n');
+        assert.equal(fs.existsSync(resolveIndexPath(reviewsDir)), false);
+
+        process.env.GARDA_LOW_NOISE_RUNTIME_WRITES = '1';
+        const loaded = loadIndex(reviewsDir);
+        assert.equal(loaded.source, 'rebuilt');
+        assert.ok(loaded.index.entries.some((entry) => entry.fileName === 'T-011-low-noise-code.md'));
+        assert.equal(fs.existsSync(resolveIndexPath(reviewsDir)), false);
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_LOW_NOISE_RUNTIME_WRITES;
+        } else {
+            process.env.GARDA_LOW_NOISE_RUNTIME_WRITES = previousEnv;
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('writeReviewArtifactText low-noise mode still persists indexes for critical review writes', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-low-noise-critical-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const artifactPath = path.join(reviewsDir, 'T-011-low-noise-critical-code.md');
+
+    try {
+        const result = writeReviewArtifactText(
+            artifactPath,
+            'REVIEW PASSED\n',
+            { lowNoiseRuntimeWrites: true, requireIndexUpdate: true }
+        );
+
+        assert.equal(result.index_update_status, 'updated');
+        assert.equal(fs.existsSync(resolveIndexPath(reviewsDir)), true);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('writeReviewArtifactText surfaces index failures and rolls back critical writes', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-index-failure-'));
     const reviewsDir = createReviewsDir(tempDir);

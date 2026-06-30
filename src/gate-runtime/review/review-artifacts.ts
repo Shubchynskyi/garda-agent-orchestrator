@@ -23,6 +23,7 @@ import {
     type ReviewsIndexMutationStatus,
     upsertEntry
 } from '../reviews-index';
+import { isLowNoiseRuntimeWritesEnabled } from '../derived-runtime-writes';
 
 const DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS = 25;
@@ -37,6 +38,8 @@ export interface ReviewArtifactLockOptions {
     allowForeignHostStaleRecovery?: unknown;
     requireIndexUpdate?: unknown;
     excludeCompletionFinalizationLocks?: unknown;
+    runtimeWritesMode?: unknown;
+    lowNoiseRuntimeWrites?: unknown;
 }
 
 export interface ReviewArtifactLockTelemetry {
@@ -513,7 +516,16 @@ function writeReviewArtifactTextUnlocked(
         writeArtifactFileAtomically(artifactPath, redactedContent);
     }, options);
     const reviewsDir = path.dirname(artifactPath);
-    const indexUpdate = updateIndex
+    const skipIndexUpdate = updateIndex
+        && !shouldRequireIndexUpdate(options)
+        && isLowNoiseRuntimeWritesEnabled(options);
+    const indexUpdate = skipIndexUpdate
+        ? {
+            status: 'skipped_low_noise' as const,
+            index_path: resolveIndexPath(reviewsDir),
+            file_name: path.basename(artifactPath)
+        }
+        : updateIndex
         ? upsertEntry(reviewsDir, path.basename(artifactPath))
         : {
             status: 'updated' as const,

@@ -525,23 +525,44 @@ function hasFullSuiteTimeoutWarningLifecyclePolicy(
     });
 }
 
-function getFullSuiteTimeoutRepairTaskProposalSummary(timeoutPolicy: Record<string, unknown> | null): string | null {
+interface FullSuiteTimeoutRepairTaskProposal {
+    suggestedTaskId: string | null;
+    summary: string | null;
+}
+
+function getFullSuiteTimeoutRepairTaskProposal(
+    timeoutPolicy: Record<string, unknown> | null
+): FullSuiteTimeoutRepairTaskProposal {
     const proposal = isPlainRecord(timeoutPolicy?.repair_task_proposal)
         ? timeoutPolicy.repair_task_proposal
         : null;
     if (!proposal) {
-        return null;
+        return {
+            suggestedTaskId: null,
+            summary: null
+        };
     }
     const taskId = String(proposal.suggested_task_id || '').trim();
     const title = String(proposal.title || '').trim();
     const area = String(proposal.area || '').trim();
     const rationale = String(proposal.rationale || '').trim();
-    return [
+    const summary = [
         taskId ? `id=${taskId}` : null,
         title ? `title=${title}` : null,
         area ? `area=${area}` : null,
         rationale ? `rationale=${rationale}` : null
     ].filter(Boolean).join('; ') || null;
+    return {
+        suggestedTaskId: taskId || null,
+        summary
+    };
+}
+
+function isFullSuiteTimeoutRepairTaskMaterialized(
+    taskEntries: Map<string, TaskQueueEntry>,
+    proposal: FullSuiteTimeoutRepairTaskProposal
+): boolean {
+    return !!proposal.suggestedTaskId && taskEntries.has(proposal.suggestedTaskId);
 }
 
 function isFullSuiteWarningOnlyContinuationArtifact(
@@ -579,9 +600,10 @@ function isFullSuiteTimeoutBlockerExhaustedArtifact(
     currentCycle: boolean
 ): boolean {
     const timeoutPolicy = getFullSuiteTimeoutPolicy(artifact);
+    const status = String(artifact?.status || '').trim();
     return currentCycle
-        && artifact?.status === 'FAILED'
-        && artifact.timed_out === true
+        && (status === 'FAILED' || status === 'WARNED')
+        && artifact?.timed_out === true
         && timeoutPolicy?.timeout_blocker !== false
         && timeoutPolicy?.attempts_exhausted === true;
 }
@@ -1871,7 +1893,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         readinessArtifacts.fullSuiteValidation,
         fullSuiteCurrentArtifactMatchesCycle
     );
-    const fullSuiteTimeoutRepairTaskProposal = getFullSuiteTimeoutRepairTaskProposalSummary(fullSuiteTimeoutPolicy);
+    const fullSuiteTimeoutRepairTaskProposal = getFullSuiteTimeoutRepairTaskProposal(fullSuiteTimeoutPolicy);
+    const fullSuiteTimeoutRepairTaskMaterialized = isFullSuiteTimeoutRepairTaskMaterialized(
+        taskEntries,
+        fullSuiteTimeoutRepairTaskProposal
+    );
     const fullSuiteManualRetryEvidence = readFullSuiteManualRetryEvidence({
         repoRoot,
         taskId,
@@ -2805,7 +2831,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         gateStatus: fullSuiteGateStatus,
         gatePassed: fullSuiteGatePassed,
         timeoutBlockerExhausted: fullSuiteTimeoutBlockerExhausted,
-        timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal,
+        timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal.summary,
+        timeoutRepairTaskMaterialized: fullSuiteTimeoutRepairTaskMaterialized,
         timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
         transientRetryEvidenceAvailable: fullSuiteManualRetryEvidence.available,
         transientRetryEvidenceReason: fullSuiteManualRetryEvidence.reason,
@@ -3612,6 +3639,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         ),
         fullSuiteEnabled: fullSuiteConfig.enabled,
         fullSuiteGatePassed,
+        fullSuiteTimeoutBlockerResolvedByRepairTask: fullSuiteTimeoutBlockerExhausted && fullSuiteTimeoutRepairTaskMaterialized,
         fullSuiteNotRequiredForDocsOnly,
         fullSuitePlacement: fullSuiteConfig.placement,
         fullSuiteConfigPath: fullSuiteSummary.config_path,

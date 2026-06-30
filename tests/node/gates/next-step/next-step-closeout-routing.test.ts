@@ -70,6 +70,38 @@ describe('next-step closeout routing helpers', () => {
         assert.equal(route.commands[0].command, 'garda gate full-suite-validation');
     });
 
+    it('continues closeout after materialized repair task resolves a full-suite timeout blocker', () => {
+        const route = resolvePostReviewCloseoutRouteFromState({
+            requiredReviewsGatePassed: true,
+            zeroDiffNoReviewCloseout: false,
+            requiredReviewsCommand: 'garda gate required-reviews-check',
+            docImpactGatePassed: false,
+            docImpactCompatibilityHint: 'No compatibility issue.',
+            docImpactCommand: 'garda gate doc-impact-gate --decision "NO_DOC_UPDATES"',
+            fullSuiteEnabled: true,
+            fullSuiteGatePassed: false,
+            fullSuiteTimeoutBlockerResolvedByRepairTask: true,
+            fullSuiteNotRequiredForDocsOnly: false,
+            fullSuitePlacement: 'after_compile_before_reviews',
+            fullSuiteConfigPath: 'workflow-config.json',
+            fullSuiteCommandText: 'npm test',
+            fullSuiteTimeoutForecastLine: null,
+            fullSuiteCommand: 'garda gate full-suite-validation',
+            projectMemoryRequired: false,
+            projectMemoryEvidenceCurrent: false,
+            projectMemoryVisibleSummaryLine: 'project memory disabled',
+            projectMemoryAffectedMemoryFiles: [],
+            projectMemoryViolations: [],
+            projectMemoryCommand: 'garda gate project-memory-impact',
+            completionGatePassed: false,
+            completionCommand: 'garda gate completion-gate'
+        });
+
+        assert.equal(route.status, 'BLOCKED');
+        assert.equal(route.nextGate, 'doc-impact-gate');
+        assert.equal(route.commands[0].command, 'garda gate doc-impact-gate --decision "NO_DOC_UPDATES"');
+    });
+
     it('routes stale project-memory evidence before doc-impact when doc-impact claims project-memory evidence', () => {
         const route = resolvePostReviewCloseoutRouteFromState({
             requiredReviewsGatePassed: true,

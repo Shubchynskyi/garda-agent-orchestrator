@@ -13,6 +13,7 @@ import {
 import { assertValidTaskId } from './task-events-helpers';
 import { createTaskEventPublicRecord } from './task-event-public-contract';
 import { redactSecretText, redactSensitiveData } from '../core/redaction';
+import { isLowNoiseRuntimeWritesEnabled } from './derived-runtime-writes';
 import {
     appendTaskEventLineAsync,
     appendTaskEventLineSync,
@@ -134,6 +135,7 @@ export function appendTaskEvent(
     const lockOptions = buildLockOptions(options);
     const event = createTaskEvent(safeTaskId, eventType, outcome, actor, message, details);
     const result = createAppendResult(paths);
+    const lowNoiseRuntimeWrites = isLowNoiseRuntimeWritesEnabled(options);
     let line: string | null = null;
 
     try {
@@ -156,25 +158,31 @@ export function appendTaskEvent(
         return passThru ? result : null;
     }
 
-    try {
-        const retentionResult = appendAggregateEventSync(
-            paths.allTasksPath,
-            paths.aggregateLockPath,
-            line || '',
-            options.aggregateMaxLines,
-            lockOptions
-        );
-        if (retentionResult.retention) {
-            result.aggregate_retention = retentionResult.retention;
+    if (lowNoiseRuntimeWrites) {
+        applyAggregateLockTelemetry(result, 'skipped_low_noise');
+    } else {
+        try {
+            const retentionResult = appendAggregateEventSync(
+                paths.allTasksPath,
+                paths.aggregateLockPath,
+                line || '',
+                options.aggregateMaxLines,
+                lockOptions
+            );
+            if (retentionResult.retention) {
+                result.aggregate_retention = retentionResult.retention;
+            }
+            applyAggregateLockTelemetry(result, retentionResult.appendMode, retentionResult.telemetry);
+        } catch (error: unknown) {
+            const warning = buildAppendWarning('task-event aggregate append/prune failed', error);
+            recordDerivedAppendWarning(result, warning);
+            process.stderr.write(`WARNING: ${warning}\n`);
         }
-        applyAggregateLockTelemetry(result, retentionResult.appendMode, retentionResult.telemetry);
-    } catch (error: unknown) {
-        const warning = buildAppendWarning('task-event aggregate append/prune failed', error);
-        recordDerivedAppendWarning(result, warning);
-        process.stderr.write(`WARNING: ${warning}\n`);
     }
 
-    refreshTimelineSummaryForCommittedEvent(result, paths.eventsRoot, safeTaskId, event);
+    if (!lowNoiseRuntimeWrites) {
+        refreshTimelineSummaryForCommittedEvent(result, paths.eventsRoot, safeTaskId, event);
+    }
     return passThru ? result : null;
 }
 
@@ -200,6 +208,7 @@ export async function appendTaskEventAsync(
     const lockOptions = buildLockOptions(options);
     const event = createTaskEvent(safeTaskId, eventType, outcome, actor, message, details);
     const result = createAppendResult(paths);
+    const lowNoiseRuntimeWrites = isLowNoiseRuntimeWritesEnabled(options);
     let line: string | null = null;
 
     try {
@@ -223,25 +232,31 @@ export async function appendTaskEventAsync(
         return passThru ? result : null;
     }
 
-    try {
-        const retentionResult = await appendAggregateEventAsync(
-            paths.allTasksPath,
-            paths.aggregateLockPath,
-            line || '',
-            options.aggregateMaxLines,
-            lockOptions
-        );
-        if (retentionResult.retention) {
-            result.aggregate_retention = retentionResult.retention;
+    if (lowNoiseRuntimeWrites) {
+        applyAggregateLockTelemetry(result, 'skipped_low_noise');
+    } else {
+        try {
+            const retentionResult = await appendAggregateEventAsync(
+                paths.allTasksPath,
+                paths.aggregateLockPath,
+                line || '',
+                options.aggregateMaxLines,
+                lockOptions
+            );
+            if (retentionResult.retention) {
+                result.aggregate_retention = retentionResult.retention;
+            }
+            applyAggregateLockTelemetry(result, retentionResult.appendMode, retentionResult.telemetry);
+        } catch (error: unknown) {
+            const warning = buildAppendWarning('task-event aggregate append/prune failed', error);
+            recordDerivedAppendWarning(result, warning);
+            process.stderr.write(`WARNING: ${warning}\n`);
         }
-        applyAggregateLockTelemetry(result, retentionResult.appendMode, retentionResult.telemetry);
-    } catch (error: unknown) {
-        const warning = buildAppendWarning('task-event aggregate append/prune failed', error);
-        recordDerivedAppendWarning(result, warning);
-        process.stderr.write(`WARNING: ${warning}\n`);
     }
 
-    refreshTimelineSummaryForCommittedEvent(result, paths.eventsRoot, safeTaskId, event);
+    if (!lowNoiseRuntimeWrites) {
+        refreshTimelineSummaryForCommittedEvent(result, paths.eventsRoot, safeTaskId, event);
+    }
     return passThru ? result : null;
 }
 

@@ -27,6 +27,7 @@ export interface DocImpactCloseoutOptions {
 export interface FullSuiteCloseoutOptions {
     enabled: boolean;
     gatePassed: boolean;
+    timeoutBlockerResolvedByRepairTask?: boolean;
     notRequiredForDocsOnly: boolean;
     placement: string;
     configPath: string;
@@ -66,6 +67,7 @@ export interface PostReviewCloseoutRouteState {
     docImpactCommand: string;
     fullSuiteEnabled: boolean;
     fullSuiteGatePassed: boolean;
+    fullSuiteTimeoutBlockerResolvedByRepairTask?: boolean;
     fullSuiteNotRequiredForDocsOnly: boolean;
     fullSuitePlacement: string;
     fullSuiteConfigPath: string;
@@ -125,6 +127,7 @@ export function resolvePostReviewCloseoutRouteFromState(
         fullSuite: {
             enabled: state.fullSuiteEnabled,
             gatePassed: state.fullSuiteGatePassed,
+            timeoutBlockerResolvedByRepairTask: state.fullSuiteTimeoutBlockerResolvedByRepairTask,
             notRequiredForDocsOnly: state.fullSuiteNotRequiredForDocsOnly,
             placement: state.fullSuitePlacement,
             configPath: state.fullSuiteConfigPath,
@@ -167,7 +170,11 @@ export function resolvePostReviewCloseoutRoute(
         };
     }
 
-    if (options.fullSuite.enabled && !options.fullSuite.gatePassed) {
+    if (
+        options.fullSuite.enabled
+        && !options.fullSuite.gatePassed
+        && options.fullSuite.timeoutBlockerResolvedByRepairTask !== true
+    ) {
         if (options.fullSuite.notRequiredForDocsOnly) {
             return {
                 status: 'BLOCKED',

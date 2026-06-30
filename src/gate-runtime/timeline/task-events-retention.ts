@@ -15,7 +15,7 @@ export const DEFAULT_AGGREGATE_MAX_LINES = 10000;
 export const AGGREGATE_BYTES_PER_LINE_ESTIMATE = 512;
 const AGGREGATE_PRUNE_CHUNK_SIZE = 64 * 1024;
 
-export type AggregateAppendMode = 'lock_free' | 'locked' | 'locked_prune';
+export type AggregateAppendMode = 'lock_free' | 'locked' | 'locked_prune' | 'skipped_low_noise';
 
 export interface AggregateRetentionResult {
     pruned: boolean;

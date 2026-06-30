@@ -85,6 +85,22 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.navigatorCommand);
     });
 
+    it('routes exhausted WARNED timeout blockers to repair-task materialization before reviewers', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            gateStatus: null,
+            gatePassed: false,
+            timeoutBlockerExhausted: true,
+            timeoutRepairTaskProposal: 'id=T-123-F1; title=Fix full-suite timeout blocker'
+        });
+
+        assert.equal(route?.nextGate, 'full-suite-timeout-repair-task');
+        assert.match(route?.reason || '', /T-123-F1/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.navigatorCommand);
+    });
+
     it('prints a cleanup command only for dead interrupted markers without live descendants', () => {
         const route = resolveNextStepFullSuiteValidationRoute({
             ...BASE_OPTIONS,

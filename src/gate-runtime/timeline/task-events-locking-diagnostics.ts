@@ -25,7 +25,7 @@ export function buildLockWaitDiagnostics(lockTelemetry: {
     aggregate_lock_contention_level?: LockContentionLevel;
     aggregate_lock_stale_recovered?: boolean;
     aggregate_lock_stale_reason?: 'owner_dead' | 'age_exceeded' | null;
-    aggregate_append_mode?: 'lock_free' | 'locked' | 'locked_prune';
+    aggregate_append_mode?: 'lock_free' | 'locked' | 'locked_prune' | 'skipped_low_noise';
 } | null | undefined): LockWaitDiagnostics {
     const taskLock: LockWaitEntry = {
         retries: lockTelemetry?.task_lock_retries ?? 0,

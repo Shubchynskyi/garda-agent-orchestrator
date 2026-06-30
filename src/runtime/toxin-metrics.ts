@@ -7,6 +7,7 @@ import {
     isBundleRootLike,
     resolveBundleNameForTarget
 } from '../core/constants';
+import { isLowNoiseRuntimeWritesEnabled } from '../gate-runtime/derived-runtime-writes';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -820,6 +821,7 @@ function appendMetricLinesUnlocked(metricsPath: string, lines: string[]): boolea
 
 export function appendMetricJsonLines(metricsPath: string, entries: readonly Record<string, unknown>[]): boolean {
     if (!metricsPath || entries.length === 0) return true;
+    if (isLowNoiseRuntimeWritesEnabled()) return true;
     const lines = entries.map(entry => JSON.stringify(entry));
     return withMetricsFileLock(metricsPath, false, () => appendMetricLinesUnlocked(metricsPath, lines));
 }
@@ -847,6 +849,7 @@ export function shouldRecordToxinMetricsSnapshot(
     options: ToxinMetricsSnapshotDueOptions = {}
 ): boolean {
     if (!metricsPath) return false;
+    if (isLowNoiseRuntimeWritesEnabled()) return false;
     const minIntervalMs = options.minIntervalMs ?? DEFAULT_TOXIN_SNAPSHOT_MIN_INTERVAL_MS;
     if (minIntervalMs <= 0) return true;
     return withMetricsFileLock(metricsPath, false, () => {
@@ -870,6 +873,9 @@ export function recordToxinMetricsSnapshot(
 ): ToxinSnapshot {
     const resolvedPaths = resolveToxinPaths(repoRoot, options);
     const snapshot = collectToxinSnapshot(repoRoot, options);
+    if (isLowNoiseRuntimeWritesEnabled()) {
+        return snapshot;
+    }
     const entries = snapshotToMetricEntries(snapshot);
     const maxLines = options.maxLines ?? DEFAULT_METRICS_MAX_LINES;
     withMetricsFileLock(resolvedPaths.metricsPath, undefined, () => {

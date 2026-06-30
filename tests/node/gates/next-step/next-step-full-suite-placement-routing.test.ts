@@ -32,6 +32,13 @@ import {
     seedTimedOutFullSuiteFailure,
     seedFullSuiteRetryEvidence} from './next-step-full-suite-fixtures';
 
+function appendRepairTaskRow(repoRoot: string, taskId = `${TASK_ID}-F1`): void {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    const row =
+        `| ${taskId} | TODO | P1 | workflow/full-suite-timeout | Fix full-suite timeout blocker | gpt-5.5 | 2026-06-30 | strict | Materialized timeout repair follow-up. |`;
+    fs.writeFileSync(taskPath, `${fs.readFileSync(taskPath, 'utf8')}${row}\n`, 'utf8');
+}
+
 describe('gates/next-step', () => {
     it('runs enabled full-suite validation before launching mandatory test review', () => {
 
@@ -358,6 +365,112 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('build-review-context'));
 
         assert.ok(!result.commands[0].command.includes('--review-type'));
+
+    });
+
+    it('blocks reviewer launch until an exhausted WARNED full-suite timeout repair task is materialized', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'after_compile_before_reviews'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const timelinePath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+        const timelineEvents = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        const latestCompile = [...timelineEvents]
+            .reverse()
+            .find((event) => event.event_type === 'COMPILE_GATE_PASSED');
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const cycleBinding = {
+            task_id: TASK_ID,
+            preflight_path: normalizeForTimeline(preflightPath),
+            preflight_sha256: fileSha256(preflightPath),
+            compile_gate_timestamp: String(latestCompile?.timestamp_utc || '')
+        };
+        const timeoutPolicy = {
+            timeout_blocker: true,
+            timeout_retry_count: 1,
+            max_attempts: 2,
+            attempts: [
+                { attempt: 1, exit_code: 1, timed_out: true },
+                { attempt: 2, exit_code: 1, timed_out: true }
+            ],
+            attempts_exhausted: true,
+            warning_only_continuation: false,
+            repair_task_proposal: {
+                suggested_task_id: `${TASK_ID}-F1`,
+                title: 'Fix full-suite timeout blocker',
+                area: 'workflow/full-suite-timeout',
+                rationale: 'Full-suite validation timed out after configured retries.'
+            }
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`), {
+            task_id: TASK_ID,
+            status: 'WARNED',
+            enabled: true,
+            command: 'npm test',
+            exit_code: 1,
+            timed_out: true,
+            cycle_binding: cycleBinding,
+            timeout_policy: timeoutPolicy,
+            output_artifact_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-output.log`)
+        });
+        appendEvent(repoRoot, TASK_ID, 'FULL_SUITE_VALIDATION_WARNED', 'WARN', {
+            cycle_binding: cycleBinding,
+            timeout_policy: timeoutPolicy
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-timeout-repair-task');
+
+        assert.match(result.reason, new RegExp(`${TASK_ID}-F1`));
+
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+        assert.ok(!result.commands[0].command.includes('--review-type'));
+
+        appendRepairTaskRow(repoRoot);
+
+        const afterRepairTask = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(afterRepairTask.next_gate, 'build-review-context', afterRepairTask.reason);
+
+        assert.ok(afterRepairTask.commands[0].command.includes('--review-type "code"'), afterRepairTask.commands[0].command);
 
     });
 

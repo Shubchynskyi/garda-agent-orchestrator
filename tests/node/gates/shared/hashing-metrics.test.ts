@@ -38,3 +38,25 @@ test('appendMetricsEvent samples toxin snapshots instead of scanning on every ev
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('appendMetricsEvent low-noise mode skips metrics and toxin snapshot writes', () => {
+    const tmpDir = makeTmpDir();
+    const previousEnv = process.env.GARDA_LOW_NOISE_RUNTIME_WRITES;
+    try {
+        seedBundleRoot(tmpDir);
+        const metricsPath = path.join(tmpDir, 'runtime', 'metrics.jsonl');
+
+        process.env.GARDA_LOW_NOISE_RUNTIME_WRITES = '1';
+        appendMetricsEvent(metricsPath, { gate: 'low-noise' }, true, tmpDir);
+
+        assert.equal(fs.existsSync(metricsPath), false);
+        assert.equal(fs.existsSync(`${metricsPath}.toxin-snapshot-state.json`), false);
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_LOW_NOISE_RUNTIME_WRITES;
+        } else {
+            process.env.GARDA_LOW_NOISE_RUNTIME_WRITES = previousEnv;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
