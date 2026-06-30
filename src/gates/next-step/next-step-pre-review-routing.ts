@@ -59,6 +59,11 @@ export interface NextStepPreGuardRoutingOptions {
     protectedControlPlane: NextStepProtectedControlPlaneRoutingOptions;
     workspaceReadiness: NextStepWorkspaceReadinessState;
     workspaceRefreshCommand: string;
+    failedReviewRemediation?: {
+        reviewType: string;
+        verdictToken: string;
+        restartReviewCycleCommand: string;
+    } | null;
     coherentCycleReadiness: NextStepReadinessState & { command?: string | null };
     navigatorCommand: string;
     postPreflightRulePack: NextStepPostPreflightRulePackRoutingOptions;
@@ -100,6 +105,27 @@ export function resolveNextStepPreGuardRoute(
             reason: 'The current preflight touches protected orchestrator control-plane files, but task-mode evidence does not declare --orchestrator-work. Fresh operator approval is required before the agent can rerun protected task-mode entry.',
             commands: [
                 buildCommand('Restart task mode with orchestrator work', options.protectedControlPlane.orchestratorWorkRestartCommand)
+            ]
+        };
+    }
+
+    if (!options.workspaceReadiness.ready && options.failedReviewRemediation) {
+        const remediation = options.failedReviewRemediation;
+        return {
+            status: 'BLOCKED',
+            nextGate: 'restart-review-cycle',
+            title: `Restart failed '${remediation.reviewType}' review remediation cycle.`,
+            reason:
+                `${options.workspaceReadiness.reason} ` +
+                `The stale scope follows a recorded failed '${remediation.reviewType}' review verdict '${remediation.verdictToken}'. ` +
+                'Use restart-review-cycle as the cheapest valid recovery path: it preserves the current task-mode authorization, ' +
+                'runs any missing startup diagnostics before refreshing preflight, reloads POST_PREFLIGHT rules, reruns compile, ' +
+                'and rebuilds the affected review context before downstream reviewers. This avoids a standalone classify-change ' +
+                'that would refresh preflight after REVIEW_PHASE_STARTED and only later be rejected by coherent-cycle ordering. ' +
+                'If the current cycle has already crossed a review-gate or completion boundary, restart-review-cycle fails closed ' +
+                'with restart-coherent-cycle guidance instead of weakening startup evidence.',
+            commands: [
+                buildCommand('Restart failed-review remediation cycle', remediation.restartReviewCycleCommand)
             ]
         };
     }

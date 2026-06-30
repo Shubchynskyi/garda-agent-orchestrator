@@ -103,6 +103,16 @@ function makeTempRepo(): string {
     return repoRoot;
 }
 
+function markTaskInProgress(repoRoot: string, taskId: string): void {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    const content = fs.readFileSync(taskPath, 'utf8');
+    fs.writeFileSync(
+        taskPath,
+        content.replace(`| ${taskId} | TODO |`, `| ${taskId} | IN_PROGRESS |`),
+        'utf8'
+    );
+}
+
 function reviewsRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
 }
@@ -310,9 +320,14 @@ function writePreflight(
     return preflightPath;
 }
 
-function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string): void {
+function seedCompilePass(
+    repoRoot: string,
+    taskId: string,
+    timestampUtc?: string,
+    changedFiles: string[] = ['src/app.ts']
+): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
-    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
         timestamp_utc: timestampUtc || new Date().toISOString(),
         task_id: taskId,
@@ -1021,11 +1036,15 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('restart-review-cycle'));
     });
 
-    it('refreshes preflight when failed-review rework changes content without changing line counts', () => {
+    it('routes T-004-2-style failed-review rework to restart-review-cycle before stale preflight refresh', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
+        markTaskInProgress(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         seedCompilePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
         writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
 
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
@@ -1033,13 +1052,78 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.status, 'BLOCKED');
-        assert.equal(result.next_gate, 'classify-change');
+        assert.equal(result.next_gate, 'restart-review-cycle');
         assert.equal(result.review.next_review_type, 'code');
-        assert.match(result.title, /Refresh preflight/);
+        assert.match(result.title, /Restart failed 'code' review remediation cycle/);
         assert.match(result.reason, /scope_sha256=/);
         assert.match(result.reason, /Stale failed review detected: 'code'/);
-        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.match(result.reason, /cheapest valid recovery path/);
+        assert.match(result.reason, /before refreshing preflight/);
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(result.commands[0].command.includes('--impact-analysis'));
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+        assert.ok(!result.commands[0].command.includes('gate restart-coherent-cycle'));
         assert.ok(!result.commands[0].command.includes('compile-gate'));
+    });
+
+    it('routes T-004-3-style frontend code-review remediation to restart-review-cycle', () => {
+        const repoRoot = makeTempRepo();
+        const frontendPath = path.join(repoRoot, 'frontend', 'src', 'App.tsx');
+        fs.mkdirSync(path.dirname(frontendPath), { recursive: true });
+        fs.writeFileSync(frontendPath, 'export function App() { return <main>before</main>; }\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        markTaskInProgress(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['frontend/src/App.tsx'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['frontend/src/App.tsx']);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+
+        fs.writeFileSync(frontendPath, 'export function App() { return <main>after</main>; }\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.reason, /Stale failed review detected: 'code'/);
+        assert.match(result.reason, /avoids a standalone classify-change/);
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+    });
+
+    it('routes T-004-3-style db migration remediation to restart-review-cycle', () => {
+        const repoRoot = makeTempRepo();
+        const migrationPath = path.join(repoRoot, 'db', 'migrations', '001-init.sql');
+        fs.mkdirSync(path.dirname(migrationPath), { recursive: true });
+        fs.writeFileSync(migrationPath, 'create table audit_log(id integer primary key);\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        markTaskInProgress(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, db: true }, {
+            changedFiles: ['db/migrations/001-init.sql'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['db/migrations/001-init.sql']);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'db'
+        });
+        writeReviewEvidence(repoRoot, TASK_ID, 'db', { verdict: 'fail' });
+
+        fs.writeFileSync(migrationPath, 'create table audit_log(id integer primary key, actor text not null);\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.equal(result.review.next_review_type, 'db');
+        assert.match(result.reason, /Stale failed review detected: 'db'/);
+        assert.match(result.reason, /coherent-cycle ordering/);
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(!result.commands[0].command.includes('gate restart-coherent-cycle'));
     });
 
     it('routes failed-review remediation through current startup evidence before stale preflight refresh', () => {

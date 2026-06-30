@@ -135,6 +135,9 @@ import {
     type TaskQueueStatusContract
 } from '../../core/task-queue-status-contract';
 import {
+    isTaskQueueActiveStatus
+} from '../../core/active-task-state';
+import {
     parseTaskQueueEntriesFromContent,
     type TaskQueueEntry
 } from './next-step-task-queue';
@@ -2453,6 +2456,22 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     ?? getPreflightRefreshChangedFiles(taskMode, preflight)
             })
         }),
+        failedReviewRemediation: failedCurrentReviewStateForPreflight && isTaskQueueActiveStatus(taskEntry?.status ?? null)
+            ? {
+                reviewType: failedCurrentReviewStateForPreflight.reviewType,
+                verdictToken:
+                    failedCurrentReviewStateForPreflight.verdictToken
+                    || failedCurrentReviewStateForPreflight.failToken
+                    || 'FAILED',
+                restartReviewCycleCommand: buildRestartReviewCycleCommand(
+                    repoRoot,
+                    cliPrefix,
+                    taskId,
+                    getStringField(taskMode, 'task_summary', taskEntry?.title || taskId),
+                    taskModePath
+                )
+            }
+            : null,
         coherentCycleReadiness,
         navigatorCommand,
         postPreflightRulePack: {
