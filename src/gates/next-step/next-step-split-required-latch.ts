@@ -20,6 +20,11 @@ import {
     normalizePath
 } from '../shared/helpers';
 import {
+    canCaptureSplitRequiredWip,
+    captureAndSuspendSplitRequiredWip,
+    type SplitRequiredWipCaptureResult
+} from '../split-required/split-required-wip';
+import {
     collectOrderedTimelineEvents
 } from '../completion/completion-evidence';
 import {
@@ -37,6 +42,7 @@ export interface SplitRequiredLatchResult {
     status_sync: TaskQueueStatusSyncResult;
     status_event_recorded: boolean;
     latch_event_recorded: boolean;
+    wip_capture: SplitRequiredWipCaptureResult | null;
 }
 
 export interface SplitRequiredLatchEvidence {
@@ -86,8 +92,16 @@ function buildSplitRequiredArtifact(params: {
     preflightSha256: string;
     materializationPhase: 'pending_status_sync' | 'complete' | 'status_sync_failed';
     statusSync: Record<string, unknown>;
+    wipCapture: SplitRequiredWipCaptureResult | null;
     guardDetails: Record<string, unknown>;
 }): Record<string, unknown> {
+    const wipNextActions = params.guardKind === 'full_suite_repair'
+        ? []
+        : [
+            'list_split_required_wip',
+            'preview_or_restore_selected_wip_in_child_task',
+            'retire_split_required_wip_when_no_longer_needed'
+        ];
     return {
         schema_version: 1,
         timestamp_utc: params.timestampUtc,
@@ -103,10 +117,25 @@ function buildSplitRequiredArtifact(params: {
         next_actions: [
             'create_and_link_child_tasks',
             'rerun_next_step_on_parent_to_transition_to_decomposed',
+            ...wipNextActions,
             'or_use_explicit_operator_task_reset_or_discard'
         ],
+        wip_capture: params.wipCapture
+            ? {
+                status: params.wipCapture.status,
+                manifest_path: params.wipCapture.manifest_path,
+                manifest_sha256: params.wipCapture.manifest_sha256,
+                tracked_files: params.wipCapture.tracked_files,
+                untracked_files: params.wipCapture.untracked_files,
+                violations: params.wipCapture.violations
+            }
+            : null,
         guard_details: params.guardDetails
     };
+}
+
+function shouldCaptureGenericSplitRequiredWip(guardKind: SplitRequiredGuardKind): guardKind is 'scope_budget' | 'review_cycle' {
+    return guardKind === 'scope_budget' || guardKind === 'review_cycle';
 }
 
 export function readSplitRequiredLatchEvidence(params: {
@@ -389,6 +418,7 @@ export function materializeSplitRequiredLatch(params: {
                 next_status: SPLIT_REQUIRED_STATUS,
                 error_message: null
             },
+            wipCapture: null,
             guardDetails: params.guardDetails
         }));
     }
@@ -411,6 +441,7 @@ export function materializeSplitRequiredLatch(params: {
                 next_status: statusSync.next_status,
                 error_message: statusSync.error_message
             },
+            wipCapture: null,
             guardDetails: params.guardDetails
         }));
         return {
@@ -418,12 +449,26 @@ export function materializeSplitRequiredLatch(params: {
             artifact_sha256: failedArtifactSha256,
             status_sync: statusSync,
             status_event_recorded: false,
-            latch_event_recorded: false
+            latch_event_recorded: false,
+            wip_capture: null
         };
     }
 
     let artifactSha256 = '';
+    let wipCapture: SplitRequiredWipCaptureResult | null = null;
     try {
+        if (shouldCaptureGenericSplitRequiredWip(params.guardKind) && canCaptureSplitRequiredWip(params.repoRoot)) {
+            wipCapture = captureAndSuspendSplitRequiredWip({
+                repoRoot: params.repoRoot,
+                taskId: params.taskId,
+                preflightPath: params.preflightPath,
+                guardKind: params.guardKind,
+                guardReason: params.guardReason
+            });
+            if (wipCapture.status === 'BLOCKED') {
+                throw new Error(`split-required WIP capture failed: ${wipCapture.violations.join('; ') || 'unknown violation'}`);
+            }
+        }
         const artifact = buildSplitRequiredArtifact({
             taskId: params.taskId,
             timestampUtc,
@@ -439,6 +484,7 @@ export function materializeSplitRequiredLatch(params: {
                 next_status: statusSync.next_status,
                 error_message: statusSync.error_message
             },
+            wipCapture,
             guardDetails: params.guardDetails
         });
         artifactSha256 = writeStableJsonIfChanged(artifactPath, artifact);
@@ -462,7 +508,10 @@ export function materializeSplitRequiredLatch(params: {
                     artifact_sha256: artifactSha256,
                     preflight_path: normalizePath(params.preflightPath),
                     preflight_sha256: preflightSha256,
-                    status_sync_outcome: statusSync.outcome
+                    status_sync_outcome: statusSync.outcome,
+                    wip_manifest_path: wipCapture?.manifest_path || null,
+                    wip_manifest_sha256: wipCapture?.manifest_sha256 || null,
+                    wip_capture_status: wipCapture?.status || null
                 },
                 { actor: 'orchestrator' }
             );
@@ -509,15 +558,16 @@ export function materializeSplitRequiredLatch(params: {
                 rawGuardSummary: params.rawGuardSummary,
                 preflightPath: params.preflightPath,
                 preflightSha256,
-                materializationPhase: 'status_sync_failed',
-                statusSync: {
-                    outcome: failureStatusSync.outcome,
-                    previous_status: failureStatusSync.previous_status,
-                    next_status: failureStatusSync.next_status,
-                    error_message: failureStatusSync.error_message
-                },
-                guardDetails: params.guardDetails
-            }));
+            materializationPhase: 'status_sync_failed',
+            statusSync: {
+                outcome: failureStatusSync.outcome,
+                previous_status: failureStatusSync.previous_status,
+                next_status: failureStatusSync.next_status,
+                error_message: failureStatusSync.error_message
+            },
+            wipCapture,
+            guardDetails: params.guardDetails
+        }));
         } catch {
             artifactSha256 = artifactSha256 || '';
         }
@@ -526,7 +576,8 @@ export function materializeSplitRequiredLatch(params: {
             artifact_sha256: artifactSha256,
             status_sync: failureStatusSync,
             status_event_recorded: statusEventRecorded,
-            latch_event_recorded: latchEventRecorded
+            latch_event_recorded: latchEventRecorded,
+            wip_capture: wipCapture
         };
     }
 
@@ -535,6 +586,7 @@ export function materializeSplitRequiredLatch(params: {
         artifact_sha256: artifactSha256,
         status_sync: statusSync,
         status_event_recorded: statusEventRecorded,
-        latch_event_recorded: latchEventRecorded
+        latch_event_recorded: latchEventRecorded,
+        wip_capture: wipCapture
     };
 }

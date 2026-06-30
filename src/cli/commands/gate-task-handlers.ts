@@ -17,6 +17,9 @@ import {
     runRecordReviewCycleContinuationCommand,
     runRecordReviewCycleSplitDecisionCommand,
     runRecordStrictDecompositionDecisionCommand,
+    runListSplitRequiredWipCommand,
+    runRestoreSplitRequiredWipCommand,
+    runRetireSplitRequiredWipCommand,
     runRestartCoherentCycleCommand,
     runRestartReviewCycleCommand,
     runShellSmokePreflightCommand,
@@ -267,6 +270,51 @@ export async function handleRecordReviewCycleSplitDecision(gateArgv: string[]): 
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runRecordReviewCycleSplitDecisionCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleListSplitRequiredWip(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runListSplitRequiredWipCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleRestoreSplitRequiredWip(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--manifest-path': { key: 'manifestPath', type: 'string' },
+        '--include-path': { key: 'includePaths', type: 'string[]' },
+        '--include-paths': { key: 'includePaths', type: 'string[]' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runRestoreSplitRequiredWipCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleRetireSplitRequiredWip(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--manifest-path': { key: 'manifestPath', type: 'string' },
+        '--reason': { key: 'reason', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runRetireSplitRequiredWipCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;

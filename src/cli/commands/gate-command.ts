@@ -34,6 +34,9 @@ import {
     handleRecordReviewCycleContinuation,
     handleRecordReviewCycleSplitDecision,
     handleRecordStrictDecompositionDecision,
+    handleListSplitRequiredWip,
+    handleRestoreSplitRequiredWip,
+    handleRetireSplitRequiredWip,
     handleHandshakeDiagnostics,
     handleShellSmokePreflight,
     handleCommandTimeoutDiagnostics,
@@ -107,6 +110,12 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleRecordReviewCycleSplitDecision(gateArgv);
         case 'record-strict-decomposition-decision':
             return handleRecordStrictDecompositionDecision(gateArgv);
+        case 'list-split-required-wip':
+            return handleListSplitRequiredWip(gateArgv);
+        case 'restore-split-required-wip':
+            return handleRestoreSplitRequiredWip(gateArgv);
+        case 'retire-split-required-wip':
+            return handleRetireSplitRequiredWip(gateArgv);
         case 'handshake-diagnostics':
             return handleHandshakeDiagnostics(gateArgv);
         case 'shell-smoke-preflight':

@@ -216,6 +216,31 @@ function buildPreflightGateHelpEntries(
                 true
             )
         },
+        'list-split-required-wip': {
+            ...createSingleUsageEntry(
+                'List task-owned WIP manifests captured when a parent was moved to SPLIT_REQUIRED.',
+                `${cliPrefix} gate list-split-required-wip --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
+                true
+            )
+        },
+        'restore-split-required-wip': {
+            ...createGateHelpEntry(
+                'Preview or explicitly restore a full or selected subset of captured split-required parent WIP, refusing stale-base, dirty-workspace, and target conflicts.',
+                [
+                    `${cliPrefix} gate restore-split-required-wip --task-id "${TASK_ID_PLACEHOLDER}" --manifest-path "${buildBundleRelativePath(bundleName, `runtime/wip/${TASK_ID_PLACEHOLDER}/split-required/<timestamp>/manifest.json`)}" --dry-run --repo-root "."`,
+                    `${cliPrefix} gate restore-split-required-wip --task-id "${TASK_ID_PLACEHOLDER}" --manifest-path "${buildBundleRelativePath(bundleName, `runtime/wip/${TASK_ID_PLACEHOLDER}/split-required/<timestamp>/manifest.json`)}" --include-path "src/<file>.ts" --dry-run --repo-root "."`,
+                    `${cliPrefix} gate restore-split-required-wip --task-id "${TASK_ID_PLACEHOLDER}" --manifest-path "${buildBundleRelativePath(bundleName, `runtime/wip/${TASK_ID_PLACEHOLDER}/split-required/<timestamp>/manifest.json`)}" --include-path "src/<file>.ts" --repo-root "."`
+                ],
+                false
+            )
+        },
+        'retire-split-required-wip': {
+            ...createSingleUsageEntry(
+                'Mark a captured split-required WIP manifest retired after child scopes no longer need it.',
+                `${cliPrefix} gate retire-split-required-wip --task-id "${TASK_ID_PLACEHOLDER}" --manifest-path "${buildBundleRelativePath(bundleName, `runtime/wip/${TASK_ID_PLACEHOLDER}/split-required/<timestamp>/manifest.json`)}" --reason "<why this WIP is no longer needed>" --repo-root "."`,
+                false
+            )
+        },
         'handshake-diagnostics': {
             ...createSingleUsageEntry(
                 'Verify runtime identity, reviewer-subagent launchability, router presence, and CLI path before preflight.',

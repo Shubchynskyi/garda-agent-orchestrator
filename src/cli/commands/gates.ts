@@ -20,6 +20,9 @@ export {
     runRecordReviewCycleContinuationCommand,
     runRecordReviewCycleSplitDecisionCommand,
     runRecordStrictDecompositionDecisionCommand,
+    runListSplitRequiredWipCommand,
+    runRestoreSplitRequiredWipCommand,
+    runRetireSplitRequiredWipCommand,
     runHandshakeDiagnosticsCommand,
     runShellSmokePreflightCommand,
     runCommandTimeoutDiagnosticsCommand

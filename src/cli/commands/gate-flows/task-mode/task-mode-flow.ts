@@ -86,6 +86,14 @@ import {
     type RecordReviewCycleContinuationCommandOptions,
     type RecordReviewCycleSplitDecisionCommandOptions
 } from './task-mode-review-cycle-commands';
+import {
+    runListSplitRequiredWipCommand,
+    runRestoreSplitRequiredWipCommand,
+    runRetireSplitRequiredWipCommand,
+    type ListSplitRequiredWipCommandOptions,
+    type RestoreSplitRequiredWipCommandOptions,
+    type RetireSplitRequiredWipCommandOptions
+} from './task-mode-split-required-wip-commands';
 
 export { WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE };
 export {
@@ -97,6 +105,9 @@ export {
     runRecordReviewCycleContinuationCommand,
     runRecordReviewCycleSplitDecisionCommand,
     runRecordStrictDecompositionDecisionCommand,
+    runListSplitRequiredWipCommand,
+    runRestoreSplitRequiredWipCommand,
+    runRetireSplitRequiredWipCommand,
     runShellSmokePreflightCommand
 };
 export type {
@@ -108,6 +119,9 @@ export type {
     RecordReviewCycleContinuationCommandOptions,
     RecordReviewCycleSplitDecisionCommandOptions,
     RecordStrictDecompositionDecisionCommandOptions,
+    ListSplitRequiredWipCommandOptions,
+    RestoreSplitRequiredWipCommandOptions,
+    RetireSplitRequiredWipCommandOptions,
     ShellSmokePreflightCommandOptions
 };
 
