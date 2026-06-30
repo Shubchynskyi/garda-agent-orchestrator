@@ -194,7 +194,14 @@ function createCandidateTarball(repoRoot: string) {
     const fixtureRoot = path.join(tempRoot, 'pack-repo');
     copyPackFixture(repoRoot, fixtureRoot);
     rewriteFixtureReleaseVersion(fixtureRoot, NEXT_RELEASE_TEST_VERSION);
-    buildPublishRuntimeInRepo(fixtureRoot);
+    const builtDistRoot = path.join(repoRoot, 'dist');
+    const builtBinRoot = path.join(repoRoot, 'bin');
+    if (fs.existsSync(builtDistRoot) && fs.existsSync(builtBinRoot)) {
+        fs.cpSync(builtDistRoot, path.join(fixtureRoot, 'dist'), { recursive: true });
+        fs.cpSync(builtBinRoot, path.join(fixtureRoot, 'bin'), { recursive: true });
+    } else {
+        buildPublishRuntimeInRepo(fixtureRoot);
+    }
     const legacyCompatResult = spawnSync(process.execPath, [
         'scripts/package-legacy-entrypoint-compat.cjs',
         'create'
@@ -314,6 +321,18 @@ function createSourcePathFixture(repoRoot: string): string {
     return sourceRoot;
 }
 
+function createMinimalSourcePathFixture(repoRoot: string, version = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim()): string {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-checkupdate-min-source-'));
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as Record<string, unknown>;
+    fs.writeFileSync(path.join(sourceRoot, 'VERSION'), `${version}\n`, 'utf8');
+    fs.writeFileSync(
+        path.join(sourceRoot, 'package.json'),
+        JSON.stringify({ name: packageJson.name, version }, null, 2),
+        'utf8'
+    );
+    return sourceRoot;
+}
+
 function setupUpToDateSourceWorkspace(repoRoot: string) {
     const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
     const sourceRoot = createSourcePathFixture(repoRoot);
@@ -418,12 +437,13 @@ describe('runCheckUpdate', () => {
     });
 
     it('detects UPDATE_AVAILABLE when deployed version is older', async () => {
+        const sourceRoot = createMinimalSourcePathFixture(repoRoot);
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                sourcePath: repoRoot,
+                sourcePath: sourceRoot,
                 noPrompt: true,
                 dryRun: false,
                 apply: false,
@@ -436,6 +456,7 @@ describe('runCheckUpdate', () => {
             assert.ok(result.latestVersion);
             assert.equal(result.updateApplied, false);
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
@@ -449,7 +470,21 @@ describe('runCheckUpdate', () => {
                 packageSpec: sourceRoot,
                 noPrompt: true,
                 dryRun: true,
-                trustOverride: true
+                trustOverride: true,
+                async npmInstallRunner(args) {
+                    const prefixIndex = args.indexOf('--prefix');
+                    assert.notEqual(prefixIndex, -1);
+                    const installRoot = args[prefixIndex + 1];
+                    const packageRoot = path.join(installRoot, 'node_modules', 'garda-agent-orchestrator');
+                    seedBundleSyncSurface(sourceRoot, packageRoot);
+                    return {
+                        cancelled: false,
+                        timedOut: false,
+                        exitCode: 0,
+                        stdout: '',
+                        stderr: ''
+                    };
+                }
             });
 
             assert.equal(result.checkUpdateResult, 'UP_TO_DATE');
@@ -620,12 +655,13 @@ describe('runCheckUpdate', () => {
     });
 
     it('reports DRY_RUN_UPDATE_AVAILABLE when apply + dryRun', async () => {
+        const sourceRoot = createMinimalSourcePathFixture(repoRoot);
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                sourcePath: repoRoot,
+                sourcePath: sourceRoot,
                 noPrompt: true,
                 dryRun: true,
                 apply: true,
@@ -637,11 +673,13 @@ describe('runCheckUpdate', () => {
             assert.ok(result.syncedItems.length > 0);
             assert.equal(result.updateApplied, false);
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
 
     it('applies update with updateRunner callback', async () => {
+        const sourceRoot = createMinimalSourcePathFixture(repoRoot);
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             let updateRunnerCalled = false;
@@ -649,7 +687,7 @@ describe('runCheckUpdate', () => {
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                sourcePath: repoRoot,
+                sourcePath: sourceRoot,
                 noPrompt: true,
                 apply: true,
                 trustOverride: true,
@@ -667,6 +705,7 @@ describe('runCheckUpdate', () => {
             assert.equal(result.trustOverrideUsed, true);
             assert.equal(result.trustOverrideSource, 'cli-flag');
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
@@ -953,6 +992,7 @@ describe('runCheckUpdate', () => {
     });
 
     it('defers VERSION sync until after lifecycle completes', async () => {
+        const sourceRoot = createMinimalSourcePathFixture(repoRoot);
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             let versionDuringLifecycle = null;
@@ -960,7 +1000,7 @@ describe('runCheckUpdate', () => {
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                sourcePath: repoRoot,
+                sourcePath: sourceRoot,
                 noPrompt: true,
                 apply: true,
                 trustOverride: true,
@@ -982,11 +1022,13 @@ describe('runCheckUpdate', () => {
             assert.ok(result.syncedItems.includes('VERSION'),
                 'VERSION should be listed in synced items');
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
 
     it('realigns live/version.json after deferred VERSION sync completes', async () => {
+        const sourceRoot = createMinimalSourcePathFixture(repoRoot);
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             fs.mkdirSync(path.join(bundleRoot, 'live'), { recursive: true });
@@ -999,7 +1041,7 @@ describe('runCheckUpdate', () => {
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                sourcePath: repoRoot,
+                sourcePath: sourceRoot,
                 noPrompt: true,
                 apply: true,
                 trustOverride: true,
@@ -1011,6 +1053,7 @@ describe('runCheckUpdate', () => {
             assert.equal(result.checkUpdateResult, 'UPDATED');
             assert.equal(liveVersion.Version, finalVersion);
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
@@ -1148,6 +1191,20 @@ describe('runCheckUpdate', () => {
                 noPrompt: true,
                 apply: true,
                 trustOverride: true,
+                async npmInstallRunner(args) {
+                    const prefixIndex = args.indexOf('--prefix');
+                    assert.notEqual(prefixIndex, -1);
+                    const installRoot = args[prefixIndex + 1];
+                    const packageRoot = path.join(installRoot, 'node_modules', 'garda-agent-orchestrator');
+                    seedBundleSyncSurface(sourceRoot, packageRoot);
+                    return {
+                        cancelled: false,
+                        timedOut: false,
+                        exitCode: 0,
+                        stdout: '',
+                        stderr: ''
+                    };
+                },
                 updateRunner: () => {
                     sentinelDuringLifecycle = readUpdateSentinel(bundleRoot) as Record<string, unknown> | null;
                 }
@@ -1473,7 +1530,9 @@ describe('runCheckUpdate', () => {
         const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion);
         try {
-            const progressChunks = [];
+            const progressChunks: string[] = [];
+            let installedSpec: string | null = null;
+            let packageRoot = '';
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
@@ -1481,13 +1540,34 @@ describe('runCheckUpdate', () => {
                 noPrompt: true,
                 dryRun: true,
                 trustOverride: true,
-                onProgress: (chunk) => { progressChunks.push(chunk); }
+                onProgress: (chunk) => { progressChunks.push(chunk); },
+                async npmInstallRunner(args, options) {
+                    installedSpec = args[args.length - 1] ?? null;
+                    const prefixIndex = args.indexOf('--prefix');
+                    assert.notEqual(prefixIndex, -1);
+                    const installRoot = args[prefixIndex + 1];
+                    assert.ok(installRoot);
+                    packageRoot = path.join(installRoot, 'node_modules', 'garda-agent-orchestrator');
+                    seedBundleSyncSurface(repoRoot, packageRoot);
+                    options.onStderr?.('npm progress: installing local fixture\n');
+                    return {
+                        cancelled: false,
+                        timedOut: false,
+                        exitCode: 0,
+                        stdout: '',
+                        stderr: 'npm progress: installing local fixture\n'
+                    };
+                },
+                installedPackageRootResolver() {
+                    return {
+                        packageName: 'garda-agent-orchestrator',
+                        packageRoot
+                    };
+                }
             });
             assert.equal(result.sourceType, 'npm');
-            // npm install produces stderr output (progress/warnings) that should be captured
-            // The callback may or may not receive chunks depending on npm's output behavior,
-            // but it should not throw or break the flow
-            assert.equal(typeof progressChunks.length, 'number');
+            assert.equal(installedSpec, repoRoot);
+            assert.deepEqual(progressChunks, ['npm progress: installing local fixture\n']);
         } finally {
             removePathRecursive(projectRoot);
         }

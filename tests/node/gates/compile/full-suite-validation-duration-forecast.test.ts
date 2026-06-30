@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
+    buildFullSuiteDurationHistoryComparison,
     buildFullSuiteTimeoutForecast,
     formatFullSuiteTimeoutForecast,
     recordFullSuiteValidationDuration,
@@ -58,6 +59,33 @@ describe('gates/full-suite-validation', () => {
             assert.equal(forecast.recommendation_source, 'history');
             assert.match(formatFullSuiteTimeoutForecast(forecast), /Recommended full-suite command timeout: 90s/);
             assert.match(formatFullSuiteTimeoutForecast(forecast), /max 60s/);
+        });
+
+        it('compares the current duration against previous eligible matching history before recording it', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-comparison-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            fs.mkdirSync(repoRoot, { recursive: true });
+            const config = buildFullSuiteDurationTestConfig();
+
+            for (const [index, durationMs] of [120_000, 100_000, 80_000].entries()) {
+                recordFullSuiteValidationDuration(repoRoot, config, {
+                    timestamp_utc: `2099-01-01T00:00:0${index}.000Z`,
+                    task_id: `T-COMPARE-${index}`,
+                    status: 'PASSED',
+                    duration_ms: durationMs,
+                    timed_out: false,
+                    exit_code: 0
+                });
+            }
+
+            const comparison = buildFullSuiteDurationHistoryComparison(repoRoot, config, 90_000);
+            assert.equal(comparison.previous_sample_count, 3);
+            assert.equal(comparison.previous_average_duration_ms, 100_000);
+            assert.equal(comparison.previous_best_duration_ms, 80_000);
+            assert.equal(comparison.previous_latest_duration_ms, 80_000);
+            assert.equal(comparison.delta_vs_previous_average_ms, 10_000);
+            assert.equal(comparison.delta_vs_previous_best_ms, -10_000);
+            assert.equal(comparison.delta_vs_previous_latest_ms, -10_000);
         });
 
         it('uses the slowest matching duration instead of hiding outliers behind the average', () => {

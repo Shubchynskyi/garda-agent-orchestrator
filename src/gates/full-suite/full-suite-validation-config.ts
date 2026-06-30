@@ -15,6 +15,7 @@ import {
     type FullSuiteDurationForecastExclusionReason,
     type FullSuiteDurationHistory,
     type FullSuiteDurationHistoryEntry,
+    type FullSuiteDurationHistoryComparison,
     type FullSuitePerformanceGuidance,
     type FullSuiteTimeoutForecast,
     type FullSuiteValidationConfig,
@@ -282,6 +283,38 @@ export function recordFullSuiteValidationDuration(
     fs.mkdirSync(path.dirname(historyPath), { recursive: true });
     fs.writeFileSync(historyPath, `${JSON.stringify(nextHistory, null, 2)}\n`, 'utf8');
     return nextHistory;
+}
+
+export function buildFullSuiteDurationHistoryComparison(
+    repoRoot: string,
+    config: FullSuiteValidationConfig,
+    currentDurationMs: number
+): FullSuiteDurationHistoryComparison {
+    const historyPath = resolveFullSuiteDurationHistoryPath(repoRoot);
+    const signature = buildFullSuiteConfigSignature(config);
+    const { history } = readFullSuiteDurationHistory(repoRoot);
+    const previousSamples = history.entries
+        .filter((entry) => entry.config_signature_sha256 === signature)
+        .filter((entry) => Number.isFinite(entry.duration_ms) && entry.duration_ms > 0)
+        .filter((entry) => classifyFullSuiteForecastSample(config, entry).eligible)
+        .slice(-FULL_SUITE_DURATION_HISTORY_LIMIT);
+    const previousDurations = previousSamples.map((entry) => entry.duration_ms);
+    const previousAverageDurationMs = previousDurations.length > 0
+        ? Math.round(previousDurations.reduce((total, duration) => total + duration, 0) / previousDurations.length)
+        : null;
+    const previousBestDurationMs = previousDurations.length > 0 ? Math.min(...previousDurations) : null;
+    const previousLatestDurationMs = previousDurations.length > 0 ? previousDurations[previousDurations.length - 1] : null;
+    return {
+        history_path: normalizePath(historyPath),
+        previous_sample_count: previousSamples.length,
+        previous_average_duration_ms: previousAverageDurationMs,
+        previous_best_duration_ms: previousBestDurationMs,
+        previous_latest_duration_ms: previousLatestDurationMs,
+        current_duration_ms: currentDurationMs,
+        delta_vs_previous_average_ms: previousAverageDurationMs === null ? null : previousAverageDurationMs - currentDurationMs,
+        delta_vs_previous_best_ms: previousBestDurationMs === null ? null : previousBestDurationMs - currentDurationMs,
+        delta_vs_previous_latest_ms: previousLatestDurationMs === null ? null : previousLatestDurationMs - currentDurationMs
+    };
 }
 
 export function buildFullSuiteTimeoutForecast(

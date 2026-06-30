@@ -207,8 +207,8 @@ test('package.json exposes focused test shard scripts for targeted validation', 
     assert.match(scripts['test:packaging'], /pack-smoke\.test\.ts/);
     assert.doesNotMatch(scripts.test, /tests\/node\/packaging/);
     assert.doesNotMatch(scripts['test:node-foundation'], /tests\/node\/packaging/);
-    assert.match(scripts['test:sharded'], /--garda-shards 4/);
-    assert.doesNotMatch(scripts['test:sharded'], /--garda-shard-concurrency/);
+    assert.match(scripts['test:sharded'], /--garda-shards 2/);
+    assert.match(scripts['test:sharded'], /--garda-shard-concurrency 2/);
     assert.doesNotMatch(scripts['test:sharded'], /tests\/node\/packaging/);
     // test:full must rebuild before running to keep it self-contained
     assert.match(scripts['test:full'], /build.js node-foundation/);

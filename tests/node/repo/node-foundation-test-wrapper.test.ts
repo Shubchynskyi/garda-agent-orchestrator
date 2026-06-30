@@ -398,18 +398,20 @@ test('runNodeFoundationTests runs contention-sensitive tests after parallel shar
     }
 });
 
-test('runNodeFoundationTests schedules heavy tests as isolated shards with default shard concurrency', async () => {
+test('runNodeFoundationTests schedules known 60s slow tests as isolated shards with default shard concurrency', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
     const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
     const originalSpawn = mutableChildProcess.spawn;
+    const originalConsoleLog = console.log;
     const durationFile = path.join(buildResult.repoRoot, 'duration-telemetry.json');
     const isolatedTestPath = addCompiledTestFile(
         buildResult,
-        'tests/node/repo/dynamic-heavy.test.js'
-    );
+            'tests/node/repo/dynamic-heavy.test.js'
+        );
     const observedShardArgs: string[][] = [];
+    const observedLogs: string[] = [];
     let activeShards = 0;
     let maxActiveShards = 0;
 
@@ -419,7 +421,7 @@ test('runNodeFoundationTests schedules heavy tests as isolated shards with defau
         entries: {
             'tests/node/repo/dynamic-heavy.test.ts': {
                 file: 'tests/node/repo/dynamic-heavy.test.ts',
-                duration_ms: 75000,
+                duration_ms: 60000,
                 samples: 2,
                 updated_at_utc: new Date(0).toISOString()
             }
@@ -437,6 +439,9 @@ test('runNodeFoundationTests schedules heavy tests as isolated shards with defau
         ];
         mutableBuildModule.buildPublishRuntime = () => buildResult;
         mutableBuildModule.buildNodeFoundation = () => buildResult;
+        console.log = ((...args: unknown[]) => {
+            observedLogs.push(args.map(String).join(' '));
+        }) as typeof console.log;
         mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
             const observedArgs = Array.from(args);
             observedShardArgs.push(observedArgs);
@@ -463,11 +468,18 @@ test('runNodeFoundationTests schedules heavy tests as isolated shards with defau
         assert.equal(maxActiveShards, 2);
         assert.ok(observedShardArgs.slice(0, 2).every((args) => !args.includes(isolatedTestPath)));
         assert.deepEqual(observedShardArgs[2], [...DEFAULT_SHARDED_NODE_TEST_ARGS, isolatedTestPath]);
+        const comparisonLine = observedLogs.find((line) => line.startsWith('NODE_FOUNDATION_TEST_SHARD_COMPARISON '));
+        assert.match(comparisonLine || '', /current_threshold_ms=60000/);
+        assert.match(comparisonLine || '', /baseline_threshold_ms=60000/);
+        assert.match(comparisonLine || '', /current_isolated_files=1/);
+        assert.match(comparisonLine || '', /baseline_isolated_files=1/);
+        assert.match(comparisonLine || '', /max_worker_processes=2/);
     } finally {
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
         mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
         mutableChildProcess.spawn = originalSpawn;
+        console.log = originalConsoleLog;
         cleanup();
     }
 });

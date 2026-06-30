@@ -242,6 +242,37 @@ describe('gates/full-suite-validation', () => {
             assert.ok(text.includes('PerformanceMode: mode=optimized_sharded; optimized=true; boundary=mandatory_full_suite_not_smoke_or_fast; optimized_command="npm run test:sharded"; fallback_command="npm test"'));
         });
 
+        it('formatFullSuiteValidationResult includes duration history comparison evidence', () => {
+            const config = {
+                ...loadFullSuiteValidationConfig('/nonexistent'),
+                enabled: true,
+                command: 'npm run test:sharded'
+            };
+            const result = buildValidationResult(config, 0, false, ['# pass 1'], null, ['src/changed.ts'], {
+                task_id: 'T-123',
+                preflight_path: 'runtime/reviews/T-123-preflight.json',
+                preflight_sha256: 'abc123',
+                compile_gate_timestamp: null
+            });
+            result.duration_ms = 90_000;
+            result.duration_history_comparison = {
+                history_path: 'runtime/metrics/full-suite-validation-duration-history.json',
+                previous_sample_count: 3,
+                previous_average_duration_ms: 100_000,
+                previous_best_duration_ms: 80_000,
+                previous_latest_duration_ms: 95_000,
+                current_duration_ms: 90_000,
+                delta_vs_previous_average_ms: 10_000,
+                delta_vs_previous_best_ms: -10_000,
+                delta_vs_previous_latest_ms: 5_000
+            };
+
+            const text = formatFullSuiteValidationResult(result);
+
+            assert.ok(text.includes('DurationHistoryComparison: current_duration_ms=90000; previous_sample_count=3; previous_average_duration_ms=100000; delta_vs_previous_average_ms=10000;'));
+            assert.ok(text.includes('delta_vs_previous_best_ms=-10000; previous_latest_duration_ms=95000; delta_vs_previous_latest_ms=5000;'));
+        });
+
         it('formatFullSuiteValidationResult surfaces top failure diagnostics', () => {
             const config = {
                 ...loadFullSuiteValidationConfig('/nonexistent'),
@@ -332,16 +363,21 @@ describe('gates/full-suite-validation', () => {
                 ...loadFullSuiteValidationConfig('/nonexistent'),
                 enabled: true,
                 command: 'npm run test:sharded',
-                green_summary_max_lines: 5
+                green_summary_max_lines: 7
             };
             const result = buildValidationResult(config, 0, false, [
                 'NODE_FOUNDATION_TEST_SHARD_PLAN source=duration duration_known=2/2',
+                'NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=600000 heartbeat_ms=60000 concurrency=2 node_test_concurrency=inherit grouped_shards=12 max_grouped_files=32 isolated_files=2 serial_files=6',
+                'NODE_FOUNDATION_TEST_SHARD_COMPARISON source=pre_run_telemetry current_threshold_ms=60000 baseline_threshold_ms=60000 current_estimated_wall_ms=541552 baseline_estimated_wall_ms=541552 estimated_wall_delta_ms=0 current_isolated_files=2 baseline_isolated_files=2 current_scheduled_shards=14 baseline_scheduled_shards=14 current_grouped_shards=12 baseline_grouped_shards=12 max_worker_processes=2 baseline_max_worker_processes=2 serial_files=6 telemetry_known=120/376',
                 'NODE_FOUNDATION_TEST_SLOWEST tests/node/slow-a.test.ts duration_ms=42000',
                 'NODE_FOUNDATION_TEST_SLOWEST tests/node/slow-b.test.ts duration_ms=39000',
                 '# tests 20',
                 '# pass 20',
                 '# fail 0',
-                '# duration_ms 120000'
+                '# duration_ms 120000',
+                'NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=600000 heartbeat_ms=60000 concurrency=1',
+                'NODE_FOUNDATION_TEST_SHARD_COMPARISON current_threshold_ms=60000 baseline_threshold_ms=60000 current_estimated_wall_ms=0 baseline_estimated_wall_ms=0 estimated_wall_delta_ms=0 current_isolated_files=0 baseline_isolated_files=0 current_scheduled_shards=9 baseline_scheduled_shards=9 current_grouped_shards=9 baseline_grouped_shards=9 max_worker_processes=2 baseline_max_worker_processes=2 serial_files=0 telemetry_known=0/262',
+                'NODE_FOUNDATION_TEST_SHARD_COMPARISON source=post_run_telemetry current_threshold_ms=60000 baseline_threshold_ms=60000 current_estimated_wall_ms=512000 baseline_estimated_wall_ms=512000 estimated_wall_delta_ms=0 current_isolated_files=2 baseline_isolated_files=2 current_scheduled_shards=14 baseline_scheduled_shards=14 current_grouped_shards=12 baseline_grouped_shards=12 max_worker_processes=2 baseline_max_worker_processes=2 serial_files=6 telemetry_known=132/376'
             ], null, ['src/changed.ts'], {
                 task_id: 'T-123',
                 preflight_path: 'runtime/reviews/T-123-preflight.json',
@@ -352,6 +388,12 @@ describe('gates/full-suite-validation', () => {
 
             assert.ok(text.includes('NODE_FOUNDATION_TEST_SLOWEST tests/node/slow-a.test.ts duration_ms=42000'));
             assert.ok(text.includes('NODE_FOUNDATION_TEST_SLOWEST tests/node/slow-b.test.ts duration_ms=39000'));
+            assert.ok(text.includes('NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=600000 heartbeat_ms=60000 concurrency=2'));
+            assert.ok(text.includes('NODE_FOUNDATION_TEST_SHARD_COMPARISON source=post_run_telemetry current_threshold_ms=60000 baseline_threshold_ms=60000'));
+            assert.ok(text.includes('estimated_wall_delta_ms=0'));
+            assert.ok(text.includes('telemetry_known=132/376'));
+            assert.ok(!text.includes('telemetry_known=0/262'));
+            assert.ok(!text.includes('telemetry_known=120/376'));
         });
 
         it('formatFullSuiteValidationResult redacts secrets from configured command output', () => {

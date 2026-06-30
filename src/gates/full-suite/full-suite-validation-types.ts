@@ -78,6 +78,18 @@ export interface FullSuiteTimeoutForecast {
     warning: string | null;
 }
 
+export interface FullSuiteDurationHistoryComparison {
+    history_path: string;
+    previous_sample_count: number;
+    previous_average_duration_ms: number | null;
+    previous_best_duration_ms: number | null;
+    previous_latest_duration_ms: number | null;
+    current_duration_ms: number;
+    delta_vs_previous_average_ms: number | null;
+    delta_vs_previous_best_ms: number | null;
+    delta_vs_previous_latest_ms: number | null;
+}
+
 export interface FullSuiteTimeoutAttemptEvidence {
     attempt: number;
     exit_code: number | null;
@@ -132,6 +144,7 @@ export interface FullSuiteValidationResult {
     warnings: string[];
     output_telemetry?: Record<string, unknown> | null;
     duration_ms?: number | null;
+    duration_history_comparison?: FullSuiteDurationHistoryComparison | null;
     timeout_forecast?: FullSuiteTimeoutForecast | null;
     timeout_policy?: FullSuiteTimeoutPolicyEvidence | null;
     cycle_binding?: FullSuiteValidationCycleBinding;

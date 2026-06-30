@@ -12,7 +12,6 @@ import {
     handleSetup
 } from '../../../../src/cli/commands/setup';
 import { evaluateProtectedControlPlaneManifest } from '../../../../src/gates/shared/helpers';
-import { runVerify } from '../../../../src/validators/verify';
 import type { StatusSnapshot } from '../../../../src/validators/status';
 
 import {
@@ -459,21 +458,17 @@ test('handleSetup runs contract migrations before verify so stale live task work
         fs.writeFileSync(staleWorkflowPath, staleWorkflow, 'utf8');
         assert.ok(!fs.readFileSync(staleWorkflowPath, 'utf8').includes(taskAuditSnippet));
 
-        await handleSetup(
-            ['--target-root', workspaceRoot, '--no-prompt', '--verify', '--skip-manifest-validation', '--preserve-agent-state'],
-            packageJson,
-            repoRoot
-        );
+        const verifyOutput = await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
 
         const refreshedWorkflow = fs.readFileSync(staleWorkflowPath, 'utf8');
         assert.ok(refreshedWorkflow.includes(taskAuditSnippet));
-
-        const verifyResult = runVerify({
-            targetRoot: workspaceRoot,
-            sourceOfTruth: 'Codex',
-            initAnswersPath: path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json')
-        });
-        assert.equal(verifyResult.passed, true, JSON.stringify(verifyResult.violations));
+        assert.ok(verifyOutput.includes('Verify: PASS'), verifyOutput.join('\n'));
 
         const protectedManifestEvidence = evaluateProtectedControlPlaneManifest(workspaceRoot, null, true);
         assert.equal(protectedManifestEvidence.status, 'MATCH', JSON.stringify(protectedManifestEvidence));

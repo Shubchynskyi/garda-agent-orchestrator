@@ -80,7 +80,7 @@ export function compactGreenSummary(outputLines: string[], maxLines: number): st
         if (nodeTestFail) summaryLines.push(nodeTestFail);
         const nodeTestDuration = extractMetricLine(outputLines, /^#\s*duration_ms\s/i);
         if (nodeTestDuration) summaryLines.push(nodeTestDuration);
-        appendSlowestKnownTestLines(summaryLines, outputLines, maxLines);
+        appendNodeFoundationTelemetryLines(summaryLines, outputLines, maxLines);
         return summaryLines.slice(0, maxLines);
     }
 
@@ -95,13 +95,114 @@ export function compactGreenSummary(outputLines: string[], maxLines: number): st
     if (durationLine && durationLine !== totalTests) {
         summaryLines.push(durationLine);
     }
-    appendSlowestKnownTestLines(summaryLines, outputLines, maxLines);
+    appendNodeFoundationTelemetryLines(summaryLines, outputLines, maxLines);
 
     if (summaryLines.length === 0) {
         return outputLines.slice(-Math.min(maxLines, outputLines.length));
     }
 
     return summaryLines.slice(0, maxLines);
+}
+
+function appendNodeFoundationTelemetryLines(summaryLines: string[], outputLines: string[], maxLines: number): void {
+    const primaryComparison = findPrimaryShardComparisonLine(outputLines);
+    if (primaryComparison) {
+        const runtimeLine = findPrimaryShardRuntimeLine(outputLines)
+            || findNearestPreviousMatchingLine(
+                outputLines,
+                primaryComparison.index,
+                /^NODE_FOUNDATION_TEST_SHARD_RUNTIME\s+/i
+            );
+        appendSummaryLine(summaryLines, runtimeLine, maxLines);
+        appendSummaryLine(summaryLines, primaryComparison.line, maxLines);
+    } else {
+        appendLatestMatchingLine(summaryLines, outputLines, /^NODE_FOUNDATION_TEST_SHARD_RUNTIME\s+/i, maxLines);
+    }
+    appendSlowestKnownTestLines(summaryLines, outputLines, maxLines);
+}
+
+function findPrimaryShardComparisonLine(outputLines: string[]): { line: string; index: number; } | null {
+    let best: { line: string; index: number; postRun: boolean; knownCount: number; totalCount: number; } | null = null;
+    for (let index = 0; index < outputLines.length; index += 1) {
+        const line = outputLines[index].trim();
+        if (!/^NODE_FOUNDATION_TEST_SHARD_COMPARISON\s+/i.test(line)) {
+            continue;
+        }
+        const telemetryKnown = line.match(/\btelemetry_known=(\d+)\/(\d+)\b/u);
+        const knownCount = telemetryKnown && typeof telemetryKnown[1] === 'string'
+            ? Number.parseInt(telemetryKnown[1], 10)
+            : 0;
+        const totalCount = telemetryKnown && typeof telemetryKnown[2] === 'string'
+            ? Number.parseInt(telemetryKnown[2], 10)
+            : 0;
+        const postRun = /\bsource=post_run_telemetry\b/u.test(line);
+        if (
+            !best
+            || (postRun && !best.postRun)
+            || (postRun === best.postRun && knownCount > best.knownCount)
+            || (postRun === best.postRun && knownCount === best.knownCount && totalCount > best.totalCount)
+        ) {
+            best = { line, index, postRun, knownCount, totalCount };
+        }
+    }
+    return best ? { line: best.line, index: best.index } : null;
+}
+
+function findPrimaryShardRuntimeLine(outputLines: string[]): string | null {
+    let best: { line: string; surfaceCount: number; concurrency: number; } | null = null;
+    for (const rawLine of outputLines) {
+        const line = rawLine.trim();
+        if (!/^NODE_FOUNDATION_TEST_SHARD_RUNTIME\s+/i.test(line)) {
+            continue;
+        }
+        const groupedShards = parseMarkerIntegerField(line, 'grouped_shards');
+        const isolatedFiles = parseMarkerIntegerField(line, 'isolated_files');
+        const serialFiles = parseMarkerIntegerField(line, 'serial_files');
+        const concurrency = parseMarkerIntegerField(line, 'concurrency');
+        const surfaceCount = groupedShards + isolatedFiles + serialFiles;
+        if (
+            !best
+            || surfaceCount > best.surfaceCount
+            || (surfaceCount === best.surfaceCount && concurrency > best.concurrency)
+        ) {
+            best = { line, surfaceCount, concurrency };
+        }
+    }
+    return best?.line ?? null;
+}
+
+function parseMarkerIntegerField(line: string, fieldName: string): number {
+    const match = line.match(new RegExp(`\\b${fieldName}=(\\d+)\\b`, 'u'));
+    return match && typeof match[1] === 'string' ? Number.parseInt(match[1], 10) : 0;
+}
+
+function findNearestPreviousMatchingLine(outputLines: string[], startIndex: number, pattern: RegExp): string | null {
+    for (let index = startIndex - 1; index >= 0; index -= 1) {
+        const line = outputLines[index].trim();
+        if (pattern.test(line)) {
+            return line;
+        }
+    }
+    return null;
+}
+
+function appendLatestMatchingLine(
+    summaryLines: string[],
+    outputLines: string[],
+    pattern: RegExp,
+    maxLines: number
+): void {
+    if (summaryLines.length >= maxLines) {
+        return;
+    }
+    const matchedLine = extractMetricLine(outputLines, pattern);
+    appendSummaryLine(summaryLines, matchedLine, maxLines);
+}
+
+function appendSummaryLine(summaryLines: string[], line: string | null, maxLines: number): void {
+    if (line && summaryLines.length < maxLines && !summaryLines.includes(line)) {
+        summaryLines.push(line);
+    }
 }
 
 function appendSlowestKnownTestLines(summaryLines: string[], outputLines: string[], maxLines: number): void {

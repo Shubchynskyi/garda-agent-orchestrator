@@ -30,6 +30,7 @@ const GARDA_SHARDS_OPTION = '--garda-shards';
 const GARDA_SHARD_CONCURRENCY_OPTION = '--garda-shard-concurrency';
 const GARDA_SHARD_LOG_DIR_OPTION = '--garda-shard-log-dir';
 const GARDA_DURATION_FILE_OPTION = '--garda-duration-file';
+const NODE_FOUNDATION_BASELINE_SINGLE_FILE_SHARD_MIN_DURATION_MS = 60_000;
 const NODE_FOUNDATION_SINGLE_FILE_SHARD_MIN_DURATION_MS = 60_000;
 const NODE_FOUNDATION_ISOLATED_TEST_PATHS = new Set<string>();
 const NODE_FOUNDATION_SERIAL_TEST_PATHS = new Set<string>([
@@ -450,6 +451,18 @@ interface NodeFoundationTestExecutionPlan {
     serialFiles: string[];
 }
 
+interface NodeFoundationTestShardScheduleSummary {
+    thresholdMs: number;
+    groupedShardCount: number;
+    isolatedFileCount: number;
+    serialFileCount: number;
+    scheduledShardCount: number;
+    maxWorkerProcesses: number;
+    knownDurationFiles: number;
+    totalFiles: number;
+    estimatedWallMs: number;
+}
+
 function resolveNodeTestShardRuntimeConfig(
     requestedShardConcurrency: number | null = null,
     defaultNodeTestConcurrency: number | null = null
@@ -654,7 +667,8 @@ function splitNodeFoundationTestExecutionPlan(
     buildResult: BuildResult,
     selectedTestFiles: string[],
     shardCount: number,
-    telemetry: TestDurationTelemetry
+    telemetry: TestDurationTelemetry,
+    singleFileShardMinDurationMs = NODE_FOUNDATION_SINGLE_FILE_SHARD_MIN_DURATION_MS
 ): NodeFoundationTestExecutionPlan {
     if (shardCount <= 1) {
         return { parallelFiles: selectedTestFiles, isolatedFiles: [], serialFiles: [] };
@@ -669,7 +683,7 @@ function splitNodeFoundationTestExecutionPlan(
             serialFiles.push(file);
         } else if (
             NODE_FOUNDATION_ISOLATED_TEST_PATHS.has(key)
-            || ((telemetry.entries[key]?.duration_ms ?? 0) >= NODE_FOUNDATION_SINGLE_FILE_SHARD_MIN_DURATION_MS)
+            || ((telemetry.entries[key]?.duration_ms ?? 0) >= singleFileShardMinDurationMs)
         ) {
             isolatedFiles.push(file);
         } else {
@@ -693,6 +707,32 @@ function sortFilesByKnownDuration(
 function resolveGroupedNodeFoundationShardCount(parallelFileCount: number, requestedShardCount: number): number {
     const boundedShardCount = Math.ceil(parallelFileCount / NODE_FOUNDATION_MAX_GROUPED_SHARD_FILES);
     return Math.min(parallelFileCount, Math.max(requestedShardCount, boundedShardCount));
+}
+
+function assignNodeFoundationTestShardWeights(fileWeights: TestFileWeight[], shardCount: number): Array<{
+    files: string[];
+    totalWeight: number;
+}> {
+    const sortedFileWeights = [...fileWeights].sort((a, b) => b.weight - a.weight || a.key.localeCompare(b.key));
+    const shards = Array.from({ length: shardCount }, () => ({
+        files: [] as string[],
+        totalWeight: 0
+    }));
+
+    for (const item of sortedFileWeights) {
+        let minShardIndex = 0;
+        let minWeight = shards[0].totalWeight;
+        for (let i = 1; i < shardCount; i++) {
+            if (shards[i].totalWeight < minWeight) {
+                minWeight = shards[i].totalWeight;
+                minShardIndex = i;
+            }
+        }
+        shards[minShardIndex].files.push(item.file);
+        shards[minShardIndex].totalWeight += item.weight;
+    }
+
+    return shards.filter((shard) => shard.files.length > 0);
 }
 
 function buildTestFileWeights(
@@ -747,26 +787,7 @@ function buildNodeFoundationTestShards(
 ): string[][] {
     const fileWeights = buildTestFileWeights(buildResult, selectedTestFiles, telemetry);
     const knownDurationCount = fileWeights.filter((item) => item.durationMs !== null).length;
-
-    fileWeights.sort((a, b) => b.weight - a.weight || a.key.localeCompare(b.key));
-
-    const shards = Array.from({ length: shardCount }, () => ({
-        files: [] as string[],
-        totalWeight: 0
-    }));
-
-    for (const item of fileWeights) {
-        let minShardIndex = 0;
-        let minWeight = shards[0].totalWeight;
-        for (let i = 1; i < shardCount; i++) {
-            if (shards[i].totalWeight < minWeight) {
-                minWeight = shards[i].totalWeight;
-                minShardIndex = i;
-            }
-        }
-        shards[minShardIndex].files.push(item.file);
-        shards[minShardIndex].totalWeight += item.weight;
-    }
+    const shards = assignNodeFoundationTestShardWeights(fileWeights, shardCount);
 
     const source = knownDurationCount === 0
         ? 'size_fallback'
@@ -779,17 +800,125 @@ function buildNodeFoundationTestShards(
     ));
     printSlowestKnownTests(fileWeights);
 
-    return shards.map((s) => s.files).filter((files) => files.length > 0);
+    return shards.map((s) => s.files);
+}
+
+function getKnownTestDurationMs(buildResult: BuildResult, file: string, telemetry: TestDurationTelemetry): number {
+    const key = compiledTestFileToTelemetryKey(buildResult, file);
+    const durationMs = telemetry.entries[key]?.duration_ms ?? 0;
+    return Number.isFinite(durationMs) && durationMs > 0 ? Math.trunc(durationMs) : 0;
+}
+
+function sumKnownTestDurationMs(
+    buildResult: BuildResult,
+    files: string[],
+    telemetry: TestDurationTelemetry
+): number {
+    return files.reduce((sum, file) => sum + getKnownTestDurationMs(buildResult, file, telemetry), 0);
+}
+
+function estimateKnownDurationWallMs(
+    buildResult: BuildResult,
+    scheduledShards: string[][],
+    serialFiles: string[],
+    workerCount: number,
+    telemetry: TestDurationTelemetry
+): number {
+    if (scheduledShards.length === 0) {
+        return sumKnownTestDurationMs(buildResult, serialFiles, telemetry);
+    }
+    const workerTotals = Array.from({ length: Math.max(1, workerCount) }, () => 0);
+    for (const shardFiles of scheduledShards) {
+        let minWorkerIndex = 0;
+        for (let index = 1; index < workerTotals.length; index += 1) {
+            if (workerTotals[index] < workerTotals[minWorkerIndex]) {
+                minWorkerIndex = index;
+            }
+        }
+        workerTotals[minWorkerIndex] += sumKnownTestDurationMs(buildResult, shardFiles, telemetry);
+    }
+    return Math.max(...workerTotals) + sumKnownTestDurationMs(buildResult, serialFiles, telemetry);
+}
+
+function summarizeNodeFoundationShardSchedule(
+    buildResult: BuildResult,
+    selectedTestFiles: string[],
+    shardCount: number,
+    requestedConcurrency: number,
+    telemetry: TestDurationTelemetry,
+    thresholdMs: number
+): NodeFoundationTestShardScheduleSummary {
+    const executionPlan = splitNodeFoundationTestExecutionPlan(
+        buildResult,
+        selectedTestFiles,
+        shardCount,
+        telemetry,
+        thresholdMs
+    );
+    const groupedShardCount = executionPlan.parallelFiles.length === 0
+        ? 0
+        : resolveGroupedNodeFoundationShardCount(executionPlan.parallelFiles.length, shardCount);
+    const parallelShards = executionPlan.parallelFiles.length === 0
+        ? []
+        : assignNodeFoundationTestShardWeights(
+            buildTestFileWeights(buildResult, executionPlan.parallelFiles, telemetry),
+            groupedShardCount
+        ).map((shard) => shard.files);
+    const isolatedShards = sortFilesByKnownDuration(buildResult, executionPlan.isolatedFiles, telemetry)
+        .map((file) => [file]);
+    const scheduledShards = [...parallelShards, ...isolatedShards];
+    const maxWorkerProcesses = scheduledShards.length === 0
+        ? 1
+        : Math.max(1, Math.min(scheduledShards.length, requestedConcurrency));
+    const knownDurationFiles = selectedTestFiles
+        .filter((file) => getKnownTestDurationMs(buildResult, file, telemetry) > 0)
+        .length;
+
+    return {
+        thresholdMs,
+        groupedShardCount,
+        isolatedFileCount: executionPlan.isolatedFiles.length,
+        serialFileCount: executionPlan.serialFiles.length,
+        scheduledShardCount: scheduledShards.length,
+        maxWorkerProcesses,
+        knownDurationFiles,
+        totalFiles: selectedTestFiles.length,
+        estimatedWallMs: estimateKnownDurationWallMs(
+            buildResult,
+            scheduledShards,
+            executionPlan.serialFiles,
+            maxWorkerProcesses,
+            telemetry
+        )
+    };
+}
+
+function printShardScheduleComparison(
+    current: NodeFoundationTestShardScheduleSummary,
+    baseline: NodeFoundationTestShardScheduleSummary,
+    source: 'pre_run_telemetry' | 'post_run_telemetry'
+): void {
+    console.log(formatNodeFoundationTestMarker(
+        NODE_FOUNDATION_TEST_MARKERS.SHARD_COMPARISON,
+        `source=${source} current_threshold_ms=${current.thresholdMs} baseline_threshold_ms=${baseline.thresholdMs} `
+        + `current_estimated_wall_ms=${current.estimatedWallMs} baseline_estimated_wall_ms=${baseline.estimatedWallMs} `
+        + `estimated_wall_delta_ms=${baseline.estimatedWallMs - current.estimatedWallMs} `
+        + `current_isolated_files=${current.isolatedFileCount} baseline_isolated_files=${baseline.isolatedFileCount} `
+        + `current_scheduled_shards=${current.scheduledShardCount} baseline_scheduled_shards=${baseline.scheduledShardCount} `
+        + `current_grouped_shards=${current.groupedShardCount} baseline_grouped_shards=${baseline.groupedShardCount} `
+        + `max_worker_processes=${current.maxWorkerProcesses} baseline_max_worker_processes=${baseline.maxWorkerProcesses} `
+        + `serial_files=${current.serialFileCount} telemetry_known=${current.knownDurationFiles}/${current.totalFiles}`
+    ));
 }
 
 async function recordTestDurationTelemetry(
     telemetryPath: string,
     buildResult: BuildResult,
     results: NodeTestShardResult[]
-): Promise<void> {
+): Promise<TestDurationTelemetry | null> {
     const measurableResults = results.filter((result) => result.exitCode === 0 && result.shardFiles.length === 1);
     if (measurableResults.length === 0) {
-        return;
+        return null;
     }
     let release: (() => void) | null = null;
     try {
@@ -824,9 +953,11 @@ async function recordTestDurationTelemetry(
             NODE_FOUNDATION_TEST_MARKERS.DURATION_TELEMETRY_UPDATED,
             `${telemetryPath} entries=${Object.keys(nextTelemetry.entries).length}`
         ));
+        return nextTelemetry;
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY_UPDATE_SKIPPED ${message}`);
+        return null;
     } finally {
         release?.();
     }
@@ -1270,6 +1401,25 @@ async function runShardedNodeTestProcesses(
         + `grouped_shards=${parallelShards.length} max_grouped_files=${NODE_FOUNDATION_MAX_GROUPED_SHARD_FILES} `
         + `isolated_files=${executionPlan.isolatedFiles.length} serial_files=${executionPlan.serialFiles.length}`
     ));
+    printShardScheduleComparison(
+        summarizeNodeFoundationShardSchedule(
+            buildResult,
+            selectedTestFiles,
+            shardCount,
+            requestedConcurrency,
+            telemetry,
+            NODE_FOUNDATION_SINGLE_FILE_SHARD_MIN_DURATION_MS
+        ),
+        summarizeNodeFoundationShardSchedule(
+            buildResult,
+            selectedTestFiles,
+            shardCount,
+            requestedConcurrency,
+            telemetry,
+            NODE_FOUNDATION_BASELINE_SINGLE_FILE_SHARD_MIN_DURATION_MS
+        ),
+        'pre_run_telemetry'
+    );
     const results: NodeTestShardResult[] = [];
     const scheduledResults: NodeTestShardResult[] = new Array(scheduledShards.length);
     let nextShardIndex = 0;
@@ -1305,7 +1455,28 @@ async function runShardedNodeTestProcesses(
         results.push(result);
         diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
     }
-    await recordTestDurationTelemetry(telemetryPath, buildResult, results);
+    const updatedTelemetry = await recordTestDurationTelemetry(telemetryPath, buildResult, results);
+    if (updatedTelemetry) {
+        printShardScheduleComparison(
+            summarizeNodeFoundationShardSchedule(
+                buildResult,
+                selectedTestFiles,
+                shardCount,
+                requestedConcurrency,
+                updatedTelemetry,
+                NODE_FOUNDATION_SINGLE_FILE_SHARD_MIN_DURATION_MS
+            ),
+            summarizeNodeFoundationShardSchedule(
+                buildResult,
+                selectedTestFiles,
+                shardCount,
+                requestedConcurrency,
+                updatedTelemetry,
+                NODE_FOUNDATION_BASELINE_SINGLE_FILE_SHARD_MIN_DURATION_MS
+            ),
+            'post_run_telemetry'
+        );
+    }
     return results.find((result) => result.exitCode !== 0)?.exitCode || 0;
 }
 

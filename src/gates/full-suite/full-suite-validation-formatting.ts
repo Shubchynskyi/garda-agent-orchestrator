@@ -6,6 +6,10 @@ import {
 } from './full-suite-validation-config';
 import type { FullSuiteValidationResult } from './full-suite-validation-types';
 
+function formatNullableDurationMs(value: number | null): string {
+    return typeof value === 'number' && Number.isFinite(value) ? String(value) : 'null';
+}
+
 function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult): string[] {
     const lines: string[] = [];
     lines.push(`FULL_SUITE_VALIDATION_${result.status}`);
@@ -65,6 +69,21 @@ function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult):
     }
     if (typeof result.duration_ms === 'number') {
         lines.push(`DurationMs: ${result.duration_ms}`);
+    }
+    if (result.duration_history_comparison) {
+        const comparison = result.duration_history_comparison;
+        lines.push(
+            'DurationHistoryComparison: '
+            + `current_duration_ms=${comparison.current_duration_ms}; `
+            + `previous_sample_count=${comparison.previous_sample_count}; `
+            + `previous_average_duration_ms=${formatNullableDurationMs(comparison.previous_average_duration_ms)}; `
+            + `delta_vs_previous_average_ms=${formatNullableDurationMs(comparison.delta_vs_previous_average_ms)}; `
+            + `previous_best_duration_ms=${formatNullableDurationMs(comparison.previous_best_duration_ms)}; `
+            + `delta_vs_previous_best_ms=${formatNullableDurationMs(comparison.delta_vs_previous_best_ms)}; `
+            + `previous_latest_duration_ms=${formatNullableDurationMs(comparison.previous_latest_duration_ms)}; `
+            + `delta_vs_previous_latest_ms=${formatNullableDurationMs(comparison.delta_vs_previous_latest_ms)}; `
+            + `history=${comparison.history_path}`
+        );
     }
     if (result.timeout_forecast) {
         lines.push(`TimeoutForecast: ${formatFullSuiteTimeoutForecast(result.timeout_forecast)}`);

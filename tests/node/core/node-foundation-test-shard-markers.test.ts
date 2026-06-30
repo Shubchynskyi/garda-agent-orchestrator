@@ -63,6 +63,7 @@ test('node foundation shard marker parser rejects malformed marker output', () =
 test('node foundation shard marker predicates identify setup and diagnostics lines', () => {
     assert.equal(isNodeFoundationTestShardSetupLine('NODE_FOUNDATION_TEST_DURATION_TELEMETRY telemetry.json'), true);
     assert.equal(isNodeFoundationTestShardSetupLine('NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=1'), true);
+    assert.equal(isNodeFoundationTestShardSetupLine('NODE_FOUNDATION_TEST_SHARD_COMPARISON current_estimated_wall_ms=1'), true);
     assert.equal(isNodeFoundationTestShardSetupLine('not ok 1 - child output started'), false);
 
     assert.equal(isNodeFoundationTestShardDiagnosticLine('NODE_FOUNDATION_TEST_SHARD_TIMEOUT 1/2 pid=100'), true);

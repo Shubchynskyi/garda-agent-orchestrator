@@ -4,6 +4,7 @@ import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../../core/con
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import { redactSecretText } from '../../../../core/redaction';
 import {
+    buildFullSuiteDurationHistoryComparison,
     buildFullSuiteValidationOutputTelemetry,
     buildFullSuiteTimeoutForecast,
     buildFullSuiteTimeoutRepairTaskProposal,
@@ -458,6 +459,7 @@ export async function runFullSuiteValidationCommand(
         blockedResult.output_artifact_path = gateHelpers.normalizePath(outputArtifactPath);
         blockedResult.output_retention = buildRawOutputRetentionEvidence(rawOutputText, true);
         blockedResult.duration_ms = durationMs;
+        blockedResult.duration_history_comparison = buildFullSuiteDurationHistoryComparison(repoRoot, config, durationMs);
         blockedResult.failure_evidence = persistFullSuiteFailureEvidence({
             repoRoot,
             reviewsRoot,
@@ -489,6 +491,7 @@ export async function runFullSuiteValidationCommand(
             artifact_path: gateHelpers.normalizePath(artifactPath),
             output_artifact_path: gateHelpers.normalizePath(outputArtifactPath),
             duration_ms: blockedResult.duration_ms,
+            duration_history_comparison: blockedResult.duration_history_comparison,
             timeout_forecast: blockedResult.timeout_forecast,
             cycle_binding: blockedResult.cycle_binding,
             violations: blockedResult.violations,
@@ -505,6 +508,7 @@ export async function runFullSuiteValidationCommand(
         };
     }
     if (result.status !== 'SKIPPED') {
+        result.duration_history_comparison = buildFullSuiteDurationHistoryComparison(repoRoot, config, durationMs);
         recordFullSuiteValidationDuration(repoRoot, config, {
             timestamp_utc: new Date().toISOString(),
             task_id: taskId,
@@ -533,6 +537,7 @@ export async function runFullSuiteValidationCommand(
         artifact_path: gateHelpers.normalizePath(artifactPath),
         output_artifact_path: result.output_artifact_path,
         duration_ms: result.duration_ms,
+        duration_history_comparison: result.duration_history_comparison,
         timeout_forecast: result.timeout_forecast,
         cycle_binding: result.cycle_binding,
         out_of_scope_audit_verdict: result.out_of_scope_audit_verdict,
