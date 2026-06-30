@@ -12,7 +12,8 @@ import {
     type TaskQueueEntry
 } from './next-step-task-queue';
 import {
-    buildCommand
+    buildCommand,
+    toRepoDisplayPath
 } from './next-step-command-formatters';
 import {
     restoreSplitRequiredParentFromPermanentLatch,
@@ -31,6 +32,9 @@ import {
     hasSplitRequiredClearedEvidence,
     readSplitRequiredLatchEvidence
 } from './next-step-split-required-latch';
+import {
+    readFullSuiteRepairTaskMaterializationEvidence
+} from '../full-suite/full-suite-repair-task';
 import {
     resolveNextStepFullSuiteValidationRoute,
     type NextStepFullSuiteValidationRoutingOptions
@@ -103,6 +107,67 @@ function isSuccessfulStatusSync(summary: { outcome: string }): boolean {
     return summary.outcome === 'updated' || summary.outcome === 'already_synced';
 }
 
+function resolveCompletedFullSuiteRepairWipRestoreRoute(options: {
+    repoRoot: string;
+    reviewsRoot: string;
+    taskId: string;
+    cliPrefix: string;
+    taskEntries: Map<string, TaskQueueEntry>;
+    taskEntry: TaskQueueEntry | null;
+    fullSuiteArtifactPath?: string;
+}): NextStepDecisionRoutePayload | null {
+    if (!options.fullSuiteArtifactPath) {
+        return null;
+    }
+    const childTaskIds = extractExplicitLinkedChildTaskIds(
+        options.taskEntry?.notes || null,
+        options.taskEntries.keys()
+    ).filter((childTaskId) => childTaskId !== options.taskId);
+    for (const childTaskId of childTaskIds) {
+        const childEntry = options.taskEntries.get(childTaskId);
+        if (!childEntry || !isTaskQueueDoneStatus(childEntry.status)) {
+            continue;
+        }
+        const evidence = readFullSuiteRepairTaskMaterializationEvidence({
+            repoRoot: options.repoRoot,
+            reviewsRoot: options.reviewsRoot,
+            taskId: options.taskId,
+            fullSuiteArtifactPath: options.fullSuiteArtifactPath,
+            childTaskId
+        });
+        if (!evidence.materialized || !evidence.wip_manifest_path) {
+            continue;
+        }
+        const fullSuiteArtifactPath = toRepoDisplayPath(options.repoRoot, options.fullSuiteArtifactPath);
+        const restoreBindingFlags =
+            `--task-id "${options.taskId}" ` +
+            `--full-suite-artifact-path "${fullSuiteArtifactPath}" ` +
+            `--child-task-id "${childTaskId}"`;
+        return {
+            status: 'BLOCKED',
+            nextGate: 'restore-full-suite-repair-wip',
+            title: 'Restore suspended full-suite repair WIP before resuming parent.',
+            reason:
+                `Linked full-suite repair child ${childTaskId} is DONE and materialized repair evidence is current. ` +
+                'Restore the suspended parent WIP before running parent classify, compile, review, full-suite, completion, or final closeout gates. ' +
+                'The restore gate validates manifest paths, artifact hashes, stale base, tracked workspace cleanliness, and untracked target conflicts before applying the parent WIP.',
+            commands: [
+                buildCommand(
+                    'Dry-run full-suite repair WIP restore',
+                    `${options.cliPrefix} gate restore-full-suite-repair-wip ${restoreBindingFlags} --manifest-path "${evidence.wip_manifest_path}" --dry-run --repo-root "."`
+                ),
+                buildCommand(
+                    'Restore full-suite repair WIP and resume parent',
+                    `${options.cliPrefix} gate restore-full-suite-repair-wip ${restoreBindingFlags} --manifest-path "${evidence.wip_manifest_path}" --repo-root "."`
+                )
+            ],
+            missingArtifacts: [],
+            finalReport: null
+        };
+    }
+    return null;
+}
+
 export function resolveTaskQueueTerminalDecisionRoute(options: {
     repoRoot: string;
     reviewsRoot: string;
@@ -118,6 +183,7 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
     summaryBlockers: readonly string[];
     filteredMissingArtifacts: NextStepArtifactState[];
     corePresentArtifacts: NextStepArtifactState[];
+    fullSuiteArtifactPath?: string;
 }): NextStepDecisionRoutePayload | null {
     const taskQueueStatus = options.taskEntry?.status || null;
     const splitRequiredStatusInTaskQueue = isTaskQueueSplitRequiredStatus(taskQueueStatus);
@@ -223,6 +289,23 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
             extractExplicitLinkedChildTaskIds
         );
         const hasChildren = hasLinkedChildTasks(options.taskEntries, options.taskId);
+        if (hasChildren && !childRoute) {
+            const repairRestoreRoute = resolveCompletedFullSuiteRepairWipRestoreRoute({
+                repoRoot: options.repoRoot,
+                reviewsRoot: options.reviewsRoot,
+                taskId: options.taskId,
+                cliPrefix: options.cliPrefix,
+                taskEntries: options.taskEntries,
+                taskEntry: options.taskEntry,
+                fullSuiteArtifactPath: options.fullSuiteArtifactPath
+            });
+            if (repairRestoreRoute) {
+                return {
+                    ...repairRestoreRoute,
+                    presentArtifacts: options.corePresentArtifacts
+                };
+            }
+        }
         const syncResult = latchEvidence.valid && hasChildren
             ? transitionSplitRequiredParentToDecomposed({
                 repoRoot: options.repoRoot,
@@ -318,6 +401,23 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
         const tasksToComplete = completionState?.hasLinkedChildren && completionState.complete
             ? [...new Set([...completionState.completedDecomposedTaskIds, options.taskId])]
             : [];
+        if (completionState?.hasLinkedChildren && completionState.complete) {
+            const repairRestoreRoute = resolveCompletedFullSuiteRepairWipRestoreRoute({
+                repoRoot: options.repoRoot,
+                reviewsRoot: options.reviewsRoot,
+                taskId: options.taskId,
+                cliPrefix: options.cliPrefix,
+                taskEntries: options.taskEntries,
+                taskEntry: options.taskEntry,
+                fullSuiteArtifactPath: options.fullSuiteArtifactPath
+            });
+            if (repairRestoreRoute) {
+                return {
+                    ...repairRestoreRoute,
+                    presentArtifacts: options.corePresentArtifacts
+                };
+            }
+        }
         const syncResult = tasksToComplete.length > 0
             ? transitionDecomposedParentsToDone({
                 repoRoot: options.repoRoot,

@@ -45,6 +45,9 @@ import {
     resolveWorkflowConfigPath
 } from '../full-suite/full-suite-validation';
 import {
+    readFullSuiteRepairTaskMaterializationEvidence
+} from '../full-suite/full-suite-repair-task';
+import {
     readInterruptedFullSuiteValidationRunMarker,
     resolveFullSuiteValidationRunMarkerPath
 } from '../full-suite/full-suite-validation-run-marker';
@@ -559,10 +562,23 @@ function getFullSuiteTimeoutRepairTaskProposal(
 }
 
 function isFullSuiteTimeoutRepairTaskMaterialized(
+    repoRoot: string,
+    reviewsRoot: string,
     taskEntries: Map<string, TaskQueueEntry>,
-    proposal: FullSuiteTimeoutRepairTaskProposal
+    proposal: FullSuiteTimeoutRepairTaskProposal,
+    taskId: string,
+    fullSuiteArtifactPath: string
 ): boolean {
-    return !!proposal.suggestedTaskId && taskEntries.has(proposal.suggestedTaskId);
+    if (!proposal.suggestedTaskId || !taskEntries.has(proposal.suggestedTaskId)) {
+        return false;
+    }
+    return readFullSuiteRepairTaskMaterializationEvidence({
+        repoRoot,
+        reviewsRoot,
+        taskId,
+        fullSuiteArtifactPath,
+        childTaskId: proposal.suggestedTaskId
+    }).materialized;
 }
 
 function isFullSuiteWarningOnlyContinuationArtifact(
@@ -1895,8 +1911,12 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     );
     const fullSuiteTimeoutRepairTaskProposal = getFullSuiteTimeoutRepairTaskProposal(fullSuiteTimeoutPolicy);
     const fullSuiteTimeoutRepairTaskMaterialized = isFullSuiteTimeoutRepairTaskMaterialized(
+        repoRoot,
+        reviewsRoot,
         taskEntries,
-        fullSuiteTimeoutRepairTaskProposal
+        fullSuiteTimeoutRepairTaskProposal,
+        taskId,
+        readinessArtifacts.paths.fullSuiteValidationPath
     );
     const fullSuiteManualRetryEvidence = readFullSuiteManualRetryEvidence({
         repoRoot,
@@ -2099,7 +2119,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         finalReportContractBlocker: summary.final_report_contract.blocker || null,
         summaryBlockers: summary.blockers.map((blocker) => `${blocker.gate}: ${blocker.reason}`),
         filteredMissingArtifacts,
-        corePresentArtifacts: coreArtifacts.present
+        corePresentArtifacts: coreArtifacts.present,
+        fullSuiteArtifactPath: readinessArtifacts.paths.fullSuiteValidationPath
     });
     if (taskQueueTerminalRoute) {
         return buildResult({
@@ -2820,6 +2841,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     }
 
     const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+    const fullSuiteRepairTaskCommand =
+        `${cliPrefix} gate materialize-full-suite-repair-task --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --full-suite-artifact-path "${toRepoDisplayPath(repoRoot, readinessArtifacts.paths.fullSuiteValidationPath)}" --repo-root "."`;
     const fullSuiteRunMarkerRecoveryCommand =
         `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
     const fullSuiteRunMarkerCleanupCommand =
@@ -2832,6 +2855,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         gatePassed: fullSuiteGatePassed,
         timeoutBlockerExhausted: fullSuiteTimeoutBlockerExhausted,
         timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal.summary,
+        timeoutRepairTaskCommand: fullSuiteTimeoutRepairTaskProposal.suggestedTaskId
+            ? fullSuiteRepairTaskCommand
+            : null,
         timeoutRepairTaskMaterialized: fullSuiteTimeoutRepairTaskMaterialized,
         timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
         transientRetryEvidenceAvailable: fullSuiteManualRetryEvidence.available,

@@ -5,6 +5,7 @@ import { getBundleCliCommand, getSourceCliCommand, resolveBundleNameForTarget } 
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import { redactSecretText } from '../../../../core/redaction';
 import {
+    buildFullSuiteTimeoutRepairTaskProposal,
     buildFullSuiteTimeoutForecast,
     buildFullSuiteValidationOutputTelemetry,
     formatFullSuiteTimeoutForecast,
@@ -12,6 +13,7 @@ import {
     persistFullSuiteFailureEvidence,
     recordFullSuiteValidationDuration,
     resolveFullSuiteDurationHistoryPath,
+    type FullSuiteTimeoutPolicyEvidence,
     type FullSuiteValidationCycleBinding,
     type FullSuiteValidationResult
 } from '../../../../gates/full-suite/full-suite-validation';
@@ -384,6 +386,28 @@ async function materializeInterruptedFullSuiteTimeoutEvidence(options: {
     const outputArtifactPath = path.join(reviewsRoot, `${options.taskId}-full-suite-output.log`);
     const config = loadFullSuiteValidationConfig(options.repoRoot);
     const timeoutMs = options.summary?.timeoutMs || config.timeout_ms;
+    const timeoutRetryCount = Number.isSafeInteger(config.timeout_retry_count)
+        && (config.timeout_retry_count ?? 0) >= 0
+        ? config.timeout_retry_count ?? 0
+        : 1;
+    const maxAttempts = Math.max(1, 1 + timeoutRetryCount);
+    const attemptsExhausted = maxAttempts <= 1;
+    const timeoutPolicy: FullSuiteTimeoutPolicyEvidence = {
+        timeout_blocker: config.timeout_blocker !== false,
+        timeout_retry_count: timeoutRetryCount,
+        max_attempts: maxAttempts,
+        attempts: [{
+            attempt: 1,
+            exit_code: null,
+            timed_out: true,
+            cancelled: true
+        }],
+        attempts_exhausted: attemptsExhausted,
+        warning_only_continuation: config.timeout_blocker === false,
+        repair_task_proposal: attemptsExhausted && config.timeout_blocker !== false
+            ? buildFullSuiteTimeoutRepairTaskProposal(options.taskId)
+            : null
+    };
     const startedAtMs = Date.parse(options.summary?.startedAtUtc || '');
     const durationMs = Number.isFinite(startedAtMs)
         ? Math.max(1, Date.now() - startedAtMs)
@@ -439,6 +463,7 @@ async function materializeInterruptedFullSuiteTimeoutEvidence(options: {
         warnings: [
             'Dead run marker had no live child or descendant process evidence; no generic Node process cleanup was required.'
         ],
+        timeout_policy: timeoutPolicy,
         cycle_binding: {
             task_id: options.taskId,
             preflight_path: gateHelpers.normalizePath(options.preflightPath),
@@ -480,6 +505,7 @@ async function materializeInterruptedFullSuiteTimeoutEvidence(options: {
             warnings: result.warnings,
             output_telemetry: result.output_telemetry,
             output_retention: result.output_retention,
+            timeout_policy: result.timeout_policy,
             failure_evidence: result.failure_evidence,
             recovery_artifact_path: gateHelpers.normalizePath(options.recoveryArtifactPath)
         });

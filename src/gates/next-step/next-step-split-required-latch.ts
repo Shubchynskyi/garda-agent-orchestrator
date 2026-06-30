@@ -29,7 +29,7 @@ import {
     SPLIT_REQUIRED_STATUS
 } from './next-step-task-queue';
 
-export type SplitRequiredGuardKind = 'scope_budget' | 'review_cycle';
+export type SplitRequiredGuardKind = 'scope_budget' | 'review_cycle' | 'full_suite_repair';
 
 export interface SplitRequiredLatchResult {
     artifact_path: string;
@@ -159,7 +159,7 @@ export function readSplitRequiredLatchEvidence(params: {
             guard_kind: guardKind || null
         };
     }
-    if (guardKind !== 'scope_budget' && guardKind !== 'review_cycle') {
+    if (guardKind !== 'scope_budget' && guardKind !== 'review_cycle' && guardKind !== 'full_suite_repair') {
         return {
             valid: false,
             reason: 'split-required latch artifact guard_kind is not recognized',

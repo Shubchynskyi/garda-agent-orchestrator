@@ -2,6 +2,7 @@ import { normalizePath } from '../shared/helpers';
 import {
     type FullSuiteValidationConfig,
     type FullSuiteValidationCycleBinding,
+    type FullSuiteTimeoutRepairTaskProposal,
     type FullSuiteValidationResult
 } from './full-suite-validation-types';
 
@@ -53,6 +54,17 @@ export function isFullSuiteNotRequiredForZeroDiffNoReviewableScope(preflight: Re
         && zeroDiffGuard.completion_requires_audited_no_op === true
         && profileGuardrails.zero_diff_no_reviewable_scope === true
         && !hasRequiredReview(preflight);
+}
+
+export function buildFullSuiteTimeoutRepairTaskProposal(taskId: string): FullSuiteTimeoutRepairTaskProposal {
+    return {
+        suggested_task_id: `${taskId}-F1`,
+        title: 'Fix full-suite timeout blocker',
+        area: 'workflow/full-suite-timeout',
+        rationale:
+            `Full-suite validation for ${taskId} timed out after exhausting the configured timeout retry policy. ` +
+            'Materialize this audited follow-up before launching reviewers or continuing task closeout.'
+    };
 }
 
 export function compactGreenSummary(outputLines: string[], maxLines: number): string[] {

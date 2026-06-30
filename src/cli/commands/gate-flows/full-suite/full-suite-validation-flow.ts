@@ -6,6 +6,7 @@ import { redactSecretText } from '../../../../core/redaction';
 import {
     buildFullSuiteValidationOutputTelemetry,
     buildFullSuiteTimeoutForecast,
+    buildFullSuiteTimeoutRepairTaskProposal,
     buildDocsOnlyNotRequiredResult,
     buildSkippedResult,
     buildValidationResult,
@@ -17,7 +18,6 @@ import {
     persistFullSuiteFailureEvidence,
     recordFullSuiteValidationDuration,
     type FullSuiteTimeoutAttemptEvidence,
-    type FullSuiteTimeoutRepairTaskProposal,
     type FullSuiteValidationCycleBinding
 } from '../../../../gates/full-suite/full-suite-validation';
 import { getTaskModeEvidence } from '../../../../gates/task-mode/task-mode';
@@ -110,17 +110,6 @@ function resolveEffectiveFullSuiteValidationConfig(
     return effectiveTimeoutMs === config.timeout_ms
         ? config
         : { ...config, timeout_ms: effectiveTimeoutMs };
-}
-
-function buildFullSuiteTimeoutRepairTaskProposal(taskId: string): FullSuiteTimeoutRepairTaskProposal {
-    return {
-        suggested_task_id: `${taskId}-F1`,
-        title: 'Fix full-suite timeout blocker',
-        area: 'workflow/full-suite-timeout',
-        rationale:
-            `Full-suite validation for ${taskId} timed out after exhausting the configured timeout retry policy. ` +
-            'Materialize this audited follow-up before launching reviewers or continuing task closeout.'
-    };
 }
 
 export async function runFullSuiteValidationCommand(

@@ -22,6 +22,7 @@ const BASE_OPTIONS = Object.freeze({
     command: 'node bin/garda.js gate full-suite-validation --task-id "T-123" --preflight-path "runtime/reviews/T-123-preflight.json" --repo-root "."',
     runMarkerRecoveryCommand: 'node bin/garda.js gate full-suite-run-marker-recovery --task-id "T-123" --preflight-path "runtime/reviews/T-123-preflight.json" --repo-root "."',
     runMarkerCleanupCommand: 'node bin/garda.js gate full-suite-run-marker-recovery --task-id "T-123" --preflight-path "runtime/reviews/T-123-preflight.json" --clear-dead-marker --operator-confirmed yes --repo-root "."',
+    timeoutRepairTaskCommand: 'node bin/garda.js gate materialize-full-suite-repair-task --task-id "T-123" --preflight-path "runtime/reviews/T-123-preflight.json" --full-suite-artifact-path "runtime/reviews/T-123-full-suite-validation.json" --repo-root "."',
     navigatorCommand: 'node bin/garda.js next-step "T-123" --repo-root "."',
     nextReviewType: 'test'
 });
@@ -82,7 +83,7 @@ describe('next-step full-suite route helper', () => {
         assert.match(route?.title || '', /repair task/i);
         assert.match(route?.reason || '', /exhausting the configured retry policy/);
         assert.match(route?.reason || '', /T-123-F1/);
-        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.navigatorCommand);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.timeoutRepairTaskCommand);
     });
 
     it('routes exhausted WARNED timeout blockers to repair-task materialization before reviewers', () => {
@@ -98,7 +99,7 @@ describe('next-step full-suite route helper', () => {
 
         assert.equal(route?.nextGate, 'full-suite-timeout-repair-task');
         assert.match(route?.reason || '', /T-123-F1/);
-        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.navigatorCommand);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.timeoutRepairTaskCommand);
     });
 
     it('prints a cleanup command only for dead interrupted markers without live descendants', () => {

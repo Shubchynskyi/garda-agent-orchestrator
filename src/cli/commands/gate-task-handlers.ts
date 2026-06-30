@@ -35,6 +35,10 @@ import type { ParsedOptionsRecord } from './shared-command-utils';
 import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/completion/completion-finalization';
 import { runFullSuiteValidationCommand } from './gate-flows/full-suite/full-suite-validation-flow';
 import { runFullSuiteRunMarkerRecoveryCommand } from './gate-flows/full-suite/full-suite-run-marker-recovery';
+import {
+    runMaterializeFullSuiteRepairTaskCommand,
+    runRestoreFullSuiteRepairWipCommand
+} from './gate-flows/full-suite/full-suite-repair-task-flow';
 import { runTaskEventsSummaryCommand, runTaskAuditSummaryCommand } from './gate-flows/task/task-summary-flow';
 import { runTaskResetCommand } from './gate-flows/task/task-reset-flow';
 import { buildTaskResetMissingTaskIdMessage } from './task-reset-alias';
@@ -497,6 +501,40 @@ export async function handleFullSuiteRunMarkerRecovery(gateArgv: string[]): Prom
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = await runFullSuiteRunMarkerRecoveryCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleMaterializeFullSuiteRepairTask(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--full-suite-artifact-path': { key: 'fullSuiteArtifactPath', type: 'string' },
+        '--reviews-root': { key: 'reviewsRoot', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runMaterializeFullSuiteRepairTaskCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleRestoreFullSuiteRepairWip(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--full-suite-artifact-path': { key: 'fullSuiteArtifactPath', type: 'string' },
+        '--manifest-path': { key: 'manifestPath', type: 'string' },
+        '--child-task-id': { key: 'childTaskId', type: 'string' },
+        '--reviews-root': { key: 'reviewsRoot', type: 'string' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runRestoreFullSuiteRepairWipCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;

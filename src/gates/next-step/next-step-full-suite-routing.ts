@@ -49,6 +49,7 @@ export interface NextStepFullSuiteValidationRoutingOptions {
     gatePassed: boolean;
     timeoutBlockerExhausted: boolean;
     timeoutRepairTaskProposal: string | null;
+    timeoutRepairTaskCommand?: string | null;
     timeoutRepairTaskMaterialized?: boolean;
     timedOutRetryAvailable: boolean;
     transientRetryEvidenceAvailable: boolean;
@@ -418,6 +419,7 @@ function buildTimeoutBlockerRepairRoute(
     const proposal = options.timeoutRepairTaskProposal
         ? ` Proposed repair task: ${options.timeoutRepairTaskProposal}.`
         : ' No structured repair-task proposal was found in the full-suite artifact; inspect the artifact before continuing.';
+    const repairCommand = options.timeoutRepairTaskCommand || options.navigatorCommand;
     return {
         status: 'BLOCKED',
         nextGate: 'full-suite-timeout-repair-task',
@@ -429,8 +431,10 @@ function buildTimeoutBlockerRepairRoute(
             `Command: ${options.commandText}. ${options.timeoutForecastLine || ''}`.trim(),
         commands: [
             buildCommand(
-                'Rerun navigator after audited timeout repair task is materialized',
-                options.navigatorCommand
+                options.timeoutRepairTaskCommand
+                    ? 'Materialize audited timeout repair task'
+                    : 'Rerun navigator after audited timeout repair task is materialized',
+                repairCommand
             )
         ]
     };

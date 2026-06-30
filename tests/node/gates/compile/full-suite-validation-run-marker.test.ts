@@ -188,6 +188,24 @@ describe('full-suite validation run marker', () => {
             const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuiteArtifactPath, 'utf8')) as Record<string, unknown>;
             assert.equal(fullSuiteArtifact.status, 'FAILED');
             assert.equal(fullSuiteArtifact.timed_out, true);
+            const timeoutPolicy = fullSuiteArtifact.timeout_policy as Record<string, unknown>;
+            assert.equal(timeoutPolicy.timeout_blocker, true);
+            assert.equal(timeoutPolicy.timeout_retry_count, 1);
+            assert.equal(timeoutPolicy.max_attempts, 2);
+            assert.equal(timeoutPolicy.attempts_exhausted, false);
+            assert.equal(timeoutPolicy.warning_only_continuation, false);
+            assert.equal(timeoutPolicy.repair_task_proposal, null);
+            assert.deepEqual((timeoutPolicy.attempts as Array<Record<string, unknown>>).map((entry) => ({
+                attempt: entry.attempt,
+                exit_code: entry.exit_code,
+                timed_out: entry.timed_out,
+                cancelled: entry.cancelled
+            })), [{
+                attempt: 1,
+                exit_code: null,
+                timed_out: true,
+                cancelled: true
+            }]);
             assert.equal(fullSuiteArtifact.output_retention && typeof fullSuiteArtifact.output_retention === 'object'
                 ? (fullSuiteArtifact.output_retention as Record<string, unknown>).raw_output_retained
                 : null, true);
@@ -208,6 +226,7 @@ describe('full-suite validation run marker', () => {
             assert.match(outputLog, new RegExp(`CleanupCommand: .+gate full-suite-run-marker-recovery --task-id "${taskId}"`, 'u'));
             const timeline = fs.readFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`), 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/u);
+            assert.match(timeline, /"timeout_policy":\{/u);
             const durationHistory = JSON.parse(fs.readFileSync(resolveFullSuiteDurationHistoryPath(repoRoot), 'utf8')) as {
                 entries: Array<{
                     task_id: string;

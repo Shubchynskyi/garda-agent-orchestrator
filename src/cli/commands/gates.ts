@@ -58,6 +58,11 @@ export {
 } from './gate-flows/full-suite/full-suite-run-marker-recovery';
 
 export {
+    runMaterializeFullSuiteRepairTaskCommand,
+    runRestoreFullSuiteRepairWipCommand
+} from './gate-flows/full-suite/full-suite-repair-task-flow';
+
+export {
     runQualityChecklistCommand
 } from './gate-flows/quality-checklist/quality-checklist-flow';
 

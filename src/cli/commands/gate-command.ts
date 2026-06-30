@@ -46,6 +46,8 @@ import {
         handleNextStep,
         handleFullSuiteValidation,
         handleFullSuiteRunMarkerRecovery,
+        handleMaterializeFullSuiteRepairTask,
+        handleRestoreFullSuiteRepairWip,
         handleCompletionGate,
         handleHumanCommit,
         handleTaskReset
@@ -141,6 +143,10 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleFullSuiteValidation(gateArgv);
         case 'full-suite-run-marker-recovery':
             return handleFullSuiteRunMarkerRecovery(gateArgv);
+        case 'materialize-full-suite-repair-task':
+            return handleMaterializeFullSuiteRepairTask(gateArgv);
+        case 'restore-full-suite-repair-wip':
+            return handleRestoreFullSuiteRepairWip(gateArgv);
         case 'record-review-result':
             return handleRecordReviewResult(gateArgv);
         case 'completion-gate':

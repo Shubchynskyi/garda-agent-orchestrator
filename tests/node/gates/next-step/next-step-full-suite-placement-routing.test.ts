@@ -39,6 +39,84 @@ function appendRepairTaskRow(repoRoot: string, taskId = `${TASK_ID}-F1`): void {
     fs.writeFileSync(taskPath, `${fs.readFileSync(taskPath, 'utf8')}${row}\n`, 'utf8');
 }
 
+function writeCompletedRepairTaskRows(repoRoot: string, childTaskId = `${TASK_ID}-F1`): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '# TASK.md',
+        '',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        `| ${TASK_ID} | SPLIT_REQUIRED | P1 | workflow/full-suite-repair-split-suspend | Parent repair task | gpt-5.5 | 2026-06-30 | strict | Created child tasks: \`${childTaskId}\`; parent WIP suspended for full-suite repair. |`,
+        `| ${childTaskId} | DONE | P1 | workflow/full-suite-timeout | Fix full-suite timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Repair completed. |`,
+        ''
+    ].join('\n'), 'utf8');
+}
+
+function writeRepairTaskMaterializationEvidence(
+    repoRoot: string,
+    childTaskId = `${TASK_ID}-F1`,
+    status = 'MATERIALIZED'
+): void {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+    const fullSuitePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`);
+    const manifestRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'wip', TASK_ID, 'full-suite-repair', 'test');
+    const stagedPatchPath = path.join(manifestRoot, 'staged.patch');
+    const unstagedPatchPath = path.join(manifestRoot, 'unstaged.patch');
+    fs.mkdirSync(manifestRoot, { recursive: true });
+    fs.writeFileSync(stagedPatchPath, '', 'utf8');
+    fs.writeFileSync(unstagedPatchPath, '', 'utf8');
+    const manifestPath = path.join(manifestRoot, 'manifest.json');
+    writeJson(manifestPath, {
+        schema_version: 1,
+        kind: 'full_suite_repair_wip',
+        status: 'suspended',
+        task_id: TASK_ID,
+        child_task_id: childTaskId,
+        created_at_utc: '2026-06-30T00:00:00.000Z',
+        base_commit: 'test-base',
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: fileSha256(preflightPath),
+        full_suite_artifact_path: normalizeForTimeline(fullSuitePath),
+        full_suite_artifact_sha256: fileSha256(fullSuitePath),
+        patches: {
+            staged: {
+                path: normalizeForTimeline(stagedPatchPath),
+                sha256: fileSha256(stagedPatchPath),
+                bytes: 0,
+                empty: true
+            },
+            unstaged: {
+                path: normalizeForTimeline(unstagedPatchPath),
+                sha256: fileSha256(unstagedPatchPath),
+                bytes: 0,
+                empty: true
+            }
+        },
+        tracked_files: [],
+        untracked_files: [],
+        unrelated_untracked_files: []
+    });
+    writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-repair-task.json`), {
+        schema_version: 1,
+        status,
+        task_id: TASK_ID,
+        child_task_id: childTaskId,
+        created_at_utc: '2026-06-30T00:00:01.000Z',
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: fileSha256(preflightPath),
+        full_suite_artifact_path: normalizeForTimeline(fullSuitePath),
+        full_suite_artifact_sha256: fileSha256(fullSuitePath),
+        wip_manifest_path: normalizeForTimeline(manifestPath),
+        wip_manifest_sha256: fileSha256(manifestPath),
+        split_required_artifact_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)),
+        task_queue: {
+            outcome: 'updated',
+            parent_linked: true,
+            child_created: true
+        },
+        violations: []
+    });
+}
+
 describe('gates/next-step', () => {
     it('runs enabled full-suite validation before launching mandatory test review', () => {
 
@@ -366,6 +444,8 @@ describe('gates/next-step', () => {
 
         assert.ok(!result.commands[0].command.includes('--review-type'));
 
+        assert.ok(result.commands[0].command.includes('gate materialize-full-suite-repair-task'));
+
     });
 
     it('blocks reviewer launch until an exhausted WARNED full-suite timeout repair task is materialized', () => {
@@ -468,10 +548,59 @@ describe('gates/next-step', () => {
 
         const afterRepairTask = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(afterRepairTask.next_gate, 'build-review-context', afterRepairTask.reason);
+        assert.equal(afterRepairTask.next_gate, 'full-suite-timeout-repair-task', afterRepairTask.reason);
 
-        assert.ok(afterRepairTask.commands[0].command.includes('--review-type "code"'), afterRepairTask.commands[0].command);
+        writeRepairTaskMaterializationEvidence(repoRoot, `${TASK_ID}-F1`, 'BLOCKED');
 
+        const afterBlockedArtifact = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(afterBlockedArtifact.next_gate, 'full-suite-timeout-repair-task', afterBlockedArtifact.reason);
+
+        writeRepairTaskMaterializationEvidence(repoRoot);
+
+        const afterMaterializationArtifact = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(afterMaterializationArtifact.next_gate, 'build-review-context', afterMaterializationArtifact.reason);
+
+        assert.ok(afterMaterializationArtifact.commands[0].command.includes('--review-type "code"'), afterMaterializationArtifact.commands[0].command);
+
+    });
+
+    it('routes completed full-suite repair child to restore suspended parent WIP before closing the parent', () => {
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            ...buildDefaultWorkflowConfig(),
+            full_suite_validation: {
+                ...NEXT_STEP_FULL_SUITE_TEST_CONFIG,
+                placement: 'after_compile_before_reviews'
+            },
+            review_execution_policy: {
+                mode: 'strict_sequential'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID);
+        writeRepairTaskMaterializationEvidence(repoRoot);
+        writeCompletedRepairTaskRows(repoRoot);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'restore-full-suite-repair-wip', result.reason);
+        assert.match(result.reason, /repair child T-NEXT-1-F1 is DONE/);
+        assert.ok(result.commands.some((command) => command.command.includes('restore-full-suite-repair-wip')));
+        assert.ok(result.commands.some((command) => command.command.includes('--dry-run')));
+        assert.ok(result.commands.every((command) => command.command.includes(`--task-id "${TASK_ID}"`)));
+        assert.ok(result.commands.every((command) => command.command.includes(`--child-task-id "${TASK_ID}-F1"`)));
+        assert.ok(result.commands.every((command) => command.command.includes(`${TASK_ID}-full-suite-validation.json`)));
+        assert.ok(!result.reason.includes('completed because all explicit children are DONE'));
     });
 
     it('accepts current warning-only full-suite timeout evidence and continues to reviewer launch', () => {
