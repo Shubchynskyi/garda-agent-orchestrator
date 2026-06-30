@@ -4,6 +4,7 @@
 
 ### Local UI
 - Restored the guarded Compile-gate command editor in `garda ui --actions`, placed next to Full-suite command and routed through the audited `garda workflow set --compile-gate-command` confirmation path.
+- Setup handoff, successful `agent-init`, and `garda status` now surface `garda ui --actions` as a separate UI recommendation for inspecting workspace state and guarded allow-listed settings without replacing the lifecycle next command.
 
 ### Install, Update, And Package Safety
 - Preserved existing `TASK.md` task rows and user-owned notes when install/update refreshes the managed template, including overwrite-style setup paths.

@@ -10,6 +10,7 @@ import {
     buildActiveProfileGuidance,
     buildFullSuiteDisabledGuidance,
     buildNextStepNavigatorGuidance,
+    RECOMMENDED_UI_ACTIONS_COMMAND,
     buildTaskStartNavigatorPrompt
 } from '../../core/onboarding-contract';
 import { pathExists, readTextFile } from '../../core/filesystem';
@@ -304,7 +305,8 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     }
     lines.push('');
     lines.push(formatSetupHandoffHeading('Workspace UI'));
-    lines.push(`  ${formatSetupHandoffLabel('RecommendedUiCommand:')} Run \`garda ui\` to inspect available commands and workspace state.`);
+    lines.push(`  ${formatSetupHandoffLabel('RecommendedUiCommand:')} ${RECOMMENDED_UI_ACTIONS_COMMAND}`);
+    lines.push('  After agent-init passes, run this to inspect workspace state and guarded allow-listed settings; mutating actions still require explicit confirmation.');
     lines.push(`RecommendedNextCommand: Give your agent "${initPromptPath}" and complete the agent-init flow, then run ${deployedCliCommand} agent-init --target-root ${quoteCommandValue(path.dirname(snapshot.bundlePath))}`);
     return lines.join('\n');
 }

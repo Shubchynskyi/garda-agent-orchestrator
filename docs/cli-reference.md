@@ -47,6 +47,7 @@ What it does:
 - runs install
 - validates `MANIFEST.md`
 - leaves final agent onboarding for `AGENT_INIT_PROMPT.md` and `garda agent-init`
+- prints `RecommendedUiCommand: garda ui --actions` as the post-agent-init UI inspection command
 
 Notes:
 - `setup` supports `--active-agent-files` for fully scripted flows, but ordinary onboarding leaves explicit active-agent-file confirmation to `garda agent-init`.
@@ -60,6 +61,8 @@ Hard code-level onboarding gate. This command writes `runtime/agent-init-state.j
 garda agent-init --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md, CLAUDE.md" --project-rules-updated yes --skills-prompted yes
 ```
 
+When `agent-init` passes and the workspace is ready for tasks, the final output prints `RecommendedUiCommand: garda ui --actions` so the operator can review workspace state and guarded allow-listed settings before or alongside choosing the first task. Mutating UI actions still require explicit confirmation.
+
 ### `garda status`
 
 ```text
@@ -70,6 +73,7 @@ garda status why-blocked --target-root "."
 
 Notes:
 - `status` prints the normal workspace readiness snapshot.
+- `status` prints `RecommendedUiCommand: garda ui --actions` separately from `RecommendedNextCommand`; the UI command is for guarded local inspection/settings, while the next command remains the lifecycle command to run.
 - While a valid `runtime/agent-init-state.json` has `ProjectMemoryInitialized=false` or `ProjectMemoryValidated=false`, `status` reports `PROJECT_MEMORY_PENDING` and prints `ProjectMemoryInitRefreshPrompt`.
 - Malformed or invalid `agent-init-state.json` remains an `AGENT_STATE_INVALID` readiness problem; rerun `garda agent-init` after repair so the memory readiness fields can be trusted.
 - When both `ProjectMemoryInitialized=true` and `ProjectMemoryValidated=true`, `status` treats durable project memory as already confirmed and does not recommend the expensive full init/refresh prompt again.

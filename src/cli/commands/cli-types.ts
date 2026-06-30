@@ -54,6 +54,7 @@ export interface StatusSnapshot {
     liveVersionError: string | null;
     agentInitStateError: string | null;
     commandsRulePath: string;
+    recommendedUiCommand: string;
     recommendedNextCommand: string;
     parityResult: {
         isSourceCheckout: boolean;

@@ -1,5 +1,7 @@
 import { resolveBundleName } from './constants';
 
+export const RECOMMENDED_UI_ACTIONS_COMMAND = 'garda ui --actions';
+
 export function buildTaskStartNavigatorPrompt(taskId = '<task-id>'): string {
     return `Execute task ${taskId} from TASK.md strictly through the orchestrator. Use \`next-step\` as the navigator; when independent review is required, launch a sub-agent using your internal tools.`;
 }

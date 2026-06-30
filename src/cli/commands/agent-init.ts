@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { resolveBundleNameForTarget, resolveInitAnswersRelativePathForTarget } from '../../core/constants';
-import { buildFullSuiteDisabledGuidance } from '../../core/onboarding-contract';
+import { buildFullSuiteDisabledGuidance, RECOMMENDED_UI_ACTIONS_COMMAND } from '../../core/onboarding-contract';
 import { runAgentInit } from '../../lifecycle/agent-init';
 import { getNodeBundleCliCommand } from '../../materialization/command-constants';
 import { getStatusSnapshot } from '../../validators/status';
@@ -67,6 +67,10 @@ export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): s
     lines.push(`ProjectMemoryBootstrapReport: ${result.projectMemoryBootstrapReport}`);
     if (snapshot.mandatoryFullSuiteEnabled === false) {
         lines.push(`FullSuiteValidationNotice: ${buildFullSuiteDisabledGuidance(getNodeBundleCliCommand())}`);
+    }
+    if (result.readyForTasks) {
+        lines.push(`RecommendedUiCommand: ${RECOMMENDED_UI_ACTIONS_COMMAND}`);
+        lines.push('UiCommandGuidance: Run this to review workspace state and guarded allow-listed settings before or alongside choosing the first task; mutating actions require explicit confirmation.');
     }
     for (const warning of result.projectMemoryWarnings) {
         lines.push(`ProjectMemoryWarning: ${warning}`);

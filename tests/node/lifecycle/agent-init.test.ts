@@ -174,6 +174,10 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
         const nextStepLine = buildAgentInitNextStep(result);
         assert.ok(nextStepLine.includes('node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."'));
         assert.ok(!nextStepLine.includes('node bin/garda.js profile current|list|use|create --target-root "."'));
+
+        const output = buildAgentInitOutput(result);
+        assert.ok(output.includes('RecommendedUiCommand: garda ui --actions'));
+        assert.ok(output.includes('guarded allow-listed settings before or alongside choosing the first task'));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

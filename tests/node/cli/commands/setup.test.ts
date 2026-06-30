@@ -1300,7 +1300,8 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(!text.includes('Mandatory orchestrator flow:'));
     assert.ok(!text.includes('Project memory maintenance: update read_strategy=index_first'));
     assert.ok(!text.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
-    assert.ok(text.includes('RecommendedUiCommand: Run `garda ui` to inspect available commands and workspace state.'));
+    assert.ok(text.includes('RecommendedUiCommand: garda ui --actions'));
+    assert.ok(text.includes('guarded allow-listed settings'));
     assert.match(text.trimEnd(), /RecommendedNextCommand: Give your agent ".*AGENT_INIT_PROMPT\.md" and complete the agent-init flow, then run .* agent-init --target-root ".*"$/);
 });
 

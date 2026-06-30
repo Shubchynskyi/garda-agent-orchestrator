@@ -247,6 +247,7 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     appendToxinLines(lines, snapshot);
     appendCommandsLines(lines, snapshot);
 
+    lines.push(`RecommendedUiCommand: ${snapshot.recommendedUiCommand || 'garda ui --actions'}`);
     lines.push(`RecommendedNextCommand: ${snapshot.recommendedNextCommand}`);
     return lines.join('\n');
 }

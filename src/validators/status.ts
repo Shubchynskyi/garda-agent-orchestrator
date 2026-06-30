@@ -27,6 +27,7 @@ import {
 import { assessProtectedManifest } from './protected-manifest-assessment';
 import { readTaskQueueStatusMap } from './task-status-map';
 import { buildRecommendedNextCommand } from './status/status-recommendations';
+import { RECOMMENDED_UI_ACTIONS_COMMAND } from '../core/onboarding-contract';
 import { formatFullSuitePerformanceGuidance } from '../gates/full-suite/full-suite-validation';
 import { getWorkflowConfigPath, isConfiguredCompileGateCommand } from '../core/workflow-config';
 import type {
@@ -649,6 +650,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         agentInitializationPendingReason,
         agentInitializationComplete,
         readyForTasks,
+        recommendedUiCommand: RECOMMENDED_UI_ACTIONS_COMMAND,
         recommendedNextCommand,
         activeProfile,
         timelineTaskCount: timelineSummary.taskCount,

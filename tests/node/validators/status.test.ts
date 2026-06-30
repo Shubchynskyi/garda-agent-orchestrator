@@ -1102,6 +1102,8 @@ test('formatStatusSnapshot produces expected text markers', () => {
         assert.ok(output.includes('Not installed'));
         assert.ok(output.includes('Workspace Stages'));
         assert.ok(output.includes('Installed'));
+        assert.equal(snapshot.recommendedUiCommand, 'garda ui --actions');
+        assert.ok(output.includes('RecommendedUiCommand: garda ui --actions'));
         assert.ok(output.includes('RecommendedNextCommand'));
     } finally {
         cleanupStatusTempDir(tmpDir);
@@ -1144,6 +1146,7 @@ test('formatStatusSnapshot includes explicit next stage for CLI-collected setup'
         const output = formatStatusSnapshot(snapshot);
         assert.ok(output.includes('Agent setup required'));
         assert.ok(output.includes('Next stage: Launch your agent with AGENT_INIT_PROMPT.md'));
+        assert.ok(output.includes('RecommendedUiCommand: garda ui --actions'));
         assert.ok(output.includes('RecommendedNextCommand: Give your agent'));
     } finally {
         cleanupStatusTempDir(tmpDir);
