@@ -361,6 +361,57 @@ describe('next-step reviewer launch evidence helpers', () => {
         );
     });
 
+    it('does not treat stale launch metadata as current through reviewer provenance context fallback', () => {
+        const repoRoot = makeTempRepo();
+        const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${REVIEW_TYPE}-review-context.json`);
+        writeJson(contextPath, { task_id: TASK_ID, review_type: REVIEW_TYPE, generation: 'stale' });
+        const staleContextSha256 = fileSha256(contextPath);
+        const { launchArtifactPath, preparedLaunchEventSha256, routingEventSha256 } = seedPreparedLaunchArtifact(repoRoot, contextPath);
+        overwriteLaunchedArtifact(
+            repoRoot,
+            contextPath,
+            launchArtifactPath,
+            preparedLaunchEventSha256,
+            routingEventSha256
+        );
+
+        writeJson(contextPath, { task_id: TASK_ID, review_type: REVIEW_TYPE, generation: 'current' });
+        const currentContextSha256 = fileSha256(contextPath);
+        assert.notEqual(currentContextSha256, staleContextSha256);
+
+        const state = makeReviewState(contextPath, {
+            artifactExists: true,
+            receiptExists: true,
+            ready: true,
+            receiptReviewContextSha256: currentContextSha256,
+            receiptReviewTreeStateSha256: HASH_A,
+            reviewerProvenance: {
+                attestation_type: 'reviewer_invocation_attestation',
+                controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                task_sequence: 4,
+                prev_event_sha256: routingEventSha256,
+                event_sha256: 'c'.repeat(64),
+                task_id: TASK_ID,
+                review_type: REVIEW_TYPE,
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: REVIEWER_IDENTITY,
+                review_context_sha256: staleContextSha256,
+                review_tree_state_sha256: HASH_A,
+                routing_event_sha256: routingEventSha256
+            }
+        });
+
+        const artifactEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
+            repoRoot,
+            eventsRoot(repoRoot),
+            TASK_ID,
+            state
+        );
+
+        assert.equal(artifactEvidence.state, 'missing_or_invalid');
+        assert.equal(artifactEvidence.reviewContextSha256, null);
+    });
+
     it('summarizes provider-native delegated reviewer launch target from provider registry', () => {
         assert.match(
             buildProviderNativeReviewerLaunchTargetSummary({ provider: 'Codex' }),

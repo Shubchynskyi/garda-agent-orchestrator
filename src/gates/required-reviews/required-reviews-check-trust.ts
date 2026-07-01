@@ -368,7 +368,20 @@ export function validateReviewArtifactGateEligibility(options: {
                     `and review-context (${contextExecutionMode}).`
                 );
             }
-            if (!reusedExistingReview && reviewerIdentity && contextReviewerSessionId && reviewerIdentity !== contextReviewerSessionId) {
+            const contextReviewerIdentityMatchesReceipt = reviewerIdentity && contextReviewerSessionId
+                ? reviewerIdentityMatchesDelegatedLaunchCycle({
+                    observedIdentity: contextReviewerSessionId,
+                    expectedIdentity: reviewerIdentity,
+                    taskId: resolvedTaskId || '',
+                    reviewType: reviewKey
+                })
+                : false;
+            if (
+                !reusedExistingReview
+                && reviewerIdentity
+                && contextReviewerSessionId
+                && !contextReviewerIdentityMatchesReceipt
+            ) {
                 errors.push(
                     `Review '${reviewKey}' has inconsistent reviewer identity between receipt (${reviewerIdentity}) ` +
                     `and review-context (${contextReviewerSessionId}).`

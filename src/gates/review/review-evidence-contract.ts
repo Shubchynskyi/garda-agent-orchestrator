@@ -3,6 +3,7 @@ import {
     normalizeReviewReceiptReviewerProvenance
 } from '../../gate-runtime/review-context';
 import {
+    buildPlannedReviewerIdentity,
     isResolvedReviewerIdentity
 } from '../../gate-runtime/review/reviewer-identity-contract';
 
@@ -42,6 +43,21 @@ export interface NormalizedReviewReceiptEvidenceFields {
 export interface ReviewReceiptEvidenceContractResult {
     fields: NormalizedReviewReceiptEvidenceFields;
     violations: string[];
+}
+
+function contextReviewerIdentityMatchesReceipt(options: {
+    taskId: string;
+    reviewType: string;
+    contextReviewerIdentity: string | null;
+    receiptReviewerIdentity: string | null;
+}): boolean {
+    if (options.contextReviewerIdentity === options.receiptReviewerIdentity) {
+        return true;
+    }
+    if (!options.receiptReviewerIdentity || !isResolvedReviewerIdentity(options.receiptReviewerIdentity)) {
+        return false;
+    }
+    return options.contextReviewerIdentity === buildPlannedReviewerIdentity(options.taskId, options.reviewType);
 }
 
 function normalizeText(value: unknown): string | null {
@@ -142,7 +158,15 @@ export function validateReviewReceiptEvidenceContract(options: {
     if (!fields.reusedExistingReview && options.contextExecutionMode !== REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE) {
         violations.push("review context is missing delegated_subagent routing metadata");
     }
-    if (!fields.reusedExistingReview && options.contextReviewerIdentity !== fields.reviewerIdentity) {
+    if (
+        !fields.reusedExistingReview
+        && !contextReviewerIdentityMatchesReceipt({
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            contextReviewerIdentity: options.contextReviewerIdentity,
+            receiptReviewerIdentity: fields.reviewerIdentity
+        })
+    ) {
         violations.push('review context reviewer identity does not match the receipt');
     }
     if (options.receipt.reviewer_provenance == null) {
@@ -157,6 +181,22 @@ export function validateReviewReceiptEvidenceContract(options: {
         violations.push('review receipt reviewer_provenance is incomplete');
     } else if (fields.reviewerProvenance.controller_event_type !== REVIEW_EVIDENCE_REQUIRED_PROVENANCE_EVENT_TYPE) {
         violations.push('review receipt reviewer_provenance must reference REVIEWER_INVOCATION_ATTESTED telemetry');
+    } else if (!fields.reviewerProvenance.review_context_sha256) {
+        violations.push('review receipt reviewer_provenance is missing review_context_sha256');
+    } else if (
+        !fields.reusedExistingReview
+        && fields.reviewContextSha256
+        && fields.reviewerProvenance.review_context_sha256 !== fields.reviewContextSha256
+    ) {
+        violations.push('review receipt reviewer_provenance review_context_sha256 does not match the receipt');
+    } else if (fields.reusedExistingReview && !fields.reusedFromReviewContextSha256) {
+        violations.push('reused review receipt is missing reused_from_review_context_sha256');
+    } else if (
+        fields.reusedExistingReview
+        && fields.reusedFromReviewContextSha256
+        && fields.reviewerProvenance.review_context_sha256 !== fields.reusedFromReviewContextSha256
+    ) {
+        violations.push('reused review receipt reviewer_provenance review_context_sha256 does not match reused_from_review_context_sha256');
     } else if (
         !fields.reusedExistingReview
         && fields.reviewTreeStateSha256

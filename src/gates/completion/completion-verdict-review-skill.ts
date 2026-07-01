@@ -837,7 +837,20 @@ export function validateReviewSkillEvidence(
                             `and review-context (${actualExecutionMode}).`
                         );
                     }
-                    if (!reusedExistingReview && receiptReviewerIdentity && reviewerSessionId && receiptReviewerIdentity !== reviewerSessionId) {
+                    const reviewerSessionMatchesReceipt = receiptReviewerIdentity && reviewerSessionId
+                        ? reviewerIdentityMatchesDelegatedLaunchCycle({
+                            observedIdentity: reviewerSessionId,
+                            expectedIdentity: receiptReviewerIdentity,
+                            taskId: normalizeTimelineDetailString(receipt?.task_id) || '',
+                            reviewType: key
+                        })
+                        : false;
+                    if (
+                        !reusedExistingReview
+                        && receiptReviewerIdentity
+                        && reviewerSessionId
+                        && !reviewerSessionMatchesReceipt
+                    ) {
                         result.violations.push(
                             `Required review '${key}' has inconsistent reviewer identity between receipt (${receiptReviewerIdentity}) ` +
                             `and review-context (${reviewerSessionId}).`

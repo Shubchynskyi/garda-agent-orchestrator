@@ -293,14 +293,15 @@ describe('gates/next-step review reuse stale context routing', () => {
         const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code.md`);
         const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        const reviewerProvenance = receipt.reviewer_provenance as Record<string, unknown>;
         const historicalTreeStateSha = '8'.repeat(64);
         receipt.reused_existing_review = true;
         receipt.reused_from_receipt_path = receiptPath;
-        receipt.reused_from_review_context_sha256 = '6'.repeat(64);
+        receipt.reused_from_review_context_sha256 = reviewerProvenance.review_context_sha256;
         receipt.reused_from_review_context_reuse_sha256 = '7'.repeat(64);
         receipt.reused_from_review_tree_state_sha256 = historicalTreeStateSha;
         receipt.reviewer_provenance = {
-            ...(receipt.reviewer_provenance as Record<string, unknown>),
+            ...reviewerProvenance,
             task_sequence: 1,
             prev_event_sha256: null,
             event_sha256: '9'.repeat(64),

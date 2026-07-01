@@ -2,14 +2,12 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-    applyReviewerRoutingMetadata,
     buildReviewReceipt,
     buildReviewReceiptReviewerInvocationProvenance,
     buildReviewReceiptReviewerProvenance,
     buildReviewVerdictTokenSet,
     extractReviewVerdictToken,
-    formatAcceptedReviewVerdictTokens,
-    restoreReviewerRoutingMetadata
+    formatAcceptedReviewVerdictTokens
 } from '../../../../gate-runtime/review-context';
 import { fileSha256 } from '../../../../gate-runtime/hash';
 import {
@@ -461,11 +459,15 @@ async function recordReviewReceiptFromArtifacts(options: {
         isResolvedReviewerIdentity(options.reviewerIdentity)
             ? [...timelineEvents].reverse().find((entry) => {
                 const details = entry.details;
+                const detailsReviewContextSha256 = String(details?.review_context_sha256 || details?.reviewContextSha256 || '')
+                    .trim()
+                    .toLowerCase();
                 return entry.event_type === 'REVIEWER_INVOCATION_ATTESTED'
                     && String(details?.task_id || details?.taskId || '').trim() === options.taskId
                     && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === options.reviewType
                     && String(details?.reviewer_execution_mode || details?.reviewerExecutionMode || '').trim() === options.reviewerExecutionMode
                     && String(details?.reviewer_identity || details?.reviewer_session_id || '').trim() === options.reviewerIdentity
+                    && detailsReviewContextSha256 === invocationReviewContextSha256
                     && String(details?.routing_event_sha256 || details?.routingEventSha256 || '').trim().toLowerCase() === routingEventProvenance.event_sha256
                     && (!reviewTreeStateSha256 || String(details?.review_tree_state_sha256 || details?.reviewTreeStateSha256 || '').trim().toLowerCase() === reviewTreeStateSha256)
                     && entry.integrity;
@@ -866,80 +868,56 @@ async function handleRecordReviewResultWithDependencies(
     const routingReviewerIdentityForLookup = isPlannedReviewerIdentity(preApplyReviewerSessionId)
         ? preApplyReviewerSessionId
         : reviewerIdentity;
-    const previousRoutingUpdate = {
-        actualExecutionMode: currentRouting?.actual_execution_mode != null
-            ? String(currentRouting.actual_execution_mode).trim() || null
-            : null,
-        reviewerSessionId: currentRouting?.reviewer_session_id != null
-            ? String(currentRouting.reviewer_session_id).trim() || null
-            : null,
-        fallbackReason: currentRouting?.fallback_reason != null
-            ? String(currentRouting.fallback_reason).trim() || null
-            : null
-    };
-    const routingUpdate = applyReviewerRoutingMetadata(contextPath, {
-        actualExecutionMode: reviewerExecutionMode,
-        reviewerSessionId: reviewerIdentity,
-        fallbackReason: reviewerFallbackReason
-    });
+    const contextSha256 = invocationReviewContextSha256 || fileSha256(contextPath) || '';
 
-    try {
-        const receiptPath = await recordReviewReceiptFromArtifacts({
-            repoRoot,
-            taskId,
-            reviewType,
-            preflightPath,
-            artifactPath,
-            reviewArtifactContent: acceptedReviewArtifactContent,
-            contextPath,
-            rawReviewOutputPath: reviewOutput.reviewOutputPath,
-            rawReviewOutputSourcePath: reviewOutput.reviewOutputSourcePath,
-            rawReviewOutputContent: acceptedRawReviewContent,
-            rawReviewOutputSha256,
-            rawReviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
-            reviewMaterializationFidelity,
-            historicalStaleReviewResultReason,
-            taskModePath: String(options.taskModePath || '').trim(),
-            reviewerExecutionMode,
-            reviewerIdentity,
-            reviewerFallbackReason,
-            requireStrictBindingMetadata: !!options.reviewContextPath,
-            invocationReviewContextSha256,
-            routingReviewerIdentity: routingReviewerIdentityForLookup
-        }, dependencies);
-        cleanupReviewTempSourceArtifact(repoRoot, taskId, reviewOutput.reviewOutputSourcePath);
+    const receiptPath = await recordReviewReceiptFromArtifacts({
+        repoRoot,
+        taskId,
+        reviewType,
+        preflightPath,
+        artifactPath,
+        reviewArtifactContent: acceptedReviewArtifactContent,
+        contextPath,
+        rawReviewOutputPath: reviewOutput.reviewOutputPath,
+        rawReviewOutputSourcePath: reviewOutput.reviewOutputSourcePath,
+        rawReviewOutputContent: acceptedRawReviewContent,
+        rawReviewOutputSha256,
+        rawReviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
+        reviewMaterializationFidelity,
+        historicalStaleReviewResultReason,
+        taskModePath: String(options.taskModePath || '').trim(),
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewerFallbackReason,
+        requireStrictBindingMetadata: !!options.reviewContextPath,
+        invocationReviewContextSha256,
+        routingReviewerIdentity: routingReviewerIdentityForLookup
+    }, dependencies);
+    cleanupReviewTempSourceArtifact(repoRoot, taskId, reviewOutput.reviewOutputSourcePath);
 
-        console.log(`REVIEW_RESULT_RECORDED: ${reviewType}`);
-        console.log(`ArtifactPath: ${normalizePath(artifactPath)}`);
-        console.log(`ContextPath: ${normalizePath(contextPath)}`);
-        console.log(`ReceiptPath: ${normalizePath(receiptPath)}`);
-        console.log(`ReviewerExecutionMode: ${reviewerExecutionMode}`);
-        console.log(`ReviewerIdentity: ${reviewerIdentity}`);
-        console.log(`ReviewOutputMode: ${reviewOutput.reviewOutputMode}`);
-        console.log(`ReviewOutputPath: ${normalizePath(reviewOutput.reviewOutputPath)}`);
-        console.log(`ReviewOutputSha256: ${rawReviewOutputSha256 || 'n/a'}`);
-        console.log(`ReviewMaterializationFidelity: ${reviewMaterializationFidelity}`);
-        if (historicalStaleReviewResultReason) {
-            console.log('HistoricalStaleReviewResult: true');
-            console.log(`HistoricalStaleReviewReason: ${historicalStaleReviewResultReason}`);
-        }
-        if (reviewOutput.reviewOutputSourcePath) {
-            console.log(`ReviewOutputSourcePath: ${normalizePath(reviewOutput.reviewOutputSourcePath)}`);
-        }
-        console.log(`ContextSha256: ${routingUpdate.contextSha256 || 'n/a'}`);
-        if (reviewerFallbackReason) {
-            console.log(`ReviewerFallbackReason: ${reviewerFallbackReason}`);
-        }
-        console.log(`VerdictToken: ${verdictToken}`);
-        console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
-    } catch (error: unknown) {
-        try {
-            restoreReviewerRoutingMetadata(contextPath, previousRoutingUpdate);
-        } catch {
-            // Best-effort rollback only.
-        }
-        throw error;
+    console.log(`REVIEW_RESULT_RECORDED: ${reviewType}`);
+    console.log(`ArtifactPath: ${normalizePath(artifactPath)}`);
+    console.log(`ContextPath: ${normalizePath(contextPath)}`);
+    console.log(`ReceiptPath: ${normalizePath(receiptPath)}`);
+    console.log(`ReviewerExecutionMode: ${reviewerExecutionMode}`);
+    console.log(`ReviewerIdentity: ${reviewerIdentity}`);
+    console.log(`ReviewOutputMode: ${reviewOutput.reviewOutputMode}`);
+    console.log(`ReviewOutputPath: ${normalizePath(reviewOutput.reviewOutputPath)}`);
+    console.log(`ReviewOutputSha256: ${rawReviewOutputSha256 || 'n/a'}`);
+    console.log(`ReviewMaterializationFidelity: ${reviewMaterializationFidelity}`);
+    if (historicalStaleReviewResultReason) {
+        console.log('HistoricalStaleReviewResult: true');
+        console.log(`HistoricalStaleReviewReason: ${historicalStaleReviewResultReason}`);
     }
+    if (reviewOutput.reviewOutputSourcePath) {
+        console.log(`ReviewOutputSourcePath: ${normalizePath(reviewOutput.reviewOutputSourcePath)}`);
+    }
+    console.log(`ContextSha256: ${contextSha256 || 'n/a'}`);
+    if (reviewerFallbackReason) {
+        console.log(`ReviewerFallbackReason: ${reviewerFallbackReason}`);
+    }
+    console.log(`VerdictToken: ${verdictToken}`);
+    console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
 }
 
 async function handleRecordReviewReceiptWithDependencies(

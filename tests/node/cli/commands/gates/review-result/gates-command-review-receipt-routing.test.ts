@@ -1378,6 +1378,11 @@ describe('gates command review receipt - routing', () => {
                 capability_level: 'delegation_capable'
             })
         }, null, 2) + '\n', 'utf8');
+        applyReviewerRoutingMetadata(reviewContextPath, {
+            actualExecutionMode: 'delegated_subagent',
+            reviewerSessionId: 'agent:code-reviewer',
+            fallbackReason: null
+        });
 
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);

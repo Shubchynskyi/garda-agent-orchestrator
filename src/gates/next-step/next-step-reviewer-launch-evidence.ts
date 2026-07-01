@@ -545,9 +545,9 @@ function getReviewContextSha256CandidatesForInvocationMatching(
     if (currentSha256) {
         candidates.push(currentSha256);
     }
+    const receiptReviewContextSha256 = String(state.receiptReviewContextSha256 || '').trim().toLowerCase();
     for (const candidate of [
-        String(state.reviewerProvenance?.review_context_sha256 || '').trim().toLowerCase(),
-        String(state.receiptReviewContextSha256 || '').trim().toLowerCase()
+        receiptReviewContextSha256 === currentSha256 ? receiptReviewContextSha256 : ''
     ]) {
         if (/^[0-9a-f]{64}$/.test(candidate) && !candidates.includes(candidate)) {
             candidates.push(candidate);
@@ -638,20 +638,9 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
             const preparedEventReviewContextSha256 = String(
                 details.review_context_sha256 || details.reviewContextSha256 || ''
             ).trim().toLowerCase();
-            const artifactReviewTreeStateSha256 = getArtifactStringField(
-                launchArtifact,
-                'review_tree_state_sha256',
-                'reviewTreeStateSha256'
-            ).toLowerCase();
             const currentContextShaMatches = artifactReviewContextSha256 === reviewContextSha256
                 && preparedEventReviewContextSha256 === reviewContextSha256;
-            const launchBoundContextMatchesCurrentTree = Boolean(
-                /^[0-9a-f]{64}$/.test(artifactReviewContextSha256)
-                && artifactReviewContextSha256 === preparedEventReviewContextSha256
-                && artifactReviewTreeStateSha256
-                && artifactReviewTreeStateSha256 === String(state.contextReviewTreeStateSha256 || '').trim().toLowerCase()
-            );
-            const matchedReviewContextSha256 = currentContextShaMatches || launchBoundContextMatchesCurrentTree
+            const matchedReviewContextSha256 = currentContextShaMatches
                 ? artifactReviewContextSha256
                 : '';
             const launchBindingSha256 = getArtifactStringField(

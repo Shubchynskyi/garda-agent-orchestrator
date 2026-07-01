@@ -261,6 +261,7 @@ export function findMatchingInvocationAttestationEvent(
     const normalizedReviewType = String(options.reviewType || '').trim().toLowerCase();
     const normalizedTaskId = String(options.taskId || '').trim();
     const provenanceReviewContextSha256 = String(options.reviewerProvenance.review_context_sha256 || '').trim().toLowerCase();
+    const normalizedReviewContextSha256 = normalizeSha256String(options.reviewContextSha256);
     const normalizedReviewTreeStateSha256 = normalizeSha256String(options.reviewTreeStateSha256);
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
     if (
@@ -269,6 +270,8 @@ export function findMatchingInvocationAttestationEvent(
         || options.reviewerProvenance.reviewer_execution_mode !== options.reviewerExecutionMode
         || options.reviewerProvenance.reviewer_identity !== options.reviewerIdentity
         || !provenanceReviewContextSha256
+        || (normalizedReviewContextSha256
+            && provenanceReviewContextSha256 !== normalizedReviewContextSha256)
         || (normalizedReviewTreeStateSha256
             && options.reviewerProvenance.review_tree_state_sha256 !== normalizedReviewTreeStateSha256)
         || options.reviewerProvenance.routing_event_sha256 !== normalizedRoutingEventSha256
