@@ -26,6 +26,7 @@ import {
     writeReviewCapabilitiesConfig,
     writeSimpleCompileCommandsFile
 } from './gates-review-cycle-fixtures';
+import { resolveNextStep } from '../../../../../../src/gates/next-step/next-step';
 
 describe('cli/commands/gates – review-cycle recovery suite', () => {
     it('restart-review-cycle refuses to rebuild from a fresh task-mode cycle that never restored TASK_ENTRY rule-pack evidence', { concurrency: false }, async () => {
@@ -233,6 +234,50 @@ describe('cli/commands/gates – review-cycle recovery suite', () => {
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
         assert.match(restartResult.outputLines.join('\n'), /REVIEW_CYCLE_RESTARTED/);
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const eventSequence = (event: Record<string, unknown>): number => {
+            const integrity = event.integrity && typeof event.integrity === 'object'
+                ? event.integrity as Record<string, unknown>
+                : {};
+            return Number(event.sequence ?? integrity.task_sequence ?? 0);
+        };
+        const latestRefreshedPreflight = [...events].reverse().find(
+            (event) => event.event_type === 'PREFLIGHT_CLASSIFIED'
+        );
+        assert.ok(latestRefreshedPreflight);
+        const latestRefreshedPreflightSequence = eventSequence(latestRefreshedPreflight);
+        const latestRecoveryBoundary = [...events].reverse().find(
+            (event) => (
+                [
+                    'REVIEW_PHASE_STARTED',
+                    'COMPLETION_GATE_FAILED'
+                ].includes(String(event.event_type || ''))
+                && eventSequence(event) < latestRefreshedPreflightSequence
+            )
+        );
+        assert.ok(latestRecoveryBoundary, 'test fixture must contain a review-cycle recovery boundary before refreshed preflight');
+        const latestRecoveryBoundarySequence = eventSequence(latestRecoveryBoundary);
+        const freshHandshake = events.find(
+            (event) => (
+                event.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED'
+                && eventSequence(event) > latestRecoveryBoundarySequence
+                && eventSequence(event) < latestRefreshedPreflightSequence
+            )
+        );
+        const freshShellSmoke = events.find(
+            (event) => (
+                event.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED'
+                && eventSequence(event) > latestRecoveryBoundarySequence
+                && eventSequence(event) < latestRefreshedPreflightSequence
+            )
+        );
+        assert.ok(freshHandshake, 'restart-review-cycle must refresh handshake diagnostics after recovery boundary and before refreshed preflight');
+        assert.ok(freshShellSmoke, 'restart-review-cycle must refresh shell smoke after recovery boundary and before refreshed preflight');
+        assert.ok(eventSequence(freshHandshake) < eventSequence(freshShellSmoke));
+        assert.ok(eventSequence(freshShellSmoke) < latestRefreshedPreflightSequence);
+        const nextStep = resolveNextStep({ taskId, repoRoot });
+        assert.notEqual(nextStep.next_gate, 'restart-coherent-cycle', nextStep.reason);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

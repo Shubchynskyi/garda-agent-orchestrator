@@ -468,7 +468,6 @@ export async function runRestartReviewCycleCommand(
     if (!taskSummary) {
         throw new Error('Task intent could not be resolved for review-cycle restart.');
     }
-
     try {
         const refreshedPreflightPath = resolveRecoveryPreflightPath(
             repoRoot,
@@ -579,6 +578,8 @@ export async function runRestartReviewCycleCommand(
                 repoRoot,
                 taskId: resolvedTaskId,
                 provider: previousTaskMode.provider || undefined,
+                taskModePath: resolvedTaskModePath,
+                allowCurrentShellSmokePrecheck: true,
                 emitMetrics: options.emitMetrics
             }));
         }
@@ -588,6 +589,7 @@ export async function runRestartReviewCycleCommand(
                 repoRoot,
                 taskId: resolvedTaskId,
                 provider: previousTaskMode.provider || undefined,
+                taskModePath: resolvedTaskModePath,
                 emitMetrics: options.emitMetrics
             }));
         }

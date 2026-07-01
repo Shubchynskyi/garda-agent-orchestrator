@@ -165,10 +165,11 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         const lastHandshakeIndex = handshakeIndexes.at(-1) ?? -1;
         const lastShellSmokeIndex = shellSmokeIndexes.at(-1) ?? -1;
         assert.ok(lastCompileIndex >= 0);
-        assert.equal(handshakeIndexes.length, 1);
-        assert.equal(shellSmokeIndexes.length, 1);
+        assert.equal(handshakeIndexes.length, 2);
+        assert.equal(shellSmokeIndexes.length, 2);
         assert.ok(firstCompileIndex >= 0);
-        assert.ok(firstCompileIndex > lastHandshakeIndex);
+        assert.ok(firstCompileIndex > shellSmokeIndexes[0]);
+        assert.ok(lastHandshakeIndex > firstCompileIndex);
         assert.ok(lastShellSmokeIndex > lastHandshakeIndex);
         assert.ok(lastCompileIndex > lastShellSmokeIndex);
         assert.ok(lastCodeReviewPhaseIndex > lastCompileIndex);

@@ -64,6 +64,7 @@ export interface HandshakeDiagnosticsCommandOptions {
     providerBridge?: unknown;
     artifactPath?: string;
     metricsPath?: string;
+    allowCurrentShellSmokePrecheck?: unknown;
     emitMetrics?: unknown;
 }
 
@@ -130,7 +131,8 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
     return withFilesystemLock(sequenceLockPath, {}, () => {
         const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
         const shellSmokeEvidence = getShellSmokeEvidence(repoRoot, taskId, { timelinePath });
-        const handshakePrecheckViolations = shellSmokeEvidence.evidence_status === 'PASS'
+        const allowCurrentShellSmokePrecheck = parseBooleanOption(options.allowCurrentShellSmokePrecheck, false);
+        const handshakePrecheckViolations = shellSmokeEvidence.evidence_status === 'PASS' && !allowCurrentShellSmokePrecheck
             ? [
                 `Current task cycle in '${gateHelpers.normalizePath(timelinePath)}' already has valid SHELL_SMOKE_PREFLIGHT_RECORDED evidence. ` +
                 'Re-running handshake-diagnostics now would invalidate the existing shell-smoke artifact for this cycle. ' +

@@ -27,6 +27,11 @@ const REVIEW_CYCLE_BOUNDARY_EVENTS = new Set([
     'COMPLETION_GATE_PASSED'
 ]);
 
+const REVIEW_CYCLE_PREFLIGHT_REFRESH_BOUNDARY_EVENTS = new Set([
+    'REVIEW_PHASE_STARTED',
+    'COMPLETION_GATE_FAILED'
+]);
+
 export function normalizeRuleFileList(requiredReviews: Record<string, boolean>, effectiveDepth: number): string[] {
     const fileNames = new Set<string>(TASK_ENTRY_RULE_FILES);
     for (const [reviewType, required] of Object.entries(requiredReviews)) {
@@ -217,13 +222,28 @@ export function getReviewCyclePrePreflightRefreshPlan(
         );
     }
 
+    const latestPreflightRefreshBoundary = findLatestTimelineEvent(
+        events,
+        (entry) => (
+            entry.sequence > lowerBoundExclusive
+            && REVIEW_CYCLE_PREFLIGHT_REFRESH_BOUNDARY_EVENTS.has(entry.event_type)
+        )
+    );
+    const startupLowerBoundExclusive = latestPreflightRefreshBoundary?.sequence ?? lowerBoundExclusive;
+
     const latestHandshake = findLatestTimelineEvent(
         events,
-        (entry) => entry.sequence > lowerBoundExclusive && entry.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED'
+        (entry) => (
+            entry.sequence > startupLowerBoundExclusive
+            && entry.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED'
+        )
     );
     const latestShellSmoke = findLatestTimelineEvent(
         events,
-        (entry) => entry.sequence > lowerBoundExclusive && entry.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED'
+        (entry) => (
+            entry.sequence > startupLowerBoundExclusive
+            && entry.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED'
+        )
     );
 
     if (!latestHandshake && !latestShellSmoke) {
