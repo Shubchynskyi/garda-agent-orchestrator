@@ -146,6 +146,13 @@ function hasProtectedOrchestratorWorkRecoverySignal(message: string): boolean {
         && normalized.includes('--orchestrator-work');
 }
 
+function hasWorkflowConfigWorkRecoverySignal(message: string): boolean {
+    const normalized = String(message || '').toLowerCase();
+    return normalized.includes('workflow config files changed before')
+        && normalized.includes('task-mode')
+        && normalized.includes('--workflow-config-work');
+}
+
 function isSha256(value: unknown): value is string {
     return /^[0-9a-f]{64}$/u.test(String(value || '').trim().toLowerCase());
 }
@@ -269,7 +276,9 @@ export function readFailedGateRecovery(
     }
 
     const errorText = getTimelineEventDetailString(latestPreflightFailure, 'error');
-    if (!hasProtectedOrchestratorWorkRecoverySignal(errorText)) {
+    const hasProtectedRecoverySignal = hasProtectedOrchestratorWorkRecoverySignal(errorText);
+    const hasWorkflowConfigRecoverySignal = hasWorkflowConfigWorkRecoverySignal(errorText);
+    if (!hasProtectedRecoverySignal && !hasWorkflowConfigRecoverySignal) {
         return null;
     }
     if (isGardaSelfGuardDenyAgentEntry(repoRoot)) {
@@ -277,7 +286,7 @@ export function readFailedGateRecovery(
             nextGate: 'operator-maintenance',
             title: 'Garda self-guard blocks agent-owned protected control-plane recovery.',
             reason:
-                `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected control-plane recovery signal. ` +
+                `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected ${hasWorkflowConfigRecoverySignal ? 'workflow-config' : 'control-plane'} recovery signal. ` +
                 formatGardaSelfGuardProtectedControlPlaneGuidance(),
             label: 'Operator policy change',
             command: buildGardaSelfGuardPolicyChangeCommand(cliPrefix)
@@ -290,12 +299,23 @@ export function readFailedGateRecovery(
 
     return {
         nextGate: 'enter-task-mode',
-        title: 'Recover failed classify-change as orchestrator work.',
+        title: hasWorkflowConfigRecoverySignal
+            ? 'Recover failed classify-change as workflow-config work.'
+            : 'Recover failed classify-change as orchestrator work.',
         reason:
-            `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected control-plane recovery signal. ` +
+            `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected ${hasWorkflowConfigRecoverySignal ? 'workflow-config' : 'control-plane'} recovery signal. ` +
             'Run the deterministic recovery command rebuilt from current task-mode and workspace state before reclassifying, after fresh operator approval for protected task-mode entry.',
-        label: 'Restart task mode with orchestrator work',
-        command: buildOrchestratorWorkRestartCommand(repoRoot, cliPrefix, taskId, taskMode, currentChangedFiles)
+        label: hasWorkflowConfigRecoverySignal
+            ? 'Restart task mode with workflow-config work'
+            : 'Restart task mode with orchestrator work',
+        command: buildOrchestratorWorkRestartCommand(
+            repoRoot,
+            cliPrefix,
+            taskId,
+            taskMode,
+            currentChangedFiles,
+            hasWorkflowConfigRecoverySignal
+        )
     };
 }
 

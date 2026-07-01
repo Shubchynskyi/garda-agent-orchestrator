@@ -28,6 +28,8 @@ const ALL_REVIEW_FLAGS = Object.freeze({
     dependency: false
 });
 
+const WORKFLOW_CONFIG_PREFLIGHT_ERROR = 'Workflow config files changed before preflight classification without task-mode --orchestrator-work --workflow-config-work: garda-agent-orchestrator/live/config/workflow-config.json';
+
 let tempRoots: string[] = [];
 
 
@@ -455,6 +457,85 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(!result.commands[0].command.includes('&&'));
         assert.ok(!result.commands[0].command.includes('injected.js'));
         assert.ok(!result.commands[0].command.includes('gate classify-change'));
+    });
+
+    it('routes workflow-config preflight failures to workflow-config protected task-mode recovery', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 7
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error: WORKFLOW_CONFIG_PREFLIGHT_ERROR
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.title, /workflow-config work/);
+        assert.match(result.reason, /protected workflow-config recovery signal/);
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes('--operator-confirmed yes'));
+        assert.ok(command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
+        assert.ok(command.includes('--planned-changed-file "garda-agent-orchestrator/live/config/workflow-config.json"'));
+        assert.ok(!command.includes('gate classify-change'));
+    });
+
+    it('routes workflow-config preflight recovery to operator maintenance when self-guard denies agent entry', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error: WORKFLOW_CONFIG_PREFLIGHT_ERROR
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'operator-maintenance');
+        assert.match(result.reason, /protected workflow-config recovery signal/);
+        assert.match(result.reason, /Garda self-guard is on/);
+        assert.ok(!result.commands[0].command.includes('--orchestrator-work'));
+        assert.ok(result.commands[0].command.includes('workflow set'));
+        assert.ok(result.commands[0].command.includes('--garda-self-guard off'));
+    });
+
+    it('ignores stale workflow-config preflight failures after later successful preflight', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error: WORKFLOW_CONFIG_PREFLIGHT_ERROR
+        });
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: ['src/app.ts']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'enter-task-mode');
+        assert.doesNotMatch(result.reason, /protected workflow-config recovery signal/);
+    });
+
+    it('ignores stale workflow-config preflight failures after later task-mode entry', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error: WORKFLOW_CONFIG_PREFLIGHT_ERROR
+        });
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'enter-task-mode');
+        assert.doesNotMatch(result.reason, /protected workflow-config recovery signal/);
     });
 
     it('prefers current workspace scope over stale planned files in protected recovery command', () => {
