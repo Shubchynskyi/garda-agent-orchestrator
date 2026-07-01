@@ -12,7 +12,11 @@ import {
     resolveReviewsRoot
 } from '../task-audit/task-audit-summary-collectors';
 import {
-    buildBundleRelativePath
+    isPathRealpathInsideRoot,
+    normalizePath
+} from '../shared/helpers';
+import {
+    toRepoDisplayPath
 } from './next-step-command-formatters';
 import {
     readNextStepReadinessArtifacts,
@@ -52,14 +56,26 @@ export function buildCliPrefix(repoRoot: string): string {
         : `node ${resolveBundleNameForTarget(repoRoot)}/bin/garda.js`;
 }
 
+function assertRuntimeRootInsideRepo(repoRoot: string, runtimeRoot: string, label: string): void {
+    if (isPathRealpathInsideRoot(runtimeRoot, repoRoot, { allowMissing: true })) {
+        return;
+    }
+    throw new Error(
+        `${label} must resolve inside repo root without symlink or junction escape: ${normalizePath(runtimeRoot)}.`
+    );
+}
+
 export function createNextStepResolutionContext(options: NextStepOptions): NextStepResolutionContext {
     const repoRoot = path.resolve(options.repoRoot || '.');
     const taskId = assertValidTaskId(options.taskId);
     const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
+    assertRuntimeRootInsideRepo(repoRoot, reviewsRoot, 'ReviewsRoot');
+    assertRuntimeRootInsideRepo(repoRoot, eventsRoot, 'EventsRoot');
     const cliPrefix = buildCliPrefix(repoRoot);
     const taskModePath = resolveActiveTaskModeArtifactPath(repoRoot, eventsRoot, reviewsRoot, taskId);
-    const preflightCommandPath = buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-preflight.json`);
+    const preflightArtifactPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    const preflightCommandPath = toRepoDisplayPath(repoRoot, preflightArtifactPath);
     const readinessArtifacts = readNextStepReadinessArtifacts({
         reviewsRoot,
         taskId,

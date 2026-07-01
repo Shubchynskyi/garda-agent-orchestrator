@@ -1061,6 +1061,7 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /cheapest valid recovery path/);
         assert.match(result.reason, /before refreshing preflight/);
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(result.commands[0].command.includes(`--preflight-path "garda-agent-orchestrator/runtime/reviews/${TASK_ID}-preflight.json"`));
         assert.ok(result.commands[0].command.includes('--impact-analysis'));
         assert.ok(!result.commands[0].command.includes('gate classify-change'));
         assert.ok(!result.commands[0].command.includes('gate restart-coherent-cycle'));
@@ -1157,6 +1158,7 @@ describe('gates/next-step', () => {
         assert.equal(result.review.next_review_type, 'code');
         assert.match(result.title, /Restart failed 'code' review remediation cycle/);
         assert.ok(command.includes('gate restart-review-cycle'), command);
+        assert.ok(command.includes(`--preflight-path "garda-agent-orchestrator/runtime/reviews/${TASK_ID}-preflight.json"`), command);
         assert.ok(!command.includes('gate classify-change'), command);
         assert.ok(!command.includes('runtime/manual-validation'), command);
         assert.ok(!command.includes('gate prepare-reviewer-launch'), command);

@@ -93,6 +93,27 @@ function ensureStepPassed(stepName: string, result: { outputLines: string[]; exi
     }
 }
 
+function resolveRecoveryPreflightPath(
+    repoRoot: string,
+    taskId: string,
+    pathValue: unknown,
+    label: string
+): string {
+    const defaultPreflightPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-preflight.json`)
+    );
+    const requestedPath = String(pathValue || defaultPreflightPath).trim() || defaultPreflightPath;
+    const resolvedPath = gateHelpers.resolvePathInsideRepo(requestedPath, repoRoot, { allowMissing: true });
+    if (!resolvedPath || !gateHelpers.isPathRealpathInsideRoot(resolvedPath, repoRoot, { allowMissing: true })) {
+        throw new Error(
+            `${label} must resolve inside repo root without symlink or junction escape: `
+            + gateHelpers.normalizePath(resolvedPath || requestedPath)
+        );
+    }
+    return resolvedPath;
+}
+
 function requireArtifactSha256(artifactPath: string, label: string): string {
     if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
         throw new Error(`${label} artifact is missing after restart success: ${gateHelpers.normalizePath(artifactPath)}`);
@@ -243,10 +264,12 @@ export async function runRestartCoherentCycleCommand(
     }
 
     const resolvedTaskModePath = String(options.taskModePath || previousTaskMode.evidence_path || '').trim();
-    const resolvedPreflightPath = path.resolve(String(
-        options.preflightPath
-        || gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${resolvedTaskId}-preflight.json`))
-    ));
+    const resolvedPreflightPath = resolveRecoveryPreflightPath(
+        repoRoot,
+        resolvedTaskId,
+        options.preflightPath,
+        'PreflightPath'
+    );
     const previousPreflight = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
     const replayScope = resolveReplayScope(options, previousPreflight);
     const taskSummary = String(options.taskIntent || previousTaskMode.task_summary || '').trim();
@@ -305,7 +328,12 @@ export async function runRestartCoherentCycleCommand(
             emitMetrics: options.emitMetrics
         }));
 
-        const refreshedPreflightPath = String(options.preflightOutputPath || resolvedPreflightPath).trim() || resolvedPreflightPath;
+        const refreshedPreflightPath = resolveRecoveryPreflightPath(
+            repoRoot,
+            resolvedTaskId,
+            options.preflightOutputPath || resolvedPreflightPath,
+            'PreflightOutputPath'
+        );
         const classifyResult = runClassifyChangeCommand({
             repoRoot,
             taskId: resolvedTaskId,
@@ -400,10 +428,12 @@ export async function runRestartReviewCycleCommand(
     }
 
     const resolvedTaskModePath = String(options.taskModePath || previousTaskMode.evidence_path || '').trim();
-    const resolvedPreflightPath = path.resolve(String(
-        options.preflightPath
-        || gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${resolvedTaskId}-preflight.json`))
-    ));
+    const resolvedPreflightPath = resolveRecoveryPreflightPath(
+        repoRoot,
+        resolvedTaskId,
+        options.preflightPath,
+        'PreflightPath'
+    );
     const previousPreflight = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
     const replayScope = resolveReviewCycleReplayScope(options, previousPreflight, previousTaskMode);
     const previousChangedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
@@ -440,7 +470,12 @@ export async function runRestartReviewCycleCommand(
     }
 
     try {
-        const refreshedPreflightPath = String(options.preflightOutputPath || resolvedPreflightPath).trim() || resolvedPreflightPath;
+        const refreshedPreflightPath = resolveRecoveryPreflightPath(
+            repoRoot,
+            resolvedTaskId,
+            options.preflightOutputPath || resolvedPreflightPath,
+            'PreflightOutputPath'
+        );
         const prePreflightRefreshPlan = getReviewCyclePrePreflightRefreshPlan(repoRoot, resolvedTaskId);
         try {
             remediationImpactAnalysis = resolveReviewRemediationImpactAnalysis(

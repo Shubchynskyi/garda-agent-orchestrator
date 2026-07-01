@@ -219,12 +219,14 @@ export function buildRestartReviewCycleCommand(
     cliPrefix: string,
     taskId: string,
     taskIntent: string,
+    preflightCommandPath: string,
     taskModePath: string | null
 ): string {
     return [
         `${cliPrefix} gate restart-review-cycle`,
         `--task-id "${taskId}"`,
         `--task-intent ${quoteCommandValue(taskIntent)}`,
+        `--preflight-path ${quoteCommandValue(preflightCommandPath)}`,
         `--impact-analysis ${quoteCommandValue('<replace with main-agent remediation impact analysis>')}`,
         ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
         '--repo-root "."'

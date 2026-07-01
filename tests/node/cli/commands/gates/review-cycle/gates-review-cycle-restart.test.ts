@@ -2347,4 +2347,48 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
+
+    it('restart-review-cycle rejects out-of-repo preflight artifacts before remediation replay', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-external-preflight';
+        seedRemediationRepoBase(repoRoot);
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'restart-review-cycle-external-preflight'
+        );
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject review-cycle restart from an external preflight artifact',
+            plannedChangedFiles: ['src/app.ts']
+        });
+
+        const outsideReviewsRoot = fs.mkdtempSync(path.join(os.tmpdir(), `${taskId}-outside-reviews-`));
+        const outsidePreflightPath = path.join(outsideReviewsRoot, `${taskId}-preflight.json`);
+        fs.writeFileSync(outsidePreflightPath, JSON.stringify({
+            task_id: taskId,
+            changed_files: ['src/app.ts'],
+            required_reviews: { code: true, security: true }
+        }, null, 2), 'utf8');
+
+        try {
+            await assert.rejects(
+                () => runRestartReviewCycleCommand({
+                    repoRoot,
+                    taskId,
+                    preflightPath: outsidePreflightPath,
+                    commandsPath,
+                    outputFiltersPath,
+                    emitMetrics: false
+                }),
+                /PreflightPath must resolve inside repo root without symlink or junction escape/
+            );
+        } finally {
+            fs.rmSync(outsideReviewsRoot, { recursive: true, force: true });
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
 });

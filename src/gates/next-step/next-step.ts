@@ -2491,6 +2491,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     cliPrefix,
                     taskId,
                     getStringField(taskMode, 'task_summary', taskEntry?.title || taskId),
+                    preflightCommandPath,
                     taskModePath
                 )
             }
@@ -3140,7 +3141,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         state.failureKind === 'missing-validation-evidence'
                             ? 'Restart review cycle after manual-validation evidence refresh'
                             : 'Restart review cycle for reviewer launch retry',
-                        buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, taskIntent, taskModePath)
+                        buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, taskIntent, preflightCommandPath, taskModePath)
                     ),
                     rerunNavigator: buildCommand(
                         'Rerun navigator after fixing implementation',
@@ -3424,11 +3425,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 ),
                 recoverOrphanedLaunch: buildCommand(
                     'Restart/supersede orphaned delegated reviewer launch',
-                    buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, reviewCycleTaskIntent, taskModePath)
+                    buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, reviewCycleTaskIntent, preflightCommandPath, taskModePath)
                 ),
                 recoverFailedLaunch: buildCommand(
                     'Restart/supersede failed delegated reviewer launch',
-                    buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, reviewCycleTaskIntent, taskModePath)
+                    buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, reviewCycleTaskIntent, preflightCommandPath, taskModePath)
                 ),
                 recordInvocation: buildCommand(
                     'Record delegated reviewer launch attestation',

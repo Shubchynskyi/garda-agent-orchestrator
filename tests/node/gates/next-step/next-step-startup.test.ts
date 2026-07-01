@@ -21,6 +21,7 @@ import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import { createNextStepResolutionContext } from '../../../../src/gates/next-step/next-step-resolution-context';
+import { resolveNextStepFromCliOptions } from '../../../../src/gates/next-step/next-step';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -493,6 +494,45 @@ describe('gates/next-step startup routing', () => {
 
         assert.equal(result.next_gate, 'enter-task-mode');
         assert.match(result.commands[0]?.command || '', /^node bin\/garda\.js gate enter-task-mode /);
+    });
+
+    it('uses a custom reviews root as the active preflight command path', () => {
+        const repoRoot = makeTempRepo();
+        const customReviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'custom-reviews');
+        fs.mkdirSync(customReviewsRoot, { recursive: true });
+
+        const context = createNextStepResolutionContext({
+            taskId: TASK_ID,
+            repoRoot,
+            reviewsRoot: customReviewsRoot
+        });
+
+        assert.equal(context.preflightPath, path.join(customReviewsRoot, `${TASK_ID}-preflight.json`));
+        assert.equal(context.preflightCommandPath, 'garda-agent-orchestrator/runtime/custom-reviews/T-NEXT-1-preflight.json');
+    });
+
+    it('rejects out-of-repo active preflight and reviews roots', () => {
+        const repoRoot = makeTempRepo();
+        const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-external-reviews-'));
+        tempRoots.push(externalRoot);
+        const externalPreflightPath = path.join(externalRoot, `${TASK_ID}-preflight.json`);
+        writeJson(externalPreflightPath, { task_id: TASK_ID, changed_files: ['src/app.ts'] });
+
+        assert.throws(
+            () => createNextStepResolutionContext({
+                taskId: TASK_ID,
+                repoRoot,
+                reviewsRoot: externalRoot
+            }),
+            /ReviewsRoot must resolve inside repo root without symlink or junction escape/
+        );
+        assert.throws(
+            () => resolveNextStepFromCliOptions({
+                repoRoot,
+                preflightPath: externalPreflightPath
+            }),
+            /ReviewsRoot must resolve inside repo root without symlink or junction escape/
+        );
     });
 
     it('points a fresh task at enter-task-mode', () => {
