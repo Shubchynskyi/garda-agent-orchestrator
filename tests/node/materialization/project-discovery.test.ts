@@ -261,6 +261,65 @@ describe('resolveSuggestedCompileGateCommands', () => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
     });
+
+    it('composes Maven backend and frontend build checks while ignoring heavyweight root build scripts', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-multistack-'));
+        try {
+            fs.mkdirSync(path.join(tmpDir, 'backend'), { recursive: true });
+            fs.mkdirSync(path.join(tmpDir, 'frontend'), { recursive: true });
+            fs.mkdirSync(path.join(tmpDir, 'scripts'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'backend', 'pom.xml'), '<project />', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'frontend', 'package.json'), JSON.stringify({
+                scripts: { build: 'vite build', test: 'vitest run' }
+            }), 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
+                scripts: { build: 'bash ./scripts/build.sh -f' }
+            }), 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'scripts', 'build.sh'), '#!/bin/sh\n', 'utf8');
+
+            const result = resolveSuggestedCompileGateCommands(tmpDir, 'linux');
+
+            assert.equal(result[0], 'npm --prefix frontend run build && mvn -f backend/pom.xml compile');
+            assert.ok(result.includes('npm --prefix frontend run build'));
+            assert.ok(result.includes('mvn -f backend/pom.xml compile'));
+            assert.ok(!result.some((command) => command.includes('build.sh -f')));
+            assert.ok(!result.some((command) => /\btest\b/.test(command)));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps compile-gate suggestions empty when only heavyweight scripts are available', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-heavy-build-'));
+        try {
+            fs.mkdirSync(path.join(tmpDir, 'scripts'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
+                scripts: {
+                    build: 'bash ./scripts/build.sh -f',
+                    compile: 'docker build -t app .',
+                    typecheck: 'npm run test'
+                }
+            }), 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'scripts', 'build.sh'), '#!/bin/sh\n', 'utf8');
+
+            assert.deepEqual(resolveSuggestedCompileGateCommands(tmpDir), []);
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps static sites without build metadata unconfigured', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-static-site-'));
+        try {
+            fs.mkdirSync(path.join(tmpDir, 'assets'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'index.html'), '<!doctype html>\n', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'assets', 'site.css'), 'body {}\n', 'utf8');
+
+            assert.deepEqual(resolveSuggestedCompileGateCommands(tmpDir), []);
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
 });
 
 describe('buildProjectDiscoveryLines', () => {

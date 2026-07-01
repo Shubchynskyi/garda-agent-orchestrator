@@ -1042,6 +1042,87 @@ test('runAgentInit preserves npm run build from existing compile-gate guidance',
     }
 });
 
+test('runAgentInit seeds a composed fast compile gate for backend and frontend workspaces', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-multistack-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
+        writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
+            compile_gate: {
+                command: '__COMPILE_GATE_COMMAND_UNCONFIGURED__'
+            },
+            full_suite_validation: {
+                enabled: false,
+                command: '__FULL_SUITE_COMMAND_UNCONFIGURED__',
+                timeout_ms: 600000,
+                green_summary_max_lines: 5,
+                red_failure_chunk_lines: 50,
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            }
+        });
+        writeText(
+            path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+            [
+                '# Commands',
+                '',
+                '### Compile Gate (Mandatory)',
+                '```bash',
+                '__COMPILE_GATE_COMMAND_UNCONFIGURED__',
+                '```',
+                ''
+            ].join('\n')
+        );
+        writeText(path.join(workspaceRoot, 'backend', 'pom.xml'), '<project />\n');
+        writeJson(path.join(workspaceRoot, 'frontend', 'package.json'), {
+            scripts: { build: 'vite build', test: 'vitest run' }
+        });
+        writeJson(path.join(workspaceRoot, 'package.json'), {
+            scripts: { build: 'bash ./scripts/build.sh -f' }
+        });
+        writeText(path.join(workspaceRoot, 'scripts', 'build.sh'), '#!/bin/sh\n');
+
+        runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        const expectedCommand = 'npm --prefix frontend run build && mvn -f backend/pom.xml compile';
+        const workflowConfig = readWorkflowConfig(bundleRoot);
+        const compileGate = workflowConfig.compile_gate as Record<string, unknown>;
+        assert.equal(compileGate.command, expectedCommand);
+        assert.match(
+            fs.readFileSync(path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'), 'utf8'),
+            new RegExp(`### Compile Gate \\(Mandatory\\)\\r?\\n\`\`\`bash\\r?\\n${expectedCommand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\r?\\n\`\`\``)
+        );
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
 test('runAgentInit preserves legacy-compatible workflow-config omission when the file is missing on an existing bundle', () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-missing-workflow-config-'));
     const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');

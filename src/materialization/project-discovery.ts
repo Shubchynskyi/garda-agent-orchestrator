@@ -19,6 +19,10 @@ interface StackEvidence {
     matches: string[];
 }
 
+interface CompileGateCommandSurface {
+    commands: string[];
+}
+
 export interface ProjectDiscovery {
     source: string;
     fileCount: number;
@@ -91,8 +95,7 @@ function isExcludedDiscoveryRelativePath(relativePath: string): boolean {
     return getExcludedPathFragments().some((fragment) => wrapped.includes(fragment));
 }
 
-function readRootPackageJsonSafe(targetRoot: string): Record<string, unknown> | null {
-    const packageJsonPath = path.join(targetRoot, 'package.json');
+function readPackageJsonSafe(packageJsonPath: string): Record<string, unknown> | null {
     if (!pathExists(packageJsonPath)) {
         return null;
     }
@@ -105,6 +108,10 @@ function readRootPackageJsonSafe(targetRoot: string): Record<string, unknown> | 
     } catch {
         return null;
     }
+}
+
+function readRootPackageJsonSafe(targetRoot: string): Record<string, unknown> | null {
+    return readPackageJsonSafe(path.join(targetRoot, 'package.json'));
 }
 
 function detectNodePackageManager(targetRoot: string, packageJson: Record<string, unknown> | null): 'npm' | 'pnpm' | 'yarn' | 'bun' {
@@ -137,19 +144,148 @@ function getPackageJsonScripts(packageJson: Record<string, unknown> | null): Rec
     return packageJson.scripts as Record<string, unknown>;
 }
 
-function resolveNodeCompileGateCommands(targetRoot: string): string[] {
-    if (!pathExists(path.join(targetRoot, 'package.json'))) {
-        return [];
+function quoteCommandPath(relativePath: string): string {
+    const normalized = normalizeRelativePath(relativePath);
+    if (/^[A-Za-z0-9._/-]+$/.test(normalized)) {
+        return normalized;
+    }
+    return `"${normalized.replace(/(["\\$`])/g, '\\$1')}"`;
+}
+
+function getRelativeSurfacePath(targetRoot: string, surfaceRoot: string): string {
+    return normalizeRelativePath(path.relative(targetRoot, surfaceRoot));
+}
+
+function buildNodeRunCommand(
+    runner: 'npm' | 'pnpm' | 'yarn' | 'bun',
+    scriptName: string,
+    relativeSurfacePath: string
+): string {
+    if (!relativeSurfacePath) {
+        return `${runner} run ${scriptName}`;
     }
 
-    const packageJson = readRootPackageJsonSafe(targetRoot);
-    const runner = detectNodePackageManager(targetRoot, packageJson);
-    const scripts = getPackageJsonScripts(packageJson);
-    const preferredScripts = ['build', 'compile', 'typecheck', 'type-check'];
-    const commands = preferredScripts
-        .filter((scriptName) => typeof scripts[scriptName] === 'string')
-        .map((scriptName) => `${runner} run ${scriptName}`);
-    return commands;
+    const surfaceArg = quoteCommandPath(relativeSurfacePath);
+    if (runner === 'npm') {
+        return `npm --prefix ${surfaceArg} run ${scriptName}`;
+    }
+    if (runner === 'pnpm') {
+        return `pnpm --dir ${surfaceArg} run ${scriptName}`;
+    }
+    return `${runner} --cwd ${surfaceArg} run ${scriptName}`;
+}
+
+function buildTscCompileCommand(relativeSurfacePath: string): string {
+    if (!relativeSurfacePath) {
+        return 'npx tsc --noEmit';
+    }
+    return `npx tsc --noEmit -p ${quoteCommandPath(`${relativeSurfacePath}/tsconfig.json`)}`;
+}
+
+function normalizeScriptForHeuristic(scriptValue: string): string {
+    return String(scriptValue || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+}
+
+function isHeavyweightCompileGateScript(scriptName: string, scriptValue: string): boolean {
+    const normalizedName = String(scriptName || '').trim().toLowerCase();
+    const normalizedScript = normalizeScriptForHeuristic(scriptValue);
+    if (!normalizedScript) {
+        return true;
+    }
+
+    const heavyweightNamePattern = /(^|[:_-])(test|tests|e2e|integration|integrated|perf|performance|benchmark|bench|deploy|release|publish|package|pack|docker|image|migration|migrate)([:_-]|$)/;
+    if (heavyweightNamePattern.test(normalizedName)) {
+        return true;
+    }
+
+    const heavyweightScriptPatterns = [
+        /\b(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test(?::[\w:-]+)?|e2e|coverage|integration)(?:\s|$)/,
+        /\b(?:jest|vitest|ava|mocha|playwright\s+test|cypress\s+run|pytest|tox|go\s+test|cargo\s+test|dotnet\s+test)(?:\s|$)/,
+        /\b(?:mvn|\.\/mvnw|mvnw|mvnw\.cmd)\b.*\b(?:test|package|verify|install|deploy)\b/,
+        /\b(?:gradle|\.\/gradlew|gradlew|gradlew\.bat)\b.*\b(?:test|check|build)\b/,
+        /\b(?:docker|docker-compose|podman|buildx)(?:\s|$)|\bimage(?:s)?\b/,
+        /\b(?:deploy|deployment|release|publish|npm\s+pack|package)\b/,
+        /\b(?:integration|e2e|perf|performance|benchmark|migration|migrate|full[-_\s]?suite)\b/,
+        /(?:^|\s)(?:bash|sh|pwsh|powershell)(?:\.exe)?\s+\.?\/?scripts\/build\.sh\s+-f(?:\s|$)/,
+        /(?:^|\s)\.?\/?scripts\/build\.sh\s+-f(?:\s|$)/,
+        /\bci-build[\w:-]*\b/,
+        /\bartifacts?[-_\s]*(?:lock|rebuild|package|build)\b|\b(?:lock|rebuild|package|build)[-_\s]*artifacts?\b/
+    ];
+
+    return heavyweightScriptPatterns.some((pattern) => pattern.test(normalizedScript));
+}
+
+function listImmediateProjectRootsWithMarker(
+    targetRoot: string,
+    markerFileNames: readonly string[],
+    includeNestedWhenRootExists: boolean
+): string[] {
+    const roots: string[] = [];
+    const rootHasMarker = markerFileNames.some((marker) => pathExists(path.join(targetRoot, marker)));
+    if (rootHasMarker) {
+        roots.push(targetRoot);
+        if (!includeNestedWhenRootExists) {
+            return roots;
+        }
+    }
+
+    let entries: fs.Dirent[] = [];
+    try {
+        entries = fs.readdirSync(targetRoot, { withFileTypes: true });
+    } catch {
+        return roots;
+    }
+
+    const excludedTopLevelDirs = getExcludedTopLevelDirs();
+    const nestedRoots = entries
+        .filter((entry) => entry.isDirectory() && !excludedTopLevelDirs.has(entry.name))
+        .map((entry) => path.join(targetRoot, entry.name))
+        .filter((candidateRoot) => markerFileNames.some((marker) => pathExists(path.join(candidateRoot, marker))))
+        .sort((left, right) => getRelativeSurfacePath(targetRoot, left).localeCompare(getRelativeSurfacePath(targetRoot, right)));
+
+    return [...roots, ...nestedRoots];
+}
+
+function resolveNodeCompileGateSurfaces(targetRoot: string): CompileGateCommandSurface[] {
+    const packageRoots = listImmediateProjectRootsWithMarker(targetRoot, ['package.json'], true);
+    const surfaces: CompileGateCommandSurface[] = [];
+
+    for (const packageRoot of packageRoots) {
+        const packageJson = readPackageJsonSafe(path.join(packageRoot, 'package.json'));
+        const runner = detectNodePackageManager(packageRoot, packageJson);
+        const scripts = getPackageJsonScripts(packageJson);
+        const relativeSurfacePath = getRelativeSurfacePath(targetRoot, packageRoot);
+        const preferredScripts = ['build', 'compile', 'typecheck', 'type-check'];
+        const commands = preferredScripts
+            .filter((scriptName) => {
+                const scriptValue = scripts[scriptName];
+                return typeof scriptValue === 'string'
+                    && !isHeavyweightCompileGateScript(scriptName, scriptValue);
+            })
+            .map((scriptName) => buildNodeRunCommand(runner, scriptName, relativeSurfacePath));
+
+        if (commands.length === 0 && pathExists(path.join(packageRoot, 'tsconfig.json'))) {
+            commands.push(buildTscCompileCommand(relativeSurfacePath));
+        }
+
+        if (commands.length > 0) {
+            surfaces.push({
+                commands
+            });
+        }
+    }
+
+    if (packageRoots.length === 0 && hasAnyRootFile(targetRoot, ['tsconfig.json'])) {
+        surfaces.push({
+            commands: [buildTscCompileCommand('')]
+        });
+    }
+
+    return surfaces;
 }
 
 function resolveNodeFullSuiteValidationCommand(targetRoot: string): string | null {
@@ -207,6 +343,104 @@ function resolveJvmWrapperCommand(options: {
     return fallbackCommand;
 }
 
+function resolveMavenCompileCommand(
+    targetRoot: string,
+    projectRoot: string,
+    runtimePlatform: NodeJS.Platform
+): string {
+    const relativeSurfacePath = getRelativeSurfacePath(targetRoot, projectRoot);
+    if (!relativeSurfacePath) {
+        return resolveJvmWrapperCommand({
+            targetRoot,
+            wrapperName: 'mvnw',
+            windowsWrapperName: 'mvnw.cmd',
+            fallbackCommand: 'mvn compile',
+            runtimePlatform,
+            taskName: 'compile'
+        });
+    }
+
+    const pomArg = quoteCommandPath(`${relativeSurfacePath}/pom.xml`);
+    return resolveJvmWrapperCommand({
+        targetRoot,
+        wrapperName: 'mvnw',
+        windowsWrapperName: 'mvnw.cmd',
+        fallbackCommand: `mvn -f ${pomArg} compile`,
+        runtimePlatform,
+        taskName: `-f ${pomArg} compile`
+    });
+}
+
+function resolveGradleCompileCommand(
+    targetRoot: string,
+    projectRoot: string,
+    runtimePlatform: NodeJS.Platform
+): string {
+    const relativeSurfacePath = getRelativeSurfacePath(targetRoot, projectRoot);
+    if (!relativeSurfacePath) {
+        return resolveJvmWrapperCommand({
+            targetRoot,
+            wrapperName: 'gradlew',
+            windowsWrapperName: 'gradlew.bat',
+            fallbackCommand: 'gradle assemble',
+            runtimePlatform,
+            taskName: 'assemble'
+        });
+    }
+
+    const projectArg = quoteCommandPath(relativeSurfacePath);
+    return resolveJvmWrapperCommand({
+        targetRoot,
+        wrapperName: 'gradlew',
+        windowsWrapperName: 'gradlew.bat',
+        fallbackCommand: `gradle -p ${projectArg} assemble`,
+        runtimePlatform,
+        taskName: `-p ${projectArg} assemble`
+    });
+}
+
+function resolveMavenCompileGateSurfaces(
+    targetRoot: string,
+    runtimePlatform: NodeJS.Platform
+): CompileGateCommandSurface[] {
+    return listImmediateProjectRootsWithMarker(targetRoot, ['pom.xml'], false)
+        .map((projectRoot) => {
+            return {
+                commands: [resolveMavenCompileCommand(targetRoot, projectRoot, runtimePlatform)]
+            };
+        });
+}
+
+function resolveGradleCompileGateSurfaces(
+    targetRoot: string,
+    runtimePlatform: NodeJS.Platform
+): CompileGateCommandSurface[] {
+    return listImmediateProjectRootsWithMarker(
+        targetRoot,
+        ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'],
+        false
+    ).map((projectRoot) => {
+        return {
+            commands: [resolveGradleCompileCommand(targetRoot, projectRoot, runtimePlatform)]
+        };
+    });
+}
+
+function buildOrderedCompileGateCommands(surfaces: readonly CompileGateCommandSurface[]): string[] {
+    const uniqueSurfaceCommands = [...new Set(surfaces.flatMap((surface) => surface.commands))];
+    const primarySurfaceCommands = surfaces
+        .map((surface) => surface.commands[0])
+        .filter((command): command is string => Boolean(command));
+    if (primarySurfaceCommands.length <= 1) {
+        return uniqueSurfaceCommands;
+    }
+
+    return [...new Set([
+        primarySurfaceCommands.join(' && '),
+        ...uniqueSurfaceCommands
+    ])];
+}
+
 function resolveJvmWrapperTestCommand(options: {
     targetRoot: string;
     wrapperName: string;
@@ -222,53 +456,39 @@ export function resolveSuggestedCompileGateCommands(
     runtimePlatform: NodeJS.Platform = process.platform
 ): string[] {
     const normalizedTargetRoot = path.resolve(targetRoot);
-    const commands: string[] = [];
+    const surfaces: CompileGateCommandSurface[] = [];
 
-    commands.push(...resolveNodeCompileGateCommands(normalizedTargetRoot));
-
-    if (hasAnyRootFile(normalizedTargetRoot, ['tsconfig.json'])) {
-        commands.push('npx tsc --noEmit');
-    }
+    surfaces.push(...resolveNodeCompileGateSurfaces(normalizedTargetRoot));
 
     if (hasAnyRootFile(normalizedTargetRoot, ['pyproject.toml', 'requirements.txt', 'requirements-dev.txt'])) {
-        commands.push('python -m compileall .');
+        surfaces.push({
+            commands: ['python -m compileall .']
+        });
     }
 
-    if (pathExists(path.join(normalizedTargetRoot, 'pom.xml'))) {
-        commands.push(resolveJvmWrapperCommand({
-            targetRoot: normalizedTargetRoot,
-            wrapperName: 'mvnw',
-            windowsWrapperName: 'mvnw.cmd',
-            fallbackCommand: 'mvn compile',
-            runtimePlatform,
-            taskName: 'compile'
-        }));
-    }
-
-    if (hasAnyRootFile(normalizedTargetRoot, ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'])) {
-        commands.push(resolveJvmWrapperCommand({
-            targetRoot: normalizedTargetRoot,
-            wrapperName: 'gradlew',
-            windowsWrapperName: 'gradlew.bat',
-            fallbackCommand: 'gradle assemble',
-            runtimePlatform,
-            taskName: 'assemble'
-        }));
-    }
+    surfaces.push(...resolveMavenCompileGateSurfaces(normalizedTargetRoot, runtimePlatform));
 
     if (pathExists(path.join(normalizedTargetRoot, 'go.mod'))) {
-        commands.push('go build ./...');
+        surfaces.push({
+            commands: ['go build ./...']
+        });
     }
 
     if (pathExists(path.join(normalizedTargetRoot, 'Cargo.toml'))) {
-        commands.push('cargo check');
+        surfaces.push({
+            commands: ['cargo check']
+        });
     }
 
     if (hasAnyRootFileByExtension(normalizedTargetRoot, ['.sln', '.csproj', '.fsproj'])) {
-        commands.push('dotnet build');
+        surfaces.push({
+            commands: ['dotnet build']
+        });
     }
 
-    return [...new Set(commands)].sort();
+    surfaces.push(...resolveGradleCompileGateSurfaces(normalizedTargetRoot, runtimePlatform));
+
+    return buildOrderedCompileGateCommands(surfaces);
 }
 
 export function resolveSuggestedFullSuiteValidationCommand(
@@ -603,7 +823,7 @@ export function buildProjectDiscoveryLines(discovery: ProjectDiscovery, timestam
     if (!Array.isArray(discovery.suggestedCompileGateCommands) || discovery.suggestedCompileGateCommands.length === 0) {
         lines.push(`- No deterministic compile-gate command detected. Keep workflow config at \`${UNCONFIGURED_COMPILE_GATE_COMMAND}\` until an operator or agent-init records a project-specific compile/build/type-check command.`);
     } else {
-        lines.push('- Use these only for `workflow-config.compile_gate.command`; `40-commands.md` is human guidance. Full test suites belong in full-suite validation.');
+        lines.push('- Use these only for `workflow-config.compile_gate.command`; `40-commands.md` is human guidance. If the first command composes multiple build surfaces with `&&`, keep the whole command together. Full test suites belong in full-suite validation.');
         for (const cmd of discovery.suggestedCompileGateCommands) {
             lines.push(`- ${tick}${cmd}${tick}`);
         }

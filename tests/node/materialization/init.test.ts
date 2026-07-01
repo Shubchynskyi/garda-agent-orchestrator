@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { runInit, mergeConfig, USAGE_CONTRACT_MARKERS } from '../../../src/materialization/init';
+import { handleWorkflow } from '../../../src/cli/commands/workflow-command';
 import { getLifecycleOperationLockPath } from '../../../src/lifecycle/common';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../src/core/project-memory-rollout';
 import {
@@ -51,6 +52,26 @@ function extractMarkdownSection(markdown: string, heading: string): string {
     const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const match = new RegExp(`^## ${escapedHeading}\\r?\\n([\\s\\S]*?)(?=^## |\\Z)`, 'm').exec(markdown);
     return match ? match[1].trim() : '';
+}
+
+function stripAnsi(value: string): string {
+    return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
+function captureConsole<T>(run: () => T): { result: T; output: string } {
+    const originalConsoleLog = console.log;
+    const lines: string[] = [];
+    console.log = (...items: unknown[]) => {
+        lines.push(stripAnsi(items.join(' ')));
+    };
+    try {
+        return {
+            result: run(),
+            output: lines.join('\n')
+        };
+    } finally {
+        console.log = originalConsoleLog;
+    }
 }
 
 function seedLifecycleOperationLock(projectRoot: string, pid: number, hostname: string = os.hostname()) {
@@ -589,6 +610,59 @@ describe('runInit', () => {
             assert.equal(/### Compile Gate \(Mandatory\)\r?\n```bash\r?\nnpm run build\r?\n```/.test(commands), false);
             assert.ok(commands.includes('Use the command detected in `garda-agent-orchestrator/live/project-discovery.md`'));
             assert.ok(!commands.includes('### Test\r\n```bash\r\nnpm test'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('materializes a composed fast compile gate for Maven backend and frontend workspaces', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            fs.mkdirSync(path.join(projectRoot, 'backend'), { recursive: true });
+            fs.mkdirSync(path.join(projectRoot, 'frontend'), { recursive: true });
+            fs.mkdirSync(path.join(projectRoot, 'scripts'), { recursive: true });
+            fs.writeFileSync(path.join(projectRoot, 'backend', 'pom.xml'), '<project />', 'utf8');
+            fs.writeFileSync(path.join(projectRoot, 'frontend', 'package.json'), JSON.stringify({
+                scripts: { build: 'vite build', test: 'vitest run' }
+            }), 'utf8');
+            fs.writeFileSync(path.join(projectRoot, 'package.json'), JSON.stringify({
+                scripts: { build: 'bash ./scripts/build.sh -f' }
+            }), 'utf8');
+            fs.writeFileSync(path.join(projectRoot, 'scripts', 'build.sh'), '#!/bin/sh\n', 'utf8');
+
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const expectedCommand = 'npm --prefix frontend run build && mvn -f backend/pom.xml compile';
+            const workflowConfig = JSON.parse(fs.readFileSync(
+                path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+                'utf8'
+            ));
+            const discovery = fs.readFileSync(result.projectDiscoveryPath, 'utf8');
+            const commands = fs.readFileSync(
+                path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+                'utf8'
+            );
+            const workflowShow = captureConsole(() => handleWorkflow([
+                'show',
+                '--bundle-root',
+                bundleRoot
+            ], { name: 'garda-agent-orchestrator', version: 'test' }));
+
+            assert.equal(workflowConfig.compile_gate.command, expectedCommand);
+            assert.ok(discovery.includes(`\`${expectedCommand}\``));
+            assert.match(
+                commands,
+                new RegExp(`### Compile Gate \\(Mandatory\\)\\r?\\n\`\`\`bash\\r?\\n${expectedCommand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\r?\\n\`\`\``)
+            );
+            assert.ok(workflowShow.output.includes(`CompileGateCommand: ${expectedCommand}`));
+            assert.ok(!commands.includes('build.sh -f'));
+            assert.ok(!workflowShow.output.includes('build.sh -f'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
