@@ -470,12 +470,24 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                     enum: ['BLOCK_FOR_SPLIT', 'WARN_ONLY'],
                     description: 'Action when any configured budget is exceeded.'
                 },
-                max_files: { type: 'integer', minimum: 1, description: 'Maximum changed files before guard action.' },
-                max_changed_lines: { type: 'integer', minimum: 1, description: 'Maximum changed lines before guard action.' },
-                max_required_reviews: { type: 'integer', minimum: 1, description: 'Maximum distinct required review types before guard action.' },
-                max_review_tokens: { type: 'integer', minimum: 1, description: 'Maximum estimated review tokens before guard action.' }
+                max_files: { type: 'integer', minimum: 1, description: 'Legacy changed-file threshold. WARN_ONLY maps it to warn_files; BLOCK_FOR_SPLIT maps it to block_files.' },
+                max_changed_lines: { type: 'integer', minimum: 1, description: 'Legacy changed-line threshold. WARN_ONLY maps it to warn_changed_lines; BLOCK_FOR_SPLIT maps it to block_changed_lines.' },
+                max_required_reviews: { type: 'integer', minimum: 1, description: 'Legacy required-review threshold. WARN_ONLY maps it to warn_required_reviews; BLOCK_FOR_SPLIT maps it to block_required_reviews.' },
+                max_review_tokens: { type: 'integer', minimum: 1, description: 'Legacy review-token threshold. WARN_ONLY maps it to warn_review_tokens; BLOCK_FOR_SPLIT maps it to block_review_tokens.' },
+                warn_files: { type: 'integer', minimum: 1, description: 'Changed-file warning threshold; must be lower than block_files.' },
+                block_files: { type: 'integer', minimum: 1, description: 'Changed-file blocking threshold.' },
+                warn_changed_lines: { type: 'integer', minimum: 1, description: 'Changed-line warning threshold; must be lower than block_changed_lines.' },
+                block_changed_lines: { type: 'integer', minimum: 1, description: 'Changed-line blocking threshold.' },
+                warn_required_reviews: { type: 'integer', minimum: 1, description: 'Required review type warning threshold; must be lower than block_required_reviews.' },
+                block_required_reviews: { type: 'integer', minimum: 1, description: 'Required review type blocking threshold.' },
+                warn_review_tokens: { type: 'integer', minimum: 1, description: 'Estimated review-token warning threshold; must be lower than block_review_tokens.' },
+                block_review_tokens: { type: 'integer', minimum: 1, description: 'Estimated review-token blocking threshold.' }
             },
-            required: ['enabled', 'profiles', 'action', 'max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens'],
+            required: [
+                'enabled',
+                'profiles',
+                'action'
+            ],
             additionalProperties: false
         },
         review_cycle_guard: {

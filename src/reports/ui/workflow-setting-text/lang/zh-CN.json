@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "范围预算超限动作",
-    "description": "超出范围预算时的处理方式。",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "阻止直至拆分",
-        "description": "停止过大的工作，并要求操作员或智能体进行拆分。"
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "仅警告",
-        "description": "显示范围警告，但不停止下一生命周期步骤。"
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "可选质量检查规则",
     "description": "通过已审计的工作流设置路径添加、更新或移除一条建议性的可选质量检查规则。"
+  },
+  "scope-budget-warn-files": {
+    "label": "范围预算: 变更文件 - WARN 警告",
+    "description": "WARN 警告: 变更文件 above threshold; 仍允许继续; keep it below BLOCK 阻止."
+  },
+  "scope-budget-block-files": {
+    "label": "范围预算: 变更文件 - BLOCK 阻止",
+    "description": "BLOCK 阻止: 变更文件 above threshold; next-step 进入 split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "范围预算: 变更行 - WARN 警告",
+    "description": "WARN 警告: 变更行 above threshold; 仍允许继续; keep it below BLOCK 阻止."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "范围预算: 变更行 - BLOCK 阻止",
+    "description": "BLOCK 阻止: 变更行 above threshold; next-step 进入 split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "范围预算: 必需评审类型 - WARN 警告",
+    "description": "WARN 警告: 必需评审类型 above threshold; 仍允许继续; keep it below BLOCK 阻止."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "范围预算: 必需评审类型 - BLOCK 阻止",
+    "description": "BLOCK 阻止: 必需评审类型 above threshold; next-step 进入 split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "范围预算: 评审 token - WARN 警告",
+    "description": "WARN 警告: 评审 token above threshold; 仍允许继续; keep it below BLOCK 阻止."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "范围预算: 评审 token - BLOCK 阻止",
+    "description": "BLOCK 阻止: 评审 token above threshold; next-step 进入 split-required."
   }
 }

@@ -367,8 +367,11 @@ export function sanitizeScopeBudgetGuardSummary(evaluation: ScopeBudgetGuardEval
     if (evaluation.violations.length === 0) {
         return evaluation.summary_line;
     }
-    const metrics = evaluation.violations.map((violation) => violation.metric).join(', ');
-    return `Scope budget guard: ${evaluation.action} (configured budget exceeded: ${metrics})`;
+    const metrics = evaluation.violations
+        .filter((violation) => violation.severity === 'BLOCK')
+        .map((violation) => violation.metric)
+        .join(', ');
+    return `Scope budget guard: BLOCK (configured blocking budget exceeded: ${metrics || 'unknown'})`;
 }
 
 export function sanitizeReviewCycleAutoSplitSummary(evaluation: ReviewCycleGuardEvaluation): string {

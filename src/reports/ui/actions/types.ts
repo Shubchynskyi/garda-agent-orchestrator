@@ -36,6 +36,7 @@ export interface UiSettingDefinition {
     placeholder?: string;
     command_value_inverts_boolean?: boolean;
     compile_gate_full_suite_command?: string | null;
+    peer_values?: Record<string, unknown>;
     confirmation_phrase: string;
     readiness?: import('../../report-data/types').ReportWorkflowSetting['readiness'];
 }

@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "স্কোপ বাজেট অ্যাকশন",
-    "description": "স্কোপ বাজেট ছাড়িয়ে গেলে কী হয়।",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "বিভাজন পর্যন্ত ব্লক",
-        "description": "অতিরিক্ত বড় কাজ থামায় এবং অপারেটর বা এজেন্টকে বিভাজন করতে বলে।"
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "শুধু সতর্কতা",
-        "description": "স্কোপ সতর্কতা দেখায় কিন্তু পরবর্তী লাইফসাইকেল ধাপ থামায় না।"
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "ঐচ্ছিক গুণমান-পরীক্ষা নিয়ম",
     "description": "নিরীক্ষিত workflow-setting পথ দিয়ে একটি পরামর্শমূলক ঐচ্ছিক গুণমান-পরীক্ষা নিয়ম যোগ, আপডেট বা সরায়।"
+  },
+  "scope-budget-warn-files": {
+    "label": "স্কোপ বাজেট: পরিবর্তিত ফাইল - WARN সতর্কতা",
+    "description": "WARN সতর্কতা: পরিবর্তিত ফাইল above threshold; চালিয়ে যাওয়া যায়; keep it below BLOCK ব্লক."
+  },
+  "scope-budget-block-files": {
+    "label": "স্কোপ বাজেট: পরিবর্তিত ফাইল - BLOCK ব্লক",
+    "description": "BLOCK ব্লক: পরিবর্তিত ফাইল above threshold; next-step split-required এ যায়."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "স্কোপ বাজেট: পরিবর্তিত লাইন - WARN সতর্কতা",
+    "description": "WARN সতর্কতা: পরিবর্তিত লাইন above threshold; চালিয়ে যাওয়া যায়; keep it below BLOCK ব্লক."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "স্কোপ বাজেট: পরিবর্তিত লাইন - BLOCK ব্লক",
+    "description": "BLOCK ব্লক: পরিবর্তিত লাইন above threshold; next-step split-required এ যায়."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "স্কোপ বাজেট: আবশ্যিক রিভিউ টাইপ - WARN সতর্কতা",
+    "description": "WARN সতর্কতা: আবশ্যিক রিভিউ টাইপ above threshold; চালিয়ে যাওয়া যায়; keep it below BLOCK ব্লক."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "স্কোপ বাজেট: আবশ্যিক রিভিউ টাইপ - BLOCK ব্লক",
+    "description": "BLOCK ব্লক: আবশ্যিক রিভিউ টাইপ above threshold; next-step split-required এ যায়."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "স্কোপ বাজেট: রিভিউ টোকেন - WARN সতর্কতা",
+    "description": "WARN সতর্কতা: রিভিউ টোকেন above threshold; চালিয়ে যাওয়া যায়; keep it below BLOCK ব্লক."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "স্কোপ বাজেট: রিভিউ টোকেন - BLOCK ব্লক",
+    "description": "BLOCK ব্লক: রিভিউ টোকেন above threshold; next-step split-required এ যায়."
   }
 }

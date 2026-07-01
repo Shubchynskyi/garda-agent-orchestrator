@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Azione su superamento scope",
-    "description": "Cosa succede quando il budget di scope viene superato.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Blocca fino alla suddivisione",
-        "description": "Arresta il lavoro eccessivamente ampio e richiede una suddivisione."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Solo avviso",
-        "description": "Mostra l'avviso di scope senza arrestare il passo successivo del ciclo di vita."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Regola opzionale di controllo qualità",
     "description": "Aggiunge, aggiorna o rimuove una regola opzionale e consultiva di controllo qualità tramite il percorso auditato delle impostazioni del workflow."
+  },
+  "scope-budget-warn-files": {
+    "label": "budget di scope: file modificati - avviso WARN",
+    "description": "avviso WARN: file modificati above threshold; la continuazione resta consentita; keep it below blocco BLOCK."
+  },
+  "scope-budget-block-files": {
+    "label": "budget di scope: file modificati - blocco BLOCK",
+    "description": "blocco BLOCK: file modificati above threshold; next-step passa a split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "budget di scope: righe modificate - avviso WARN",
+    "description": "avviso WARN: righe modificate above threshold; la continuazione resta consentita; keep it below blocco BLOCK."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "budget di scope: righe modificate - blocco BLOCK",
+    "description": "blocco BLOCK: righe modificate above threshold; next-step passa a split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "budget di scope: tipi di review obbligatori - avviso WARN",
+    "description": "avviso WARN: tipi di review obbligatori above threshold; la continuazione resta consentita; keep it below blocco BLOCK."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "budget di scope: tipi di review obbligatori - blocco BLOCK",
+    "description": "blocco BLOCK: tipi di review obbligatori above threshold; next-step passa a split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "budget di scope: token review - avviso WARN",
+    "description": "avviso WARN: token review above threshold; la continuazione resta consentita; keep it below blocco BLOCK."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "budget di scope: token review - blocco BLOCK",
+    "description": "blocco BLOCK: token review above threshold; next-step passa a split-required."
   }
 }

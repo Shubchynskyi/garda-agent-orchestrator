@@ -437,14 +437,31 @@ function validateProjectMemoryMaintenanceSection(input: unknown): Record<string,
 function validateScopeBudgetGuardSection(input: unknown): Record<string, unknown> {
     const section = ensurePlainObject(input, 'workflow-config.scope_budget_guard');
     const normalizedInput = { ...section };
+    const knownKeys = [
+        'enabled',
+        'profiles',
+        'action',
+        'max_files',
+        'max_changed_lines',
+        'max_required_reviews',
+        'max_review_tokens',
+        'warn_files',
+        'block_files',
+        'warn_changed_lines',
+        'block_changed_lines',
+        'warn_required_reviews',
+        'block_required_reviews',
+        'warn_review_tokens',
+        'block_review_tokens'
+    ];
     assertNoCaseMismatchedKnownKeys(
         section,
-        ['enabled', 'profiles', 'action', 'max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens'],
+        knownKeys,
         'workflow-config.scope_budget_guard'
     );
     assertNoUnknownKeys(
         section,
-        ['enabled', 'profiles', 'action', 'max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens'],
+        knownKeys,
         'workflow-config.scope_budget_guard'
     );
     if (section.enabled !== undefined) {
@@ -472,12 +489,43 @@ function validateScopeBudgetGuardSection(input: unknown): Record<string, unknown
             'workflow-config.scope_budget_guard.profiles'
         );
     }
-    for (const key of ['max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens']) {
+    for (const key of [
+        'max_files',
+        'max_changed_lines',
+        'max_required_reviews',
+        'max_review_tokens',
+        'warn_files',
+        'block_files',
+        'warn_changed_lines',
+        'block_changed_lines',
+        'warn_required_reviews',
+        'block_required_reviews',
+        'warn_review_tokens',
+        'block_review_tokens'
+    ]) {
         if (section[key] !== undefined) {
             normalizedInput[key] = normalizeInteger(section[key], `workflow-config.scope_budget_guard.${key}`, { minimum: 1 });
         }
     }
     const normalized = normalizeScopeBudgetGuardConfig(normalizedInput) as unknown as Record<string, unknown>;
+    for (const [warningKey, blockingKey] of [
+        ['warn_files', 'block_files'],
+        ['warn_changed_lines', 'block_changed_lines'],
+        ['warn_required_reviews', 'block_required_reviews'],
+        ['warn_review_tokens', 'block_review_tokens']
+    ] as const) {
+        const warningLimit = normalized[warningKey];
+        const blockingLimit = normalized[blockingKey];
+        if (
+            typeof warningLimit === 'number'
+            && typeof blockingLimit === 'number'
+            && warningLimit >= blockingLimit
+        ) {
+            throw new Error(
+                `workflow-config.scope_budget_guard.${warningKey} must be less than workflow-config.scope_budget_guard.${blockingKey}.`
+            );
+        }
+    }
     return normalized;
 }
 

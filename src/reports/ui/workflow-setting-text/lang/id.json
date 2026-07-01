@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Tindakan anggaran cakupan",
-    "description": "Apa yang terjadi ketika anggaran cakupan terlampaui.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Blokir untuk pemisahan",
-        "description": "Menghentikan pekerjaan yang terlalu besar dan meminta operator atau agen membaginya."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Hanya peringatkan",
-        "description": "Menampilkan peringatan cakupan tetapi tidak menghentikan langkah siklus hidup berikutnya."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Aturan pemeriksaan kualitas opsional",
     "description": "Menambah, memperbarui, atau menghapus satu aturan pemeriksaan kualitas opsional yang bersifat advisori melalui jalur pengaturan workflow yang diaudit."
+  },
+  "scope-budget-warn-files": {
+    "label": "scope budget: file berubah - peringatan WARN",
+    "description": "peringatan WARN: file berubah above threshold; lanjutan tetap diizinkan; keep it below blok BLOCK."
+  },
+  "scope-budget-block-files": {
+    "label": "scope budget: file berubah - blok BLOCK",
+    "description": "blok BLOCK: file berubah above threshold; next-step diarahkan ke split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "scope budget: baris berubah - peringatan WARN",
+    "description": "peringatan WARN: baris berubah above threshold; lanjutan tetap diizinkan; keep it below blok BLOCK."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "scope budget: baris berubah - blok BLOCK",
+    "description": "blok BLOCK: baris berubah above threshold; next-step diarahkan ke split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "scope budget: tipe review wajib - peringatan WARN",
+    "description": "peringatan WARN: tipe review wajib above threshold; lanjutan tetap diizinkan; keep it below blok BLOCK."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "scope budget: tipe review wajib - blok BLOCK",
+    "description": "blok BLOCK: tipe review wajib above threshold; next-step diarahkan ke split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "scope budget: token review - peringatan WARN",
+    "description": "peringatan WARN: token review above threshold; lanjutan tetap diizinkan; keep it below blok BLOCK."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "scope budget: token review - blok BLOCK",
+    "description": "blok BLOCK: token review above threshold; next-step diarahkan ke split-required."
   }
 }

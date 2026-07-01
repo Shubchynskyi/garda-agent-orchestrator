@@ -118,7 +118,7 @@ export function buildReviewExecutionPolicyView(state: WorkflowConfigState): Work
 }
 
 export function buildScopeBudgetGuardLine(config: ScopeBudgetGuardConfig): string {
-    return `Scope budget guard: ${config.enabled ? config.action : 'disabled'} profiles=${config.profiles.join(',')} max_files=${config.max_files} max_lines=${config.max_changed_lines} max_reviews=${config.max_required_reviews} max_review_tokens=${config.max_review_tokens}`;
+    return `Scope budget guard: ${config.enabled ? 'tiered WARN/BLOCK' : 'disabled'} profiles=${config.profiles.join(',')} warn_files=${config.warn_files} block_files=${config.block_files} warn_lines=${config.warn_changed_lines} block_lines=${config.block_changed_lines} warn_reviews=${config.warn_required_reviews} block_reviews=${config.block_required_reviews} warn_review_tokens=${config.warn_review_tokens} block_review_tokens=${config.block_review_tokens}`;
 }
 
 export function buildReviewCycleGuardLine(config: ReviewCycleGuardConfig): string {
@@ -355,11 +355,20 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Scope budget guard');
     lines.push(`ScopeBudgetGuardEnabled: ${scopeBudgetGuard.enabled}`);
     lines.push(`ScopeBudgetGuardProfiles: ${scopeBudgetGuard.profiles.join(', ')}`);
-    lines.push(`ScopeBudgetGuardAction: ${scopeBudgetGuard.action}`);
+    lines.push(`ScopeBudgetGuardLegacyMaxMappingMode: ${scopeBudgetGuard.action}`);
+    lines.push('ScopeBudgetGuardBlocking: explicit block_* thresholds produce BLOCK in every legacy mapping mode');
     lines.push(`ScopeBudgetGuardMaxFiles: ${scopeBudgetGuard.max_files}`);
     lines.push(`ScopeBudgetGuardMaxChangedLines: ${scopeBudgetGuard.max_changed_lines}`);
     lines.push(`ScopeBudgetGuardMaxRequiredReviews: ${scopeBudgetGuard.max_required_reviews}`);
     lines.push(`ScopeBudgetGuardMaxReviewTokens: ${scopeBudgetGuard.max_review_tokens}`);
+    lines.push(`ScopeBudgetGuardWarnFiles: ${scopeBudgetGuard.warn_files}`);
+    lines.push(`ScopeBudgetGuardBlockFiles: ${scopeBudgetGuard.block_files}`);
+    lines.push(`ScopeBudgetGuardWarnChangedLines: ${scopeBudgetGuard.warn_changed_lines}`);
+    lines.push(`ScopeBudgetGuardBlockChangedLines: ${scopeBudgetGuard.block_changed_lines}`);
+    lines.push(`ScopeBudgetGuardWarnRequiredReviews: ${scopeBudgetGuard.warn_required_reviews}`);
+    lines.push(`ScopeBudgetGuardBlockRequiredReviews: ${scopeBudgetGuard.block_required_reviews}`);
+    lines.push(`ScopeBudgetGuardWarnReviewTokens: ${scopeBudgetGuard.warn_review_tokens}`);
+    lines.push(`ScopeBudgetGuardBlockReviewTokens: ${scopeBudgetGuard.block_review_tokens}`);
     lines.push('');
     lines.push('Review cycle guard');
     lines.push(`ReviewCycleGuardEnabled: ${reviewCycleGuard.enabled}`);
@@ -407,7 +416,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Tip: run "workflow set --full-suite on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the repo-local mode after operator approval.');
     lines.push('Tip: run "workflow set --full-suite-timeout-blocker true|false --full-suite-timeout-retry-count 1 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change timeout blocker behavior after operator approval.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change review launch ordering after operator approval.`);
-    lines.push('Tip: run "workflow set --scope-budget on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the scope budget guard after operator approval.');
+    lines.push('Tip: run "workflow set --scope-budget on|off --scope-budget-warn-changed-lines 2000 --scope-budget-block-changed-lines 5000 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the tiered scope budget guard after operator approval.');
     lines.push('Tip: run "workflow set --review-cycle on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the review cycle guard after operator approval.');
     lines.push('Tip: run "workflow set --project-memory on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change project memory maintenance checks after operator approval.');
     lines.push('Tip: run "workflow set --task-reset on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change confirmed task-reset availability after operator approval.');

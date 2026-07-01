@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Reaktion auf Scope-Budget",
-    "description": "Was passiert, wenn das Scope-Budget überschritten wird.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Blockieren bis zur Aufteilung",
-        "description": "Stoppt überdimensionierte Arbeit und fordert eine Aufteilung."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Nur warnen",
-        "description": "Zeigt die Scope-Warnung, stoppt aber nicht den nächsten Lifecycle-Schritt."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Optionale Qualitätsprüfregel",
     "description": "Fügt eine beratende optionale Qualitätsprüfregel über den auditierten Workflow-Einstellungspfad hinzu, aktualisiert oder entfernt sie."
+  },
+  "scope-budget-warn-files": {
+    "label": "Scope-Budget: geänderte Dateien - WARN-Warnung",
+    "description": "WARN-Warnung: geänderte Dateien above threshold; Fortsetzen bleibt erlaubt; keep it below BLOCK-Blockade."
+  },
+  "scope-budget-block-files": {
+    "label": "Scope-Budget: geänderte Dateien - BLOCK-Blockade",
+    "description": "BLOCK-Blockade: geänderte Dateien above threshold; next-step führt zu split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "Scope-Budget: geänderte Zeilen - WARN-Warnung",
+    "description": "WARN-Warnung: geänderte Zeilen above threshold; Fortsetzen bleibt erlaubt; keep it below BLOCK-Blockade."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "Scope-Budget: geänderte Zeilen - BLOCK-Blockade",
+    "description": "BLOCK-Blockade: geänderte Zeilen above threshold; next-step führt zu split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "Scope-Budget: Pflicht-Reviewtypen - WARN-Warnung",
+    "description": "WARN-Warnung: Pflicht-Reviewtypen above threshold; Fortsetzen bleibt erlaubt; keep it below BLOCK-Blockade."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "Scope-Budget: Pflicht-Reviewtypen - BLOCK-Blockade",
+    "description": "BLOCK-Blockade: Pflicht-Reviewtypen above threshold; next-step führt zu split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "Scope-Budget: Review-Tokens - WARN-Warnung",
+    "description": "WARN-Warnung: Review-Tokens above threshold; Fortsetzen bleibt erlaubt; keep it below BLOCK-Blockade."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "Scope-Budget: Review-Tokens - BLOCK-Blockade",
+    "description": "BLOCK-Blockade: Review-Tokens above threshold; next-step führt zu split-required."
   }
 }

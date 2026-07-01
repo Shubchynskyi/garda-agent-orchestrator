@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Реакция на превышение scope",
-    "description": "Что делать, когда задача превысила настроенный бюджет охвата.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Блокировать до разбиения",
-        "description": "Останавливает слишком большую задачу и требует разбиения."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Только предупредить",
-        "description": "Показывает предупреждение, но не останавливает lifecycle."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Правило опциональной проверки качества",
     "description": "Добавляет, обновляет или удаляет одно рекомендательное правило опциональной проверки качества через проверяемый путь настроек workflow."
+  },
+  "scope-budget-warn-files": {
+    "label": "бюджет scope: измененные файлы - предупреждение WARN",
+    "description": "предупреждение WARN: измененные файлы above threshold; продолжение разрешено; keep it below блокировка BLOCK."
+  },
+  "scope-budget-block-files": {
+    "label": "бюджет scope: измененные файлы - блокировка BLOCK",
+    "description": "блокировка BLOCK: измененные файлы above threshold; next-step ведет к split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "бюджет scope: измененные строки - предупреждение WARN",
+    "description": "предупреждение WARN: измененные строки above threshold; продолжение разрешено; keep it below блокировка BLOCK."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "бюджет scope: измененные строки - блокировка BLOCK",
+    "description": "блокировка BLOCK: измененные строки above threshold; next-step ведет к split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "бюджет scope: типы обязательного ревью - предупреждение WARN",
+    "description": "предупреждение WARN: типы обязательного ревью above threshold; продолжение разрешено; keep it below блокировка BLOCK."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "бюджет scope: типы обязательного ревью - блокировка BLOCK",
+    "description": "блокировка BLOCK: типы обязательного ревью above threshold; next-step ведет к split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "бюджет scope: review-токены - предупреждение WARN",
+    "description": "предупреждение WARN: review-токены above threshold; продолжение разрешено; keep it below блокировка BLOCK."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "бюджет scope: review-токены - блокировка BLOCK",
+    "description": "блокировка BLOCK: review-токены above threshold; next-step ведет к split-required."
   }
 }

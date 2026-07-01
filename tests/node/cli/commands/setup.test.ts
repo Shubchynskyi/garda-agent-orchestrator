@@ -723,7 +723,9 @@ test('handleSetup migrates exact legacy scope-budget guard default during refres
         const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
         assert.equal(workflowConfig.scope_budget_guard.action, 'WARN_ONLY');
         assert.equal(workflowConfig.scope_budget_guard.max_files, 20);
-        assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 1500);
+        assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 2000);
+        assert.equal(workflowConfig.scope_budget_guard.warn_changed_lines, 2000);
+        assert.equal(workflowConfig.scope_budget_guard.block_changed_lines, 5000);
         assert.equal(workflowConfig.scope_budget_guard.max_required_reviews, 5);
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
@@ -785,7 +787,15 @@ test('handleSetup preserves custom scope-budget guard settings during refresh', 
             max_files: 7,
             max_changed_lines: 300,
             max_required_reviews: 3,
-            max_review_tokens: 5000
+            max_review_tokens: 5000,
+            warn_files: 6,
+            block_files: 7,
+            warn_changed_lines: 299,
+            block_changed_lines: 300,
+            warn_required_reviews: 2,
+            block_required_reviews: 3,
+            warn_review_tokens: 4999,
+            block_review_tokens: 5000
         });
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
@@ -847,7 +857,15 @@ test('handleSetup preserves disabled scope-budget guard settings during refresh'
             max_files: 12,
             max_changed_lines: 1200,
             max_required_reviews: 5,
-            max_review_tokens: 50000
+            max_review_tokens: 50000,
+            warn_files: 11,
+            block_files: 12,
+            warn_changed_lines: 1199,
+            block_changed_lines: 1200,
+            warn_required_reviews: 4,
+            block_required_reviews: 5,
+            warn_review_tokens: 49999,
+            block_review_tokens: 50000
         });
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
@@ -1123,7 +1141,9 @@ test('handleSetup materializes strict_sequential review_execution_policy for a f
         assert.equal(workflowConfig.compile_gate.command, UNCONFIGURED_COMPILE_GATE_COMMAND);
         assert.equal(workflowConfig.scope_budget_guard.action, 'WARN_ONLY');
         assert.equal(workflowConfig.scope_budget_guard.max_files, 20);
-        assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 1500);
+        assert.equal(workflowConfig.scope_budget_guard.max_changed_lines, 2000);
+        assert.equal(workflowConfig.scope_budget_guard.warn_changed_lines, 2000);
+        assert.equal(workflowConfig.scope_budget_guard.block_changed_lines, 5000);
         assert.equal(workflowConfig.scope_budget_guard.max_required_reviews, 5);
         assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);

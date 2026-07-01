@@ -372,6 +372,23 @@ test('workflow-config schema accepts legacy configs without compile_gate', () =>
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('workflow-config schema accepts legacy scope budget max-only thresholds', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    clone.scope_budget_guard = {
+        enabled: true,
+        profiles: ['strict'],
+        action: 'BLOCK_FOR_SPLIT',
+        max_files: 12,
+        max_changed_lines: 1500,
+        max_required_reviews: 5,
+        max_review_tokens: 50000
+    };
+
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
 test('workflow-config schema accepts optional quality checks without explicit rules', () => {
     const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
     const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;

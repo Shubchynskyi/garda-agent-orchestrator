@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "إجراء ميزانية النطاق",
-    "description": "ما الذي يحدث عند تجاوز ميزانية النطاق.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "حظر حتى التقسيم",
-        "description": "يوقف العمل الكبير جدًا ويطلب من المشغّل أو الوكيل تقسيمه."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "تحذير فقط",
-        "description": "يعرض تحذير النطاق لكنه لا يوقف الخطوة التالية في دورة الحياة."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "قاعدة فحص جودة اختيارية",
     "description": "تضيف قاعدة فحص جودة اختيارية استشارية واحدة أو تحدثها أو تزيلها عبر مسار إعدادات سير العمل المدقق."
+  },
+  "scope-budget-warn-files": {
+    "label": "ميزانية النطاق: الملفات المتغيرة - تحذير WARN",
+    "description": "تحذير WARN: الملفات المتغيرة above threshold; المتابعة مسموحة; keep it below حظر BLOCK."
+  },
+  "scope-budget-block-files": {
+    "label": "ميزانية النطاق: الملفات المتغيرة - حظر BLOCK",
+    "description": "حظر BLOCK: الملفات المتغيرة above threshold; next-step يوجه إلى split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "ميزانية النطاق: الأسطر المتغيرة - تحذير WARN",
+    "description": "تحذير WARN: الأسطر المتغيرة above threshold; المتابعة مسموحة; keep it below حظر BLOCK."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "ميزانية النطاق: الأسطر المتغيرة - حظر BLOCK",
+    "description": "حظر BLOCK: الأسطر المتغيرة above threshold; next-step يوجه إلى split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "ميزانية النطاق: أنواع المراجعة المطلوبة - تحذير WARN",
+    "description": "تحذير WARN: أنواع المراجعة المطلوبة above threshold; المتابعة مسموحة; keep it below حظر BLOCK."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "ميزانية النطاق: أنواع المراجعة المطلوبة - حظر BLOCK",
+    "description": "حظر BLOCK: أنواع المراجعة المطلوبة above threshold; next-step يوجه إلى split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "ميزانية النطاق: رموز المراجعة - تحذير WARN",
+    "description": "تحذير WARN: رموز المراجعة above threshold; المتابعة مسموحة; keep it below حظر BLOCK."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "ميزانية النطاق: رموز المراجعة - حظر BLOCK",
+    "description": "حظر BLOCK: رموز المراجعة above threshold; next-step يوجه إلى split-required."
   }
 }

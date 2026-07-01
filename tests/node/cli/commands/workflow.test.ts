@@ -108,10 +108,16 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('FullSuiteTimeoutBlocker: true'));
         assert.ok(output.includes('FullSuiteTimeoutRetryCount: 1'));
         assert.ok(output.includes('FullSuitePlacement: before_test_review'));
-        assert.ok(output.includes('Scope budget guard: WARN_ONLY'));
-        assert.ok(output.includes('max_reviews=5'));
+        assert.ok(output.includes('Scope budget guard: tiered WARN/BLOCK'));
+        assert.ok(output.includes('warn_reviews=5 block_reviews=8'));
+        assert.ok(output.includes('ScopeBudgetGuardLegacyMaxMappingMode: WARN_ONLY'));
+        assert.ok(output.includes('ScopeBudgetGuardBlocking: explicit block_* thresholds produce BLOCK in every legacy mapping mode'));
         assert.ok(output.includes('ScopeBudgetGuardMaxRequiredReviews: 5'));
+        assert.ok(output.includes('ScopeBudgetGuardWarnChangedLines: 2000'));
+        assert.ok(output.includes('ScopeBudgetGuardBlockChangedLines: 5000'));
         assert.equal(result.scope_budget_guard.max_required_reviews, 5);
+        assert.equal(result.scope_budget_guard.warn_changed_lines, 2000);
+        assert.equal(result.scope_budget_guard.block_changed_lines, 5000);
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
         assert.ok(output.includes('max_failed_non_test_reviews=15 max_total_non_test_reviews=30'));
         assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first'));
@@ -238,11 +244,15 @@ test('workflow set updates scope budget guard settings deterministically', () =>
             '--scope-budget-max-changed-lines', '300',
             '--scope-budget-max-required-reviews', '3',
             '--scope-budget-max-review-tokens', '5000',
+            '--scope-budget-block-files', '50',
+            '--scope-budget-block-changed-lines', '5000',
+            '--scope-budget-block-required-reviews', '8',
+            '--scope-budget-block-review-tokens', '100000',
             ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
         assert.ok(result && result.action === 'set');
         assert.equal(result.status, 'CHANGED');
-        assert.ok(output.includes('Scope budget guard: WARN_ONLY profiles=strict,balanced'));
+        assert.ok(output.includes('Scope budget guard: tiered WARN/BLOCK profiles=strict,balanced'));
 
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.scope_budget_guard.enabled, true);
@@ -252,6 +262,33 @@ test('workflow set updates scope budget guard settings deterministically', () =>
         assert.equal(parsedConfig.scope_budget_guard.max_changed_lines, 300);
         assert.equal(parsedConfig.scope_budget_guard.max_required_reviews, 3);
         assert.equal(parsedConfig.scope_budget_guard.max_review_tokens, 5000);
+        assert.equal(parsedConfig.scope_budget_guard.warn_files, 7);
+        assert.equal(parsedConfig.scope_budget_guard.block_files, 50);
+        assert.equal(parsedConfig.scope_budget_guard.warn_changed_lines, 300);
+        assert.equal(parsedConfig.scope_budget_guard.block_changed_lines, 5000);
+        assert.equal(parsedConfig.scope_budget_guard.warn_required_reviews, 3);
+        assert.equal(parsedConfig.scope_budget_guard.block_required_reviews, 8);
+        assert.equal(parsedConfig.scope_budget_guard.warn_review_tokens, 5000);
+        assert.equal(parsedConfig.scope_budget_guard.block_review_tokens, 100000);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set rejects scope budget warning thresholds that do not stay below blocking thresholds', () => {
+    const bundleRoot = createBundleRoot();
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--scope-budget-warn-files', '50',
+                '--scope-budget-block-files', '50',
+                ...buildOperatorConfirmationArgs()
+            ], PACKAGE_JSON),
+            /warn_files must be less than workflow-config\.scope_budget_guard\.block_files/u
+        );
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -1065,6 +1102,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         assert.ok(explainOutput.includes('BLOCK_FOR_OPERATOR_DECISION'));
         assert.ok(explainOutput.includes('auto_split_enabled is true'));
         assert.ok(explainOutput.includes('WARN_ONLY'));
+        assert.ok(explainOutput.includes('explicit block_* thresholds produce BLOCK in every action mode'));
         assert.ok(explainOutput.includes('Task reset: confirmed reset mutations are disabled by default'));
         assert.ok(explainOutput.includes('Optional quality checks: advisory self-check rules are default-enabled'));
     } finally {

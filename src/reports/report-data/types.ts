@@ -20,6 +20,7 @@ import type {
     CanonicalOptionalSkillSelectionPolicyMode,
     OptionalSkillSelectionPolicyMode
 } from '../../runtime/optional-skill-selection';
+import type { ScopeBudgetStatusSnapshot } from '../../core/scope-budget-status';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
 export const DEFAULT_REPORT_MAX_DETAILED_TASKS = 0;
@@ -465,6 +466,9 @@ export interface ReportSystemState {
         full_suite_timeout_warning_only_continuation: boolean | null;
         full_suite_timeout_latest_warning: string | null;
         task_reset_ready: boolean;
+    };
+    scope_budget: ReportSystemStateSignal & {
+        evaluation: ScopeBudgetStatusSnapshot;
     };
     quality_baseline: ReportSystemStateSignal;
     project_memory: ReportSystemStateSignal;

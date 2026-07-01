@@ -7,6 +7,7 @@ import type { validateInitAnswers } from '../../schemas/init-answers';
 import type { ProtectedManifestAssessment } from '../protected-manifest-assessment';
 import type { ProviderComplianceResult } from '../provider-compliance';
 import type { detectSourceBundleParity } from '../workspace-layout';
+import type { ScopeBudgetStatusSnapshot } from '../../core/scope-budget-status';
 
 export type InitAnswers = ReturnType<typeof validateInitAnswers>;
 
@@ -52,4 +53,5 @@ export interface StatusSnapshot extends CliStatusSnapshot {
     protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null;
     protectedManifestAssessment: ProtectedManifestAssessment | null;
     toxinMetricsSummary: ToxinStatusSummary | null;
+    scopeBudgetGuardStatus: ScopeBudgetStatusSnapshot | null;
 }

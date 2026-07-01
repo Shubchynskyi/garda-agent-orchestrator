@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "स्कोप बजट कार्रवाई",
-    "description": "स्कोप बजट पार होने पर क्या होता है।",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "विभाजन तक रोकें",
-        "description": "बड़े कार्य को रोकता है और ऑपरेटर या एजेंट से विभाजन माँगता है।"
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "केवल चेतावनी",
-        "description": "स्कोप चेतावनी दिखाता है लेकिन अगला जीवनचक्र चरण नहीं रोकता।"
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "वैकल्पिक गुणवत्ता-जांच नियम",
     "description": "ऑडिट किए गए workflow-setting पथ से एक सलाहकारी वैकल्पिक गुणवत्ता-जांच नियम जोड़ता, अपडेट करता या हटाता है।"
+  },
+  "scope-budget-warn-files": {
+    "label": "स्कोप बजट: बदली हुई फाइलें - WARN चेतावनी",
+    "description": "WARN चेतावनी: बदली हुई फाइलें above threshold; आगे बढ़ना अनुमत है; keep it below BLOCK ब्लॉक."
+  },
+  "scope-budget-block-files": {
+    "label": "स्कोप बजट: बदली हुई फाइलें - BLOCK ब्लॉक",
+    "description": "BLOCK ब्लॉक: बदली हुई फाइलें above threshold; next-step split-required पर जाता है."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "स्कोप बजट: बदली हुई लाइनें - WARN चेतावनी",
+    "description": "WARN चेतावनी: बदली हुई लाइनें above threshold; आगे बढ़ना अनुमत है; keep it below BLOCK ब्लॉक."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "स्कोप बजट: बदली हुई लाइनें - BLOCK ब्लॉक",
+    "description": "BLOCK ब्लॉक: बदली हुई लाइनें above threshold; next-step split-required पर जाता है."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "स्कोप बजट: अनिवार्य समीक्षा प्रकार - WARN चेतावनी",
+    "description": "WARN चेतावनी: अनिवार्य समीक्षा प्रकार above threshold; आगे बढ़ना अनुमत है; keep it below BLOCK ब्लॉक."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "स्कोप बजट: अनिवार्य समीक्षा प्रकार - BLOCK ब्लॉक",
+    "description": "BLOCK ब्लॉक: अनिवार्य समीक्षा प्रकार above threshold; next-step split-required पर जाता है."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "स्कोप बजट: समीक्षा टोकन - WARN चेतावनी",
+    "description": "WARN चेतावनी: समीक्षा टोकन above threshold; आगे बढ़ना अनुमत है; keep it below BLOCK ब्लॉक."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "स्कोप बजट: समीक्षा टोकन - BLOCK ब्लॉक",
+    "description": "BLOCK ब्लॉक: समीक्षा टोकन above threshold; next-step split-required पर जाता है."
   }
 }

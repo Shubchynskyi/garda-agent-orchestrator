@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Kapsam bütçesi eylemi",
-    "description": "Kapsam bütçesi aşıldığında ne olacağı.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Bölme için engelle",
-        "description": "Aşırı büyük işi durdurur ve operatörden veya ajandan bölmesini ister."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Yalnızca uyar",
-        "description": "Kapsam uyarısını gösterir ancak sonraki yaşam döngüsü adımını durdurmaz."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "İsteğe bağlı kalite kontrol kuralı",
     "description": "Denetlenen workflow ayarı yolu üzerinden bir danışma niteliğindeki isteğe bağlı kalite kontrol kuralını ekler, günceller veya kaldırır."
+  },
+  "scope-budget-warn-files": {
+    "label": "kapsam bütçesi: değişen dosyalar - WARN uyarısı",
+    "description": "WARN uyarısı: değişen dosyalar above threshold; devam etmeye izin verilir; keep it below BLOCK engeli."
+  },
+  "scope-budget-block-files": {
+    "label": "kapsam bütçesi: değişen dosyalar - BLOCK engeli",
+    "description": "BLOCK engeli: değişen dosyalar above threshold; next-step split-required rotasına gider."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "kapsam bütçesi: değişen satırlar - WARN uyarısı",
+    "description": "WARN uyarısı: değişen satırlar above threshold; devam etmeye izin verilir; keep it below BLOCK engeli."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "kapsam bütçesi: değişen satırlar - BLOCK engeli",
+    "description": "BLOCK engeli: değişen satırlar above threshold; next-step split-required rotasına gider."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "kapsam bütçesi: zorunlu inceleme türleri - WARN uyarısı",
+    "description": "WARN uyarısı: zorunlu inceleme türleri above threshold; devam etmeye izin verilir; keep it below BLOCK engeli."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "kapsam bütçesi: zorunlu inceleme türleri - BLOCK engeli",
+    "description": "BLOCK engeli: zorunlu inceleme türleri above threshold; next-step split-required rotasına gider."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "kapsam bütçesi: inceleme tokenleri - WARN uyarısı",
+    "description": "WARN uyarısı: inceleme tokenleri above threshold; devam etmeye izin verilir; keep it below BLOCK engeli."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "kapsam bütçesi: inceleme tokenleri - BLOCK engeli",
+    "description": "BLOCK engeli: inceleme tokenleri above threshold; next-step split-required rotasına gider."
   }
 }

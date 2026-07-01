@@ -30,6 +30,7 @@ import { buildRecommendedNextCommand } from './status/status-recommendations';
 import { RECOMMENDED_UI_ACTIONS_COMMAND } from '../core/onboarding-contract';
 import { formatFullSuitePerformanceGuidance } from '../gates/full-suite/full-suite-validation';
 import { getWorkflowConfigPath, isConfiguredCompileGateCommand } from '../core/workflow-config';
+import { readLatestScopeBudgetStatus } from '../core/scope-budget-status';
 import type {
     AgentInitializationPendingReason,
     AgentInitState,
@@ -520,6 +521,37 @@ function readToxinMetricsSummary(
     }
 }
 
+function readScopeBudgetGuardStatus(
+    targetRoot: string,
+    bundlePath: string,
+    bundlePresent: boolean,
+    taskStatuses: Map<string, string>
+): StatusSnapshot['scopeBudgetGuardStatus'] {
+    if (!bundlePresent) {
+        return null;
+    }
+    try {
+        return readLatestScopeBudgetStatus({
+            targetRoot,
+            bundleRoot: bundlePath,
+            preflightPath: resolveScopeBudgetPreflightPath(bundlePath, taskStatuses)
+        });
+    } catch {
+        return null;
+    }
+}
+
+function resolveScopeBudgetPreflightPath(bundlePath: string, taskStatuses: Map<string, string>): string | null {
+    for (const status of ['IN_PROGRESS', 'IN_REVIEW', 'TODO']) {
+        for (const [taskId, taskStatus] of taskStatuses.entries()) {
+            if (taskStatus === status) {
+                return path.join(bundlePath, 'runtime', 'reviews', `${taskId}-preflight.json`);
+            }
+        }
+    }
+    return null;
+}
+
 export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string): StatusSnapshot {
     const resolvedTargetRoot = path.resolve(targetRoot);
     const bundlePath = getBundlePath(resolvedTargetRoot);
@@ -610,6 +642,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
     const timelineSummary = readTimelineSummary(bundlePath, bundlePresent, taskStatuses);
     const activeProfile = readActiveProfile(bundlePath, bundlePresent);
     const toxinMetricsSummary = readToxinMetricsSummary(resolvedTargetRoot, bundlePath, bundlePresent);
+    const scopeBudgetGuardStatus = readScopeBudgetGuardStatus(resolvedTargetRoot, bundlePath, bundlePresent, taskStatuses);
     const mandatoryFullSuiteConfig = bundlePresent
         ? readMandatoryFullSuiteConfig(bundlePath)
         : { enabled: null, command: null, performance: null };
@@ -662,6 +695,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         protectedManifestEvidence,
         protectedManifestAssessment,
         toxinMetricsSummary,
+        scopeBudgetGuardStatus,
         mandatoryFullSuiteEnabled: mandatoryFullSuiteConfig.enabled,
         mandatoryFullSuiteCommand: mandatoryFullSuiteConfig.command,
         mandatoryFullSuitePerformance: mandatoryFullSuiteConfig.performance,

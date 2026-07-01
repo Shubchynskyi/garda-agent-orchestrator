@@ -234,6 +234,29 @@ function writeOptionalSkillSelectionPolicyConfig(policyPath: string, config: Rec
     fs.writeFileSync(policyPath, serializeManagedConfig(config), 'utf8');
 }
 
+function applyLegacyScopeBudgetLimit(
+    guard: ReturnType<typeof normalizeScopeBudgetGuardConfig>,
+    metric: {
+        legacyKey: 'max_files' | 'max_changed_lines' | 'max_required_reviews' | 'max_review_tokens';
+        warningKey: 'warn_files' | 'warn_changed_lines' | 'warn_required_reviews' | 'warn_review_tokens';
+        blockingKey: 'block_files' | 'block_changed_lines' | 'block_required_reviews' | 'block_review_tokens';
+    },
+    value: number
+): void {
+    guard[metric.legacyKey] = value;
+    if (guard.action === 'BLOCK_FOR_SPLIT') {
+        guard[metric.blockingKey] = value;
+        if (guard[metric.warningKey] >= value && value > 1) {
+            guard[metric.warningKey] = value - 1;
+        }
+        return;
+    }
+    guard[metric.warningKey] = value;
+    if (guard[metric.blockingKey] <= value) {
+        guard[metric.blockingKey] = value + 1;
+    }
+}
+
 export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const roots = resolveWorkflowRoots(options);
     const state = readWorkflowConfigState(roots.configPath, roots.bundleRoot);
@@ -419,20 +442,72 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         changedFields.push('scope_budget_guard.profiles');
     }
     if (typeof options.scopeBudgetMaxFiles === 'string') {
-        nextScopeBudgetGuard.max_files = parseIntegerText(options.scopeBudgetMaxFiles, '--scope-budget-max-files', 1);
+        applyLegacyScopeBudgetLimit(nextScopeBudgetGuard, {
+            legacyKey: 'max_files',
+            warningKey: 'warn_files',
+            blockingKey: 'block_files'
+        }, parseIntegerText(options.scopeBudgetMaxFiles, '--scope-budget-max-files', 1));
         changedFields.push('scope_budget_guard.max_files');
     }
     if (typeof options.scopeBudgetMaxChangedLines === 'string') {
-        nextScopeBudgetGuard.max_changed_lines = parseIntegerText(options.scopeBudgetMaxChangedLines, '--scope-budget-max-changed-lines', 1);
+        applyLegacyScopeBudgetLimit(nextScopeBudgetGuard, {
+            legacyKey: 'max_changed_lines',
+            warningKey: 'warn_changed_lines',
+            blockingKey: 'block_changed_lines'
+        }, parseIntegerText(options.scopeBudgetMaxChangedLines, '--scope-budget-max-changed-lines', 1));
         changedFields.push('scope_budget_guard.max_changed_lines');
     }
     if (typeof options.scopeBudgetMaxRequiredReviews === 'string') {
-        nextScopeBudgetGuard.max_required_reviews = parseIntegerText(options.scopeBudgetMaxRequiredReviews, '--scope-budget-max-required-reviews', 1);
+        applyLegacyScopeBudgetLimit(nextScopeBudgetGuard, {
+            legacyKey: 'max_required_reviews',
+            warningKey: 'warn_required_reviews',
+            blockingKey: 'block_required_reviews'
+        }, parseIntegerText(options.scopeBudgetMaxRequiredReviews, '--scope-budget-max-required-reviews', 1));
         changedFields.push('scope_budget_guard.max_required_reviews');
     }
     if (typeof options.scopeBudgetMaxReviewTokens === 'string') {
-        nextScopeBudgetGuard.max_review_tokens = parseIntegerText(options.scopeBudgetMaxReviewTokens, '--scope-budget-max-review-tokens', 1);
+        applyLegacyScopeBudgetLimit(nextScopeBudgetGuard, {
+            legacyKey: 'max_review_tokens',
+            warningKey: 'warn_review_tokens',
+            blockingKey: 'block_review_tokens'
+        }, parseIntegerText(options.scopeBudgetMaxReviewTokens, '--scope-budget-max-review-tokens', 1));
         changedFields.push('scope_budget_guard.max_review_tokens');
+    }
+    if (typeof options.scopeBudgetWarnFiles === 'string') {
+        nextScopeBudgetGuard.warn_files = parseIntegerText(options.scopeBudgetWarnFiles, '--scope-budget-warn-files', 1);
+        nextScopeBudgetGuard.max_files = nextScopeBudgetGuard.warn_files;
+        changedFields.push('scope_budget_guard.warn_files');
+    }
+    if (typeof options.scopeBudgetBlockFiles === 'string') {
+        nextScopeBudgetGuard.block_files = parseIntegerText(options.scopeBudgetBlockFiles, '--scope-budget-block-files', 1);
+        changedFields.push('scope_budget_guard.block_files');
+    }
+    if (typeof options.scopeBudgetWarnChangedLines === 'string') {
+        nextScopeBudgetGuard.warn_changed_lines = parseIntegerText(options.scopeBudgetWarnChangedLines, '--scope-budget-warn-changed-lines', 1);
+        nextScopeBudgetGuard.max_changed_lines = nextScopeBudgetGuard.warn_changed_lines;
+        changedFields.push('scope_budget_guard.warn_changed_lines');
+    }
+    if (typeof options.scopeBudgetBlockChangedLines === 'string') {
+        nextScopeBudgetGuard.block_changed_lines = parseIntegerText(options.scopeBudgetBlockChangedLines, '--scope-budget-block-changed-lines', 1);
+        changedFields.push('scope_budget_guard.block_changed_lines');
+    }
+    if (typeof options.scopeBudgetWarnRequiredReviews === 'string') {
+        nextScopeBudgetGuard.warn_required_reviews = parseIntegerText(options.scopeBudgetWarnRequiredReviews, '--scope-budget-warn-required-reviews', 1);
+        nextScopeBudgetGuard.max_required_reviews = nextScopeBudgetGuard.warn_required_reviews;
+        changedFields.push('scope_budget_guard.warn_required_reviews');
+    }
+    if (typeof options.scopeBudgetBlockRequiredReviews === 'string') {
+        nextScopeBudgetGuard.block_required_reviews = parseIntegerText(options.scopeBudgetBlockRequiredReviews, '--scope-budget-block-required-reviews', 1);
+        changedFields.push('scope_budget_guard.block_required_reviews');
+    }
+    if (typeof options.scopeBudgetWarnReviewTokens === 'string') {
+        nextScopeBudgetGuard.warn_review_tokens = parseIntegerText(options.scopeBudgetWarnReviewTokens, '--scope-budget-warn-review-tokens', 1);
+        nextScopeBudgetGuard.max_review_tokens = nextScopeBudgetGuard.warn_review_tokens;
+        changedFields.push('scope_budget_guard.warn_review_tokens');
+    }
+    if (typeof options.scopeBudgetBlockReviewTokens === 'string') {
+        nextScopeBudgetGuard.block_review_tokens = parseIntegerText(options.scopeBudgetBlockReviewTokens, '--scope-budget-block-review-tokens', 1);
+        changedFields.push('scope_budget_guard.block_review_tokens');
     }
     nextConfig.scope_budget_guard = nextScopeBudgetGuard;
     const nextReviewCycleGuard = normalizeReviewCycleGuardConfig(nextConfig.review_cycle_guard);

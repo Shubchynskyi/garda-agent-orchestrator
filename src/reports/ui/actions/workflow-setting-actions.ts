@@ -50,6 +50,7 @@ function buildWarningOnlyTimeoutContinuationSetting(settings: ReturnType<typeof 
 export function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition[] {
     const settings = buildWorkflowConfigTab(repoRoot).settings;
     const fullSuiteCommand = settings.find((setting) => setting.id === 'full-suite-command')?.value;
+    const peerValues = Object.fromEntries(settings.map((setting) => [setting.key, setting.value]));
     const definitions = WORKFLOW_SETTING_DEFINITIONS
         .filter((definition) => definition.editable !== false)
         .map((definition) => {
@@ -58,6 +59,7 @@ export function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition
                 ...definition,
                 options: reportSetting?.options ?? definition.options,
                 current_value: reportSetting?.value,
+                peer_values: peerValues,
                 confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE,
                 readiness: reportSetting?.readiness,
                 compile_gate_full_suite_command: definition.id === 'compile-gate-command' && typeof fullSuiteCommand === 'string'
@@ -89,6 +91,33 @@ function normalizeEnumListValue(value: unknown): string[] {
         .filter(Boolean))];
 }
 
+function validateScopeBudgetTieredThreshold(setting: UiSettingDefinition, proposedValue: number): void {
+    const thresholdPairs: Record<string, { peerKey: string; relation: 'warning' | 'blocking' }> = {
+        'scope_budget_guard.warn_files': { peerKey: 'scope_budget_guard.block_files', relation: 'warning' },
+        'scope_budget_guard.block_files': { peerKey: 'scope_budget_guard.warn_files', relation: 'blocking' },
+        'scope_budget_guard.warn_changed_lines': { peerKey: 'scope_budget_guard.block_changed_lines', relation: 'warning' },
+        'scope_budget_guard.block_changed_lines': { peerKey: 'scope_budget_guard.warn_changed_lines', relation: 'blocking' },
+        'scope_budget_guard.warn_required_reviews': { peerKey: 'scope_budget_guard.block_required_reviews', relation: 'warning' },
+        'scope_budget_guard.block_required_reviews': { peerKey: 'scope_budget_guard.warn_required_reviews', relation: 'blocking' },
+        'scope_budget_guard.warn_review_tokens': { peerKey: 'scope_budget_guard.block_review_tokens', relation: 'warning' },
+        'scope_budget_guard.block_review_tokens': { peerKey: 'scope_budget_guard.warn_review_tokens', relation: 'blocking' }
+    };
+    const pair = thresholdPairs[setting.key];
+    if (!pair) {
+        return;
+    }
+    const peerValue = setting.peer_values?.[pair.peerKey];
+    if (typeof peerValue !== 'number') {
+        return;
+    }
+    const valid = pair.relation === 'warning'
+        ? proposedValue < peerValue
+        : peerValue < proposedValue;
+    if (!valid) {
+        throw new Error(`${setting.label} must keep the warning threshold lower than the blocking threshold.`);
+    }
+}
+
 export function parseUiSettingValue(setting: UiSettingDefinition, value: unknown): ParsedUiSettingValue {
     const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
     if (setting.value_type === 'integer') {
@@ -101,6 +130,7 @@ export function parseUiSettingValue(setting: UiSettingDefinition, value: unknown
         if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
             throw new Error(`${setting.label} must be an integer from ${min} to ${max}.`);
         }
+        validateScopeBudgetTieredThreshold(setting, parsed);
         return {
             command_value: String(parsed),
             proposed_value: parsed

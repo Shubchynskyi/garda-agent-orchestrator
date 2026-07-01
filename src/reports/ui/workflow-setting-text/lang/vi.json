@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Hành động ngân sách phạm vi",
-    "description": "Điều gì xảy ra khi vượt ngân sách phạm vi.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Chặn để tách",
-        "description": "Dừng công việc quá lớn và yêu cầu operator hoặc agent tách nhỏ."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Chỉ cảnh báo",
-        "description": "Hiển thị cảnh báo phạm vi nhưng không dừng bước vòng đời tiếp theo."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Quy tắc kiểm tra chất lượng tùy chọn",
     "description": "Thêm, cập nhật hoặc xóa một quy tắc kiểm tra chất lượng tùy chọn mang tính tư vấn qua đường dẫn cài đặt workflow đã được kiểm toán."
+  },
+  "scope-budget-warn-files": {
+    "label": "ngân sách phạm vi: tệp thay đổi - cảnh báo WARN",
+    "description": "cảnh báo WARN: tệp thay đổi above threshold; vẫn được phép tiếp tục; keep it below chặn BLOCK."
+  },
+  "scope-budget-block-files": {
+    "label": "ngân sách phạm vi: tệp thay đổi - chặn BLOCK",
+    "description": "chặn BLOCK: tệp thay đổi above threshold; next-step chuyển tới split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "ngân sách phạm vi: dòng thay đổi - cảnh báo WARN",
+    "description": "cảnh báo WARN: dòng thay đổi above threshold; vẫn được phép tiếp tục; keep it below chặn BLOCK."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "ngân sách phạm vi: dòng thay đổi - chặn BLOCK",
+    "description": "chặn BLOCK: dòng thay đổi above threshold; next-step chuyển tới split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "ngân sách phạm vi: loại review bắt buộc - cảnh báo WARN",
+    "description": "cảnh báo WARN: loại review bắt buộc above threshold; vẫn được phép tiếp tục; keep it below chặn BLOCK."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "ngân sách phạm vi: loại review bắt buộc - chặn BLOCK",
+    "description": "chặn BLOCK: loại review bắt buộc above threshold; next-step chuyển tới split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "ngân sách phạm vi: token review - cảnh báo WARN",
+    "description": "cảnh báo WARN: token review above threshold; vẫn được phép tiếp tục; keep it below chặn BLOCK."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "ngân sách phạm vi: token review - chặn BLOCK",
+    "description": "chặn BLOCK: token review above threshold; next-step chuyển tới split-required."
   }
 }

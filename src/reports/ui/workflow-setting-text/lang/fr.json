@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Action sur dépassement de périmètre",
-    "description": "Comportement lorsque le budget de périmètre est dépassé.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Bloquer jusqu'au découpage",
-        "description": "Arrête le travail trop volumineux et demande un découpage."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Avertir seulement",
-        "description": "Affiche l'avertissement de périmètre sans arrêter l'étape suivante du cycle de vie."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Règle facultative de contrôle qualité",
     "description": "Ajoute, met à jour ou retire une règle consultative facultative de contrôle qualité via le parcours audité des paramètres de workflow."
+  },
+  "scope-budget-warn-files": {
+    "label": "budget de périmètre: fichiers modifiés - avertissement WARN",
+    "description": "avertissement WARN: fichiers modifiés above threshold; la suite reste autorisée; keep it below blocage BLOCK."
+  },
+  "scope-budget-block-files": {
+    "label": "budget de périmètre: fichiers modifiés - blocage BLOCK",
+    "description": "blocage BLOCK: fichiers modifiés above threshold; next-step route vers split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "budget de périmètre: lignes modifiées - avertissement WARN",
+    "description": "avertissement WARN: lignes modifiées above threshold; la suite reste autorisée; keep it below blocage BLOCK."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "budget de périmètre: lignes modifiées - blocage BLOCK",
+    "description": "blocage BLOCK: lignes modifiées above threshold; next-step route vers split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "budget de périmètre: types de revue requis - avertissement WARN",
+    "description": "avertissement WARN: types de revue requis above threshold; la suite reste autorisée; keep it below blocage BLOCK."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "budget de périmètre: types de revue requis - blocage BLOCK",
+    "description": "blocage BLOCK: types de revue requis above threshold; next-step route vers split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "budget de périmètre: tokens de revue - avertissement WARN",
+    "description": "avertissement WARN: tokens de revue above threshold; la suite reste autorisée; keep it below blocage BLOCK."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "budget de périmètre: tokens de revue - blocage BLOCK",
+    "description": "blocage BLOCK: tokens de revue above threshold; next-step route vers split-required."
   }
 }

@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Reakcja na przekroczenie budżetu",
-    "description": "Co się dzieje, gdy budżet zakresu zostanie przekroczony.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Zablokuj do podziału",
-        "description": "Zatrzymuje zbyt duże zadanie i prosi operatora lub agenta o podział."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Tylko ostrzeżenie",
-        "description": "Pokazuje ostrzeżenie o zakresie, ale nie zatrzymuje kolejnego kroku cyklu życia."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Opcjonalna reguła kontroli jakości",
     "description": "Dodaje, aktualizuje lub usuwa jedną doradczą opcjonalną regułę kontroli jakości przez audytowaną ścieżkę ustawień workflow."
+  },
+  "scope-budget-warn-files": {
+    "label": "budżet zakresu: zmienione pliki - ostrzeżenie WARN",
+    "description": "ostrzeżenie WARN: zmienione pliki above threshold; kontynuacja jest dozwolona; keep it below blokada BLOCK."
+  },
+  "scope-budget-block-files": {
+    "label": "budżet zakresu: zmienione pliki - blokada BLOCK",
+    "description": "blokada BLOCK: zmienione pliki above threshold; next-step przechodzi do split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "budżet zakresu: zmienione linie - ostrzeżenie WARN",
+    "description": "ostrzeżenie WARN: zmienione linie above threshold; kontynuacja jest dozwolona; keep it below blokada BLOCK."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "budżet zakresu: zmienione linie - blokada BLOCK",
+    "description": "blokada BLOCK: zmienione linie above threshold; next-step przechodzi do split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "budżet zakresu: wymagane typy review - ostrzeżenie WARN",
+    "description": "ostrzeżenie WARN: wymagane typy review above threshold; kontynuacja jest dozwolona; keep it below blokada BLOCK."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "budżet zakresu: wymagane typy review - blokada BLOCK",
+    "description": "blokada BLOCK: wymagane typy review above threshold; next-step przechodzi do split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "budżet zakresu: tokeny review - ostrzeżenie WARN",
+    "description": "ostrzeżenie WARN: tokeny review above threshold; kontynuacja jest dozwolona; keep it below blokada BLOCK."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "budżet zakresu: tokeny review - blokada BLOCK",
+    "description": "blokada BLOCK: tokeny review above threshold; next-step przechodzi do split-required."
   }
 }

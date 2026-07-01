@@ -183,6 +183,21 @@ function appendCommandsLines(lines: string[], snapshot: StatusSnapshot): void {
     lines.push('CommandsStatus: PENDING_AGENT_CONTEXT');
 }
 
+function appendScopeBudgetLines(lines: string[], snapshot: StatusSnapshot): void {
+    const scopeBudget = snapshot.scopeBudgetGuardStatus;
+    if (!scopeBudget) {
+        return;
+    }
+    lines.push(`ScopeBudgetGuardStatus: ${scopeBudget.status}`);
+    lines.push(`ScopeBudgetGuardSummary: ${scopeBudget.summary_line}`);
+    if (scopeBudget.preflight_path) {
+        lines.push(`ScopeBudgetGuardPreflight: ${scopeBudget.preflight_path}`);
+    }
+    if (scopeBudget.continuation_allowed !== null) {
+        lines.push(`ScopeBudgetGuardContinuationAllowed: ${scopeBudget.continuation_allowed ? 'yes' : 'no'}`);
+    }
+}
+
 export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { heading?: string }): string {
     const heading = options?.heading || 'GARDA_STATUS';
     const lines: string[] = [
@@ -244,6 +259,7 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     }
 
     appendTimelineLines(lines, snapshot);
+    appendScopeBudgetLines(lines, snapshot);
     appendToxinLines(lines, snapshot);
     appendCommandsLines(lines, snapshot);
 

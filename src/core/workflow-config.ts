@@ -12,6 +12,7 @@ import {
 } from './review-execution-policy';
 import {
     DEFAULT_SCOPE_BUDGET_GUARD_CONFIG,
+    normalizeScopeBudgetGuardConfig,
     type ScopeBudgetGuardConfig
 } from './scope-budget-guard';
 import {
@@ -228,7 +229,7 @@ const LEGACY_PROJECT_MEMORY_MAINTENANCE_GENERATED_DEFAULT: ProjectMemoryMaintena
     impact_artifact_retention_days: 30
 });
 
-const LEGACY_SCOPE_BUDGET_GUARD_GENERATED_DEFAULT: ScopeBudgetGuardConfig = Object.freeze({
+const LEGACY_SCOPE_BUDGET_GUARD_GENERATED_DEFAULT = Object.freeze({
     enabled: true,
     profiles: ['strict'],
     action: 'BLOCK_FOR_SPLIT',
@@ -236,7 +237,7 @@ const LEGACY_SCOPE_BUDGET_GUARD_GENERATED_DEFAULT: ScopeBudgetGuardConfig = Obje
     max_changed_lines: 1200,
     max_required_reviews: 5,
     max_review_tokens: 50000
-});
+} as const);
 
 const LEGACY_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT: ReviewCycleGuardConfig = Object.freeze({
     enabled: true,
@@ -522,6 +523,40 @@ function migrateLegacyScopeBudgetGuardGeneratedDefault(
     return migrated;
 }
 
+function hasTieredScopeBudgetGuardKeys(input: Record<string, unknown>): boolean {
+    return [
+        'warn_files',
+        'block_files',
+        'warn_changed_lines',
+        'block_changed_lines',
+        'warn_required_reviews',
+        'block_required_reviews',
+        'warn_review_tokens',
+        'block_review_tokens'
+    ].some((key) => Object.prototype.hasOwnProperty.call(input, key));
+}
+
+function migrateLegacyScopeBudgetGuardShape(
+    existingConfig: Record<string, unknown> | null
+): Record<string, unknown> | null {
+    if (!isPlainObject(existingConfig)) {
+        return existingConfig;
+    }
+
+    const scopeBudgetKey = findOwnCaseInsensitiveKey(existingConfig, 'scope_budget_guard');
+    if (scopeBudgetKey === undefined || !isPlainObject(existingConfig[scopeBudgetKey])) {
+        return existingConfig;
+    }
+    const scopeBudgetGuard = existingConfig[scopeBudgetKey] as Record<string, unknown>;
+    if (hasTieredScopeBudgetGuardKeys(scopeBudgetGuard)) {
+        return existingConfig;
+    }
+
+    const migrated = cloneJsonValue(existingConfig);
+    migrated[scopeBudgetKey] = normalizeScopeBudgetGuardConfig(scopeBudgetGuard);
+    return migrated;
+}
+
 function migrateLegacyReviewCycleGuardGeneratedDefault(
     existingConfig: Record<string, unknown> | null
 ): Record<string, unknown> | null {
@@ -609,8 +644,10 @@ export function mergeWorkflowConfigWithTemplate(
 ): Record<string, unknown> {
     const existingConfigForMerge = migrateLegacyOptionalQualityChecksGeneratedDefault(
         migrateLegacyReviewCycleGuardGeneratedDefault(
-            migrateLegacyScopeBudgetGuardGeneratedDefault(
-                migrateLegacyProjectMemoryGeneratedDefault(existingConfig)
+            migrateLegacyScopeBudgetGuardShape(
+                migrateLegacyScopeBudgetGuardGeneratedDefault(
+                    migrateLegacyProjectMemoryGeneratedDefault(existingConfig)
+                )
             )
         )
     );

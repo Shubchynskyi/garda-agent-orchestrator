@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Scope-budgetactie",
-    "description": "Wat er gebeurt wanneer het scope-budget wordt overschreden.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Blokkeren voor splitsing",
-        "description": "Stopt te grote taken en vraagt de operator of agent om te splitsen."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Alleen waarschuwen",
-        "description": "Toont de scope-waarschuwing maar stopt de volgende levenscyclusstap niet."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Optionele kwaliteitscontroleregel",
     "description": "Voegt een adviserende optionele kwaliteitscontroleregel toe, werkt die bij of verwijdert die via het gecontroleerde workflow-instellingenpad."
+  },
+  "scope-budget-warn-files": {
+    "label": "scope-budget: gewijzigde bestanden - WARN-waarschuwing",
+    "description": "WARN-waarschuwing: gewijzigde bestanden above threshold; doorgaan blijft toegestaan; keep it below BLOCK-blokkade."
+  },
+  "scope-budget-block-files": {
+    "label": "scope-budget: gewijzigde bestanden - BLOCK-blokkade",
+    "description": "BLOCK-blokkade: gewijzigde bestanden above threshold; next-step gaat naar split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "scope-budget: gewijzigde regels - WARN-waarschuwing",
+    "description": "WARN-waarschuwing: gewijzigde regels above threshold; doorgaan blijft toegestaan; keep it below BLOCK-blokkade."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "scope-budget: gewijzigde regels - BLOCK-blokkade",
+    "description": "BLOCK-blokkade: gewijzigde regels above threshold; next-step gaat naar split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "scope-budget: verplichte reviewtypes - WARN-waarschuwing",
+    "description": "WARN-waarschuwing: verplichte reviewtypes above threshold; doorgaan blijft toegestaan; keep it below BLOCK-blokkade."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "scope-budget: verplichte reviewtypes - BLOCK-blokkade",
+    "description": "BLOCK-blokkade: verplichte reviewtypes above threshold; next-step gaat naar split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "scope-budget: review-tokens - WARN-waarschuwing",
+    "description": "WARN-waarschuwing: review-tokens above threshold; doorgaan blijft toegestaan; keep it below BLOCK-blokkade."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "scope-budget: review-tokens - BLOCK-blokkade",
+    "description": "BLOCK-blokkade: review-tokens above threshold; next-step gaat naar split-required."
   }
 }

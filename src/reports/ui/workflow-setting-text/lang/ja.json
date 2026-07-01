@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "スコープ予算超過時の動作",
-    "description": "スコープ予算を超えた場合の動作。",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "分割までブロック",
-        "description": "大きすぎる作業を停止し、オペレーターまたはエージェントに分割を求めます。"
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "警告のみ",
-        "description": "スコープ警告を表示しますが、次のライフサイクルステップは停止しません。"
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "任意の品質チェックルール",
     "description": "監査済みのワークフロー設定経路で、助言用の任意品質チェックルールを1件追加、更新、または削除します。"
+  },
+  "scope-budget-warn-files": {
+    "label": "スコープ予算: 変更ファイル - WARN 警告",
+    "description": "WARN 警告: 変更ファイル above threshold; 続行は許可されます; keep it below BLOCK ブロック."
+  },
+  "scope-budget-block-files": {
+    "label": "スコープ予算: 変更ファイル - BLOCK ブロック",
+    "description": "BLOCK ブロック: 変更ファイル above threshold; next-step split-required に進みます."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "スコープ予算: 変更行 - WARN 警告",
+    "description": "WARN 警告: 変更行 above threshold; 続行は許可されます; keep it below BLOCK ブロック."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "スコープ予算: 変更行 - BLOCK ブロック",
+    "description": "BLOCK ブロック: 変更行 above threshold; next-step split-required に進みます."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "スコープ予算: 必須レビュー種別 - WARN 警告",
+    "description": "WARN 警告: 必須レビュー種別 above threshold; 続行は許可されます; keep it below BLOCK ブロック."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "スコープ予算: 必須レビュー種別 - BLOCK ブロック",
+    "description": "BLOCK ブロック: 必須レビュー種別 above threshold; next-step split-required に進みます."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "スコープ予算: レビュートークン - WARN 警告",
+    "description": "WARN 警告: レビュートークン above threshold; 続行は許可されます; keep it below BLOCK ブロック."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "スコープ予算: レビュートークン - BLOCK ブロック",
+    "description": "BLOCK ブロック: レビュートークン above threshold; next-step split-required に進みます."
   }
 }

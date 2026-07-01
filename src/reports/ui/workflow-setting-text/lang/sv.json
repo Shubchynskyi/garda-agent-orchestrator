@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Scope-budgetåtgärd",
-    "description": "Vad som händer när scope-budgeten överskrids.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Blockera för uppdelning",
-        "description": "Stoppar för stort arbete och ber operatören eller agenten dela upp det."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Endast varna",
-        "description": "Visar scope-varningen men stoppar inte nästa livscykelsteg."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Valfri kvalitetskontrollregel",
     "description": "Lägger till, uppdaterar eller tar bort en rådgivande valfri kvalitetskontrollregel via den granskade workflow-inställningsvägen."
+  },
+  "scope-budget-warn-files": {
+    "label": "scope-budget: ändrade filer - WARN-varning",
+    "description": "WARN-varning: ändrade filer above threshold; fortsättning är tillåten; keep it below BLOCK-blockering."
+  },
+  "scope-budget-block-files": {
+    "label": "scope-budget: ändrade filer - BLOCK-blockering",
+    "description": "BLOCK-blockering: ändrade filer above threshold; next-step går till split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "scope-budget: ändrade rader - WARN-varning",
+    "description": "WARN-varning: ändrade rader above threshold; fortsättning är tillåten; keep it below BLOCK-blockering."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "scope-budget: ändrade rader - BLOCK-blockering",
+    "description": "BLOCK-blockering: ändrade rader above threshold; next-step går till split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "scope-budget: obligatoriska reviewtyper - WARN-varning",
+    "description": "WARN-varning: obligatoriska reviewtyper above threshold; fortsättning är tillåten; keep it below BLOCK-blockering."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "scope-budget: obligatoriska reviewtyper - BLOCK-blockering",
+    "description": "BLOCK-blockering: obligatoriska reviewtyper above threshold; next-step går till split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "scope-budget: review-tokens - WARN-varning",
+    "description": "WARN-varning: review-tokens above threshold; fortsättning är tillåten; keep it below BLOCK-blockering."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "scope-budget: review-tokens - BLOCK-blockering",
+    "description": "BLOCK-blockering: review-tokens above threshold; next-step går till split-required."
   }
 }

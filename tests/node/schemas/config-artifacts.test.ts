@@ -20,6 +20,7 @@ import {
     validateWorkflowConfig
 } from '../../../src/schemas/config-artifacts';
 import {
+    buildDefaultWorkflowConfig,
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION
 } from '../../../src/core/workflow-config';
@@ -174,7 +175,15 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
             max_files: '7',
             max_changed_lines: '300',
             max_required_reviews: '3',
-            max_review_tokens: '5000'
+            max_review_tokens: '5000',
+            warn_files: '7',
+            block_files: '50',
+            warn_changed_lines: '300',
+            block_changed_lines: '5000',
+            warn_required_reviews: '3',
+            block_required_reviews: '8',
+            warn_review_tokens: '5000',
+            block_review_tokens: '100000'
         },
         review_cycle_guard: {
             enabled: 'true',
@@ -206,6 +215,14 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
     assert.equal(guard.max_changed_lines, 300);
     assert.equal(guard.max_required_reviews, 3);
     assert.equal(guard.max_review_tokens, 5000);
+    assert.equal(guard.warn_files, 7);
+    assert.equal(guard.block_files, 50);
+    assert.equal(guard.warn_changed_lines, 300);
+    assert.equal(guard.block_changed_lines, 5000);
+    assert.equal(guard.warn_required_reviews, 3);
+    assert.equal(guard.block_required_reviews, 8);
+    assert.equal(guard.warn_review_tokens, 5000);
+    assert.equal(guard.block_review_tokens, 100000);
 
     const reviewCycleGuard = normalized.review_cycle_guard as Record<string, unknown>;
     assert.equal(reviewCycleGuard.enabled, true);
@@ -231,6 +248,72 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
     assert.equal(fullSuiteValidation.placement, 'before_completion');
     assert.equal(fullSuiteValidation.timeout_blocker, true);
     assert.equal(fullSuiteValidation.timeout_retry_count, 1);
+});
+
+test('validateWorkflowConfig preserves legacy BLOCK_FOR_SPLIT max-only minimum thresholds', () => {
+    const config = buildDefaultWorkflowConfig() as unknown as Record<string, unknown>;
+    config.scope_budget_guard = {
+        enabled: true,
+        profiles: ['strict'],
+        action: 'BLOCK_FOR_SPLIT',
+        max_files: 1,
+        max_changed_lines: 1,
+        max_required_reviews: 1,
+        max_review_tokens: 1
+    };
+
+    const normalized = validateWorkflowConfig(config);
+    const guard = normalized.scope_budget_guard as Record<string, unknown>;
+    assert.equal(guard.action, 'BLOCK_FOR_SPLIT');
+    assert.equal(guard.max_files, 1);
+    assert.equal(guard.max_changed_lines, 1);
+    assert.equal(guard.max_required_reviews, 1);
+    assert.equal(guard.max_review_tokens, 1);
+    assert.equal(guard.warn_files, 0);
+    assert.equal(guard.block_files, 1);
+    assert.equal(guard.warn_changed_lines, 0);
+    assert.equal(guard.block_changed_lines, 1);
+    assert.equal(guard.warn_required_reviews, 0);
+    assert.equal(guard.block_required_reviews, 1);
+    assert.equal(guard.warn_review_tokens, 0);
+    assert.equal(guard.block_review_tokens, 1);
+});
+
+test('validateWorkflowConfig rejects scope budget warning thresholds at or above blocking thresholds', () => {
+    assert.throws(
+        () => validateWorkflowConfig({
+            full_suite_validation: {
+                enabled: false,
+                command: 'npm test',
+                timeout_ms: 600000,
+                green_summary_max_lines: 5,
+                red_failure_chunk_lines: 50,
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                placement: 'before_completion'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            },
+            scope_budget_guard: {
+                enabled: true,
+                profiles: ['strict'],
+                action: 'WARN_ONLY',
+                max_files: 20,
+                max_changed_lines: 2000,
+                max_required_reviews: 5,
+                max_review_tokens: 50000,
+                warn_files: 50,
+                block_files: 50,
+                warn_changed_lines: 2000,
+                block_changed_lines: 5000,
+                warn_required_reviews: 5,
+                block_required_reviews: 8,
+                warn_review_tokens: 50000,
+                block_review_tokens: 100000
+            }
+        }),
+        /warn_files must be less than workflow-config\.scope_budget_guard\.block_files/u
+    );
 });
 
 test('validateWorkflowConfig validates custom optional quality checks and duplicate ids', () => {

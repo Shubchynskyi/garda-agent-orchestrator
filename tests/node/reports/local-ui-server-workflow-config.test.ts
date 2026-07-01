@@ -145,6 +145,23 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.ok(scopeProfiles);
         assert.equal(scopeProfiles.value_type, 'enum_list');
         assert.ok(scopeProfiles.options.some((option) => option.value === 'strict'));
+        assert.equal(list.settings.some((setting) => setting.id === 'scope-budget-action'), false);
+        const scopeWarnLines = list.settings.find((setting) => setting.id === 'scope-budget-warn-changed-lines');
+        assert.ok(scopeWarnLines);
+        assert.equal(scopeWarnLines.value_type, 'integer');
+        assert.equal(scopeWarnLines.current_value, 2000);
+        const scopeBlockLines = list.settings.find((setting) => setting.id === 'scope-budget-block-changed-lines');
+        assert.ok(scopeBlockLines);
+        assert.equal(scopeBlockLines.value_type, 'integer');
+        assert.equal(scopeBlockLines.current_value, 5000);
+
+        const legacyScopeActionResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'scope-budget-action', mode: 'preview', value: 'WARN_ONLY' })
+        });
+        assert.equal(legacyScopeActionResponse.status, 400);
+        assert.equal((await legacyScopeActionResponse.json() as { code: string }).code, 'unknown_setting');
 
         const compilePreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
@@ -412,6 +429,31 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         });
         assert.equal(invalidEnumListResponse.status, 400);
         assert.equal((await invalidEnumListResponse.json() as { code: string }).code, 'invalid_setting_value');
+
+        const scopeBlockPreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'scope-budget-block-changed-lines', mode: 'preview', value: 6000 })
+        });
+        assert.equal(scopeBlockPreviewResponse.status, 200);
+        const scopeBlockPreview = await scopeBlockPreviewResponse.json() as {
+            key: string;
+            proposed_value: number;
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(scopeBlockPreview.key, 'scope_budget_guard.block_changed_lines');
+        assert.equal(scopeBlockPreview.proposed_value, 6000);
+        assert.deepEqual(scopeBlockPreview.changed_keys, ['scope_budget_guard.block_changed_lines']);
+        assert.match(scopeBlockPreview.command, /workflow set --scope-budget-block-changed-lines 6000/u);
+
+        const invalidScopeWarnResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'scope-budget-warn-changed-lines', mode: 'preview', value: 5000 })
+        });
+        assert.equal(invalidScopeWarnResponse.status, 400);
+        assert.equal((await invalidScopeWarnResponse.json() as { code: string }).code, 'invalid_setting_value');
 
         const invalidResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',

@@ -9,7 +9,7 @@ const WORKFLOW_SETTING_TEXT_CATALOG = buildWorkflowSettingTextCatalog();
 const EXPECTED_SETTING_IDS = listWorkflowSettingTextCatalogIds(WORKFLOW_SETTING_TEXT_CATALOG);
 
 test('workflow setting text catalog covers every workflow setting definition plus compile-gate fallback', () => {
-    assert.equal(EXPECTED_SETTING_IDS.length, 40);
+    assert.equal(EXPECTED_SETTING_IDS.length, 48);
     assert.ok(EXPECTED_SETTING_IDS.includes('compile-gate-command-fallback'));
     assert.ok(EXPECTED_SETTING_IDS.includes('optional-check-rule-management'));
     assert.ok(EXPECTED_SETTING_IDS.includes('full-suite-enabled'));
@@ -17,6 +17,8 @@ test('workflow setting text catalog covers every workflow setting definition plu
     assert.ok(EXPECTED_SETTING_IDS.includes('optional-skill-selection-mode'));
     assert.ok(EXPECTED_SETTING_IDS.includes('full-suite-timeout-blocker'));
     assert.ok(EXPECTED_SETTING_IDS.includes('full-suite-timeout-retry-count'));
+    assert.ok(EXPECTED_SETTING_IDS.includes('scope-budget-warn-changed-lines'));
+    assert.ok(EXPECTED_SETTING_IDS.includes('scope-budget-block-changed-lines'));
 });
 
 test('every non-English UI language has a complete workflow setting text pack', () => {
@@ -80,6 +82,34 @@ test('scope budget required review limit text names review types instead of lane
             `${setting.label} ${setting.description}`,
             /review[- ]?lanes?/iu,
             `${languageId} still describes the required-review limit as review lanes`
+        );
+    }
+});
+
+test('scope budget tiered threshold text names warning and blocking states', () => {
+    const warnLines = LOCAL_UI_SETTING_TEXT.en['scope-budget-warn-changed-lines'];
+    const blockLines = LOCAL_UI_SETTING_TEXT.en['scope-budget-block-changed-lines'];
+    assert.match(warnLines.label ?? '', /warning/i);
+    assert.match(warnLines.description ?? '', /WARN/u);
+    assert.match(warnLines.description ?? '', /continuation remains allowed/u);
+    assert.match(blockLines.label ?? '', /block/i);
+    assert.match(blockLines.description ?? '', /BLOCK/u);
+    assert.match(blockLines.description ?? '', /split-required/u);
+});
+
+test('scope budget legacy action text does not imply blocking is disabled', () => {
+    const english = LOCAL_UI_SETTING_TEXT.en['scope-budget-action'];
+    assert.equal(english.label, 'Legacy max mapping mode');
+    assert.match(english.description || '', /does not disable blocking/u);
+    assert.equal(english.options?.WARN_ONLY?.label, 'Legacy max maps to warn');
+    assert.match(english.options?.WARN_ONLY?.description || '', /block_\* thresholds still block/u);
+
+    for (const [languageId, pack] of Object.entries(LOCAL_UI_SETTING_TEXT)) {
+        const action = pack['scope-budget-action'];
+        assert.doesNotMatch(
+            `${action.label} ${action.description} ${action.options?.WARN_ONLY?.label} ${action.options?.WARN_ONLY?.description}`,
+            /Warn only|does not stop|не останавливает|no bloquea|sans effet bloquant/iu,
+            `${languageId} still presents scope_budget_guard.action as a non-blocking mode`
         );
     }
 });

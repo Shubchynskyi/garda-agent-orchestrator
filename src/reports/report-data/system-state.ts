@@ -5,6 +5,7 @@ import {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION
 } from '../../core/workflow-config';
+import { readLatestScopeBudgetStatus } from '../../core/scope-budget-status';
 import {
     buildFullSuiteTimeoutForecast,
     formatFullSuiteTimeoutForecast,
@@ -316,6 +317,48 @@ function buildWorkflowSignal(repoRoot: string, workflowTab: ReportWorkflowConfig
     };
 }
 
+function buildScopeBudgetSignal(
+    repoRoot: string,
+    workflowTab: ReportWorkflowConfigTab,
+    taskId: string | null
+): ReportSystemState['scope_budget'] {
+    const resolvedRoot = path.resolve(repoRoot);
+    const preflightPath = taskId
+        ? path.join(resolvedRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-preflight.json`)
+        : null;
+    const evaluation = readLatestScopeBudgetStatus({
+        targetRoot: repoRoot,
+        bundleRoot: path.join(resolvedRoot, 'garda-agent-orchestrator'),
+        preflightPath,
+        workflowConfigPath: workflowTab.config_path
+    });
+    const status: ReportSystemStateHealth = evaluation.status === 'BLOCK'
+        ? 'error'
+        : evaluation.status === 'WARN'
+            ? 'attention'
+            : evaluation.status === 'unavailable'
+                ? 'unknown'
+                : 'ok';
+    return {
+        ...signal(
+            'scope-budget',
+            'Scope budget guard',
+            status,
+            evaluation.summary_line,
+            evaluation.status === 'BLOCK'
+                ? 'Split the task or reduce scope before continuing the guarded lifecycle.'
+                : evaluation.status === 'WARN'
+                    ? 'Continuation is allowed, but monitor scope before adding more changes.'
+                    : evaluation.unavailable_reason
+                        ? 'Run classify-change/compile for the current task so report data can bind to a preflight artifact.'
+                        : null,
+            evaluation,
+            evaluation.preflight_path || workflowTab.config_path
+        ),
+        evaluation
+    };
+}
+
 function buildQualityBaselineSignal(workflowTab: ReportWorkflowConfigTab): ReportSystemStateSignal {
     const shippedRuleIds = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id);
     const shippedRuleIdSet = new Set(shippedRuleIds);
@@ -590,6 +633,7 @@ export function buildSystemStateReport(options: {
     const uiActions = buildUiActionsSignal();
     const taskQueue = buildTaskQueueSignal(options.tasks);
     const workflow = buildWorkflowSignal(options.repoRoot, options.workflowTab);
+    const scopeBudget = buildScopeBudgetSignal(options.repoRoot, options.workflowTab, taskQueue.next_task_id);
     const qualityBaseline = buildQualityBaselineSignal(options.workflowTab);
     const projectMemory = buildProjectMemorySignal(options.projectMemoryTab);
     const protectedManifest = buildProtectedManifestSignal(options.repoRoot);
@@ -611,6 +655,7 @@ export function buildSystemStateReport(options: {
         uiActions,
         taskQueue,
         workflow,
+        scopeBudget,
         qualityBaseline,
         projectMemory,
         protectedManifest,
@@ -637,6 +682,7 @@ export function buildSystemStateReport(options: {
         ui_actions: uiActions,
         task_queue: taskQueue,
         workflow,
+        scope_budget: scopeBudget,
         quality_baseline: qualityBaseline,
         project_memory: projectMemory,
         protected_manifest: protectedManifest,

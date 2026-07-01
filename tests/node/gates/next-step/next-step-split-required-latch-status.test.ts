@@ -150,6 +150,8 @@ describe('gates/next-step split-required latch status', () => {
         const workflowConfig = buildDefaultWorkflowConfig();
         workflowConfig.scope_budget_guard.action = 'BLOCK_FOR_SPLIT';
         workflowConfig.scope_budget_guard.max_files = 12;
+        workflowConfig.scope_budget_guard.warn_files = 11;
+        workflowConfig.scope_budget_guard.block_files = 12;
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
         seedStartedTask(repoRoot, TASK_ID);
         const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
@@ -200,7 +202,7 @@ describe('gates/next-step split-required latch status', () => {
         assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
         assert.equal(result.next_gate, 'split-required-latch');
         assert.equal(result.commands.length, 0);
-        assert.ok(result.reason.includes('configured budget exceeded: changed_files_count'));
+        assert.ok(result.reason.includes('configured blocking budget exceeded: changed_files_count'));
         assert.equal(result.reason.includes('13>12'), false);
         assert.ok(text.includes('Status: SPLIT_REQUIRED'));
         assert.ok(text.includes('NextGate: split-required-latch'));
@@ -213,6 +215,82 @@ describe('gates/next-step split-required latch status', () => {
         const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_LATCHED"'));
         assert.ok(events.includes('"new_status":"SPLIT_REQUIRED"'));
+    });
+
+    it('warns but continues when strict-profile scope exceeds warning lines below blocking lines', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/scope-budget | Add warning tier | gpt-5.4 | 2026-05-03 | strict | Test queue entry. |`,
+            ''
+        ].join('\n'), 'utf8');
+        const changedFiles = ['src/warn.ts'];
+        fs.mkdirSync(path.dirname(path.join(repoRoot, changedFiles[0])), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, changedFiles[0]),
+            Array.from({ length: 2500 }, (_, index) => `export const value${index} = ${index};`).join('\n') + '\n',
+            'utf8'
+        );
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.scope_budget_guard.warn_changed_lines = 2000;
+        workflowConfig.scope_budget_guard.block_changed_lines = 5000;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            detection_source: snapshot.detection_source,
+            mode: 'FULL_PATH',
+            scope_category: 'code',
+            metrics: {
+                changed_files_count: snapshot.changed_files.length,
+                changed_lines_total: 2500,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            required_reviews: { ...ALL_REVIEW_FLAGS },
+            changed_files: changedFiles,
+            review_execution_policy: {
+                mode: 'code_first_optional',
+                visible_summary_line: 'Review execution policy: code_first_optional'
+            },
+            profile_selection: {
+                task_profile: 'strict',
+                profile_selection_source: 'task_queue',
+                effective_profile: 'strict',
+                effective_profile_source: 'built_in',
+                runtime_active_profile: 'balanced',
+                runtime_profile_source: 'built_in'
+            },
+            budget_forecast: {
+                total_estimated_review_tokens: 9000
+            }
+        });
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(preflightPath)
+        });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'single-cycle',
+            taskSummary: 'Seeded next-step task',
+            expectedReviewTypes: ['none']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+        assert.equal(result.warnings.length, 1);
+        assert.ok(result.warnings[0].includes('Scope budget guard: WARN'));
+        assert.ok(result.warnings[0].includes('changed_lines_total=2500>2000 WARN'));
+        assert.ok(result.warnings[0].includes('Continuation allowed'));
+        assert.ok(text.includes('Warnings:'));
+        assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
     });
 
     it('does not latch companion UI i18n scopes by raw language-pack file count', () => {
@@ -440,6 +518,8 @@ describe('gates/next-step split-required latch status', () => {
         config.scope_budget_guard.max_changed_lines = 120;
         config.scope_budget_guard.max_required_reviews = 999999;
         config.scope_budget_guard.max_review_tokens = 999999;
+        config.scope_budget_guard.warn_changed_lines = 119;
+        config.scope_budget_guard.block_changed_lines = 120;
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), config);
         const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
         const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
@@ -515,7 +595,7 @@ describe('gates/next-step split-required latch status', () => {
 
         assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
         assert.equal(result.next_gate, 'split-required-latch');
-        assert.ok(result.reason.includes('configured budget exceeded: changed_lines_total'), result.reason);
+        assert.ok(result.reason.includes('configured blocking budget exceeded: changed_lines_total'), result.reason);
         const latchPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`);
         assert.equal(fs.existsSync(latchPath), true);
         const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as {
@@ -523,7 +603,7 @@ describe('gates/next-step split-required latch status', () => {
             guard_details?: { violations?: Array<{ metric?: unknown; actual?: unknown; limit?: unknown }> };
         };
         const violation = latch.guard_details?.violations?.[0];
-        assert.equal(latch.raw_guard_summary, 'Scope budget guard: BLOCK_FOR_SPLIT (changed_lines_total=132>120)');
+        assert.equal(latch.raw_guard_summary, 'Scope budget guard: BLOCK (changed_lines_total=132>120 BLOCK)');
         assert.equal(violation?.metric, 'changed_lines_total');
         assert.equal(violation?.actual, 132);
         assert.equal(violation?.limit, 120);
@@ -771,6 +851,8 @@ describe('gates/next-step split-required latch status', () => {
         const workflowConfig = buildDefaultWorkflowConfig();
         workflowConfig.scope_budget_guard.action = 'BLOCK_FOR_SPLIT';
         workflowConfig.scope_budget_guard.max_files = 12;
+        workflowConfig.scope_budget_guard.warn_files = 11;
+        workflowConfig.scope_budget_guard.block_files = 12;
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
         writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
             taskId,
@@ -832,6 +914,11 @@ describe('gates/next-step split-required latch status', () => {
             output_path: normalizeForTimeline(preflightPath)
         });
         seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeStrictDecompositionDecision(repoRoot, taskId, {
+            decision: 'single-cycle',
+            taskSummary: 'Missing task row split latch',
+            expectedReviewTypes: ['code', 'security', 'refactor', 'test']
+        });
 
         const result = resolveNextStep({ taskId, repoRoot });
 

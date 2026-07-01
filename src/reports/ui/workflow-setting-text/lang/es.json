@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "Acción ante exceso de alcance",
-    "description": "Qué ocurre cuando se supera el presupuesto de alcance.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "Bloquear hasta dividir",
-        "description": "Detiene el trabajo demasiado grande y solicita dividirlo."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "Solo advertir",
-        "description": "Muestra la advertencia de alcance sin detener el siguiente paso del ciclo de vida."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "Regla opcional de control de calidad",
     "description": "Añade, actualiza o elimina una regla opcional y consultiva de control de calidad mediante la ruta auditada de configuración del flujo de trabajo."
+  },
+  "scope-budget-warn-files": {
+    "label": "presupuesto de alcance: archivos cambiados - aviso WARN",
+    "description": "aviso WARN: archivos cambiados above threshold; se permite continuar; keep it below bloqueo BLOCK."
+  },
+  "scope-budget-block-files": {
+    "label": "presupuesto de alcance: archivos cambiados - bloqueo BLOCK",
+    "description": "bloqueo BLOCK: archivos cambiados above threshold; next-step deriva a split-required."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "presupuesto de alcance: líneas cambiadas - aviso WARN",
+    "description": "aviso WARN: líneas cambiadas above threshold; se permite continuar; keep it below bloqueo BLOCK."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "presupuesto de alcance: líneas cambiadas - bloqueo BLOCK",
+    "description": "bloqueo BLOCK: líneas cambiadas above threshold; next-step deriva a split-required."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "presupuesto de alcance: tipos de revisión obligatoria - aviso WARN",
+    "description": "aviso WARN: tipos de revisión obligatoria above threshold; se permite continuar; keep it below bloqueo BLOCK."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "presupuesto de alcance: tipos de revisión obligatoria - bloqueo BLOCK",
+    "description": "bloqueo BLOCK: tipos de revisión obligatoria above threshold; next-step deriva a split-required."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "presupuesto de alcance: tokens de revisión - aviso WARN",
+    "description": "aviso WARN: tokens de revisión above threshold; se permite continuar; keep it below bloqueo BLOCK."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "presupuesto de alcance: tokens de revisión - bloqueo BLOCK",
+    "description": "bloqueo BLOCK: tokens de revisión above threshold; next-step deriva a split-required."
   }
 }

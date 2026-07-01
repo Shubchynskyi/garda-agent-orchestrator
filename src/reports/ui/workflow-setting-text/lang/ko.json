@@ -105,16 +105,16 @@
     }
   },
   "scope-budget-action": {
-    "label": "범위 예산 초과 동작",
-    "description": "범위 예산을 초과했을 때 수행하는 동작입니다.",
+    "label": "Legacy max_* compatibility mode",
+    "description": "Old max_* compatibility only; explicit block_* thresholds still produce BLOCK and route to split-required.",
     "options": {
       "BLOCK_FOR_SPLIT": {
-        "label": "분할까지 차단",
-        "description": "과도하게 큰 작업을 중지하고 운영자 또는 에이전트에게 분할을 요청합니다."
+        "label": "max_* maps to block_*",
+        "description": "Old max_* values are treated as blocking thresholds; explicit block_* thresholds still block in every mode."
       },
       "WARN_ONLY": {
-        "label": "경고만",
-        "description": "범위 경고를 표시하지만 다음 수명 주기 단계는 중지하지 않습니다."
+        "label": "max_* maps to warn_*",
+        "description": "Old max_* values are treated as warning thresholds; explicit block_* thresholds still block in every mode."
       }
     }
   },
@@ -406,5 +406,37 @@
   "optional-check-rule-management": {
     "label": "선택적 품질 점검 규칙",
     "description": "감사되는 워크플로 설정 경로를 통해 권고용 선택적 품질 점검 규칙 하나를 추가, 업데이트 또는 제거합니다."
+  },
+  "scope-budget-warn-files": {
+    "label": "스코프 예산: 변경 파일 - WARN 경고",
+    "description": "WARN 경고: 변경 파일 above threshold; 계속 진행할 수 있습니다; keep it below BLOCK 차단."
+  },
+  "scope-budget-block-files": {
+    "label": "스코프 예산: 변경 파일 - BLOCK 차단",
+    "description": "BLOCK 차단: 변경 파일 above threshold; next-step split-required로 이동합니다."
+  },
+  "scope-budget-warn-changed-lines": {
+    "label": "스코프 예산: 변경 라인 - WARN 경고",
+    "description": "WARN 경고: 변경 라인 above threshold; 계속 진행할 수 있습니다; keep it below BLOCK 차단."
+  },
+  "scope-budget-block-changed-lines": {
+    "label": "스코프 예산: 변경 라인 - BLOCK 차단",
+    "description": "BLOCK 차단: 변경 라인 above threshold; next-step split-required로 이동합니다."
+  },
+  "scope-budget-warn-required-reviews": {
+    "label": "스코프 예산: 필수 리뷰 유형 - WARN 경고",
+    "description": "WARN 경고: 필수 리뷰 유형 above threshold; 계속 진행할 수 있습니다; keep it below BLOCK 차단."
+  },
+  "scope-budget-block-required-reviews": {
+    "label": "스코프 예산: 필수 리뷰 유형 - BLOCK 차단",
+    "description": "BLOCK 차단: 필수 리뷰 유형 above threshold; next-step split-required로 이동합니다."
+  },
+  "scope-budget-warn-review-tokens": {
+    "label": "스코프 예산: 리뷰 토큰 - WARN 경고",
+    "description": "WARN 경고: 리뷰 토큰 above threshold; 계속 진행할 수 있습니다; keep it below BLOCK 차단."
+  },
+  "scope-budget-block-review-tokens": {
+    "label": "스코프 예산: 리뷰 토큰 - BLOCK 차단",
+    "description": "BLOCK 차단: 리뷰 토큰 above threshold; next-step split-required로 이동합니다."
   }
 }

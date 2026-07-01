@@ -614,6 +614,28 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.ok(scopeProfiles.options.some((option) => option.value === 'strict'));
     assert.ok(scopeProfiles.options.some((option) => option.value === 'custom-review'));
     assert.match(scopeProfiles.command, /--scope-budget-profiles <comma-separated: /u);
+    const scopeAction = tab.settings.find((setting) => setting.key === 'scope_budget_guard.action');
+    assert.ok(scopeAction);
+    assert.equal(scopeAction.editable, false);
+    assert.equal(scopeAction.label, 'Legacy max mapping mode');
+    assert.match(scopeAction.description, /does not disable blocking/u);
+    assert.ok(scopeAction.options.some((option) => (
+        option.value === 'WARN_ONLY'
+        && option.label === 'Legacy max maps to warn'
+        && /block_\*/u.test(option.description)
+    )));
+    const scopeWarnLines = tab.settings.find((setting) => setting.key === 'scope_budget_guard.warn_changed_lines');
+    assert.ok(scopeWarnLines);
+    assert.equal(scopeWarnLines.value, 2000);
+    assert.equal(scopeWarnLines.value_type, 'integer');
+    assert.equal(scopeWarnLines.flag, '--scope-budget-warn-changed-lines');
+    assert.match(scopeWarnLines.command, /garda workflow set --scope-budget-warn-changed-lines <number>/);
+    const scopeBlockLines = tab.settings.find((setting) => setting.key === 'scope_budget_guard.block_changed_lines');
+    assert.ok(scopeBlockLines);
+    assert.equal(scopeBlockLines.value, 5000);
+    assert.equal(scopeBlockLines.value_type, 'integer');
+    assert.equal(scopeBlockLines.flag, '--scope-budget-block-changed-lines');
+    assert.match(scopeBlockLines.command, /garda workflow set --scope-budget-block-changed-lines <number>/);
     const excludedReviewTypes = tab.settings.find((setting) => setting.key === 'review_cycle_guard.excluded_review_types');
     assert.ok(excludedReviewTypes);
     assert.equal(excludedReviewTypes.value_type, 'enum_list');
@@ -1330,6 +1352,22 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     writeWorkflowConfig(repoRoot);
     writeProfilesConfig(repoRoot);
     writeInitAndProjectMemory(repoRoot);
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    preflight.metrics = {
+        ...(preflight.metrics as Record<string, unknown>),
+        changed_files_count: 1,
+        changed_lines_total: 6000
+    };
+    preflight.budget_forecast = {
+        required_reviews: ['code'],
+        total_estimated_review_tokens: 1000
+    };
+    preflight.profile_selection = {
+        task_profile: 'strict',
+        effective_profile: 'strict'
+    };
+    fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2));
 
     const report = buildReportDataContract({
         repoRoot,
@@ -1351,8 +1389,13 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.equal(report.system_state.workflow.full_suite_timeout_retry_count, 1);
     assert.match(report.system_state.workflow.full_suite_timeout_forecast_label || '', /Recommended full-suite command timeout/u);
     assert.equal(report.system_state.workflow.task_reset_ready, false);
+    assert.equal(report.system_state.scope_budget.status, 'error');
+    assert.equal(report.system_state.scope_budget.evaluation.status, 'BLOCK');
+    assert.match(report.system_state.scope_budget.summary, /Scope budget guard: BLOCK/u);
+    assert.equal(report.system_state.scope_budget.evaluation.continuation_allowed, false);
     assert.equal(report.system_state.project_memory.status, 'ok');
     assert.ok(report.system_state.signals.some((signal) => signal.id === 'protected-manifest'));
+    assert.ok(report.system_state.signals.some((signal) => signal.id === 'scope-budget' && signal.status === 'error'));
     assert.ok(report.system_state.signals.some((signal) => signal.id === 'active-task-timelines' && signal.status === 'ok'));
     assert.equal(report.tasks_tab.parser, 'canonical_active_queue_9_columns');
     assert.deepEqual(report.tasks_tab.rows.map((row) => row.task_id), ['T-100', 'T-101']);
@@ -1420,6 +1463,97 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.match(report.backups_tab.workflow_config_path, /workflow-config\.json$/u);
     assert.ok(report.tasks_tab.rows[0].detail.unavailable.some((entry) => entry.scope === 'task:T-100:detail'));
     assert.equal(report.unavailable.length, 0);
+});
+
+test('buildReportDataContract uses companion effective scope budget metrics', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeProfilesConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    preflight.metrics = {
+        ...(preflight.metrics as Record<string, unknown>),
+        changed_files_count: 56,
+        changed_lines_total: 1000,
+        review_trigger_effective_changed_files_count: 35,
+        review_trigger_effective_changed_lines_total: 1000
+    };
+    preflight.triggers = {
+        ui_i18n_companion_scope: true,
+        ui_i18n_review_trigger_suppressed: true
+    };
+    preflight.budget_forecast = {
+        required_reviews: ['code'],
+        total_estimated_review_tokens: 1000
+    };
+    preflight.profile_selection = {
+        task_profile: 'strict',
+        effective_profile: 'strict'
+    };
+    fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+
+    assert.equal(report.system_state.scope_budget.status, 'attention');
+    assert.equal(report.system_state.scope_budget.evaluation.status, 'WARN');
+    assert.equal(report.system_state.scope_budget.evaluation.changed_files_count, 35);
+    assert.match(report.system_state.scope_budget.summary, /Scope budget guard: WARN \(changed_files_count=35>20 WARN\)/u);
+    assert.ok(report.system_state.signals.some((signal) => signal.id === 'scope-budget' && signal.status === 'attention'));
+});
+
+test('buildReportDataContract binds scope budget signal to queue task preflight before historical artifacts', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeProfilesConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    const currentPreflightPath = writePreflight(repoRoot, 'T-100');
+    const currentPreflight = JSON.parse(fs.readFileSync(currentPreflightPath, 'utf8')) as Record<string, unknown>;
+    currentPreflight.metrics = {
+        ...(currentPreflight.metrics as Record<string, unknown>),
+        changed_files_count: 1,
+        changed_lines_total: 1000
+    };
+    currentPreflight.budget_forecast = {
+        required_reviews: ['code'],
+        total_estimated_review_tokens: 1000
+    };
+    currentPreflight.profile_selection = {
+        task_profile: 'strict',
+        effective_profile: 'strict'
+    };
+    fs.writeFileSync(currentPreflightPath, JSON.stringify(currentPreflight, null, 2));
+    const historicalPreflightPath = writePreflight(repoRoot, 'T-999');
+    const historicalPreflight = JSON.parse(fs.readFileSync(historicalPreflightPath, 'utf8')) as Record<string, unknown>;
+    historicalPreflight.metrics = {
+        ...(historicalPreflight.metrics as Record<string, unknown>),
+        changed_files_count: 100,
+        changed_lines_total: 6000
+    };
+    historicalPreflight.budget_forecast = {
+        required_reviews: ['code', 'security', 'api', 'test'],
+        total_estimated_review_tokens: 40000
+    };
+    historicalPreflight.profile_selection = {
+        task_profile: 'strict',
+        effective_profile: 'strict'
+    };
+    fs.writeFileSync(historicalPreflightPath, JSON.stringify(historicalPreflight, null, 2));
+    const recent = new Date('2026-07-01T12:00:00.000Z');
+    fs.utimesSync(historicalPreflightPath, recent, recent);
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+
+    assert.equal(report.system_state.scope_budget.evaluation.status, 'OK');
+    assert.match(report.system_state.scope_budget.evaluation.preflight_path || '', /T-100-preflight\.json$/u);
 });
 
 test('buildReportDataContract bounds deep task detail collection', () => {

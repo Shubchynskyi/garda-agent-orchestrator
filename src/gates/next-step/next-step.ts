@@ -115,6 +115,8 @@ import {
 import {
     evaluateScopeBudgetGuard,
     normalizeScopeBudgetGuardConfig,
+    readScopeBudgetChangedFilesCount,
+    readScopeBudgetChangedLinesTotal,
     type ScopeBudgetGuardEvaluation
 } from '../../core/scope-budget-guard';
 import {
@@ -895,25 +897,6 @@ function parseOptionalNumberField(value: unknown): number | null {
     return null;
 }
 
-function getCompanionScopeEffectiveMetric(
-    preflight: Record<string, unknown> | null,
-    field: 'changed_files_count' | 'changed_lines_total'
-): number | null {
-    const triggers = isPlainRecord(preflight?.triggers) ? preflight.triggers : {};
-    if (triggers.ui_i18n_companion_scope !== true && triggers.ui_i18n_review_trigger_suppressed !== true) {
-        return null;
-    }
-    const metrics = isPlainRecord(preflight?.metrics) ? preflight.metrics : {};
-    const effectiveField = field === 'changed_files_count'
-        ? 'review_trigger_effective_changed_files_count'
-        : 'review_trigger_effective_changed_lines_total';
-    const legacyEffectiveField = field === 'changed_files_count'
-        ? 'companion_scope_effective_changed_files_count'
-        : 'companion_scope_effective_changed_lines_total';
-    return parseOptionalNumberField(metrics[effectiveField])
-        ?? parseOptionalNumberField(metrics[legacyEffectiveField]);
-}
-
 function readWorkflowConfigRecordForNextStep(repoRoot: string): Record<string, unknown> | null {
     const workflowConfigPath = resolveWorkflowConfigPath(repoRoot);
     if (!fileExists(workflowConfigPath)) {
@@ -954,7 +937,6 @@ function readScopeBudgetGuardEvaluation(
     if (!preflight) {
         return null;
     }
-    const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
     const budgetForecast = isPlainRecord(preflight.budget_forecast) ? preflight.budget_forecast : {};
     const defaultWorkflowConfig = buildDefaultWorkflowConfig();
     let rawScopeBudgetGuard: unknown = defaultWorkflowConfig.scope_budget_guard;
@@ -970,15 +952,8 @@ function readScopeBudgetGuardEvaluation(
             : defaultWorkflowConfig.scope_budget_guard;
     }
 
-    const changedFilesCount =
-        getCompanionScopeEffectiveMetric(preflight, 'changed_files_count')
-        ?? parseOptionalNumberField(metrics.changed_files_count)
-        ?? (Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0);
-    const changedLinesTotal =
-        getCompanionScopeEffectiveMetric(preflight, 'changed_lines_total')
-        ?? parseOptionalNumberField(metrics.changed_lines_total)
-        ?? parseOptionalNumberField(budgetForecast.changed_lines_total)
-        ?? 0;
+    const changedFilesCount = readScopeBudgetChangedFilesCount(preflight);
+    const changedLinesTotal = readScopeBudgetChangedLinesTotal(preflight);
     const totalEstimatedReviewTokens =
         parseOptionalNumberField(budgetForecast.total_estimated_review_tokens)
         ?? 0;
@@ -2535,6 +2510,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             ]
         });
     }
+    if (scopeBudgetGuardEvaluation?.should_warn) {
+        resultBase.warnings.push(
+            `${scopeBudgetGuardEvaluation.summary_line}. Continuation allowed until a blocking scope-budget threshold is exceeded.`
+        );
+    }
     if (scopeBudgetGuardEvaluation?.should_block) {
         const guardReason = sanitizeScopeBudgetGuardSummary(scopeBudgetGuardEvaluation);
         const latchResult = materializeSplitRequiredLatch({
@@ -2552,7 +2532,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 violations: scopeBudgetGuardEvaluation.violations.map((violation) => ({
                     metric: violation.metric,
                     actual: violation.actual,
-                    limit: violation.limit
+                    limit: violation.limit,
+                    warning_limit: violation.warning_limit,
+                    blocking_limit: violation.blocking_limit,
+                    severity: violation.severity
                 }))
             }
         });

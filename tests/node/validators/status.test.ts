@@ -189,6 +189,60 @@ function writeIntegrityTaskModeEvent(timelinePath: string, taskId: string, messa
     writeStatusFixtureFile(timelinePath, JSON.stringify(taskModeEvent) + '\n');
 }
 
+function writeScopeBudgetPreflight(
+    bundlePath: string,
+    taskId: string,
+    changedLinesTotal: number,
+    options: {
+        changedFilesCount?: number;
+        effectiveChangedFilesCount?: number;
+        effectiveChangedLinesTotal?: number;
+        uiI18nCompanionScope?: boolean;
+    } = {}
+): void {
+    const metrics: Record<string, unknown> = {
+        changed_files_count: options.changedFilesCount ?? 1,
+        changed_lines_total: changedLinesTotal,
+        changed_files_sha256: 'changed-files',
+        scope_sha256: 'scope',
+        scope_content_sha256: 'content'
+    };
+    if (typeof options.effectiveChangedFilesCount === 'number') {
+        metrics.review_trigger_effective_changed_files_count = options.effectiveChangedFilesCount;
+    }
+    if (typeof options.effectiveChangedLinesTotal === 'number') {
+        metrics.review_trigger_effective_changed_lines_total = options.effectiveChangedLinesTotal;
+    }
+    const payload: Record<string, unknown> = {
+        task_id: taskId,
+        mode: 'FULL_PATH',
+        detection_source: 'explicit_changed_files',
+        changed_files: ['src/example.ts'],
+        metrics,
+        required_reviews: {
+            code: true
+        },
+        budget_forecast: {
+            required_reviews: ['code'],
+            total_estimated_review_tokens: 1000
+        },
+        profile_selection: {
+            task_profile: 'strict',
+            effective_profile: 'strict'
+        }
+    };
+    if (options.uiI18nCompanionScope) {
+        payload.triggers = {
+            ui_i18n_companion_scope: true,
+            ui_i18n_review_trigger_suppressed: true
+        };
+    }
+    writeStatusFixtureFile(
+        path.join(bundlePath, 'runtime', 'reviews', `${taskId}-preflight.json`),
+        JSON.stringify(payload, null, 2)
+    );
+}
+
 function seedMatchingSourceCheckoutParity(tmpDir: string) {
     const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
     writeStatusFixtureFile(
@@ -1133,6 +1187,73 @@ test('formatStatusSnapshot prints mandatory full-suite performance guidance when
         assert.ok(output.includes('MandatoryFullSuite: enabled'));
         assert.ok(output.includes('MandatoryFullSuiteCommand: npm run test:sharded'));
         assert.ok(output.includes('MandatoryFullSuitePerformance: mode=optimized_sharded; optimized=true; boundary=mandatory_full_suite_not_smoke_or_fast; optimized_command="npm run test:sharded"; fallback_command="npm test"'));
+    } finally {
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
+test('formatStatusSnapshot surfaces scope budget WARN state from latest preflight', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENTS.md');
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        writeScopeBudgetPreflight(bundlePath, 'T-100', 2500);
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        const output = formatStatusSnapshot(snapshot);
+
+        assert.equal(snapshot.scopeBudgetGuardStatus?.status, 'WARN');
+        assert.equal(snapshot.scopeBudgetGuardStatus?.continuation_allowed, true);
+        assert.ok(output.includes('ScopeBudgetGuardStatus: WARN'));
+        assert.ok(output.includes('ScopeBudgetGuardSummary: Scope budget guard: WARN'));
+        assert.ok(output.includes('ScopeBudgetGuardContinuationAllowed: yes'));
+    } finally {
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
+test('formatStatusSnapshot uses companion effective scope budget metrics', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENTS.md');
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        writeScopeBudgetPreflight(bundlePath, 'T-100', 1000, {
+            changedFilesCount: 56,
+            effectiveChangedFilesCount: 35,
+            uiI18nCompanionScope: true
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        const output = formatStatusSnapshot(snapshot);
+
+        assert.equal(snapshot.scopeBudgetGuardStatus?.changed_files_count, 35);
+        assert.equal(snapshot.scopeBudgetGuardStatus?.status, 'WARN');
+        assert.equal(snapshot.scopeBudgetGuardStatus?.continuation_allowed, true);
+        assert.ok(output.includes('ScopeBudgetGuardSummary: Scope budget guard: WARN (changed_files_count=35>20 WARN)'));
+    } finally {
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
+test('formatStatusSnapshot binds scope budget status to current task preflight before historical artifacts', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENTS.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-100 | 🟨 IN_PROGRESS | P2 | workflow | Current task | gpt-5.5 | 2026-07-01 | strict | Current |',
+                '| T-999 | 🟦 TODO | P2 | workflow | Later task | gpt-5.5 | 2026-07-01 | strict | Later |'
+            ])
+        });
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        writeScopeBudgetPreflight(bundlePath, 'T-100', 1000);
+        writeScopeBudgetPreflight(bundlePath, 'T-999', 6000, { changedFilesCount: 100 });
+        const recent = new Date('2026-07-01T12:00:00.000Z');
+        fs.utimesSync(path.join(bundlePath, 'runtime', 'reviews', 'T-999-preflight.json'), recent, recent);
+
+        const snapshot = getStatusSnapshot(tmpDir);
+
+        assert.equal(snapshot.scopeBudgetGuardStatus?.status, 'OK');
+        assert.match(snapshot.scopeBudgetGuardStatus?.preflight_path || '', /T-100-preflight\.json$/u);
     } finally {
         cleanupStatusTempDir(tmpDir);
     }

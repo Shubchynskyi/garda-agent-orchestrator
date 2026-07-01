@@ -110,14 +110,14 @@ const scopeBudgetActionOptions: WorkflowSettingOption[] = SCOPE_BUDGET_GUARD_ACT
     if (action === 'BLOCK_FOR_SPLIT') {
         return {
             value: action,
-            label: 'Block for split',
-            description: 'Stops oversized work and asks the operator or agent to split it.'
+            label: 'Legacy max maps to block',
+            description: 'Compatibility mode for legacy max_* values: max_* is interpreted as the blocking threshold. Explicit block_* thresholds still block in every mode.'
         };
     }
     return {
         value: action,
-        label: 'Warn only',
-        description: 'Shows the scope warning but does not stop the next lifecycle step.'
+        label: 'Legacy max maps to warn',
+        description: 'Compatibility mode for legacy max_* values: max_* is interpreted as the warning threshold. Explicit block_* thresholds still block in every mode.'
     };
 });
 
@@ -352,11 +352,12 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
     {
         id: 'scope-budget-action',
         key: 'scope_budget_guard.action',
-        label: 'Scope budget action',
-        description: 'What happens when the scope budget is exceeded.',
+        label: 'Legacy max mapping mode',
+        description: 'Compatibility-only mode for old max_* thresholds. It does not disable blocking: explicit block_* thresholds still produce BLOCK and route to split-required.',
         flag: '--scope-budget-action',
         value_type: 'enum',
-        options: scopeBudgetActionOptions
+        options: scopeBudgetActionOptions,
+        editable: false
     },
     {
         id: 'scope-budget-profiles',
@@ -409,6 +410,94 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         flag: '--scope-budget-max-review-tokens',
         value_type: 'integer',
         min: 1,
+        max: 10_000_000,
+        options: []
+    },
+    {
+        id: 'scope-budget-warn-files',
+        key: 'scope_budget_guard.warn_files',
+        label: 'Scope budget file warning',
+        description: 'Changed-file count above this value is reported as WARN and continuation remains allowed. Must stay lower than the blocking threshold.',
+        flag: '--scope-budget-warn-files',
+        value_type: 'integer',
+        min: 1,
+        max: 10000,
+        options: []
+    },
+    {
+        id: 'scope-budget-block-files',
+        key: 'scope_budget_guard.block_files',
+        label: 'Scope budget file block',
+        description: 'Changed-file count above this value is reported as BLOCK and next-step routes to split-required.',
+        flag: '--scope-budget-block-files',
+        value_type: 'integer',
+        min: 2,
+        max: 10000,
+        options: []
+    },
+    {
+        id: 'scope-budget-warn-changed-lines',
+        key: 'scope_budget_guard.warn_changed_lines',
+        label: 'Scope budget changed-line warning',
+        description: 'Changed-line count above this value is reported as WARN and continuation remains allowed. Must stay lower than the blocking threshold.',
+        flag: '--scope-budget-warn-changed-lines',
+        value_type: 'integer',
+        min: 1,
+        max: 1_000_000,
+        options: []
+    },
+    {
+        id: 'scope-budget-block-changed-lines',
+        key: 'scope_budget_guard.block_changed_lines',
+        label: 'Scope budget changed-line block',
+        description: 'Changed-line count above this value is reported as BLOCK and next-step routes to split-required.',
+        flag: '--scope-budget-block-changed-lines',
+        value_type: 'integer',
+        min: 2,
+        max: 1_000_000,
+        options: []
+    },
+    {
+        id: 'scope-budget-warn-required-reviews',
+        key: 'scope_budget_guard.warn_required_reviews',
+        label: 'Mandatory review type warning',
+        description: 'Distinct required review type count above this value is reported as WARN. Disabled review capabilities do not become mandatory just because matching files changed; this counts review types, not reviewers, attempts, or review cycles.',
+        flag: '--scope-budget-warn-required-reviews',
+        value_type: 'integer',
+        min: 1,
+        max: 100,
+        options: []
+    },
+    {
+        id: 'scope-budget-block-required-reviews',
+        key: 'scope_budget_guard.block_required_reviews',
+        label: 'Mandatory review type block',
+        description: 'Distinct required review type count above this value is reported as BLOCK and next-step routes to split-required.',
+        flag: '--scope-budget-block-required-reviews',
+        value_type: 'integer',
+        min: 2,
+        max: 100,
+        options: []
+    },
+    {
+        id: 'scope-budget-warn-review-tokens',
+        key: 'scope_budget_guard.warn_review_tokens',
+        label: 'Review-token forecast warning',
+        description: 'Estimated review-token budget above this value is reported as WARN and continuation remains allowed.',
+        flag: '--scope-budget-warn-review-tokens',
+        value_type: 'integer',
+        min: 1,
+        max: 10_000_000,
+        options: []
+    },
+    {
+        id: 'scope-budget-block-review-tokens',
+        key: 'scope_budget_guard.block_review_tokens',
+        label: 'Review-token forecast block',
+        description: 'Estimated review-token budget above this value is reported as BLOCK and next-step routes to split-required.',
+        flag: '--scope-budget-block-review-tokens',
+        value_type: 'integer',
+        min: 2,
         max: 10_000_000,
         options: []
     },

@@ -251,7 +251,7 @@ const COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS = [
 ];
 const COMPATIBILITY_COMPILE_GATE_KEYS = ['command'];
 const COMPATIBILITY_REVIEW_EXECUTION_POLICY_KEYS = ['mode'];
-const COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS = [
+const COMPATIBILITY_LEGACY_SCOPE_BUDGET_GUARD_KEYS = [
     'action',
     'enabled',
     'max_changed_lines',
@@ -259,6 +259,17 @@ const COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS = [
     'max_required_reviews',
     'max_review_tokens',
     'profiles'
+];
+const COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS = [
+    ...COMPATIBILITY_LEGACY_SCOPE_BUDGET_GUARD_KEYS,
+    'block_changed_lines',
+    'block_files',
+    'block_required_reviews',
+    'block_review_tokens',
+    'warn_changed_lines',
+    'warn_files',
+    'warn_required_reviews',
+    'warn_review_tokens'
 ];
 const COMPATIBILITY_REVIEW_CYCLE_GUARD_KEYS = [
     'action',
@@ -322,6 +333,11 @@ function scopeBudgetMaxRequiredReviewsAtMostCompatibilityLimit(scopeBudgetGuard:
         ? LEGACY_SCOPE_BUDGET_MAX_REQUIRED_REVIEWS_COMPATIBILITY_LIMIT
         : Math.max(currentDefault, LEGACY_SCOPE_BUDGET_MAX_REQUIRED_REVIEWS_COMPATIBILITY_LIMIT);
     return numberAtMost(scopeBudgetGuard, 'max_required_reviews', compatibilityLimit);
+}
+
+function hasSupportedScopeBudgetGuardKeys(scopeBudgetGuard: Record<string, unknown>): boolean {
+    return hasExactOwnKeys(scopeBudgetGuard, COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS)
+        || hasExactOwnKeys(scopeBudgetGuard, COMPATIBILITY_LEGACY_SCOPE_BUDGET_GUARD_KEYS);
 }
 
 function numberEquals(record: Record<string, unknown>, key: string, expected: unknown): boolean {
@@ -478,7 +494,7 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
     if (
         !scopeBudgetGuard
         || !hasExactOwnKeys(defaultScopeBudgetGuard, COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS)
-        || !hasExactOwnKeys(scopeBudgetGuard, COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS)
+        || !hasSupportedScopeBudgetGuardKeys(scopeBudgetGuard)
         || scopeBudgetGuard.enabled !== true
         || !['WARN_ONLY', 'BLOCK_FOR_SPLIT'].includes(scopeBudgetGuardAction)
         || !includesEvery(
@@ -491,6 +507,20 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
         || !numberAtMost(scopeBudgetGuard, 'max_review_tokens', defaultScopeBudgetGuard.max_review_tokens)
     ) {
         return false;
+    }
+    if (hasExactOwnKeys(scopeBudgetGuard, COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS)) {
+        if (
+            !numberAtMost(scopeBudgetGuard, 'warn_files', defaultScopeBudgetGuard.warn_files)
+            || !numberAtMost(scopeBudgetGuard, 'block_files', defaultScopeBudgetGuard.block_files)
+            || !numberAtMost(scopeBudgetGuard, 'warn_changed_lines', defaultScopeBudgetGuard.warn_changed_lines)
+            || !numberAtMost(scopeBudgetGuard, 'block_changed_lines', defaultScopeBudgetGuard.block_changed_lines)
+            || !numberAtMost(scopeBudgetGuard, 'warn_required_reviews', defaultScopeBudgetGuard.warn_required_reviews)
+            || !numberAtMost(scopeBudgetGuard, 'block_required_reviews', defaultScopeBudgetGuard.block_required_reviews)
+            || !numberAtMost(scopeBudgetGuard, 'warn_review_tokens', defaultScopeBudgetGuard.warn_review_tokens)
+            || !numberAtMost(scopeBudgetGuard, 'block_review_tokens', defaultScopeBudgetGuard.block_review_tokens)
+        ) {
+            return false;
+        }
     }
 
     const reviewCycleGuard = toPlainRecord(config.review_cycle_guard);
