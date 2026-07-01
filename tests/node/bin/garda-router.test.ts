@@ -8,7 +8,6 @@ import * as path from 'node:path';
 import {
     getRuntimeCandidates,
     loadCliMainModule,
-    main,
     resolveDelegatedLauncherTrustEvidence,
     resolveDelegatedLauncherTarget
 } from '../../../src/bin/garda';

@@ -159,7 +159,7 @@ function buildProfileEntryFromPayload(
     };
 }
 
-function buildCreatePlan(repoRoot: string, data: ProfilesData, payload: UiProfileRequest): ProfileActionPlan {
+function buildCreatePlan(data: ProfilesData, payload: UiProfileRequest): ProfileActionPlan {
     const name = normalizeProfileName(payload.profile_name);
     assertValidProfileName(name);
     if (getProfileEntry(data, name)) {
@@ -289,7 +289,7 @@ function buildProfileActionPlan(repoRoot: string, payload: UiProfileRequest): Pr
         throw new Error('Profile operation must be create, select, save, reset, or delete.');
     }
     const data = readProfilesData(profilesPath(repoRoot));
-    if (operation === 'create') return buildCreatePlan(repoRoot, data, payload);
+    if (operation === 'create') return buildCreatePlan(data, payload);
     if (operation === 'select') return buildSelectPlan(data, payload);
     if (operation === 'reset') return buildResetPlan(repoRoot, data, payload);
     if (operation === 'delete') return buildDeletePlan(data, payload);
