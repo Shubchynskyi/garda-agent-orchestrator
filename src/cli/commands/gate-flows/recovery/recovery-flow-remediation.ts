@@ -1,9 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { matchAnyRegex } from '../../../../gate-runtime/text-utils';
 import { writeReviewArtifactJson } from '../../../../gate-runtime/review-artifacts';
 import { getWorkspaceSnapshot } from '../../../../gates/compile/compile-gate';
 import * as gateHelpers from '../../../../gates/shared/helpers';
+import {
+    assessReviewRemediationScopeBoundary,
+    isTestLikeRemediationPath
+} from '../../../../gates/review-remediation/review-remediation-scope-boundary';
 import { normalizeChangedFiles } from './recovery-flow-shared';
 import type {
     ResolvedReplayScope,
@@ -14,6 +17,8 @@ import type {
     ReviewRemediationScopeCategory,
     ReviewRemediationSemanticCategory
 } from './recovery-flow-types';
+
+export { assessReviewRemediationScopeBoundary };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -215,13 +220,6 @@ export function resolveReviewRemediationImpactAnalysis(
     };
 }
 
-function isTestLikeRemediationPath(relativePath: string, testTriggerRegexes: readonly string[]): boolean {
-    return matchAnyRegex(gateHelpers.normalizePath(relativePath), [...testTriggerRegexes], {
-        skipInvalidRegex: true,
-        caseInsensitive: true
-    });
-}
-
 export function resolveCurrentRemediationChangedFiles(
     repoRoot: string,
     replayScope: ResolvedReplayScope
@@ -235,30 +233,6 @@ export function resolveCurrentRemediationChangedFiles(
         ...(replayScope.changedFiles ?? []),
         ...(snapshot.changed_files as string[])
     ]);
-}
-
-export function assessReviewRemediationScopeBoundary(
-    previousChangedFiles: readonly string[],
-    currentChangedFiles: readonly string[],
-    allowedBoundaryFiles: readonly string[] = [],
-    testTriggerRegexes: readonly string[] = []
-): ReviewRemediationScopeBoundary {
-    const previous = normalizeChangedFiles(previousChangedFiles);
-    const current = normalizeChangedFiles(currentChangedFiles);
-    const previousSet = new Set(previous);
-    const allowedSet = new Set(normalizeChangedFiles([...previous, ...allowedBoundaryFiles]));
-    const expandedFiles = current.filter((entry) => !previousSet.has(entry));
-    const unplannedExpandedFiles = current.filter((entry) => !allowedSet.has(entry));
-    const expandedNonTestFiles = unplannedExpandedFiles.filter((entry) => !isTestLikeRemediationPath(entry, testTriggerRegexes));
-    const allowedTestOnlyExpansionFiles = unplannedExpandedFiles.filter((entry) => isTestLikeRemediationPath(entry, testTriggerRegexes));
-    return {
-        status: expandedNonTestFiles.length > 0 ? 'BLOCKED' : 'OK',
-        previousChangedFiles: previous,
-        currentChangedFiles: current,
-        expandedFiles,
-        expandedNonTestFiles,
-        allowedTestOnlyExpansionFiles
-    };
 }
 
 function groupReviewRemediationFiles(

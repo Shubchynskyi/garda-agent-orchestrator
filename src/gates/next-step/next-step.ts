@@ -110,6 +110,12 @@ import {
     readPreflightWorkspaceReadiness
 } from './next-step-compile-full-suite-readiness';
 import {
+    getClassificationConfig
+} from '../preflight/classify-change-config';
+import {
+    assessReviewRemediationScopeBoundary
+} from '../review-remediation/review-remediation-scope-boundary';
+import {
     resolveProviderFromEnvironment as resolveProviderFromRegistryEnvironment
 } from '../../core/provider-registry';
 import {
@@ -1077,6 +1083,31 @@ function preflightTouchesProtectedControlPlane(preflight: Record<string, unknown
         return true;
     }
     return Array.isArray(triggers.changed_protected_files) && triggers.changed_protected_files.length > 0;
+}
+
+function getPreflightChangedFilesForReviewRemediation(preflight: Record<string, unknown> | null): string[] {
+    return Array.isArray(preflight?.changed_files)
+        ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+}
+
+function getExpandedNonTestReviewRemediationFiles(params: {
+    repoRoot: string;
+    preflight: Record<string, unknown> | null;
+    currentChangedFiles?: readonly string[];
+    taskMode: Record<string, unknown> | null;
+}): string[] {
+    if (!params.preflight || !params.currentChangedFiles || params.currentChangedFiles.length === 0) {
+        return [];
+    }
+    const classificationConfig = getClassificationConfig(params.repoRoot);
+    const scopeBoundary = assessReviewRemediationScopeBoundary(
+        getPreflightChangedFilesForReviewRemediation(params.preflight),
+        params.currentChangedFiles,
+        getTaskModeDirtyWorkspaceBaselineChangedFiles(params.taskMode),
+        classificationConfig.test_trigger_regexes
+    );
+    return scopeBoundary.expandedNonTestFiles;
 }
 
 function readCurrentProtectedScopeBeforePreflight(repoRoot: string): {
@@ -2385,6 +2416,16 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         taskModePath
     );
     const reviewGateAlreadyPassed = isGatePassed(summary, 'required-reviews-check');
+    const failedReviewRemediationExpandedNonTestFiles = failedCurrentReviewStateForPreflight
+        ? getExpandedNonTestReviewRemediationFiles({
+            repoRoot,
+            preflight,
+            currentChangedFiles: (reviewGateAlreadyPassed
+                ? effectivePreflightWorkspaceReadiness.currentChangedFiles
+                : effectiveStrictPreGuardWorkspaceReadiness.currentChangedFiles),
+            taskMode
+        })
+        : [];
     const currentProtectedScopeRoute = buildCurrentProtectedScopeTaskModeRestartRoute();
     if (currentProtectedScopeRoute) {
         return currentProtectedScopeRoute;
@@ -2438,6 +2479,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     failedCurrentReviewStateForPreflight.verdictToken
                     || failedCurrentReviewStateForPreflight.failToken
                     || 'FAILED',
+                expandedNonTestFiles: failedReviewRemediationExpandedNonTestFiles,
                 restartReviewCycleCommand: buildRestartReviewCycleCommand(
                     repoRoot,
                     cliPrefix,
@@ -3661,10 +3703,24 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         });
     }
 
+    const reviewAuthorshipAttestationDefaults = Object.fromEntries(requiredReviewTypes.map((reviewType) => {
+        const state = reviewStates.find((candidate) => candidate.reviewType === reviewType);
+        return [
+            reviewType,
+            state ? reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state) : false
+        ];
+    }));
     const postReviewCloseoutRoute = resolvePostReviewCloseoutRouteFromState({
         requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
         zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),
-        requiredReviewsCommand: buildRequiredReviewsCheckCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath),
+        requiredReviewsCommand: buildRequiredReviewsCheckCommand(
+            repoRoot,
+            cliPrefix,
+            taskId,
+            preflightCommandPath,
+            taskModePath,
+            reviewAuthorshipAttestationDefaults
+        ),
         docImpactGatePassed: isGatePassed(summary, 'doc-impact-gate'),
         docImpactCompatibilityHint: buildDocImpactCompatibilityHint(),
         docImpactCommand: buildDocImpactCommand(

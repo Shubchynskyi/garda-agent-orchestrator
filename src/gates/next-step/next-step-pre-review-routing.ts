@@ -63,6 +63,7 @@ export interface NextStepPreGuardRoutingOptions {
         reviewType: string;
         verdictToken: string;
         restartReviewCycleCommand: string;
+        expandedNonTestFiles?: string[];
     } | null;
     coherentCycleReadiness: NextStepReadinessState & { command?: string | null };
     navigatorCommand: string;
@@ -111,6 +112,21 @@ export function resolveNextStepPreGuardRoute(
 
     if (!options.workspaceReadiness.ready && options.failedReviewRemediation) {
         const remediation = options.failedReviewRemediation;
+        if ((remediation.expandedNonTestFiles || []).length > 0) {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'classify-change',
+                title: `Refresh preflight for expanded '${remediation.reviewType}' remediation scope.`,
+                reason:
+                    `${options.workspaceReadiness.reason} ` +
+                    `The stale scope follows a recorded failed '${remediation.reviewType}' review verdict '${remediation.verdictToken}', ` +
+                    `but the current remediation added non-test files outside the failed-review scope: ${remediation.expandedNonTestFiles?.join(', ')}. ` +
+                    'restart-review-cycle would fail its scope-boundary guard for that expanded scope, so refresh classify-change for the current workspace before rebuilding compile/review evidence.',
+                commands: [
+                    buildCommand('Refresh preflight', options.workspaceRefreshCommand)
+                ]
+            };
+        }
         return {
             status: 'BLOCKED',
             nextGate: 'restart-review-cycle',

@@ -513,19 +513,28 @@ export function buildRequiredReviewsCheckCommand(
     cliPrefix: string,
     taskId: string,
     preflightCommandPath: string,
-    taskModePath: string | null
+    taskModePath: string | null,
+    reviewAuthorshipAttestationDefaults?: Record<string, boolean>
 ): string {
     const parts = [
         `--preflight-path "${preflightCommandPath}"`
     ];
-    const attestationPlaceholder = buildReviewAuthorshipAttestationFailClosedDefault(repoRoot, preflightCommandPath);
+    const attestationPlaceholder = buildReviewAuthorshipAttestationDefault(
+        repoRoot,
+        preflightCommandPath,
+        reviewAuthorshipAttestationDefaults
+    );
     if (attestationPlaceholder) {
         parts.push(`--review-authorship-attestation-json ${quoteCommandValue(attestationPlaceholder)}`);
     }
     return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'required-reviews-check', parts, taskModePath);
 }
 
-function buildReviewAuthorshipAttestationFailClosedDefault(repoRoot: string, preflightCommandPath: string): string | null {
+function buildReviewAuthorshipAttestationDefault(
+    repoRoot: string,
+    preflightCommandPath: string,
+    reviewAuthorshipAttestationDefaults?: Record<string, boolean>
+): string | null {
     try {
         const preflightPath = path.resolve(repoRoot, preflightCommandPath);
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
@@ -538,7 +547,10 @@ function buildReviewAuthorshipAttestationFailClosedDefault(repoRoot: string, pre
         if (requiredReviewTypes.length === 0) {
             return null;
         }
-        return JSON.stringify(Object.fromEntries(requiredReviewTypes.map((reviewType) => [reviewType, false])));
+        return JSON.stringify(Object.fromEntries(requiredReviewTypes.map((reviewType) => [
+            reviewType,
+            reviewAuthorshipAttestationDefaults?.[reviewType] === true
+        ])));
     } catch {
         return null;
     }

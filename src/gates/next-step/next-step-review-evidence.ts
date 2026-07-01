@@ -376,6 +376,44 @@ export function reviewStateHasSatisfiedEvidence(
     return timelineHasDelegatedReviewInvocationAttestation(repoRoot, eventsRoot, taskId, state);
 }
 
+function getStringArrayField(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+}
+
+function latestReviewGateFailureIsAuthorshipAttestationOnly(
+    eventsRoot: string,
+    taskId: string,
+    latestReviewGateFailureSequence: number
+): boolean {
+    const event = readTaskTimelineEventLikes(eventsRoot, taskId)
+        .find((candidate) => (
+            String(candidate.event_type || '').trim() === 'REVIEW_GATE_FAILED'
+            && getTimelineEventTaskSequence(candidate) === latestReviewGateFailureSequence
+        ));
+    if (!event || !isPlainRecord(event.details)) {
+        return false;
+    }
+    const details = event.details;
+    const attestation = isPlainRecord(details.review_authorship_attestation)
+        ? details.review_authorship_attestation
+        : null;
+    if (!attestation) {
+        return false;
+    }
+    const status = String(attestation.status || '').trim().toUpperCase();
+    if (!status || ['PASSED', 'NOT_REQUIRED'].includes(status)) {
+        return false;
+    }
+    const violations = [
+        ...getStringArrayField(details.violations),
+        ...getStringArrayField(attestation.violations)
+    ];
+    return violations.length > 0
+        && violations.every((violation) => /\bReview authorship attestation\b/i.test(violation));
+}
+
 export function getHiddenReviewTimingTrustRemediation(
     eventsRoot: string,
     taskId: string,
@@ -537,6 +575,13 @@ export function findReviewGateStaleUpstreamRecovery(params: {
         ['COMPILE_GATE_PASSED']
     );
     if (latestCompileSequence == null || latestReviewGateFailureSequence <= latestCompileSequence) {
+        return null;
+    }
+    if (latestReviewGateFailureIsAuthorshipAttestationOnly(
+        params.eventsRoot,
+        params.taskId,
+        latestReviewGateFailureSequence
+    )) {
         return null;
     }
     const stateByReviewType = new Map(params.reviewStates.map((state) => [state.reviewType, state]));
