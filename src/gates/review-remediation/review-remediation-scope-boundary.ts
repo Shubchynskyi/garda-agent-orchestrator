@@ -21,6 +21,21 @@ export function isTestLikeRemediationPath(relativePath: string, testTriggerRegex
     });
 }
 
+export function getTaskManualValidationBoundaryFiles(taskId: string, currentChangedFiles: readonly string[]): string[] {
+    const normalizedTaskId = String(taskId || '').trim();
+    if (!normalizedTaskId) {
+        return [];
+    }
+    const taskManualValidationPath = normalizePath(`garda-agent-orchestrator/runtime/manual-validation/${normalizedTaskId}`);
+    const deployedTaskManualValidationPath = normalizePath(`runtime/manual-validation/${normalizedTaskId}`);
+    return normalizeReviewRemediationChangedFiles(currentChangedFiles).filter((entry) => (
+        entry === taskManualValidationPath
+        || entry.startsWith(`${taskManualValidationPath}/`)
+        || entry === deployedTaskManualValidationPath
+        || entry.startsWith(`${deployedTaskManualValidationPath}/`)
+    ));
+}
+
 export function assessReviewRemediationScopeBoundary(
     previousChangedFiles: readonly string[],
     currentChangedFiles: readonly string[],

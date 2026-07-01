@@ -113,7 +113,8 @@ import {
     getClassificationConfig
 } from '../preflight/classify-change-config';
 import {
-    assessReviewRemediationScopeBoundary
+    assessReviewRemediationScopeBoundary,
+    getTaskManualValidationBoundaryFiles
 } from '../review-remediation/review-remediation-scope-boundary';
 import {
     resolveProviderFromEnvironment as resolveProviderFromRegistryEnvironment
@@ -1093,6 +1094,7 @@ function getPreflightChangedFilesForReviewRemediation(preflight: Record<string, 
 
 function getExpandedNonTestReviewRemediationFiles(params: {
     repoRoot: string;
+    taskId: string;
     preflight: Record<string, unknown> | null;
     currentChangedFiles?: readonly string[];
     taskMode: Record<string, unknown> | null;
@@ -1104,7 +1106,10 @@ function getExpandedNonTestReviewRemediationFiles(params: {
     const scopeBoundary = assessReviewRemediationScopeBoundary(
         getPreflightChangedFilesForReviewRemediation(params.preflight),
         params.currentChangedFiles,
-        getTaskModeDirtyWorkspaceBaselineChangedFiles(params.taskMode),
+        [
+            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(params.taskMode),
+            ...getTaskManualValidationBoundaryFiles(params.taskId, params.currentChangedFiles)
+        ],
         classificationConfig.test_trigger_regexes
     );
     return scopeBoundary.expandedNonTestFiles;
@@ -2419,6 +2424,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const failedReviewRemediationExpandedNonTestFiles = failedCurrentReviewStateForPreflight
         ? getExpandedNonTestReviewRemediationFiles({
             repoRoot,
+            taskId,
             preflight,
             currentChangedFiles: (reviewGateAlreadyPassed
                 ? effectivePreflightWorkspaceReadiness.currentChangedFiles

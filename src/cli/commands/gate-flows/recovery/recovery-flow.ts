@@ -48,6 +48,7 @@ import { resolveRuntimeReviewerIdentity } from '../../../../gates/review/reviewe
 import {
     assessReviewRemediationScopeBoundary,
     classifyReviewRemediationFix,
+    getTaskManualValidationBoundaryFiles,
     REMEDIATION_IMPACT_ANALYSIS_TOPICS,
     resolveCurrentRemediationChangedFiles,
     resolveReviewRemediationClassifyChangedFiles,
@@ -167,21 +168,6 @@ function appendRestartCompletedEvidence(input: {
         },
         { actor: 'orchestrator' }
     );
-}
-
-function getTaskManualValidationBoundaryFiles(taskId: string, currentChangedFiles: readonly string[]): string[] {
-    const taskManualValidationPath = gateHelpers.normalizePath(
-        path.join('garda-agent-orchestrator', 'runtime', 'manual-validation', taskId)
-    );
-    const deployedTaskManualValidationPath = gateHelpers.normalizePath(
-        path.join('runtime', 'manual-validation', taskId)
-    );
-    return normalizeChangedFiles(currentChangedFiles).filter((entry) => (
-        entry === taskManualValidationPath
-        || entry.startsWith(`${taskManualValidationPath}/`)
-        || entry === deployedTaskManualValidationPath
-        || entry.startsWith(`${deployedTaskManualValidationPath}/`)
-    ));
 }
 
 function toPlainRecord(value: unknown): Record<string, unknown> | null {

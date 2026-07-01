@@ -1103,6 +1103,67 @@ describe('gates/next-step', () => {
         assert.ok(!command.includes('gate required-reviews-check'));
     });
 
+    it('keeps task-owned manual-validation attachments on restart-review-cycle route', () => {
+        const repoRoot = makeTempRepo();
+        markTaskInProgress(repoRoot, TASK_ID);
+        initGitRepo(repoRoot, {
+            gitignoreContent: [
+                'garda-agent-orchestrator/runtime/reviews/',
+                'garda-agent-orchestrator/runtime/task-events/',
+                'garda-agent-orchestrator/runtime/tmp/',
+                ''
+            ].join('\n')
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/app.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['src/app.ts']);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+
+        const manualValidationRoot = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'manual-validation',
+            TASK_ID
+        );
+        fs.mkdirSync(manualValidationRoot, { recursive: true });
+        fs.writeFileSync(path.join(manualValidationRoot, 'gradle-test.log'), 'BUILD SUCCESSFUL\n', 'utf8');
+        fs.writeFileSync(
+            path.join(manualValidationRoot, 'review-evidence.json'),
+            JSON.stringify({
+                task_id: TASK_ID,
+                selected_logs: [{
+                    path: 'gradle-test.log',
+                    command: './gradlew test',
+                    status: 'PASSED',
+                    review_types: ['code']
+                }]
+            }, null, 2) + '\n',
+            'utf8'
+        );
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Restart failed 'code' review remediation cycle/);
+        assert.ok(command.includes('gate restart-review-cycle'), command);
+        assert.ok(!command.includes('gate classify-change'), command);
+        assert.ok(!command.includes('runtime/manual-validation'), command);
+        assert.ok(!command.includes('gate prepare-reviewer-launch'), command);
+        assert.ok(!command.includes('gate record-review-routing'), command);
+        assert.ok(!command.includes('gate required-reviews-check'), command);
+    });
+
     it('routes T-004-3-style frontend code-review remediation to restart-review-cycle', () => {
         const repoRoot = makeTempRepo();
         const frontendPath = path.join(repoRoot, 'frontend', 'src', 'App.tsx');

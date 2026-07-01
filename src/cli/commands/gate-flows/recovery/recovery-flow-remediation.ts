@@ -5,6 +5,7 @@ import { getWorkspaceSnapshot } from '../../../../gates/compile/compile-gate';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import {
     assessReviewRemediationScopeBoundary,
+    getTaskManualValidationBoundaryFiles,
     isTestLikeRemediationPath
 } from '../../../../gates/review-remediation/review-remediation-scope-boundary';
 import { normalizeChangedFiles } from './recovery-flow-shared';
@@ -18,7 +19,7 @@ import type {
     ReviewRemediationSemanticCategory
 } from './recovery-flow-types';
 
-export { assessReviewRemediationScopeBoundary };
+export { assessReviewRemediationScopeBoundary, getTaskManualValidationBoundaryFiles };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
