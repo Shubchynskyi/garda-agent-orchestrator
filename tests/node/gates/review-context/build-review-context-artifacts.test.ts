@@ -1,4 +1,5 @@
 import { describe, it } from 'node:test';
+import { createRequire } from 'node:module';
 import {
     assert,
     fs,
@@ -16,6 +17,8 @@ import {
     cloneJson,
     writeTaskModeArtifactFixture
 } from './build-review-context-fixtures';
+
+type SubprocessModule = typeof import('../../../../src/core/process/subprocess');
 
 describe('gates/build-review-context prompt artifacts and scoped hashes', () => {
         it('writes task scope and changed files into the reviewer prompt artifact', () => {
@@ -620,6 +623,152 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptArtifact.includes('+export const created = true;'));
             assert.equal(result.task_scope.diff.available, true);
             assert.equal(result.task_scope.diff.source, 'git_diff_head_plus_untracked');
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('includes task-owned ignored file content for explicit changed-file review contexts', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-explicit-ignored-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+            const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.dirname(workflowConfigPath), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.writeFileSync(path.join(repoRoot, '.gitignore'), `${workflowConfigRelativePath}\n`, 'utf8');
+            runGit(repoRoot, ['add', '.gitignore']);
+            runGit(repoRoot, ['commit', '-m', 'baseline ignore rules']);
+            for (const ruleFile of getRulePack('code').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({ full_suite_validation: { timeout_ms: 1234 } }, null, 2) + '\n',
+                'utf8'
+            );
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-explicit-ignored', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-explicit-ignored-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-explicit-ignored',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'config',
+                changed_files: [workflowConfigRelativePath],
+                required_reviews: { code: true },
+                triggers: {
+                    runtime_changed: false,
+                    runtime_code_changed: false,
+                    protected_control_plane_changed: true
+                }
+            }, null, 2), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-explicit-ignored-code-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-explicit-ignored-code-review-context.json'),
+                repoRoot
+            });
+
+            const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
+            assert.ok(promptArtifact.includes(`+++ b/${workflowConfigRelativePath}`));
+            assert.ok(promptArtifact.includes('"timeout_ms": 1234'));
+            assert.equal(result.task_scope.diff.available, true);
+            assert.equal(result.task_scope.diff.source, 'git_diff_head_plus_untracked');
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('batches tracked-file detection for broad explicit tracked review contexts', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-explicit-tracked-batch-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            for (const ruleFile of getRulePack('code').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            const changedFiles = Array.from({ length: 24 }, (_, index) => `src/file-${String(index).padStart(2, '0')}.ts`);
+            for (const changedFile of changedFiles) {
+                fs.writeFileSync(path.join(repoRoot, changedFile), `export const baseline${changedFile.replace(/\D/g, '') || '0'} = true;\n`, 'utf8');
+            }
+            runGit(repoRoot, ['add', 'src']);
+            runGit(repoRoot, ['commit', '-m', 'baseline tracked files']);
+            for (const changedFile of changedFiles) {
+                fs.appendFileSync(path.join(repoRoot, changedFile), 'export const changed = true;\n', 'utf8');
+            }
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-explicit-tracked-batch', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-explicit-tracked-batch-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-explicit-tracked-batch',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: changedFiles,
+                required_reviews: { code: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true }
+            }, null, 2), 'utf8');
+
+            const requireForPatch = createRequire(__filename);
+            const subprocessPatch = requireForPatch('../../../../src/core/process/subprocess') as {
+                spawnSyncWithTimeout: SubprocessModule['spawnSyncWithTimeout'];
+            };
+            const originalSpawnSyncWithTimeout = subprocessPatch.spawnSyncWithTimeout;
+            let trackedLookupCount = 0;
+            try {
+                subprocessPatch.spawnSyncWithTimeout = ((command, args, options) => {
+                    if (
+                        command === 'git'
+                        && args.includes('ls-files')
+                        && args.includes('--')
+                        && !args.includes('--others')
+                        && !args.includes('-s')
+                    ) {
+                        trackedLookupCount += 1;
+                    }
+                    return originalSpawnSyncWithTimeout(command, args, options);
+                }) as SubprocessModule['spawnSyncWithTimeout'];
+                buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-explicit-tracked-batch-code-scoped.json'),
+                    outputPath: path.join(reviewsRoot, 'T-901-explicit-tracked-batch-code-review-context.json'),
+                    repoRoot
+                });
+            } finally {
+                subprocessPatch.spawnSyncWithTimeout = originalSpawnSyncWithTimeout;
+            }
+
+            assert.equal(trackedLookupCount, 1);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 

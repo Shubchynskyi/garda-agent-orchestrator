@@ -212,13 +212,57 @@ function boundText(text: string, maxChars: number, forceTruncated = false): {
     };
 }
 
-function buildUntrackedFileDiff(repoRoot: string, changedFiles: string[], maxChars: number): { text: string | null; charCount: number; truncated: boolean } {
+function readTrackedGitFileSet(repoRoot: string, changedFiles: string[]): Set<string> {
+    if (changedFiles.length === 0) {
+        return new Set();
+    }
+    const result = runGitTextCommand(repoRoot, ['ls-files', '--', ...toLiteralGitPathspecs(changedFiles)], 120000);
+    if (result.error || !result.text) {
+        return new Set();
+    }
+    return new Set(result.text
+        .split(/\r?\n/)
+        .map((entry) => normalizePath(entry))
+        .filter(Boolean));
+}
+
+function isReviewableExplicitWorktreeFile(repoRoot: string, relativeFile: string, trackedFiles: Set<string>): boolean {
+    const absolutePath = resolveRepoRelativePath(repoRoot, relativeFile);
+    if (!absolutePath || trackedFiles.has(normalizePath(relativeFile))) {
+        return false;
+    }
+    try {
+        const stat = fs.lstatSync(absolutePath);
+        return stat.isFile() || stat.isSymbolicLink();
+    } catch {
+        return false;
+    }
+}
+
+function buildUntrackedFileDiff(
+    repoRoot: string,
+    changedFiles: string[],
+    maxChars: number,
+    options: { includeExplicitIgnored?: boolean } = {}
+): { text: string | null; charCount: number; truncated: boolean } {
     const literalPathspecs = toLiteralGitPathspecs(changedFiles);
     const untrackedResult = runGitTextCommand(repoRoot, ['ls-files', '--others', '--exclude-standard', '--', ...literalPathspecs], maxChars);
-    const untrackedFiles = String(untrackedResult.text || '')
+    const visibleUntrackedFiles = String(untrackedResult.text || '')
         .split('\n')
         .map((entry) => normalizePath(entry))
         .filter((entry) => entry.length > 0);
+    const visibleUntrackedFileSet = new Set(visibleUntrackedFiles);
+    const trackedFiles = options.includeExplicitIgnored === true
+        ? readTrackedGitFileSet(repoRoot, changedFiles)
+        : new Set<string>();
+    const explicitIgnoredFiles = options.includeExplicitIgnored === true
+        ? changedFiles
+            .map((entry) => normalizePath(entry))
+            .filter((entry) => entry.length > 0)
+            .filter((entry) => !visibleUntrackedFileSet.has(entry))
+            .filter((entry) => isReviewableExplicitWorktreeFile(repoRoot, entry, trackedFiles))
+        : [];
+    const untrackedFiles = [...new Set([...visibleUntrackedFiles, ...explicitIgnoredFiles])].sort();
     if (untrackedFiles.length === 0) {
         return { text: null, charCount: 0, truncated: false };
     }
@@ -508,7 +552,9 @@ export function buildGitDiffSummary(
         return cached;
     }
     const untrackedDiff = includeUntracked
-        ? buildUntrackedFileDiff(repoRoot, changedFiles, REVIEW_CONTEXT_DIFF_COLLECTION_MAX_CHARS)
+        ? buildUntrackedFileDiff(repoRoot, changedFiles, REVIEW_CONTEXT_DIFF_COLLECTION_MAX_CHARS, {
+            includeExplicitIgnored: detectionSource === 'explicit_changed_files'
+        })
         : { text: null, charCount: 0, truncated: false };
     const remainingTrackedDiffChars = Math.max(0, REVIEW_CONTEXT_DIFF_COLLECTION_MAX_CHARS - (untrackedDiff.text || '').length);
     const diffResult = runGitTextCommand(repoRoot, [...diffBaseArgs, '--', ...literalPathspecs], remainingTrackedDiffChars);

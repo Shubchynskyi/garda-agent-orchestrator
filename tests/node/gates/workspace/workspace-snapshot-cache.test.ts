@@ -464,6 +464,31 @@ describe('gates/workspace-snapshot-cache', () => {
             assert.equal(result.detection_source, 'explicit_changed_files');
         });
 
+        it('preserves explicit task-owned ignored workflow-config files without widening git-auto scope', () => {
+            const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+            const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+            fs.mkdirSync(path.dirname(workflowConfigPath), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, '.gitignore'), `${workflowConfigRelativePath}\n`, 'utf8');
+            fs.writeFileSync(workflowConfigPath, JSON.stringify({ full_suite_validation: { timeout_ms: 1000 } }, null, 2) + '\n', 'utf8');
+
+            const automatic = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
+            assert.equal(automatic.changed_files.includes(workflowConfigRelativePath), false);
+
+            const explicit = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, [workflowConfigRelativePath]);
+            assert.equal(explicit.cache_hit, false);
+            assert.deepEqual(explicit.changed_files, [workflowConfigRelativePath]);
+            assert.equal(explicit.changed_files_count, 1);
+            assert.equal(explicit.ignored_generated_runtime_files_count, 0);
+
+            fs.writeFileSync(workflowConfigPath, JSON.stringify({ full_suite_validation: { timeout_ms: 2000 } }, null, 2) + '\n', 'utf8');
+            const refreshed = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, [workflowConfigRelativePath]);
+            assert.equal(refreshed.cache_hit, false);
+            assert.deepEqual(refreshed.changed_files, [workflowConfigRelativePath]);
+            assert.equal(refreshed.changed_files_sha256, explicit.changed_files_sha256);
+            assert.notEqual(refreshed.scope_content_sha256, explicit.scope_content_sha256);
+            assert.notEqual(refreshed.scope_sha256, explicit.scope_sha256);
+        });
+
         it('invalidates explicit_changed_files cache when explicit file content changes', () => {
             const first = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', false, ['file.ts']);
             assert.equal(first.cache_hit, false);
