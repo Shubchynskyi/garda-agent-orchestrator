@@ -141,6 +141,7 @@ function hasDuplicateProviderInvocationId(options: {
     invocationEvent: ReviewTimingTrustEventLike;
     reviewType: string;
     providerInvocationId: string;
+    reusedExistingReview: boolean;
     latestCompileSequence: number | null;
 }): boolean {
     const providerInvocationId = options.providerInvocationId.trim();
@@ -154,6 +155,8 @@ function hasDuplicateProviderInvocationId(options: {
         const integrity = asRecord(event.integrity);
         const sequence = normalizedSequence(integrity?.task_sequence);
         if (
+            !options.reusedExistingReview
+            &&
             options.latestCompileSequence != null
             && sequence != null
             && sequence <= options.latestCompileSequence
@@ -242,12 +245,13 @@ export function evaluateHiddenReviewTimingTrust(options: {
     reviewResultRecordedAtUtc?: string | null;
     recordedAtUtc?: string | null;
     reviewOutputSourceMtimeUtc?: string | null;
+    strictReusedReviewRecordedDetails?: Record<string, unknown> | null;
     timelineEvents: readonly ReviewTimingTrustEventLike[];
     latestCompileSequence?: number | null;
     nowMs?: number;
 }): HiddenReviewTimingTrustResult {
     const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (options.reusedExistingReview || !TIMING_ENFORCED_REVIEW_TYPES.has(reviewType)) {
+    if (!TIMING_ENFORCED_REVIEW_TYPES.has(reviewType)) {
         return { trusted: true, code: null, message: null };
     }
     const provenance = options.reviewerProvenance;
@@ -274,9 +278,24 @@ export function evaluateHiddenReviewTimingTrust(options: {
         ?? getDetailsTimestampMs(details, 'launch_completed_at_utc', 'launchCompletedAtUtc');
     const invocationAttestedAtMs = getTimestampMs(provenance.invocation_attested_at_utc)
         ?? getDetailsTimestampMs(details, 'invocation_attested_at_utc', 'invocationAttestedAtUtc');
-    const reviewResultRecordedAtMs = getTimestampMs(options.reviewResultRecordedAtUtc)
-        ?? getTimestampMs(options.recordedAtUtc);
-    const reviewOutputSourceMtimeMs = getTimestampMs(options.reviewOutputSourceMtimeUtc);
+    const historicalReviewRecordedDetails = options.reusedExistingReview
+        ? asRecord(options.strictReusedReviewRecordedDetails)
+        : null;
+    if (options.reusedExistingReview && !historicalReviewRecordedDetails) {
+        return distrust('missing_timing');
+    }
+    const reviewResultRecordedAtMs = historicalReviewRecordedDetails
+        ? (
+            getDetailsTimestampMs(historicalReviewRecordedDetails, 'review_result_recorded_at_utc', 'reviewResultRecordedAtUtc')
+            ?? getDetailsTimestampMs(historicalReviewRecordedDetails, 'recorded_at_utc', 'recordedAtUtc')
+        )
+        : (
+            getTimestampMs(options.reviewResultRecordedAtUtc)
+            ?? getTimestampMs(options.recordedAtUtc)
+        );
+    const reviewOutputSourceMtimeMs = historicalReviewRecordedDetails
+        ? getDetailsTimestampMs(historicalReviewRecordedDetails, 'review_output_source_mtime_utc', 'reviewOutputSourceMtimeUtc')
+        : getTimestampMs(options.reviewOutputSourceMtimeUtc);
     const timestamps = [
         launchPreparedAtMs,
         delegationStartedAtMs,
@@ -320,6 +339,7 @@ export function evaluateHiddenReviewTimingTrust(options: {
         invocationEvent,
         reviewType,
         providerInvocationId,
+        reusedExistingReview: options.reusedExistingReview,
         latestCompileSequence: options.latestCompileSequence ?? null
     })) {
         return distrust('duplicate_provider_invocation_id');

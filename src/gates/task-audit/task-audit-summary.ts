@@ -407,7 +407,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             currentPreflight: preflight,
             excludedReviewTypes: reviewCycleExcludedReviewTypes
         });
-        const reviewTimingAudit = buildReviewTimingAuditSummary(reviewsRoot, safeTaskId, events);
+        const reviewTimingAudit = buildReviewTimingAuditSummary(reviewsRoot, safeTaskId, events, repoRoot);
         return {
             evidence,
             requiredReviewBlockers,

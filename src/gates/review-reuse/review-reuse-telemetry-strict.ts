@@ -74,6 +74,7 @@ export function validateStrictReusedReviewEvidence(
         currentReuseEventSha256: currentReuseEvent.eventSha256,
         historicalReviewRecordedTaskSequence: historicalReviewRecordedEvent.taskSequence,
         historicalReviewRecordedEventSha256: historicalReviewRecordedEvent.eventSha256,
+        historicalReviewRecordedDetails: historicalReviewRecordedEvent.details,
         historicalReviewerInvocationTaskSequence: historicalReviewerInvocationEvent.taskSequence,
         historicalReviewerInvocationEventSha256: historicalReviewerInvocationEvent.eventSha256
     };
@@ -291,7 +292,9 @@ function findStrictCurrentReuseRecordedEvent(input: StrictReusedReviewEvidenceVa
     };
 }
 
-function findStrictHistoricalReviewRecordedSourceEvent(input: StrictReusedReviewEvidenceValidationInput): StrictEventEvidence {
+function findStrictHistoricalReviewRecordedSourceEvent(
+    input: StrictReusedReviewEvidenceValidationInput
+): StrictEventEvidence & ({ valid: true; details: Record<string, unknown> } | { valid: false }) {
     let lastReason: string | null = null;
     for (let index = input.events.length - 1; index >= 0; index -= 1) {
         const event = input.events[index];
@@ -340,7 +343,10 @@ function findStrictHistoricalReviewRecordedSourceEvent(input: StrictReusedReview
         if (strictDetailsError) {
             return { valid: false, reason: strictDetailsError };
         }
-        return strictEventEvidenceFromMatch(match, 'historical REVIEW_RECORDED source telemetry has invalid integrity');
+        const evidence = strictEventEvidenceFromMatch(match, 'historical REVIEW_RECORDED source telemetry has invalid integrity');
+        return evidence.valid
+            ? { ...evidence, details }
+            : evidence;
     }
     return {
         valid: false,

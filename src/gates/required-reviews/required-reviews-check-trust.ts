@@ -514,6 +514,29 @@ export function validateReviewArtifactGateEligibility(options: {
                             errors.push(
                                 strictReuseReason
                             );
+                        } else {
+                            const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
+                                reviewType: reviewKey,
+                                reusedExistingReview,
+                                reviewerProvenance,
+                                reviewResultRecordedAtUtc: typeof validatedReceipt?.review_result_recorded_at_utc === 'string'
+                                    ? validatedReceipt.review_result_recorded_at_utc
+                                    : null,
+                                recordedAtUtc: typeof validatedReceipt?.recorded_at_utc === 'string'
+                                    ? validatedReceipt.recorded_at_utc
+                                    : null,
+                                reviewOutputSourceMtimeUtc: typeof validatedReceipt?.review_output_source_mtime_utc === 'string'
+                                    ? validatedReceipt.review_output_source_mtime_utc
+                                    : null,
+                                strictReusedReviewRecordedDetails: strictReuseValidation.historicalReviewRecordedDetails,
+                                timelineEvents: options.timelineEvents,
+                                latestCompileSequence: latestCompilePassSequence
+                            });
+                            if (!hiddenTimingTrust.trusted && hiddenTimingTrust.message) {
+                                errors.push(
+                                    `Review receipt for '${reviewKey}' is not sufficiently trustworthy. ${hiddenTimingTrust.message}`
+                                );
+                            }
                         }
                     }
                 } else {

@@ -119,6 +119,7 @@ export type StrictReusedReviewEvidenceValidationResult =
         currentReuseEventSha256: string;
         historicalReviewRecordedTaskSequence: number;
         historicalReviewRecordedEventSha256: string;
+        historicalReviewRecordedDetails: Record<string, unknown>;
         historicalReviewerInvocationTaskSequence: number;
         historicalReviewerInvocationEventSha256: string;
     }

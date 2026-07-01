@@ -198,11 +198,11 @@ describe('gates/task-audit-summary final user report rendering', () => {
                     makeFinalUserReportTimingEntry('test', 42_000),
                     makeFinalUserReportTimingEntry('test', 8_000, {
                         reused_existing_review: true,
-                        hidden_timing_status: 'SKIPPED_REUSED',
+                        hidden_timing_status: 'TRUSTED',
                         hidden_timing_distrust_code: null
                     })
                 ],
-                visible_summary_line: 'Review timing audit: code(TRUSTED); test(SKIPPED_REUSED).'
+                visible_summary_line: 'Review timing audit: code(TRUSTED); test(TRUSTED).'
             }
         }));
 

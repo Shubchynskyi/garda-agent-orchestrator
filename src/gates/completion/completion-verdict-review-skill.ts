@@ -586,6 +586,31 @@ export function validateReviewSkillEvidence(
                             );
                         })
                         : null;
+                    let strictReusedReviewRecordedDetails: Record<string, unknown> | null = null;
+                    const recordHiddenTimingTrustViolation = () => {
+                        const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
+                            reviewType: key,
+                            reusedExistingReview,
+                            reviewerProvenance: receiptReviewerProvenance,
+                            reviewResultRecordedAtUtc: typeof receipt.review_result_recorded_at_utc === 'string'
+                                ? receipt.review_result_recorded_at_utc
+                                : null,
+                            recordedAtUtc: typeof receipt.recorded_at_utc === 'string'
+                                ? receipt.recorded_at_utc
+                                : null,
+                            reviewOutputSourceMtimeUtc: typeof receipt.review_output_source_mtime_utc === 'string'
+                                ? receipt.review_output_source_mtime_utc
+                                : null,
+                            strictReusedReviewRecordedDetails,
+                            timelineEvents: events,
+                            latestCompileSequence: compilePassSequence
+                        });
+                        if (!hiddenTimingTrust.trusted && hiddenTimingTrust.message) {
+                            result.violations.push(
+                                `Required review '${key}' evidence is not sufficiently trustworthy. ${hiddenTimingTrust.message}`
+                            );
+                        }
+                    };
                     if (receipt.reviewer_execution_mode && !receiptExecutionMode) {
                         result.violations.push(
                             `Required review '${key}' has invalid receipt reviewer_execution_mode ` +
@@ -725,6 +750,8 @@ export function validateReviewSkillEvidence(
                                 result.violations.push(
                                     `Required review '${key}' reused receipt strict evidence is invalid: ${strictReuseReason}.`
                                 );
+                            } else {
+                                strictReusedReviewRecordedDetails = strictReuseValidation.historicalReviewRecordedDetails;
                             }
                         }
                         const trustViolation = getMandatoryDelegatedReviewTrustViolation({
@@ -737,6 +764,11 @@ export function validateReviewSkillEvidence(
                                 trustViolation.replace(`Review receipt for '${key}'`, `Required review '${key}' receipt`)
                             );
                         }
+                        // Reused evidence must always pass hidden timing trust, matching
+                        // required-reviews-check; do not gate on the completion-level
+                        // invocation-attestation match, which is stricter than the strict
+                        // reuse binding and would silently skip the timing check.
+                        recordHiddenTimingTrustViolation();
                     }
                     if (receiptExecutionMode === 'delegated_subagent' && routingEvent && !reusedExistingReview) {
                         const provenanceRoutingEvent = attestedRoutingEvent || routingEvent;
@@ -771,27 +803,7 @@ export function validateReviewSkillEvidence(
                                     `Required review '${key}' receipt reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
                                 );
                             } else {
-                                const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
-                                    reviewType: key,
-                                    reusedExistingReview,
-                                    reviewerProvenance: receiptReviewerProvenance,
-                                    reviewResultRecordedAtUtc: typeof receipt.review_result_recorded_at_utc === 'string'
-                                        ? receipt.review_result_recorded_at_utc
-                                        : null,
-                                    recordedAtUtc: typeof receipt.recorded_at_utc === 'string'
-                                        ? receipt.recorded_at_utc
-                                        : null,
-                                    reviewOutputSourceMtimeUtc: typeof receipt.review_output_source_mtime_utc === 'string'
-                                        ? receipt.review_output_source_mtime_utc
-                                        : null,
-                                    timelineEvents: events,
-                                    latestCompileSequence: compilePassSequence
-                                });
-                                if (!hiddenTimingTrust.trusted && hiddenTimingTrust.message) {
-                                    result.violations.push(
-                                        `Required review '${key}' evidence is not sufficiently trustworthy. ${hiddenTimingTrust.message}`
-                                    );
-                                }
+                                recordHiddenTimingTrustViolation();
                             }
                         } else if (!attestedRoutingEvent) {
                             result.violations.push(

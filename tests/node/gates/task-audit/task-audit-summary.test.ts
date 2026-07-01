@@ -21,8 +21,50 @@ import {
     writeCurrentIndependentReviewFixture,
     initGitRepo,
     makeTempDir} from './task-audit-summary-fixtures';
+import {
+    ALL_REVIEW_FLAGS as REUSE_ALL_REVIEW_FLAGS,
+    appendEvent as appendReuseEvent,
+    fileSha256 as reuseFileSha256,
+    makeTempRepo as makeReuseTempRepo,
+    markReviewEvidenceAsStrictReuse as markReuseReviewEvidenceAsStrictReuse,
+    reviewsRoot as reuseReviewsRoot,
+    seedCompilePass as seedReuseCompilePass,
+    seedStartedTask as seedReuseStartedTask,
+    writePreflight as writeReusePreflight,
+    writeReviewEvidence as writeReuseReviewEvidence
+} from '../next-step/next-step-review-reuse-fixtures';
 import { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
 import { formatFinalUserReport } from '../../../../src/gates/task-audit/task-audit-summary';
+
+function appendCurrentStrictReuseRecordedForAudit(repoRoot: string, taskId: string, reviewType: string): void {
+    const root = reuseReviewsRoot(repoRoot);
+    const receiptPath = path.join(root, `${taskId}-${reviewType}-receipt.json`);
+    const artifactPath = path.join(root, `${taskId}-${reviewType}.md`);
+    const contextPath = path.join(root, `${taskId}-${reviewType}-review-context.json`);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    const receiptSha256 = reuseFileSha256(receiptPath);
+    const receiptSnapshotPath = path.join(root, `${taskId}-${reviewType}-receipt-${receiptSha256}.json`);
+    const reviewArtifactSha256 = reuseFileSha256(artifactPath);
+    const reviewArtifactSnapshotPath = path.join(root, `${taskId}-${reviewType}-artifact-${reviewArtifactSha256}.md`);
+    fs.copyFileSync(receiptPath, receiptSnapshotPath);
+    fs.copyFileSync(artifactPath, reviewArtifactSnapshotPath);
+    appendReuseEvent(repoRoot, taskId, 'REVIEW_RECORDED', 'PASS', {
+        ...receipt,
+        receipt_path: receiptPath,
+        receipt_sha256: receiptSha256,
+        receipt_snapshot_path: receiptSnapshotPath,
+        receipt_snapshot_sha256: receiptSha256,
+        review_artifact_path: artifactPath,
+        review_artifact_sha256: reviewArtifactSha256,
+        review_artifact_snapshot_path: reviewArtifactSnapshotPath,
+        review_artifact_snapshot_sha256: reviewArtifactSha256,
+        review_context_path: contextPath,
+        review_context_sha256: reuseFileSha256(contextPath),
+        review_context_reuse_sha256: receipt.review_context_reuse_sha256,
+        review_tree_state_sha256: receipt.review_tree_state_sha256,
+        reused_existing_review: true
+    });
+}
 
 
 describe('gates/task-audit-summary', () => {
@@ -772,6 +814,97 @@ describe('gates/task-audit-summary', () => {
             assert.ok(rendered.includes('Review timing audit: code(TRUSTED, delegation_to_result=53000ms'));
             assert.ok(rendered.includes('provider=GitHubCopilot provider_invocation=codex-subagent-run-123'));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review timing audit: code(TRUSTED'));
+        });
+
+        it('keeps valid strict reused review timing trusted in final closeout output', () => {
+            const repoRoot = makeReuseTempRepo();
+            const taskId = 'T-AUDIT-REUSE-TIMING';
+            const reviewsRoot = reuseReviewsRoot(repoRoot);
+            const eventsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            seedReuseStartedTask(repoRoot, taskId);
+            writeReusePreflight(repoRoot, taskId, { ...REUSE_ALL_REVIEW_FLAGS, code: true }, {
+                includeDomainScopeFingerprints: true
+            });
+            seedReuseCompilePass(repoRoot, taskId);
+            writeReuseReviewEvidence(repoRoot, taskId, 'code');
+            markReuseReviewEvidenceAsStrictReuse(repoRoot, taskId, 'code');
+            seedReuseCompilePass(repoRoot, taskId);
+            appendCurrentStrictReuseRecordedForAudit(repoRoot, taskId, 'code');
+            writeArtifact(reviewsRoot, taskId, '-doc-impact.json', {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'NO_DOC_UPDATES'
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId,
+                repoRoot,
+                eventsRoot,
+                reviewsRoot
+            });
+
+            const reusedEntry = result.final_closeout.review_timing_audit?.entries.find((entry) => (
+                entry.review_type === 'code' && entry.reused_existing_review
+            ));
+            assert.ok(reusedEntry);
+            assert.equal(reusedEntry.hidden_timing_status, 'TRUSTED');
+            assert.equal(reusedEntry.hidden_timing_distrust_code, null);
+            assert.ok(result.final_closeout.review_timing_audit?.visible_summary_line.includes('code(TRUSTED'));
+            const finalUserReport = formatFinalUserReport(result.final_closeout);
+            assert.equal(finalUserReport.includes('timing looked unusual'), false);
+            assert.equal(finalUserReport.includes('DISTRUSTED'), false);
+        });
+
+        it('distrusts diverging reused receipt snapshots instead of borrowing canonical strict-reuse validation', () => {
+            const repoRoot = makeReuseTempRepo();
+            const taskId = 'T-AUDIT-REUSE-TAMPER';
+            const reviewsRoot = reuseReviewsRoot(repoRoot);
+            const eventsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            seedReuseStartedTask(repoRoot, taskId);
+            writeReusePreflight(repoRoot, taskId, { ...REUSE_ALL_REVIEW_FLAGS, code: true }, {
+                includeDomainScopeFingerprints: true
+            });
+            seedReuseCompilePass(repoRoot, taskId);
+            writeReuseReviewEvidence(repoRoot, taskId, 'code');
+            markReuseReviewEvidenceAsStrictReuse(repoRoot, taskId, 'code');
+            seedReuseCompilePass(repoRoot, taskId);
+            appendCurrentStrictReuseRecordedForAudit(repoRoot, taskId, 'code');
+            // A snapshot receipt that diverges from the canonical receipt content must
+            // not inherit the canonical receipt's strict-reuse validation result.
+            const canonicalReceiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+            const tamperedReceipt = JSON.parse(fs.readFileSync(canonicalReceiptPath, 'utf8')) as Record<string, unknown>;
+            tamperedReceipt.recorded_at_utc = '2099-01-01T00:00:00.000Z';
+            tamperedReceipt.review_result_recorded_at_utc = '2099-01-01T00:00:00.000Z';
+            const tamperedSnapshotName = `${taskId}-code-receipt-${'f'.repeat(64)}.json`;
+            fs.writeFileSync(
+                path.join(reviewsRoot, tamperedSnapshotName),
+                `${JSON.stringify(tamperedReceipt, null, 2)}\n`,
+                'utf8'
+            );
+            writeArtifact(reviewsRoot, taskId, '-doc-impact.json', {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'NO_DOC_UPDATES'
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId,
+                repoRoot,
+                eventsRoot,
+                reviewsRoot
+            });
+
+            const reusedEntries = (result.final_closeout.review_timing_audit?.entries || []).filter((entry) => (
+                entry.review_type === 'code' && entry.reused_existing_review
+            ));
+            const trustedEntry = reusedEntries.find((entry) => entry.hidden_timing_status === 'TRUSTED');
+            const tamperedEntry = reusedEntries.find((entry) => entry.receipt_path.endsWith(tamperedSnapshotName));
+            assert.ok(trustedEntry, JSON.stringify(reusedEntries, null, 2));
+            assert.ok(tamperedEntry, JSON.stringify(reusedEntries, null, 2));
+            assert.equal(tamperedEntry.hidden_timing_status, 'DISTRUSTED');
+            assert.equal(tamperedEntry.hidden_timing_distrust_code, 'missing_timing');
         });
     });
 });

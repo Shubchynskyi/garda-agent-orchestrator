@@ -169,7 +169,7 @@ export interface FinalCloseoutReviewTimingAuditEntry {
     gate_finalize_ms: number | null;
     launch_to_result_ms: number | null;
     launch_to_source_mtime_ms: number | null;
-    hidden_timing_status: 'TRUSTED' | 'DISTRUSTED' | 'SKIPPED_REUSED';
+    hidden_timing_status: 'TRUSTED' | 'DISTRUSTED';
     hidden_timing_distrust_code: string | null;
 }
 

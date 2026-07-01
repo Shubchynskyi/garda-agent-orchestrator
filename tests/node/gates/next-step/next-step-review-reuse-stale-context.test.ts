@@ -7,6 +7,7 @@ const {
     fileSha256,
     fs,
     makeTempRepo,
+    markReviewEvidenceAsStrictReuse,
     path,
     resolveNextStep,
     reviewsRoot,
@@ -21,6 +22,37 @@ const {
     writeReviewEvidence
 } = fx;
 void [assert];
+
+function appendCurrentStrictReuseRecorded(repoRoot: string, taskId: string, reviewType: string): void {
+    const root = reviewsRoot(repoRoot);
+    const receiptPath = path.join(root, `${taskId}-${reviewType}-receipt.json`);
+    const artifactPath = path.join(root, `${taskId}-${reviewType}.md`);
+    const contextPath = path.join(root, `${taskId}-${reviewType}-review-context.json`);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    const receiptSha256 = fileSha256(receiptPath);
+    const receiptSnapshotPath = path.join(root, `${taskId}-${reviewType}-receipt-${receiptSha256}.json`);
+    const reviewArtifactSha256 = fileSha256(artifactPath);
+    const reviewArtifactSnapshotPath = path.join(root, `${taskId}-${reviewType}-artifact-${reviewArtifactSha256}.md`);
+    fs.copyFileSync(receiptPath, receiptSnapshotPath);
+    fs.copyFileSync(artifactPath, reviewArtifactSnapshotPath);
+    appendEvent(repoRoot, taskId, 'REVIEW_RECORDED', 'PASS', {
+        ...receipt,
+        receipt_path: receiptPath,
+        receipt_sha256: receiptSha256,
+        receipt_snapshot_path: receiptSnapshotPath,
+        receipt_snapshot_sha256: receiptSha256,
+        review_artifact_path: artifactPath,
+        review_artifact_sha256: reviewArtifactSha256,
+        review_artifact_snapshot_path: reviewArtifactSnapshotPath,
+        review_artifact_snapshot_sha256: reviewArtifactSha256,
+        review_context_path: contextPath,
+        review_context_sha256: fileSha256(contextPath),
+        review_context_reuse_sha256: receipt.review_context_reuse_sha256,
+        review_tree_state_sha256: receipt.review_tree_state_sha256,
+        reused_existing_review: true
+    });
+}
+
 describe('gates/next-step review reuse stale context routing', () => {
     it('refreshes review context after a failed upstream review becomes stale behind a new compile cycle', () => {
         const repoRoot = makeTempRepo();
@@ -353,6 +385,28 @@ describe('gates/next-step review reuse stale context routing', () => {
         assert.equal(result.next_gate, 'record-review-result', result.reason);
         assert.equal(result.review.next_review_type, 'code');
         assert.ok(result.reason.includes('current-cycle REVIEW_RECORDED reuse telemetry'), result.reason);
+        assert.equal(result.reason.includes('missing_timing'), false, result.reason);
+    });
+
+    it('continues to downstream review when strict reused review timing is bound to the original source', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        markReviewEvidenceAsStrictReuse(repoRoot, TASK_ID, 'code');
+        seedCompilePass(repoRoot, TASK_ID);
+        appendCurrentStrictReuseRecorded(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.equal(result.review.next_review_type, 'test');
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+        assert.equal(result.reason.includes("Required review 'code' evidence is not sufficiently trustworthy"), false);
     });
 
     it('routes hidden timing distrust back to review result with generic remediation only', () => {

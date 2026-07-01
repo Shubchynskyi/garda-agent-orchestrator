@@ -233,6 +233,14 @@ export function timelineHasReviewReuseRecordedAfterCompile(
     taskId: string,
     state: ReviewArtifactState
 ): boolean {
+    return validateStrictReviewReuseForState(eventsRoot, taskId, state).valid;
+}
+
+function validateStrictReviewReuseForState(
+    eventsRoot: string,
+    taskId: string,
+    state: ReviewArtifactState
+): ReturnType<typeof validateStrictReusedReviewEvidence> {
     if (
         !state.reusedExistingReview
         || !state.receiptExists
@@ -240,16 +248,16 @@ export function timelineHasReviewReuseRecordedAfterCompile(
         || (!state.contextCurrent && !state.domainScopeCurrent)
         || !state.artifactExists
     ) {
-        return false;
+        return { valid: false, reason: 'reused review evidence is not current or complete' };
     }
     const reviewContextSha256 = fileSha256(state.contextPath);
     const reviewArtifactSha256 = fileSha256(state.artifactPath);
     const latestCompileSequence = getLatestTaskSequenceForEventTypes(eventsRoot, taskId, ['COMPILE_GATE_PASSED']);
     if (!reviewContextSha256 || !reviewArtifactSha256 || latestCompileSequence == null) {
-        return false;
+        return { valid: false, reason: 'reused review evidence cannot be bound to current compile telemetry' };
     }
     const repoRoot = path.resolve(eventsRoot, '..', '..', '..');
-    const validation = validateStrictReusedReviewEvidence({
+    return validateStrictReusedReviewEvidence({
         repoRoot,
         taskId,
         reviewType: state.reviewType,
@@ -273,7 +281,15 @@ export function timelineHasReviewReuseRecordedAfterCompile(
         reviewerProvenance: state.reviewerProvenance as unknown as Record<string, unknown> | null,
         latestCompileTaskSequence: latestCompileSequence
     });
-    return validation.valid;
+}
+
+function getStrictReusedReviewRecordedDetailsForTimingTrust(
+    eventsRoot: string,
+    taskId: string,
+    state: ReviewArtifactState
+): Record<string, unknown> | null {
+    const validation = validateStrictReviewReuseForState(eventsRoot, taskId, state);
+    return validation.valid ? validation.historicalReviewRecordedDetails : null;
 }
 
 export function buildReviewGateChainStatusSummary(options: {
@@ -421,6 +437,12 @@ export function getHiddenReviewTimingTrustRemediation(
 ): string | null {
     const timelineEvents = readTaskTimelineEventLikes(eventsRoot, taskId);
     const latestCompileSequence = getLatestTaskSequenceForEventTypes(eventsRoot, taskId, ['COMPILE_GATE_PASSED']);
+    const strictReusedReviewRecordedDetails = state.reusedExistingReview
+        ? getStrictReusedReviewRecordedDetailsForTimingTrust(eventsRoot, taskId, state)
+        : null;
+    if (state.reusedExistingReview && !strictReusedReviewRecordedDetails) {
+        return null;
+    }
     const timingTrust = evaluateHiddenReviewTimingTrust({
         reviewType: state.reviewType,
         reusedExistingReview: state.reusedExistingReview,
@@ -428,6 +450,7 @@ export function getHiddenReviewTimingTrustRemediation(
         reviewResultRecordedAtUtc: state.reviewResultRecordedAtUtc,
         recordedAtUtc: state.recordedAtUtc,
         reviewOutputSourceMtimeUtc: state.reviewOutputSourceMtimeUtc,
+        strictReusedReviewRecordedDetails,
         timelineEvents,
         latestCompileSequence
     });

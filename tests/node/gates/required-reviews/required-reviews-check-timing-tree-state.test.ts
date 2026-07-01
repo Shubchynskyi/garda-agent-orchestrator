@@ -1,9 +1,335 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import {
     validateReviewArtifactGateEligibility,
 } from '../../../../src/gates/required-reviews/required-reviews-check';
+
+type ReusedTimingMode = 'missing' | 'too-short' | 'duplicate' | 'forged-later' | 'stale-output';
+
+function sha256(content: string): string {
+    return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+function writeText(filePath: string, content: string): string {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf8');
+    return sha256(content);
+}
+
+function writeJson(filePath: string, payload: unknown): string {
+    return writeText(filePath, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function toPosixPath(filePath: string): string {
+    return filePath.replace(/\\/g, '/');
+}
+
+function buildRequiredReviewsReusedTimingFixture(mode: ReusedTimingMode) {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-reused-timing-'));
+    const taskId = 'T-889-REG';
+    const reviewType = 'code';
+    const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    const preflightPayload = {
+        task_id: taskId,
+        detection_source: 'explicit_changed_files',
+        changed_files: ['src/reused.ts'],
+        include_untracked: true,
+        metrics: {
+            scope_sha256: 'a'.repeat(64)
+        }
+    };
+    const preflightSha = writeJson(preflightPath, preflightPayload);
+
+    const artifactText = [
+        '# Code Review',
+        '',
+        'Validated reused review timing trust with strict historical evidence, source receipt snapshots, and non-trivial gate fixture coverage.',
+        '',
+        '## Findings by Severity',
+        'none',
+        '',
+        '## Residual Risks',
+        'none',
+        '',
+        '## Verdict',
+        'REVIEW PASSED',
+        ''
+    ].join('\n');
+    const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
+    const artifactSha = writeText(artifactPath, artifactText);
+    const artifactSnapshotPath = path.join(reviewsRoot, `${taskId}-${reviewType}-artifact-${artifactSha}.md`);
+    writeText(artifactSnapshotPath, artifactText);
+
+    const currentTreeStateSha = '1'.repeat(64);
+    const currentContextReuseSha = '2'.repeat(64);
+    const currentReviewScopeSha = '3'.repeat(64);
+    const currentCodeScopeSha = '4'.repeat(64);
+    const sourceTreeStateSha = '5'.repeat(64);
+    const sourceContextSha = '6'.repeat(64);
+    const sourceContextReuseSha = '7'.repeat(64);
+    const sourceReviewScopeSha = '8'.repeat(64);
+    const sourceCodeScopeSha = '9'.repeat(64);
+    const routingEventSha = 'a'.repeat(64);
+    const invocationEventSha = 'b'.repeat(64);
+    const historicalReviewRecordedSha = 'c'.repeat(64);
+    const currentReviewRecordedSha = 'd'.repeat(64);
+    const duplicateInvocationSha = 'e'.repeat(64);
+    const forgedReviewRecordedSha = '0'.repeat(64);
+    const reviewerIdentity = 'agent:strict-reviewer';
+
+    const reviewContext = {
+        schema_version: 2,
+        task_id: taskId,
+        review_type: reviewType,
+        preflight_path: toPosixPath(preflightPath),
+        preflight_sha256: preflightSha,
+        tree_state: {
+            tree_state_sha256: currentTreeStateSha
+        },
+        reviewer_routing: {
+            source_of_truth: 'Codex',
+            canonical_source_of_truth: 'Codex',
+            execution_provider: 'Codex',
+            execution_provider_source: 'explicit_provider',
+            identity_status: 'resolved',
+            actual_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        }
+    };
+    const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
+    const currentContextSha = writeJson(reviewContextPath, reviewContext);
+
+    const reviewerProvenance = {
+        schema_version: 1,
+        attestation_type: 'reviewer_invocation_attestation',
+        controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+        task_sequence: 4,
+        prev_event_sha256: routingEventSha,
+        event_sha256: invocationEventSha,
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: sourceContextSha,
+        review_tree_state_sha256: sourceTreeStateSha,
+        routing_event_sha256: routingEventSha,
+        launch_prepared_at_utc: '2026-05-17T20:00:00.000Z',
+        delegation_started_at_utc: '2026-05-17T20:00:01.000Z',
+        launched_at_utc: '2026-05-17T20:00:01.000Z',
+        launch_completed_at_utc: mode === 'too-short'
+            ? '2026-05-17T20:00:04.000Z'
+            : '2026-05-17T20:00:12.000Z',
+        invocation_attested_at_utc: mode === 'too-short'
+            ? '2026-05-17T20:00:04.500Z'
+            : '2026-05-17T20:00:13.000Z'
+    };
+
+    const sourceReceipt = {
+        schema_version: 2,
+        task_id: taskId,
+        review_type: reviewType,
+        preflight_sha256: preflightSha,
+        scope_sha256: 'a'.repeat(64),
+        review_scope_sha256: sourceReviewScopeSha,
+        code_scope_sha256: sourceCodeScopeSha,
+        review_context_sha256: sourceContextSha,
+        review_context_reuse_sha256: sourceContextReuseSha,
+        review_tree_state_sha256: sourceTreeStateSha,
+        review_artifact_sha256: artifactSha,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: reviewerIdentity,
+        reviewer_fallback_reason: null,
+        reviewer_provenance: reviewerProvenance,
+        trust_level: 'INDEPENDENT_AUDITED',
+        reused_existing_review: false,
+        recorded_at_utc: mode === 'missing' || mode === 'forged-later'
+            ? null
+            : mode === 'too-short'
+                ? '2026-05-17T20:00:05.000Z'
+                : '2026-05-17T20:00:30.000Z',
+        review_result_recorded_at_utc: mode === 'missing' || mode === 'forged-later'
+            ? null
+            : mode === 'too-short'
+                ? '2026-05-17T20:00:05.000Z'
+                : '2026-05-17T20:00:30.000Z',
+        review_output_source_mtime_utc: mode === 'stale-output'
+            ? '2026-05-17T19:59:59.000Z'
+            : '2026-05-17T20:00:31.000Z'
+    };
+    const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
+    const sourceReceiptPayload = `${JSON.stringify(sourceReceipt, null, 2)}\n`;
+    const sourceReceiptSha = sha256(sourceReceiptPayload);
+    const sourceReceiptSnapshotPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt-${sourceReceiptSha}.json`);
+    writeText(sourceReceiptSnapshotPath, sourceReceiptPayload);
+
+    const currentReceipt = {
+        ...sourceReceipt,
+        review_context_sha256: currentContextSha,
+        review_context_reuse_sha256: currentContextReuseSha,
+        review_tree_state_sha256: currentTreeStateSha,
+        review_scope_sha256: currentReviewScopeSha,
+        code_scope_sha256: currentCodeScopeSha,
+        reused_existing_review: true,
+        reused_from_receipt_path: toPosixPath(receiptPath),
+        reused_from_receipt_sha256: sourceReceiptSha,
+        reused_from_review_context_sha256: sourceContextSha,
+        reused_from_review_context_reuse_sha256: sourceContextReuseSha,
+        reused_from_review_tree_state_sha256: sourceTreeStateSha,
+        reused_from_review_scope_sha256: sourceReviewScopeSha,
+        reused_from_code_scope_sha256: sourceCodeScopeSha,
+        recorded_at_utc: '2026-05-17T20:10:00.000Z',
+        review_result_recorded_at_utc: '2026-05-17T20:10:00.000Z'
+    };
+    const currentReceiptSha = writeJson(receiptPath, currentReceipt);
+    const currentReceiptSnapshotPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt-${currentReceiptSha}.json`);
+    writeJson(currentReceiptSnapshotPath, currentReceipt);
+
+    const duplicateEvent = {
+        event_type: 'REVIEWER_INVOCATION_ATTESTED',
+        sequence: 0,
+        details: {
+            task_id: taskId,
+            review_type: 'test',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: 'agent:test-reviewer',
+            review_context_sha256: sourceContextSha,
+            review_tree_state_sha256: sourceTreeStateSha,
+            routing_event_sha256: routingEventSha,
+            provider_invocation_id: 'provider-run-reused',
+            reviewer_launch_attestation_source: 'codex.spawn_agent'
+        },
+        integrity: {
+            schema_version: 1,
+            task_sequence: 2,
+            prev_event_sha256: routingEventSha,
+            event_sha256: duplicateInvocationSha
+        }
+    };
+    const invocationEvent = {
+        event_type: 'REVIEWER_INVOCATION_ATTESTED',
+        sequence: 1,
+        details: {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: sourceContextSha,
+            review_tree_state_sha256: sourceTreeStateSha,
+            routing_event_sha256: routingEventSha,
+            provider_invocation_id: 'provider-run-reused',
+            reviewer_launch_attestation_source: mode === 'too-short' ? 'controller' : 'codex.spawn_agent',
+            launch_prepared_at_utc: reviewerProvenance.launch_prepared_at_utc,
+            delegation_started_at_utc: reviewerProvenance.delegation_started_at_utc,
+            launched_at_utc: reviewerProvenance.launched_at_utc,
+            launch_completed_at_utc: reviewerProvenance.launch_completed_at_utc,
+            invocation_attested_at_utc: reviewerProvenance.invocation_attested_at_utc
+        },
+        integrity: {
+            schema_version: 1,
+            task_sequence: 4,
+            prev_event_sha256: routingEventSha,
+            event_sha256: invocationEventSha
+        }
+    };
+    const historicalReviewRecordedEvent = {
+        event_type: 'REVIEW_RECORDED',
+        sequence: 2,
+        details: {
+            ...sourceReceipt,
+            receipt_path: toPosixPath(receiptPath),
+            receipt_sha256: sourceReceiptSha,
+            receipt_snapshot_path: toPosixPath(sourceReceiptSnapshotPath),
+            receipt_snapshot_sha256: sourceReceiptSha,
+            review_artifact_path: toPosixPath(artifactPath),
+            review_artifact_sha256: artifactSha,
+            review_artifact_snapshot_path: toPosixPath(artifactSnapshotPath),
+            review_artifact_snapshot_sha256: artifactSha
+        },
+        integrity: {
+            schema_version: 1,
+            task_sequence: 5,
+            prev_event_sha256: invocationEventSha,
+            event_sha256: historicalReviewRecordedSha
+        }
+    };
+    const currentReviewRecordedEvent = {
+        event_type: 'REVIEW_RECORDED',
+        sequence: mode === 'forged-later' ? 5 : 4,
+        details: {
+            ...currentReceipt,
+            receipt_path: toPosixPath(receiptPath),
+            receipt_sha256: currentReceiptSha,
+            receipt_snapshot_path: toPosixPath(currentReceiptSnapshotPath),
+            receipt_snapshot_sha256: currentReceiptSha,
+            review_artifact_path: toPosixPath(artifactPath),
+            review_artifact_sha256: artifactSha,
+            review_artifact_snapshot_path: toPosixPath(artifactSnapshotPath),
+            review_artifact_snapshot_sha256: artifactSha
+        },
+        integrity: {
+            schema_version: 1,
+            task_sequence: 12,
+            prev_event_sha256: historicalReviewRecordedSha,
+            event_sha256: currentReviewRecordedSha
+        }
+    };
+    const forgedReviewRecordedEvent = {
+        event_type: 'REVIEW_RECORDED',
+        sequence: 4,
+        details: {
+            ...sourceReceipt,
+            receipt_path: toPosixPath(receiptPath),
+            receipt_sha256: sourceReceiptSha,
+            receipt_snapshot_path: toPosixPath(sourceReceiptSnapshotPath),
+            receipt_snapshot_sha256: sourceReceiptSha,
+            review_artifact_path: toPosixPath(artifactPath),
+            review_artifact_sha256: artifactSha,
+            review_artifact_snapshot_path: toPosixPath(artifactSnapshotPath),
+            review_artifact_snapshot_sha256: artifactSha,
+            recorded_at_utc: '2026-05-17T20:00:30.000Z',
+            review_result_recorded_at_utc: '2026-05-17T20:00:30.000Z'
+        },
+        integrity: {
+            schema_version: 1,
+            task_sequence: 11,
+            prev_event_sha256: 'f'.repeat(64),
+            event_sha256: forgedReviewRecordedSha
+        }
+    };
+    const timelineEvents = [
+        ...(mode === 'duplicate' ? [duplicateEvent] : []),
+        invocationEvent,
+        historicalReviewRecordedEvent,
+        { event_type: 'COMPILE_GATE_PASSED', sequence: 3, details: {}, integrity: { schema_version: 1, task_sequence: 10, prev_event_sha256: historicalReviewRecordedSha, event_sha256: 'f'.repeat(64) } },
+        ...(mode === 'forged-later' ? [forgedReviewRecordedEvent] : []),
+        currentReviewRecordedEvent
+    ];
+
+    return {
+        repoRoot,
+        taskId,
+        reviewType,
+        preflightPath,
+        preflightSha,
+        preflightPayload,
+        artifactPath,
+        artifactText,
+        artifactSha,
+        reviewContextPath,
+        reviewContext,
+        currentContextSha,
+        currentReceipt,
+        timelineEvents
+    };
+}
 
 
 describe('gates/required-reviews-check', () => {
@@ -701,6 +1027,51 @@ describe('gates/required-reviews-check', () => {
             assert.match(hiddenViolation, /Launch a real subagent using built-in tools/);
             assert.equal(/timing|threshold|elapsed|duration|seconds|impossible_ordering|missing_timing/i.test(hiddenViolation), false);
         });
+
+        for (const mode of ['missing', 'too-short', 'duplicate', 'forged-later', 'stale-output'] as const) {
+            it(`rejects reused receipts whose historical timing trust is ${mode}`, () => {
+                const fixture = buildRequiredReviewsReusedTimingFixture(mode);
+                try {
+                    const result = validateReviewArtifactGateEligibility({
+                        resolvedTaskId: fixture.taskId,
+                        reviewKey: fixture.reviewType,
+                        required: true,
+                        skippedByOverride: false,
+                        preflightPath: fixture.preflightPath,
+                        preflightSha256: fixture.preflightSha,
+                        preflightPayload: fixture.preflightPayload,
+                        repoRoot: fixture.repoRoot,
+                        canonicalSourceOfTruth: 'Codex',
+                        executionProvider: 'Codex',
+                        executionProviderSource: 'explicit_provider',
+                        timelineEvents: fixture.timelineEvents,
+                        reviewArtifact: {
+                            path: fixture.artifactPath,
+                            content: fixture.artifactText,
+                            reviewContextPath: fixture.reviewContextPath,
+                            reviewContext: fixture.reviewContext,
+                            reviewContextSha256: fixture.currentContextSha,
+                            artifactSha256: fixture.artifactSha,
+                            receipt: fixture.currentReceipt as any
+                        }
+                    });
+
+                    const hiddenViolation = result.violations.find((violation) => (
+                        violation.includes("Review receipt for 'code' is not sufficiently trustworthy")
+                    ));
+                    assert.ok(hiddenViolation, JSON.stringify(result, null, 2));
+                    assert.match(hiddenViolation, /Launch a real subagent using built-in tools/);
+                    assert.equal(/timing|threshold|elapsed|duration|seconds|impossible_ordering|missing_timing|duplicate_provider_invocation_id|too_short/i.test(hiddenViolation), false);
+                    assert.equal(
+                        result.violations.some((violation) => violation.includes('strict evidence is invalid')),
+                        false,
+                        JSON.stringify(result, null, 2)
+                    );
+                } finally {
+                    fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+                }
+            });
+        }
 
 
     });
