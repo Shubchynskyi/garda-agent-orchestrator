@@ -28,6 +28,78 @@ import {
     writePreflight
 } from './gates-completion-fixtures';
 
+function writeTaskQueueRows(repoRoot: string, rows: string[]): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        ...rows
+    ].join('\n'), 'utf8');
+}
+
+async function prepareCompletionReadyTask(repoRoot: string, taskId: string, taskSummary: string): Promise<string> {
+    seedInitAnswers(repoRoot);
+    const preflightPath = writePreflight(repoRoot, taskId);
+    const commandsPath = path.join(repoRoot, `${taskId}-commands.md`);
+    const outputFiltersPath = path.resolve('live/config/output-filters.json');
+    fs.writeFileSync(commandsPath, [
+        '### Compile Gate (Mandatory)',
+        '```bash',
+        'node -e "console.log(\'build ok\')"',
+        '```'
+    ].join('\n'), 'utf8');
+
+    runEnterTaskMode({
+        repoRoot,
+        taskId,
+        taskSummary
+    });
+    loadTaskEntryRulePack(repoRoot, taskId);
+    runHandshakeForTask(repoRoot, taskId);
+    runShellSmokeForTask(repoRoot, taskId);
+    loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+    await runCompileGateCommand({
+        repoRoot,
+        taskId,
+        preflightPath,
+        commandsPath,
+        outputFiltersPath,
+        emitMetrics: false
+    });
+    writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+    const reviewResult = runRequiredReviewsCheckCommand({
+        repoRoot,
+        taskId,
+        preflightPath,
+        codeReviewVerdict: 'REVIEW PASSED',
+        outputFiltersPath,
+        emitMetrics: false
+    });
+    assert.equal(reviewResult.exitCode, 0, JSON.stringify(reviewResult, null, 2));
+
+    const docImpactResult = runDocImpactGateCommand({
+        repoRoot,
+        taskId,
+        preflightPath,
+        decision: 'NO_DOC_UPDATES',
+        behaviorChanged: false,
+        changelogUpdated: false,
+        rationale: 'Completion task queue sync regression fixture only.',
+        emitMetrics: false
+    });
+    assert.equal(docImpactResult.exitCode, 0);
+    return preflightPath;
+}
+
+function readOptionalTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {
+    const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    if (!fs.existsSync(timelinePath)) {
+        return [];
+    }
+    return readTaskTimelineEvents(repoRoot, taskId);
+}
+
 describe('cli/commands/gates', () => {
     test('completion-gate updates the TASK.md row to DONE through the CLI handler', async () => {
         const repoRoot = createTempRepo();
@@ -114,6 +186,254 @@ describe('cli/commands/gates', () => {
         assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.json`)), true);
         assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.md`)), true);
         assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-final-user-report.md`)), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    test('completion-gate auto-completes a linked decomposed parent when the final child closes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-parent-auto-close-child';
+        const parentTaskId = 'T-903-parent-auto-close';
+        writeTaskQueueRows(repoRoot, [
+            `| ${parentTaskId} | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | default | Execute child tasks \`${taskId}\` through normal gates. |`,
+            `| ${taskId} | 🟦 TODO | P1 | workflow | Child | gpt-5.5 | 2026-05-06 | default | Complete the child. |`
+        ]);
+        const preflightPath = await prepareCompletionReadyTask(
+            repoRoot,
+            taskId,
+            'Auto-close linked decomposed parent after child completion'
+        );
+
+        await handleCompletionGate([
+            '--preflight-path', preflightPath,
+            '--task-id', taskId,
+            '--repo-root', repoRoot
+        ]);
+
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, parentTaskId), 'DONE');
+        const parentEvents = readTaskTimelineEvents(repoRoot, parentTaskId);
+        assert.equal(
+            parentEvents.some((event) => event.event_type === 'DECOMPOSED_PARENT_COMPLETED'),
+            true
+        );
+        assert.equal(
+            parentEvents.some((event) => (
+                event.event_type === 'STATUS_CHANGED'
+                && String((event.details as Record<string, unknown> | undefined)?.new_status || '').toUpperCase() === 'DONE'
+            )),
+            true
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    test('completion-gate leaves a linked decomposed parent open when another explicit child is not DONE', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-parent-incomplete-child';
+        const siblingTaskId = 'T-903-parent-incomplete-sibling';
+        const parentTaskId = 'T-903-parent-incomplete';
+        writeTaskQueueRows(repoRoot, [
+            `| ${parentTaskId} | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | default | Execute child tasks \`${taskId}\` and \`${siblingTaskId}\` through normal gates. |`,
+            `| ${taskId} | 🟦 TODO | P1 | workflow | Child | gpt-5.5 | 2026-05-06 | default | Complete the child. |`,
+            `| ${siblingTaskId} | 🟦 TODO | P1 | workflow | Sibling child | gpt-5.5 | 2026-05-06 | default | Still pending. |`
+        ]);
+        const preflightPath = await prepareCompletionReadyTask(
+            repoRoot,
+            taskId,
+            'Keep parent decomposed while a sibling child remains open'
+        );
+
+        await handleCompletionGate([
+            '--preflight-path', preflightPath,
+            '--task-id', taskId,
+            '--repo-root', repoRoot
+        ]);
+
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, siblingTaskId), 'TODO');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, parentTaskId), 'DECOMPOSED');
+        assert.equal(
+            readOptionalTaskTimelineEvents(repoRoot, parentTaskId)
+                .some((event) => event.event_type === 'DECOMPOSED_PARENT_COMPLETED'),
+            false
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    test('completion-gate auto-completes nested decomposed parents after the leaf child closes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-nested-leaf';
+        const nestedParentTaskId = 'T-903-nested-parent';
+        const rootParentTaskId = 'T-903-root-parent';
+        writeTaskQueueRows(repoRoot, [
+            `| ${rootParentTaskId} | 🟪 DECOMPOSED | P1 | workflow | Root parent | gpt-5.5 | 2026-05-06 | default | Execute child tasks \`${nestedParentTaskId}\` through normal gates. |`,
+            `| ${nestedParentTaskId} | 🟪 DECOMPOSED | P1 | workflow | Nested parent | gpt-5.5 | 2026-05-06 | default | Execute child tasks \`${taskId}\` through normal gates. |`,
+            `| ${taskId} | 🟦 TODO | P1 | workflow | Leaf child | gpt-5.5 | 2026-05-06 | default | Complete the leaf child. |`
+        ]);
+        const preflightPath = await prepareCompletionReadyTask(
+            repoRoot,
+            taskId,
+            'Auto-close nested decomposed parents after leaf completion'
+        );
+
+        await handleCompletionGate([
+            '--preflight-path', preflightPath,
+            '--task-id', taskId,
+            '--repo-root', repoRoot
+        ]);
+
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, nestedParentTaskId), 'DONE');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, rootParentTaskId), 'DONE');
+        for (const parentTaskId of [nestedParentTaskId, rootParentTaskId]) {
+            assert.equal(
+                readTaskTimelineEvents(repoRoot, parentTaskId)
+                    .some((event) => event.event_type === 'DECOMPOSED_PARENT_COMPLETED'),
+                true
+            );
+        }
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    test('completion-gate rolls back child finalization when decomposed parent auto-close cannot append mandatory evidence', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-parent-auto-close-rollback-child';
+        const parentTaskId = 'T-903-parent-auto-close-rollback';
+        writeTaskQueueRows(repoRoot, [
+            `| ${parentTaskId} | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | default | Execute child tasks \`${taskId}\` through normal gates. |`,
+            `| ${taskId} | 🟦 TODO | P1 | workflow | Child | gpt-5.5 | 2026-05-06 | default | Complete the child. |`
+        ]);
+        const preflightPath = await prepareCompletionReadyTask(
+            repoRoot,
+            taskId,
+            'Rollback child completion when parent auto-close evidence fails'
+        );
+        const parentTimelinePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `${parentTaskId}.jsonl`
+        );
+        const mutableFs = require('node:fs') as typeof fs;
+        const originalAppendFileSync = mutableFs.appendFileSync;
+        mutableFs.appendFileSync = ((filePath: fs.PathOrFileDescriptor, data: string | Uint8Array, options?: unknown): void => {
+            if (typeof filePath === 'string' && path.resolve(filePath) === path.resolve(parentTimelinePath)) {
+                throw new Error('Injected decomposed parent event append failure');
+            }
+            return (originalAppendFileSync as unknown as (...args: unknown[]) => void)(filePath, data, options);
+        }) as typeof fs.appendFileSync;
+
+        try {
+            const error = await captureExpectedAsyncError(async () => {
+                await handleCompletionGate([
+                    '--preflight-path', preflightPath,
+                    '--task-id', taskId,
+                    '--repo-root', repoRoot
+                ]);
+            });
+            assert.match(error.message, /mandatory decomposed parent auto-close failed/i);
+        } finally {
+            mutableFs.appendFileSync = originalAppendFileSync;
+        }
+
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_REVIEW');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, parentTaskId), 'DECOMPOSED');
+        const failedAttemptEvents = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(
+            failedAttemptEvents.some((event) => event.event_type === 'COMPLETION_GATE_PASSED'),
+            false
+        );
+
+        await handleCompletionGate([
+            '--preflight-path', preflightPath,
+            '--task-id', taskId,
+            '--repo-root', repoRoot
+        ]);
+
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, parentTaskId), 'DONE');
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, parentTaskId)
+                .some((event) => event.event_type === 'DECOMPOSED_PARENT_COMPLETED'),
+            true
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    test('completion-gate rolls back earlier nested parent evidence when a later parent auto-close fails', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-nested-rollback-leaf';
+        const nestedParentTaskId = 'T-903-nested-rollback-parent';
+        const rootParentTaskId = 'T-903-root-rollback-parent';
+        writeTaskQueueRows(repoRoot, [
+            `| ${rootParentTaskId} | 🟪 DECOMPOSED | P1 | workflow | Root parent | gpt-5.5 | 2026-05-06 | default | Execute child tasks \`${nestedParentTaskId}\` through normal gates. |`,
+            `| ${nestedParentTaskId} | 🟪 DECOMPOSED | P1 | workflow | Nested parent | gpt-5.5 | 2026-05-06 | default | Execute child tasks \`${taskId}\` through normal gates. |`,
+            `| ${taskId} | 🟦 TODO | P1 | workflow | Leaf child | gpt-5.5 | 2026-05-06 | default | Complete the leaf child. |`
+        ]);
+        const preflightPath = await prepareCompletionReadyTask(
+            repoRoot,
+            taskId,
+            'Rollback nested parent evidence when root parent auto-close fails'
+        );
+        const rootParentTimelinePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `${rootParentTaskId}.jsonl`
+        );
+        const mutableFs = require('node:fs') as typeof fs;
+        const originalAppendFileSync = mutableFs.appendFileSync;
+        mutableFs.appendFileSync = ((filePath: fs.PathOrFileDescriptor, data: string | Uint8Array, options?: unknown): void => {
+            if (typeof filePath === 'string' && path.resolve(filePath) === path.resolve(rootParentTimelinePath)) {
+                throw new Error('Injected root parent event append failure');
+            }
+            return (originalAppendFileSync as unknown as (...args: unknown[]) => void)(filePath, data, options);
+        }) as typeof fs.appendFileSync;
+
+        try {
+            const error = await captureExpectedAsyncError(async () => {
+                await handleCompletionGate([
+                    '--preflight-path', preflightPath,
+                    '--task-id', taskId,
+                    '--repo-root', repoRoot
+                ]);
+            });
+            assert.match(error.message, /mandatory decomposed parent auto-close failed/i);
+        } finally {
+            mutableFs.appendFileSync = originalAppendFileSync;
+        }
+
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_REVIEW');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, nestedParentTaskId), 'DECOMPOSED');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, rootParentTaskId), 'DECOMPOSED');
+        assert.equal(
+            readOptionalTaskTimelineEvents(repoRoot, nestedParentTaskId)
+                .some((event) => event.event_type === 'DECOMPOSED_PARENT_COMPLETED'),
+            false,
+            'nested parent completion evidence must be removed when the later root parent close fails'
+        );
+        assert.equal(
+            readOptionalTaskTimelineEvents(repoRoot, rootParentTaskId)
+                .some((event) => event.event_type === 'STATUS_CHANGED'),
+            false,
+            'root parent status evidence must not survive the failed close attempt'
+        );
+
+        await handleCompletionGate([
+            '--preflight-path', preflightPath,
+            '--task-id', taskId,
+            '--repo-root', repoRoot
+        ]);
+
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, nestedParentTaskId), 'DONE');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, rootParentTaskId), 'DONE');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

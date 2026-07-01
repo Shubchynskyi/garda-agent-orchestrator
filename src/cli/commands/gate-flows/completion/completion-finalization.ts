@@ -14,6 +14,17 @@ import {
 import { resolveTaskHistoryLedgerPath } from '../../../../gate-runtime/task-history-ledger';
 import { collectOrderedTimelineEvents } from '../../../../gates/completion/completion-evidence';
 import {
+    extractExplicitLinkedChildTaskIds,
+    isDecomposedParentTask,
+    parseTaskQueueEntriesFromContent,
+    resolveDecomposedParentCompletionState,
+    type TaskQueueEntry
+} from '../../../../gates/next-step/next-step-task-queue';
+import {
+    transitionDecomposedParentsToDone,
+    type DecomposedParentBatchStatusSyncResult
+} from '../../../../gates/next-step/next-step-task-queue-transitions';
+import {
     isOrchestratorSourceCheckout,
     joinOrchestratorPath
 } from '../../../../gates/shared/helpers';
@@ -38,7 +49,11 @@ interface CompletionEventDetails {
     violations: unknown;
 }
 
-type CompletionFinalizationStep = 'STATUS_CHANGED' | 'COMPLETION_GATE_PASSED' | 'FINAL_CLOSEOUT';
+type CompletionFinalizationStep =
+    | 'STATUS_CHANGED'
+    | 'COMPLETION_GATE_PASSED'
+    | 'FINAL_CLOSEOUT'
+    | 'DECOMPOSED_PARENT_AUTO_CLOSE';
 
 interface TimelineStatusTransition {
     previous_status: string | null;
@@ -84,6 +99,7 @@ export interface CompletionFinalizationResult {
     queue_status_after: string | null;
     latest_timeline_status: string | null;
     task_queue_sync: TaskQueueStatusSyncResult;
+    decomposed_parent_status_sync: DecomposedParentAutoCloseResult;
 }
 
 export interface ReconcileSuccessfulCompletionFinalizationOptions {
@@ -207,6 +223,226 @@ function isSuccessfulTaskQueueSync(syncResult: TaskQueueStatusSyncResult): boole
     return syncResult.outcome === 'updated' || syncResult.outcome === 'already_synced';
 }
 
+interface DecomposedParentAutoCloseOutcome {
+    root_task_id: string;
+    outcome: DecomposedParentBatchStatusSyncResult['outcome'];
+    updated_task_ids: string[];
+    error_message: string | null;
+}
+
+interface DecomposedParentAutoCloseResult {
+    attempted_parent_task_ids: string[];
+    updated_task_ids: string[];
+    outcomes: DecomposedParentAutoCloseOutcome[];
+}
+
+interface DecomposedParentAutoCloseRollbackState {
+    aggregateSnapshot: FileSnapshot;
+    timelineSnapshotsByTaskId: Map<string, FileSnapshot>;
+}
+
+function buildEmptyDecomposedParentAutoCloseResult(): DecomposedParentAutoCloseResult {
+    return {
+        attempted_parent_task_ids: [],
+        updated_task_ids: [],
+        outcomes: []
+    };
+}
+
+function appendUniqueTaskIds(target: string[], taskIds: readonly string[]): void {
+    for (const taskId of taskIds) {
+        if (!target.includes(taskId)) {
+            target.push(taskId);
+        }
+    }
+}
+
+function readTaskQueueEntries(repoRoot: string): Map<string, TaskQueueEntry> {
+    return parseTaskQueueEntriesFromContent(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'));
+}
+
+function createDecomposedParentAutoCloseRollbackState(eventsRoot: string): DecomposedParentAutoCloseRollbackState {
+    return {
+        aggregateSnapshot: captureFileSnapshot(path.join(eventsRoot, 'all-tasks.jsonl')),
+        timelineSnapshotsByTaskId: new Map<string, FileSnapshot>()
+    };
+}
+
+function captureDecomposedParentAutoCloseTimelineSnapshots(params: {
+    eventsRoot: string;
+    rollbackState: DecomposedParentAutoCloseRollbackState;
+    taskIds: readonly string[];
+}): void {
+    for (const taskId of params.taskIds) {
+        if (params.rollbackState.timelineSnapshotsByTaskId.has(taskId)) {
+            continue;
+        }
+        params.rollbackState.timelineSnapshotsByTaskId.set(
+            taskId,
+            captureFileSnapshot(path.join(params.eventsRoot, `${taskId}.jsonl`))
+        );
+    }
+}
+
+function rollbackDecomposedParentAutoCloseArtifacts(params: {
+    eventsRoot: string;
+    rollbackState: DecomposedParentAutoCloseRollbackState;
+}): string[] {
+    const rollbackErrors: string[] = [];
+    const taskIds = [...params.rollbackState.timelineSnapshotsByTaskId.keys()];
+    for (const [taskId, snapshot] of params.rollbackState.timelineSnapshotsByTaskId.entries()) {
+        const taskLockPath = path.join(params.eventsRoot, `.${taskId}.lock`);
+        try {
+            withFilesystemLock(taskLockPath, {}, () => {
+                restoreFileSnapshot(snapshot);
+                reconcileTimelineSummaryForTask(params.eventsRoot, taskId);
+            });
+        } catch (rollbackError: unknown) {
+            rollbackErrors.push(
+                `${taskId} task-event rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+            );
+        }
+    }
+    const aggregateLockPath = path.join(params.eventsRoot, '.all-tasks.lock');
+    try {
+        withFilesystemLock(aggregateLockPath, {}, () => {
+            rollbackAggregateTaskEntriesForTaskIdsUnsafe({
+                taskIds,
+                aggregateSnapshot: params.rollbackState.aggregateSnapshot
+            });
+        });
+    } catch (rollbackError: unknown) {
+        rollbackErrors.push(
+            `parent aggregate rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+        );
+    }
+    return rollbackErrors;
+}
+
+function resolveParentTaskIdsLinkedToCompletedTasks(params: {
+    taskEntries: Map<string, TaskQueueEntry>;
+    completedTaskIds: Set<string>;
+    settledParentTaskIds: Set<string>;
+}): string[] {
+    const linkedParentTaskIds: string[] = [];
+    for (const entry of params.taskEntries.values()) {
+        if (!isDecomposedParentTask(entry) || params.settledParentTaskIds.has(entry.taskId)) {
+            continue;
+        }
+        const childTaskIds = extractExplicitLinkedChildTaskIds(entry.notes, params.taskEntries.keys());
+        if (childTaskIds.some((childTaskId) => params.completedTaskIds.has(childTaskId))) {
+            linkedParentTaskIds.push(entry.taskId);
+        }
+    }
+    return linkedParentTaskIds;
+}
+
+function assertSuccessfulDecomposedParentAutoCloseOutcome(syncResult: DecomposedParentBatchStatusSyncResult): void {
+    if (syncResult.outcome === 'updated' || syncResult.outcome === 'already_synced') {
+        return;
+    }
+    throw new Error(
+        `decomposed parent auto-close failed for ${syncResult.root_task_id}: `
+        + `${syncResult.error_message || syncResult.outcome}`
+    );
+}
+
+function closeEligibleDecomposedParentsLinkedToCompletedTask(params: {
+    repoRoot: string;
+    eventsRoot: string;
+    completedTaskId: string;
+}): DecomposedParentAutoCloseResult {
+    const result = buildEmptyDecomposedParentAutoCloseResult();
+    const rollbackState = createDecomposedParentAutoCloseRollbackState(params.eventsRoot);
+    const completedTaskIds = new Set<string>([params.completedTaskId]);
+    const settledParentTaskIds = new Set<string>();
+    let remainingPasses = Number.POSITIVE_INFINITY;
+
+    try {
+        while (remainingPasses > 0) {
+            const taskEntries = readTaskQueueEntries(params.repoRoot);
+            if (remainingPasses === Number.POSITIVE_INFINITY) {
+                remainingPasses = Math.max(taskEntries.size + 1, 1);
+            }
+            remainingPasses -= 1;
+            const linkedParentTaskIds = resolveParentTaskIdsLinkedToCompletedTasks({
+                taskEntries,
+                completedTaskIds,
+                settledParentTaskIds
+            });
+            if (linkedParentTaskIds.length === 0) {
+                break;
+            }
+
+            let updatedInPass = false;
+            for (const parentTaskId of linkedParentTaskIds) {
+                appendUniqueTaskIds(result.attempted_parent_task_ids, [parentTaskId]);
+                const completionState = resolveDecomposedParentCompletionState(
+                    taskEntries,
+                    parentTaskId,
+                    new Set<string>(),
+                    extractExplicitLinkedChildTaskIds
+                );
+                if (
+                    !completionState.hasLinkedChildren
+                    || completionState.missingChildTaskIds.length > 0
+                    || !completionState.complete
+                ) {
+                    continue;
+                }
+                const syncTaskIds = [...new Set([...completionState.completedDecomposedTaskIds, parentTaskId])];
+                captureDecomposedParentAutoCloseTimelineSnapshots({
+                    eventsRoot: params.eventsRoot,
+                    rollbackState,
+                    taskIds: syncTaskIds
+                });
+                const syncResult = transitionDecomposedParentsToDone({
+                    repoRoot: params.repoRoot,
+                    eventsRoot: params.eventsRoot,
+                    rootTaskId: parentTaskId,
+                    taskIds: syncTaskIds
+                });
+                result.outcomes.push({
+                    root_task_id: parentTaskId,
+                    outcome: syncResult.outcome,
+                    updated_task_ids: syncResult.updated_task_ids,
+                    error_message: syncResult.error_message
+                });
+                assertSuccessfulDecomposedParentAutoCloseOutcome(syncResult);
+                settledParentTaskIds.add(parentTaskId);
+                if (syncResult.updated_task_ids.length > 0) {
+                    appendUniqueTaskIds(result.updated_task_ids, syncResult.updated_task_ids);
+                    for (const updatedTaskId of syncResult.updated_task_ids) {
+                        completedTaskIds.add(updatedTaskId);
+                    }
+                    updatedInPass = true;
+                }
+            }
+            if (!updatedInPass) {
+                break;
+            }
+        }
+
+        if (remainingPasses <= 0) {
+            throw new Error('decomposed parent auto-close exceeded the task queue graph traversal limit');
+        }
+
+        return result;
+    } catch (error: unknown) {
+        const rollbackErrors = rollbackDecomposedParentAutoCloseArtifacts({
+            eventsRoot: params.eventsRoot,
+            rollbackState
+        });
+        if (rollbackErrors.length > 0) {
+            throw new Error(
+                `${error instanceof Error ? error.message : String(error)} `
+                + `Parent auto-close rollback failed: ${rollbackErrors.join(' | ')}`
+            );
+        }
+        throw error;
+    }
+}
+
 function resolveDoneTransitionPreviousStatus(
     queueStatusBefore: string | null,
     latestStatus: string | null,
@@ -325,19 +561,23 @@ function buildSnapshotRestoredContent(snapshot: FileSnapshot, appendedLines: rea
     return `${baselineContent}${separator}${appendedLines.join('\n')}\n`;
 }
 
-function shouldKeepAppendedAggregateLogLine(rawLine: string, taskId: string): boolean {
+function shouldKeepAppendedAggregateLogLineForTaskIds(rawLine: string, taskIds: ReadonlySet<string>): boolean {
     try {
         const parsed = JSON.parse(rawLine) as Record<string, unknown>;
-        return String(parsed.task_id || '').trim() !== taskId;
+        return !taskIds.has(String(parsed.task_id || '').trim());
     } catch {
-        return !rawLineLooksLikeTaskId(rawLine, taskId);
+        return ![...taskIds].some((taskId) => rawLineLooksLikeTaskId(rawLine, taskId));
     }
 }
 
-function rollbackAggregateTaskEntriesUnsafe(options: AggregateRollbackOptions): void {
+function rollbackAggregateTaskEntriesForTaskIdsUnsafe(options: {
+    taskIds: readonly string[];
+    aggregateSnapshot: FileSnapshot;
+}): void {
+    const taskIds = new Set(options.taskIds);
     const aggregatePath = options.aggregateSnapshot.path;
     const appendedTailLines = getAppendedRawLinesSinceSnapshot(options.aggregateSnapshot)
-        .filter((line) => shouldKeepAppendedAggregateLogLine(line, options.taskId));
+        .filter((line) => shouldKeepAppendedAggregateLogLineForTaskIds(line, taskIds));
     const restoredContent = buildSnapshotRestoredContent(options.aggregateSnapshot, appendedTailLines);
     if (!options.aggregateSnapshot.existed && restoredContent.length === 0) {
         if (fs.existsSync(aggregatePath)) {
@@ -346,6 +586,13 @@ function rollbackAggregateTaskEntriesUnsafe(options: AggregateRollbackOptions): 
         return;
     }
     writeFileAtomically(aggregatePath, restoredContent, { encoding: 'utf8' });
+}
+
+function rollbackAggregateTaskEntriesUnsafe(options: AggregateRollbackOptions): void {
+    rollbackAggregateTaskEntriesForTaskIdsUnsafe({
+        taskIds: [options.taskId],
+        aggregateSnapshot: options.aggregateSnapshot
+    });
 }
 
 function normalizeRollbackDetailValue(value: unknown): string {
@@ -422,7 +669,10 @@ function resolveAllowedRollbackEventSequences(
             ? [[], [completionPassedSignature]]
             : [[statusChangedSignature], [statusChangedSignature, completionPassedSignature]];
     }
-    if (pendingFinalizationStep === 'FINAL_CLOSEOUT') {
+    if (
+        pendingFinalizationStep === 'FINAL_CLOSEOUT'
+        || pendingFinalizationStep === 'DECOMPOSED_PARENT_AUTO_CLOSE'
+    ) {
         const sequence: RollbackEventSignature[] = [];
         if (statusEventRecorded) {
             sequence.push(statusChangedSignature);
@@ -637,6 +887,7 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
     let statusEventRecorded = false;
     let completionEventRecorded = false;
     let pendingFinalizationStep: CompletionFinalizationStep | null = null;
+    let decomposedParentStatusSync = buildEmptyDecomposedParentAutoCloseResult();
 
     try {
         if (!statusDoneRecorded) {
@@ -655,6 +906,12 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
             taskId,
             eventsRoot: taskEventsRoot,
             reviewsRoot
+        });
+        pendingFinalizationStep = 'DECOMPOSED_PARENT_AUTO_CLOSE';
+        decomposedParentStatusSync = closeEligibleDecomposedParentsLinkedToCompletedTask({
+            repoRoot,
+            eventsRoot: taskEventsRoot,
+            completedTaskId: taskId
         });
         pendingFinalizationStep = null;
     } catch (error: unknown) {
@@ -703,6 +960,8 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
                 options.preflightPath,
                 `${pendingFinalizationStep === 'FINAL_CLOSEOUT'
                     ? `mandatory final closeout materialization failed. ${error instanceof Error ? error.message : String(error)}`
+                    : pendingFinalizationStep === 'DECOMPOSED_PARENT_AUTO_CLOSE'
+                    ? `mandatory decomposed parent auto-close failed. ${error instanceof Error ? error.message : String(error)}`
                     : pendingFinalizationStep === 'COMPLETION_GATE_PASSED'
                     ? `mandatory COMPLETION_GATE_PASSED append failed. ${error instanceof Error ? error.message : String(error)}`
                     : `mandatory STATUS_CHANGED append failed. ${error instanceof Error ? error.message : String(error)}`}${rollbackErrors.length > 0 ? ` Rollback failed: ${rollbackErrors.join(' ')}` : ''}`,
@@ -721,6 +980,7 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
         queue_status_before: queueStatusBefore,
         queue_status_after: readTaskQueueStatus(repoRoot, taskId),
         latest_timeline_status: statusDoneRecorded || statusEventRecorded ? 'DONE' : (latestCurrentCycleStatusTransition?.new_status || latestStatusTransition?.new_status || null),
-        task_queue_sync: syncResult
+        task_queue_sync: syncResult,
+        decomposed_parent_status_sync: decomposedParentStatusSync
     };
 }
