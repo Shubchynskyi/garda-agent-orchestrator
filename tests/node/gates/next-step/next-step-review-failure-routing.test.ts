@@ -12,6 +12,7 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
+import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -1064,6 +1065,42 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('gate classify-change'));
         assert.ok(!result.commands[0].command.includes('gate restart-coherent-cycle'));
         assert.ok(!result.commands[0].command.includes('compile-gate'));
+    });
+
+    it('refreshes preflight before restart-review-cycle when failed-review remediation expands non-test scope', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        markTaskInProgress(repoRoot, TASK_ID);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/app.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['src/app.ts']);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'extra.ts'), 'export const extra = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /expanded 'code' remediation scope/);
+        assert.match(result.reason, /restart-review-cycle would fail its scope-boundary guard/);
+        assert.ok(command.includes('gate classify-change'), command);
+        assert.ok(command.includes('--changed-file "src/app.ts"'), command);
+        assert.ok(command.includes('--changed-file "src/extra.ts"'), command);
+        assert.ok(!command.includes('gate restart-review-cycle'));
+        assert.ok(!command.includes('gate build-review-context'));
+        assert.ok(!command.includes('gate prepare-reviewer-launch'));
+        assert.ok(!command.includes('gate record-review-routing'));
+        assert.ok(!command.includes('gate required-reviews-check'));
     });
 
     it('routes T-004-3-style frontend code-review remediation to restart-review-cycle', () => {
