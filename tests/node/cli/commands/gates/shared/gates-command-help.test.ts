@@ -119,6 +119,13 @@ describe('cli/commands/gates command help and syntax remediation', () => {
                 expectedSnippets: ['gate full-suite-validation', '--task-id "<task-id>"', '--preflight-path']
             },
             {
+                argv: ['gate', 'restart-coherent-cycle', '--help'],
+                expectedSnippets: [
+                    'gate restart-coherent-cycle',
+                    'reruns the configured compile gate and can take the full project compile duration'
+                ]
+            },
+            {
                 argv: ['gate', 'record-review-result', '--help'],
                 expectedSnippets: [
                     'gate record-review-result',

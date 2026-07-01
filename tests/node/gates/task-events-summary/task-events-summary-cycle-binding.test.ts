@@ -150,6 +150,35 @@ describe('gates/task-events-summary', () => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 
+        it('surfaces persisted restart-cycle payload details in human summaries', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const events = [
+                {
+                    timestamp_utc: '2026-01-15T10:00:00Z',
+                    task_id: 'T-RESTART-1',
+                    event_type: 'COHERENT_CYCLE_RESTARTED',
+                    outcome: 'PASS',
+                    actor: 'orchestrator',
+                    message: 'Coherent task cycle restarted after compile gate pass.',
+                    details: {
+                        restart_event_schema_version: 1,
+                        task_id: 'T-RESTART-1',
+                        compile_evidence_path: 'garda-agent-orchestrator/runtime/reviews/T-RESTART-1-compile-gate.json',
+                        compile_evidence_sha256: 'a'.repeat(64),
+                        next_step_summary: 'materialize review artifacts'
+                    }
+                }
+            ];
+            const eventsRoot = createTaskEvents(tmpDir, 'T-RESTART-1', events);
+            const summary = buildTaskEventsSummary({ taskId: 'T-RESTART-1', eventsRoot });
+            const text = formatTaskEventsSummaryText(summary, true);
+
+            assert.ok(text.includes('COHERENT_CYCLE_RESTARTED'));
+            assert.ok(text.includes('compile_evidence_sha256'));
+            assert.ok(text.includes('materialize review artifacts'));
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
         it('surfaces validation-chain warnings through aggregated task summary details', () => {
             const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
             const events = [

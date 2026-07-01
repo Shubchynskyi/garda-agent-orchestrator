@@ -140,7 +140,7 @@ describe('gates/next-step review reuse rebind routing', () => {
         const testFile = path.join(repoRoot, 'tests', 'restart-cycle.test.ts');
         fs.mkdirSync(path.dirname(testFile), { recursive: true });
         fs.writeFileSync(testFile, 'test("restart cycle", () => {});\n', 'utf8');
-        writePreflight(repoRoot, TASK_ID, {
+        const restartedPreflightPath = writePreflight(repoRoot, TASK_ID, {
             ...ALL_REVIEW_FLAGS,
             code: true,
             test: true
@@ -150,6 +150,23 @@ describe('gates/next-step review reuse rebind routing', () => {
             includeDomainScopeFingerprints: true
         });
         seedCompilePass(repoRoot, TASK_ID);
+        const restartedTaskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+        const restartedCompileEvidencePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`);
+        appendEvent(repoRoot, TASK_ID, 'COHERENT_CYCLE_RESTARTED', 'PASS', {
+            restart_event_schema_version: 1,
+            task_id: TASK_ID,
+            event_type: 'COHERENT_CYCLE_RESTARTED',
+            task_mode_path: restartedTaskModePath.replace(/\\/g, '/'),
+            task_mode_sha256: fileSha256(restartedTaskModePath),
+            preflight_path: restartedPreflightPath.replace(/\\/g, '/'),
+            preflight_sha256: fileSha256(restartedPreflightPath),
+            compile_evidence_path: restartedCompileEvidencePath.replace(/\\/g, '/'),
+            compile_evidence_sha256: fileSha256(restartedCompileEvidencePath),
+            detected_changed_files_count: 2,
+            elapsed_ms: 1,
+            restart_reason: 'coherent_cycle_restart_after_downstream_boundary_or_invalid_preflight_order',
+            next_step_summary: 'continue restarted downstream rebind through upstream reuse materialization'
+        });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 

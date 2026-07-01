@@ -6,6 +6,7 @@ import {
     createTempRepo,
     describe,
     escapeRegExp,
+    fileSha256,
     findLastTimelineEventIndex,
     fs,
     getCurrentWorkflowConfigFileHashes,
@@ -396,6 +397,23 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
+        const restartEvent = [...events].reverse().find((event) => event.event_type === 'COHERENT_CYCLE_RESTARTED') as Record<string, unknown> | undefined;
+        assert.ok(restartEvent, 'coherent-cycle restart must persist a task event after compile pass');
+        const restartDetails = restartEvent.details as Record<string, unknown>;
+        const restartArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-coherent-cycle-restart.json`);
+        const compileEvidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        assert.equal(restartDetails.restart_event_schema_version, 1);
+        assert.equal(restartDetails.task_id, taskId);
+        assert.equal(restartDetails.event_type, 'COHERENT_CYCLE_RESTARTED');
+        assert.equal(restartDetails.task_mode_sha256, fileSha256(taskModePath));
+        assert.equal(restartDetails.preflight_sha256, fileSha256(preflightPath));
+        assert.equal(restartDetails.compile_evidence_sha256, fileSha256(compileEvidencePath));
+        assert.equal(restartDetails.restart_artifact_sha256, fileSha256(restartArtifactPath));
+        assert.equal(restartDetails.detected_changed_files_count, 1);
+        assert.ok(Number(restartDetails.elapsed_ms) >= 0);
+        assert.equal(fs.existsSync(restartArtifactPath), true);
+
         const lastTaskModeIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'TASK_MODE_ENTERED');
         const lastHandshakeIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED');
         const lastShellSmokeIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED');
@@ -417,6 +435,81 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         )) as Record<string, unknown>;
         assert.equal(refreshedTaskModeArtifact.start_banner, 'Garda rewrites my code');
         assert.equal(refreshedTaskModeArtifact.orchestrator_work, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not persist coherent-cycle restart success when compile fails', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-restart-coherent-cycle-compile-failed';
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const workflowConfigPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'config',
+            'workflow-config.json'
+        );
+        writeWorkflowConfig(repoRoot);
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as {
+            compile_gate?: { command?: string };
+        };
+        workflowConfig.compile_gate = {
+            ...(workflowConfig.compile_gate || {}),
+            command: 'node -e "process.exit(1)"'
+        };
+        fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
+        writeProtectedControlPlaneManifest(repoRoot);
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            `${taskId}-compile-failed`
+        );
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart a coherent cycle but fail compile',
+            orchestratorWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString()
+        });
+        assert.equal(taskModeResult.exitCode, 0, taskModeResult.outputLines.join('\n'));
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts']
+        });
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            emitMetrics: false
+        });
+        const output = restartResult.outputLines.join('\n');
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE, output);
+        assert.match(output, /COHERENT_CYCLE_RESTART_FAILED/);
+        assert.match(output, /compile-gate failed during coherent-cycle restart/);
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'COHERENT_CYCLE_RESTARTED'), false);
+        assert.equal(
+            fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-coherent-cycle-restart.json`)),
+            false
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1876,6 +1969,24 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.match(restartResult.outputLines.join('\n'), /REVIEW_CYCLE_RESTARTED/);
         assert.match(restartResult.outputLines.join('\n'), /PreparedReviewTypes: code/);
         assert.match(restartResult.outputLines.join('\n'), /LaunchRequiredReviewTypes: code/);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const restartEvent = [...events].reverse().find((event) => event.event_type === 'REVIEW_CYCLE_RESTARTED') as Record<string, unknown> | undefined;
+        assert.ok(restartEvent, 'review-cycle restart must persist a task event after compile pass');
+        const restartDetails = restartEvent.details as Record<string, unknown>;
+        const restartArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-cycle-restart.json`);
+        const compileEvidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const remediationArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`);
+        assert.equal(restartDetails.restart_event_schema_version, 1);
+        assert.equal(restartDetails.task_id, taskId);
+        assert.equal(restartDetails.event_type, 'REVIEW_CYCLE_RESTARTED');
+        assert.equal(restartDetails.task_mode_sha256, fileSha256(customTaskModePath));
+        assert.equal(restartDetails.preflight_sha256, fileSha256(preflightPath));
+        assert.equal(restartDetails.compile_evidence_sha256, fileSha256(compileEvidencePath));
+        assert.equal(restartDetails.restart_artifact_sha256, fileSha256(restartArtifactPath));
+        assert.equal(restartDetails.remediation_artifact_sha256, fileSha256(remediationArtifactPath));
+        assert.deepEqual(restartDetails.prepared_review_types, ['code']);
+        assert.deepEqual(restartDetails.launch_required_review_types, ['code']);
+        assert.equal(fs.existsSync(restartArtifactPath), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

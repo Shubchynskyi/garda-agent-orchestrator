@@ -5,7 +5,10 @@ import {
     getReviewExecutionPreparationBatches,
     resolveReviewExecutionPolicyModeFromPreflight
 } from '../../../../core/review-execution-policy';
-import { assertValidTaskId } from '../../../../gate-runtime/task-events';
+import {
+    appendMandatoryTaskEvent,
+    assertValidTaskId
+} from '../../../../gate-runtime/task-events';
 import { type TokenEconomyConfig } from '../../../../gates/review-context/review-context-token-economy';
 import { getClassificationConfig } from '../../../../gates/preflight/classify-change';
 import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../../gates/preflight/build-scoped-diff';
@@ -22,6 +25,13 @@ import {
     runCompileGateCommand,
     type CompileGateCommandOptions
 } from '../compile/compile-flow';
+import {
+    resolveDefaultReviewsPath,
+    writeJsonArtifact
+} from '../../gates/gates-artifacts';
+import {
+    resolveOrchestratorRoot
+} from '../compile/gate-flow-helpers';
 import {
     runBuildReviewContextCommand,
     readTimelineEventsSummary,
@@ -80,6 +90,83 @@ function ensureStepPassed(stepName: string, result: { outputLines: string[]; exi
     if (result.exitCode !== 0) {
         throw new Error(`${stepName} failed during coherent-cycle restart.\n${result.outputLines.join('\n')}`.trim());
     }
+}
+
+function requireArtifactSha256(artifactPath: string, label: string): string {
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+        throw new Error(`${label} artifact is missing after restart success: ${gateHelpers.normalizePath(artifactPath)}`);
+    }
+    const sha256 = gateHelpers.fileSha256(artifactPath);
+    if (!sha256) {
+        throw new Error(`${label} artifact hash could not be computed after restart success: ${gateHelpers.normalizePath(artifactPath)}`);
+    }
+    return sha256;
+}
+
+function toNonNegativeCount(value: unknown, fallback: number): number {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function appendRestartCompletedEvidence(input: {
+    repoRoot: string;
+    taskId: string;
+    eventType: 'COHERENT_CYCLE_RESTARTED' | 'REVIEW_CYCLE_RESTARTED';
+    artifactSuffix: '-coherent-cycle-restart.json' | '-review-cycle-restart.json';
+    message: string;
+    taskModePath: string;
+    preflightPath: string;
+    compileEvidencePath: string;
+    detectionSource: string;
+    plannedChangedFilesCount: number;
+    detectedChangedFilesCount: number;
+    elapsedMs: number;
+    restartReason: string;
+    nextStepSummary: string;
+    extraDetails?: Record<string, unknown>;
+}): void {
+    const artifactPath = resolveDefaultReviewsPath(input.repoRoot, `${input.taskId}${input.artifactSuffix}`);
+    const baseDetails = {
+        restart_event_schema_version: 1,
+        task_id: input.taskId,
+        event_type: input.eventType,
+        status: 'PASSED',
+        task_mode_path: gateHelpers.normalizePath(input.taskModePath),
+        task_mode_sha256: requireArtifactSha256(input.taskModePath, 'task-mode'),
+        preflight_path: gateHelpers.normalizePath(input.preflightPath),
+        preflight_sha256: requireArtifactSha256(input.preflightPath, 'preflight'),
+        compile_evidence_path: gateHelpers.normalizePath(input.compileEvidencePath),
+        compile_evidence_sha256: requireArtifactSha256(input.compileEvidencePath, 'compile-gate'),
+        detection_source: input.detectionSource,
+        planned_changed_files_count: input.plannedChangedFilesCount,
+        detected_changed_files_count: input.detectedChangedFilesCount,
+        elapsed_ms: Math.max(0, Math.floor(input.elapsedMs)),
+        restart_reason: input.restartReason,
+        next_step_summary: input.nextStepSummary,
+        ...(input.extraDetails || {})
+    };
+    writeJsonArtifact(artifactPath, {
+        schema_version: 1,
+        event_source: input.eventType === 'COHERENT_CYCLE_RESTARTED'
+            ? 'restart-coherent-cycle'
+            : 'restart-review-cycle',
+        recorded_at_utc: new Date().toISOString(),
+        ...baseDetails
+    });
+    const restartArtifactSha256 = requireArtifactSha256(artifactPath, 'restart-cycle');
+    appendMandatoryTaskEvent(
+        resolveOrchestratorRoot(input.repoRoot),
+        input.taskId,
+        input.eventType,
+        'PASS',
+        input.message,
+        {
+            ...baseDetails,
+            restart_artifact_path: gateHelpers.normalizePath(artifactPath),
+            restart_artifact_sha256: restartArtifactSha256
+        },
+        { actor: 'orchestrator' }
+    );
 }
 
 function getTaskManualValidationBoundaryFiles(taskId: string, currentChangedFiles: readonly string[]): string[] {
@@ -160,6 +247,7 @@ function resolveRestartAllowedDirtyWorkflowConfigFiles(
 export async function runRestartCoherentCycleCommand(
     options: RestartCoherentCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
+    const startedAt = Date.now();
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const resolvedTaskId = assertValidTaskId(String(options.taskId || '').trim());
     const previousTaskMode = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
@@ -268,6 +356,26 @@ export async function runRestartCoherentCycleCommand(
             emitMetrics: options.emitMetrics
         } as CompileGateCommandOptions);
         ensureStepPassed('compile-gate', compileResult);
+        const nextStepSummary = 'materialize review artifacts for the new compile cycle, then rerun required-reviews-check, doc-impact-gate, and completion-gate.';
+        appendRestartCompletedEvidence({
+            repoRoot,
+            taskId: resolvedTaskId,
+            eventType: 'COHERENT_CYCLE_RESTARTED',
+            artifactSuffix: '-coherent-cycle-restart.json',
+            message: 'Coherent task cycle restarted after compile gate pass.',
+            taskModePath: resolvedTaskModePath,
+            preflightPath: refreshedPreflightPath,
+            compileEvidencePath: resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`),
+            detectionSource: replayScope.detectionSource,
+            plannedChangedFilesCount: replayScope.plannedChangedFiles.length,
+            detectedChangedFilesCount: toNonNegativeCount(
+                refreshedPreflight.changed_files_count,
+                refreshedPreflight.changed_files.length
+            ),
+            elapsedMs: Date.now() - startedAt,
+            restartReason: 'coherent_cycle_restart_after_downstream_boundary_or_invalid_preflight_order',
+            nextStepSummary
+        });
 
         return {
             outputLines: buildCoherentCycleRestartedOutput({
@@ -296,6 +404,7 @@ export async function runRestartCoherentCycleCommand(
 export async function runRestartReviewCycleCommand(
     options: RestartReviewCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
+    const startedAt = Date.now();
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const resolvedTaskId = assertValidTaskId(String(options.taskId || '').trim());
     const previousTaskMode = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
@@ -673,6 +782,41 @@ export async function runRestartReviewCycleCommand(
                 expanded_non_test_files_block_reuse: true
             }
         });
+        const reviewContextsRefreshStatus = pendingReviewTypes.length > 0
+            ? 'partially_prepared_dependency_blocked'
+            : 'prepared_or_reused';
+        appendRestartCompletedEvidence({
+            repoRoot,
+            taskId: resolvedTaskId,
+            eventType: 'REVIEW_CYCLE_RESTARTED',
+            artifactSuffix: '-review-cycle-restart.json',
+            message: 'Review remediation cycle restarted after compile gate pass.',
+            taskModePath: resolvedTaskModePath,
+            preflightPath: refreshedPreflightPath,
+            compileEvidencePath: resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`),
+            detectionSource: replayScope.detectionSource,
+            plannedChangedFilesCount: previousChangedFiles.length,
+            detectedChangedFilesCount: scopeBoundary.currentChangedFiles.length,
+            elapsedMs: Date.now() - startedAt,
+            restartReason: 'failed_review_remediation_cycle',
+            nextStepSummary: nextStep,
+            extraDetails: {
+                remediation_artifact_path: gateHelpers.normalizePath(remediationArtifactPath),
+                remediation_artifact_sha256: requireArtifactSha256(remediationArtifactPath, 'review-remediation-cycle'),
+                impact_analysis_source: remediationImpactAnalysis.source,
+                affected_files_count: scopeBoundary.currentChangedFiles.length,
+                remediation_category: remediationFixClassification.category,
+                invalidated_review_types: remediationFixClassification.invalidated_review_types,
+                preserved_review_types: remediationFixClassification.preserved_review_types,
+                review_contexts_refresh_status: reviewContextsRefreshStatus,
+                review_execution_policy_mode: reviewExecutionPolicyMode,
+                prepared_review_types: preparedResults.map((result) => result.reviewType),
+                launch_required_review_types: launchRequiredReviewTypes,
+                reused_review_types: reusedReviewTypes,
+                pending_review_types: pendingReviewTypes,
+                pending_reason: pendingReason
+            }
+        });
 
         return {
             outputLines: buildReviewCycleRestartedOutput({
@@ -689,9 +833,7 @@ export async function runRestartReviewCycleCommand(
                 previousFilesCount: scopeBoundary.previousChangedFiles.length,
                 currentFilesCount: scopeBoundary.currentChangedFiles.length,
                 expandedNonTestFiles: scopeBoundary.expandedNonTestFiles,
-                reviewContextsRefreshStatus: pendingReviewTypes.length > 0
-                    ? 'partially_prepared_dependency_blocked'
-                    : 'prepared_or_reused',
+                reviewContextsRefreshStatus,
                 effectiveDepth,
                 reviewExecutionPolicyMode,
                 preparedResults,

@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
@@ -28,6 +29,7 @@ import {
     safeReadJson
 } from '../task-audit/task-audit-summary-collectors';
 import {
+    fileSha256,
     normalizePath,
     resolvePathInsideRepo
 } from '../shared/helpers';
@@ -73,6 +75,11 @@ const COHERENT_CYCLE_BOUNDARY_EVENTS = new Set([
     'REVIEW_GATE_PASSED_WITH_OVERRIDE',
     'COMPLETION_GATE_FAILED',
     'COMPLETION_GATE_PASSED'
+]);
+
+const RESTART_COMPLETED_EVENT_TYPES = new Set([
+    'COHERENT_CYCLE_RESTARTED',
+    'REVIEW_CYCLE_RESTARTED'
 ]);
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -137,6 +144,86 @@ function hasProtectedOrchestratorWorkRecoverySignal(message: string): boolean {
         && normalized.includes('control-plane')
         && normalized.includes('enter-task-mode')
         && normalized.includes('--orchestrator-work');
+}
+
+function isSha256(value: unknown): value is string {
+    return /^[0-9a-f]{64}$/u.test(String(value || '').trim().toLowerCase());
+}
+
+function resolveEventPath(repoRoot: string, value: unknown): string | null {
+    const rawPath = String(value || '').trim();
+    if (!rawPath) {
+        return null;
+    }
+    try {
+        return resolvePathInsideRepo(rawPath, repoRoot, { allowMissing: true, enforceInside: true });
+    } catch {
+        return null;
+    }
+}
+
+function validateRestartCompletedEvent(
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string,
+    preflightPath: string,
+    restartEvent: NonNullable<ReturnType<typeof findLatestTimelineEvent>>
+): string[] {
+    const details = restartEvent.details || {};
+    const violations: string[] = [];
+    if (String(details.task_id || '').trim() !== taskId) {
+        violations.push('task_id does not match the current task');
+    }
+    for (const [fieldName, label] of [
+        ['task_mode_sha256', 'task-mode'],
+        ['preflight_sha256', 'preflight'],
+        ['compile_evidence_sha256', 'compile evidence']
+    ] as const) {
+        if (!isSha256(details[fieldName])) {
+            violations.push(`${label} hash is missing or invalid`);
+        }
+    }
+    if (!Number.isInteger(Number(details.detected_changed_files_count)) || Number(details.detected_changed_files_count) < 0) {
+        violations.push('detected_changed_files_count is missing or invalid');
+    }
+    if (!Number.isInteger(Number(details.elapsed_ms)) || Number(details.elapsed_ms) < 0) {
+        violations.push('elapsed_ms is missing or invalid');
+    }
+    if (!String(details.restart_reason || '').trim()) {
+        violations.push('restart_reason is missing');
+    }
+    if (!String(details.next_step_summary || '').trim()) {
+        violations.push('next_step_summary is missing');
+    }
+
+    const taskModePath = resolveEventPath(repoRoot, details.task_mode_path);
+    if (!taskModePath) {
+        violations.push('task_mode_path is missing or outside the repository');
+    } else if (!isSha256(details.task_mode_sha256) || !fs.existsSync(taskModePath) || fileSha256(taskModePath) !== details.task_mode_sha256) {
+        violations.push('task-mode hash does not match the current artifact');
+    }
+
+    const eventPreflightPath = resolveEventPath(repoRoot, details.preflight_path);
+    const normalizedExpectedPreflightPath = normalizePath(path.resolve(preflightPath));
+    if (!eventPreflightPath) {
+        violations.push('preflight_path is missing or outside the repository');
+    } else if (normalizePath(path.resolve(eventPreflightPath)) !== normalizedExpectedPreflightPath) {
+        violations.push('preflight_path does not match the latest preflight');
+    } else if (!isSha256(details.preflight_sha256) || !fs.existsSync(eventPreflightPath) || fileSha256(eventPreflightPath) !== details.preflight_sha256) {
+        violations.push('preflight hash does not match the current artifact');
+    }
+
+    const compileEvidencePath = resolveEventPath(repoRoot, details.compile_evidence_path);
+    const normalizedExpectedCompileEvidencePath = normalizePath(path.resolve(reviewsRoot, `${taskId}-compile-gate.json`));
+    if (!compileEvidencePath) {
+        violations.push('compile_evidence_path is missing or outside the repository');
+    } else if (normalizePath(path.resolve(compileEvidencePath)) !== normalizedExpectedCompileEvidencePath) {
+        violations.push('compile_evidence_path does not match the latest compile evidence artifact');
+    } else if (!isSha256(details.compile_evidence_sha256) || !fs.existsSync(compileEvidencePath) || fileSha256(compileEvidencePath) !== details.compile_evidence_sha256) {
+        violations.push('compile evidence hash does not match the current artifact');
+    }
+
+    return violations;
 }
 
 export function readFailedGateRecovery(
@@ -285,6 +372,79 @@ export function readCoherentCycleReadiness(
     }
 
     if (violations.length === 0) {
+        const latestCompilePass = findLatestTimelineEvent(
+            events,
+            (entry) => entry.event_type === 'COMPILE_GATE_PASSED' && entry.sequence > latestPreflight.sequence
+        );
+        if (latestBoundary && latestCompilePass) {
+            const restartCompletedEvent = findLatestTimelineEvent(
+                events,
+                (entry) => RESTART_COMPLETED_EVENT_TYPES.has(entry.event_type) && entry.sequence > latestCompilePass.sequence
+            );
+            if (!restartCompletedEvent) {
+                const compileAnchor = ` after COMPILE_GATE_PASSED (seq ${latestCompilePass.sequence})`;
+                const cycleAnchor = ` after latest ${latestBoundary.event_type} (seq ${latestBoundary.sequence})`;
+                const compileEvidence = safeReadJson(path.join(reviewsRoot, `${taskId}-compile-gate.json`));
+                const commandsPath = typeof compileEvidence?.commands_path === 'string' && compileEvidence.commands_path.trim()
+                    ? compileEvidence.commands_path.trim()
+                    : getDefaultCommandsPath(repoRoot);
+                const outputFiltersPath = typeof compileEvidence?.output_filters_path === 'string' && compileEvidence.output_filters_path.trim()
+                    ? compileEvidence.output_filters_path.trim()
+                    : getDefaultOutputFiltersPath(repoRoot);
+                const taskModePayload = taskModePath ? safeReadJson(taskModePath) : null;
+                const requiresOperatorConfirmation = isPlainRecord(taskModePayload)
+                    && (taskModePayload.orchestrator_work === true || taskModePayload.workflow_config_work === true);
+                return {
+                    ready: false,
+                    reason:
+                        `Latest restarted compile cycle${cycleAnchor} has no persisted restart-completed event${compileAnchor}. ` +
+                        'Rerun restart-coherent-cycle so long compile recovery cannot advance from stdout-only success.',
+                    command: buildCoherentCycleRestartCommand(
+                        repoRoot,
+                        taskId,
+                        normalizePath(preflightPath),
+                        taskModePath,
+                        commandsPath,
+                        outputFiltersPath,
+                        { requiresOperatorConfirmation }
+                    )
+                };
+            }
+            const restartEventViolations = validateRestartCompletedEvent(
+                repoRoot,
+                reviewsRoot,
+                taskId,
+                preflightPath,
+                restartCompletedEvent
+            );
+            if (restartEventViolations.length > 0) {
+                const compileEvidence = safeReadJson(path.join(reviewsRoot, `${taskId}-compile-gate.json`));
+                const commandsPath = typeof compileEvidence?.commands_path === 'string' && compileEvidence.commands_path.trim()
+                    ? compileEvidence.commands_path.trim()
+                    : getDefaultCommandsPath(repoRoot);
+                const outputFiltersPath = typeof compileEvidence?.output_filters_path === 'string' && compileEvidence.output_filters_path.trim()
+                    ? compileEvidence.output_filters_path.trim()
+                    : getDefaultOutputFiltersPath(repoRoot);
+                const taskModePayload = taskModePath ? safeReadJson(taskModePath) : null;
+                const requiresOperatorConfirmation = isPlainRecord(taskModePayload)
+                    && (taskModePayload.orchestrator_work === true || taskModePayload.workflow_config_work === true);
+                return {
+                    ready: false,
+                    reason:
+                        `Latest restart-completed event ${restartCompletedEvent.event_type} (seq ${restartCompletedEvent.sequence}) is not valid durable recovery evidence: ` +
+                        `${restartEventViolations.join('; ')}. Rerun restart-coherent-cycle to refresh task-mode, preflight, compile, and restart evidence together.`,
+                    command: buildCoherentCycleRestartCommand(
+                        repoRoot,
+                        taskId,
+                        normalizePath(preflightPath),
+                        taskModePath,
+                        commandsPath,
+                        outputFiltersPath,
+                        { requiresOperatorConfirmation }
+                    )
+                };
+            }
+        }
         return {
             ready: true,
             reason: 'Latest preflight has current-cycle handshake and shell-smoke evidence.',

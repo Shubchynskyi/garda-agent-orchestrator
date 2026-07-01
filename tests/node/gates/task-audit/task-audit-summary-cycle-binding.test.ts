@@ -48,6 +48,11 @@ describe('gates/task-audit-summary', () => {
                 metrics: { changed_lines_total: 0 },
                 required_reviews: {}
             });
+            writeArtifact(reviewsDir, TASK_ID, '-coherent-cycle-restart.json', {
+                schema_version: 1,
+                event_source: 'restart-coherent-cycle',
+                status: 'PASSED'
+            });
 
             const result = buildTaskAuditSummary({
                 taskId: TASK_ID,
@@ -65,6 +70,10 @@ describe('gates/task-audit-summary', () => {
             assert.ok(compileEvidence);
             assert.equal(compileEvidence.exists, false);
             assert.equal(compileEvidence.sha256, null);
+            const restartEvidence = result.evidence.find(e => e.kind === 'coherent-cycle-restart');
+            assert.ok(restartEvidence);
+            assert.equal(restartEvidence.exists, true);
+            assert.ok(restartEvidence.sha256);
         });
 
         it('returns INCOMPLETE when completion gate is present but supporting lifecycle evidence is missing', () => {

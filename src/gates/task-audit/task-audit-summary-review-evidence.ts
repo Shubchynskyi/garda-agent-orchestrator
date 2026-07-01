@@ -22,6 +22,8 @@ const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'preflight', suffix: '-preflight.json' },
     { kind: 'compile-gate', suffix: '-compile-gate.json' },
     { kind: 'compile-output', suffix: '-compile-output.log' },
+    { kind: 'coherent-cycle-restart', suffix: '-coherent-cycle-restart.json' },
+    { kind: 'review-cycle-restart', suffix: '-review-cycle-restart.json' },
     { kind: 'review-gate', suffix: '-review-gate.json' },
     { kind: 'doc-impact', suffix: '-doc-impact.json' },
     { kind: 'full-suite-validation', suffix: '-full-suite-validation.json' },
@@ -232,4 +234,3 @@ export function collectEvidenceArtifacts(
 
     return evidence;
 }
-
