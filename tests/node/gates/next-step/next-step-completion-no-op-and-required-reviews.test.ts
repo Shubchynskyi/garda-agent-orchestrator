@@ -120,6 +120,63 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /change a lane to true only/i);
     });
 
+    it('attests only independently audited required lanes when building required-reviews-check command', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.ok(!command.includes('required-reviews-check'), command);
+
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        const readyResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const readyCommand = readyResult.commands[0].command;
+
+        assert.equal(readyResult.next_gate, 'required-reviews-check', readyResult.reason);
+        assert.ok(readyCommand.includes('--review-authorship-attestation-json'));
+        assert.ok(readyCommand.includes('{"code":true,"security":true,"test":true}'), readyCommand);
+        assert.ok(!readyCommand.includes('prepare-reviewer-launch'), readyCommand);
+        assert.ok(!readyCommand.includes('record-review-routing'), readyCommand);
+        assert.ok(!readyCommand.includes('build-review-context'), readyCommand);
+    });
+
+    it('keeps attestation-only required-review failures on corrected required-reviews-check command', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_GATE_FAILED', 'FAIL', {
+            review_authorship_attestation: {
+                status: 'FAILED',
+                false_review_types: ['code', 'test'],
+                violations: [
+                    'Review authorship attestation is false for mandatory review types: code, test. Fresh delegated reviewer output/receipt is not honestly attested for those lanes.'
+                ]
+            },
+            violations: [
+                'Review authorship attestation is false for mandatory review types: code, test. Fresh delegated reviewer output/receipt is not honestly attested for those lanes.'
+            ]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'required-reviews-check', result.reason);
+        assert.ok(command.includes('--review-authorship-attestation-json'));
+        assert.ok(command.includes('{"code":true,"test":true}'), command);
+        assert.ok(!command.includes('prepare-reviewer-launch'), command);
+        assert.ok(!command.includes('record-review-routing'), command);
+        assert.ok(!command.includes('build-review-context'), command);
+    });
+
     it('reports stale source runtime before required reviews check without hiding the intended gate', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
