@@ -54,17 +54,23 @@ describe('gates/next-step review cycle continuation', () => {
         writeJson(configPath, workflowConfig);
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
-        for (let index = 0; index < 3; index += 1) {
+        for (let index = 0; index < 2; index += 1) {
             appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:code-one-shot-active-${index}`,
                 review_context_sha256: sha256Text(`code-one-shot-active-${index}`)
             });
         }
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:code-one-shot-active-fail',
+            review_context_sha256: sha256Text('code-one-shot-active-fail'),
+            summary: 'failed after reaching the review-cycle total limit'
+        });
         const beforeConfig = fs.readFileSync(configPath, 'utf8');
         writeReviewCycleContinuation(repoRoot, TASK_ID, {
             baselineTotalNonTestReviewCount: 3,
-            baselineFailedNonTestReviewCount: 0,
+            baselineFailedNonTestReviewCount: 1,
             maxTotalNonTestReviews: 2
         });
 
@@ -87,16 +93,22 @@ describe('gates/next-step review cycle continuation', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
-        for (let index = 0; index < 3; index += 1) {
+        for (let index = 0; index < 2; index += 1) {
             appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:code-one-shot-reuse-baseline-${index}`,
                 review_context_sha256: sha256Text(`code-one-shot-reuse-baseline-${index}`)
             });
         }
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:code-one-shot-reuse-fail',
+            review_context_sha256: sha256Text('code-one-shot-reuse-fail'),
+            summary: 'failed after reaching the review-cycle total limit'
+        });
         writeReviewCycleContinuation(repoRoot, TASK_ID, {
             baselineTotalNonTestReviewCount: 3,
-            baselineFailedNonTestReviewCount: 0,
+            baselineFailedNonTestReviewCount: 1,
             maxTotalNonTestReviews: 2
         });
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {

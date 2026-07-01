@@ -153,9 +153,11 @@ interface ReviewCycleGuardReadAttempt {
     reviewType: string;
     failed: boolean;
     passed: boolean;
+    latestEventFailed: boolean;
     reused: boolean;
     scopeHash: string | null;
     currentScope: boolean;
+    lastSequence: number;
 }
 
 interface ReviewCycleGuardReadResult {
@@ -402,16 +404,15 @@ function readReviewCycleGuardAttempts(
         reviewType: string;
         failed: boolean;
         passed: boolean;
+        latestEventFailed: boolean;
         reused: boolean;
         scopeHash: string | null;
         currentScope: boolean;
+        lastSequence: number;
     }>();
     const verdictCache = new Map<string, boolean>();
     const excludedReviewTypes = new Set(reviewCycleGuardConfig.excluded_review_types.map((entry) => entry.trim().toLowerCase()).filter(Boolean));
     let malformedReviewCycleEvent = false;
-    let guardLimitExceeded = false;
-    let totalNonTestReviewCount = 0;
-    let failedNonTestReviewCount = 0;
     let latestFailedReview: NextStepReviewCycleLatestFailedReview | null = null;
     let sequence = 0;
     let pending = '';
@@ -427,10 +428,8 @@ function readReviewCycleGuardAttempts(
         try {
             event = parseReviewCycleTimelineLine(line, sequence);
         } catch {
-            if (!guardLimitExceeded) {
-                malformedReviewCycleEvent = true;
-            }
-            return reviewCycleGuardConfig.action === 'BLOCK_FOR_OPERATOR_DECISION' && !guardLimitExceeded;
+            malformedReviewCycleEvent = true;
+            return reviewCycleGuardConfig.action === 'BLOCK_FOR_OPERATOR_DECISION';
         } finally {
             sequence += 1;
         }
@@ -439,10 +438,8 @@ function readReviewCycleGuardAttempts(
         }
         const reviewType = getTimelineReviewType(event.details);
         if (!reviewType) {
-            if (!guardLimitExceeded) {
-                malformedReviewCycleEvent = true;
-            }
-            return reviewCycleGuardConfig.action === 'BLOCK_FOR_OPERATOR_DECISION' && !guardLimitExceeded;
+            malformedReviewCycleEvent = true;
+            return reviewCycleGuardConfig.action === 'BLOCK_FOR_OPERATOR_DECISION';
         }
         const reviewerIdentity = getTimelineReviewerIdentity(event.details);
         const reviewContextSha256 = getTimelineReviewContextSha256(event.details);
@@ -471,23 +468,17 @@ function readReviewCycleGuardAttempts(
             reviewType,
             failed: nextFailed,
             passed: nextPassed,
+            latestEventFailed: Boolean(failed),
             reused: Boolean(existing?.reused || reused),
             scopeHash: existing?.scopeHash || scopeHash,
-            currentScope: Boolean(existing?.currentScope || currentScope)
+            currentScope: Boolean(existing?.currentScope || currentScope),
+            lastSequence: event.sequence
         });
         const countedReviewType = reviewType.trim().toLowerCase();
         const countsTowardGuard = countedReviewType && !excludedReviewTypes.has(countedReviewType);
-        if (!existing && countsTowardGuard) {
-            totalNonTestReviewCount += 1;
-        }
         if (!existingFailed && nextFailed && countsTowardGuard) {
-            failedNonTestReviewCount += 1;
             latestFailedReview = buildLatestFailedReviewSummary(event, countedReviewType, event.details);
         }
-        guardLimitExceeded = guardLimitExceeded || (
-            failedNonTestReviewCount > reviewCycleGuardConfig.max_failed_non_test_reviews
-            || totalNonTestReviewCount > reviewCycleGuardConfig.max_total_non_test_reviews
-        );
         return false;
     };
 
@@ -505,7 +496,7 @@ function readReviewCycleGuardAttempts(
                 pending = pending.slice(newlineIndex + 1);
                 if (handleLine(line)) {
                     return {
-                        attempts: [...attemptsByKey.values()],
+                        attempts: [...attemptsByKey.values()].sort((left, right) => left.lastSequence - right.lastSequence),
                         timelineValid: !malformedReviewCycleEvent,
                         latestFailedReview
                     };
@@ -515,7 +506,7 @@ function readReviewCycleGuardAttempts(
         } while (bytesRead > 0);
         if (pending.trim() && handleLine(pending.replace(/\r$/, ''))) {
             return {
-                attempts: [...attemptsByKey.values()],
+                attempts: [...attemptsByKey.values()].sort((left, right) => left.lastSequence - right.lastSequence),
                 timelineValid: !malformedReviewCycleEvent,
                 latestFailedReview
             };
@@ -525,7 +516,7 @@ function readReviewCycleGuardAttempts(
     }
 
     return {
-        attempts: [...attemptsByKey.values()],
+        attempts: [...attemptsByKey.values()].sort((left, right) => left.lastSequence - right.lastSequence),
         timelineValid: !malformedReviewCycleEvent,
         latestFailedReview
     };

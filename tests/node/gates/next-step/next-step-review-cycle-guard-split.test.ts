@@ -89,13 +89,19 @@ describe('gates/next-step review cycle guard split', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
-        for (let index = 0; index < 3; index += 1) {
+        for (let index = 0; index < 2; index += 1) {
             appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:code-one-shot-offer-${index}`,
                 review_context_sha256: sha256Text(`code-one-shot-offer-${index}`)
             });
         }
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:code-one-shot-offer-fail',
+            review_context_sha256: sha256Text('code-one-shot-offer-fail'),
+            summary: 'failed after reaching the review-cycle total limit'
+        });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
@@ -105,12 +111,13 @@ describe('gates/next-step review cycle guard split', () => {
         assert.match(result.commands[0]?.command || '', /gate record-review-cycle-continuation/);
         assert.match(result.commands[0]?.command || '', /--decision "allow_one_more_cycle"/);
         assert.match(result.commands[0]?.command || '', /--baseline-total-non-test-reviews "3"/);
+        assert.match(result.commands[0]?.command || '', /--baseline-failed-non-test-reviews "1"/);
         assert.ok(text.includes('allow_one_more_cycle: task-scoped one-shot runtime approval'));
         assert.ok(text.includes('raise_limits: permanent repo-local workflow-config change through workflow set'));
         assert.ok(text.includes('does not edit workflow-config.json'));
     });
 
-    it('uses one-shot continuation before auto-split while the current sequential review phase is pending', () => {
+    it('does not auto-split successful PASS attempts while the current sequential review phase is pending', () => {
         const repoRoot = makeTempRepo();
         const workflowConfig = buildDefaultWorkflowConfig();
         workflowConfig.full_suite_validation.enabled = false;
@@ -140,22 +147,15 @@ describe('gates/next-step review cycle guard split', () => {
         appendRecordedReviewCycleAttempt(repoRoot, 'security');
         writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
         appendRecordedReviewCycleAttempt(repoRoot, 'refactor');
-        writeReviewCycleContinuation(repoRoot, TASK_ID, {
-            baselineTotalNonTestReviewCount: 3,
-            baselineFailedNonTestReviewCount: 0,
-            maxTotalNonTestReviews: 2
-        });
-
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
 
         assert.notEqual(result.status, 'SPLIT_REQUIRED');
         assert.notEqual(result.next_gate, 'split-required-latch');
+        assert.notEqual(result.next_gate, 'review-cycle-attempt-guard');
         assert.equal(result.review_cycle_block, null);
-        assert.ok(text.includes('Review cycle one-shot continuation active'));
-        assert.ok(text.includes('pending_required_reviews='));
+        assert.equal(text.includes('Review cycle one-shot continuation active'), false);
         assert.ok(text.includes('api'));
-        assert.ok(text.includes('performance'));
         assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
         assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
         assert.equal(result.review.next_review_type, 'api');
@@ -183,11 +183,6 @@ describe('gates/next-step review cycle guard split', () => {
             { reviewPolicyMode: 'strict_sequential' }
         );
         seedCompilePass(repoRoot, TASK_ID, preflightPath);
-        writeReviewCycleContinuation(repoRoot, TASK_ID, {
-            baselineTotalNonTestReviewCount: 3,
-            baselineFailedNonTestReviewCount: 0,
-            maxTotalNonTestReviews: 2
-        });
         writeReviewEvidence(repoRoot, TASK_ID, 'code');
         appendRecordedReviewCycleAttempt(repoRoot, 'code');
         writeReviewEvidence(repoRoot, TASK_ID, 'security');
@@ -204,7 +199,7 @@ describe('gates/next-step review cycle guard split', () => {
         assert.notEqual(result.next_gate, 'review-cycle-attempt-guard');
         assert.equal(result.review_cycle_block, null);
         assert.equal(result.review.next_review_type, null);
-        assert.ok(text.includes('completed the required review phase'));
+        assert.equal(text.includes('completed the required review phase'), false);
         assert.equal(text.includes('allow_one_more_cycle'), false);
         assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
         assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
@@ -257,13 +252,19 @@ describe('gates/next-step review cycle guard split', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
         seedStartedTask(repoRoot, TASK_ID);
         const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
-        for (let index = 0; index < 3; index += 1) {
+        for (let index = 0; index < 2; index += 1) {
             appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:manual-split-offer-${index}`,
                 review_context_sha256: sha256Text(`manual-split-offer-${index}`)
             });
         }
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:manual-split-offer-fail',
+            review_context_sha256: sha256Text('manual-split-offer-fail'),
+            summary: 'failed after reaching the review-cycle total limit'
+        });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);

@@ -15,6 +15,7 @@ export interface ReviewCycleAttempt {
     reviewType: string;
     failed: boolean;
     passed?: boolean;
+    latestEventFailed?: boolean;
 }
 
 export interface ReviewCycleGuardViolation {
@@ -112,6 +113,7 @@ export function evaluateReviewCycleGuard(
     const countsByReviewType: Record<string, { total: number; failed: number; passed: number; pending: number }> = {};
     let totalNonTestReviewCount = 0;
     let failedNonTestReviewCount = 0;
+    let latestNonTestAttemptFailed = false;
 
     for (const attempt of input.attempts) {
         const reviewType = attempt.reviewType.trim().toLowerCase();
@@ -121,6 +123,7 @@ export function evaluateReviewCycleGuard(
         countsByReviewType[reviewType] ??= { total: 0, failed: 0, passed: 0, pending: 0 };
         countsByReviewType[reviewType].total += 1;
         totalNonTestReviewCount += 1;
+        latestNonTestAttemptFailed = attempt.latestEventFailed ?? attempt.failed;
         if (attempt.failed) {
             countsByReviewType[reviewType].failed += 1;
             failedNonTestReviewCount += 1;
@@ -143,7 +146,11 @@ export function evaluateReviewCycleGuard(
             limit: config.max_failed_non_test_reviews
         });
     }
-    if (active && totalNonTestReviewCount > config.max_total_non_test_reviews) {
+    if (
+        active
+        && totalNonTestReviewCount > config.max_total_non_test_reviews
+        && (config.action === 'WARN_ONLY' || latestNonTestAttemptFailed)
+    ) {
         violations.push({
             metric: 'total_non_test_review_count',
             actual: totalNonTestReviewCount,
