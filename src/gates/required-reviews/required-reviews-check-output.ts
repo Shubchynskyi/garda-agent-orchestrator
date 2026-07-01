@@ -5,6 +5,7 @@ import { normalizePath } from '../shared/helpers';
 import { getNoOpEvidence } from '../task-mode/no-op';
 import { createReviewTreeStateFreshnessCache } from '../review/review-tree-state';
 import { normalizeSourceOfTruthValue } from '../review/reviewer-routing';
+import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-scope-fingerprints';
 import { resolveBundleName } from '../../core/constants';
 import { REVIEW_CONTRACTS, resolveExpectedReviewVerdicts, testExpectedVerdict } from './required-reviews-check-contracts';
 import { readReviewDependencyTimelineEvents } from './required-reviews-check-dependencies';
@@ -270,13 +271,19 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         let routingPolicySummary: Record<string, unknown> | null = null;
         let trivialReview = false;
         let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
-        if (reviewArtifacts[reviewKey]) {
+        const reviewArtifact = reviewArtifacts[reviewKey];
+        if (reviewArtifact) {
+            const allowLaneDomainPreflightBinding = reviewContextLaneScopeMatchesCurrentPreflight(
+                reviewKey,
+                reviewArtifact.reviewContext || null,
+                preflightPayload
+            );
             const validation = validateReviewArtifactGateEligibility({
                 resolvedTaskId,
                 reviewKey,
                 required,
                 skippedByOverride,
-                reviewArtifact: reviewArtifacts[reviewKey],
+                reviewArtifact,
                 preflightPath: validatedPreflight.preflight_path,
                 preflightSha256: validatedPreflight.preflight_hash,
                 preflightPayload,
@@ -285,6 +292,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                 executionProvider,
                 executionProviderSource: options.executionProviderSource,
                 allowLegacyReviewContextIdentityFallback,
+                allowLaneDomainPreflightBinding,
                 timelineEvents,
                 repoRoot: options.repoRoot || null,
                 treeStateFreshnessCache

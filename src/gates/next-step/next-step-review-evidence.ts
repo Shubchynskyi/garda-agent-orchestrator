@@ -636,7 +636,7 @@ export function findReviewGateStaleContextPrecheckRecovery(params: {
         ) {
             continue;
         }
-        if (!reviewStateHasSatisfiedEvidence(params.repoRoot, params.eventsRoot, params.taskId, state)) {
+        if (reviewStateHasSatisfiedEvidence(params.repoRoot, params.eventsRoot, params.taskId, state)) {
             continue;
         }
         return { state, reviewType };

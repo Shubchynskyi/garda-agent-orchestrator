@@ -442,7 +442,7 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
-    it('routes stale review contexts to rebind before required-reviews-check after coherent-cycle restart', () => {
+    it('advances lane-domain-current historical PASS evidence to required-reviews-check after coherent-cycle restart', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         const changedFiles = ['src/app.ts', 'tests/rebound-context.test.ts'];
@@ -478,12 +478,10 @@ describe('gates/next-step review reuse rebind routing', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.match(result.title, /Rebind stale 'code' review context before required reviews check/);
-        assert.ok(result.reason.includes('required-reviews-check'), result.reason);
-        assert.ok(result.reason.includes('known to fail'), result.reason);
-        assert.ok(result.commands[0].command.includes('--review-type "code"'));
-        assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+        assert.equal(result.next_gate, 'required-reviews-check', result.reason);
+        assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(result.commands[0].command.includes('{"code":true,"test":true}'), result.commands[0].command);
     });
 
     it('routes review-gate stale upstream failures even when upstream context is current after a later compile', () => {
