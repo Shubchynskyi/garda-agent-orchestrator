@@ -23,6 +23,7 @@ import {
     seedRemediationRepoBase,
     seedReusableReviewEvidence,
     seedTaskQueue,
+    writeProtectedControlPlaneManifest,
     writeProfilesConfig,
     writeReviewCapabilitiesConfig,
     writeSimpleCompileCommandsFile
@@ -862,6 +863,138 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         const expectedPreservedReviews = ['api', 'code', 'performance', 'refactor', 'security'];
         assert.equal(classification.category, 'test_coverage_only');
         assert.equal(classification.scope_category, 'previous_scope_only');
+        assert.deepEqual(classification.invalidated_review_types, ['test']);
+        assert.deepEqual(
+            [...((classification.preserved_review_types as string[]) || [])].sort(),
+            expectedPreservedReviews
+        );
+        assert.deepEqual(evidence.semantic_changed_files, [testFile]);
+        assert.equal(evidence.semantic_scope_source, 'impact_analysis_files');
+        assert.deepEqual(
+            [...((reviewReuse.reused_review_types as string[]) || [])].sort(),
+            expectedPreservedReviews
+        );
+        assert.deepEqual(reviewReuse.launch_required_review_types, ['test']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle ignores historical protected scope when remediation delta is test-only', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-906-protected-scope-test-only-remediation';
+        const sourceFile = 'src/cli/commands/workflow/workflow-command-set.ts';
+        const testFile = 'tests/node/reports/ui-dashboard-assets.test.ts';
+        const changedFiles = [sourceFile, testFile];
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'protected-scope-test-only-remediation'
+        );
+
+        fs.mkdirSync(path.dirname(path.join(repoRoot, sourceFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, sourceFile), 'export const previousRule = true;\n', 'utf8');
+        fs.mkdirSync(path.dirname(path.join(repoRoot, testFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, testFile), 'it("renders previous UI state", () => {});\n', 'utf8');
+        writeProtectedControlPlaneManifest(repoRoot);
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart failed test review after test-only remediation with protected historical scope',
+            orchestratorWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            plannedChangedFiles: changedFiles
+        });
+        assert.equal(taskModeResult.exitCode, 0, taskModeResult.outputLines.join('\n'));
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, sourceFile), 'export const previousRule = false;\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, testFile), 'it("renders the updated UI state", () => {});\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart failed test review after test-only remediation with protected historical scope',
+            changedFiles
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const upstreamReviews: Array<[string, string]> = [
+            ['code', 'REVIEW PASSED'],
+            ['refactor', 'REFACTOR REVIEW PASSED'],
+            ['security', 'SECURITY REVIEW PASSED']
+        ];
+        for (const [reviewType, verdict] of upstreamReviews) {
+            seedReusableReviewEvidence(
+                repoRoot,
+                taskId,
+                reviewType,
+                verdict,
+                preflightPath,
+                path.join(getReviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`),
+                `agent:${reviewType}-reviewer`
+            );
+        }
+
+        fs.writeFileSync(
+            path.join(repoRoot, testFile),
+            'it("renders the updated UI state", () => { assert.equal(1, 1); });\n',
+            'utf8'
+        );
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles,
+            impactAnalysis: [
+                `Reviewer finding: test reviewer reported missing assertion coverage in ${testFile}.`,
+                `Intended fix: edit ${testFile} only to add the missing assertion for the failed test review.`,
+                `Affected files/contracts: ${testFile} is the only affected file; product contracts stay unchanged.`,
+                `API/runtime/artifact/test impact: only test impact is expected from ${testFile}; runtime and artifacts stay unchanged.`,
+                'Possible side effects: historical protected preflight scope must not force fresh upstream reviewers when the remediation delta is test-only.',
+                'Required targeted checks: focused review-cycle classification and reuse assertions cover the protected historical scope path.',
+                'Scope or review-type changes: review-type impact stays in test; code, security, and refactor remain reuse candidates.',
+                'Related blockers/follow-up: no separate follow-up is needed because the remediation delta is limited to the failed test-review file.'
+            ].join(' '),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const triggers = refreshedPreflight.triggers as Record<string, unknown>;
+        assert.equal(triggers.protected_control_plane_changed, true);
+        assert.deepEqual(triggers.changed_protected_files, [sourceFile]);
+
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
+        const evidence = classification.evidence as Record<string, unknown>;
+        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
+        const expectedPreservedReviews = ['code', 'refactor', 'security'];
+        assert.equal(classification.category, 'test_coverage_only');
+        assert.equal(classification.scope_category, 'previous_scope_only');
+        assert.doesNotMatch(String(classification.reason), /protected-control-plane changes/);
         assert.deepEqual(classification.invalidated_review_types, ['test']);
         assert.deepEqual(
             [...((classification.preserved_review_types as string[]) || [])].sort(),

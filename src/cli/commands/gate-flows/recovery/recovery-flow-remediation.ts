@@ -25,16 +25,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function getPreflightReuseBlockReason(preflightPayload?: unknown): string | null {
+function pathsReferToSameRelativeFile(left: string, right: string): boolean {
+    return left === right || left.endsWith(`/${right}`) || right.endsWith(`/${left}`);
+}
+
+function getPreflightReuseBlockReason(
+    preflightPayload?: unknown,
+    remediationChangedFiles: readonly string[] = []
+): string | null {
     if (!isRecord(preflightPayload) || !isRecord(preflightPayload.triggers)) {
         return null;
     }
     const changedProtectedFiles = Array.isArray(preflightPayload.triggers.changed_protected_files)
-        ? preflightPayload.triggers.changed_protected_files
-            .map((entry) => String(entry || '').trim())
-            .filter(Boolean)
+        ? normalizeChangedFiles(preflightPayload.triggers.changed_protected_files)
         : [];
     if (preflightPayload.triggers.protected_control_plane_changed === true || changedProtectedFiles.length > 0) {
+        const remediationFileSet = new Set(normalizeChangedFiles(remediationChangedFiles));
+        if (remediationFileSet.size > 0 && changedProtectedFiles.length > 0) {
+            const protectedRemediationFiles = changedProtectedFiles.filter((protectedFile) => (
+                [...remediationFileSet].some((remediationFile) => (
+                    pathsReferToSameRelativeFile(protectedFile, remediationFile)
+                ))
+            ));
+            if (protectedRemediationFiles.length === 0) {
+                return null;
+            }
+            return `remediation delta includes protected-control-plane changes: ${protectedRemediationFiles.join(', ')}`;
+        }
         return changedProtectedFiles.length > 0
             ? `refreshed preflight includes protected-control-plane changes: ${changedProtectedFiles.join(', ')}`
             : 'refreshed preflight includes protected-control-plane changes';
@@ -444,7 +461,10 @@ export function classifyReviewRemediationFix(
             : 'previous_scope_only';
     const semantic = getReviewRemediationSemanticSignals(scopeBoundary, impactAnalysis, testTriggerRegexes);
     const affectedFileGroups = groupReviewRemediationFiles(scopeBoundary.currentChangedFiles, testTriggerRegexes);
-    const preflightReuseBlockReason = getPreflightReuseBlockReason(preflightPayload);
+    const preflightReuseBlockReason = getPreflightReuseBlockReason(
+        preflightPayload,
+        semantic.category === 'test_coverage_only' ? semantic.changedFiles : []
+    );
     const failClosed = !!preflightReuseBlockReason
         || semantic.category === 'unknown'
         || semantic.category === 'security_sensitive'
