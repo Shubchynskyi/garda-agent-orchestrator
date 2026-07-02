@@ -9,6 +9,8 @@ import {
     runCompileGateCommand,
     runDocImpactGateCommand
 } from '../../../../../../src/cli/commands/gates';
+import { runTaskAuditSummaryCommand } from '../../../../../../src/cli/commands/gate-flows/task/task-summary-flow';
+import { EXIT_GATE_FAILURE } from '../../../../../../src/cli/exit-codes';
 import { runCliMain } from '../../../../../../src/cli/main';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 
@@ -625,52 +627,25 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(staleJsonPath, '{}\n', 'utf8');
         fs.writeFileSync(staleMarkdownPath, 'stale\n', 'utf8');
 
-        const previousExitCode = process.exitCode;
-        const previousCwd = process.cwd();
-        const originalStdoutWrite = process.stdout.write;
-        const capturedStdout: string[] = [];
-        process.exitCode = 0;
-        process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): boolean => {
-            let bufferEncoding: BufferEncoding = 'utf8';
-            let writeCallback = callback;
-            if (typeof encoding === 'function') {
-                writeCallback = encoding;
-            } else if (encoding !== undefined) {
-                bufferEncoding = encoding;
-            }
-            capturedStdout.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString(bufferEncoding));
-            if (typeof writeCallback === 'function') {
-                writeCallback();
-            }
-            return true;
-        }) as typeof process.stdout.write;
-
         try {
-            process.chdir(repoRoot);
-            await runCliMain([
-                'gate',
-                'task-audit-summary',
-                '--task-id', taskId,
-                '--repo-root', repoRoot,
-                '--as-json'
-            ]);
+            const auditResult = runTaskAuditSummaryCommand({
+                taskId,
+                repoRoot,
+                asJson: true
+            });
+            assert.equal(auditResult.exitCode, EXIT_GATE_FAILURE);
+            const rendered = JSON.parse(auditResult.rendered);
+            assert.equal(rendered.status, 'INCOMPLETE');
+            assert.equal(rendered.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
+            assert.equal(rendered.point_in_time_snapshot.owner_pid, process.pid);
+            assert.equal(rendered.point_in_time_snapshot.owner_metadata_status, 'ok');
+            assert.equal(rendered.point_in_time_snapshot.acquisition_policy.timeout_ms, 5000);
+            assert.match(rendered.final_report_contract.blocker, /point-in-time snapshot/i);
+            assert.match(rendered.final_report_contract.blocker, /Re-run task-audit-summary sequentially/i);
+            assert.equal(fs.existsSync(staleJsonPath), true);
+            assert.equal(fs.existsSync(staleMarkdownPath), true);
         } finally {
-            process.stdout.write = originalStdoutWrite;
-            process.chdir(previousCwd);
-            process.exitCode = previousExitCode;
+            fs.rmSync(repoRoot, { recursive: true, force: true });
         }
-
-        const rendered = JSON.parse(capturedStdout.join(''));
-        assert.equal(rendered.status, 'INCOMPLETE');
-        assert.equal(rendered.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
-        assert.equal(rendered.point_in_time_snapshot.owner_pid, process.pid);
-        assert.equal(rendered.point_in_time_snapshot.owner_metadata_status, 'ok');
-        assert.equal(rendered.point_in_time_snapshot.acquisition_policy.timeout_ms, 5000);
-        assert.match(rendered.final_report_contract.blocker, /point-in-time snapshot/i);
-        assert.match(rendered.final_report_contract.blocker, /Re-run task-audit-summary sequentially/i);
-        assert.equal(fs.existsSync(staleJsonPath), true);
-        assert.equal(fs.existsSync(staleMarkdownPath), true);
-
-        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 });
