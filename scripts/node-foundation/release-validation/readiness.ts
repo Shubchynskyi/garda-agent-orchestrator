@@ -134,6 +134,40 @@ function extractYamlListAfterKey(block: string | null, key: string): string[] {
     return values;
 }
 
+function getYamlDirectChildBlock(block: string | null, key: string): string | null {
+    if (block === null) {
+        return null;
+    }
+    const lines = block.split(/\r?\n/u);
+    const parentLineIndex = lines.findIndex((line) => line.trim() !== '');
+    if (parentLineIndex === -1) {
+        return null;
+    }
+    const parentIndent = lines[parentLineIndex].match(/^\s*/u)![0].length;
+    const childIndent = lines.slice(parentLineIndex + 1)
+        .map((line) => ({ line, indent: line.match(/^\s*/u)![0].length }))
+        .find(({ line, indent }) => line.trim() !== '' && indent > parentIndent)?.indent;
+    if (childIndent === undefined) {
+        return null;
+    }
+
+    const keyPattern = new RegExp(`^\\s{${childIndent}}${key}:\\s*(?:[|>][+-]?)?\\s*$`, 'u');
+    const keyIndex = lines.findIndex((line, index) => index > parentLineIndex && keyPattern.test(line));
+    if (keyIndex === -1) {
+        return null;
+    }
+
+    let endIndex = lines.length;
+    for (let index = keyIndex + 1; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (line.trim() && line.match(/^\s*/u)![0].length <= childIndent) {
+            endIndex = index;
+            break;
+        }
+    }
+    return lines.slice(keyIndex, endIndex).join('\n');
+}
+
 function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
     return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -144,6 +178,45 @@ function workflowJobHasRunStep(block: string | null, command: string): boolean {
     }
     const runScripts = extractWorkflowRunScripts(block);
     return runScripts.some((script) => scriptHasExecutableCommand(script, command));
+}
+
+function workflowJobHasExactRunLine(block: string | null, command: string): boolean {
+    if (block === null) {
+        return false;
+    }
+    return extractWorkflowRunScripts(block)
+        .some((script) => extractExecutableScriptLines(script).some((line) => line === command));
+}
+
+function workflowRunScriptsIncludeAll(runScripts: readonly string[], requiredMarkers: readonly string[]): boolean {
+    return runScripts.some((script) => {
+        const executableLines = extractExecutableScriptLines(script);
+        return requiredMarkers.every((marker) => executableLines.some((line) => executableLineContainsMarker(line, marker)));
+    });
+}
+
+function workflowRunScriptsIncludeExecutableMarkers(
+    runScripts: readonly string[],
+    requiredMarkers: readonly string[]
+): boolean {
+    return runScripts.some((script) => {
+        const executableLines = extractExecutableScriptLines(script);
+        return requiredMarkers.every((marker) => executableLines.some((line) => line.includes(marker)));
+    });
+}
+
+function executableLineContainsMarker(line: string, marker: string): boolean {
+    return !isShellTextOnlyCommand(line)
+        && extractHereDocTerminator(line) === null
+        && line.includes(marker);
+}
+
+function isShellTextOnlyCommand(line: string): boolean {
+    const withoutLeadingAssignments = line.replace(
+        /^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]+)\s+)*/u,
+        ''
+    );
+    return /^(?:echo|printf)\b/u.test(withoutLeadingAssignments);
 }
 
 function workflowHasUseStep(workflowText: string, actionReference: string): boolean {
@@ -229,8 +302,29 @@ function blockHasNonCommentLine(block: string | null, expectedLine: string): boo
         });
 }
 
+function yamlBlockHasScalarValue(block: string | null, key: string, allowedValues: readonly string[]): boolean {
+    if (block === null) {
+        return false;
+    }
+    const keyPattern = new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'u');
+    return block.split(/\r?\n/u).some((line) => {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed.startsWith('#')) {
+            return false;
+        }
+        const match = keyPattern.exec(trimmed);
+        return match !== null && allowedValues.includes(stripYamlQuotes(match[1].trim()));
+    });
+}
+
 function scriptHasExecutableCommand(script: string, command: string): boolean {
+    return extractExecutableScriptLines(script)
+        .some((line) => line === command || line.startsWith(`${command} `));
+}
+
+function extractExecutableScriptLines(script: string): string[] {
     let hereDocTerminator: string | null = null;
+    const executableLines: string[] = [];
 
     for (const line of script.split(/\r?\n/u)) {
         const trimmedLine = line.trim();
@@ -243,13 +337,11 @@ function scriptHasExecutableCommand(script: string, command: string): boolean {
         if (!trimmedLine || trimmedLine.startsWith('#')) {
             continue;
         }
-        if (trimmedLine === command || trimmedLine.startsWith(`${command} `)) {
-            return true;
-        }
+        executableLines.push(trimmedLine);
         hereDocTerminator = extractHereDocTerminator(trimmedLine);
     }
 
-    return false;
+    return executableLines;
 }
 
 function extractHereDocTerminator(line: string): string | null {
@@ -399,6 +491,173 @@ function validateSecurityCiBaselineContract(repoRoot: string): { passed: boolean
         { passed: requiredCheckGuidance, detail: 'informational: branch protection required-check guidance labels retained security checks' },
         { passed: actionPinningDecision, detail: 'informational: GitHub Action pinning decision documented' },
         { passed: updateSourcePolicyReporting, detail: 'informational: update-source policy reporting statuses documented' }
+    ];
+
+    return {
+        passed: checks.every((check) => check.passed),
+        details: checks.map((check) => `${check.detail}=${check.passed}`)
+    };
+}
+
+function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boolean; details: string[] } {
+    const publishWorkflow = readTextFileIfExists(path.join(repoRoot, '.github', 'workflows', 'publish.yml')) || '';
+    const validateJob = getWorkflowJobBlock(publishWorkflow, 'validate');
+    const publishJob = getWorkflowJobBlock(publishWorkflow, 'publish');
+    const onBlock = getYamlKeyBlock(publishWorkflow, 'on');
+    const pushTriggerBlock = getYamlDirectChildBlock(onBlock, 'push');
+    const workflowEnv = getYamlKeyBlock(publishWorkflow, 'env');
+    const tagTriggers = extractYamlListAfterKey(pushTriggerBlock, 'tags');
+    const validateSetupNode = getWorkflowUseStepBlock(validateJob || '', 'actions/setup-node@v6');
+    const publishSetupNode = getWorkflowUseStepBlock(publishJob || '', 'actions/setup-node@v6');
+    const validateSetupWith = getYamlKeyBlock(validateSetupNode, 'with');
+    const publishSetupWith = getYamlKeyBlock(publishSetupNode, 'with');
+    const publishPermissions = getYamlKeyBlock(publishJob, 'permissions');
+    const validateUploadArtifact = getWorkflowUseStepBlock(validateJob || '', 'actions/upload-artifact@v4');
+    const validateUploadWith = getYamlKeyBlock(validateUploadArtifact, 'with');
+    const validateRunScripts = validateJob === null ? [] : extractWorkflowRunScripts(validateJob);
+    const publishRunScripts = publishJob === null ? [] : extractWorkflowRunScripts(publishJob);
+
+    const tagVersionGuard = workflowRunScriptsIncludeAll(validateRunScripts, [
+        'set -euo pipefail',
+        'GITHUB_REF_TYPE',
+        'GITHUB_REF_NAME',
+        'TAG_VERSION="${GITHUB_REF_NAME#v}"',
+        `PACKAGE_VERSION="$(node -p "require('./package.json').version")"`,
+        `LOCK_VERSION="$(node -p "require('./package-lock.json').version")"`,
+        `LOCK_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"`,
+        `VERSION_FILE="$(node -e "process.stdout.write(require('node:fs').readFileSync('VERSION', 'utf8').trim())")"`,
+        '${TAG_VERSION}" != "${PACKAGE_VERSION}',
+        '${TAG_VERSION}" != "${LOCK_VERSION}',
+        '${TAG_VERSION}" != "${LOCK_ROOT_VERSION}',
+        '${TAG_VERSION}" != "${VERSION_FILE}',
+        'exit 1'
+    ]);
+    const publishSanityGuard = workflowRunScriptsIncludeAll(publishRunScripts, [
+        'set -euo pipefail',
+        'GITHUB_REF_TYPE',
+        'GITHUB_REF_NAME',
+        'TAG_VERSION="${GITHUB_REF_NAME#v}"',
+        `PACKAGE_NAME="$(node -p "require('./package.json').name")"`,
+        `PACKAGE_VERSION="$(node -p "require('./package.json').version")"`,
+        `LOCK_VERSION="$(node -p "require('./package-lock.json').version")"`,
+        `LOCK_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"`,
+        `VERSION_FILE="$(node -e "process.stdout.write(require('node:fs').readFileSync('VERSION', 'utf8').trim())")"`,
+        '${PACKAGE_NAME}" != "garda-agent-orchestrator"',
+        '${TAG_VERSION}" != "${PACKAGE_VERSION}',
+        '${TAG_VERSION}" != "${LOCK_VERSION}',
+        '${TAG_VERSION}" != "${LOCK_ROOT_VERSION}',
+        '${TAG_VERSION}" != "${VERSION_FILE}',
+        'NPM_VERSION="$(npm --version)"',
+        'npm CLI 11.5.1+',
+        'major < 11',
+        'minor < 5',
+        'patch < 1'
+    ]);
+    const tagDrivenOnly = tagTriggers.includes('v*') && !publishWorkflow.includes('workflow_dispatch:');
+    const nodeVersionPinned = yamlBlockHasScalarValue(workflowEnv, 'NODE_VERSION', ['24', '24.x']);
+    const packDryRunArtifactOutsideCheckout = workflowRunScriptsIncludeExecutableMarkers(validateRunScripts, [
+        'set -euo pipefail',
+        'npm pack --dry-run',
+        '$RUNNER_TEMP/npm-pack-dry-run.txt'
+    ]) && blockHasNonCommentLine(validateUploadWith, 'path: ${{ runner.temp }}/npm-pack-dry-run.txt');
+    const validateJobContract = validateJob !== null
+        && blockHasNonCommentLine(validateJob, 'runs-on: ubuntu-latest')
+        && workflowHasUseStep(validateJob, 'actions/checkout@v6')
+        && validateSetupNode !== null
+        && nodeVersionPinned
+        && blockHasNonCommentLine(validateSetupWith, "node-version: ${{ env.NODE_VERSION }}")
+        && blockHasNonCommentLine(validateSetupWith, 'package-manager-cache: false')
+        && tagVersionGuard
+        && workflowJobHasRunStep(validateJob, 'npm ci --no-fund --no-audit')
+        && workflowJobHasRunStep(validateJob, 'npm run release:preflight')
+        && packDryRunArtifactOutsideCheckout
+        && validateUploadArtifact !== null
+        && validateJob.includes('npm-pack-dry-run.txt')
+        && blockHasNonCommentLine(validateUploadWith, 'if-no-files-found: error');
+    const publishJobContract = publishJob !== null
+        && blockHasNonCommentLine(publishJob, 'runs-on: ubuntu-latest')
+        && blockHasNonCommentLine(publishJob, 'needs: validate')
+        && blockHasNonCommentLine(publishJob, 'environment: npm-release')
+        && blockHasNonCommentLine(publishPermissions, 'contents: read')
+        && blockHasNonCommentLine(publishPermissions, 'id-token: write')
+        && workflowHasUseStep(publishJob, 'actions/checkout@v6')
+        && publishSetupNode !== null
+        && nodeVersionPinned
+        && blockHasNonCommentLine(publishSetupWith, "node-version: ${{ env.NODE_VERSION }}")
+        && blockHasNonCommentLine(publishSetupWith, 'registry-url: https://registry.npmjs.org')
+        && blockHasNonCommentLine(publishSetupWith, 'package-manager-cache: false')
+        && workflowJobHasRunStep(publishJob, 'npm ci --no-fund --no-audit')
+        && publishSanityGuard
+        && workflowJobHasRunStep(publishJob, 'npm run release:preflight')
+        && workflowJobHasExactRunLine(publishJob, 'npm publish');
+    const tokenlessOidc = !publishWorkflow.includes('NODE_AUTH_TOKEN')
+        && !publishWorkflow.includes('NPM_TOKEN')
+        && !publishWorkflow.includes('--provenance')
+        && !publishWorkflow.includes('self-hosted');
+
+    const checks = [
+        { passed: publishWorkflow !== '', detail: 'publish.yml present' },
+        { passed: tagDrivenOnly, detail: 'publish.yml is v*-tag driven without manual dispatch' },
+        { passed: nodeVersionPinned, detail: 'publish workflow pins Node 24 for Trusted Publishing' },
+        { passed: tagVersionGuard, detail: 'validate job has fail-closed tag/version guard' },
+        { passed: packDryRunArtifactOutsideCheckout, detail: 'validate job records npm pack dry-run output outside the checkout' },
+        { passed: validateJobContract, detail: 'validate job checks tag/version metadata, release proof, and npm pack dry-run' },
+        { passed: publishSanityGuard, detail: 'publish job has fail-closed package and npm CLI sanity guard' },
+        { passed: publishJobContract, detail: 'publish job is npm-release environment gated and uses id-token OIDC npm publish' },
+        { passed: tokenlessOidc, detail: 'publish workflow avoids npm tokens, --provenance override, and self-hosted runners' }
+    ];
+
+    return {
+        passed: checks.every((check) => check.passed),
+        details: checks.map((check) => `${check.detail}=${check.passed}`)
+    };
+}
+
+function validateTrustedPublishDocsContract(repoRoot: string, version: string | null): { passed: boolean; details: string[] } {
+    const releaseReadiness = readTextFileIfExists(path.join(repoRoot, 'docs', 'release-readiness.md')) || '';
+    const runMethods = readTextFileIfExists(path.join(repoRoot, 'docs', 'run-methods.md')) || '';
+    const platformDocs = readTextFileIfExists(path.join(repoRoot, 'docs', 'node-platform-foundation.md')) || '';
+    const targetVersion = version || 'unknown';
+    const versionCommand = `npx --yes garda-agent-orchestrator@${targetVersion} --version`;
+
+    const checklistDocumentsTrustedPublishing = [
+        `## ${targetVersion}`,
+        'Trusted Publishing',
+        '`publish.yml`',
+        '`npm-release`',
+        'required reviewers',
+        'release evidence',
+        '`Shubchynskyi`',
+        '`garda-agent-orchestrator`',
+        '`npm publish`',
+        'Require two-factor authentication and disallow tokens',
+        versionCommand
+    ].every((marker) => releaseReadiness.includes(marker));
+    const runbookDocumentsOperatorSetup = [
+        '.github/workflows/publish.yml',
+        'npm-release',
+        'required_reviewers',
+        'release evidence',
+        'Trusted Publisher',
+        'Shubchynskyi',
+        'publish.yml',
+        'Require two-factor authentication and disallow tokens',
+        'npm publish'
+    ].every((marker) => runMethods.includes(marker));
+    const platformDocsNameTagDrivenRelease = [
+        'Tag-driven npm publishing',
+        '.github/workflows/publish.yml',
+        'npm Trusted Publishing',
+        'GitHub Environment approval',
+        'required_reviewers',
+        'OIDC',
+        'npm publish'
+    ].every((marker) => platformDocs.includes(marker));
+
+    const checks = [
+        { passed: checklistDocumentsTrustedPublishing, detail: `docs/release-readiness.md records ${targetVersion} Trusted Publishing readiness` },
+        { passed: runbookDocumentsOperatorSetup, detail: 'docs/run-methods.md documents GitHub Environment and npm Trusted Publisher setup' },
+        { passed: platformDocsNameTagDrivenRelease, detail: 'docs/node-platform-foundation.md names the tag-driven OIDC release path' }
     ];
 
     return {
@@ -577,6 +836,26 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         securityCiBaseline.details
     );
 
+    const trustedPublishWorkflow = validateTrustedPublishWorkflowContract(normalizedRoot);
+    pushCheck(
+        checks,
+        violations,
+        'trusted-publish-workflow',
+        'npm Trusted Publishing workflow is tag-driven, approval-gated, tokenless, and provenance-ready',
+        trustedPublishWorkflow.passed,
+        trustedPublishWorkflow.details
+    );
+
+    const trustedPublishDocs = validateTrustedPublishDocsContract(normalizedRoot, version);
+    pushCheck(
+        checks,
+        violations,
+        'trusted-publish-docs',
+        'release docs document the tag-driven npm Trusted Publishing operator path',
+        trustedPublishDocs.passed,
+        trustedPublishDocs.details
+    );
+
     const cliReference = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'cli-reference.md')) || '';
     const runMethods = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'run-methods.md')) || '';
     const platformDocs = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'node-platform-foundation.md')) || '';
@@ -596,11 +875,12 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
     );
 
     const releaseChecklist = validateReleaseChecklist(normalizedRoot, version);
+    const releaseChecklistVersion = version || 'unknown';
     pushCheck(
         checks,
         violations,
         'release-blockers',
-        'tracked Release 1.1.0 readiness checklist is complete',
+        `tracked Release ${releaseChecklistVersion} readiness checklist is complete`,
         releaseChecklist.releaseChecklistItems.length > 0 &&
             releaseChecklist.openReleaseChecklistItems.length === 0,
         releaseChecklist.details
@@ -610,13 +890,15 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         `Version: ${version || 'unknown'}`,
         'Validation command: npm run release:preflight',
         'Package proof: validate:release covers clean worktree, version parity, build, embedded bundle parity, quality, pack smoke, and final clean worktree.',
-        'Readiness alignment: validate:release-readiness checks package, CI runtime matrix, runtime-state docs, security-document surface, and the tracked Release 1.1.0 checklist before the full proof path.',
+        `Readiness alignment: validate:release-readiness checks package, CI runtime matrix, runtime-state docs, security-document surface, npm Trusted Publishing workflow/docs, and the tracked Release ${releaseChecklistVersion} checklist before the full proof path.`,
         'Short smoke: test:release-smoke exercises task id parsing, task-event append integrity, next-step startup routing, and status and doctor formatting before the full proof path.',
         'Package smoke: npm run test:packaging remains an explicit validate:release step for pack, install, and CLI invoke proof.',
         'Update/runtime alignment: CI workflow is configured for setup, update git, doctor, and uninstall smoke across Linux, Windows, and macOS.',
         'Unused-symbol enforcement: quality includes typecheck:unused with --noUnusedLocals and --noUnusedParameters before lint, coverage, and production npm audit.',
         'Security/audit alignment: quality includes production npm audit and security/SBOM/threat-model docs are present in source, package files, and MANIFEST.',
-        'Release-security baseline: readiness labels npm audit and gitleaks as blocking, OSV and SBOM as informational, and reports action-pinning plus update-source provenance policy without adding a duplicate security pipeline.'
+        'Release-security baseline: readiness labels npm audit and gitleaks as blocking, OSV and SBOM as informational, and reports action-pinning plus update-source provenance policy without adding a duplicate security pipeline.',
+        'Trusted Publishing path: pushing the matching v* tag runs .github/workflows/publish.yml, validates the package before approval, then waits for the npm-release GitHub Environment before tokenless OIDC npm publish.',
+        `Post-publish verification: confirm npm latest, package integrity/provenance visibility, and npx --yes garda-agent-orchestrator@${version || '<version>'} --version.`
     ];
 
     return {

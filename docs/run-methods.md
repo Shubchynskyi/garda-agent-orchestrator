@@ -147,6 +147,34 @@ npm run validate:clean-worktree
 
 Direct `npm pack` and `npm pack --dry-run` run the package `prepack` lifecycle, which enforces a clean worktree before package preparation and again after `build:publish-runtime`.
 
+## 8.1 Tag-Driven npm Publish
+
+The primary npm release path is now tag-driven through `.github/workflows/publish.yml`, not a local `npm publish`.
+
+Before pushing `v1.2.0`, complete these repository and registry checks:
+
+1. Run `npm run release:preflight` from a clean local worktree.
+2. Configure the GitHub repository Environment `npm-release` with required reviewer approval. Before pushing the tag, capture release evidence for the environment settings with GitHub REST or UI output showing `required_reviewers` is non-empty for `npm-release`; the publish job must not run from an environment that only exists by name. A `git push origin v1.2.0` must create a pending publish job; it must not publish until an operator approves the environment deployment in GitHub Actions.
+3. On npmjs.com, open the `garda-agent-orchestrator` package settings and configure Trusted Publisher:
+   - Publisher: GitHub Actions.
+   - Organization or user: `Shubchynskyi`.
+   - Repository: `garda-agent-orchestrator`.
+   - Workflow filename: `publish.yml`.
+   - Environment name: `npm-release` when the npm UI supports environment binding.
+   - Allowed action: `npm publish`.
+4. Keep old automation tokens disabled or unused during the first OIDC publish attempt, but do not remove the rollback path until the Trusted Publishing run succeeds.
+5. Push the matching tag only after package metadata, `VERSION`, changelog, and `docs/release-readiness.md` all name the same version.
+
+After the GitHub Actions publish job completes, verify:
+
+```text
+npm view garda-agent-orchestrator@latest version dist.integrity
+npm view garda-agent-orchestrator@1.2.0 version dist.integrity
+npx --yes garda-agent-orchestrator@1.2.0 --version
+```
+
+Also verify the package page or npm metadata shows provenance/attestation for the public package before claiming provenance in release notes. After that verification, set npm Publishing access to `Require two-factor authentication and disallow tokens`, then remove obsolete long-lived publish tokens from npm and GitHub secrets.
+
 ## 9. Update And Rollback In A Deployed Workspace
 
 ```text

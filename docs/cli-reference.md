@@ -13,7 +13,7 @@ The runtime is Node-only.
 
 Runtime compatibility matrix:
 
-| Node.js line | Garda 1.1.x status | Notes |
+| Node.js line | Garda 1.2.x status | Notes |
 |---|---|---|
 | Node 24 LTS | Supported primary runtime | Covered by `package.json` engines, CI, release validation, and cross-platform smoke. |
 | Node 22.13+ LTS | Supported compatibility runtime | Covered by `package.json` engines, CI typecheck/test/release validation, runtime diagnostics, docs, and cross-platform smoke. |

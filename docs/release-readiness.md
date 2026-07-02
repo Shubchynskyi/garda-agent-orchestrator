@@ -4,6 +4,18 @@ This tracked checklist is the release-cut source of truth for static readiness.
 Local `TASK.md` and `TASK_DONE.md` files are intentionally gitignored operator
 queues and must not be treated as publish blockers by release validation.
 
+## 1.2.0
+
+- [x] Package metadata is aligned to `1.2.0` in `package.json`, `package-lock.json`, and `VERSION`.
+- [x] `.github/workflows/publish.yml` is the primary tag-driven release workflow for `v*` tags and runs on GitHub-hosted Ubuntu with Node 24.
+- [x] The publish workflow validates tag/version parity, runs `npm ci`, runs `npm run release:preflight`, and records `npm pack --dry-run` output before any approval-gated publish job can start.
+- [x] The `publish` job waits on the GitHub Environment `npm-release`, uses `permissions: contents: read, id-token: write`, disables package-manager cache, reruns release proof after approval, and publishes with plain `npm publish` through npm Trusted Publishing/OIDC.
+- [x] The `npm-release` GitHub Environment setup must have required reviewers enabled and must be captured as release evidence before the matching `v*` tag is pushed.
+- [x] npmjs.com Trusted Publisher settings are documented as GitHub Actions publisher `Shubchynskyi` / `garda-agent-orchestrator` / `publish.yml`, Environment `npm-release` when supported, and allowed action `npm publish`.
+- [x] Post-verification hardening is documented: set Publishing access to `Require two-factor authentication and disallow tokens` and remove obsolete publish tokens only after Trusted Publishing succeeds.
+- [x] Release operators are told not to claim provenance until npm shows package provenance/attestation evidence for the public package.
+- [x] Post-publish verification includes npm `latest`, package integrity/provenance visibility, and `npx --yes garda-agent-orchestrator@1.2.0 --version`.
+
 ## 1.1.0
 
 - [x] Update provenance and self-update trust policy are documented and validated.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+### Release And Package Publishing
+- Prepared npm Trusted Publishing through a tag-driven `.github/workflows/publish.yml` workflow with pre-approval release validation, `npm pack --dry-run` evidence, `npm-release` environment approval, OIDC `id-token: write`, and tokenless `npm publish`.
+- Updated release readiness validation to check the Trusted Publishing workflow and operator docs so future release prep cannot drift back to local token-based publishing.
+- Documented npmjs.com Trusted Publisher settings, GitHub Environment approval, post-publish provenance verification, exact-version install verification, and post-verification token restrictions.
+- Aligned package metadata for the planned `1.2.0` release.
+
 ## 1.1.1
 
 ### Local UI
