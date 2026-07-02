@@ -398,6 +398,48 @@ test('runNodeFoundationTests runs contention-sensitive tests after parallel shar
     }
 });
 
+test('runNodeFoundationTests isolates completion rollback suite from grouped shard peers', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const isolatedTestPath = addCompiledTestFile(
+        buildResult,
+        'tests/node/cli/commands/gates/completion/gates-completion-rollback.test.js'
+    );
+    const observedShardArgs: string[][] = [];
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2'
+        ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
+            observedShardArgs.push(Array.from(args));
+            return createCompletingNodeTestChild();
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.equal(observedShardArgs.length, 3);
+        const isolatedShardArgs = observedShardArgs.filter((args) => args.includes(isolatedTestPath));
+        assert.equal(isolatedShardArgs.length, 1);
+        assert.deepEqual(isolatedShardArgs[0], [...DEFAULT_SHARDED_NODE_TEST_ARGS, isolatedTestPath]);
+    } finally {
+        process.argv = originalArgv;
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
 test('runNodeFoundationTests schedules known 60s slow tests as isolated shards with default shard concurrency', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
@@ -408,8 +450,13 @@ test('runNodeFoundationTests schedules known 60s slow tests as isolated shards w
     const durationFile = path.join(buildResult.repoRoot, 'duration-telemetry.json');
     const isolatedTestPath = addCompiledTestFile(
         buildResult,
-            'tests/node/repo/dynamic-heavy.test.js'
-        );
+        'tests/node/repo/dynamic-heavy.test.js'
+    );
+    fs.writeFileSync(
+        path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js'),
+        `${'void 0;\n'.repeat(20_000)}\n`,
+        'utf8'
+    );
     const observedShardArgs: string[][] = [];
     const observedLogs: string[] = [];
     let activeShards = 0;
@@ -466,8 +513,10 @@ test('runNodeFoundationTests schedules known 60s slow tests as isolated shards w
         assert.equal(exitCode, 0);
         assert.equal(observedShardArgs.length, 3);
         assert.equal(maxActiveShards, 2);
-        assert.ok(observedShardArgs.slice(0, 2).every((args) => !args.includes(isolatedTestPath)));
-        assert.deepEqual(observedShardArgs[2], [...DEFAULT_SHARDED_NODE_TEST_ARGS, isolatedTestPath]);
+        assert.ok(observedShardArgs[0].includes(isolatedTestPath), 'known slow isolated test should start first');
+        const isolatedShardArgs = observedShardArgs.filter((args) => args.includes(isolatedTestPath));
+        assert.equal(isolatedShardArgs.length, 1);
+        assert.deepEqual(isolatedShardArgs[0], [...DEFAULT_SHARDED_NODE_TEST_ARGS, isolatedTestPath]);
         const comparisonLine = observedLogs.find((line) => line.startsWith('NODE_FOUNDATION_TEST_SHARD_COMPARISON '));
         assert.match(comparisonLine || '', /current_threshold_ms=60000/);
         assert.match(comparisonLine || '', /baseline_threshold_ms=60000/);
@@ -1301,14 +1350,18 @@ test('runNodeFoundationTests balances shards with duration telemetry before size
 
         assert.equal(exitCode, 0);
         assert.equal(observedShardArgs.length, 2);
-        assert.deepEqual(observedShardArgs[0], [
-            ...DEFAULT_SHARDED_NODE_TEST_ARGS,
-            path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js')
-        ]);
-        assert.deepEqual(observedShardArgs[1], [
-            ...DEFAULT_SHARDED_NODE_TEST_ARGS,
-            path.join(buildResult.buildRoot, 'tests', 'node', 'repo', 'build-root-serialization.test.js'),
-            path.join(buildResult.buildRoot, ...buildResult.copiedFiles[2].split('/'))
+        const observedShardFiles = observedShardArgs
+            .map((args) => args
+                .filter((arg) => !arg.startsWith('--'))
+                .map((file) => path.relative(buildResult.buildRoot, file).replace(/\\/g, '/'))
+                .sort())
+            .sort((a, b) => a.join('\0').localeCompare(b.join('\0')));
+        assert.deepEqual(observedShardFiles, [
+            ['tests/node/cli/commands/gates.test.js'],
+            [
+                'tests/node/repo/auto-shard-long-path-0000-padding-padding-padding-padding.test.js',
+                'tests/node/repo/build-root-serialization.test.js'
+            ]
         ]);
         assert.ok(observedShardArgs.every((args) => !args.includes('--garda-duration-file')));
     } finally {

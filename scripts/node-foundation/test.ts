@@ -32,7 +32,9 @@ const GARDA_SHARD_LOG_DIR_OPTION = '--garda-shard-log-dir';
 const GARDA_DURATION_FILE_OPTION = '--garda-duration-file';
 const NODE_FOUNDATION_BASELINE_SINGLE_FILE_SHARD_MIN_DURATION_MS = 60_000;
 const NODE_FOUNDATION_SINGLE_FILE_SHARD_MIN_DURATION_MS = 60_000;
-const NODE_FOUNDATION_ISOLATED_TEST_PATHS = new Set<string>();
+const NODE_FOUNDATION_ISOLATED_TEST_PATHS = new Set<string>([
+    'tests/node/cli/commands/gates/completion/gates-completion-rollback.test.ts'
+]);
 const NODE_FOUNDATION_SERIAL_TEST_PATHS = new Set<string>([
     'tests/node/bin/garda-delegation.test.ts',
     'tests/node/cli/commands/gates/diagnostics/gates-command-timeout.test.ts',
@@ -817,6 +819,40 @@ function sumKnownTestDurationMs(
     return files.reduce((sum, file) => sum + getKnownTestDurationMs(buildResult, file, telemetry), 0);
 }
 
+function getTestFileSchedulingPriority(
+    buildResult: BuildResult,
+    files: string[],
+    telemetry: TestDurationTelemetry
+): { knownDurationMs: number; fallbackWeight: number; } {
+    return buildTestFileWeights(buildResult, files, telemetry)
+        .reduce((priority, item) => ({
+            knownDurationMs: priority.knownDurationMs + (item.durationMs ?? 0),
+            fallbackWeight: priority.fallbackWeight + item.fallbackSize
+        }), {
+            knownDurationMs: 0,
+            fallbackWeight: 0
+        });
+}
+
+function sortNodeFoundationScheduledShards(
+    buildResult: BuildResult,
+    scheduledShards: string[][],
+    telemetry: TestDurationTelemetry
+): string[][] {
+    return scheduledShards
+        .map((files, index) => ({
+            files,
+            index,
+            ...getTestFileSchedulingPriority(buildResult, files, telemetry)
+        }))
+        .sort((a, b) => (
+            b.knownDurationMs - a.knownDurationMs
+            || b.fallbackWeight - a.fallbackWeight
+            || a.index - b.index
+        ))
+        .map((item) => item.files);
+}
+
 function estimateKnownDurationWallMs(
     buildResult: BuildResult,
     scheduledShards: string[][],
@@ -866,7 +902,11 @@ function summarizeNodeFoundationShardSchedule(
         ).map((shard) => shard.files);
     const isolatedShards = sortFilesByKnownDuration(buildResult, executionPlan.isolatedFiles, telemetry)
         .map((file) => [file]);
-    const scheduledShards = [...parallelShards, ...isolatedShards];
+    const scheduledShards = sortNodeFoundationScheduledShards(
+        buildResult,
+        [...parallelShards, ...isolatedShards],
+        telemetry
+    );
     const maxWorkerProcesses = scheduledShards.length === 0
         ? 1
         : Math.max(1, Math.min(scheduledShards.length, requestedConcurrency));
@@ -1380,7 +1420,11 @@ async function runShardedNodeTestProcesses(
         );
     const isolatedShards = sortFilesByKnownDuration(buildResult, executionPlan.isolatedFiles, telemetry)
         .map((file) => [file]);
-    const scheduledShards = [...parallelShards, ...isolatedShards];
+    const scheduledShards = sortNodeFoundationScheduledShards(
+        buildResult,
+        [...parallelShards, ...isolatedShards],
+        telemetry
+    );
     const shardLogDir = resolveShardLogDir(repoRoot, buildRoot, requestedShardLogDir);
     const runtimeConfig = resolveNodeTestShardRuntimeConfig(
         requestedShardConcurrency,
