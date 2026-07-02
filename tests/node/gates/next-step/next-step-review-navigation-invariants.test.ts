@@ -39,6 +39,26 @@ function markTaskInProgress(repoRoot: string, taskId: string): void {
     );
 }
 
+function seedReviewGatePassWithOverride(repoRoot: string, taskId: string, skippedReviewTypes: string[]): void {
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-review-gate.json`), {
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        skip_reviews: skippedReviewTypes,
+        review_authorship_attestation: {
+            schema_version: 1,
+            skipped_review_types: skippedReviewTypes
+        }
+    });
+    appendEvent(repoRoot, taskId, 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'PASS', {
+        skip_reviews: skippedReviewTypes,
+        review_authorship_attestation: {
+            schema_version: 1,
+            skipped_review_types: skippedReviewTypes
+        }
+    });
+}
+
 function assertNoUnexpectedReviewWork(
     result: { commands?: Array<{ command?: string }> },
     options: {
@@ -126,6 +146,52 @@ describe('gates/next-step post-review navigation invariants', () => {
         assert.notEqual(result.next_gate, 'prepare-reviewer-launch', result.reason);
         assert.equal(result.next_gate, 'doc-impact-gate', result.reason);
         assertNoUnexpectedReviewWork(result);
+    });
+
+    it('treats review gate override skipped lanes as satisfied for closeout routing', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        seedReviewGatePassWithOverride(repoRoot, TASK_ID, ['code']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.review.next_review_type, null, result.reason);
+        assert.equal(result.next_gate, 'doc-impact-gate', result.reason);
+        assertNoUnexpectedReviewWork(result);
+    });
+
+    it('does not satisfy missing review lanes that the review gate override did not skip', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        seedReviewGatePassWithOverride(repoRoot, TASK_ID, ['test']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = commandText(result);
+
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.ok(command.includes('--review-type "code"'), command);
+        assertNoUnexpectedReviewWork(result, { allowBuildReviewContext: true });
     });
 
     it('refreshes preflight instead of restarting failed review when remediation adds expanded non-test files', () => {

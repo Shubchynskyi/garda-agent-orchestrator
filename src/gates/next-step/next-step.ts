@@ -460,6 +460,66 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function normalizeReviewTypeValue(value: unknown): string | null {
+    const reviewType = String(value || '').trim().toLowerCase();
+    return reviewType || null;
+}
+
+function addNormalizedReviewTypes(target: Set<string>, value: unknown): void {
+    if (Array.isArray(value)) {
+        for (const entry of value) {
+            const reviewType = normalizeReviewTypeValue(entry);
+            if (reviewType) {
+                target.add(reviewType);
+            }
+        }
+        return;
+    }
+    if (typeof value === 'string') {
+        for (const entry of value.split(',')) {
+            const reviewType = normalizeReviewTypeValue(entry);
+            if (reviewType) {
+                target.add(reviewType);
+            }
+        }
+        return;
+    }
+    if (isPlainRecord(value)) {
+        for (const [key, enabled] of Object.entries(value)) {
+            if (enabled === true || isPlainRecord(enabled)) {
+                const reviewType = normalizeReviewTypeValue(key);
+                if (reviewType) {
+                    target.add(reviewType);
+                }
+            }
+        }
+    }
+}
+
+function readLatestReviewGateOverrideSkippedReviewTypes(eventsRoot: string, taskId: string): Set<string> {
+    const orderedEvents = readOrderedTaskEvents(path.join(eventsRoot, `${taskId}.jsonl`)).events;
+    for (let index = orderedEvents.length - 1; index >= 0; index -= 1) {
+        const event = orderedEvents[index];
+        const eventType = String(event.event_type || '').trim();
+        if (eventType !== 'REVIEW_GATE_PASSED' && eventType !== 'REVIEW_GATE_PASSED_WITH_OVERRIDE') {
+            continue;
+        }
+        if (eventType !== 'REVIEW_GATE_PASSED_WITH_OVERRIDE') {
+            return new Set();
+        }
+        const details = isPlainRecord(event.details) ? event.details : {};
+        const attestation = isPlainRecord(details.review_authorship_attestation)
+            ? details.review_authorship_attestation
+            : {};
+        const skippedReviewTypes = new Set<string>();
+        addNormalizedReviewTypes(skippedReviewTypes, details.skip_reviews);
+        addNormalizedReviewTypes(skippedReviewTypes, details.skipped_review_types);
+        addNormalizedReviewTypes(skippedReviewTypes, attestation.skipped_review_types);
+        return skippedReviewTypes;
+    }
+    return new Set();
+}
+
 function fileExists(filePath: string): boolean {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
 }
@@ -1969,13 +2029,20 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         const markerPath = resolveFullSuiteValidationRunMarkerPath(repoRoot, taskId);
         return fs.existsSync(markerPath) ? normalizePath(markerPath) : null;
     })();
+    const reviewGateAlreadyPassed = isGatePassed(summary, 'required-reviews-check');
+    const reviewGateOverrideSkippedReviewTypes = reviewGateAlreadyPassed
+        ? readLatestReviewGateOverrideSkippedReviewTypes(eventsRoot, taskId)
+        : new Set<string>();
     const reviewLaunchPlan = applyFullSuiteReadinessToReviewLaunchPlan(
         buildNextStepReviewLaunchPlan({
             requiredReviewTypes,
             policyMode: reviewPolicy.mode,
             requiredReviews: summary.required_reviews,
             reviewStates,
-            isSatisfied: (state) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state as ReviewArtifactState),
+            isSatisfied: (state) => (
+                reviewGateOverrideSkippedReviewTypes.has(normalizeReviewTypeValue(state.reviewType) || '')
+                || reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state as ReviewArtifactState)
+            ),
             isCurrentFailed: (state) => reviewStateHasCurrentRecordedEvidence(repoRoot, eventsRoot, taskId, state as ReviewArtifactState)
         }),
         fullSuiteConfig.enabled,
@@ -2420,7 +2487,6 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         rulePackPath,
         taskModePath
     );
-    const reviewGateAlreadyPassed = isGatePassed(summary, 'required-reviews-check');
     const failedReviewRemediationExpandedNonTestFiles = failedCurrentReviewStateForPreflight
         ? getExpandedNonTestReviewRemediationFiles({
             repoRoot,
