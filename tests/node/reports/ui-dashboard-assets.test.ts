@@ -39,6 +39,10 @@ function htmlTagHasDisabled(tag: string): boolean {
     return /\sdisabled(?:\s|>|=)/u.test(tag);
 }
 
+function htmlTagHasChecked(tag: string): boolean {
+    return /\schecked(?:\s|>|=)/u.test(tag);
+}
+
 function renderQualityGateHtml(
     qualityGate: Record<string, unknown>,
     actionsEnabled: boolean,
@@ -556,7 +560,7 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                         title: 'Custom focus',
                         prompt: 'Check custom concern.',
                         enabled: false,
-                        excluded_scope_categories: [],
+                        excluded_scope_categories: ['future-scope'],
                         present: true,
                         source: 'custom',
                         statuses: ['disabled']
@@ -603,6 +607,12 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.match(qualityGateNode.innerHTML, /size_growth/u);
     assert.match(qualityGateNode.innerHTML, /Rule is excluded for current scope category: test-only\./u);
     assert.match(qualityGateNode.innerHTML, /Excluded scopes/u);
+    assert.match(qualityGateNode.innerHTML, /Exclude test-only/u);
+    assert.match(qualityGateNode.innerHTML, /Other scopes/u);
+    assert.match(qualityGateNode.innerHTML, /future-scope/u);
+    assert.equal(htmlTagHasChecked(htmlTagById(qualityGateNode.innerHTML, 'input', 'optional-rule-code_simplification-exclude-test-only')), true);
+    assert.equal(htmlTagHasChecked(htmlTagById(qualityGateNode.innerHTML, 'input', 'optional-rule-custom_focus-exclude-test-only')), false);
+    assert.equal(htmlTagHasDisabled(htmlTagById(qualityGateNode.innerHTML, 'input', 'optional-rule-custom_focus-exclude-test-only')), true);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Central parser helpers still need a smaller shape\./u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Bounded answer summary rendering added\./u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Extract parser helpers before review\./u);
@@ -656,6 +666,7 @@ test('quality gate rule table renders new custom row before custom rules and bas
                 title: 'Code simplification',
                 prompt: 'Check simplification.',
                 enabled: true,
+                excluded_scope_categories: ['test-only'],
                 present: true,
                 source: 'baseline',
                 statuses: ['active']
@@ -768,7 +779,7 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
         shipped_baseline_version: '2026-07-02.t898',
         baseline_version_label: '2026-07-02',
         shipped_baseline_version_label: '2026-07-02',
-        baseline_rule_count: 1,
+        baseline_rule_count: 2,
         custom_rule_count: 1,
         deleted_baseline_rule_count: 0,
         latest_check: {
@@ -785,6 +796,16 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
                 id: 'code_simplification',
                 title: 'Code simplification',
                 prompt: 'Check simplification.',
+                enabled: true,
+                excluded_scope_categories: ['test-only'],
+                present: true,
+                source: 'baseline',
+                statuses: ['active']
+            },
+            {
+                id: 'project_style_fit',
+                title: 'Project style fit',
+                prompt: 'Check local style fit.',
                 enabled: true,
                 present: true,
                 source: 'baseline',
@@ -805,13 +826,21 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
     assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-code_simplification-title')), true);
     assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-code_simplification-prompt')), true);
     assert.equal(htmlTagHasDisabled(htmlTagById(html, 'select', 'optional-rule-code_simplification-enabled')), false);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-code_simplification-exclude-test-only')), false);
+    assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'optional-rule-code_simplification-exclude-test-only')), true);
+    assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'optional-rule-project_style_fit-exclude-test-only')), false);
     assert.equal(htmlTagHasDisabled(htmlButtonByRuleAction(html, 'code_simplification', 'upsert')), false);
+    assert.match(htmlButtonByRuleAction(html, 'code_simplification', 'upsert'), /data-quality-gate-rule-source="baseline"/u);
     assert.equal(htmlTagHasDisabled(htmlButtonByRuleAction(html, 'code_simplification', 'delete')), true);
 
     assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-custom_focus-title')), false);
     assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-custom_focus-prompt')), false);
     assert.equal(htmlTagHasDisabled(htmlTagById(html, 'select', 'optional-rule-custom_focus-enabled')), false);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-custom_focus-exclude-test-only')), false);
+    assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'optional-rule-custom_focus-exclude-test-only')), false);
+    assert.match(htmlButtonByRuleAction(html, 'custom_focus', 'upsert'), /data-quality-gate-rule-source="custom"/u);
     assert.equal(htmlTagHasDisabled(htmlButtonByRuleAction(html, 'custom_focus', 'delete')), false);
+    assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'optional-rule-quality-gate-new-exclude-test-only')), false);
 });
 
 test('profiles tab renders required auto disabled policy controls without trigger editors', () => {

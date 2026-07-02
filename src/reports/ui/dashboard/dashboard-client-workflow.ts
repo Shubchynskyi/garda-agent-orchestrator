@@ -227,11 +227,15 @@ function optionalRuleValue(rule, field) {
   if (field === 'enabled') return rule.enabled === false ? 'false' : 'true';
   return rule[field] === null || rule[field] === undefined ? '' : String(rule[field]);
 }
-async function submitOptionalRule(action, ruleId, title, prompt, enabled, confirmation, resultRenderer) {
+function optionalRuleExcludesTestOnly(rule) {
+  return Array.isArray(rule && rule.excluded_scope_categories)
+    && rule.excluded_scope_categories.map(scope => String(scope || '').trim()).includes('test-only');
+}
+async function submitOptionalRule(action, ruleId, title, prompt, enabled, excludeTestOnly, confirmation, resultRenderer) {
   const response = await fetch('/api/settings', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
-    body: JSON.stringify({ optional_rule_action: action, mode: 'execute', rule_id: ruleId, title, prompt, enabled, confirmation })
+    body: JSON.stringify({ optional_rule_action: action, mode: 'execute', rule_id: ruleId, title, prompt, enabled, exclude_test_only: excludeTestOnly, confirmation })
   });
   const result = await response.json();
   if (typeof resultRenderer === 'function') {

@@ -58,6 +58,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
                     title: string;
                     prompt: string;
                     enabled: boolean;
+                    excluded_scope_categories?: string[];
                 }>;
             };
             optional_skill_selection_policy: {
@@ -190,7 +191,8 @@ test('local UI settings use guarded workflow commands with preview confirmation 
                 rule_id: 'custom_focus',
                 title: 'Custom focus',
                 prompt: 'Check custom concern.',
-                enabled: 'true'
+                enabled: 'true',
+                exclude_test_only: true
             })
         });
         assert.equal(optionalRulePreviewResponse.status, 200);
@@ -203,6 +205,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
                 title: string;
                 prompt: string;
                 enabled: boolean;
+                excluded_scope_categories: string[];
             };
             command: string;
             changed_keys: string[];
@@ -215,12 +218,14 @@ test('local UI settings use guarded workflow commands with preview confirmation 
             id: 'custom_focus',
             title: 'Custom focus',
             prompt: 'Check custom concern.',
-            enabled: true
+            enabled: true,
+            excluded_scope_categories: ['test-only']
         });
         assert.match(optionalRulePreview.command, /workflow set --optional-check-rule-id custom_focus/u);
         assert.match(optionalRulePreview.command, /--optional-check-rule-title "Custom focus"/u);
         assert.match(optionalRulePreview.command, /--optional-check-rule-prompt "Check custom concern\."/u);
         assert.match(optionalRulePreview.command, /--optional-check-rule-enabled true/u);
+        assert.match(optionalRulePreview.command, /--optional-check-rule-exclude-test-only true/u);
 
         const skillSelectionPreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
@@ -269,7 +274,8 @@ test('local UI settings use guarded workflow commands with preview confirmation 
                 rule_id: 'code_simplification',
                 title: 'Code simplification',
                 prompt: 'Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.',
-                enabled: 'false'
+                enabled: 'false',
+                exclude_test_only: false
             })
         });
         assert.equal(baselineRuleTogglePreviewResponse.status, 200);
@@ -278,6 +284,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
                 id: string;
                 title: string;
                 enabled: boolean;
+                excluded_scope_categories: string[];
             };
             command: string;
         };
@@ -286,10 +293,12 @@ test('local UI settings use guarded workflow commands with preview confirmation 
             id: 'code_simplification',
             title: 'Code simplification',
             prompt: 'Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.',
-            enabled: false
+            enabled: false,
+            excluded_scope_categories: []
         });
         assert.match(baselineRuleTogglePreview.command, /workflow set --optional-check-rule-id code_simplification/u);
         assert.match(baselineRuleTogglePreview.command, /--optional-check-rule-enabled false/u);
+        assert.match(baselineRuleTogglePreview.command, /--optional-check-rule-exclude-test-only false/u);
         assert.doesNotMatch(baselineRuleTogglePreview.command, /--optional-check-rule-title/u);
         assert.doesNotMatch(baselineRuleTogglePreview.command, /--optional-check-rule-prompt/u);
 
@@ -619,6 +628,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
                 title: 'Custom focus',
                 prompt: 'Check custom concern.',
                 enabled: 'false',
+                exclude_test_only: true,
                 confirmation: 'APPLY GARDA SETTING'
             })
         });
@@ -628,6 +638,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal(executedCommands.length, 5);
         assert.match(executedCommands[4], /workflow set --optional-check-rule-id custom_focus/u);
         assert.match(executedCommands[4], /--optional-check-rule-enabled false/u);
+        assert.match(executedCommands[4], /--optional-check-rule-exclude-test-only true/u);
         const optionalRuleAuditLines = fs.readFileSync(optionalRuleExecute.audit_path, 'utf8').trim().split(/\r?\n/u);
         assert.ok(optionalRuleAuditLines.length >= 3);
         assert.match(optionalRuleAuditLines[optionalRuleAuditLines.length - 1], /"action_id":"setting:optional-check-rule:upsert:custom_focus"/u);

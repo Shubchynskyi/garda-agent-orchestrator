@@ -413,7 +413,7 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
     );
 
     const baselineRule = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0];
-    const canonicalizedBaseline = validateWorkflowConfig({
+    const preservedBaseline = validateWorkflowConfig({
         ...baseConfig,
         optional_quality_checks: {
             enabled: true,
@@ -428,17 +428,20 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
             ]
         }
     });
-    const canonicalizedBaselineRules =
-        (canonicalizedBaseline.optional_quality_checks as { rules: Array<Record<string, unknown>> }).rules;
+    const preservedBaselineRules =
+        (preservedBaseline.optional_quality_checks as { rules: Array<Record<string, unknown>> }).rules;
     assert.deepEqual(
-        canonicalizedBaselineRules[0],
+        preservedBaselineRules[0],
         {
-            ...baselineRule,
-            enabled: false
+            id: baselineRule.id,
+            title: 'Locally edited shipped title',
+            prompt: 'Locally edited shipped prompt.',
+            enabled: false,
+            local_note: 'operator-owned'
         }
     );
     assert.deepEqual(
-        canonicalizedBaselineRules.map((rule) => rule.id),
+        preservedBaselineRules.map((rule) => rule.id),
         DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
     );
 

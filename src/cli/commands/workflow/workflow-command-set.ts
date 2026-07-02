@@ -107,11 +107,13 @@ function applyOptionalCheckRuleScopeOptions(
     options: ParsedOptionsRecord
 ): OptionalQualityCheckRule {
     let nextRule = rule;
-    if (existing && hasOwn(existing, 'excluded_scope_categories')) {
-        nextRule = {
-            ...nextRule,
-            excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(existing.excluded_scope_categories)
-        };
+    if (existing) {
+        nextRule = { ...nextRule };
+        if (hasOwn(existing, 'excluded_scope_categories')) {
+            nextRule.excluded_scope_categories = normalizeOptionalQualityCheckScopeCategories(existing.excluded_scope_categories);
+        } else {
+            delete nextRule.excluded_scope_categories;
+        }
     }
     if (typeof options.optionalCheckRuleExcludeTestOnly !== 'string') {
         return nextRule;
@@ -148,9 +150,11 @@ function upsertOptionalCheckRule(
     if (baselineRule) {
         const requestedTitle = parseOptionalCheckRuleText(options.optionalCheckRuleTitle, '--optional-check-rule-title');
         const requestedPrompt = parseOptionalCheckRuleText(options.optionalCheckRulePrompt, '--optional-check-rule-prompt');
+        const currentTitle = existing?.title || baselineRule.title;
+        const currentPrompt = existing?.prompt || baselineRule.prompt;
         if (
-            (requestedTitle !== null && requestedTitle !== baselineRule.title)
-            || (requestedPrompt !== null && requestedPrompt !== baselineRule.prompt)
+            (requestedTitle !== null && requestedTitle !== currentTitle)
+            || (requestedPrompt !== null && requestedPrompt !== currentPrompt)
         ) {
             throw new Error(`Baseline optional quality-check rule '${id}' can only change enabled state and scope exclusions.`);
         }
@@ -159,6 +163,10 @@ function upsertOptionalCheckRule(
             : existing?.enabled !== false;
         const nextRule = applyOptionalCheckRuleScopeOptions({
             ...baselineRule,
+            ...(existing || {}),
+            id,
+            title: currentTitle,
+            prompt: currentPrompt,
             enabled
         }, existing, options);
         if (existingIndex >= 0) {

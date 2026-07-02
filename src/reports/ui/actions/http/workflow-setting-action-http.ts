@@ -33,6 +33,7 @@ interface UiSettingRequest {
     title?: unknown;
     prompt?: unknown;
     enabled?: unknown;
+    exclude_test_only?: unknown;
 }
 
 function normalizeSettingRequest(payload: unknown): UiSettingRequest {

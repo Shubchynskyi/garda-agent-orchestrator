@@ -271,12 +271,39 @@ function normalizeOptionalRuleEnabled(value: unknown): boolean | null {
     throw new Error('Optional quality-check rule enabled must be on or off.');
 }
 
+function normalizeOptionalRuleExcludeTestOnly(value: unknown): boolean | null {
+    if (value === undefined || value === null || value === '') {
+        return null;
+    }
+    const raw = typeof value === 'boolean' ? String(value) : typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (['true', 'on', 'yes', '1'].includes(raw)) {
+        return true;
+    }
+    if (['false', 'off', 'no', '0'].includes(raw)) {
+        return false;
+    }
+    throw new Error('Optional quality-check rule test-only exclusion must be on or off.');
+}
+
+function optionalCheckRuleScopeCommandArgs(excludeTestOnly: boolean | null): string[] {
+    return excludeTestOnly === null
+        ? []
+        : ['--optional-check-rule-exclude-test-only', String(excludeTestOnly)];
+}
+
+function optionalCheckRuleScopeProposedValue(excludeTestOnly: boolean | null): Record<string, unknown> {
+    return excludeTestOnly === null
+        ? {}
+        : { excluded_scope_categories: excludeTestOnly ? ['test-only'] : [] };
+}
+
 export function parseUiOptionalCheckRuleValue(payload: {
     optional_rule_action?: unknown;
     rule_id?: unknown;
     title?: unknown;
     prompt?: unknown;
     enabled?: unknown;
+    exclude_test_only?: unknown;
 }): ParsedUiOptionalCheckRuleValue {
     const action: UiOptionalCheckRuleAction = payload.optional_rule_action === 'delete' ? 'delete' : 'upsert';
     const ruleId = normalizeRuleId(payload.rule_id);
@@ -290,11 +317,13 @@ export function parseUiOptionalCheckRuleValue(payload: {
             title: null,
             prompt: null,
             enabled: null,
+            exclude_test_only: null,
             proposed_value: { action, id: ruleId },
             command_args: ['--optional-check-rule-delete', ruleId]
         };
     }
     const baselineRule = getBaselineOptionalQualityCheckRule(ruleId);
+    const excludeTestOnly = normalizeOptionalRuleExcludeTestOnly(payload.exclude_test_only);
     if (baselineRule) {
         const title = normalizeOptionalText(payload.title);
         const prompt = normalizeOptionalText(payload.prompt);
@@ -302,7 +331,7 @@ export function parseUiOptionalCheckRuleValue(payload: {
             (title !== null && title !== baselineRule.title)
             || (prompt !== null && prompt !== baselineRule.prompt)
         ) {
-            throw new Error(`Baseline optional quality-check rule '${ruleId}' can only change enabled state.`);
+            throw new Error(`Baseline optional quality-check rule '${ruleId}' can only change enabled state and scope exclusions.`);
         }
         const enabled = normalizeOptionalRuleEnabled(payload.enabled);
         if (enabled === null) {
@@ -314,18 +343,21 @@ export function parseUiOptionalCheckRuleValue(payload: {
             title: baselineRule.title,
             prompt: baselineRule.prompt,
             enabled,
+            exclude_test_only: excludeTestOnly,
             proposed_value: {
                 action,
                 id: ruleId,
                 title: baselineRule.title,
                 prompt: baselineRule.prompt,
-                enabled
+                enabled,
+                ...optionalCheckRuleScopeProposedValue(excludeTestOnly)
             },
             command_args: [
                 '--optional-check-rule-id',
                 ruleId,
                 '--optional-check-rule-enabled',
-                String(enabled)
+                String(enabled),
+                ...optionalCheckRuleScopeCommandArgs(excludeTestOnly)
             ]
         };
     }
@@ -344,12 +376,14 @@ export function parseUiOptionalCheckRuleValue(payload: {
         title,
         prompt,
         enabled,
+        exclude_test_only: excludeTestOnly,
         proposed_value: {
             action,
             id: ruleId,
             title,
             prompt,
-            enabled: enabled ?? true
+            enabled: enabled ?? true,
+            ...optionalCheckRuleScopeProposedValue(excludeTestOnly)
         },
         command_args: [
             '--optional-check-rule-id',
@@ -359,7 +393,8 @@ export function parseUiOptionalCheckRuleValue(payload: {
             '--optional-check-rule-prompt',
             prompt,
             '--optional-check-rule-enabled',
-            String(enabled ?? true)
+            String(enabled ?? true),
+            ...optionalCheckRuleScopeCommandArgs(excludeTestOnly)
         ]
     };
 }

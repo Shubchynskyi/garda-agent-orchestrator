@@ -101,23 +101,36 @@ function renderQualityGateToggle(settings, disabled) {
     + '<tr><td><strong>' + safe(settingLabelText(setting)) + '</strong><code>(' + safe(setting.key) + ')</code></td><td>' + inlineText(settingDescriptionText(setting)) + '</td><td><code class="current-value">' + safe(settingCurrentDisplay(setting)) + '</code></td><td><label class="setting-control"><span>' + safe(t('newValue')) + '</span>' + renderSettingControl(setting, disabled, 'quality-gate') + '</label><div class="setting-buttons"><button type="button" data-quality-gate-setting-id="' + safe(setting.id) + '" data-setting-mode="execute"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div></td></tr>'
     + '</tbody></table></div></section>';
 }
+function qualityGateOtherExcludedScopes(rule) {
+  return Array.isArray(rule && rule.excluded_scope_categories)
+    ? rule.excluded_scope_categories.map(scope => String(scope || '').trim()).filter(scope => scope && scope !== 'test-only')
+    : [];
+}
+function renderQualityGateScopeControl(rule, disabled) {
+  const disabledAttr = disabled ? ' disabled' : '';
+  const checkedAttr = optionalRuleExcludesTestOnly(rule) ? ' checked' : '';
+  const otherScopes = qualityGateOtherExcludedScopes(rule);
+  return '<label class="quality-gate-scope-control"><input id="' + safe(optionalRuleInputId(rule.id, 'exclude-test-only')) + '" type="checkbox"' + checkedAttr + disabledAttr + '><span>' + safe('Exclude test-only') + '</span></label>'
+    + (otherScopes.length > 0 ? '<div class="setting-note">' + safe('Other scopes') + ': <code>' + safe(qualityGateListValue(otherScopes)) + '</code></div>' : '');
+}
 function renderQualityGateRuleRow(rule, disabled) {
   const ruleId = safe(rule.id || '');
   const baselineRule = rule.source === 'baseline';
+  const ruleSource = baselineRule ? 'baseline' : 'custom';
   const disabledAttr = disabled ? ' disabled' : '';
   const immutableTextAttr = disabled || baselineRule ? ' disabled' : '';
   const deleteDisabledAttr = disabled || baselineRule || rule.present === false ? ' disabled' : '';
   const source = qualityGateSourceLabel(rule.source);
   const actionLabel = rule.present === false ? t('addOptionalCheckRule') : t('saveOptionalCheckRule');
-  return '<tr data-optional-rule-id="' + ruleId + '">'
+  return '<tr data-optional-rule-id="' + ruleId + '" data-optional-rule-source="' + safe(ruleSource) + '">'
     + '<td><code>' + ruleId + '</code></td>'
     + '<td>' + safe(source) + '</td>'
     + '<td>' + qualityGateStatusBadges(rule) + '</td>'
     + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'title')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'title')) + '"' + immutableTextAttr + '></td>'
     + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'prompt')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'prompt')) + '"' + immutableTextAttr + '></td>'
     + '<td><select id="' + safe(optionalRuleInputId(rule.id, 'enabled')) + '"' + disabledAttr + '><option value="true"' + (rule.enabled !== false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOn')) + '</option><option value="false"' + (rule.enabled === false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOff')) + '</option></select></td>'
-    + '<td><code>' + safe(qualityGateListValue(rule.excluded_scope_categories)) + '</code></td>'
-    + '<td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : actionLabel) + '</button><button type="button" data-quality-gate-rule-action="delete" data-quality-gate-rule-id="' + ruleId + '"' + deleteDisabledAttr + '>' + safe(t('removeOptionalCheckRule')) + '</button></div></td>'
+    + '<td>' + renderQualityGateScopeControl(rule, disabled) + '</td>'
+    + '<td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="' + ruleId + '" data-quality-gate-rule-source="' + safe(ruleSource) + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : actionLabel) + '</button><button type="button" data-quality-gate-rule-action="delete" data-quality-gate-rule-id="' + ruleId + '" data-quality-gate-rule-source="' + safe(ruleSource) + '"' + deleteDisabledAttr + '>' + safe(t('removeOptionalCheckRule')) + '</button></div></td>'
     + '</tr>';
 }
 function renderQualityGateNewRuleRow(disabled) {
@@ -126,7 +139,8 @@ function renderQualityGateNewRuleRow(disabled) {
   const newTitle = optionalRuleInputId('quality-gate-new', 'title');
   const newPrompt = optionalRuleInputId('quality-gate-new', 'prompt');
   const newEnabled = optionalRuleInputId('quality-gate-new', 'enabled');
-  return '<tr data-optional-rule-id="quality-gate-new"><td><input id="' + safe(newId) + '" type="text" placeholder="custom_rule_id"' + disabledAttr + '></td><td>' + safe(t('qualityGateSourceCustom')) + '</td><td>' + badge(t('qualityGateNewRule'), 'quality-gate-rule', 'quality-gate-rule-new') + '</td><td><input id="' + safe(newTitle) + '" type="text"' + disabledAttr + '></td><td><input id="' + safe(newPrompt) + '" type="text"' + disabledAttr + '></td><td><select id="' + safe(newEnabled) + '"' + disabledAttr + '><option value="true">' + safe(t('gardaSwitchStateOn')) + '</option><option value="false">' + safe(t('gardaSwitchStateOff')) + '</option></select></td><td><code>-</code></td><td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="quality-gate-new"' + (disabled ? ' disabled' : '') + '>' + safe(t('addOptionalCheckRule')) + '</button></div></td></tr>';
+  const newExcludeTestOnly = optionalRuleInputId('quality-gate-new', 'exclude-test-only');
+  return '<tr data-optional-rule-id="quality-gate-new"><td><input id="' + safe(newId) + '" type="text" placeholder="custom_rule_id"' + disabledAttr + '></td><td>' + safe(t('qualityGateSourceCustom')) + '</td><td>' + badge(t('qualityGateNewRule'), 'quality-gate-rule', 'quality-gate-rule-new') + '</td><td><input id="' + safe(newTitle) + '" type="text"' + disabledAttr + '></td><td><input id="' + safe(newPrompt) + '" type="text"' + disabledAttr + '></td><td><select id="' + safe(newEnabled) + '"' + disabledAttr + '><option value="true">' + safe(t('gardaSwitchStateOn')) + '</option><option value="false">' + safe(t('gardaSwitchStateOff')) + '</option></select></td><td><label class="quality-gate-scope-control"><input id="' + safe(newExcludeTestOnly) + '" type="checkbox"' + disabledAttr + '><span>' + safe('Exclude test-only') + '</span></label></td><td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="quality-gate-new"' + (disabled ? ' disabled' : '') + '>' + safe(t('addOptionalCheckRule')) + '</button></div></td></tr>';
 }
 function renderQualityGateRuleRows(rules, disabled) {
   const customRules = rules.filter(rule => rule.source === 'custom');
@@ -135,7 +149,7 @@ function renderQualityGateRuleRows(rules, disabled) {
     + customRules.map(rule => renderQualityGateRuleRow(rule, disabled)).join('')
     + baselineRules.map(rule => renderQualityGateRuleRow(rule, disabled)).join('');
 }
-function readQualityGateRuleForm(ruleId) {
+function readQualityGateRuleForm(ruleId, ruleSource) {
   const formId = ruleId === 'quality-gate-new' ? 'quality-gate-new' : ruleId;
   const actualId = ruleId === 'quality-gate-new'
     ? (document.getElementById(optionalRuleInputId('quality-gate-new', 'id')) || {}).value
@@ -143,11 +157,14 @@ function readQualityGateRuleForm(ruleId) {
   const titleInput = document.getElementById(optionalRuleInputId(formId, 'title'));
   const promptInput = document.getElementById(optionalRuleInputId(formId, 'prompt'));
   const enabledInput = document.getElementById(optionalRuleInputId(formId, 'enabled'));
+  const excludeTestOnlyInput = document.getElementById(optionalRuleInputId(formId, 'exclude-test-only'));
+  const immutableBaseline = ruleSource === 'baseline';
   return {
     id: actualId || '',
-    title: titleInput ? titleInput.value : '',
-    prompt: promptInput ? promptInput.value : '',
-    enabled: enabledInput ? enabledInput.value : 'true'
+    title: immutableBaseline ? null : (titleInput ? titleInput.value : ''),
+    prompt: immutableBaseline ? null : (promptInput ? promptInput.value : ''),
+    enabled: enabledInput ? enabledInput.value : 'true',
+    excludeTestOnly: excludeTestOnlyInput ? excludeTestOnlyInput.checked : false
   };
 }
 function renderQualityGate(report) {
@@ -198,12 +215,12 @@ function renderQualityGate(report) {
   for (const button of qualityGateNode.querySelectorAll('button[data-quality-gate-rule-action]')) {
     button.addEventListener('click', () => {
       const action = button.dataset.qualityGateRuleAction;
-      const form = readQualityGateRuleForm(button.dataset.qualityGateRuleId || '');
+      const form = readQualityGateRuleForm(button.dataset.qualityGateRuleId || '', button.dataset.qualityGateRuleSource || '');
       const confirmation = window.prompt(t('typeToApplySetting') + ' "APPLY GARDA SETTING" ' + t('typeToApplySettingTail'));
       if (confirmation === null) {
         return;
       }
-      submitOptionalRule(action, form.id, form.title, form.prompt, form.enabled, confirmation, renderQualityGateResult);
+      submitOptionalRule(action, form.id, form.title, form.prompt, form.enabled, form.excludeTestOnly, confirmation, renderQualityGateResult);
     });
   }
 }

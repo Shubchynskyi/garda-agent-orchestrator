@@ -251,10 +251,18 @@ function normalizeOptionalQualityCheckRule(input: unknown): OptionalQualityCheck
     }
     const baselineRule = getOptionalQualityCheckBaselineRuleById(id);
     if (baselineRule) {
-        return applyRuleScopeExclusions({
+        const normalizedRule = {
             ...cloneJsonValue(baselineRule),
+            ...cloneJsonValue(input),
+            id,
+            title,
+            prompt,
             enabled: input.enabled === undefined ? baselineRule.enabled : input.enabled === true
-        }, input);
+        } as OptionalQualityCheckRule;
+        if (!hasOwn(input, 'excluded_scope_categories')) {
+            delete normalizedRule.excluded_scope_categories;
+        }
+        return applyRuleScopeExclusions(normalizedRule, input);
     }
     const customRule = {
         ...cloneJsonValue(input),
@@ -332,10 +340,23 @@ function mergeOptionalQualityCheckRulesWithBaseline(
         if (baselineRule) {
             if (!mergedRuleIds.has(existingRule.id)) {
                 const canonicalRule = cloneJsonValue(baselineRule) as OptionalQualityCheckRule;
-                mergedRules.push(applyRuleScopeExclusions({
-                    ...canonicalRule,
-                    enabled: existingRule.enabled !== false
-                }, existingRule));
+                const preservedRule = staleBaselineVersion
+                    ? {
+                        ...canonicalRule,
+                        enabled: existingRule.enabled !== false
+                    }
+                    : {
+                        ...canonicalRule,
+                        ...cloneJsonValue(existingRule),
+                        id: existingRule.id,
+                        title: existingRule.title,
+                        prompt: existingRule.prompt,
+                        enabled: existingRule.enabled !== false
+                    };
+                if (!hasOwn(existingRule, 'excluded_scope_categories')) {
+                    delete preservedRule.excluded_scope_categories;
+                }
+                mergedRules.push(applyRuleScopeExclusions(preservedRule, existingRule));
                 mergedRuleIds.add(existingRule.id);
             }
             continue;

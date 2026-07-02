@@ -78,6 +78,7 @@ export interface ParsedUiOptionalCheckRuleValue {
     title: string | null;
     prompt: string | null;
     enabled: boolean | null;
+    exclude_test_only: boolean | null;
     proposed_value: unknown;
     command_args: string[];
 }

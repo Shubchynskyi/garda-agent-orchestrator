@@ -92,6 +92,8 @@ tr.selected { background: #eef8f6; }
 .quality-gate-rule-table th, .quality-gate-rule-table td { overflow-wrap: anywhere; }
 .quality-gate-rule-table code { white-space: normal; overflow-wrap: anywhere; }
 .quality-gate-rule-table input, .quality-gate-rule-table select { width: 100%; min-width: 0; }
+.quality-gate-rule-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; padding: 0; }
+.quality-gate-scope-control { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; align-items: center; line-height: 1.25; }
 .quality-gate-rule-table .setting-buttons { margin-top: 0; }
 .quality-gate-rule-table .setting-buttons button { flex: 1 1 104px; width: auto; min-width: 0; }
 .quality-gate-rule-active { background: #eaf7ee; color: #176333; }

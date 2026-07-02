@@ -357,13 +357,16 @@ test('workflow set refreshes stale optional quality baseline version when writin
         enabled: true
     };
     const baselineRule = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0];
+    const legacyBaselineRuleWithoutScopeExclusions = { ...baselineRule };
+    delete (legacyBaselineRuleWithoutScopeExclusions as { excluded_scope_categories?: string[] }).excluded_scope_categories;
     const bundleRoot = createBundleRoot({}, {
         optional_quality_checks: {
             enabled: true,
             baseline_version: staleBaselineVersion,
             rules: [
                 customRule,
-                ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({ ...rule }))
+                legacyBaselineRuleWithoutScopeExclusions,
+                ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.slice(1).map((rule) => ({ ...rule }))
             ]
         }
     });
@@ -389,7 +392,9 @@ test('workflow set refreshes stale optional quality baseline version when writin
             (rule: { id: string }) => rule.id === baselineRule.id
         );
         assert.deepEqual(disabledBaselineRule, {
-            ...baselineRule,
+            id: baselineRule.id,
+            title: baselineRule.title,
+            prompt: baselineRule.prompt,
             enabled: false
         });
     } finally {
@@ -492,12 +497,84 @@ test('workflow set adds edits disables and deletes optional quality-check rules'
         assert.equal(baselineUnexclude.status, 'CHANGED');
 
         parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        const unexcludedBaselineRule = parsedConfig.optional_quality_checks.rules.find((rule: { id: string }) => rule.id === baselineRule.id);
+        const unexcludedBaselineRuleIndex = parsedConfig.optional_quality_checks.rules.findIndex(
+            (rule: { id: string }) => rule.id === baselineRule.id
+        );
+        assert.ok(unexcludedBaselineRuleIndex >= 0);
+        const unexcludedBaselineRule = parsedConfig.optional_quality_checks.rules[unexcludedBaselineRuleIndex];
         assert.deepEqual(unexcludedBaselineRule, {
             ...baselineRule,
             enabled: false,
             excluded_scope_categories: []
         });
+
+        parsedConfig.optional_quality_checks.rules[unexcludedBaselineRuleIndex] = {
+            ...unexcludedBaselineRule,
+            title: 'Locally edited baseline title',
+            prompt: 'Locally edited baseline prompt.',
+            severity: 'warning'
+        };
+        fs.writeFileSync(configPath, JSON.stringify(parsedConfig, null, 2));
+
+        const baselineRelimit = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-id', baselineRule.id,
+            '--optional-check-rule-enabled', 'true',
+            '--optional-check-rule-exclude-test-only', 'true',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON)).result;
+        assert.ok(baselineRelimit && baselineRelimit.action === 'set');
+        assert.equal(baselineRelimit.status, 'CHANGED');
+
+        parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const relimitedBaselineRule = parsedConfig.optional_quality_checks.rules.find((rule: { id: string }) => rule.id === baselineRule.id);
+        assert.deepEqual(relimitedBaselineRule, {
+            ...baselineRule,
+            title: 'Locally edited baseline title',
+            prompt: 'Locally edited baseline prompt.',
+            enabled: true,
+            excluded_scope_categories: ['test-only'],
+            severity: 'warning'
+        });
+
+        parsedConfig.optional_quality_checks.rules[unexcludedBaselineRuleIndex] = {
+            ...relimitedBaselineRule,
+            excluded_scope_categories: ['future-scope', 'test-only']
+        };
+        fs.writeFileSync(configPath, JSON.stringify(parsedConfig, null, 2));
+
+        const baselineKeepsOtherScope = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-id', baselineRule.id,
+            '--optional-check-rule-exclude-test-only', 'false',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON)).result;
+        assert.ok(baselineKeepsOtherScope && baselineKeepsOtherScope.action === 'set');
+        assert.equal(baselineKeepsOtherScope.status, 'CHANGED');
+
+        parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const otherScopeOnlyBaselineRule = parsedConfig.optional_quality_checks.rules.find(
+            (rule: { id: string }) => rule.id === baselineRule.id
+        );
+        assert.deepEqual(otherScopeOnlyBaselineRule.excluded_scope_categories, ['future-scope']);
+
+        const baselineRestoresTestOnlyScope = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-id', baselineRule.id,
+            '--optional-check-rule-exclude-test-only', 'true',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON)).result;
+        assert.ok(baselineRestoresTestOnlyScope && baselineRestoresTestOnlyScope.action === 'set');
+        assert.equal(baselineRestoresTestOnlyScope.status, 'CHANGED');
+
+        parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const restoredOtherScopeBaselineRule = parsedConfig.optional_quality_checks.rules.find(
+            (rule: { id: string }) => rule.id === baselineRule.id
+        );
+        assert.deepEqual(restoredOtherScopeBaselineRule.excluded_scope_categories, ['future-scope', 'test-only']);
 
         assert.throws(
             () => captureConsole(() => handleWorkflow([
