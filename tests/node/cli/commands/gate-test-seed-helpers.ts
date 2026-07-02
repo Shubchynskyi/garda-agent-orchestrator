@@ -27,7 +27,8 @@ import {
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash,
-    computeReviewRelevantScopeFingerprint
+    computeReviewRelevantScopeFingerprint,
+    computeReviewReuseCodeScopeFingerprint
 } from '../../../../src/gates/review-reuse';
 import {buildReviewTreeState} from '../../../../src/gates/review/review-tree-state';
 import {resolveDefaultReviewScratchPath} from '../../../../src/gates/review/review-scratch-paths';
@@ -1256,7 +1257,7 @@ export function seedReusableReviewEvidence(
         scopeSha256: String((preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
         reviewScopeSha256: computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256,
         codeScopeSha256: reviewKey !== 'test'
-            ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
+            ? computeReviewReuseCodeScopeFingerprint(reviewKey, preflight, repoRoot).code_scope_sha256
             : null,
         reviewContextSha256: receiptReviewContextSha256,
         reviewTreeStateSha256,

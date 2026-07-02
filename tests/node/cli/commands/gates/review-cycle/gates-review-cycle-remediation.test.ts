@@ -765,6 +765,119 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('restart-review-cycle preserves upstream lanes when failed test remediation edits an existing test file', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-902-existing-test-remediation-reuse';
+        const sourceFile = 'src/api/orders.ts';
+        const performanceFile = 'perf/review-routing.ts';
+        const testFile = 'tests/node/gates/quality-checklist/quality-checklist.test.ts';
+        const changedFiles = [sourceFile, performanceFile, testFile];
+        seedRemediationRepoBase(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'existing-test-remediation-reuse');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle after failed test review edits existing test coverage only',
+            plannedChangedFiles: changedFiles
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, sourceFile), 'export const orderStatus = "draft";\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'perf'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, performanceFile), 'export const routingBudgetMs = 25;\n', 'utf8');
+        fs.mkdirSync(path.dirname(path.join(repoRoot, testFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, testFile), 'it("keeps review routing covered", () => {});\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle after failed test review edits existing test coverage only',
+            changedFiles
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        for (const reviewType of ['api', 'code', 'performance', 'refactor', 'security']) {
+            seedReusableReviewEvidence(
+                repoRoot,
+                taskId,
+                reviewType,
+                `${reviewType.toUpperCase()} REVIEW PASSED`,
+                preflightPath,
+                path.join(getReviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`),
+                `agent:${reviewType}-reviewer`
+            );
+        }
+
+        fs.writeFileSync(
+            path.join(repoRoot, testFile),
+            'it("keeps review routing covered", () => { assert.equal(1, 1); });\n',
+            'utf8'
+        );
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles,
+            impactAnalysis: [
+                `Reviewer finding: test reviewer reported missing assertion coverage in ${testFile}.`,
+                `Intended fix: edit ${testFile} only to add the missing assertion for the failed test review.`,
+                `Affected files/contracts: ${testFile} is the only affected file; product contracts stay unchanged.`,
+                `API/runtime/artifact/test impact: only test impact is expected from ${testFile}; runtime and artifacts stay unchanged.`,
+                'Possible side effects: stale upstream api, code, performance, security, or refactor evidence must not be relaunched when lane-domain fingerprints match.',
+                'Required targeted checks: focused review-cycle classification and reuse assertions cover the existing test-file remediation path.',
+                'Scope or review-type changes: review-type impact stays in test; api, code, performance, security, and refactor remain reuse candidates.',
+                'Related blockers/follow-up: no separate follow-up is needed because the remediation delta is limited to the failed test-review file.'
+            ].join(' '),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
+        const evidence = classification.evidence as Record<string, unknown>;
+        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
+        const expectedPreservedReviews = ['api', 'code', 'performance', 'refactor', 'security'];
+        assert.equal(classification.category, 'test_coverage_only');
+        assert.equal(classification.scope_category, 'previous_scope_only');
+        assert.deepEqual(classification.invalidated_review_types, ['test']);
+        assert.deepEqual(
+            [...((classification.preserved_review_types as string[]) || [])].sort(),
+            expectedPreservedReviews
+        );
+        assert.deepEqual(evidence.semantic_changed_files, [testFile]);
+        assert.equal(evidence.semantic_scope_source, 'impact_analysis_files');
+        assert.deepEqual(
+            [...((reviewReuse.reused_review_types as string[]) || [])].sort(),
+            expectedPreservedReviews
+        );
+        assert.deepEqual(reviewReuse.launch_required_review_types, ['test']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('restart-review-cycle emits semantic remediation classifications before reuse decisions', { concurrency: false }, async () => {
         const cases: Array<{
             suffix: string;

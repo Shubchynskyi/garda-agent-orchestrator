@@ -85,7 +85,7 @@ export interface ReviewRemediationFixClassification {
         impact_analysis_source: ReviewRemediationImpactAnalysis['source'] | 'missing';
         matched_signals: string[];
         semantic_changed_files: string[];
-        semantic_scope_source: 'expanded_files' | 'current_changed_files';
+        semantic_scope_source: 'expanded_files' | 'impact_analysis_files' | 'current_changed_files';
     };
     review_reuse_decision_order: 'classification_before_reuse';
     non_test_review_reuse_candidate: boolean;

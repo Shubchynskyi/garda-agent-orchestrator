@@ -267,13 +267,26 @@ function groupReviewRemediationFiles(
 }
 
 function getReviewRemediationSemanticFileScope(
-    scopeBoundary: ReviewRemediationScopeBoundary
-): { files: string[]; source: 'expanded_files' | 'current_changed_files' } {
+    scopeBoundary: ReviewRemediationScopeBoundary,
+    impactAnalysis?: ReviewRemediationImpactAnalysis,
+    testTriggerRegexes: readonly string[] = []
+): { files: string[]; source: 'expanded_files' | 'impact_analysis_files' | 'current_changed_files' } {
     const expandedFiles = normalizeChangedFiles(scopeBoundary.expandedFiles);
     if (expandedFiles.length > 0) {
         return {
             files: expandedFiles,
             source: 'expanded_files'
+        };
+    }
+    const impactAnalysisFiles = getTestOnlyImpactAnalysisFileScope(
+        scopeBoundary,
+        impactAnalysis,
+        testTriggerRegexes
+    );
+    if (impactAnalysisFiles.length > 0) {
+        return {
+            files: impactAnalysisFiles,
+            source: 'impact_analysis_files'
         };
     }
     return {
@@ -282,18 +295,62 @@ function getReviewRemediationSemanticFileScope(
     };
 }
 
+function getMentionedCurrentChangedFiles(
+    summary: string,
+    currentChangedFiles: readonly string[]
+): string[] {
+    const normalizedSummary = summary.replace(/\\/gu, '/').toLocaleLowerCase();
+    return normalizeChangedFiles(currentChangedFiles).filter((entry) => (
+        normalizedSummary.includes(entry.toLocaleLowerCase())
+    ));
+}
+
+function getTestOnlyImpactAnalysisFileScope(
+    scopeBoundary: ReviewRemediationScopeBoundary,
+    impactAnalysis: ReviewRemediationImpactAnalysis | undefined,
+    testTriggerRegexes: readonly string[]
+): string[] {
+    if (!impactAnalysis || scopeBoundary.status !== 'OK') {
+        return [];
+    }
+    const mentionedFiles = getMentionedCurrentChangedFiles(
+        impactAnalysis.summary,
+        scopeBoundary.currentChangedFiles
+    );
+    if (mentionedFiles.length === 0) {
+        return [];
+    }
+    return mentionedFiles.every((entry) => isTestLikeRemediationPath(entry, testTriggerRegexes))
+        ? mentionedFiles
+        : [];
+}
+
 function getReviewRemediationSemanticSignals(
     scopeBoundary: ReviewRemediationScopeBoundary,
-    impactAnalysis?: ReviewRemediationImpactAnalysis
+    impactAnalysis?: ReviewRemediationImpactAnalysis,
+    testTriggerRegexes: readonly string[] = []
 ): {
     category: ReviewRemediationSemanticCategory;
     matchedSignals: string[];
     rationale: string;
     changedFiles: string[];
-    scopeSource: 'expanded_files' | 'current_changed_files';
+    scopeSource: 'expanded_files' | 'impact_analysis_files' | 'current_changed_files';
 } {
     const summary = impactAnalysis?.summary.toLocaleLowerCase() || '';
-    const semanticFileScope = getReviewRemediationSemanticFileScope(scopeBoundary);
+    const semanticFileScope = getReviewRemediationSemanticFileScope(
+        scopeBoundary,
+        impactAnalysis,
+        testTriggerRegexes
+    );
+    if (impactAnalysis && semanticFileScope.source === 'impact_analysis_files') {
+        return {
+            category: 'test_coverage_only',
+            matchedSignals: ['test-only impact analysis files'],
+            rationale: 'remediation impact analysis names only classifier-recognized test files inside the previous failed-review scope',
+            changedFiles: semanticFileScope.files,
+            scopeSource: semanticFileScope.source
+        };
+    }
     const files = semanticFileScope.files.join('\n').toLocaleLowerCase();
     const text = `${summary}\n${files}`;
     const matches: Array<{ category: ReviewRemediationSemanticCategory; signal: string; pattern: RegExp }> = [
@@ -385,7 +442,7 @@ export function classifyReviewRemediationFix(
         : scopeBoundary.allowedTestOnlyExpansionFiles.length > 0
             ? 'test_only_expansion'
             : 'previous_scope_only';
-    const semantic = getReviewRemediationSemanticSignals(scopeBoundary, impactAnalysis);
+    const semantic = getReviewRemediationSemanticSignals(scopeBoundary, impactAnalysis, testTriggerRegexes);
     const affectedFileGroups = groupReviewRemediationFiles(scopeBoundary.currentChangedFiles, testTriggerRegexes);
     const preflightReuseBlockReason = getPreflightReuseBlockReason(preflightPayload);
     const failClosed = !!preflightReuseBlockReason
@@ -427,7 +484,7 @@ export function classifyReviewRemediationFix(
             preserved_review_types: []
         };
     }
-    if (scopeBoundary.allowedTestOnlyExpansionFiles.length > 0) {
+    if (scopeBoundary.allowedTestOnlyExpansionFiles.length > 0 || semantic.category === 'test_coverage_only') {
         return {
             ...base,
             non_test_review_reuse_candidate: !failClosed,
