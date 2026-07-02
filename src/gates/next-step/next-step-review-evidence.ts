@@ -535,6 +535,15 @@ export function findStrictSequentialUpstreamNeedingCurrentCycleReuse(params: {
         ) {
             continue;
         }
+        const upstreamSatisfiedEvidence = reviewStateHasSatisfiedEvidence(
+            params.repoRoot,
+            params.eventsRoot,
+            params.taskId,
+            upstreamState
+        );
+        if (params.targetReviewType === 'test' && upstreamSatisfiedEvidence) {
+            continue;
+        }
         const upstreamRecordedSequence = getLatestReviewEventSequence(
             timelineEvents,
             'REVIEW_RECORDED',
@@ -550,12 +559,7 @@ export function findStrictSequentialUpstreamNeedingCurrentCycleReuse(params: {
         if (!upstreamState.reusedExistingReview && upstreamState.contextCurrent) {
             continue;
         }
-        if (!upstreamState.reusedExistingReview && !reviewStateHasSatisfiedEvidence(
-            params.repoRoot,
-            params.eventsRoot,
-            params.taskId,
-            upstreamState
-        )) {
+        if (!upstreamState.reusedExistingReview && !upstreamSatisfiedEvidence) {
             continue;
         }
         return {

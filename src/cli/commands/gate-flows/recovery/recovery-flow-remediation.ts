@@ -266,12 +266,35 @@ function groupReviewRemediationFiles(
     return Object.fromEntries(Object.entries(groups).filter(([, entries]) => entries.length > 0));
 }
 
+function getReviewRemediationSemanticFileScope(
+    scopeBoundary: ReviewRemediationScopeBoundary
+): { files: string[]; source: 'expanded_files' | 'current_changed_files' } {
+    const expandedFiles = normalizeChangedFiles(scopeBoundary.expandedFiles);
+    if (expandedFiles.length > 0) {
+        return {
+            files: expandedFiles,
+            source: 'expanded_files'
+        };
+    }
+    return {
+        files: scopeBoundary.currentChangedFiles,
+        source: 'current_changed_files'
+    };
+}
+
 function getReviewRemediationSemanticSignals(
     scopeBoundary: ReviewRemediationScopeBoundary,
     impactAnalysis?: ReviewRemediationImpactAnalysis
-): { category: ReviewRemediationSemanticCategory; matchedSignals: string[]; rationale: string } {
+): {
+    category: ReviewRemediationSemanticCategory;
+    matchedSignals: string[];
+    rationale: string;
+    changedFiles: string[];
+    scopeSource: 'expanded_files' | 'current_changed_files';
+} {
     const summary = impactAnalysis?.summary.toLocaleLowerCase() || '';
-    const files = scopeBoundary.currentChangedFiles.join('\n').toLocaleLowerCase();
+    const semanticFileScope = getReviewRemediationSemanticFileScope(scopeBoundary);
+    const files = semanticFileScope.files.join('\n').toLocaleLowerCase();
     const text = `${summary}\n${files}`;
     const matches: Array<{ category: ReviewRemediationSemanticCategory; signal: string; pattern: RegExp }> = [
         {
@@ -307,14 +330,18 @@ function getReviewRemediationSemanticSignals(
         return {
             category,
             matchedSignals: matched.map((entry) => entry.signal),
-            rationale: `remediation impact analysis and file scope matched ${category}`
+            rationale: `remediation impact analysis and file scope matched ${category}`,
+            changedFiles: semanticFileScope.files,
+            scopeSource: semanticFileScope.source
         };
     }
     if (matchedCategories.length > 1) {
         return {
             category: 'unknown',
             matchedSignals: matched.map((entry) => entry.signal),
-            rationale: 'remediation matched multiple semantic classes; fail closed before reuse'
+            rationale: 'remediation matched multiple semantic classes; fail closed before reuse',
+            changedFiles: semanticFileScope.files,
+            scopeSource: semanticFileScope.source
         };
     }
     if (
@@ -326,7 +353,9 @@ function getReviewRemediationSemanticSignals(
         return {
             category: 'test_coverage_only',
             matchedSignals: ['test-only expansion'],
-            rationale: 'remediation only added classifier-recognized test coverage outside the previous failed-review scope'
+            rationale: 'remediation only added classifier-recognized test coverage outside the previous failed-review scope',
+            changedFiles: semanticFileScope.files,
+            scopeSource: semanticFileScope.source
         };
     }
     return {
@@ -334,7 +363,9 @@ function getReviewRemediationSemanticSignals(
         matchedSignals: impactAnalysis ? [] : ['missing remediation impact analysis'],
         rationale: impactAnalysis
             ? 'remediation impact analysis did not identify a single supported semantic class'
-            : 'remediation impact analysis is missing; fail closed before reuse'
+            : 'remediation impact analysis is missing; fail closed before reuse',
+        changedFiles: semanticFileScope.files,
+        scopeSource: semanticFileScope.source
     };
 }
 
@@ -378,7 +409,9 @@ export function classifyReviewRemediationFix(
         evidence: {
             scope_boundary_status: scopeBoundary.status,
             impact_analysis_source: impactAnalysisSource,
-            matched_signals: semantic.matchedSignals
+            matched_signals: semantic.matchedSignals,
+            semantic_changed_files: semantic.changedFiles,
+            semantic_scope_source: semantic.scopeSource
         },
         review_reuse_decision_order: 'classification_before_reuse' as const
     };

@@ -558,6 +558,95 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('restart-review-cycle uses expanded remediation files for semantic classification', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-892-restart-review-cycle-semantic-test-expansion';
+        seedRemediationRepoBase(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-semantic-test-expansion');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle classifies only the remediation delta',
+            plannedChangedFiles: ['src/app.ts', 'tests/app.test.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle classifies only the remediation delta',
+            ['src/app.ts', 'tests/app.test.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        fs.writeFileSync(
+            path.join(repoRoot, 'tests', 'remediation-only.test.ts'),
+            'it("covers the failed review path", () => {});\n',
+            'utf8'
+        );
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts', 'tests/app.test.ts'],
+            impactAnalysis: [
+                'Reviewer finding: test reviewer reported missing coverage for tests/remediation-only.test.ts retry routing.',
+                'Intended fix: add tests/remediation-only.test.ts as assertion coverage for the failed test lane only.',
+                'Affected files/contracts: tests/remediation-only.test.ts is the affected file; source contracts are unchanged.',
+                'API/runtime/artifact/test impact: test impact is limited to added coverage assertions and no product files are touched.',
+                'Possible side effects: the restart may preserve non-test review receipts and invalidate only the test review.',
+                'Required targeted checks: focused review-cycle classification checks cover the remediation artifact fields.',
+                'Scope or review-type changes: review-type impact stays in test; code, security, and refactor remain reuse candidates.',
+                'Related blockers/follow-up: no separate follow-up is needed because the remediation delta is a test file.'
+            ].join(' '),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, [
+            'src/app.ts',
+            'tests/app.test.ts',
+            'tests/remediation-only.test.ts'
+        ]);
+
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
+        const evidence = classification.evidence as Record<string, unknown>;
+        assert.equal(classification.category, 'test_coverage_only');
+        assert.equal(classification.scope_category, 'test_only_expansion');
+        assert.deepEqual(classification.invalidated_review_types, ['test']);
+        assert.deepEqual(evidence.semantic_changed_files, ['tests/remediation-only.test.ts']);
+        assert.equal(evidence.semantic_scope_source, 'expanded_files');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('restart-review-cycle emits semantic remediation classifications before reuse decisions', { concurrency: false }, async () => {
         const cases: Array<{
             suffix: string;

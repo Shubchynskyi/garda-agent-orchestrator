@@ -114,7 +114,7 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.ok(!result.reason.includes('latest review phase predates the upstream review record'));
     });
 
-    it('routes restarted downstream rebind through upstream reuse materialization first', () => {
+    it('routes restarted downstream test rebind directly to test when upstream code evidence is current', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, {
@@ -171,10 +171,12 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.match(result.title, /Materialize 'code' review reuse before downstream 'test'/);
-        assert.match(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
-        assert.ok(result.commands[0].command.includes('--review-type "code"'));
-        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.equal(result.review.next_review_type, 'test', result.reason);
+        assert.match(result.title, /Prepare 'test' review context/);
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+        assert.doesNotMatch(result.title, /Materialize 'code' review reuse/);
+        assert.doesNotMatch(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
     });
 
     it('does not rebind downstream strict-sequential review after the review gate passed', () => {
@@ -203,7 +205,7 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.ok(!result.reason.includes('latest review phase predates the upstream review record'));
     });
 
-    it('materializes upstream code reuse before downstream test after test-only remediation', () => {
+    it('routes directly to downstream test after test-only remediation when upstream code evidence is current', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, {
@@ -235,8 +237,47 @@ describe('gates/next-step review reuse rebind routing', () => {
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
         assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /Materialize 'code' review reuse before downstream 'test'/);
-        assert.match(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
+        assert.match(result.title, /Prepare 'test' review context/);
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+        assert.doesNotMatch(result.title, /Materialize 'code' review reuse/);
+        assert.doesNotMatch(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
+    });
+
+    it('keeps upstream code first before downstream test when code domain changed', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        const testFile = path.join(repoRoot, 'tests', 'review-domain.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("review domain", () => {});\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles: ['src/app.ts', 'tests/review-domain.test.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.match(result.title, /Prepare 'code' review context/);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
