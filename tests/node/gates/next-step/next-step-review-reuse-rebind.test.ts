@@ -384,6 +384,84 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.doesNotMatch(result.title, /Materialize 'code' review reuse/);
     });
 
+    it('does not relaunch upstream performance after failed test review plus test-only remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const workflowConfigPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'config',
+            'workflow-config.json'
+        );
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as {
+            full_suite_validation: {
+                enabled: boolean;
+                command: string;
+                placement: string;
+            };
+        };
+        workflowConfig.full_suite_validation.enabled = true;
+        workflowConfig.full_suite_validation.command = 'npm test';
+        workflowConfig.full_suite_validation.placement = 'after_compile_before_reviews';
+        writeJson(workflowConfigPath, workflowConfig);
+        const testFile = path.join(repoRoot, 'tests', 'performance-upstream-test-remediation.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("performance upstream test remediation", () => {});\n', 'utf8');
+        const changedFiles = ['src/app.ts', 'tests/performance-upstream-test-remediation.test.ts'];
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            performance: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        writeReviewEvidence(repoRoot, TASK_ID, 'performance');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test', {
+            verdict: 'fail',
+            body: 'P1: Missing assertion coverage for the failed test review rerun.\n\n'
+        });
+
+        fs.writeFileSync(
+            testFile,
+            'test("performance upstream test remediation", () => { assert.equal(1, 1); });\n',
+            'utf8'
+        );
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            performance: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.equal(result.review.next_review_type, 'test', result.reason);
+        assert.match(result.title, /Refresh 'test' review context after implementation changes/);
+        assert.match(result.reason, /A previous 'test' review recorded 'TEST REVIEW FAILED'/);
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "performance"'));
+        assert.ok(!result.commands[0].command.includes('full-suite-validation'));
+        assert.doesNotMatch(result.title, /Materialize 'performance' review reuse/);
+    });
+
     it('routes to test after upstream code reuse has already been materialized for failed test remediation', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
