@@ -34,6 +34,21 @@ const DEPRECATED_PROJECT_ONLY_OPTIONAL_QUALITY_RULE_IDS = [
     'zero_diff_noop_preemption'
 ];
 
+function expectedOptionalQualityRule(
+    rule: typeof DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[number]
+): Record<string, unknown> {
+    const expected: Record<string, unknown> = {
+        id: rule.id,
+        title: rule.title,
+        prompt: rule.prompt,
+        enabled: rule.enabled
+    };
+    if (rule.excluded_scope_categories) {
+        expected.excluded_scope_categories = rule.excluded_scope_categories;
+    }
+    return expected;
+}
+
 function readTemplateConfig(configName: string): Record<string, unknown> {
     return JSON.parse(
         fs.readFileSync(path.join(process.cwd(), 'template', 'config', `${configName}.json`), 'utf8')
@@ -116,12 +131,7 @@ test('tracked workflow template ships current optional quality baseline', () => 
     assert.equal(optionalQualityChecks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
     assert.deepEqual(
         optionalQualityChecks.rules,
-        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({
-            id: rule.id,
-            title: rule.title,
-            prompt: rule.prompt,
-            enabled: rule.enabled
-        }))
+        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map(expectedOptionalQualityRule)
     );
 });
 
@@ -368,12 +378,7 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
     );
     assert.deepEqual(
         optionalQualityCheckRules.slice(1),
-        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({
-            id: rule.id,
-            title: rule.title,
-            prompt: rule.prompt,
-            enabled: true
-        }))
+        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map(expectedOptionalQualityRule)
     );
     assert.deepEqual(optionalQualityChecks.audit_history, [
         {

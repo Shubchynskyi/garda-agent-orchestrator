@@ -21,6 +21,58 @@ function qualityGateStatusBadges(rule) {
 function qualityGateRulePackLabel(tab, labelField, rawField) {
   return tab && tab[labelField] ? tab[labelField] : formatQualityRulePackVersion(tab && tab[rawField]);
 }
+function qualityGateListValue(values) {
+  const items = Array.isArray(values) ? values.map(item => String(item || '').trim()).filter(Boolean) : [];
+  return items.length > 0 ? items.join(', ') : '-';
+}
+function qualityGateEvidenceLabel(status) {
+  if (status === 'current') return t('qualityGateEvidenceCurrent');
+  if (status === 'stale') return t('qualityGateEvidenceStale');
+  if (status === 'missing') return t('qualityGateEvidenceMissing');
+  if (status === 'invalid') return t('qualityGateEvidenceInvalid');
+  return status || '-';
+}
+function qualityGateEffectLabel(effect) {
+  if (effect === 'passed') return t('qualityGateEffectPassed');
+  if (effect === 'helped') return t('qualityGateEffectHelped');
+  if (effect === 'warned') return t('qualityGateEffectWarned');
+  if (effect === 'required_rework') return t('qualityGateEffectRequiredRework');
+  if (effect === 'disabled') return t('qualityGateEffectDisabled');
+  if (effect === 'missing') return t('qualityGateEffectMissing');
+  if (effect === 'invalid') return t('qualityGateEffectInvalid');
+  if (effect === 'stale') return t('qualityGateEffectStale');
+  return effect || '-';
+}
+function renderQualityGateSkippedByScopeRules(latest) {
+  const rules = latest && Array.isArray(latest.skipped_by_scope_rules) ? latest.skipped_by_scope_rules : [];
+  if (rules.length === 0) {
+    return '<p class="empty">No rules were skipped by scope.</p>';
+  }
+  return '<div class="workflow-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe('Excluded scopes') + '</th><th>' + safe('Skip reason') + '</th></tr></thead><tbody>'
+    + rules.map(rule => '<tr><td><code>' + safe(rule.rule_id || '') + '</code></td><td>' + safe(rule.title || '') + '</td><td><code>' + safe(qualityGateListValue(rule.excluded_scope_categories)) + '</code></td><td>' + safe(rule.scope_skip_reason || '-') + '</td></tr>').join('')
+    + '</tbody></table></div>';
+}
+function renderQualityGateLatestCheck(latest) {
+  if (!latest) {
+    return '';
+  }
+  return '<section class="quality-gate-block"><h3>' + safe(t('qualityGateLatestCheck')) + '</h3>'
+    + '<section class="quality-gate-summary">'
+    + metric(t('qualityGateEvidenceState'), qualityGateEvidenceLabel(latest.evidence_status))
+    + metric(t('qualityGateEffect'), qualityGateEffectLabel(latest.effect))
+    + metric('Scope', latest.scope_category || '-')
+    + metric(t('qualityGateChangedFiles'), latest.changed_files_count)
+    + metric('Enabled rules', latest.enabled_rule_count)
+    + metric('Active rules', latest.active_rule_count)
+    + metric('Skipped by scope', latest.skipped_by_scope_rule_count)
+    + metric(t('qualityGateAnswers'), latest.answer_count)
+    + metric(t('qualityGateActionsRequired'), latest.action_required_count)
+    + '</section>'
+    + (latest.summary ? '<p class="empty">' + safe(latest.summary) + '</p>' : '')
+    + '<h4>' + safe('Skipped by scope') + '</h4>'
+    + renderQualityGateSkippedByScopeRules(latest)
+    + '</section>';
+}
 function renderQualityGateResult(result) {
   currentQualityGateSettingResult = result;
   if (!qualityGateStatusNode) {
@@ -64,6 +116,7 @@ function renderQualityGateRuleRow(rule, disabled) {
     + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'title')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'title')) + '"' + immutableTextAttr + '></td>'
     + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'prompt')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'prompt')) + '"' + immutableTextAttr + '></td>'
     + '<td><select id="' + safe(optionalRuleInputId(rule.id, 'enabled')) + '"' + disabledAttr + '><option value="true"' + (rule.enabled !== false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOn')) + '</option><option value="false"' + (rule.enabled === false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOff')) + '</option></select></td>'
+    + '<td><code>' + safe(qualityGateListValue(rule.excluded_scope_categories)) + '</code></td>'
     + '<td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : actionLabel) + '</button><button type="button" data-quality-gate-rule-action="delete" data-quality-gate-rule-id="' + ruleId + '"' + deleteDisabledAttr + '>' + safe(t('removeOptionalCheckRule')) + '</button></div></td>'
     + '</tr>';
 }
@@ -73,7 +126,7 @@ function renderQualityGateNewRuleRow(disabled) {
   const newTitle = optionalRuleInputId('quality-gate-new', 'title');
   const newPrompt = optionalRuleInputId('quality-gate-new', 'prompt');
   const newEnabled = optionalRuleInputId('quality-gate-new', 'enabled');
-  return '<tr data-optional-rule-id="quality-gate-new"><td><input id="' + safe(newId) + '" type="text" placeholder="custom_rule_id"' + disabledAttr + '></td><td>' + safe(t('qualityGateSourceCustom')) + '</td><td>' + badge(t('qualityGateNewRule'), 'quality-gate-rule', 'quality-gate-rule-new') + '</td><td><input id="' + safe(newTitle) + '" type="text"' + disabledAttr + '></td><td><input id="' + safe(newPrompt) + '" type="text"' + disabledAttr + '></td><td><select id="' + safe(newEnabled) + '"' + disabledAttr + '><option value="true">' + safe(t('gardaSwitchStateOn')) + '</option><option value="false">' + safe(t('gardaSwitchStateOff')) + '</option></select></td><td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="quality-gate-new"' + (disabled ? ' disabled' : '') + '>' + safe(t('addOptionalCheckRule')) + '</button></div></td></tr>';
+  return '<tr data-optional-rule-id="quality-gate-new"><td><input id="' + safe(newId) + '" type="text" placeholder="custom_rule_id"' + disabledAttr + '></td><td>' + safe(t('qualityGateSourceCustom')) + '</td><td>' + badge(t('qualityGateNewRule'), 'quality-gate-rule', 'quality-gate-rule-new') + '</td><td><input id="' + safe(newTitle) + '" type="text"' + disabledAttr + '></td><td><input id="' + safe(newPrompt) + '" type="text"' + disabledAttr + '></td><td><select id="' + safe(newEnabled) + '"' + disabledAttr + '><option value="true">' + safe(t('gardaSwitchStateOn')) + '</option><option value="false">' + safe(t('gardaSwitchStateOff')) + '</option></select></td><td><code>-</code></td><td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="quality-gate-new"' + (disabled ? ' disabled' : '') + '>' + safe(t('addOptionalCheckRule')) + '</button></div></td></tr>';
 }
 function renderQualityGateRuleRows(rules, disabled) {
   const customRules = rules.filter(rule => rule.source === 'custom');
@@ -127,8 +180,9 @@ function renderQualityGate(report) {
     + metric(t('qualityGateCustomRules'), tab.custom_rule_count)
     + '</section>'
     + renderQualityGateToggle(settingsPayload.settings || [], disabled)
+    + renderQualityGateLatestCheck(tab.latest_check)
     + '<section class="quality-gate-block"><h3>' + safe(t('qualityGateRuleSet')) + '</h3>'
-    + (rules.length === 0 ? '<p class="empty">' + safe(t('qualityGateRulesEmpty')) + '</p>' : '<div class="workflow-table quality-gate-rule-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('qualityGateSourceColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('gardaSwitchState')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + renderQualityGateRuleRows(rules, disabled) + '</tbody></table></div>')
+    + (rules.length === 0 ? '<p class="empty">' + safe(t('qualityGateRulesEmpty')) + '</p>' : '<div class="workflow-table quality-gate-rule-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('qualityGateSourceColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('gardaSwitchState')) + '</th><th>' + safe('Excluded scopes') + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + renderQualityGateRuleRows(rules, disabled) + '</tbody></table></div>')
     + '</section>';
   for (const button of qualityGateNode.querySelectorAll('button[data-quality-gate-setting-id]')) {
     button.addEventListener('click', () => {

@@ -278,6 +278,16 @@ function writeQualityChecklistArtifact(repoRoot: string, options: {
     actionsTaken?: string[];
     actionsRequired?: string[];
     checklistId?: string;
+    scopeCategory?: string;
+    activeRuleCount?: number;
+    skippedByScopeRuleCount?: number;
+    skippedRules?: Array<{
+        id: string;
+        title: string;
+        prompt?: string;
+        excludedScopeCategories?: string[];
+        scopeSkipReason?: string;
+    }>;
 }): void {
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
     const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
@@ -291,6 +301,8 @@ function writeQualityChecklistArtifact(repoRoot: string, options: {
         ? preflight.changed_files.map(String).sort()
         : ['src/reports/report-data-contract.ts'];
     const metrics = preflight.metrics || {};
+    const skippedRules = options.skippedRules ?? [];
+    const scopeCategory = options.scopeCategory ?? 'mixed';
     fs.writeFileSync(path.join(reviewsRoot, `${options.taskId}-quality-checklist.json`), JSON.stringify({
         schema_version: 1,
         timestamp_utc: options.timestampUtc,
@@ -299,11 +311,15 @@ function writeQualityChecklistArtifact(repoRoot: string, options: {
         checklist_id: options.checklistId ?? 'optional_quality_checks',
         status: options.status,
         outcome: options.status === 'WARN' ? 'WARN' : 'FAIL',
+        scope_category: scopeCategory,
+        active_rule_count: options.activeRuleCount ?? 1,
+        skipped_by_scope_rule_count: options.skippedByScopeRuleCount ?? skippedRules.length,
         workflow_config_path: workflowConfigPath,
         workflow_config_sha256: sha256File(workflowConfigPath),
         preflight_path: options.preflightPath,
         preflight_sha256: sha256File(options.preflightPath),
         changed_file_evidence: {
+            scope_category: scopeCategory,
             changed_files: changedFiles,
             changed_files_count: changedFiles.length,
             changed_files_sha256: metrics.changed_files_sha256 || sha256Text(changedFiles.join('\n')),
@@ -314,8 +330,18 @@ function writeQualityChecklistArtifact(repoRoot: string, options: {
             id: 'code_simplification',
             title: 'Code simplification',
             prompt: 'Check simplification.',
-            enabled: true
-        }],
+            enabled: true,
+            excluded_scope_categories: [],
+            scope_applicability: 'active'
+        }, ...skippedRules.map((rule) => ({
+            id: rule.id,
+            title: rule.title,
+            prompt: rule.prompt ?? 'Skipped for this scope.',
+            enabled: true,
+            excluded_scope_categories: rule.excludedScopeCategories ?? ['test-only'],
+            scope_applicability: 'skipped_by_scope',
+            scope_skip_reason: rule.scopeSkipReason ?? 'Rule is excluded for the current scope category.'
+        }))],
         answers: [{
             rule_id: 'code_simplification',
             status: options.status,
@@ -914,7 +940,15 @@ test('buildReportDataContract exposes quality gate evidence and action-required 
         status: 'WARN',
         timestampUtc: '2026-05-16T00:02:00.000Z',
         preflightPath: warnPreflightPath,
-        actionsTaken: ['Kept evidence scan bounded to recent artifacts.']
+        actionsTaken: ['Kept evidence scan bounded to recent artifacts.'],
+        scopeCategory: 'test-only',
+        activeRuleCount: 1,
+        skippedRules: [{
+            id: 'size_growth',
+            title: 'Size growth',
+            excludedScopeCategories: ['test-only'],
+            scopeSkipReason: 'Rule is excluded for current scope category: test-only.'
+        }]
     });
     writeQualityChecklistTimelineEvent(repoRoot, {
         taskId: 'T-099',
@@ -941,6 +975,15 @@ test('buildReportDataContract exposes quality gate evidence and action-required 
     assert.equal(report.quality_gate_tab.latest_check.action_required_count, 0);
     assert.equal(report.quality_gate_tab.latest_check.answer_count, 1);
     assert.equal(report.quality_gate_tab.latest_check.changed_files_count, 1);
+    assert.equal(report.quality_gate_tab.latest_check.scope_category, 'test-only');
+    assert.equal(report.quality_gate_tab.latest_check.active_rule_count, 1);
+    assert.equal(report.quality_gate_tab.latest_check.skipped_by_scope_rule_count, 1);
+    assert.deepEqual(report.quality_gate_tab.latest_check.skipped_by_scope_rules, [{
+        rule_id: 'size_growth',
+        title: 'Size growth',
+        excluded_scope_categories: ['test-only'],
+        scope_skip_reason: 'Rule is excluded for current scope category: test-only.'
+    }]);
     assert.equal(report.quality_gate_tab.latest_check.timeline_event_count, 2);
     assert.ok(report.quality_gate_tab.latest_check.actions_taken.includes('Kept evidence scan bounded to recent artifacts.'));
     assert.equal(report.quality_gate_tab.action_required_history.length, 1);

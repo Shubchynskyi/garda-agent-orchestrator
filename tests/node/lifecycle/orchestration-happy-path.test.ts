@@ -6,7 +6,10 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { DEFAULT_BUNDLE_NAME } from '../../../src/core/constants';
-import { DEFAULT_OPTIONAL_QUALITY_CHECK_RULES } from '../../../src/core/workflow-config';
+import {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    isOptionalQualityCheckRuleExcludedForScope
+} from '../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 import { handleSetup } from '../../../src/cli/commands/setup';
 import { handleGate } from '../../../src/cli/commands/gate-command';
@@ -283,15 +286,17 @@ function buildQualityChecklistAnswersJson(): string {
             evidence_files: ['tests/app.test.ts', 'scripts/full-suite-check.cjs']
         }
     };
-    return JSON.stringify(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({
-        rule_id: rule.id,
-        status: 'PASS',
-        answer: answersByRuleId[rule.id]?.answer
-            ?? `The fixture has no ${rule.title.toLowerCase()} risk beyond the focused test-only change.`,
-        evidence_files: answersByRuleId[rule.id]?.evidence_files ?? ['tests/app.test.ts'],
-        actions_taken: [],
-        actions_required: []
-    })));
+    return JSON.stringify(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
+        .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
+        .map((rule) => ({
+            rule_id: rule.id,
+            status: 'PASS',
+            answer: answersByRuleId[rule.id]?.answer
+                ?? `The fixture has no ${rule.title.toLowerCase()} risk beyond the focused test-only change.`,
+            evidence_files: answersByRuleId[rule.id]?.evidence_files ?? ['tests/app.test.ts'],
+            actions_taken: [],
+            actions_required: []
+        })));
 }
 
 async function runReviewGateCommand(repoRoot: string, args: string[]): Promise<void> {

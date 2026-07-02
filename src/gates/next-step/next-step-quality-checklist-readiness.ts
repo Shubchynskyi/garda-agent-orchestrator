@@ -3,6 +3,7 @@ import * as path from 'node:path';
 
 import {
     formatOptionalQualityChecksRuleSetDiagnostics,
+    isOptionalQualityCheckRuleExcludedForScope,
     normalizeOptionalQualityChecksConfig
 } from '../../core/workflow-config';
 import {
@@ -40,6 +41,10 @@ export interface NextStepQualityChecklistReadiness {
     actionsTakenCount: number;
     answerCount: number;
     changedFilesCount: number | null;
+    scopeCategory: string | null;
+    enabledRuleCount: number;
+    activeRuleCount: number;
+    skippedByScopeRuleCount: number;
     artifactPath: string | null;
 }
 
@@ -57,6 +62,10 @@ export interface NextStepQualityChecklistSummary {
     actions_taken_count: number;
     answer_count: number;
     changed_files_count: number | null;
+    scope_category: string | null;
+    enabled_rule_count: number;
+    active_rule_count: number;
+    skipped_by_scope_rule_count: number;
     visible_summary_line: string;
 }
 
@@ -97,6 +106,11 @@ function preflightChangedFilesCount(preflight: Record<string, unknown> | null): 
     }
     const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
     return parseOptionalNumberField(metrics.changed_files_count);
+}
+
+function preflightScopeCategory(preflight: Record<string, unknown> | null): string | null {
+    const normalized = String(preflight?.scope_category || '').trim().toLowerCase();
+    return normalized || null;
 }
 
 function readJsonRecordOrNull(filePath: string): Record<string, unknown> | null {
@@ -140,6 +154,10 @@ function buildQualityChecklistReadiness(options: {
     artifactPath?: string | null;
     artifact?: Record<string, unknown> | null;
     changedFilesCount?: number | null;
+    scopeCategory?: string | null;
+    enabledRuleCount?: number;
+    activeRuleCount?: number;
+    skippedByScopeRuleCount?: number;
 }): NextStepQualityChecklistReadiness {
     const artifact = options.artifact || null;
     return {
@@ -156,6 +174,10 @@ function buildQualityChecklistReadiness(options: {
         actionsTakenCount: countArray(artifact?.actions_taken),
         answerCount: countArray(artifact?.answers),
         changedFilesCount: options.changedFilesCount ?? null,
+        scopeCategory: options.scopeCategory || null,
+        enabledRuleCount: options.enabledRuleCount ?? 0,
+        activeRuleCount: options.activeRuleCount ?? 0,
+        skippedByScopeRuleCount: options.skippedByScopeRuleCount ?? 0,
         artifactPath: options.artifactPath || null
     };
 }
@@ -175,7 +197,13 @@ export function readQualityChecklistReadiness(options: {
     const optionalQualityChecks = normalizeOptionalQualityChecksConfig(options.workflowConfig?.optional_quality_checks);
     const required = preflightHasChangedFiles(options.preflight);
     const changedFilesCount = preflightChangedFilesCount(options.preflight);
+    const scopeCategory = preflightScopeCategory(options.preflight);
     const enabledRuleCount = optionalQualityChecks.rules.filter((rule) => rule.enabled).length;
+    const activeRuleCount = optionalQualityChecks.rules
+        .filter((rule) => rule.enabled)
+        .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, scopeCategory))
+        .length;
+    const skippedByScopeRuleCount = enabledRuleCount - activeRuleCount;
     const sourceCheckoutDefaultEnabled = !hasOptionalQualityChecksConfig && isOrchestratorSourceCheckout(options.repoRoot);
     const enabled = (hasOptionalQualityChecksConfig || sourceCheckoutDefaultEnabled) && optionalQualityChecks.enabled && enabledRuleCount > 0;
     if (!enabled) {
@@ -186,7 +214,11 @@ export function readQualityChecklistReadiness(options: {
             evidenceStatus: 'disabled',
             effect: 'disabled',
             reason: 'Optional quality checks are disabled for the effective workflow configuration.',
-            changedFilesCount
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
         });
     }
     if (!required) {
@@ -197,7 +229,11 @@ export function readQualityChecklistReadiness(options: {
             evidenceStatus: 'not_required',
             effect: 'not_required',
             reason: 'The current preflight has no changed files, so optional quality checks are not required for this cycle.',
-            changedFilesCount
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
         });
     }
 
@@ -209,9 +245,17 @@ export function readQualityChecklistReadiness(options: {
             ready: false,
             evidenceStatus: 'missing',
             effect: 'missing',
-            reason: 'Optional quality checks are enabled and the current changed-file preflight has no quality checklist evidence yet.' + ruleSetDiagnosticSuffix,
+            reason:
+                'Optional quality checks are enabled and the current changed-file preflight has no quality checklist evidence yet. ' +
+                `Active rules for scope ${formatNextStepInlineValue(scopeCategory || 'unknown')}: ${activeRuleCount}; ` +
+                `skipped_by_scope=${skippedByScopeRuleCount}.` +
+                ruleSetDiagnosticSuffix,
             artifactPath,
-            changedFilesCount
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
         });
     }
 
@@ -225,7 +269,11 @@ export function readQualityChecklistReadiness(options: {
             effect: 'invalid',
             reason: `Quality checklist evidence at ${formatNextStepInlineValue(toRepoDisplayPath(options.repoRoot, artifactPath))} is not a valid JSON object.`,
             artifactPath,
-            changedFilesCount
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
         });
     }
 
@@ -241,7 +289,11 @@ export function readQualityChecklistReadiness(options: {
             reason: `Quality checklist evidence has unsupported status ${formatNextStepInlineValue(status || '<empty>')}.`,
             artifactPath,
             artifact,
-            changedFilesCount
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
         });
     }
     if (artifact.task_id !== options.taskId) {
@@ -255,7 +307,11 @@ export function readQualityChecklistReadiness(options: {
             reason: `Quality checklist evidence belongs to task ${formatNextStepInlineValue(String(artifact.task_id || '<missing>'))}, not ${formatNextStepInlineValue(options.taskId)}.`,
             artifactPath,
             artifact,
-            changedFilesCount
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
         });
     }
     if (artifact.checklist_id !== QUALITY_CHECKLIST_ID) {
@@ -269,7 +325,11 @@ export function readQualityChecklistReadiness(options: {
             reason: `Quality checklist evidence has checklist_id ${formatNextStepInlineValue(String(artifact.checklist_id || '<missing>'))}, not ${formatNextStepInlineValue(QUALITY_CHECKLIST_ID)}.`,
             artifactPath,
             artifact,
-            changedFilesCount
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
         });
     }
 
@@ -289,7 +349,11 @@ export function readQualityChecklistReadiness(options: {
                 `Expected ${formatNextStepInlineValue(expectedPreflightSha256)}, found ${formatNextStepInlineValue(artifactPreflightSha256 || '<missing>')}.`,
             artifactPath,
             artifact,
-            changedFilesCount
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
         });
     }
 
@@ -312,7 +376,11 @@ export function readQualityChecklistReadiness(options: {
                 `Expected ${formatNextStepInlineValue(expectedWorkflowConfigSha256 || '<missing>')}, found ${formatNextStepInlineValue(artifactWorkflowConfigSha256 || '<missing>')}.`,
             artifactPath,
             artifact,
-            changedFilesCount
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
         });
     }
 
@@ -343,7 +411,11 @@ export function readQualityChecklistReadiness(options: {
             (configErrorDetails ? ` Violations: ${configErrorDetails}.` : ''),
         artifactPath,
         artifact,
-        changedFilesCount
+        changedFilesCount,
+        scopeCategory,
+        enabledRuleCount: parseOptionalNumberField(artifact.enabled_rule_count) ?? enabledRuleCount,
+        activeRuleCount: parseOptionalNumberField(artifact.active_rule_count) ?? activeRuleCount,
+        skippedByScopeRuleCount: parseOptionalNumberField(artifact.skipped_by_scope_rule_count) ?? skippedByScopeRuleCount
     });
 }
 
@@ -364,9 +436,15 @@ export function buildNextStepQualityChecklistSummary(
         actions_taken_count: readiness.actionsTakenCount,
         answer_count: readiness.answerCount,
         changed_files_count: readiness.changedFilesCount,
+        scope_category: readiness.scopeCategory,
+        enabled_rule_count: readiness.enabledRuleCount,
+        active_rule_count: readiness.activeRuleCount,
+        skipped_by_scope_rule_count: readiness.skippedByScopeRuleCount,
         visible_summary_line:
             `QualityChecklist: enabled=${readiness.enabled}; required=${readiness.required}; ready=${readiness.ready}; ` +
             `evidence=${readiness.evidenceStatus}; status=${readiness.status || 'none'}; effect=${readiness.effect}; ` +
+            `scope_category=${readiness.scopeCategory || 'unknown'}; enabled_rules=${readiness.enabledRuleCount}; ` +
+            `active_rules=${readiness.activeRuleCount}; skipped_by_scope=${readiness.skippedByScopeRuleCount}; ` +
             `answers=${readiness.answerCount}; actions_taken=${readiness.actionsTakenCount}; ` +
             `actions_required=${readiness.actionsRequiredCount}; changed_files=${readiness.changedFilesCount ?? 'unknown'}`
     };

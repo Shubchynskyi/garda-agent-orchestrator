@@ -5,7 +5,8 @@ import * as path from 'node:path';
 
 import {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
-    buildDefaultWorkflowConfig
+    buildDefaultWorkflowConfig,
+    isOptionalQualityCheckRuleExcludedForScope
 } from '../../../../src/core/workflow-config';
 import {
     buildQualityChecklistArtifact
@@ -103,6 +104,11 @@ function buildPassAnswers(): Array<Record<string, unknown>> {
     }));
 }
 
+function buildPassAnswersForRuleIds(ruleIds: readonly string[]): Array<Record<string, unknown>> {
+    const allowedRuleIds = new Set(ruleIds);
+    return buildPassAnswers().filter((answer) => allowedRuleIds.has(String(answer.rule_id)));
+}
+
 function buildGenericActionRequiredAnswers(): Array<Record<string, unknown>> {
     const actionByRuleId = new Map<string, string>(
         UNIVERSAL_QUALITY_RULE_EXPECTATIONS.map((rule) => [rule.id, rule.action])
@@ -139,6 +145,15 @@ describe('quality-checklist gate', () => {
                 assert.match(searchableText, pattern, `Rule '${expectation.id}' should mention ${pattern}.`);
             }
         }
+        const testOnlySkippedRuleIds = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
+            .filter((rule) => isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
+            .map((rule) => rule.id)
+            .sort();
+        assert.deepEqual(testOnlySkippedRuleIds, [
+            'code_simplification',
+            'size_growth',
+            'unnecessary_abstraction'
+        ]);
 
         for (const ruleId of MOVED_PROJECT_LOCAL_RULE_IDS) {
             assert.equal(rulesById.has(ruleId), false, `Expected '${ruleId}' to be project-local, not shipped baseline.`);
@@ -175,6 +190,148 @@ describe('quality-checklist gate', () => {
             assert.ok(artifact.workflow_config_sha256);
             assert.ok(artifact.preflight_sha256);
             assert.deepEqual(artifact.violations, []);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('accepts only active rule answers for test-only scope and records skipped rules', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-test-only-active-rules' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture, {
+                scope_category: 'test-only',
+                metrics: {
+                    changed_lines_total: 4,
+                    scope_sha256: 'a'.repeat(64),
+                    scope_content_sha256: 'b'.repeat(64)
+                },
+                changed_files: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
+            });
+            const activeRuleIds = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
+                .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
+                .map((rule) => rule.id);
+
+            const artifact = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: buildPassAnswersForRuleIds(activeRuleIds)
+            });
+
+            assert.equal(artifact.status, 'PASS');
+            assert.equal(artifact.scope_category, 'test-only');
+            assert.equal(artifact.enabled_rule_count, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
+            assert.equal(artifact.active_rule_count, activeRuleIds.length);
+            assert.equal(artifact.skipped_by_scope_rule_count, 3);
+            assert.equal(artifact.answers.length, activeRuleIds.length);
+            assert.deepEqual(
+                artifact.rules
+                    .filter((rule) => rule.scope_applicability === 'skipped_by_scope')
+                    .map((rule) => rule.id)
+                    .sort(),
+                ['code_simplification', 'size_growth', 'unnecessary_abstraction']
+            );
+            assert.deepEqual(artifact.violations, []);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects answers for rules skipped by test-only scope', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-test-only-skipped-answer' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture, {
+                scope_category: 'test-only',
+                changed_files: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
+            });
+            const activeRuleIds = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
+                .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
+                .map((rule) => rule.id);
+            const artifact = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: [
+                    ...buildPassAnswersForRuleIds(activeRuleIds),
+                    {
+                        rule_id: 'code_simplification',
+                        status: 'PASS',
+                        answer: 'This rule is intentionally skipped for pure test changes.'
+                    }
+                ]
+            });
+
+            assert.equal(artifact.status, 'CONFIG_ERROR');
+            assert.ok(artifact.violations.some((violation) => (
+                violation.includes("Answer references quality-check rule 'code_simplification' skipped for the current preflight scope")
+            )));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('applies custom rule test-only opt-out through quality-checklist behavior', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-custom-test-only-skip' });
+        try {
+            const customRule = {
+                ...buildTestQualityRule('custom_test_only_skip'),
+                excluded_scope_categories: ['test-only']
+            };
+            const config = buildDefaultWorkflowConfig();
+            config.optional_quality_checks.rules = [
+                ...config.optional_quality_checks.rules,
+                customRule
+            ];
+            fs.writeFileSync(
+                path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json'),
+                JSON.stringify(config, null, 2) + '\n',
+                'utf8'
+            );
+            const preflightPath = writeGateFixturePreflight(fixture, {
+                scope_category: 'test-only',
+                changed_files: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
+            });
+            const activeRuleIds = config.optional_quality_checks.rules
+                .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
+                .map((rule) => rule.id);
+
+            const artifact = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: buildPassAnswersForRuleIds(activeRuleIds)
+            });
+            const skippedCustomRule = artifact.rules.find((rule) => rule.id === customRule.id);
+
+            assert.equal(artifact.status, 'PASS');
+            assert.equal(artifact.scope_category, 'test-only');
+            assert.equal(artifact.enabled_rule_count, config.optional_quality_checks.rules.length);
+            assert.equal(artifact.active_rule_count, activeRuleIds.length);
+            assert.equal(artifact.skipped_by_scope_rule_count, 4);
+            assert.equal(skippedCustomRule?.scope_applicability, 'skipped_by_scope');
+            assert.deepEqual(skippedCustomRule?.excluded_scope_categories, ['test-only']);
+            assert.match(skippedCustomRule?.scope_skip_reason || '', /test-only/u);
+            assert.equal(artifact.answers.some((answer) => answer.rule_id === customRule.id), false);
+            assert.deepEqual(artifact.violations, []);
+
+            const rejectedArtifact = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: [
+                    ...buildPassAnswersForRuleIds(activeRuleIds),
+                    {
+                        rule_id: customRule.id,
+                        status: 'PASS',
+                        answer: 'This custom rule is intentionally skipped for pure test changes.'
+                    }
+                ]
+            });
+
+            assert.equal(rejectedArtifact.status, 'CONFIG_ERROR');
+            assert.ok(rejectedArtifact.violations.some((violation) => (
+                violation.includes("Answer references quality-check rule 'custom_test_only_skip' skipped for the current preflight scope")
+            )));
         } finally {
             fixture.cleanup();
         }
@@ -494,7 +651,7 @@ describe('quality-checklist gate', () => {
             const diagnostic = String(artifact.violations[0] || '');
 
             assert.equal(artifact.status, 'CONFIG_ERROR');
-            assert.match(diagnostic, /baseline_version '2026-06-26\.t843' differs from shipped '2026-06-27\.t846'/u);
+            assert.match(diagnostic, /baseline_version '2026-06-26\.t843' differs from shipped '2026-07-02\.t898'/u);
             assert.match(diagnostic, /classifier_intent_edge_cases/u);
             assert.match(diagnostic, /custom_garda_classifier_intent_edge_cases/u);
             assert.match(diagnostic, /Canonical enabled quality-check rule ids/u);

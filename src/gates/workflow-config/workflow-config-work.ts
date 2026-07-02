@@ -291,7 +291,8 @@ const COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS = [
 const COMPATIBILITY_TASK_RESET_KEYS = ['enabled'];
 const COMPATIBILITY_AUTO_BACKUP_KEYS = ['enabled', 'interval_days', 'keep_latest'];
 const COMPATIBILITY_OPTIONAL_QUALITY_CHECKS_KEYS = ['baseline_version', 'enabled', 'rules'];
-const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_KEYS = ['enabled', 'id', 'prompt', 'title'];
+const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_REQUIRED_KEYS = ['enabled', 'id', 'prompt', 'title'];
+const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_OPTIONAL_KEYS = ['excluded_scope_categories'];
 const COMPATIBILITY_ORCHESTRATOR_WORK_POLICY_KEYS = ['mode'];
 
 function hasExactOwnKeys(record: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
@@ -363,6 +364,27 @@ function isSubsetOf(actual: readonly string[], allowed: readonly string[]): bool
     return actual.every((entry) => allowedSet.has(entry));
 }
 
+function hasCompatibleOptionalQualityRuleScopeExclusions(
+    rule: Record<string, unknown>,
+    defaultRule: Record<string, unknown>
+): boolean {
+    const defaultHasExclusions = hasOwnKey(defaultRule, 'excluded_scope_categories');
+    const ruleHasExclusions = hasOwnKey(rule, 'excluded_scope_categories');
+    if (!defaultHasExclusions) {
+        return !ruleHasExclusions;
+    }
+    if (!ruleHasExclusions) {
+        return true;
+    }
+    const defaultExclusions = normalizeStringList(defaultRule.excluded_scope_categories);
+    return defaultExclusions.length > 0
+        && arraysEqual(normalizeStringList(rule.excluded_scope_categories), defaultExclusions);
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+    return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
 function isExactDefaultOptionalQualityChecksCompatibilityBaseline(input: unknown): boolean {
     const optionalQualityChecks = toPlainRecord(input);
     const defaultOptionalQualityChecks = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.optional_quality_checks as unknown as Record<string, unknown>;
@@ -389,12 +411,21 @@ function isExactDefaultOptionalQualityChecksCompatibilityBaseline(input: unknown
         const defaultRule = toPlainRecord(defaultRules[index]);
         return !!rule
             && !!defaultRule
-            && hasExactOwnKeys(defaultRule, COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_KEYS)
-            && hasExactOwnKeys(rule, COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_KEYS)
+            && hasRequiredOwnKeysAndOnlyOptionalKeys(
+                defaultRule,
+                COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_REQUIRED_KEYS,
+                COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_OPTIONAL_KEYS
+            )
+            && hasRequiredOwnKeysAndOnlyOptionalKeys(
+                rule,
+                COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_REQUIRED_KEYS,
+                COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_OPTIONAL_KEYS
+            )
             && rule.enabled === defaultRule.enabled
             && rule.id === defaultRule.id
             && rule.title === defaultRule.title
-            && rule.prompt === defaultRule.prompt;
+            && rule.prompt === defaultRule.prompt
+            && hasCompatibleOptionalQualityRuleScopeExclusions(rule, defaultRule);
     });
 }
 

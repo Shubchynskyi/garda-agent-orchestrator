@@ -187,11 +187,13 @@ export interface ReportQualityGateRule {
     title: string;
     prompt: string;
     enabled: boolean;
+    excluded_scope_categories: string[];
     present: boolean;
     source: ReportQualityGateRuleSource;
     statuses: ReportQualityGateRuleStatus[];
     baseline_title: string | null;
     baseline_prompt: string | null;
+    baseline_excluded_scope_categories: string[] | null;
 }
 
 export type ReportQualityGateEvidenceStatus = 'current' | 'stale' | 'missing' | 'invalid' | 'disabled';
@@ -204,6 +206,13 @@ export interface ReportQualityGateAnswerSummary {
     evidence_files: string[];
     actions_taken: string[];
     actions_required: string[];
+}
+
+export interface ReportQualityGateSkippedRuleSummary {
+    rule_id: string;
+    title: string;
+    excluded_scope_categories: string[];
+    scope_skip_reason: string | null;
 }
 
 export interface ReportQualityGateLatestCheck {
@@ -220,10 +229,14 @@ export interface ReportQualityGateLatestCheck {
     preflight_path: string | null;
     preflight_sha256: string | null;
     workflow_config_sha256: string | null;
+    scope_category: string | null;
     changed_files_count: number | null;
     changed_files_preview: string[];
     changed_files_truncated: boolean;
     enabled_rule_count: number;
+    active_rule_count: number | null;
+    skipped_by_scope_rule_count: number | null;
+    skipped_by_scope_rules: ReportQualityGateSkippedRuleSummary[];
     answer_count: number;
     action_taken_count: number;
     action_required_count: number;

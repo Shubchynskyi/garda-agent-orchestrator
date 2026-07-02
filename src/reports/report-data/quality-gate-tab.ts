@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
+    normalizeOptionalQualityCheckScopeCategories,
     type OptionalQualityCheckRule
 } from '../../core/workflow-config';
 import { joinOrchestratorPath } from '../../gates/shared/helpers';
@@ -30,7 +31,16 @@ function getRuleStatuses(rule: OptionalQualityCheckRule, baselineRule: OptionalQ
     if (rule.enabled === false) {
         statuses.push('disabled');
     }
-    if (baselineRule && (rule.title !== baselineRule.title || rule.prompt !== baselineRule.prompt)) {
+    const ruleExclusions = normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories);
+    const baselineExclusions = normalizeOptionalQualityCheckScopeCategories(baselineRule?.excluded_scope_categories);
+    if (
+        baselineRule
+        && (
+            rule.title !== baselineRule.title
+            || rule.prompt !== baselineRule.prompt
+            || ruleExclusions.join('\n') !== baselineExclusions.join('\n')
+        )
+    ) {
         statuses.push('locally_edited');
     }
     return statuses.length > 0 ? statuses : ['active'];
@@ -42,11 +52,15 @@ function buildPresentRule(rule: OptionalQualityCheckRule, baselineRule: Optional
         title: rule.title,
         prompt: rule.prompt,
         enabled: rule.enabled !== false,
+        excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories),
         present: true,
         source: baselineRule ? 'baseline' : 'custom',
         statuses: getRuleStatuses(rule, baselineRule),
         baseline_title: baselineRule?.title ?? null,
-        baseline_prompt: baselineRule?.prompt ?? null
+        baseline_prompt: baselineRule?.prompt ?? null,
+        baseline_excluded_scope_categories: baselineRule
+            ? normalizeOptionalQualityCheckScopeCategories(baselineRule.excluded_scope_categories)
+            : null
     };
 }
 
@@ -56,11 +70,13 @@ function buildDeletedBaselineRule(rule: OptionalQualityCheckRule): ReportQuality
         title: rule.title,
         prompt: rule.prompt,
         enabled: false,
+        excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories),
         present: false,
         source: 'baseline',
         statuses: ['deleted'],
         baseline_title: rule.title,
-        baseline_prompt: rule.prompt
+        baseline_prompt: rule.prompt,
+        baseline_excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories)
     };
 }
 

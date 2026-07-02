@@ -22,6 +22,7 @@ import type {
     ReportQualityGateEffect,
     ReportQualityGateEvidenceStatus,
     ReportQualityGateLatestCheck,
+    ReportQualityGateSkippedRuleSummary,
     ReportWorkflowConfigTab
 } from './types';
 
@@ -34,6 +35,7 @@ const MAX_ACTION_HISTORY = 8;
 const MAX_ACTION_ITEMS = 5;
 const MAX_CHANGED_FILES = 8;
 const MAX_ANSWERS = 12;
+const MAX_SKIPPED_RULES = 12;
 const MAX_SUMMARY_CHARS = 220;
 
 interface RuntimeFileCandidate {
@@ -389,6 +391,25 @@ function summarizeAnswers(payload: Record<string, unknown>): ReportQualityGateAn
         }));
 }
 
+function summarizeSkippedByScopeRules(payload: Record<string, unknown>): ReportQualityGateSkippedRuleSummary[] {
+    if (!Array.isArray(payload.rules)) {
+        return [];
+    }
+    return payload.rules
+        .filter((rule): rule is Record<string, unknown> => (
+            isRecord(rule)
+            && toText(rule.scope_applicability) === 'skipped_by_scope'
+        ))
+        .slice(0, MAX_SKIPPED_RULES)
+        .map((rule) => ({
+            rule_id: toText(rule.id),
+            title: summarizeText(rule.title),
+            excluded_scope_categories: toTextArray(rule.excluded_scope_categories),
+            scope_skip_reason: toText(rule.scope_skip_reason) || null
+        }))
+        .filter((rule) => rule.rule_id);
+}
+
 function validateArtifactPayload(payload: Record<string, unknown> | null): string[] {
     if (!payload) {
         return ['Quality checklist artifact is not a valid JSON object.'];
@@ -683,10 +704,14 @@ function buildMissingLatestCheck(
         preflight_path: null,
         preflight_sha256: null,
         workflow_config_sha256: null,
+        scope_category: null,
         changed_files_count: null,
         changed_files_preview: [],
         changed_files_truncated: false,
         enabled_rule_count: workflowConfigTab.optional_quality_checks.rules.filter((rule) => rule.enabled !== false).length,
+        active_rule_count: null,
+        skipped_by_scope_rule_count: null,
+        skipped_by_scope_rules: [],
         answer_count: 0,
         action_taken_count: 0,
         action_required_count: 0,
@@ -722,6 +747,12 @@ function buildLatestCheckFromArtifact(options: {
     const enabledRuleCount = Array.isArray(payload?.rules)
         ? payload.rules.filter((rule) => isRecord(rule) && rule.enabled !== false).length
         : 0;
+    const activeRuleCount = toNumber(payload?.active_rule_count);
+    const skippedByScopeRuleCount = toNumber(payload?.skipped_by_scope_rule_count);
+    const scopeCategory = payload
+        ? toText(payload.scope_category) || (isRecord(payload.changed_file_evidence) ? toText(payload.changed_file_evidence.scope_category) : '')
+        : '';
+    const skippedByScopeRules = payload ? summarizeSkippedByScopeRules(payload) : [];
     const effect = effectForArtifact({
         payload,
         evidenceStatus: freshness.status,
@@ -751,10 +782,14 @@ function buildLatestCheckFromArtifact(options: {
         preflight_path: toText(payload?.preflight_path) || null,
         preflight_sha256: toText(payload?.preflight_sha256).toLowerCase() || null,
         workflow_config_sha256: toText(payload?.workflow_config_sha256).toLowerCase() || null,
+        scope_category: scopeCategory || null,
         changed_files_count: changedFiles.changedFilesCount,
         changed_files_preview: changedFiles.changedFilesPreview,
         changed_files_truncated: changedFiles.changedFilesTruncated,
         enabled_rule_count: enabledRuleCount,
+        active_rule_count: activeRuleCount,
+        skipped_by_scope_rule_count: skippedByScopeRuleCount,
+        skipped_by_scope_rules: skippedByScopeRules,
         answer_count: Array.isArray(payload?.answers) ? payload.answers.length : 0,
         action_taken_count: Array.isArray(payload?.actions_taken) ? payload.actions_taken.length : 0,
         action_required_count: Array.isArray(payload?.actions_required) ? payload.actions_required.length : 0,

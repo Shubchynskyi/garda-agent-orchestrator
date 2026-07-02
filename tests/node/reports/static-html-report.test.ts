@@ -241,6 +241,8 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
         prompt: longQualityRulePrompt,
         baseline_title: longQualityRuleTitle,
         baseline_prompt: longQualityRulePrompt,
+        excluded_scope_categories: [],
+        baseline_excluded_scope_categories: [],
         enabled: false,
         present: true,
         source: 'baseline',
@@ -374,7 +376,10 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(visibleHtml.includes(longQualityRuleId));
     assert.ok(visibleHtml.includes(longQualityRuleTitle));
     assert.ok(visibleHtml.includes(longQualityRulePrompt));
-    assert.ok(!visibleQualityGatePanelHtml.includes('Latest check'));
+    assert.ok(visibleQualityGatePanelHtml.includes('Latest check'));
+    assert.ok(visibleQualityGatePanelHtml.includes('Scope'));
+    assert.ok(visibleQualityGatePanelHtml.includes('Skipped by scope'));
+    assert.ok(visibleQualityGatePanelHtml.includes('Excluded scopes'));
     assert.ok(!visibleQualityGatePanelHtml.includes('Action-required history'));
     report.quality_gate_tab.latest_check = {
         ...report.quality_gate_tab.latest_check,
@@ -492,7 +497,7 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
 
     assert.ok(invalidQualityGateHtml.includes('Latest quality checklist artifact is invalid.'));
     assert.ok(invalidQualityGateHtml.includes('Unsupported quality checklist status: BROKEN.'));
-    assert.ok(!invalidQualityGateVisibleHtml.includes('Latest quality checklist artifact is invalid.'));
+    assert.ok(invalidQualityGateVisibleHtml.includes('Latest quality checklist artifact is invalid.'));
     assert.ok(!invalidQualityGateVisibleHtml.includes('Unsupported quality checklist status: BROKEN.'));
 });
 

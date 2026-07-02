@@ -5,6 +5,7 @@ export interface OptionalQualityCheckRule {
     title: string;
     prompt: string;
     enabled: boolean;
+    excluded_scope_categories?: string[];
     [key: string]: unknown;
 }
 
@@ -32,14 +33,16 @@ export interface OptionalQualityChecksRuleSetDiagnostics {
 }
 
 export const OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE = 'режим опциональных проверок включен, проверь в garda ui перед стартом';
-export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-06-27.t846';
+export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-07-02.t898';
+export const OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY = 'test-only';
 
 export const LEGACY_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
     Object.freeze({
         id: 'code_simplification',
         title: 'Code simplification',
         prompt: 'Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.',
-        enabled: true
+        enabled: true,
+        excluded_scope_categories: [OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY]
     }),
     Object.freeze({
         id: 'project_style_fit',
@@ -51,13 +54,15 @@ export const LEGACY_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckR
         id: 'unnecessary_abstraction',
         title: 'Unnecessary abstraction',
         prompt: 'Check whether the change introduced abstractions that do not remove real duplication, risk, or complexity.',
-        enabled: true
+        enabled: true,
+        excluded_scope_categories: [OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY]
     }),
     Object.freeze({
         id: 'size_growth',
         title: 'Class/function/file growth',
         prompt: 'Check whether touched classes, functions, or files grew enough to need local extraction or clearer ownership.',
-        enabled: true
+        enabled: true,
+        excluded_scope_categories: [OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY]
     }),
     Object.freeze({
         id: 'hardcoded_values_contracts',
@@ -156,6 +161,50 @@ const MOVED_GARDA_OPTIONAL_QUALITY_CHECK_CUSTOM_RULE_BY_OLD_ID = new Map(
     MOVED_GARDA_OPTIONAL_QUALITY_CHECK_CUSTOM_RULES.map((entry) => [entry.movedRuleId, entry.customRule])
 );
 
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function normalizeScopeCategory(value: unknown): string {
+    return String(value || '').trim().toLowerCase();
+}
+
+export function normalizeOptionalQualityCheckScopeCategories(value: unknown): string[] {
+    const rawValues = Array.isArray(value)
+        ? value
+        : typeof value === 'string'
+            ? value.split(',')
+            : [];
+    return [...new Set(rawValues
+        .map(normalizeScopeCategory)
+        .filter(Boolean))].sort();
+}
+
+export function isOptionalQualityCheckRuleExcludedForScope(
+    rule: Pick<OptionalQualityCheckRule, 'excluded_scope_categories'>,
+    scopeCategory: unknown
+): boolean {
+    const normalizedScopeCategory = normalizeScopeCategory(scopeCategory);
+    if (!normalizedScopeCategory) {
+        return false;
+    }
+    return normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories)
+        .includes(normalizedScopeCategory);
+}
+
+function applyRuleScopeExclusions(
+    rule: OptionalQualityCheckRule,
+    source: Record<string, unknown>
+): OptionalQualityCheckRule {
+    if (!hasOwn(source, 'excluded_scope_categories')) {
+        return rule;
+    }
+    return {
+        ...rule,
+        excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(source.excluded_scope_categories)
+    };
+}
+
 function appendMissingMovedProjectCustomRules(
     mergedRules: OptionalQualityCheckRule[],
     mergedRuleIds: Set<string>
@@ -202,18 +251,19 @@ function normalizeOptionalQualityCheckRule(input: unknown): OptionalQualityCheck
     }
     const baselineRule = getOptionalQualityCheckBaselineRuleById(id);
     if (baselineRule) {
-        return {
+        return applyRuleScopeExclusions({
             ...cloneJsonValue(baselineRule),
             enabled: input.enabled === undefined ? baselineRule.enabled : input.enabled === true
-        };
+        }, input);
     }
-    return {
+    const customRule = {
         ...cloneJsonValue(input),
         id,
         title,
         prompt,
         enabled: input.enabled === undefined ? true : input.enabled === true
     };
+    return applyRuleScopeExclusions(customRule, input);
 }
 
 function normalizeOptionalQualityCheckRules(input: unknown): OptionalQualityCheckRule[] {
@@ -282,10 +332,10 @@ function mergeOptionalQualityCheckRulesWithBaseline(
         if (baselineRule) {
             if (!mergedRuleIds.has(existingRule.id)) {
                 const canonicalRule = cloneJsonValue(baselineRule) as OptionalQualityCheckRule;
-                mergedRules.push({
+                mergedRules.push(applyRuleScopeExclusions({
                     ...canonicalRule,
                     enabled: existingRule.enabled !== false
-                });
+                }, existingRule));
                 mergedRuleIds.add(existingRule.id);
             }
             continue;
@@ -311,13 +361,15 @@ function mergeOptionalQualityCheckRulesWithBaseline(
 }
 
 function isExactOptionalQualityCheckRule(rule: unknown, expected: OptionalQualityCheckRule): boolean {
-    const normalized = normalizeOptionalQualityCheckRule(rule);
-    return normalized !== null
-        && normalized.id === expected.id
-        && normalized.title === expected.title
-        && normalized.prompt === expected.prompt
-        && normalized.enabled === expected.enabled
-        && Object.keys(normalized).sort().join('\n') === Object.keys(expected).sort().join('\n');
+    if (!isPlainObject(rule)) {
+        return false;
+    }
+    return typeof rule.id === 'string'
+        && rule.id.trim().toLowerCase() === expected.id
+        && rule.title === expected.title
+        && rule.prompt === expected.prompt
+        && (rule.enabled === undefined ? true : rule.enabled === true) === expected.enabled
+        && Object.keys(rule).sort().join('\n') === Object.keys(expected).sort().join('\n');
 }
 
 function getOptionalQualityChecksBaselineVersion(input: Record<string, unknown>): string {

@@ -5,12 +5,14 @@ import { isRecognizedBundleName } from '../../../core/constants';
 import {
     buildDefaultWorkflowConfig,
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
+    OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     getBaselineOptionalQualityCheckRule,
     hasMaterializedWorkflowConfigBaseline,
     isBaselineOptionalQualityCheckRuleId,
     normalizeAutoBackupConfig,
     normalizeCompileGateConfig,
+    normalizeOptionalQualityCheckScopeCategories,
     normalizeOptionalQualityChecksConfig,
     normalizeOrchestratorWorkPolicyConfig,
     type OptionalQualityCheckRule,
@@ -95,6 +97,43 @@ function parseOptionalCheckRuleText(value: unknown, flagName: string): string | 
     return text;
 }
 
+function hasOwn(value: Record<string, unknown> | null, key: string): boolean {
+    return Boolean(value) && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function applyOptionalCheckRuleScopeOptions(
+    rule: OptionalQualityCheckRule,
+    existing: OptionalQualityCheckRule | null,
+    options: ParsedOptionsRecord
+): OptionalQualityCheckRule {
+    let nextRule = rule;
+    if (existing && hasOwn(existing, 'excluded_scope_categories')) {
+        nextRule = {
+            ...nextRule,
+            excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(existing.excluded_scope_categories)
+        };
+    }
+    if (typeof options.optionalCheckRuleExcludeTestOnly !== 'string') {
+        return nextRule;
+    }
+    const excludedScopeCategories = new Set(
+        normalizeOptionalQualityCheckScopeCategories(nextRule.excluded_scope_categories)
+    );
+    const excludeTestOnly = parseBooleanText(
+        options.optionalCheckRuleExcludeTestOnly,
+        '--optional-check-rule-exclude-test-only'
+    );
+    if (excludeTestOnly) {
+        excludedScopeCategories.add(OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY);
+    } else {
+        excludedScopeCategories.delete(OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY);
+    }
+    return {
+        ...nextRule,
+        excluded_scope_categories: [...excludedScopeCategories].sort()
+    };
+}
+
 function upsertOptionalCheckRule(
     rules: OptionalQualityCheckRule[],
     options: ParsedOptionsRecord
@@ -113,15 +152,15 @@ function upsertOptionalCheckRule(
             (requestedTitle !== null && requestedTitle !== baselineRule.title)
             || (requestedPrompt !== null && requestedPrompt !== baselineRule.prompt)
         ) {
-            throw new Error(`Baseline optional quality-check rule '${id}' can only change enabled state.`);
+            throw new Error(`Baseline optional quality-check rule '${id}' can only change enabled state and scope exclusions.`);
         }
         const enabled = typeof options.optionalCheckRuleEnabled === 'string'
             ? parseBooleanText(options.optionalCheckRuleEnabled, '--optional-check-rule-enabled')
             : existing?.enabled !== false;
-        const nextRule: OptionalQualityCheckRule = {
+        const nextRule = applyOptionalCheckRuleScopeOptions({
             ...baselineRule,
             enabled
-        };
+        }, existing, options);
         if (existingIndex >= 0) {
             return rules.map((rule, index) => index === existingIndex ? nextRule : rule);
         }
@@ -140,13 +179,13 @@ function upsertOptionalCheckRule(
     const enabled = typeof options.optionalCheckRuleEnabled === 'string'
         ? parseBooleanText(options.optionalCheckRuleEnabled, '--optional-check-rule-enabled')
         : existing?.enabled !== false;
-    const nextRule: OptionalQualityCheckRule = {
+    const nextRule = applyOptionalCheckRuleScopeOptions({
         ...(existing || {}),
         id,
         title,
         prompt,
         enabled
-    };
+    }, existing, options);
     if (existingIndex >= 0) {
         return rules.map((rule, index) => index === existingIndex ? nextRule : rule);
     }

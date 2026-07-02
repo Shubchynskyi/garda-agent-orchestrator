@@ -188,6 +188,7 @@ export const WORKFLOW_SET_DEFINITIONS = {
     '--optional-check-rule-title': { key: 'optionalCheckRuleTitle', type: 'string' },
     '--optional-check-rule-prompt': { key: 'optionalCheckRulePrompt', type: 'string' },
     '--optional-check-rule-enabled': { key: 'optionalCheckRuleEnabled', type: 'string' },
+    '--optional-check-rule-exclude-test-only': { key: 'optionalCheckRuleExcludeTestOnly', type: 'string' },
     '--optional-check-rule-delete': { key: 'optionalCheckRuleDelete', type: 'string' },
     '--optional-skill-selection-mode': { key: 'optionalSkillSelectionMode', type: 'string' },
     '--garda-self-guard': { key: 'gardaSelfGuard', type: 'string' },

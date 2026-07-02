@@ -531,6 +531,7 @@ export function writePreflight(
         seedPostPreflight?: boolean;
         reviewPolicyMode?: string;
         changedFiles?: string[];
+        scopeCategory?: string;
         includeDomainScopeFingerprints?: boolean;
     } = {}
 ): string {
@@ -550,7 +551,7 @@ export function writePreflight(
         task_id: taskId,
         detection_source: snapshot.detection_source,
         mode: 'FULL_PATH',
-        scope_category: 'code',
+        scope_category: options.scopeCategory || 'code',
         metrics: {
             changed_lines_total: snapshot.changed_lines_total,
             changed_files_sha256: snapshot.changed_files_sha256,

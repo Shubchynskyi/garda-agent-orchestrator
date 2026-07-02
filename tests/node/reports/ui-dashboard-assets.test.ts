@@ -479,10 +479,10 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                 config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
                 status: 'present',
                 enabled: true,
-                baseline_version: '2026-06-27.t846',
-                shipped_baseline_version: '2026-06-27.t846',
-                baseline_version_label: '2026-06-27',
-                shipped_baseline_version_label: '2026-06-27',
+                baseline_version: '2026-07-02.t898',
+                shipped_baseline_version: '2026-07-02.t898',
+                baseline_version_label: '2026-07-02',
+                shipped_baseline_version_label: '2026-07-02',
                 baseline_rule_count: 1,
                 custom_rule_count: 1,
                 deleted_baseline_rule_count: 1,
@@ -500,10 +500,19 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                     preflight_path: 'garda-agent-orchestrator/runtime/reviews/T-100-preflight.json',
                     preflight_sha256: '1'.repeat(64),
                     workflow_config_sha256: '2'.repeat(64),
+                    scope_category: 'test-only',
                     changed_files_count: 2,
                     changed_files_preview: ['src/reports/report-data/quality-gate-evidence.ts'],
                     changed_files_truncated: false,
                     enabled_rule_count: 1,
+                    active_rule_count: 1,
+                    skipped_by_scope_rule_count: 1,
+                    skipped_by_scope_rules: [{
+                        rule_id: 'size_growth',
+                        title: 'Size growth',
+                        excluded_scope_categories: ['test-only'],
+                        scope_skip_reason: 'Rule is excluded for current scope category: test-only.'
+                    }],
                     answer_count: 1,
                     action_taken_count: 0,
                     action_required_count: 1,
@@ -537,6 +546,7 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                         title: 'Code simplification',
                         prompt: 'Changed locally.',
                         enabled: true,
+                        excluded_scope_categories: ['test-only'],
                         present: true,
                         source: 'baseline',
                         statuses: ['locally_edited']
@@ -546,6 +556,7 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                         title: 'Custom focus',
                         prompt: 'Check custom concern.',
                         enabled: false,
+                        excluded_scope_categories: [],
                         present: true,
                         source: 'custom',
                         statuses: ['disabled']
@@ -555,6 +566,7 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                         title: 'Duplicated logic and contracts',
                         prompt: 'Check duplicated logic.',
                         enabled: false,
+                        excluded_scope_categories: ['test-only'],
                         present: false,
                         source: 'baseline',
                         statuses: ['deleted']
@@ -571,20 +583,26 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.doesNotMatch(qualityGateNode.innerHTML, /Поставляемый baseline/u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Текущий baseline/u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Удалённые baseline-правила/u);
-    assert.doesNotMatch(qualityGateNode.innerHTML, /2026-06-27\.t846/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /2026-07-02\.t898/u);
     assert.equal(context.qualityGateConfigPathNode.textContent, '');
     assert.match(qualityGateNode.innerHTML, /Установленный набор правил/u);
     assert.match(qualityGateNode.innerHTML, /Поставляемый набор правил/u);
-    assert.match(qualityGateNode.innerHTML, /2026-06-27/u);
-    assert.doesNotMatch(qualityGateNode.innerHTML, /\(T-846\)/u);
+    assert.match(qualityGateNode.innerHTML, /2026-07-02/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /\(T-898\)/u);
     assert.match(qualityGateNode.innerHTML, /Изменено локально/u);
     assert.match(qualityGateNode.innerHTML, /Пользовательское/u);
     assert.match(qualityGateNode.innerHTML, /Отключено/u);
     assert.match(qualityGateNode.innerHTML, /Удалено/u);
     assert.match(qualityGateNode.innerHTML, /quality-gate-rule-table/u);
     assert.match(qualityGateNode.innerHTML, /code_simplification/u);
-    assert.doesNotMatch(qualityGateNode.innerHTML, /Последняя проверка/u);
-    assert.doesNotMatch(qualityGateNode.innerHTML, /Требует доработки/u);
+    assert.match(qualityGateNode.innerHTML, /Последняя проверка/u);
+    assert.match(qualityGateNode.innerHTML, /Требует доработки/u);
+    assert.match(qualityGateNode.innerHTML, /Scope/u);
+    assert.match(qualityGateNode.innerHTML, /test-only/u);
+    assert.match(qualityGateNode.innerHTML, /Skipped by scope/u);
+    assert.match(qualityGateNode.innerHTML, /size_growth/u);
+    assert.match(qualityGateNode.innerHTML, /Rule is excluded for current scope category: test-only\./u);
+    assert.match(qualityGateNode.innerHTML, /Excluded scopes/u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Central parser helpers still need a smaller shape\./u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Bounded answer summary rendering added\./u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Extract parser helpers before review\./u);
@@ -715,7 +733,7 @@ test('system state renders quality baseline diagnostics with localized labels', 
                 remediation: 'Run update or workflow validation.',
                 value: {
                     installed_baseline_version: '2026-06-25.t842',
-                    shipped_baseline_version: '2026-06-27.t846',
+                    shipped_baseline_version: '2026-07-02.t898',
                     installed_baseline_rule_count: 9,
                     shipped_baseline_rule_count: 12,
                     missing_shipped_rule_ids: ['duplicated_logic_contracts']
@@ -734,8 +752,8 @@ test('system state renders quality baseline diagnostics with localized labels', 
     assert.match(systemStateNode.innerHTML, /Установленный набор правил/u);
     assert.match(systemStateNode.innerHTML, /Поставляемый набор правил/u);
     assert.match(systemStateNode.innerHTML, /2026-06-25/u);
-    assert.match(systemStateNode.innerHTML, /2026-06-27/u);
-    assert.doesNotMatch(systemStateNode.innerHTML, /\(T-842\)|\(T-846\)/u);
+    assert.match(systemStateNode.innerHTML, /2026-07-02/u);
+    assert.doesNotMatch(systemStateNode.innerHTML, /\(T-842\)|\(T-898\)/u);
     assert.doesNotMatch(systemStateNode.innerHTML, /2026-06-25\.t842/u);
     assert.match(systemStateNode.innerHTML, /Отсутствующие поставляемые правила/u);
     assert.match(systemStateNode.innerHTML, /duplicated_logic_contracts/u);
@@ -746,10 +764,10 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
         config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
         status: 'present',
         enabled: true,
-        baseline_version: '2026-06-27.t846',
-        shipped_baseline_version: '2026-06-27.t846',
-        baseline_version_label: '2026-06-27',
-        shipped_baseline_version_label: '2026-06-27',
+        baseline_version: '2026-07-02.t898',
+        shipped_baseline_version: '2026-07-02.t898',
+        baseline_version_label: '2026-07-02',
+        shipped_baseline_version_label: '2026-07-02',
         baseline_rule_count: 1,
         custom_rule_count: 1,
         deleted_baseline_rule_count: 0,

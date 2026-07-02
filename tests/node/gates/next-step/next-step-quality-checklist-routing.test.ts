@@ -161,9 +161,31 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.quality_checklist?.evidence_status, 'missing');
         assert.equal(result.quality_checklist?.effect, 'missing');
         assert.match(result.quality_checklist?.visible_summary_line || '', /QualityChecklist: enabled=true; required=true/u);
+        assert.match(result.quality_checklist?.visible_summary_line || '', /active_rules=7; skipped_by_scope=0/u);
         assert.equal(result.commands[0].label, 'Run quality checklist');
         assert.ok(result.commands[0].command.includes('gate quality-checklist'));
+        assert.ok(result.commands[0].command.includes('active optional_quality_checks rule for the current preflight scope'));
         assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+    });
+
+    it('prints a shorter active-rule requirement for test-only quality checklist scope', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true }, {
+            scopeCategory: 'test-only',
+            changedFiles: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.quality_checklist?.scope_category, 'test-only');
+        assert.equal(result.quality_checklist?.enabled_rule_count, 7);
+        assert.equal(result.quality_checklist?.active_rule_count, 4);
+        assert.equal(result.quality_checklist?.skipped_by_scope_rule_count, 3);
+        assert.match(result.reason, /Active rules for scope "test-only": 4; skipped_by_scope=3/u);
+        assert.ok(result.commands[0].command.includes('active optional_quality_checks rule for the current preflight scope'));
     });
 
     it('includes canonical rule ids when stale moved rule config needs checklist answers', () => {
@@ -175,7 +197,7 @@ describe('gates/next-step quality checklist routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
-        assert.match(result.reason, /baseline_version '2026-06-26\.t843' differs from shipped '2026-06-27\.t846'/u);
+        assert.match(result.reason, /baseline_version '2026-06-26\.t843' differs from shipped '2026-07-02\.t898'/u);
         assert.match(result.reason, /classifier_intent_edge_cases/u);
         assert.match(result.reason, /custom_garda_classifier_intent_edge_cases/u);
         assert.match(result.reason, /Canonical enabled quality-check rule ids/u);

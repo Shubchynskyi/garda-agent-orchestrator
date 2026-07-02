@@ -47,6 +47,16 @@ const OPTIONAL_QUALITY_CHECK_BASELINE_RULE_ID_PATTERN = `^(?:${OPTIONAL_QUALITY_
     .map(buildCaseInsensitiveLiteralPattern)
     .join('|')})$`;
 
+const OPTIONAL_QUALITY_CHECK_EXCLUDED_SCOPE_CATEGORIES_SCHEMA: Record<string, unknown> = Object.freeze({
+    type: 'array',
+    items: {
+        type: 'string',
+        minLength: 1
+    },
+    uniqueItems: true,
+    description: 'Preflight scope categories where this advisory rule is skipped. Use ["test-only"] to omit a rule from pure test changes without disabling it globally.'
+});
+
 function buildBaselineOptionalQualityCheckRuleSchema(rule: typeof DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[number]): Record<string, unknown> {
     return {
         type: 'object',
@@ -65,7 +75,11 @@ function buildBaselineOptionalQualityCheckRuleSchema(rule: typeof DEFAULT_OPTION
             },
             enabled: {
                 type: 'boolean',
-                description: 'Enable this shipped baseline rule. This is the only user-editable baseline rule field.'
+                description: 'Enable this shipped baseline rule.'
+            },
+            excluded_scope_categories: {
+                ...OPTIONAL_QUALITY_CHECK_EXCLUDED_SCOPE_CATEGORIES_SCHEMA,
+                description: 'User-editable preflight scope categories where this shipped baseline advisory rule is skipped.'
             }
         },
         required: ['id', 'title', 'prompt'],
@@ -99,6 +113,10 @@ const CUSTOM_OPTIONAL_QUALITY_CHECK_RULE_SCHEMA: Record<string, unknown> = Objec
         enabled: {
             type: 'boolean',
             description: 'Enable this custom advisory rule.'
+        },
+        excluded_scope_categories: {
+            ...OPTIONAL_QUALITY_CHECK_EXCLUDED_SCOPE_CATEGORIES_SCHEMA,
+            description: 'Preflight scope categories where this custom advisory rule is skipped.'
         }
     },
     required: ['id', 'title', 'prompt'],

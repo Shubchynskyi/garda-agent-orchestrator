@@ -22,6 +22,7 @@ import {
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     buildDefaultWorkflowConfig,
     normalizeFullSuiteValidationPlacement,
+    normalizeOptionalQualityCheckScopeCategories,
     normalizeOptionalQualityChecksConfig,
     type OrchestratorWorkPolicyMode
 } from '../core/workflow-config';
@@ -338,14 +339,14 @@ function validateOptionalQualityChecksSection(input: unknown): Record<string, un
     normalizedInput.rules = normalizedInput.rules.map((rawRule, index) => {
         const rulePath = `workflow-config.optional_quality_checks.rules[${index}]`;
         const rule = ensurePlainObject(rawRule, rulePath);
-        const ruleKnownKeys = ['id', 'title', 'prompt', 'enabled'];
+        const ruleKnownKeys = ['id', 'title', 'prompt', 'enabled', 'excluded_scope_categories'];
         assertNoCaseMismatchedKnownKeys(rule, ruleKnownKeys, rulePath);
         const id = normalizeNonEmptyString(rule.id, `${rulePath}.id`).trim().toLowerCase();
         if (seenRuleIds.has(id)) {
             throw new Error(`workflow-config.optional_quality_checks.rules has duplicate id '${id}'.`);
         }
         seenRuleIds.add(id);
-        return {
+        const normalizedRule: Record<string, unknown> = {
             ...rule,
             id,
             title: normalizeNonEmptyString(rule.title, `${rulePath}.title`),
@@ -353,6 +354,18 @@ function validateOptionalQualityChecksSection(input: unknown): Record<string, un
             enabled: rule.enabled === undefined
                 ? true
                 : normalizeBooleanLike(rule.enabled, `${rulePath}.enabled`)
+        };
+        if (rule.excluded_scope_categories !== undefined) {
+            normalizedRule.excluded_scope_categories = normalizeOptionalQualityCheckScopeCategories(
+                normalizeStringArray(
+                    rule.excluded_scope_categories,
+                    `${rulePath}.excluded_scope_categories`,
+                    { unique: true }
+                )
+            );
+        }
+        return {
+            ...normalizedRule
         };
     });
     return normalizeOptionalQualityChecksConfig(normalizedInput) as unknown as Record<string, unknown>;

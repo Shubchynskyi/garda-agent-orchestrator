@@ -67,13 +67,16 @@
   },
   "optional_quality_checks": {
     "enabled": true,
-    "baseline_version": "2026-06-27.t846",
+    "baseline_version": "2026-07-02.t898",
     "rules": [
       {
         "id": "code_simplification",
         "title": "Code simplification",
         "prompt": "Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.",
-        "enabled": true
+        "enabled": true,
+        "excluded_scope_categories": [
+          "test-only"
+        ]
       },
       {
         "id": "project_style_fit",
@@ -85,13 +88,19 @@
         "id": "unnecessary_abstraction",
         "title": "Unnecessary abstraction",
         "prompt": "Check whether the change introduced abstractions that do not remove real duplication, risk, or complexity.",
-        "enabled": true
+        "enabled": true,
+        "excluded_scope_categories": [
+          "test-only"
+        ]
       },
       {
         "id": "size_growth",
         "title": "Class/function/file growth",
         "prompt": "Check whether touched classes, functions, or files grew enough to need local extraction or clearer ownership.",
-        "enabled": true
+        "enabled": true,
+        "excluded_scope_categories": [
+          "test-only"
+        ]
       },
       {
         "id": "hardcoded_values_contracts",

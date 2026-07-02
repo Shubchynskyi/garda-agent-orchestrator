@@ -484,7 +484,7 @@ export function buildQualityChecklistCommand(
         `--task-id "${taskId}"`,
         `--preflight-path "${preflightCommandPath}"`,
         ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
-        '--answers-json "<JSON array with one answer object per enabled optional_quality_checks rule>"',
+        '--answers-json "<JSON array with one answer object per active optional_quality_checks rule for the current preflight scope>"',
         '--repo-root "."'
     ].join(' ');
 }

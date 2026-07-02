@@ -4,6 +4,8 @@ import * as path from 'node:path';
 import {
     formatOptionalQualityChecksRuleSetDiagnostics,
     getWorkflowConfigPath,
+    isOptionalQualityCheckRuleExcludedForScope,
+    normalizeOptionalQualityCheckScopeCategories,
     normalizeOptionalQualityChecksConfig,
     type OptionalQualityCheckRule
 } from '../../core/workflow-config';
@@ -58,6 +60,9 @@ export interface QualityChecklistRuleArtifact {
     title: string;
     prompt: string;
     enabled: boolean;
+    excluded_scope_categories: string[];
+    scope_applicability: 'active' | 'disabled' | 'skipped_by_scope';
+    scope_skip_reason: string | null;
 }
 
 export interface QualityChecklistChangedFileEvidence {
@@ -66,6 +71,7 @@ export interface QualityChecklistChangedFileEvidence {
     changed_files_sha256: string;
     scope_sha256: string | null;
     scope_content_sha256: string | null;
+    scope_category: string | null;
 }
 
 export interface QualityChecklistArtifact {
@@ -81,6 +87,10 @@ export interface QualityChecklistArtifact {
     preflight_path: string;
     preflight_sha256: string | null;
     changed_file_evidence: QualityChecklistChangedFileEvidence;
+    scope_category: string | null;
+    enabled_rule_count: number;
+    active_rule_count: number;
+    skipped_by_scope_rule_count: number;
     rules: QualityChecklistRuleArtifact[];
     answers: QualityChecklistAnswer[];
     actions_taken: string[];
@@ -159,12 +169,30 @@ function normalizeAnswers(value: unknown): QualityChecklistAnswer[] {
         .filter((entry): entry is QualityChecklistAnswer => entry !== null);
 }
 
-function normalizeRuleForArtifact(rule: OptionalQualityCheckRule): QualityChecklistRuleArtifact {
+function normalizeScopeCategory(value: unknown): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized || null;
+}
+
+function normalizeRuleForArtifact(rule: OptionalQualityCheckRule, scopeCategory: string | null): QualityChecklistRuleArtifact {
+    const enabled = rule.enabled !== false;
+    const excludedScopeCategories = normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories);
+    const skippedByScope = enabled && isOptionalQualityCheckRuleExcludedForScope(rule, scopeCategory);
+    const scopeApplicability: QualityChecklistRuleArtifact['scope_applicability'] = !enabled
+        ? 'disabled'
+        : skippedByScope
+            ? 'skipped_by_scope'
+            : 'active';
     return {
         id: normalizeRuleId(rule.id),
         title: String(rule.title || '').trim(),
         prompt: String(rule.prompt || '').trim(),
-        enabled: rule.enabled !== false
+        enabled,
+        excluded_scope_categories: excludedScopeCategories,
+        scope_applicability: scopeApplicability,
+        scope_skip_reason: skippedByScope
+            ? `Rule excluded for preflight scope_category '${scopeCategory}'.`
+            : null
     };
 }
 
@@ -187,7 +215,15 @@ function findConfiguredDuplicateRuleIds(optionalQualityChecksInput: unknown): st
         .filter(isRecord)
         .map((rule) => normalizeRuleId(rule.id))
         .filter(Boolean)
-        .map((id) => ({ id, title: '', prompt: '', enabled: true }));
+        .map((id) => ({
+            id,
+            title: '',
+            prompt: '',
+            enabled: true,
+            excluded_scope_categories: [],
+            scope_applicability: 'active' as const,
+            scope_skip_reason: null
+        }));
     return findDuplicateRuleIds(configuredRules);
 }
 
@@ -239,7 +275,8 @@ function readPreflightEvidence(preflightPath: string, expectedTaskId: string): {
         changed_files_count: 0,
         changed_files_sha256: emptyChangedFilesSha256,
         scope_sha256: null,
-        scope_content_sha256: null
+        scope_content_sha256: null,
+        scope_category: null
     };
     if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
         return {
@@ -275,7 +312,8 @@ function readPreflightEvidence(preflightPath: string, expectedTaskId: string): {
             changed_files_count: changedFiles.length,
             changed_files_sha256: stringSha256(changedFiles.join('\n')) || '',
             scope_sha256: typeof metrics.scope_sha256 === 'string' ? metrics.scope_sha256.trim().toLowerCase() : null,
-            scope_content_sha256: typeof metrics.scope_content_sha256 === 'string' ? metrics.scope_content_sha256.trim().toLowerCase() : null
+            scope_content_sha256: typeof metrics.scope_content_sha256 === 'string' ? metrics.scope_content_sha256.trim().toLowerCase() : null,
+            scope_category: normalizeScopeCategory(preflight.scope_category)
         },
         violation: null
     };
@@ -284,7 +322,7 @@ function readPreflightEvidence(preflightPath: string, expectedTaskId: string): {
 function readChecklistRules(repoRoot: string): {
     workflowConfigPath: string;
     workflowConfigSha256: string | null;
-    rules: QualityChecklistRuleArtifact[];
+    rules: OptionalQualityCheckRule[];
     enabled: boolean;
     violation: string | null;
     ruleSetDiagnostic: string | null;
@@ -313,15 +351,23 @@ function readChecklistRules(repoRoot: string): {
     }
     const configuredDuplicateRuleIds = findConfiguredDuplicateRuleIds(workflowConfig.optional_quality_checks);
     const optionalQualityChecks = normalizeOptionalQualityChecksConfig(workflowConfig.optional_quality_checks);
-    const rules = optionalQualityChecks.rules.map(normalizeRuleForArtifact);
+    const normalizedRules = optionalQualityChecks.rules.map((rule) => ({
+        id: normalizeRuleId(rule.id),
+        title: String(rule.title || '').trim(),
+        prompt: String(rule.prompt || '').trim(),
+        enabled: rule.enabled !== false,
+        excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories),
+        scope_applicability: rule.enabled === false ? 'disabled' as const : 'active' as const,
+        scope_skip_reason: null
+    }));
     const duplicateRuleIds = [...new Set([
         ...configuredDuplicateRuleIds,
-        ...findDuplicateRuleIds(rules)
+        ...findDuplicateRuleIds(normalizedRules)
     ])].sort();
     return {
         workflowConfigPath,
         workflowConfigSha256: fileSha256(workflowConfigPath),
-        rules,
+        rules: optionalQualityChecks.rules,
         enabled: optionalQualityChecks.enabled,
         violation: duplicateRuleIds.length > 0
             ? `Workflow config has duplicate quality-check rule id(s): ${duplicateRuleIds.map((id) => `'${id}'`).join(', ')}.`
@@ -331,7 +377,8 @@ function readChecklistRules(repoRoot: string): {
 }
 
 function decideStatus(
-    enabledRules: readonly QualityChecklistRuleArtifact[],
+    activeRules: readonly QualityChecklistRuleArtifact[],
+    skippedByScopeRules: readonly QualityChecklistRuleArtifact[],
     answers: readonly QualityChecklistAnswer[],
     violations: string[]
 ): QualityChecklistStatus {
@@ -348,13 +395,17 @@ function decideStatus(
         }
     }
     const answerByRuleId = new Map(answers.map((answer) => [answer.rule_id, answer]));
-    for (const rule of enabledRules) {
+    for (const rule of activeRules) {
         if (!answerByRuleId.has(rule.id)) {
-            violations.push(`Missing answer for enabled quality-check rule '${rule.id}'.`);
+            violations.push(`Missing answer for active quality-check rule '${rule.id}'.`);
         }
     }
+    const activeRuleIds = new Set(activeRules.map((rule) => rule.id));
+    const skippedByScopeRuleIds = new Set(skippedByScopeRules.map((rule) => rule.id));
     for (const answer of answers) {
-        if (!enabledRules.some((rule) => rule.id === answer.rule_id)) {
+        if (skippedByScopeRuleIds.has(answer.rule_id)) {
+            violations.push(`Answer references quality-check rule '${answer.rule_id}' skipped for the current preflight scope.`);
+        } else if (!activeRuleIds.has(answer.rule_id)) {
             violations.push(`Answer references unknown or disabled quality-check rule '${answer.rule_id}'.`);
         }
         if (answer.status === 'ACTION_REQUIRED' && answer.actions_required.length === 0) {
@@ -387,8 +438,11 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
     const config = readChecklistRules(repoRoot);
     const preflight = readPreflightEvidence(preflightPath, taskId);
     const violations = [config.violation, preflight.violation].filter((entry): entry is string => !!entry);
-    const rules = config.rules;
+    const scopeCategory = preflight.evidence.scope_category;
+    const rules = config.rules.map((rule) => normalizeRuleForArtifact(rule, scopeCategory));
     const enabledRules = rules.filter((rule) => rule.enabled);
+    const activeRules = enabledRules.filter((rule) => rule.scope_applicability === 'active');
+    const skippedByScopeRules = enabledRules.filter((rule) => rule.scope_applicability === 'skipped_by_scope');
     const answers = normalizeAnswers(options.answers);
     const explicitActionsTaken = toTextArray(options.actionsTaken);
     const explicitActionsRequired = toTextArray(options.actionsRequired);
@@ -399,7 +453,7 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
     } else if (!config.enabled) {
         status = 'SKIPPED_DISABLED';
     } else {
-        status = decideStatus(enabledRules, answers, violations);
+        status = decideStatus(activeRules, skippedByScopeRules, answers, violations);
     }
 
     const actionsTaken = [
@@ -430,6 +484,10 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
         preflight_path: normalizePath(preflightPath),
         preflight_sha256: preflight.sha256,
         changed_file_evidence: preflight.evidence,
+        scope_category: scopeCategory,
+        enabled_rule_count: enabledRules.length,
+        active_rule_count: activeRules.length,
+        skipped_by_scope_rule_count: skippedByScopeRules.length,
         rules,
         answers: status === 'SKIPPED_DISABLED' ? [] : answers,
         actions_taken: [...new Set(actionsTaken)].sort(),
@@ -446,14 +504,16 @@ export function formatQualityChecklistResult(artifact: QualityChecklistArtifact)
         SKIPPED_DISABLED: 'QUALITY_CHECKLIST_SKIPPED_DISABLED',
         CONFIG_ERROR: 'QUALITY_CHECKLIST_CONFIG_ERROR'
     }[artifact.status];
-    const enabledRules = artifact.rules.filter((rule) => rule.enabled);
     const lines = [
         headline,
         `TaskId: ${artifact.task_id}`,
         `Status: ${artifact.status}`,
         `Outcome: ${artifact.outcome}`,
         `ChecklistId: ${artifact.checklist_id}`,
-        `EnabledRuleCount: ${enabledRules.length}`,
+        `ScopeCategory: ${artifact.scope_category || 'unknown'}`,
+        `EnabledRuleCount: ${artifact.enabled_rule_count}`,
+        `ActiveRuleCount: ${artifact.active_rule_count}`,
+        `SkippedByScopeRuleCount: ${artifact.skipped_by_scope_rule_count}`,
         `AnswersRecorded: ${artifact.answers.length}`,
         `ChangedFilesCount: ${artifact.changed_file_evidence.changed_files_count}`,
         `ActionsRequiredCount: ${artifact.actions_required.length}`

@@ -97,7 +97,10 @@ export function runQualityChecklistCommand(options: QualityChecklistCommandOptio
         status: artifact.status,
         outcome: artifact.outcome,
         checklist_id: artifact.checklist_id,
-        enabled_rule_count: artifact.rules.filter((rule) => rule.enabled).length,
+        scope_category: artifact.scope_category,
+        enabled_rule_count: artifact.enabled_rule_count,
+        active_rule_count: artifact.active_rule_count,
+        skipped_by_scope_rule_count: artifact.skipped_by_scope_rule_count,
         answer_count: artifact.answers.length,
         action_required_count: artifact.actions_required.length
     }, parseBooleanOption(options.emitMetrics, true));
@@ -124,7 +127,10 @@ export function runQualityChecklistCommand(options: QualityChecklistCommandOptio
             changed_files_truncated: artifact.changed_file_evidence.changed_files.length > 8,
             scope_sha256: artifact.changed_file_evidence.scope_sha256,
             scope_content_sha256: artifact.changed_file_evidence.scope_content_sha256,
-            enabled_rule_count: artifact.rules.filter((rule) => rule.enabled).length,
+            scope_category: artifact.scope_category,
+            enabled_rule_count: artifact.enabled_rule_count,
+            active_rule_count: artifact.active_rule_count,
+            skipped_by_scope_rule_count: artifact.skipped_by_scope_rule_count,
             answer_count: artifact.answers.length,
             action_required_count: artifact.actions_required.length,
             actions_required: artifact.actions_required,

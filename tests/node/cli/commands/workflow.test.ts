@@ -431,6 +431,7 @@ test('workflow set adds edits disables and deletes optional quality-check rules'
             '--optional-check-rule-title', 'Custom focus updated',
             '--optional-check-rule-prompt', 'Check the custom concern more carefully.',
             '--optional-check-rule-enabled', 'false',
+            '--optional-check-rule-exclude-test-only', 'true',
             ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON)).result;
         assert.ok(edit && edit.action === 'set');
@@ -442,7 +443,8 @@ test('workflow set adds edits disables and deletes optional quality-check rules'
             id: 'custom_focus',
             title: 'Custom focus updated',
             prompt: 'Check the custom concern more carefully.',
-            enabled: false
+            enabled: false,
+            excluded_scope_categories: ['test-only']
         });
 
         const remove = captureConsole(() => handleWorkflow([
@@ -477,6 +479,24 @@ test('workflow set adds edits disables and deletes optional quality-check rules'
         assert.deepEqual(disabledBaselineRule, {
             ...baselineRule,
             enabled: false
+        });
+
+        const baselineUnexclude = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-id', baselineRule.id,
+            '--optional-check-rule-exclude-test-only', 'false',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON)).result;
+        assert.ok(baselineUnexclude && baselineUnexclude.action === 'set');
+        assert.equal(baselineUnexclude.status, 'CHANGED');
+
+        parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const unexcludedBaselineRule = parsedConfig.optional_quality_checks.rules.find((rule: { id: string }) => rule.id === baselineRule.id);
+        assert.deepEqual(unexcludedBaselineRule, {
+            ...baselineRule,
+            enabled: false,
+            excluded_scope_categories: []
         });
 
         assert.throws(
