@@ -9,7 +9,7 @@ import {
     validateReviewArtifactGateEligibility,
 } from '../../../../src/gates/required-reviews/required-reviews-check';
 
-type ReusedTimingMode = 'missing' | 'too-short' | 'duplicate' | 'forged-later' | 'stale-output';
+type ReusedTimingMode = 'valid' | 'missing' | 'too-short' | 'duplicate' | 'forged-later' | 'stale-output';
 
 function sha256(content: string): string {
     return crypto.createHash('sha256').update(content).digest('hex');
@@ -1026,6 +1026,49 @@ describe('gates/required-reviews-check', () => {
             assert.ok(hiddenViolation, JSON.stringify(result, null, 2));
             assert.match(hiddenViolation, /Launch a real subagent using built-in tools/);
             assert.equal(/timing|threshold|elapsed|duration|seconds|impossible_ordering|missing_timing/i.test(hiddenViolation), false);
+        });
+
+        it('rejects reused receipts when the current lane-domain fingerprint differs from reuse telemetry', () => {
+            const fixture = buildRequiredReviewsReusedTimingFixture('valid');
+            try {
+                const driftedReceipt = {
+                    ...fixture.currentReceipt,
+                    code_scope_sha256: 'e'.repeat(64)
+                };
+                const result = validateReviewArtifactGateEligibility({
+                    resolvedTaskId: fixture.taskId,
+                    reviewKey: fixture.reviewType,
+                    required: true,
+                    skippedByOverride: false,
+                    preflightPath: fixture.preflightPath,
+                    preflightSha256: fixture.preflightSha,
+                    preflightPayload: fixture.preflightPayload,
+                    repoRoot: fixture.repoRoot,
+                    canonicalSourceOfTruth: 'Codex',
+                    executionProvider: 'Codex',
+                    executionProviderSource: 'explicit_provider',
+                    timelineEvents: fixture.timelineEvents,
+                    reviewArtifact: {
+                        path: fixture.artifactPath,
+                        content: fixture.artifactText,
+                        reviewContextPath: fixture.reviewContextPath,
+                        reviewContext: fixture.reviewContext,
+                        reviewContextSha256: fixture.currentContextSha,
+                        artifactSha256: fixture.artifactSha,
+                        receipt: driftedReceipt as any
+                    }
+                });
+
+                assert.ok(
+                    result.violations.some((violation) => (
+                        violation.includes("Review 'code' is missing current-cycle REVIEW_RECORDED reuse telemetry")
+                        && violation.includes('does not match strict reused evidence')
+                    )),
+                    JSON.stringify(result, null, 2)
+                );
+            } finally {
+                fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+            }
         });
 
         for (const mode of ['missing', 'too-short', 'duplicate', 'forged-later', 'stale-output'] as const) {

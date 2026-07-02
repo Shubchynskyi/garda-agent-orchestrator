@@ -15,15 +15,85 @@ const {
     resolveNextStep,
     reviewsRoot,
     seedCompilePass,
+    seedFullSuiteValidation,
     seedReviewGatePass,
     seedRulePack,
     seedStartedTask,
     TASK_ID,
+    writeFreshReviewContextWithoutRouting,
     writeJson,
     writePreflight,
     writeReviewEvidence
 } = fx;
 void [assert];
+
+function materializeCurrentStrictReuse(repoRoot: string, taskId: string, reviewType: string): void {
+    const contextPath = writeFreshReviewContextWithoutRouting(repoRoot, taskId, reviewType);
+    const receiptPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt.json`);
+    const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+        ? preflight.metrics as Record<string, unknown>
+        : {};
+    const domainScopeFingerprints = metrics.domain_scope_fingerprints
+        && typeof metrics.domain_scope_fingerprints === 'object'
+        && !Array.isArray(metrics.domain_scope_fingerprints)
+        ? metrics.domain_scope_fingerprints as Record<string, unknown>
+        : null;
+    const legacyScopes = domainScopeFingerprints?.legacy
+        && typeof domainScopeFingerprints.legacy === 'object'
+        && !Array.isArray(domainScopeFingerprints.legacy)
+        ? domainScopeFingerprints.legacy as Record<string, unknown>
+        : {};
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    const context = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    const treeState = context.tree_state && typeof context.tree_state === 'object' && !Array.isArray(context.tree_state)
+        ? context.tree_state as Record<string, unknown>
+        : {};
+    const contextSha256 = fileSha256(contextPath);
+    const treeStateSha256 = String(treeState.tree_state_sha256 || '').trim();
+    const reviewScopeSha256 = String(legacyScopes.review_scope_sha256 || '').trim();
+    const codeScopeSha256 = String(legacyScopes.code_scope_sha256 || '').trim();
+
+    receipt.preflight_sha256 = fileSha256(preflightPath);
+    receipt.review_context_sha256 = contextSha256;
+    receipt.review_tree_state_sha256 = treeStateSha256;
+    if (domainScopeFingerprints) {
+        receipt.domain_scope_fingerprints = domainScopeFingerprints;
+    }
+    if (reviewScopeSha256) {
+        receipt.review_scope_sha256 = reviewScopeSha256;
+    }
+    if (codeScopeSha256) {
+        receipt.code_scope_sha256 = codeScopeSha256;
+    }
+    writeJson(receiptPath, receipt);
+
+    const receiptSha256 = fileSha256(receiptPath);
+    const receiptSnapshotPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt-${receiptSha256}.json`);
+    fs.copyFileSync(receiptPath, receiptSnapshotPath);
+    const artifactSha256 = fileSha256(artifactPath);
+    const artifactSnapshotPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-artifact-${artifactSha256}.md`);
+    fs.copyFileSync(artifactPath, artifactSnapshotPath);
+
+    appendEvent(repoRoot, taskId, 'REVIEW_RECORDED', 'PASS', {
+        ...receipt,
+        reuse_event_type: 'REVIEW_EVIDENCE_REUSED',
+        receipt_path: receiptPath,
+        receipt_sha256: receiptSha256,
+        receipt_snapshot_path: receiptSnapshotPath,
+        receipt_snapshot_sha256: receiptSha256,
+        review_artifact_path: artifactPath,
+        review_artifact_sha256: artifactSha256,
+        review_artifact_snapshot_path: artifactSnapshotPath,
+        review_artifact_snapshot_sha256: artifactSha256,
+        review_context_path: contextPath,
+        review_context_sha256: contextSha256,
+        review_tree_state_sha256: treeStateSha256
+    });
+}
+
 describe('gates/next-step review reuse rebind routing', () => {
     it('does not treat stale pre-compile review routing as upstream pass evidence', () => {
         const repoRoot = makeTempRepo();
@@ -242,6 +312,127 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "code"'));
         assert.doesNotMatch(result.title, /Materialize 'code' review reuse/);
         assert.doesNotMatch(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
+    });
+
+    it('routes failed test review back to test after a test-only remediation delta', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const workflowConfigPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'config',
+            'workflow-config.json'
+        );
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as {
+            full_suite_validation: {
+                enabled: boolean;
+                command: string;
+                placement: string;
+            };
+        };
+        workflowConfig.full_suite_validation.enabled = true;
+        workflowConfig.full_suite_validation.command = 'npm test';
+        workflowConfig.full_suite_validation.placement = 'after_compile_before_reviews';
+        writeJson(workflowConfigPath, workflowConfig);
+        const testFile = path.join(repoRoot, 'tests', 'failed-test-review.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("failed test review", () => {});\n', 'utf8');
+        const changedFiles = ['src/app.ts', 'tests/failed-test-review.test.ts'];
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test', {
+            verdict: 'fail',
+            body: 'P1: Missing test assertion coverage for the failed test lane rerun.\n\n'
+        });
+
+        fs.writeFileSync(
+            testFile,
+            'test("failed test review", () => { assert.equal(1, 1); });\n',
+            'utf8'
+        );
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.equal(result.review.next_review_type, 'test', result.reason);
+        assert.match(result.title, /Refresh 'test' review context after implementation changes/);
+        assert.match(result.reason, /A previous 'test' review recorded 'TEST REVIEW FAILED'/);
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('full-suite-validation'));
+        assert.doesNotMatch(result.title, /Materialize 'code' review reuse/);
+    });
+
+    it('routes to test after upstream code reuse has already been materialized for failed test remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const testFile = path.join(repoRoot, 'tests', 'materialized-code-reuse.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("materialized reuse", () => {});\n', 'utf8');
+        const changedFiles = ['src/app.ts', 'tests/materialized-code-reuse.test.ts'];
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test', {
+            verdict: 'fail',
+            body: 'P1: Missing rerun coverage in the test-only remediation path.\n\n'
+        });
+        markReviewEvidenceAsStrictReuse(repoRoot, TASK_ID, 'code');
+
+        fs.writeFileSync(
+            testFile,
+            'test("materialized reuse", () => { assert.equal(1, 1); });\n',
+            'utf8'
+        );
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        materializeCurrentStrictReuse(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.equal(result.review.next_review_type, 'test', result.reason);
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+        assert.doesNotMatch(result.title, /Materialize 'code' review reuse/);
     });
 
     it('keeps upstream code first before downstream test when code domain changed', () => {
@@ -481,6 +672,56 @@ describe('gates/next-step review reuse rebind routing', () => {
         ]);
         assert.deepEqual(result.invalidation_impact?.reuse_candidates, ['none indicated']);
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+    });
+
+    it('routes review context hash mismatch failures to upstream recovery instead of fresh reviewer work', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+
+        const testFile = path.join(repoRoot, 'tests', 'review-gate-hash-mismatch.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("review gate hash mismatch", () => {});\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles: ['src/app.ts', 'tests/review-gate-hash-mismatch.test.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_GATE_FAILED', 'FAIL', {
+            violations: [
+                "Review context hash mismatch for 'code'. Review-context artifact was modified after receipt was issued."
+            ]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.match(result.title, /Recover stale upstream 'code' review evidence/);
+        assert.ok(result.reason.includes('required-reviews-check failed after compile'), result.reason);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+        assert.ok(!result.commands[0].command.includes('prepare-reviewer-launch'));
+        assert.deepEqual(result.invalidation_impact?.minimal_recovery_chain, [
+            'build-review-context',
+            'materialize current-cycle review reuse',
+            'rerun navigator before downstream review/check gates'
+        ]);
     });
 
     it('advances lane-domain-current historical PASS evidence to required-reviews-check after coherent-cycle restart', () => {
