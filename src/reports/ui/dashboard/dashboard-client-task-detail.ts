@@ -172,6 +172,7 @@ function taskQualityChecklistDiagnosticLabel(code) {
   if (code === 'scope_content_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': scope_content_sha256';
   if (code === 'path_outside_repository') return t('qualityGateEvidenceInvalid') + ': ' + t('artifactPath');
   if (code === 'referenced_artifact_missing') return t('qualityGateEvidenceMissing') + ': ' + t('artifactPath');
+  if (code === 'effective_policy_changed') return t('qualityGateEvidenceStale') + ': ' + t('qualityGateRuleSet');
   if (code === 'workflow_config_hash_changed') return t('qualityGateEvidenceStale') + ': ' + t('workflowConfigPath');
   if (code === 'referenced_artifact_hash_changed') return t('qualityGateEvidenceStale') + ': ' + t('artifactPath');
   if (code === 'changed_files_mismatch') return t('qualityGateEvidenceStale') + ': ' + t('qualityGateChangedFiles');

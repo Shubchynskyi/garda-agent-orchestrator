@@ -22,6 +22,7 @@ import {
 } from './next-step-full-suite-fixtures';
 
 type QualityChecklistStatus = 'PASS' | 'WARN' | 'ACTION_REQUIRED' | 'SKIPPED_DISABLED' | 'CONFIG_ERROR';
+type WorkflowConfig = ReturnType<typeof buildDefaultWorkflowConfig>;
 
 const T839_DERIVED_QUALITY_ACTIONS = Object.freeze([
     'Add tests/** regression files to the current preflight and review scope.',
@@ -62,10 +63,42 @@ function buildTestQualityRule(id: string): ReturnType<typeof buildDefaultWorkflo
     };
 }
 
+function buildQualityChecklistRuleSnapshot(options: {
+    rules?: WorkflowConfig['optional_quality_checks']['rules'];
+    titlePrefix?: string;
+    promptPrefix?: string;
+} = {}): Array<Record<string, unknown>> {
+    const rules = options.rules ?? buildDefaultWorkflowConfig().optional_quality_checks.rules;
+    return rules.map((rule) => ({
+        id: rule.id,
+        title: `${options.titlePrefix ?? ''}${rule.title}`,
+        prompt: `${options.promptPrefix ?? ''}${rule.prompt}`,
+        enabled: rule.enabled,
+        excluded_scope_categories: rule.excluded_scope_categories ?? [],
+        scope_applicability: rule.enabled === false ? 'disabled' : 'active'
+    }));
+}
+
+function buildQualityChecklistAnswers(options: {
+    rules?: WorkflowConfig['optional_quality_checks']['rules'];
+    omitRuleIds?: readonly string[];
+} = {}): Array<Record<string, unknown>> {
+    const omitted = new Set(options.omitRuleIds ?? []);
+    const rules = options.rules ?? buildDefaultWorkflowConfig().optional_quality_checks.rules;
+    return rules
+        .filter((rule) => rule.enabled !== false && !omitted.has(rule.id))
+        .map((rule) => ({
+            rule_id: rule.id,
+            status: 'PASS',
+            answer: `Rule ${rule.id} passed.`
+        }));
+}
+
 function writeWorkflowConfig(repoRoot: string, options: {
     optionalQualityChecksEnabled?: boolean;
     fullSuiteEnabled?: boolean;
     fullSuitePlacement?: FullSuiteValidationConfig['placement'];
+    configure?: (config: WorkflowConfig) => void;
 } = {}): void {
     const config = buildDefaultWorkflowConfig();
     config.optional_quality_checks.enabled = options.optionalQualityChecksEnabled ?? true;
@@ -77,6 +110,7 @@ function writeWorkflowConfig(repoRoot: string, options: {
     config.review_execution_policy = { mode: 'parallel_all' };
     config.project_memory_maintenance.enabled = false;
     config.project_memory_maintenance.mode = 'check';
+    options.configure?.(config);
     writeJson(workflowConfigPath(repoRoot), config);
 }
 
@@ -105,6 +139,9 @@ function writeQualityChecklistArtifact(
         workflowConfigSha256?: string | null;
         actionsTaken?: string[];
         actionsRequired?: string[];
+        scopeCategory?: string;
+        rules?: Array<Record<string, unknown>>;
+        answers?: Array<Record<string, unknown>>;
     } = {}
 ): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
@@ -138,10 +175,12 @@ function writeQualityChecklistArtifact(
             changed_files_count: 1,
             changed_files_sha256: 'changed-files-sha',
             scope_sha256: 'scope-sha',
-            scope_content_sha256: 'scope-content-sha'
+            scope_content_sha256: 'scope-content-sha',
+            scope_category: options.scopeCategory ?? 'mixed'
         },
-        rules: [],
-        answers: [],
+        scope_category: options.scopeCategory ?? 'mixed',
+        rules: options.rules ?? [],
+        answers: options.answers ?? [],
         actions_taken: options.actionsTaken ?? [],
         actions_required: actionsRequired,
         violations: []
@@ -370,6 +409,195 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.quality_checklist?.evidence_status, 'stale');
         assert.equal(result.quality_checklist?.effect, 'stale');
         assert.match(result.reason, /stale for the current preflight hash/);
+    });
+
+    it('accepts prior quality checklist evidence after compatible workflow config normalization', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS', {
+            workflowConfigSha256: '0'.repeat(64),
+            rules: buildQualityChecklistRuleSnapshot({
+                titlePrefix: 'Old shipped title: ',
+                promptPrefix: 'Old shipped prompt: '
+            }),
+            answers: buildQualityChecklistAnswers()
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.quality_checklist?.evidence_status, 'current');
+        assert.notEqual(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+    });
+
+    it('accepts compatible baseline user disable overrides after workflow config normalization', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot, {
+            configure(config) {
+                const rule = config.optional_quality_checks.rules.find((candidate) => candidate.id === 'project_style_fit');
+                assert.ok(rule);
+                rule.enabled = false;
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const config = JSON.parse(fs.readFileSync(workflowConfigPath(repoRoot), 'utf8')) as WorkflowConfig;
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS', {
+            workflowConfigSha256: '0'.repeat(64),
+            rules: buildQualityChecklistRuleSnapshot({
+                rules: config.optional_quality_checks.rules,
+                titlePrefix: 'Previous shipped title: ',
+                promptPrefix: 'Previous shipped prompt: '
+            }),
+            answers: buildQualityChecklistAnswers({ rules: config.optional_quality_checks.rules })
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.quality_checklist?.evidence_status, 'current');
+        assert.notEqual(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+    });
+
+    it('accepts unchanged custom quality rules after unrelated workflow config normalization', () => {
+        const customRule = {
+            id: 'custom_team_release_safety',
+            title: 'Team release safety',
+            prompt: 'Check team release safeguards.',
+            enabled: true
+        };
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot, {
+            configure(config) {
+                config.optional_quality_checks.rules = [...config.optional_quality_checks.rules, customRule];
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const config = JSON.parse(fs.readFileSync(workflowConfigPath(repoRoot), 'utf8')) as WorkflowConfig;
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS', {
+            workflowConfigSha256: '0'.repeat(64),
+            rules: buildQualityChecklistRuleSnapshot({ rules: config.optional_quality_checks.rules }),
+            answers: buildQualityChecklistAnswers({ rules: config.optional_quality_checks.rules })
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.quality_checklist?.evidence_status, 'current');
+        assert.notEqual(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+    });
+
+    it('reruns quality checklist when a custom quality rule changes after config normalization', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot, {
+            configure(config) {
+                config.optional_quality_checks.rules = [
+                    ...config.optional_quality_checks.rules,
+                    {
+                        id: 'custom_team_release_safety',
+                        title: 'Team release safety',
+                        prompt: 'Check updated team release safeguards.',
+                        enabled: true
+                    }
+                ];
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const artifactConfig = buildDefaultWorkflowConfig();
+        artifactConfig.optional_quality_checks.rules = [
+            ...artifactConfig.optional_quality_checks.rules,
+            {
+                id: 'custom_team_release_safety',
+                title: 'Team release safety',
+                prompt: 'Check original team release safeguards.',
+                enabled: true
+            }
+        ];
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS', {
+            workflowConfigSha256: '0'.repeat(64),
+            rules: buildQualityChecklistRuleSnapshot({ rules: artifactConfig.optional_quality_checks.rules }),
+            answers: buildQualityChecklistAnswers({ rules: artifactConfig.optional_quality_checks.rules })
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.quality_checklist?.evidence_status, 'stale');
+        assert.match(result.reason, /custom_team_release_safety/u);
+        assert.match(result.reason, /Custom quality-check rule .* changed/u);
+    });
+
+    it('reruns quality checklist when a current active baseline rule has no recorded answer after config normalization', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS', {
+            workflowConfigSha256: '0'.repeat(64),
+            rules: buildQualityChecklistRuleSnapshot(),
+            answers: buildQualityChecklistAnswers({ omitRuleIds: ['project_style_fit'] })
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.quality_checklist?.evidence_status, 'stale');
+        assert.equal(result.quality_checklist?.effect, 'stale');
+        assert.match(result.reason, /project_style_fit/u);
+        assert.match(result.reason, /missing from the recorded checklist answers/u);
+    });
+
+    it('reruns quality checklist when normalized evidence contains duplicate answers', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS', {
+            workflowConfigSha256: '0'.repeat(64),
+            rules: buildQualityChecklistRuleSnapshot(),
+            answers: [
+                ...buildQualityChecklistAnswers(),
+                {
+                    rule_id: 'project_style_fit',
+                    status: 'PASS',
+                    answer: 'Duplicate answer should invalidate compatibility.'
+                }
+            ]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.quality_checklist?.evidence_status, 'stale');
+        assert.match(result.reason, /project_style_fit/u);
+        assert.match(result.reason, /more than once/u);
+    });
+
+    it('reruns quality checklist when normalized evidence answers a skipped rule for test-only scope', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true }, {
+            scopeCategory: 'test-only',
+            changedFiles: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
+        });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS', {
+            workflowConfigSha256: '0'.repeat(64),
+            scopeCategory: 'test-only',
+            rules: buildQualityChecklistRuleSnapshot(),
+            answers: buildQualityChecklistAnswers()
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.quality_checklist?.evidence_status, 'stale');
+        assert.match(result.reason, /code_simplification/u);
+        assert.match(result.reason, /currently skipped_by_scope/u);
     });
 
     it('marks quality checklist summary stale when current workspace drifts after PASS evidence', () => {

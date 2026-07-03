@@ -8,6 +8,7 @@ import { UI_DASHBOARD_CLIENT_CORE } from '../../../src/reports/ui/dashboard/dash
 import { UI_DASHBOARD_CLIENT_PROFILES } from '../../../src/reports/ui/dashboard/dashboard-client-profiles';
 import { UI_DASHBOARD_CLIENT_QUALITY_GATE } from '../../../src/reports/ui/dashboard/dashboard-client-quality-gate';
 import { UI_DASHBOARD_CLIENT_SESSION_ACTIONS } from '../../../src/reports/ui/dashboard/dashboard-client-session-actions';
+import { UI_DASHBOARD_CLIENT_TASK_DETAIL } from '../../../src/reports/ui/dashboard/dashboard-client-task-detail';
 import { UI_DASHBOARD_CLIENT_WORKFLOW } from '../../../src/reports/ui/dashboard/dashboard-client-workflow';
 import { UI_DASHBOARD_STYLES } from '../../../src/reports/ui/dashboard/dashboard-styles';
 import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
@@ -90,6 +91,48 @@ function renderQualityGateHtml(
 
     vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\n${UI_DASHBOARD_CLIENT_QUALITY_GATE}\nrenderQualityGate(null);`, context);
     return qualityGateNode.innerHTML;
+}
+
+function renderTaskDetailHtml(
+    detail: Record<string, unknown>,
+    initialLanguage = 'ru'
+): string {
+    const detailNode = {
+        innerHTML: '',
+        querySelectorAll: () => []
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => [],
+            getElementById: () => null
+        },
+        window: {
+            localStorage: null,
+            prompt: () => null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        fallbackLanguage: 'en',
+        initialLanguage,
+        detailNode,
+        actionsEnabled: false,
+        actionToken: 'asset-test-token',
+        currentTaskDetail: null,
+        loadedTaskDetails: {},
+        selectedTaskId: null,
+        findReportTask: () => ({
+            task_id: detail.task_id,
+            title: 'Quality gate task',
+            status: 'IN_PROGRESS',
+            status_token: 'IN_PROGRESS'
+        }),
+        artifactList: () => '',
+        fetch: async () => ({ ok: false, status: 500, json: async () => ({}) })
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_TASK_DETAIL}\nrenderTaskDetail(${JSON.stringify(detail)});`, context);
+    return detailNode.innerHTML;
 }
 
 function renderProfilesHtml(
@@ -617,6 +660,73 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.doesNotMatch(qualityGateNode.innerHTML, /Bounded answer summary rendering added\./u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Extract parser helpers before review\./u);
     assert.match(qualityGateNode.innerHTML, /garda ui --actions/u);
+
+    (context.currentSettingsPayload.quality_gate as { latest_check: Record<string, unknown> }).latest_check = {
+        ...context.currentSettingsPayload.quality_gate.latest_check,
+        evidence_status: 'stale',
+        effect: 'stale',
+        summary: 'Latest quality checklist artifact is stale: Workflow config hash changed after the quality checklist was recorded.',
+        stale_reason_codes: ['effective_policy_changed'],
+        stale_reasons: ['Workflow config effective quality policy changed after the quality checklist was recorded.']
+    };
+    vm.runInNewContext('renderQualityGate(null);', context);
+
+    assert.match(qualityGateNode.innerHTML, /Устарело/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Latest quality checklist artifact is stale/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Workflow config hash changed/u);
+});
+
+test('task detail quality checklist diagnostics localize effective policy changes', () => {
+    const html = renderTaskDetailHtml({
+        task_id: 'T-908',
+        stats: {},
+        audit: {
+            blockers: [],
+            review_attempt_summary: {
+                total_attempts: 0,
+                total_non_test_attempts: 0,
+                current_scope_non_test_attempts: 0,
+                fresh_non_test_attempts: 0,
+                reused_non_test_attempts: 0,
+                by_type: []
+            }
+        },
+        full_suite_validation: {
+            state: 'not_run',
+            duration_human: null
+        },
+        quality_checklist: {
+            latest: {
+                artifact_path: 'garda-agent-orchestrator/runtime/reviews/T-908-quality-checklist.json',
+                artifact_exists: true,
+                evidence_status: 'stale',
+                checklist_status: 'PASS',
+                outcome: 'PASS',
+                effect: 'stale',
+                summary_key: 'stale',
+                summary: 'Quality checklist artifact is stale: Workflow config effective quality policy changed.',
+                stale_reason_codes: ['effective_policy_changed'],
+                stale_reasons: ['Workflow config effective quality policy changed after the quality checklist was recorded.'],
+                timestamp_utc: '2026-07-03T00:00:00.000Z',
+                changed_files_count: 1,
+                changed_files_preview: ['src/reports/report-data/quality-gate-evidence.ts'],
+                answer_count: 1,
+                action_taken_count: 0,
+                action_required_count: 0,
+                actions_taken: [],
+                actions_required: [],
+                answers: []
+            },
+            action_required_history: []
+        },
+        latest_cycle_events: {},
+        artifact_links: []
+    }, 'ru');
+
+    assert.match(html, /Устарело/u);
+    assert.match(html, /Правила качества/u);
+    assert.doesNotMatch(html, /effective_policy_changed/u);
+    assert.doesNotMatch(html, /Workflow config effective quality policy changed/u);
 });
 
 test('quality gate rule table renders long localized disabled rows in responsive layout', () => {

@@ -2,10 +2,15 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import {
+    formatOptionalQualityChecksRuleSetDiagnostics,
+    normalizeOptionalQualityChecksConfig
+} from '../../core/workflow-config';
 import { resolveBundleRootForTarget } from '../../core/constants';
 import { isPathInsideRoot } from '../../core/paths';
 import { buildScopeContentFingerprint } from '../../gates/compile/compile-gate';
 import {
+    assessQualityChecklistPolicyCompatibility,
     QUALITY_CHECKLIST_ID,
     QUALITY_CHECKLIST_STATUSES,
     type QualityChecklistStatus
@@ -144,6 +149,51 @@ function addHashFreshnessReason(
     }
     if (actualHash !== expectedHash) {
         reasons.push(`${label} hash changed after the quality checklist was recorded.`);
+    }
+}
+
+function addWorkflowConfigFreshnessReasons(
+    reasons: string[],
+    repoRoot: string,
+    payload: Record<string, unknown>
+): void {
+    const workflowConfigReference = String(payload.workflow_config_path || '').trim()
+        ? resolveRepoPath(repoRoot, payload.workflow_config_path, 'Workflow config path')
+        : {
+            filePath: path.join(resolveBundleRootForTarget(repoRoot), 'live', 'config', 'workflow-config.json'),
+            staleReason: null
+        };
+    if (workflowConfigReference.staleReason) {
+        reasons.push(workflowConfigReference.staleReason);
+    }
+    const expectedHash = normalizeHash(payload.workflow_config_sha256);
+    if (!workflowConfigReference.filePath || !expectedHash) {
+        return;
+    }
+    const actualHash = fileSha256(workflowConfigReference.filePath);
+    if (!actualHash) {
+        reasons.push(`Workflow config is missing: ${toPosix(workflowConfigReference.filePath)}.`);
+        return;
+    }
+    if (actualHash === expectedHash) {
+        return;
+    }
+    const workflowConfig = safeReadJsonRecord(workflowConfigReference.filePath);
+    const optionalQualityChecks = normalizeOptionalQualityChecksConfig(workflowConfig?.optional_quality_checks);
+    const ruleSetDiagnostic = formatOptionalQualityChecksRuleSetDiagnostics(workflowConfig?.optional_quality_checks);
+    const evidence = isRecord(payload.changed_file_evidence) ? payload.changed_file_evidence : {};
+    const scopeCategory = String(payload.scope_category || evidence.scope_category || '').trim() || null;
+    const compatibility = assessQualityChecklistPolicyCompatibility({
+        currentRules: optionalQualityChecks.rules,
+        artifactRules: payload.rules,
+        artifactAnswers: payload.answers,
+        scopeCategory,
+        currentRuleSetDiagnostic: ruleSetDiagnostic
+    });
+    if (!compatibility.compatible) {
+        reasons.push(
+            `Workflow config effective quality policy changed after the quality checklist was recorded: ${compatibility.reasons[0] || 'policy snapshot is incompatible'}.`
+        );
     }
 }
 
@@ -346,17 +396,7 @@ function taskQualityChecklistFreshnessReasons(
         readCurrentGitScopeBinding(repoRoot, currentPreflightPath),
         'the current git worktree'
     );
-    addHashFreshnessReason(
-        reasons,
-        'Workflow config',
-        String(payload.workflow_config_path || '').trim()
-            ? resolveRepoPath(repoRoot, payload.workflow_config_path, 'Workflow config path')
-            : {
-                filePath: path.join(resolveBundleRootForTarget(repoRoot), 'live', 'config', 'workflow-config.json'),
-                staleReason: null
-            },
-        normalizeHash(payload.workflow_config_sha256)
-    );
+    addWorkflowConfigFreshnessReasons(reasons, repoRoot, payload);
     return reasons;
 }
 
@@ -484,6 +524,9 @@ function qualityChecklistStaleReasonCode(reason: string): string {
     }
     if (/hash changed after the quality checklist was recorded/iu.test(reason)) {
         return /workflow config/iu.test(reason) ? 'workflow_config_hash_changed' : 'referenced_artifact_hash_changed';
+    }
+    if (/effective quality policy/iu.test(reason)) {
+        return 'effective_policy_changed';
     }
     if (/changed-file list no longer matches/iu.test(reason)) {
         return 'changed_files_mismatch';

@@ -23,6 +23,8 @@ import type {
 } from '../../../src/reports/report-data-contract';
 import { writeRollbackRecords } from '../../../src/lifecycle/common';
 
+type WorkflowConfig = ReturnType<typeof buildDefaultWorkflowConfig>;
+
 function makeTempRepo(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-report-data-'));
 }
@@ -82,12 +84,13 @@ test('report-data-contract re-exports task quality checklist types', () => {
     assert.equal(checklist.latest?.effect, 'warned');
 });
 
-function writeWorkflowConfig(repoRoot: string): void {
+function writeWorkflowConfig(repoRoot: string, configure?: (config: WorkflowConfig) => void): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const config = buildDefaultWorkflowConfig();
     config.full_suite_validation.enabled = true;
     config.full_suite_validation.command = 'npm test';
+    configure?.(config);
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
@@ -281,6 +284,8 @@ function writeQualityChecklistArtifact(repoRoot: string, options: {
     scopeCategory?: string;
     activeRuleCount?: number;
     skippedByScopeRuleCount?: number;
+    rules?: Array<Record<string, unknown>>;
+    answers?: Array<Record<string, unknown>>;
     skippedRules?: Array<{
         id: string;
         title: string;
@@ -326,7 +331,7 @@ function writeQualityChecklistArtifact(repoRoot: string, options: {
             scope_sha256: metrics.scope_sha256 || sha256Text('scope'),
             scope_content_sha256: metrics.scope_content_sha256 || sha256Text('content')
         },
-        rules: [{
+        rules: options.rules ?? [{
             id: 'code_simplification',
             title: 'Code simplification',
             prompt: 'Check simplification.',
@@ -342,7 +347,7 @@ function writeQualityChecklistArtifact(repoRoot: string, options: {
             scope_applicability: 'skipped_by_scope',
             scope_skip_reason: rule.scopeSkipReason ?? 'Rule is excluded for the current scope category.'
         }))],
-        answers: [{
+        answers: options.answers ?? [{
             rule_id: 'code_simplification',
             status: options.status,
             answer: options.status === 'WARN' ? 'Watch the helper size.' : 'Extract the history parser before review.',
@@ -436,6 +441,41 @@ function writeQualityChecklistTimelineEvent(repoRoot: string, options: {
             changed_files_preview: ['src/reports/report-data-contract.ts']
         }
     })}\n`, 'utf8');
+}
+
+function buildQualityChecklistRuleSnapshot(options: {
+    rules?: WorkflowConfig['optional_quality_checks']['rules'];
+    titlePrefix?: string;
+    promptPrefix?: string;
+} = {}): Array<Record<string, unknown>> {
+    const rules = options.rules ?? buildDefaultWorkflowConfig().optional_quality_checks.rules;
+    return rules.map((rule) => ({
+        id: rule.id,
+        title: `${options.titlePrefix ?? ''}${rule.title}`,
+        prompt: `${options.promptPrefix ?? ''}${rule.prompt}`,
+        enabled: rule.enabled,
+        excluded_scope_categories: rule.excluded_scope_categories ?? [],
+        scope_applicability: rule.enabled === false ? 'disabled' : 'active'
+    }));
+}
+
+function buildQualityChecklistAnswers(options: {
+    status: string;
+    rules?: WorkflowConfig['optional_quality_checks']['rules'];
+    omitRuleIds?: readonly string[];
+}): Array<Record<string, unknown>> {
+    const omitted = new Set(options.omitRuleIds ?? []);
+    const rules = options.rules ?? buildDefaultWorkflowConfig().optional_quality_checks.rules;
+    return rules
+        .filter((rule) => rule.enabled !== false && !omitted.has(rule.id))
+        .map((rule) => ({
+            rule_id: rule.id,
+            status: options.status,
+            answer: `Rule ${rule.id} recorded for the latest quality checklist.`,
+            evidence_files: ['src/reports/report-data/quality-gate-evidence.ts'],
+            actions_taken: [],
+            actions_required: []
+        }));
 }
 
 function writeCompileEvent(repoRoot: string, taskId = 'T-100', timestamp = '2026-05-16T00:01:00.000Z'): string {
@@ -1191,6 +1231,291 @@ test('buildReportDataContract rejects invalid quality gate evidence status', () 
     assert.ok(taskDetail.quality_checklist.latest?.stale_reason_codes?.includes('status_unsupported'));
     assert.ok(taskDetail.quality_checklist.latest?.stale_reasons.some((reason) =>
         reason.includes('Unsupported quality checklist status')
+    ));
+});
+
+test('buildReportDataContract keeps compatible quality checklist evidence current after workflow config normalization', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath,
+        activeRuleCount: 7,
+        rules: buildQualityChecklistRuleSnapshot(),
+        answers: buildQualityChecklistAnswers({ status: 'WARN' })
+    });
+    const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+    (workflowConfig.full_suite_validation as Record<string, unknown>).command = 'node -e "process.exit(0)"';
+    fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z'
+    });
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'current');
+    assert.equal(report.quality_gate_tab.latest_check.effect, 'warned');
+    assert.deepEqual(report.quality_gate_tab.latest_check.stale_reasons, []);
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'current');
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'warned');
+});
+
+test('buildReportDataContract keeps baseline user disable overrides current after workflow config normalization', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot, (config) => {
+        const rule = config.optional_quality_checks.rules.find((candidate) => candidate.id === 'project_style_fit');
+        assert.ok(rule);
+        rule.enabled = false;
+    });
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as WorkflowConfig;
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath,
+        activeRuleCount: 6,
+        rules: buildQualityChecklistRuleSnapshot({
+            rules: workflowConfig.optional_quality_checks.rules,
+            titlePrefix: 'Previous shipped title: ',
+            promptPrefix: 'Previous shipped prompt: '
+        }),
+        answers: buildQualityChecklistAnswers({
+            status: 'WARN',
+            rules: workflowConfig.optional_quality_checks.rules
+        })
+    });
+    (workflowConfig.full_suite_validation as Record<string, unknown>).command = 'node -e "process.exit(0)"';
+    fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z'
+    });
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'current');
+    assert.equal(report.quality_gate_tab.latest_check.effect, 'warned');
+    assert.deepEqual(report.quality_gate_tab.latest_check.stale_reasons, []);
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'current');
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'warned');
+});
+
+test('buildReportDataContract keeps unchanged custom rules current after unrelated workflow config normalization', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot, (config) => {
+        config.optional_quality_checks.rules = [
+            ...config.optional_quality_checks.rules,
+            {
+                id: 'custom_team_release_safety',
+                title: 'Team release safety',
+                prompt: 'Check team release safeguards.',
+                enabled: true
+            }
+        ];
+    });
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as WorkflowConfig;
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath,
+        activeRuleCount: 8,
+        rules: buildQualityChecklistRuleSnapshot({ rules: workflowConfig.optional_quality_checks.rules }),
+        answers: buildQualityChecklistAnswers({
+            status: 'WARN',
+            rules: workflowConfig.optional_quality_checks.rules
+        })
+    });
+    (workflowConfig.full_suite_validation as Record<string, unknown>).command = 'node -e "process.exit(0)"';
+    fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z'
+    });
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'current');
+    assert.deepEqual(report.quality_gate_tab.latest_check.stale_reasons, []);
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'current');
+});
+
+test('buildReportDataContract marks normalized quality checklist evidence stale when an active custom rule changes', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot, (config) => {
+        config.optional_quality_checks.rules = [
+            ...config.optional_quality_checks.rules,
+            {
+                id: 'custom_team_release_safety',
+                title: 'Team release safety',
+                prompt: 'Check original team release safeguards.',
+                enabled: true
+            }
+        ];
+    });
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const artifactWorkflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as WorkflowConfig;
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath,
+        activeRuleCount: 8,
+        rules: buildQualityChecklistRuleSnapshot({ rules: artifactWorkflowConfig.optional_quality_checks.rules }),
+        answers: buildQualityChecklistAnswers({
+            status: 'WARN',
+            rules: artifactWorkflowConfig.optional_quality_checks.rules
+        })
+    });
+    const currentWorkflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as WorkflowConfig;
+    const customRule = currentWorkflowConfig.optional_quality_checks.rules.find((rule) => rule.id === 'custom_team_release_safety');
+    assert.ok(customRule);
+    customRule.prompt = 'Check updated team release safeguards.';
+    fs.writeFileSync(workflowConfigPath, JSON.stringify(currentWorkflowConfig, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z'
+    });
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'stale');
+    assert.equal(report.quality_gate_tab.latest_check.effect, 'stale');
+    assert.ok(report.quality_gate_tab.latest_check.stale_reason_codes?.includes('effective_policy_changed'));
+    assert.ok(report.quality_gate_tab.latest_check.stale_reasons.some((reason) =>
+        reason.includes("Custom quality-check rule 'custom_team_release_safety' changed")
+    ));
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'stale');
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reason_codes?.includes('effective_policy_changed'));
+});
+
+test('buildReportDataContract marks normalized quality checklist evidence stale when an active baseline answer is missing', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath,
+        activeRuleCount: 7,
+        rules: buildQualityChecklistRuleSnapshot(),
+        answers: buildQualityChecklistAnswers({
+            status: 'WARN',
+            omitRuleIds: ['project_style_fit']
+        })
+    });
+    const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+    (workflowConfig.full_suite_validation as Record<string, unknown>).command = 'node -e "process.exit(0)"';
+    fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z'
+    });
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'stale');
+    assert.equal(report.quality_gate_tab.latest_check.effect, 'stale');
+    assert.ok(report.quality_gate_tab.latest_check.stale_reason_codes?.includes('effective_policy_changed'));
+    assert.ok(report.quality_gate_tab.latest_check.stale_reasons.some((reason) =>
+        reason.includes("Active quality-check rule 'project_style_fit' is missing from the recorded checklist answers")
+    ));
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'stale');
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'stale');
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reason_codes?.includes('effective_policy_changed'));
+});
+
+test('buildReportDataContract marks normalized quality checklist evidence stale for duplicate answers', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath,
+        activeRuleCount: 7,
+        rules: buildQualityChecklistRuleSnapshot(),
+        answers: [
+            ...buildQualityChecklistAnswers({ status: 'WARN' }),
+            {
+                rule_id: 'project_style_fit',
+                status: 'WARN',
+                answer: 'Duplicate answer should make compatibility stale.',
+                evidence_files: ['src/reports/report-data/quality-gate-evidence.ts'],
+                actions_taken: [],
+                actions_required: []
+            }
+        ]
+    });
+    const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+    (workflowConfig.full_suite_validation as Record<string, unknown>).command = 'node -e "process.exit(0)"';
+    fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z'
+    });
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'stale');
+    assert.ok(report.quality_gate_tab.latest_check.stale_reason_codes?.includes('effective_policy_changed'));
+    assert.ok(report.quality_gate_tab.latest_check.stale_reasons.some((reason) =>
+        reason.includes("Quality checklist answer references rule 'project_style_fit' more than once")
+    ));
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'stale');
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reason_codes?.includes('effective_policy_changed'));
+});
+
+test('buildReportDataContract marks aggregate quality gate evidence stale when raw workflow config loses a shipped rule', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath,
+        activeRuleCount: 7,
+        rules: buildQualityChecklistRuleSnapshot(),
+        answers: buildQualityChecklistAnswers({ status: 'WARN' })
+    });
+    const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+    workflowConfig.optional_quality_checks.rules = workflowConfig.optional_quality_checks.rules
+        .filter((rule) => rule.id !== 'duplicated_logic_contracts');
+    fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z'
+    });
+
+    assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'stale');
+    assert.equal(report.quality_gate_tab.latest_check.effect, 'stale');
+    assert.ok(report.quality_gate_tab.latest_check.stale_reason_codes?.includes('effective_policy_changed'));
+    assert.ok(report.quality_gate_tab.latest_check.stale_reasons.some((reason) =>
+        reason.includes('Canonical enabled quality-check rule ids')
     ));
 });
 

@@ -17,6 +17,7 @@ import {
     resolvePathInsideRepo,
     stringSha256
 } from '../shared/helpers';
+import { computeQualityChecklistEffectivePolicySha256 } from './quality-checklist-policy';
 
 export const QUALITY_CHECKLIST_ID = 'optional_quality_checks';
 
@@ -84,6 +85,7 @@ export interface QualityChecklistArtifact {
     outcome: 'PASS' | 'WARN' | 'FAIL' | 'INFO';
     workflow_config_path: string;
     workflow_config_sha256: string | null;
+    effective_policy_sha256: string;
     preflight_path: string;
     preflight_sha256: string | null;
     changed_file_evidence: QualityChecklistChangedFileEvidence;
@@ -481,6 +483,7 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
         outcome: outcomeForStatus(status),
         workflow_config_path: normalizePath(config.workflowConfigPath),
         workflow_config_sha256: config.workflowConfigSha256,
+        effective_policy_sha256: computeQualityChecklistEffectivePolicySha256(config.rules, scopeCategory),
         preflight_path: normalizePath(preflightPath),
         preflight_sha256: preflight.sha256,
         changed_file_evidence: preflight.evidence,

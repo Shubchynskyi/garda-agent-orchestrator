@@ -3,10 +3,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { isPathInsideRoot } from '../../core/paths';
+import { formatOptionalQualityChecksRuleSetDiagnostics } from '../../core/workflow-config';
 import { buildScopeContentFingerprint } from '../../gates/compile/compile-gate';
 import {
     QUALITY_CHECKLIST_ID,
     QUALITY_CHECKLIST_STATUSES,
+    assessQualityChecklistPolicyCompatibility,
     type QualityChecklistStatus
 } from '../../gates/quality-checklist';
 import {
@@ -457,6 +459,37 @@ function validateArtifactPayload(payload: Record<string, unknown> | null): strin
     return reasons;
 }
 
+function qualityChecklistStaleReasonCode(reason: string): string {
+    if (/not a valid JSON object/iu.test(reason)) return 'artifact_json_invalid';
+    if (/unsupported quality checklist status/iu.test(reason)) return 'status_unsupported';
+    if (/quality checklist id must/iu.test(reason)) return 'checklist_id_mismatch';
+    if (/quality checklist task_id/iu.test(reason)) return 'task_id_mismatch';
+    if (/preflight_path is missing/iu.test(reason)) return 'preflight_path_missing';
+    if (/preflight_sha256 is missing or invalid/iu.test(reason)) return 'preflight_sha256_invalid';
+    if (/workflow_config_sha256 is missing or invalid/iu.test(reason)) return 'workflow_config_sha256_invalid';
+    if (/changed_file_evidence is missing/iu.test(reason)) return 'changed_file_evidence_missing';
+    if (/changed_file_evidence\.changed_files is missing/iu.test(reason)) return 'changed_files_missing';
+    if (/changed_file_evidence\.changed_files_count is missing/iu.test(reason)) return 'changed_files_count_missing';
+    if (/changed_file_evidence\.changed_files_sha256 is missing or invalid/iu.test(reason)) return 'changed_files_sha256_invalid';
+    if (/changed_file_evidence\.scope_sha256 is missing or invalid/iu.test(reason)) return 'scope_sha256_invalid';
+    if (/changed_file_evidence\.scope_content_sha256 is missing or invalid/iu.test(reason)) return 'scope_content_sha256_invalid';
+    if (/points outside the repository/iu.test(reason)) return 'path_outside_repository';
+    if (/ is missing:/iu.test(reason)) return 'referenced_artifact_missing';
+    if (/effective quality policy/iu.test(reason)) return 'effective_policy_changed';
+    if (/hash changed after the quality checklist was recorded/iu.test(reason)) {
+        return /workflow config/iu.test(reason) ? 'workflow_config_hash_changed' : 'referenced_artifact_hash_changed';
+    }
+    if (/changed-file list no longer matches/iu.test(reason)) return 'changed_files_mismatch';
+    if (/scope binding no longer matches/iu.test(reason)) return 'scope_binding_mismatch';
+    if (/scope content no longer matches/iu.test(reason)) return 'scope_content_mismatch';
+    if (/newer preflight artifact exists/iu.test(reason)) return 'newer_preflight_exists';
+    return 'unknown';
+}
+
+function qualityChecklistStaleReasonCodes(reasons: string[]): string[] {
+    return [...new Set(reasons.map(qualityChecklistStaleReasonCode))];
+}
+
 function addScopeMismatchReasons(options: {
     staleReasons: string[];
     artifactBinding: ScopeBinding | null;
@@ -588,7 +621,23 @@ function resolveEvidenceFreshness(options: {
         if (!actualWorkflowConfigSha256) {
             staleReasons.push(`Workflow config is missing: ${toPosix(workflowConfigPath)}.`);
         } else if (actualWorkflowConfigSha256 !== expectedWorkflowConfigSha256) {
-            staleReasons.push('Workflow config hash changed after the quality checklist was recorded.');
+            const rawWorkflowConfig = readJsonRecord(workflowConfigPath);
+            const compatibility = assessQualityChecklistPolicyCompatibility({
+                currentRules: options.workflowConfigTab.optional_quality_checks.rules,
+                artifactRules: validPayload.rules,
+                artifactAnswers: validPayload.answers,
+                scopeCategory: toText(validPayload.scope_category)
+                    || (isRecord(validPayload.changed_file_evidence) ? toText(validPayload.changed_file_evidence.scope_category) : '')
+                    || null,
+                currentRuleSetDiagnostic: formatOptionalQualityChecksRuleSetDiagnostics(
+                    rawWorkflowConfig?.optional_quality_checks
+                )
+            });
+            if (!compatibility.compatible) {
+                staleReasons.push(
+                    `Workflow config effective quality policy changed after the quality checklist was recorded: ${compatibility.reasons[0] || 'policy snapshot is incompatible'}.`
+                );
+            }
         }
     }
 
@@ -704,6 +753,7 @@ function buildMissingLatestCheck(
         preflight_path: null,
         preflight_sha256: null,
         workflow_config_sha256: null,
+        effective_policy_sha256: null,
         scope_category: null,
         changed_files_count: null,
         changed_files_preview: [],
@@ -776,12 +826,20 @@ function buildLatestCheckFromArtifact(options: {
         outcome: toText(payload?.outcome) || null,
         effect,
         summary,
+        stale_reason_codes: qualityChecklistStaleReasonCodes(freshness.staleReasons),
         stale_reasons: freshness.staleReasons,
         task_id: toText(payload?.task_id) || null,
         timestamp_utc: toText(payload?.timestamp_utc) || null,
         preflight_path: toText(payload?.preflight_path) || null,
         preflight_sha256: toText(payload?.preflight_sha256).toLowerCase() || null,
         workflow_config_sha256: toText(payload?.workflow_config_sha256).toLowerCase() || null,
+        effective_policy_sha256: toText(payload?.effective_policy_sha256).toLowerCase()
+            || assessQualityChecklistPolicyCompatibility({
+                currentRules: options.workflowConfigTab.optional_quality_checks.rules,
+                artifactRules: payload?.rules,
+                artifactAnswers: payload?.answers,
+                scopeCategory: scopeCategory || null
+            }).effective_policy_sha256,
         scope_category: scopeCategory || null,
         changed_files_count: changedFiles.changedFilesCount,
         changed_files_preview: changedFiles.changedFilesPreview,

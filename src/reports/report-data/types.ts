@@ -223,12 +223,14 @@ export interface ReportQualityGateLatestCheck {
     outcome: string | null;
     effect: ReportQualityGateEffect;
     summary: string;
+    stale_reason_codes?: string[];
     stale_reasons: string[];
     task_id: string | null;
     timestamp_utc: string | null;
     preflight_path: string | null;
     preflight_sha256: string | null;
     workflow_config_sha256: string | null;
+    effective_policy_sha256: string | null;
     scope_category: string | null;
     changed_files_count: number | null;
     changed_files_preview: string[];

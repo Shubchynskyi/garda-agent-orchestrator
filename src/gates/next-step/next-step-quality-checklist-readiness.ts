@@ -7,6 +7,7 @@ import {
     normalizeOptionalQualityChecksConfig
 } from '../../core/workflow-config';
 import {
+    assessQualityChecklistPolicyCompatibility,
     QUALITY_CHECKLIST_ID,
     QUALITY_CHECKLIST_STATUSES
 } from '../quality-checklist';
@@ -364,6 +365,46 @@ export function readQualityChecklistReadiness(options: {
         ? artifact.workflow_config_sha256.trim().toLowerCase()
         : null;
     if (expectedWorkflowConfigSha256 !== artifactWorkflowConfigSha256) {
+        const compatibility = expectedWorkflowConfigSha256 && artifactWorkflowConfigSha256
+            ? assessQualityChecklistPolicyCompatibility({
+                currentRules: optionalQualityChecks.rules,
+                artifactRules: artifact.rules,
+                artifactAnswers: artifact.answers,
+                scopeCategory,
+                currentRuleSetDiagnostic: ruleSetDiagnostic
+            })
+            : null;
+        if (compatibility?.compatible === true) {
+            return buildQualityChecklistReadiness({
+                enabled,
+                required,
+                ready: true,
+                status,
+                evidenceStatus: 'current',
+                effect: status === 'ACTION_REQUIRED'
+                    ? 'required_rework'
+                    : status === 'WARN'
+                        ? 'warned'
+                        : status === 'SKIPPED_DISABLED'
+                            ? 'disabled'
+                            : status === 'CONFIG_ERROR'
+                                ? 'invalid'
+                                : countArray(artifact.actions_taken) > 0
+                                    ? 'helped'
+                                    : 'passed',
+                reason:
+                    'Quality checklist evidence is current after compatible workflow configuration normalization. ' +
+                    `Effective policy ${formatNextStepInlineValue(compatibility.effective_policy_sha256)} remains compatible with ` +
+                    `${formatNextStepInlineValue(toRepoDisplayPath(options.repoRoot, artifactPath))}.`,
+                artifactPath,
+                artifact,
+                changedFilesCount,
+                scopeCategory,
+                enabledRuleCount,
+                activeRuleCount,
+                skippedByScopeRuleCount
+            });
+        }
         return buildQualityChecklistReadiness({
             enabled,
             required,
@@ -373,7 +414,8 @@ export function readQualityChecklistReadiness(options: {
             effect: 'stale',
             reason:
                 'Quality checklist evidence is stale for the current workflow configuration. ' +
-                `Expected ${formatNextStepInlineValue(expectedWorkflowConfigSha256 || '<missing>')}, found ${formatNextStepInlineValue(artifactWorkflowConfigSha256 || '<missing>')}.`,
+                `Expected ${formatNextStepInlineValue(expectedWorkflowConfigSha256 || '<missing>')}, found ${formatNextStepInlineValue(artifactWorkflowConfigSha256 || '<missing>')}.` +
+                (compatibility && !compatibility.compatible ? ` Effective policy mismatch: ${compatibility.reasons[0] || 'unknown'}.` : ''),
             artifactPath,
             artifact,
             changedFilesCount,
