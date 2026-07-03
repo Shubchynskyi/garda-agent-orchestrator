@@ -21,6 +21,9 @@ import {
     getReviewContextContractViolations
 } from '../review-context/review-context-contract';
 import {
+    getReviewContextFullSuiteValidationViolations
+} from '../review-context/review-context-validation-evidence';
+import {
     reviewContextLaneScopeMatchesCurrentPreflight
 } from '../scope/domain-scope-fingerprints';
 import {
@@ -118,7 +121,8 @@ export function readReviewArtifactState(
     reviewType: string,
     preflightPath: string,
     preflightSha256: string | null,
-    preflightPayload: Record<string, unknown> | null
+    preflightPayload: Record<string, unknown> | null,
+    repoRoot?: string
 ): ReviewArtifactState {
     const contextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
@@ -209,10 +213,21 @@ export function readReviewArtifactState(
                     requirePreflightSha256: true,
                     ...buildReviewContextPreflightDiffExpectations(preflightPayload, reviewType)
                 });
-                if (contractViolations.length === 0) {
+                const fullSuiteBindingViolations = repoRoot
+                    ? getReviewContextFullSuiteValidationViolations({
+                        repoRoot,
+                        taskId,
+                        reviewType,
+                        preflightPath,
+                        preflightSha256,
+                        reviewContext: context
+                    })
+                    : [];
+                if (contractViolations.length === 0 && fullSuiteBindingViolations.length === 0) {
                     contextCurrent = true;
                 } else {
                     violations.push(...contractViolations);
+                    violations.push(...fullSuiteBindingViolations);
                 }
             } else {
                 contextPreflightBindingViolationIndex = violations.length;

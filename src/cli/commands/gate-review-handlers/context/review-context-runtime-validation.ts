@@ -12,6 +12,9 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../../../../gates/review-context/review-context-contract';
+import {
+    getReviewContextFullSuiteValidationViolations
+} from '../../../../gates/review-context/review-context-validation-evidence';
 import { resolveReviewContextRoutingIdentity } from '../../../../gates/review-context/review-context-routing';
 import {
     normalizeRuntimeIdentitySource,
@@ -77,6 +80,7 @@ export function assertReviewContextContractOrThrow(options: {
     preflightSha256: string | null;
     preflightPayload?: Record<string, unknown> | null;
     requireStrictBindingMetadata?: boolean;
+    repoRoot?: string;
 }): void {
     const diffExpectations = buildReviewContextPreflightDiffExpectations(options.preflightPayload, options.reviewType);
     const requireStrictBindingMetadata = options.requireStrictBindingMetadata === true
@@ -94,6 +98,16 @@ export function assertReviewContextContractOrThrow(options: {
         requirePreflightSha256: requireStrictBindingMetadata,
         ...diffExpectations
     });
+    if (options.repoRoot) {
+        violations.push(...getReviewContextFullSuiteValidationViolations({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            preflightPath: options.preflightPath,
+            preflightSha256: options.preflightSha256,
+            reviewContext: options.reviewContext
+        }));
+    }
     if (violations.length > 0) {
         throw new Error(violations.join(' '));
     }

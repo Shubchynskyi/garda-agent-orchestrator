@@ -115,6 +115,43 @@ function normalizeNullablePath(value: unknown): string | null {
     return text ? normalizePath(text) : null;
 }
 
+function normalizeNullableString(value: unknown): string | null {
+    const text = String(value || '').trim();
+    return text || null;
+}
+
+function normalizeEvidenceSha256(value: unknown): string | null {
+    const text = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(text) ? text : null;
+}
+
+function normalizeFullSuiteValidationPlacementEvidence(value: unknown): FullSuiteValidationPlacement | null {
+    const text = String(value || '').trim();
+    if (
+        text === 'before_completion'
+        || text === 'before_test_review'
+        || text === 'after_compile_before_reviews'
+    ) {
+        return text;
+    }
+    return null;
+}
+
+function isReviewReadyFullSuiteStatus(status: FullSuiteValidationResult['status'] | null): boolean {
+    return status === 'PASSED' || status === 'WARNED';
+}
+
+function formatFullSuiteEvidenceReference(
+    label: string,
+    evidence: Pick<ReviewContextFullSuiteValidationEvidence, 'artifact_path' | 'artifact_sha256' | 'status' | 'artifact_freshness' | 'cycle_binding_valid' | 'mismatch_reason'>
+): string {
+    return `${label} artifact_path='${evidence.artifact_path || 'missing'}', ` +
+        `artifact_sha256=${evidence.artifact_sha256 || 'missing'}, ` +
+        `status=${evidence.status || 'missing'}, freshness=${evidence.artifact_freshness || 'missing'}, ` +
+        `cycle_binding_valid=${evidence.cycle_binding_valid == null ? 'unknown' : String(evidence.cycle_binding_valid)}` +
+        `${evidence.mismatch_reason ? `, mismatch_reason='${evidence.mismatch_reason}'` : ''}`;
+}
+
 export function readCurrentCompileGateEvidence(repoRoot: string, taskId: string | null): CurrentCompileGateEvidence {
     if (!taskId) {
         return {
@@ -172,6 +209,171 @@ export function readCurrentCompileGateEvidence(repoRoot: string, taskId: string 
             cycle_binding: currentCycle
         };
     }
+}
+
+export function getReviewContextFullSuiteValidationViolations(options: {
+    repoRoot: string;
+    taskId: string | null;
+    reviewType: string;
+    preflightPath: string;
+    preflightSha256: string | null;
+    reviewContext: Record<string, unknown> | null;
+}): string[] {
+    const currentEvidence = buildFullSuiteValidationEvidence({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightPath: options.preflightPath,
+        preflightSha256: options.preflightSha256
+    });
+    const currentConfig = loadFullSuiteValidationConfig(options.repoRoot);
+    const reviewContext = asPlainRecord(options.reviewContext);
+    const rawContextEvidence = asPlainRecord(reviewContext?.full_suite_validation);
+    const currentRequiresPreReviewBinding = currentEvidence?.required_for_review === true;
+    if (!currentEvidence && !rawContextEvidence) {
+        return [];
+    }
+
+    const currentEvidenceFailures: string[] = [];
+    if (currentRequiresPreReviewBinding && !currentEvidence.available) {
+        currentEvidenceFailures.push('current full-suite artifact is missing or unreadable');
+    }
+    if (currentRequiresPreReviewBinding && !isReviewReadyFullSuiteStatus(currentEvidence.status)) {
+        currentEvidenceFailures.push(`current full-suite status is '${currentEvidence.status || 'missing'}'`);
+    }
+    if (currentRequiresPreReviewBinding && currentEvidence.artifact_sha256 == null) {
+        currentEvidenceFailures.push('current full-suite artifact sha256 is missing');
+    }
+    if (currentRequiresPreReviewBinding && currentEvidence.cycle_binding_valid !== true) {
+        currentEvidenceFailures.push('current full-suite cycle binding is not valid');
+    }
+    if (currentRequiresPreReviewBinding && currentEvidence.command !== currentConfig.command) {
+        currentEvidenceFailures.push(
+            `current full-suite command '${currentEvidence.command || 'missing'}' does not match workflow-config command '${currentConfig.command || 'missing'}'`
+        );
+    }
+    if (currentRequiresPreReviewBinding && currentEvidence.enabled !== currentConfig.enabled) {
+        currentEvidenceFailures.push(
+            `current full-suite enabled flag '${currentEvidence.enabled == null ? 'missing' : String(currentEvidence.enabled)}' does not match workflow-config enabled flag '${String(currentConfig.enabled)}'`
+        );
+    }
+    if (currentRequiresPreReviewBinding && currentEvidence.placement !== currentConfig.placement) {
+        currentEvidenceFailures.push(
+            `current full-suite placement '${currentEvidence.placement || 'missing'}' does not match workflow-config placement '${currentConfig.placement}'`
+        );
+    }
+    if (currentEvidenceFailures.length > 0) {
+        return [
+            'review context full-suite validation binding cannot be trusted because current full-suite evidence is not a valid pre-review PASS/WARNED binding ' +
+            `(${currentEvidenceFailures.join('; ')}; ${
+                currentEvidence
+                    ? formatFullSuiteEvidenceReference('current', currentEvidence)
+                    : `current workflow-config enabled=${String(currentConfig.enabled)}, placement='${currentConfig.placement}', command='${currentConfig.command || 'missing'}'`
+            }).`
+        ];
+    }
+
+    if (!rawContextEvidence) {
+        if (currentRequiresPreReviewBinding) {
+            return [
+                'review context full-suite validation binding is missing even though full-suite validation is required before this review ' +
+                `(${formatFullSuiteEvidenceReference('current', currentEvidence)}).`
+            ];
+        }
+        return [];
+    }
+
+    const contextEvidence: ReviewContextFullSuiteValidationEvidence = {
+        review_type: normalizeNullableString(rawContextEvidence.review_type) || options.reviewType,
+        required_for_review: rawContextEvidence.required_for_review === true,
+        placement: normalizeFullSuiteValidationPlacementEvidence(rawContextEvidence.placement),
+        artifact_path: normalizeNullablePath(rawContextEvidence.artifact_path),
+        artifact_sha256: normalizeEvidenceSha256(rawContextEvidence.artifact_sha256),
+        artifact_freshness: normalizeNullableString(rawContextEvidence.artifact_freshness) || 'missing',
+        available: rawContextEvidence.available === true,
+        status: normalizeFullSuiteValidationStatus(rawContextEvidence.status),
+        enabled: normalizeNullableBoolean(rawContextEvidence.enabled),
+        command: normalizeNullableString(rawContextEvidence.command),
+        exit_code: normalizeNullableNumber(rawContextEvidence.exit_code),
+        timed_out: normalizeNullableBoolean(rawContextEvidence.timed_out),
+        duration_ms: normalizeNullableNumber(rawContextEvidence.duration_ms),
+        duration_human: normalizeNullableString(rawContextEvidence.duration_human),
+        output_artifact_path: normalizeNullablePath(rawContextEvidence.output_artifact_path),
+        output_retention: asPlainRecord(rawContextEvidence.output_retention),
+        compact_summary: toStringArray(rawContextEvidence.compact_summary, { trimValues: true }),
+        violations: toStringArray(rawContextEvidence.violations, { trimValues: true }),
+        warnings: toStringArray(rawContextEvidence.warnings, { trimValues: true }),
+        cycle_binding: asPlainRecord(rawContextEvidence.cycle_binding) as FullSuiteValidationResult['cycle_binding'] | null,
+        matches_current_preflight: normalizeNullableBoolean(rawContextEvidence.matches_current_preflight),
+        compile_gate_artifact_path: normalizeNullablePath(rawContextEvidence.compile_gate_artifact_path),
+        compile_gate_timestamp_utc: normalizeNullableString(rawContextEvidence.compile_gate_timestamp_utc),
+        compile_gate_status: normalizeNullableString(rawContextEvidence.compile_gate_status),
+        matches_current_compile_gate: normalizeNullableBoolean(rawContextEvidence.matches_current_compile_gate),
+        cycle_binding_valid: normalizeNullableBoolean(rawContextEvidence.cycle_binding_valid),
+        mismatch_reason: normalizeNullableString(rawContextEvidence.mismatch_reason),
+        parse_error: normalizeNullableString(rawContextEvidence.parse_error) || undefined
+    };
+
+    const staleReasons: string[] = [];
+    if (currentRequiresPreReviewBinding && contextEvidence.required_for_review !== true) {
+        staleReasons.push('context says full-suite is not required before this review');
+    }
+    if (!currentRequiresPreReviewBinding && contextEvidence.required_for_review === true) {
+        staleReasons.push('context says full-suite is required before this review but current workflow config does not require it');
+    }
+    if (currentRequiresPreReviewBinding && !contextEvidence.available) {
+        staleReasons.push('context full-suite artifact was unavailable when the review context was built');
+    }
+    if (currentRequiresPreReviewBinding && !isReviewReadyFullSuiteStatus(contextEvidence.status)) {
+        staleReasons.push(`context full-suite status is '${contextEvidence.status || 'missing'}'`);
+    }
+    if (currentRequiresPreReviewBinding && contextEvidence.artifact_freshness !== 'current') {
+        staleReasons.push(`context full-suite freshness is '${contextEvidence.artifact_freshness}'`);
+    }
+    if (currentRequiresPreReviewBinding && contextEvidence.cycle_binding_valid !== true) {
+        staleReasons.push('context full-suite cycle binding is not valid');
+    }
+    if (currentRequiresPreReviewBinding && !contextEvidence.artifact_sha256) {
+        staleReasons.push('context full-suite artifact sha256 is missing');
+    } else if (currentRequiresPreReviewBinding && currentEvidence && contextEvidence.artifact_sha256 !== currentEvidence.artifact_sha256) {
+        staleReasons.push('context full-suite artifact sha256 does not match the current full-suite artifact');
+    }
+    const contextArtifactPath = contextEvidence.artifact_path == null
+        ? null
+        : normalizePath(contextEvidence.artifact_path).toLowerCase();
+    const currentArtifactPath = currentEvidence?.artifact_path == null
+        ? null
+        : normalizePath(currentEvidence.artifact_path).toLowerCase();
+    if (currentRequiresPreReviewBinding && !contextArtifactPath) {
+        staleReasons.push('context full-suite artifact path is missing');
+    } else if (currentRequiresPreReviewBinding && currentArtifactPath && contextArtifactPath !== currentArtifactPath) {
+        staleReasons.push('context full-suite artifact path does not match the current full-suite artifact');
+    }
+    if (contextEvidence.enabled !== currentConfig.enabled) {
+        staleReasons.push(
+            `context full-suite enabled flag '${contextEvidence.enabled == null ? 'missing' : String(contextEvidence.enabled)}' does not match workflow-config enabled flag '${String(currentConfig.enabled)}'`
+        );
+    }
+    if (contextEvidence.command !== currentConfig.command) {
+        staleReasons.push(
+            `context full-suite command '${contextEvidence.command || 'missing'}' does not match workflow-config command '${currentConfig.command || 'missing'}'`
+        );
+    }
+    if (contextEvidence.placement !== currentConfig.placement) {
+        staleReasons.push(
+            `context full-suite placement '${contextEvidence.placement || 'missing'}' does not match workflow-config placement '${currentConfig.placement}'`
+        );
+    }
+    if (staleReasons.length === 0) {
+        return [];
+    }
+
+    return [
+        'review context full-suite validation binding is stale ' +
+        `(${staleReasons.join('; ')}; ${formatFullSuiteEvidenceReference('context', contextEvidence)}; ` +
+        `${currentEvidence ? formatFullSuiteEvidenceReference('current', currentEvidence) : `current workflow-config enabled=${String(currentConfig.enabled)}, placement='${currentConfig.placement}', command='${currentConfig.command || 'missing'}'`}). ` +
+        'Rebuild the review context after the latest full-suite validation evidence before launching the reviewer.'
+    ];
 }
 
 export function buildFullSuiteValidationEvidence(options: {
@@ -270,6 +472,7 @@ export function buildFullSuiteValidationEvidence(options: {
 
     try {
         const raw = asPlainRecord(JSON.parse(fs.readFileSync(artifactPath, 'utf8'))) || {};
+        const artifactPlacement = normalizeFullSuiteValidationPlacementEvidence(raw.placement);
         const cycleBinding = asPlainRecord(raw.cycle_binding) as FullSuiteValidationResult['cycle_binding'] | null;
         let matchesCurrentPreflight: boolean | null = null;
         let matchesCurrentCompileGate: boolean | null = null;
@@ -328,7 +531,7 @@ export function buildFullSuiteValidationEvidence(options: {
         return {
             review_type: options.reviewType,
             required_for_review: requiredForReview,
-            placement: fullSuiteValidationConfig.placement,
+            placement: artifactPlacement,
             artifact_path: normalizedArtifactPath,
             artifact_sha256: fileSha256(artifactPath),
             artifact_freshness: artifactFreshness,

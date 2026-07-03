@@ -14,6 +14,7 @@ export function buildWorkflowConfigWorkBlockedResult(
         status: 'FAILED',
         enabled: config.enabled,
         command: config.command,
+        placement: config.placement,
         exit_code: null,
         timed_out: false,
         output_artifact_path: null,

@@ -107,7 +107,8 @@ export function createReviewInvocationHandlers(deps: ReviewInvocationHandlerDepe
             preflightPath,
             preflightSha256,
             preflightPayload,
-            requireStrictBindingMetadata: !!options.reviewContextPath
+            requireStrictBindingMetadata: !!options.reviewContextPath,
+            repoRoot
         });
         assertReviewTreeStateFresh({
             repoRoot,

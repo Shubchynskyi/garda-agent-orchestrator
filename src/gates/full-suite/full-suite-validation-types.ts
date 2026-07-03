@@ -126,6 +126,7 @@ export interface FullSuiteValidationResult {
     status: 'PASSED' | 'FAILED' | 'WARNED' | 'SKIPPED';
     enabled: boolean;
     command: string;
+    placement?: FullSuiteValidationPlacement;
     exit_code: number | null;
     timed_out: boolean;
     output_artifact_path: string | null;

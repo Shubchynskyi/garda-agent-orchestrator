@@ -46,6 +46,39 @@ function assertNoDefaultReviewerReservationGuidance(text: string): void {
     }
 }
 
+function enableAfterCompileFullSuiteEvidence(repoRoot: string, taskId: string, preflightPath: string): void {
+    fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), JSON.stringify({
+        full_suite_validation: {
+            enabled: true,
+            command: 'npm test',
+            placement: 'after_compile_before_reviews'
+        },
+        review_execution_policy: {
+            mode: 'parallel_all'
+        }
+    }, null, 2) + '\n', 'utf8');
+    const latestCompile = [...readTaskTimelineEvents(repoRoot, taskId)]
+        .reverse()
+        .find((event) => event.event_type === 'COMPILE_GATE_PASSED');
+    const cycleBinding = {
+        task_id: taskId,
+        preflight_path: preflightPath.replace(/\\/g, '/'),
+        preflight_sha256: fileSha256ForTest(preflightPath),
+        compile_gate_timestamp: String(latestCompile?.timestamp_utc || '')
+    };
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-full-suite-validation.json`), JSON.stringify({
+        task_id: taskId,
+        status: 'PASSED',
+        enabled: true,
+        command: 'npm test',
+        placement: 'after_compile_before_reviews',
+        exit_code: 0,
+        cycle_binding: cycleBinding,
+        output_artifact_path: path.join(reviewsRoot, `${taskId}-full-suite-output.log`).replace(/\\/g, '/')
+    }, null, 2) + '\n', 'utf8');
+}
+
 describe('cli/commands/gates review launch prepared metadata', () => {
     it('prepare-reviewer-launch writes current prepared launch metadata without attesting invocation', async () => {
         const repoRoot = createTempRepo();
@@ -573,6 +606,67 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(events.some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch rejects review contexts missing required full-suite binding', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-launch-full-suite-binding';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        enableAfterCompileFullSuiteEvidence(repoRoot, taskId, fixture.preflightPath);
+
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json')
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('review context full-suite validation binding is missing')),
+            prepare.errors.join('\n')
+        );
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+    });
+
+    it('record-review-routing rejects legacy schema-1 review contexts missing required full-suite binding', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-launch-legacy-full-suite-binding';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        enableAfterCompileFullSuiteEvidence(repoRoot, taskId, fixture.preflightPath);
+        const reviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`);
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        reviewContext.schema_version = 1;
+        delete reviewContext.full_suite_validation;
+        fs.writeFileSync(reviewContextPath, JSON.stringify(reviewContext, null, 2) + '\n', 'utf8');
+        const routedEventCountBefore = readTaskTimelineEvents(repoRoot, taskId)
+            .filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length;
+        const routing = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(routing.exitCode, 0);
+        assert.ok(
+            routing.errors.some((line) => line.includes('review context full-suite validation binding is missing')),
+            routing.errors.join('\n')
+        );
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(
+            events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length,
+            routedEventCountBefore
+        );
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
     });
 
     it('prepare-reviewer-launch replaces stale prepared hashes with the current routing and context hashes', async () => {

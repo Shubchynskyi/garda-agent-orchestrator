@@ -7,6 +7,9 @@ import {
     type TaskCycleBindingSnapshot
 } from '../../../../gates/task-events-summary/task-events-summary';
 import type {
+    FullSuiteValidationPlacement
+} from '../../../../core/workflow-config';
+import type {
     FullSuiteValidationCycleBinding,
     FullSuiteValidationResult
 } from '../../../../gates/full-suite/full-suite-validation';
@@ -92,6 +95,7 @@ export function tryReadRebindableFullSuiteValidationArtifact(options: {
     repoRoot: string;
     taskId: string;
     configCommand: string;
+    configPlacement: FullSuiteValidationPlacement;
     cycleBinding: FullSuiteValidationCycleBinding;
 }): FullSuiteValidationResult | null {
     if (!fs.existsSync(options.artifactPath) || !fs.statSync(options.artifactPath).isFile()) {
@@ -108,6 +112,9 @@ export function tryReadRebindableFullSuiteValidationArtifact(options: {
             return null;
         }
         if (String(raw.command || '').trim() !== options.configCommand) {
+            return null;
+        }
+        if (String(raw.placement || '').trim() !== options.configPlacement) {
             return null;
         }
         const currentCycle = buildCurrentTaskCycleBinding(options.cycleBinding);

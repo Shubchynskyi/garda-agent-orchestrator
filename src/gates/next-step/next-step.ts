@@ -1917,6 +1917,15 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         preflightSha256,
         summary
     );
+    const fullSuiteCurrentArtifactMatchesConfig = !fullSuiteConfig.enabled
+        || (
+            readinessArtifacts.fullSuiteValidation != null
+            && readinessArtifacts.fullSuiteValidation.enabled === true
+            && String(readinessArtifacts.fullSuiteValidation.command || '').trim() === fullSuiteConfig.command
+            && String(readinessArtifacts.fullSuiteValidation.placement || '').trim() === fullSuiteConfig.placement
+        );
+    const fullSuiteCurrentArtifactMatchesCycleAndConfig = fullSuiteCurrentArtifactMatchesCycle
+        && fullSuiteCurrentArtifactMatchesConfig;
     const fullSuiteLifecycleWarningPolicyPresent = hasFullSuiteTimeoutWarningLifecyclePolicy(
         repoRoot,
         taskId,
@@ -1924,13 +1933,13 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     );
     const fullSuiteWarningOnlyContinuationAccepted = isFullSuiteWarningOnlyContinuationArtifact(
         readinessArtifacts.fullSuiteValidation,
-        fullSuiteCurrentArtifactMatchesCycle,
+        fullSuiteCurrentArtifactMatchesCycleAndConfig,
         fullSuiteLifecycleGatePassed,
         fullSuiteLifecycleWarningPolicyPresent
     );
     const fullSuiteLifecyclePassArtifactAccepted = isFullSuiteLifecyclePassArtifactAccepted(
         readinessArtifacts.fullSuiteValidation,
-        fullSuiteCurrentArtifactMatchesCycle,
+        fullSuiteCurrentArtifactMatchesCycleAndConfig,
         fullSuiteLifecycleGatePassed
     );
     const fullSuiteGatePassed = fullSuiteNotRequiredForDocsOnly
@@ -1970,18 +1979,18 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const projectMemorySummary = buildProjectMemoryNextStepSummary(repoRoot, projectMemoryEvidence);
     const reviewPolicy = resolveReviewPolicy(preflight, workflowReviewPolicy);
     const reviewStates = requiredReviewTypes.map((reviewType) => (
-        readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)
+        readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight, repoRoot)
     ));
     const fullSuiteTimedOutRetryAvailable = fullSuiteFailedTimeoutRetryAvailable(
         readinessArtifacts.fullSuiteValidation,
         fullSuiteTimeoutForecast
     );
     const currentFailedFullSuiteValidation = fullSuiteGateStatus === 'FAIL'
-        && fullSuiteCurrentArtifactMatchesCycle;
+        && fullSuiteCurrentArtifactMatchesCycleAndConfig;
     const fullSuiteTimeoutPolicy = getFullSuiteTimeoutPolicy(readinessArtifacts.fullSuiteValidation);
     const fullSuiteTimeoutBlockerExhausted = isFullSuiteTimeoutBlockerExhaustedArtifact(
         readinessArtifacts.fullSuiteValidation,
-        fullSuiteCurrentArtifactMatchesCycle
+        fullSuiteCurrentArtifactMatchesCycleAndConfig
     );
     const fullSuiteTimeoutRepairTaskProposal = getFullSuiteTimeoutRepairTaskProposal(fullSuiteTimeoutPolicy);
     const fullSuiteTimeoutRepairTaskMaterialized = isFullSuiteTimeoutRepairTaskMaterialized(

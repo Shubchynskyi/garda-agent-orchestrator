@@ -142,6 +142,7 @@ interface ReviewResultHandlersDependencies {
         preflightSha256: string | null;
         preflightPayload?: Record<string, unknown> | null;
         requireStrictBindingMetadata?: boolean;
+        repoRoot?: string;
     }) => void;
     assertReviewContextRuntimeIdentityMetadataPresent: (options: {
         reviewType: string;
@@ -351,7 +352,8 @@ async function recordReviewReceiptFromArtifacts(options: {
         preflightPath: options.preflightPath,
         preflightSha256,
         preflightPayload: preflight,
-        requireStrictBindingMetadata: options.requireStrictBindingMetadata
+        requireStrictBindingMetadata: options.requireStrictBindingMetadata,
+        repoRoot: options.repoRoot
     });
     const historicalStaleReviewResultReason = options.historicalStaleReviewResultReason || null;
     assertReviewTreeStateFreshOrHistoricalFailure({
@@ -765,7 +767,8 @@ async function handleRecordReviewResultWithDependencies(
         preflightPath,
         preflightSha256,
         preflightPayload,
-        requireStrictBindingMetadata: !!options.reviewContextPath
+        requireStrictBindingMetadata: !!options.reviewContextPath,
+        repoRoot
     });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'

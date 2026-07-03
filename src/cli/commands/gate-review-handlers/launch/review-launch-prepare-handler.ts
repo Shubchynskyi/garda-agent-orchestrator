@@ -256,7 +256,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         preflightPath,
         preflightSha256,
         preflightPayload,
-        requireStrictBindingMetadata: !!options.reviewContextPath
+        requireStrictBindingMetadata: !!options.reviewContextPath,
+        repoRoot
     });
     assertReviewTreeStateFresh({
         repoRoot,

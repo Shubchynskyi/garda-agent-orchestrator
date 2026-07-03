@@ -617,11 +617,22 @@ function seedFullSuiteValidation(
         preflight_sha256: fileSha256(preflightPath),
         compile_gate_timestamp: String(latestCompile?.timestamp_utc || '')
     };
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const workflowConfig = fs.existsSync(workflowConfigPath)
+        ? JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>
+        : {};
+    const fullSuiteConfig = workflowConfig.full_suite_validation
+        && typeof workflowConfig.full_suite_validation === 'object'
+        && !Array.isArray(workflowConfig.full_suite_validation)
+        ? workflowConfig.full_suite_validation as Record<string, unknown>
+        : {};
+    const placement = String(fullSuiteConfig.placement || 'before_test_review');
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-full-suite-validation.json`), {
         task_id: taskId,
         status,
         enabled: true,
         command: 'npm test',
+        placement,
         required: status === 'SKIPPED' ? false : undefined,
         skip_reason: status === 'SKIPPED' ? 'DOCS_ONLY_SCOPE_NOT_REQUIRED' : undefined,
         exit_code: status === 'PASSED' ? 0 : status === 'SKIPPED' ? null : 1,
@@ -639,7 +650,7 @@ function seedFullSuiteValidation(
                 ? 'FULL_SUITE_VALIDATION_SKIPPED'
                 : 'FULL_SUITE_VALIDATION_FAILED',
         status === 'FAILED' ? 'FAIL' : 'PASS',
-        { cycle_binding: cycleBinding },
+        { cycle_binding: cycleBinding, command: 'npm test', placement },
         timestampUtc
     );
 }

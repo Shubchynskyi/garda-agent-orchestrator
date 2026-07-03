@@ -25,12 +25,16 @@ import {
     normalizeForTimeline,
     writePreflight,
     seedCompilePass,
+    buildReviewContextScopeFixture,
     writeReviewEvidence,
     seedReviewGatePass,
     seedDocImpactPass,
     seedFullSuiteValidation,
     seedTimedOutFullSuiteFailure,
     seedFullSuiteRetryEvidence} from './next-step-full-suite-fixtures';
+import {
+    buildFullSuiteValidationEvidence
+} from '../../../../src/gates/review-context/review-context-validation-evidence';
 
 function appendRepairTaskRow(repoRoot: string, taskId = `${TASK_ID}-F1`): void {
     const taskPath = path.join(repoRoot, 'TASK.md');
@@ -115,6 +119,45 @@ function writeRepairTaskMaterializationEvidence(
         },
         violations: []
     });
+}
+
+function writeAfterCompileFullSuiteWorkflowConfig(repoRoot: string, command = 'npm test'): void {
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+        full_suite_validation: {
+            enabled: true,
+            command,
+            placement: 'after_compile_before_reviews'
+        },
+        review_execution_policy: {
+            mode: 'parallel_all'
+        }
+    });
+}
+
+function writeFullSuiteBoundReviewContext(repoRoot: string, taskId: string, reviewType = 'code'): string {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const preflightSha256 = fileSha256(preflightPath);
+    const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    writeJson(reviewContextPath, {
+        schema_version: 2,
+        task_id: taskId,
+        review_type: reviewType,
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: preflightSha256,
+        ...buildReviewContextScopeFixture(repoRoot, taskId, reviewType),
+        full_suite_validation: buildFullSuiteValidationEvidence({
+            repoRoot,
+            taskId,
+            reviewType,
+            preflightPath,
+            preflightSha256
+        }),
+        reviewer_routing: {
+            actual_execution_mode: 'delegated_subagent',
+            reviewer_session_id: `agent:${reviewType}-reviewer`
+        }
+    });
+    return reviewContextPath;
 }
 
 describe('gates/next-step', () => {
@@ -230,6 +273,320 @@ describe('gates/next-step', () => {
 
         assert.ok(text.includes('FullSuite: enabled=true; placement=after_compile_before_reviews;'));
         assert.ok(text.includes('FullSuitePerformance: mode=optimized_sharded; optimized=true; boundary=mandatory_full_suite_not_smoke_or_fast; optimized_command="npm run test:sharded"; fallback_command="npm test"'));
+
+    });
+
+    it('rebuilds stale review context built before the latest after-compile full-suite pass', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeAfterCompileFullSuiteWorkflowConfig(repoRoot);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            security: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        writeFullSuiteBoundReviewContext(repoRoot, TASK_ID, 'code');
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.next_gate, 'build-review-context');
+
+        assert.equal(result.review.next_review_type, 'code');
+
+        assert.match(result.reason, /review context full-suite validation binding is stale/);
+
+        assert.match(result.reason, /full-suite-validation\.json/);
+
+        assert.ok(result.commands[0].command.includes('gate build-review-context'));
+
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+
+    });
+
+    it('rebuilds legacy schema-1 review context missing required after-compile full-suite binding', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeAfterCompileFullSuiteWorkflowConfig(repoRoot);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            security: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
+
+        const reviewContextPath = writeFullSuiteBoundReviewContext(repoRoot, TASK_ID, 'code');
+
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+
+        reviewContext.schema_version = 1;
+
+        delete reviewContext.full_suite_validation;
+
+        writeJson(reviewContextPath, reviewContext);
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.next_gate, 'build-review-context');
+
+        assert.equal(result.review.next_review_type, 'code');
+
+        assert.match(result.reason, /review-context artifact is stale/);
+
+        assert.match(result.reason, /full-suite validation binding is missing/);
+
+        assert.ok(result.commands[0].command.includes('gate build-review-context'));
+
+    });
+
+    it('launches reviewer routing without rebuilding when review context is bound to current after-compile full-suite evidence', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeAfterCompileFullSuiteWorkflowConfig(repoRoot);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            security: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
+
+        writeFullSuiteBoundReviewContext(repoRoot, TASK_ID, 'code');
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.next_gate, 'record-review-routing');
+
+        assert.equal(result.review.next_review_type, 'code');
+
+        assert.doesNotMatch(result.reason, /full-suite validation binding is stale/);
+
+        assert.ok(result.commands[0].command.includes('gate record-review-routing'));
+
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+    });
+
+    it('reruns after-compile full-suite when workflow config command changes after evidence was recorded', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeAfterCompileFullSuiteWorkflowConfig(repoRoot, 'npm test');
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            security: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
+
+        writeFullSuiteBoundReviewContext(repoRoot, TASK_ID, 'code');
+
+        writeAfterCompileFullSuiteWorkflowConfig(repoRoot, 'npm run test:changed');
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+
+        assert.match(result.title, /after compile before reviews/);
+
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+
+        assert.ok(result.commands[0].command.includes('--preflight-path'));
+
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+    });
+
+    it('reruns after-compile full-suite when workflow config placement changes after evidence was recorded', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'before_test_review'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            security: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
+
+        writeFullSuiteBoundReviewContext(repoRoot, TASK_ID, 'code');
+
+        writeAfterCompileFullSuiteWorkflowConfig(repoRoot, 'npm test');
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+
+        assert.match(result.title, /after compile before reviews/);
+
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+
+        assert.ok(!result.commands[0].command.includes('record-review-routing'));
+
+    });
+
+    it('rebuilds review context when workflow config placement changes from after-compile to before-completion', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeAfterCompileFullSuiteWorkflowConfig(repoRoot, 'npm test');
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            security: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
+
+        writeFullSuiteBoundReviewContext(repoRoot, TASK_ID, 'code');
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'before_completion'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.next_gate, 'build-review-context');
+
+        assert.equal(result.review.next_review_type, 'code');
+
+        assert.match(result.reason, /full-suite validation binding is stale/);
+
+        assert.match(result.reason, /workflow-config placement 'before_completion'/);
+
+        assert.ok(result.commands[0].command.includes('gate build-review-context'));
 
     });
 
@@ -523,6 +880,7 @@ describe('gates/next-step', () => {
             status: 'WARNED',
             enabled: true,
             command: 'npm test',
+            placement: 'after_compile_before_reviews',
             exit_code: 1,
             timed_out: true,
             cycle_binding: cycleBinding,
@@ -661,6 +1019,7 @@ describe('gates/next-step', () => {
             status: 'WARNED',
             enabled: true,
             command: 'npm test',
+            placement: 'after_compile_before_reviews',
             exit_code: 1,
             timed_out: true,
             cycle_binding: cycleBinding,
@@ -753,6 +1112,7 @@ describe('gates/next-step', () => {
             status: 'WARNED',
             enabled: true,
             command: 'npm test',
+            placement: 'after_compile_before_reviews',
             exit_code: 1,
             timed_out: true,
             cycle_binding: cycleBinding,
@@ -840,6 +1200,7 @@ describe('gates/next-step', () => {
             status: 'WARNED',
             enabled: true,
             command: 'npm test',
+            placement: 'after_compile_before_reviews',
             exit_code: 1,
             timed_out: true,
             cycle_binding: cycleBinding,
@@ -930,6 +1291,7 @@ describe('gates/next-step', () => {
             status: 'WARNED',
             enabled: true,
             command: 'npm test',
+            placement: 'after_compile_before_reviews',
             exit_code: 1,
             timed_out: true,
             cycle_binding: cycleBinding,
