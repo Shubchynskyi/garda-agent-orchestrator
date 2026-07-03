@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "Режим выбора specialist-skill",
-    "description": "Определяет, будет ли подбор specialist-skill на старте задачи выключен, рекомендательным или обязательным. Устаревшие advisory/required/strict значения показываются безопасно и при сохранении записываются как канонические режимы.",
+    "description": "Определяет, будет ли подбор specialist-skill на старте задачи выключен, optional или mandatory. Устаревшие advisory/required/strict значения остаются совместимыми для чтения и при сохранении записываются как канонические режимы.",
     "options": {
       "off": {
         "label": "Выключено",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "Обязательно",
         "description": "Требует выбранный установленный specialist-skill до начала реализации, если policy matching выбрал его."
+      },
+      "advisory": {
+        "label": "Устаревшее: advisory -> optional",
+        "description": "Совместимый псевдоним для optional; при сохранении записывается optional."
+      },
+      "required": {
+        "label": "Устаревшее: required -> mandatory",
+        "description": "Совместимый псевдоним для mandatory; при сохранении записывается mandatory."
+      },
+      "strict": {
+        "label": "Устаревшее: strict -> mandatory",
+        "description": "Совместимый псевдоним для mandatory; при сохранении записывается mandatory."
       }
     }
   },

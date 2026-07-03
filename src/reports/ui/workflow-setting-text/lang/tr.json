@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "Uzman beceri secim modu",
-    "description": "Gorev baslangicinda uzman beceri eslestirmesinin kapali, tavsiye niteliginde veya zorunlu olmasini denetler. Eski advisory/required/strict degerleri guvenle gosterilir ve kaydedilirken kanonik modlara yazilir.",
+    "description": "Gorev baslangicinda uzman beceri eslestirmesinin kapali, optional veya mandatory olmasini denetler. Eski advisory/required/strict degerleri okuma uyumlulugu icin korunur ve kaydedilirken kanonik modlara yazilir.",
     "options": {
       "off": {
         "label": "Kapali",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "Zorunlu",
         "description": "Politika bir kurulu uzman beceriyi sectiginde implementasyon baslamadan once onu zorunlu kilar."
+      },
+      "advisory": {
+        "label": "Eski: advisory -> optional",
+        "description": "optional icin uyumluluk takma adi; kaydedilince optional yazilir."
+      },
+      "required": {
+        "label": "Eski: required -> mandatory",
+        "description": "mandatory icin uyumluluk takma adi; kaydedilince mandatory yazilir."
+      },
+      "strict": {
+        "label": "Eski: strict -> mandatory",
+        "description": "mandatory icin uyumluluk takma adi; kaydedilince mandatory yazilir."
       }
     }
   },

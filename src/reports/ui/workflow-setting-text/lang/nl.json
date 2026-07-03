@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "Specialistische-skillselectiemodus",
-    "description": "Bepaalt of specialistische skillmatching bij taakstart uit, adviserend of verplicht is. Legacywaarden advisory/required/strict worden veilig getoond en bij opslaan naar canonieke modi geschreven.",
+    "description": "Bepaalt of specialistische skillmatching bij taakstart uit, optional of mandatory is. Legacywaarden advisory/required/strict blijven leescompatibel en worden bij opslaan naar canonieke modi geschreven.",
     "options": {
       "off": {
         "label": "Uit",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "Verplicht",
         "description": "Vereist een geselecteerde geinstalleerde specialistische skill voordat implementatie start wanneer het beleid er een selecteert."
+      },
+      "advisory": {
+        "label": "Oud: advisory -> optional",
+        "description": "Compatibiliteitsalias voor optional; bij opslaan wordt optional geschreven."
+      },
+      "required": {
+        "label": "Oud: required -> mandatory",
+        "description": "Compatibiliteitsalias voor mandatory; bij opslaan wordt mandatory geschreven."
+      },
+      "strict": {
+        "label": "Oud: strict -> mandatory",
+        "description": "Compatibiliteitsalias voor mandatory; bij opslaan wordt mandatory geschreven."
       }
     }
   },

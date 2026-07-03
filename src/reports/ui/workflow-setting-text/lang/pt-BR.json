@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "Modo de selecao de habilidades especialistas",
-    "description": "Controla se a correspondencia de habilidades especialistas no inicio da tarefa fica desativada, consultiva ou obrigatoria. Valores legados advisory/required/strict sao exibidos com seguranca e salvos como modos canonicos.",
+    "description": "Controla se a correspondencia de habilidades especialistas no inicio da tarefa fica desativada, optional ou mandatory. Valores legados advisory/required/strict continuam compativeis para leitura e sao salvos como modos canonicos.",
     "options": {
       "off": {
         "label": "Desativado",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "Obrigatorio",
         "description": "Exige uma habilidade especialista instalada antes do inicio da implementacao quando a politica seleciona uma."
+      },
+      "advisory": {
+        "label": "Legado: advisory -> optional",
+        "description": "Alias de compatibilidade para optional; ao salvar, grava optional."
+      },
+      "required": {
+        "label": "Legado: required -> mandatory",
+        "description": "Alias de compatibilidade para mandatory; ao salvar, grava mandatory."
+      },
+      "strict": {
+        "label": "Legado: strict -> mandatory",
+        "description": "Alias de compatibilidade para mandatory; ao salvar, grava mandatory."
       }
     }
   },

@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "전문 스킬 선택 모드",
-    "description": "작업 시작 시 전문 스킬 매칭을 끄거나, 권고로 두거나, 필수로 둘지 제어합니다. 기존 advisory/required/strict 값은 안전하게 표시되고 저장 시 표준 모드로 기록됩니다.",
+    "description": "작업 시작 시 전문 스킬 매칭을 끄거나 optional 또는 mandatory로 둘지 제어합니다. 기존 advisory/required/strict 값은 읽기 호환으로 유지되며 저장 시 표준 모드로 기록됩니다.",
     "options": {
       "off": {
         "label": "꺼짐",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "필수",
         "description": "정책 매칭이 설치된 전문 스킬을 선택하면 구현 시작 전에 해당 스킬을 요구합니다."
+      },
+      "advisory": {
+        "label": "레거시: advisory -> optional",
+        "description": "optional 호환 별칭입니다. 저장하면 optional로 기록됩니다."
+      },
+      "required": {
+        "label": "레거시: required -> mandatory",
+        "description": "mandatory 호환 별칭입니다. 저장하면 mandatory로 기록됩니다."
+      },
+      "strict": {
+        "label": "레거시: strict -> mandatory",
+        "description": "mandatory 호환 별칭입니다. 저장하면 mandatory로 기록됩니다."
       }
     }
   },

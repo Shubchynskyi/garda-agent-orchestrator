@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "Mode pemilihan skill spesialis",
-    "description": "Mengatur apakah pencocokan skill spesialis saat tugas dimulai dimatikan, bersifat saran, atau wajib. Nilai lama advisory/required/strict ditampilkan aman dan ditulis ulang ke mode kanonis saat disimpan.",
+    "description": "Mengatur apakah pencocokan skill spesialis saat tugas dimulai dimatikan, optional, atau mandatory. Nilai lama advisory/required/strict tetap kompatibel untuk dibaca dan disimpan sebagai mode kanonis.",
     "options": {
       "off": {
         "label": "Mati",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "Wajib",
         "description": "Mewajibkan skill spesialis terpasang yang dipilih sebelum implementasi dimulai saat kebijakan memilihnya."
+      },
+      "advisory": {
+        "label": "Lama: advisory -> optional",
+        "description": "Alias kompatibilitas untuk optional; saat disimpan ditulis sebagai optional."
+      },
+      "required": {
+        "label": "Lama: required -> mandatory",
+        "description": "Alias kompatibilitas untuk mandatory; saat disimpan ditulis sebagai mandatory."
+      },
+      "strict": {
+        "label": "Lama: strict -> mandatory",
+        "description": "Alias kompatibilitas untuk mandatory; saat disimpan ditulis sebagai mandatory."
       }
     }
   },

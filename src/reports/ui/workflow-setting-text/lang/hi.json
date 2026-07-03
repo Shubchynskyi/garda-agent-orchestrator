@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "विशेषज्ञ-स्किल चयन मोड",
-    "description": "टास्क शुरू होने पर विशेषज्ञ-स्किल मिलान बंद, सलाहकारी या अनिवार्य होगा, यह नियंत्रित करता है। पुराने advisory/required/strict मान सुरक्षित रूप से दिखते हैं और सेव करते समय canonical मोड में लिखे जाते हैं।",
+    "description": "टास्क शुरू होने पर विशेषज्ञ-स्किल मिलान बंद, optional या mandatory होगा, यह नियंत्रित करता है। पुराने advisory/required/strict मान read-compatible रहते हैं और सेव करते समय canonical modes में लिखे जाते हैं।",
     "options": {
       "off": {
         "label": "बंद",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "अनिवार्य",
         "description": "नीति मिलान कोई इंस्टॉल की गई विशेषज्ञ स्किल चुनता है तो implementation शुरू होने से पहले वह आवश्यक होती है।"
+      },
+      "advisory": {
+        "label": "पुराना: advisory -> optional",
+        "description": "optional का compatibility alias; सेव करने पर optional लिखा जाता है।"
+      },
+      "required": {
+        "label": "पुराना: required -> mandatory",
+        "description": "mandatory का compatibility alias; सेव करने पर mandatory लिखा जाता है।"
+      },
+      "strict": {
+        "label": "पुराना: strict -> mandatory",
+        "description": "mandatory का compatibility alias; सेव करने पर mandatory लिखा जाता है।"
       }
     }
   },

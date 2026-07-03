@@ -177,7 +177,7 @@ const projectMemoryReadStrategyOptions: WorkflowSettingOption[] = PROJECT_MEMORY
     description: 'Read the memory index first and open detailed files only when the index points to them.'
 }));
 
-const optionalSkillSelectionPolicyOptions: WorkflowSettingOption[] = CANONICAL_OPTIONAL_SKILL_SELECTION_POLICY_MODES.map((mode) => {
+const canonicalOptionalSkillSelectionPolicyOptions: WorkflowSettingOption[] = CANONICAL_OPTIONAL_SKILL_SELECTION_POLICY_MODES.map((mode) => {
     switch (mode) {
         case 'off':
             return {
@@ -199,6 +199,29 @@ const optionalSkillSelectionPolicyOptions: WorkflowSettingOption[] = CANONICAL_O
             };
     }
 });
+
+const legacyOptionalSkillSelectionPolicyOptions: WorkflowSettingOption[] = [
+    {
+        value: 'advisory',
+        label: 'Legacy: advisory -> optional',
+        description: 'Compatibility alias for optional; saving rewrites this value to optional.'
+    },
+    {
+        value: 'required',
+        label: 'Legacy: required -> mandatory',
+        description: 'Compatibility alias for mandatory; saving rewrites this value to mandatory.'
+    },
+    {
+        value: 'strict',
+        label: 'Legacy: strict -> mandatory',
+        description: 'Compatibility alias for mandatory; saving rewrites this value to mandatory.'
+    }
+];
+
+const optionalSkillSelectionPolicyOptions: WorkflowSettingOption[] = [
+    ...canonicalOptionalSkillSelectionPolicyOptions,
+    ...legacyOptionalSkillSelectionPolicyOptions
+];
 
 export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] = Object.freeze([
     {
@@ -229,7 +252,7 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'optional-skill-selection-mode',
         key: 'optional_skill_selection_policy.mode',
         label: 'Specialist-skill selection mode',
-        description: 'Controls whether task start keeps specialist-skill matching off, advisory, or mandatory. Legacy advisory/required/strict values are displayed safely and rewritten to canonical modes when saved.',
+        description: 'Controls whether task start keeps specialist-skill matching off, optional, or mandatory. Legacy advisory/required/strict values remain read-compatible and are rewritten to canonical modes when saved.',
         flag: '--optional-skill-selection-mode',
         value_type: 'enum',
         options: optionalSkillSelectionPolicyOptions

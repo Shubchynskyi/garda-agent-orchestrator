@@ -28,6 +28,7 @@ import type { ReportDataUnavailableEntry, ReportWorkflowConfigTab, ReportWorkflo
 const KNOWN_REVIEW_TYPES: readonly string[] = KNOWN_REVIEW_TYPE_IDS;
 const FALLBACK_PROFILE_IDS = ['balanced', 'fast', 'strict', 'docs-only'];
 const OPTIONAL_SKILL_SELECTION_POLICY_KEY = 'optional_skill_selection_policy.mode';
+const LEGACY_OPTIONAL_SKILL_SELECTION_POLICY_MODES = new Set(['advisory', 'required', 'strict']);
 
 interface OptionalSkillSelectionPolicyReportState {
     config_path: string;
@@ -193,39 +194,18 @@ function appendUnknownCurrentValues(
 }
 
 function buildOptionalSkillSelectionPolicyOptions(currentValue: unknown): WorkflowSettingOption[] {
-    const options: WorkflowSettingOption[] = CANONICAL_OPTIONAL_SKILL_SELECTION_POLICY_MODES.map((mode) => {
-        switch (mode) {
-            case 'off':
-                return {
-                    value: mode,
-                    label: 'Off',
-                    description: 'Specialist-skill matching is disabled for task start.'
-                };
-            case 'mandatory':
-                return {
-                    value: mode,
-                    label: 'Mandatory',
-                    description: 'Selected installed specialist skills are required before implementation starts.'
-                };
-            default:
-                return {
-                    value: mode,
-                    label: 'Optional',
-                    description: 'Specialist-skill suggestions are shown without blocking ordinary task work.'
-                };
-        }
-    });
+    const definition = getWorkflowSettingDefinition(OPTIONAL_SKILL_SELECTION_POLICY_KEY);
+    const definitionOptions = definition?.options ?? [];
+    const canonicalModeValues = new Set<string>(CANONICAL_OPTIONAL_SKILL_SELECTION_POLICY_MODES);
+    const options = definitionOptions.filter((option) => canonicalModeValues.has(option.value));
     const rawCurrent = typeof currentValue === 'string' ? currentValue.trim().toLowerCase() : '';
-    if (!rawCurrent || options.some((option) => option.value === rawCurrent)) {
+    if (!LEGACY_OPTIONAL_SKILL_SELECTION_POLICY_MODES.has(rawCurrent)) {
         return options;
     }
+    const legacyOption = definitionOptions.find((option) => option.value === rawCurrent);
     return [
         ...options,
-        {
-            value: rawCurrent,
-            label: `${rawCurrent} (legacy)`,
-            description: `Legacy policy value preserved from the current config; effective mode is ${normalizeOptionalSkillSelectionPolicyMode(rawCurrent)}.`
-        }
+        ...(legacyOption ? [legacyOption] : [])
     ];
 }
 
@@ -250,6 +230,8 @@ function buildWorkflowCommand(
 ): string {
     const valueHint = flag === '--garda-self-guard'
         ? '<on|off>'
+        : flag === '--optional-skill-selection-mode'
+            ? '<off|optional|mandatory>'
         : options.length > 0
         ? valueType === 'enum_list'
             ? `<comma-separated: ${options.map((option) => option.value).join('|')}>`
@@ -278,7 +260,7 @@ function resolveWorkflowSettingValue(
     optionalSkillSelectionPolicy: OptionalSkillSelectionPolicyReportState
 ): unknown {
     if (definition.key === OPTIONAL_SKILL_SELECTION_POLICY_KEY) {
-        return optionalSkillSelectionPolicy.mode;
+        return optionalSkillSelectionPolicy.effective_mode;
     }
     const value = getConfigValue(config, definition.key);
     const rawValue = getRawConfigValue(rawConfig, definition.key);
@@ -299,7 +281,10 @@ function buildWorkflowSetting(
         throw new Error(`Missing local UI workflow setting metadata for ${key}.`);
     }
     const value = resolveWorkflowSettingValue(config, rawConfig, definition, optionalSkillSelectionPolicy);
-    const options = buildWorkflowSettingOptions(repoRoot, key, value, definition.options);
+    const optionSourceValue = key === OPTIONAL_SKILL_SELECTION_POLICY_KEY
+        ? optionalSkillSelectionPolicy.mode
+        : value;
+    const options = buildWorkflowSettingOptions(repoRoot, key, optionSourceValue, definition.options);
     const setting: ReportWorkflowSetting = {
         id: definition.id,
         key,

@@ -182,6 +182,30 @@ test('workflow set updates optional skill selection policy without rewriting wor
     }
 });
 
+test('workflow show renders legacy optional skill selection policy with canonical primary labels', () => {
+    const bundleRoot = createBundleRoot();
+    const policyPath = path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json');
+    fs.writeFileSync(policyPath, JSON.stringify({
+        version: 1,
+        mode: 'required'
+    }, null, 2), 'utf8');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow(['show', '--bundle-root', bundleRoot], PACKAGE_JSON));
+
+        assert.ok(result && result.action === 'show');
+        assert.equal(result.optional_skill_selection_policy.mode, 'required');
+        assert.equal(result.optional_skill_selection_policy.effective_mode, 'mandatory');
+        assert.ok(output.includes('Specialist-skill selection: mandatory (legacy config=required)'));
+        assert.ok(output.includes('OptionalSkillSelectionPolicyMode: mandatory'));
+        assert.ok(output.includes('OptionalSkillSelectionPolicyEffectiveMode: mandatory'));
+        assert.ok(output.includes('OptionalSkillSelectionPolicyLegacyMode: required'));
+        assert.ok(!output.includes('Specialist-skill selection: required'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow set updates compile-gate command and validates full-suite separation', () => {
     const bundleRoot = createBundleRoot();
     const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');

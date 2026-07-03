@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "Modo de seleccion de habilidades especializadas",
-    "description": "Controla si la seleccion de habilidades especializadas al iniciar una tarea esta desactivada, es orientativa u obligatoria. Los valores heredados advisory/required/strict se muestran con seguridad y se guardan como modos canonicos.",
+    "description": "Controla si la seleccion de habilidades especializadas al iniciar una tarea esta desactivada, es opcional u obligatoria. Los valores heredados advisory/required/strict siguen siendo compatibles para lectura y se guardan como modos canonicos.",
     "options": {
       "off": {
         "label": "Desactivado",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "Obligatorio",
         "description": "Exige una habilidad especializada instalada antes de iniciar la implementacion cuando la politica selecciona una."
+      },
+      "advisory": {
+        "label": "Heredado: advisory -> optional",
+        "description": "Alias de compatibilidad para optional; al guardar se escribe optional."
+      },
+      "required": {
+        "label": "Heredado: required -> mandatory",
+        "description": "Alias de compatibilidad para mandatory; al guardar se escribe mandatory."
+      },
+      "strict": {
+        "label": "Heredado: strict -> mandatory",
+        "description": "Alias de compatibilidad para mandatory; al guardar se escribe mandatory."
       }
     }
   },

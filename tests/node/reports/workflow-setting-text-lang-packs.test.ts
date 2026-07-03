@@ -86,6 +86,26 @@ test('scope budget required review limit text names review types instead of lane
     }
 });
 
+test('optional skill selection text treats legacy modes as compatibility aliases', () => {
+    const english = LOCAL_UI_SETTING_TEXT.en['optional-skill-selection-mode'];
+    assert.match(english.description || '', /off, optional, or mandatory/u);
+    assert.match(english.options?.advisory?.label || '', /advisory -> optional/u);
+    assert.match(english.options?.required?.label || '', /required -> mandatory/u);
+    assert.match(english.options?.strict?.label || '', /strict -> mandatory/u);
+
+    for (const [languageId, pack] of Object.entries(LOCAL_UI_SETTING_TEXT)) {
+        const setting = pack['optional-skill-selection-mode'];
+        assert.ok(setting.options?.advisory, `${languageId} lacks advisory compatibility text`);
+        assert.ok(setting.options?.required, `${languageId} lacks required compatibility text`);
+        assert.ok(setting.options?.strict, `${languageId} lacks strict compatibility text`);
+        assert.doesNotMatch(
+            setting.description || '',
+            /off, advisory, or mandatory|aus, beratend oder verpflichtend|adviserende of verplicht/u,
+            `${languageId} still presents advisory as a primary mode`
+        );
+    }
+});
+
 test('scope budget tiered threshold text names warning and blocking states', () => {
     const warnLines = LOCAL_UI_SETTING_TEXT.en['scope-budget-warn-changed-lines'];
     const blockLines = LOCAL_UI_SETTING_TEXT.en['scope-budget-block-changed-lines'];

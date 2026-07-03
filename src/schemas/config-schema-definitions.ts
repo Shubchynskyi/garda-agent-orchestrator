@@ -302,12 +302,13 @@ export const optionalSkillSelectionPolicySchema: Record<string, unknown> = Objec
     $schema: 'http://json-schema.org/draft-07/schema#',
     $id: 'garda-agent-orchestrator/optional-skill-selection-policy.schema.json',
     title: 'Optional Skill Selection Policy',
-    description: 'Repo-local policy controlling preprompt-time optional skill selection. Unknown local extension fields are preserved.',
+    description: 'Repo-local policy controlling preprompt-time optional skill selection. Canonical modes are off, optional, and mandatory; legacy advisory/required/strict aliases remain read-compatible. Unknown local extension fields are preserved.',
     type: 'object',
     properties: {
         version: { type: 'integer', minimum: 1 },
         mode: {
             type: 'string',
+            description: 'Canonical values are off, optional, and mandatory. Legacy advisory maps to optional; legacy required and strict map to mandatory.',
             enum: ['off', 'optional', 'mandatory', 'advisory', 'required', 'strict']
         }
     },

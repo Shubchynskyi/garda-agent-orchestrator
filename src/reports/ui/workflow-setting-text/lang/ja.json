@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "専門スキル選択モード",
-    "description": "タスク開始時の専門スキル照合をオフ、助言、必須のどれにするかを制御します。従来の advisory/required/strict 値は安全に表示され、保存時に正規モードへ書き換えられます。",
+    "description": "タスク開始時の専門スキル照合をオフ、optional、mandatory のどれにするかを制御します。従来の advisory/required/strict 値は読み取り互換として残り、保存時に正規モードへ書き換えられます。",
     "options": {
       "off": {
         "label": "オフ",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "必須",
         "description": "ポリシー照合でインストール済み専門スキルが選ばれた場合、実装開始前にその利用を要求します。"
+      },
+      "advisory": {
+        "label": "レガシー: advisory -> optional",
+        "description": "optional の互換エイリアスです。保存時は optional として書き込まれます。"
+      },
+      "required": {
+        "label": "レガシー: required -> mandatory",
+        "description": "mandatory の互換エイリアスです。保存時は mandatory として書き込まれます。"
+      },
+      "strict": {
+        "label": "レガシー: strict -> mandatory",
+        "description": "mandatory の互換エイリアスです。保存時は mandatory として書き込まれます。"
       }
     }
   },

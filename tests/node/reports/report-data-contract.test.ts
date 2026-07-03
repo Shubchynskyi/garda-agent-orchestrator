@@ -619,6 +619,7 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.equal(optionalSkillSelectionMode.flag, '--optional-skill-selection-mode');
     assert.match(optionalSkillSelectionMode.command, /garda workflow set --optional-skill-selection-mode <off\|optional\|mandatory>/);
     assert.ok(optionalSkillSelectionMode.options.some((option) => option.value === 'mandatory'));
+    assert.ok(!optionalSkillSelectionMode.options.some((option) => option.value === 'advisory'));
     const fullSuiteTimeoutBlocker = tab.settings.find((setting) => setting.key === 'full_suite_validation.timeout_blocker');
     assert.ok(fullSuiteTimeoutBlocker);
     assert.equal(fullSuiteTimeoutBlocker.value, true);
@@ -735,10 +736,11 @@ test('buildWorkflowConfigTab displays legacy optional skill selection policy mod
     assert.equal(tab.optional_skill_selection_policy.status, 'present');
     const setting = tab.settings.find((candidate) => candidate.key === 'optional_skill_selection_policy.mode');
     assert.ok(setting);
-    assert.equal(setting.value, 'required');
+    assert.equal(setting.value, 'mandatory');
+    assert.match(setting.command, /garda workflow set --optional-skill-selection-mode <off\|optional\|mandatory>/);
     assert.ok(setting.options.some((option) => (
         option.value === 'required'
-        && option.label.includes('legacy')
+        && option.label.includes('required -> mandatory')
         && option.description.includes('mandatory')
     )));
     assert.ok(setting.options.some((option) => option.value === 'mandatory'));

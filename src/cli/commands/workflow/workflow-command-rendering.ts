@@ -183,10 +183,10 @@ export function buildOptionalSkillSelectionPolicyLine(config: WorkflowOptionalSk
     const statusSuffix = config.status === 'present'
         ? ''
         : ` status=${config.status}`;
-    const effectiveSuffix = config.mode === config.effective_mode
+    const legacySuffix = config.mode === config.effective_mode
         ? ''
-        : ` effective=${config.effective_mode}`;
-    return `Specialist-skill selection: ${config.mode}${effectiveSuffix}${statusSuffix}`;
+        : ` (legacy config=${config.mode})`;
+    return `Specialist-skill selection: ${config.effective_mode}${legacySuffix}${statusSuffix}`;
 }
 
 export function buildOrchestratorWorkPolicyLine(config: OrchestratorWorkPolicyConfig): string {
@@ -400,8 +400,11 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     for (const rule of optionalQualityChecks.rules) {
         lines.push(`OptionalQualityCheckRule: ${rule.id} enabled=${rule.enabled !== false} title=${rule.title}`);
     }
-    lines.push(`OptionalSkillSelectionPolicyMode: ${optionalSkillSelectionPolicy.mode}`);
+    lines.push(`OptionalSkillSelectionPolicyMode: ${optionalSkillSelectionPolicy.effective_mode}`);
     lines.push(`OptionalSkillSelectionPolicyEffectiveMode: ${optionalSkillSelectionPolicy.effective_mode}`);
+    if (optionalSkillSelectionPolicy.mode !== optionalSkillSelectionPolicy.effective_mode) {
+        lines.push(`OptionalSkillSelectionPolicyLegacyMode: ${optionalSkillSelectionPolicy.mode}`);
+    }
     lines.push(`OptionalSkillSelectionPolicyStatus: ${optionalSkillSelectionPolicy.status}`);
     lines.push(`OptionalSkillSelectionPolicyPath: ${optionalSkillSelectionPolicy.config_path}`);
     if (optionalSkillSelectionPolicy.invalid_reason) {

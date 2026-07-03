@@ -387,7 +387,7 @@
   },
   "optional-skill-selection-mode": {
     "label": "Lage for specialist-skill-val",
-    "description": "Styr om specialist-skill-matchning vid uppgiftsstart ar avstangd, radgivande eller obligatorisk. Legacy-vardena advisory/required/strict visas sakert och sparas som kanoniska lagen.",
+    "description": "Styr om specialist-skill-matchning vid uppgiftsstart ar avstangd, optional eller mandatory. Legacy-vardena advisory/required/strict forblir laskompatibla och sparas som kanoniska lagen.",
     "options": {
       "off": {
         "label": "Av",
@@ -400,6 +400,18 @@
       "mandatory": {
         "label": "Obligatoriskt",
         "description": "Kraver en vald installerad specialist-skill innan implementation startar nar policyn valjer en."
+      },
+      "advisory": {
+        "label": "Aldre: advisory -> optional",
+        "description": "Kompatibilitetsalias for optional; sparning skriver optional."
+      },
+      "required": {
+        "label": "Aldre: required -> mandatory",
+        "description": "Kompatibilitetsalias for mandatory; sparning skriver mandatory."
+      },
+      "strict": {
+        "label": "Aldre: strict -> mandatory",
+        "description": "Kompatibilitetsalias for mandatory; sparning skriver mandatory."
       }
     }
   },

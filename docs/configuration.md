@@ -18,7 +18,7 @@ node bin/garda.js gate validate-config
 | `review-capabilities.json` | Which specialist reviews are enabled | Yes |
 | `paths.json` | Preflight classification roots and trigger regexes | Yes |
 | `skill-packs.json` | Installed built-in domain packs | Yes, through `garda skills add/remove` |
-| `optional-skill-selection-policy.json` | Repo-local policy for preprompt-time optional skill selection (`off`, `advisory`, `required`, `strict`) | Yes |
+| `optional-skill-selection-policy.json` | Repo-local policy for preprompt-time optional skill selection (`off`, `optional`, `mandatory`; legacy aliases remain read-compatible) | Yes |
 | `isolation-mode.json` | Control-plane isolation and sandbox settings | Yes |
 | `profiles.json` | Active profile selection plus built-in and user profile definitions | Yes, through `garda profile ...` |
 | `review-artifact-storage.json` | Review artifact retention and storage policy | Yes, through `garda cleanup policy ...` |
@@ -223,15 +223,16 @@ Controls whether `preprompt` and the task-start lifecycle derive and validate a 
 ```json
 {
   "version": 1,
-  "mode": "advisory"
+  "mode": "optional"
 }
 ```
 
 Modes:
 - `off` disables task-start optional-skill selection.
-- `advisory` computes a read-mostly selection artifact and compact preview without blocking the task.
-- `required` expects a materialized, internally valid selection artifact for the current task cycle before implementation proceeds. `preprompt task` exits non-zero for that start-time blocker, and `compile-gate` or downstream review gates also refuse the current cycle when the artifact is missing or drifted.
-- `strict` keeps `required` behavior and also requires explicit canonical fallback reasons whenever no optional skill is selected.
+- `optional` computes a read-mostly selection artifact and compact preview without blocking the task.
+- `mandatory` expects a materialized, internally valid selection artifact for the current task cycle before implementation proceeds. `preprompt task` exits non-zero for that start-time blocker, and `compile-gate` or downstream review gates also refuse the current cycle when the artifact is missing or drifted.
+
+Legacy values remain read-compatible for older workspaces: `advisory` maps to `optional`, and `required`/`strict` map to `mandatory`. Guarded saves write the canonical mode.
 
 ## Optional Quality Checks
 
