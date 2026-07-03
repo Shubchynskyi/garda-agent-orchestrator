@@ -17,6 +17,15 @@
         "New or refreshed workflow configs now default full-suite validation placement to after_compile_before_reviews; existing explicit placement settings are preserved.",
         "Garda self-guard is enabled by default for application workspaces: agents can no longer self-escalate into --orchestrator-work for protected Garda bundle edits. Operators can change the policy with garda workflow set --garda-self-guard on|off."
       ]
+    },
+    {
+      "version": "1.2.0",
+      "title": "Optional quality gate controls",
+      "body": [
+        "Garda now includes an optional quality gate for project-specific self-check rules before expensive validation work.",
+        "After updating, run garda ui --actions and open the Quality Gate settings to review the default rules, adjust test-only exclusions, and add rules that match your project.",
+        "This gate is advisory and does not replace mandatory compile, full-suite, or independent review gates."
+      ]
     }
   ]
 }
