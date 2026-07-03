@@ -41,6 +41,7 @@ export interface ClassificationConfig {
     fast_path_allowed_regexes: string[];
     fast_path_sensitive_regexes: string[];
     sql_or_migration_regexes: string[];
+    test_refactor_changed_lines_threshold?: number;
     triggers: TriggerConfig;
     code_like_regexes: string[];
     protected_control_plane_roots: string[];
@@ -56,6 +57,7 @@ export interface ResolvedClassificationConfig {
     fast_path_allowed_regexes: string[];
     fast_path_sensitive_regexes: string[];
     sql_or_migration_regexes: string[];
+    test_refactor_changed_lines_threshold?: number;
     db_trigger_regexes: string[];
     security_trigger_regexes: string[];
     api_trigger_regexes: string[];
@@ -107,6 +109,7 @@ export function getDefaultClassificationConfig(repoRoot: string): Classification
             '(^|/)(auth|security|payment|checkout|webhook|token|jwt|guard|middleware|service|repository|query|migration|sql|datasource)(/|\\.|$)'
         ],
         sql_or_migration_regexes: ['\\.sql$', '(^|/)(db|database|migrations?|schema)(/|$)'],
+        test_refactor_changed_lines_threshold: 20,
         triggers: {
             db: [
                 '(^|/)(db|database|migrations?|schema)(/|$)',
@@ -177,7 +180,7 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
                 'metrics_path', 'runtime_roots', 'fast_path_roots',
                 'fast_path_allowed_regexes', 'fast_path_sensitive_regexes',
                 'sql_or_migration_regexes', 'code_like_regexes', 'protected_control_plane_roots',
-                ORDINARY_DOC_PATHS_CONFIG_KEY
+                'test_refactor_changed_lines_threshold', ORDINARY_DOC_PATHS_CONFIG_KEY
             ] as const) {
                 if (key in raw) (defaults as unknown as Record<string, unknown>)[key] = raw[key];
             }
@@ -210,6 +213,11 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
         fast_path_allowed_regexes: toStringArray(defaults.fast_path_allowed_regexes),
         fast_path_sensitive_regexes: toStringArray(defaults.fast_path_sensitive_regexes),
         sql_or_migration_regexes: toStringArray(defaults.sql_or_migration_regexes),
+        test_refactor_changed_lines_threshold: typeof defaults.test_refactor_changed_lines_threshold === 'number'
+            && Number.isInteger(defaults.test_refactor_changed_lines_threshold)
+            && defaults.test_refactor_changed_lines_threshold >= 1
+            ? defaults.test_refactor_changed_lines_threshold
+            : 20,
         db_trigger_regexes: toStringArray(defaults.triggers.db),
         security_trigger_regexes: toStringArray(defaults.triggers.security),
         api_trigger_regexes: toStringArray(defaults.triggers.api),

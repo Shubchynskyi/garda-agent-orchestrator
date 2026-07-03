@@ -45,6 +45,7 @@ export function validatePathsConfig(input: unknown): Record<string, unknown> {
         'fast_path_allowed_regexes',
         'fast_path_sensitive_regexes',
         'sql_or_migration_regexes',
+        'test_refactor_changed_lines_threshold',
         'triggers',
         'code_like_regexes',
         ORDINARY_DOC_PATHS_CONFIG_KEY
@@ -65,6 +66,14 @@ export function validatePathsConfig(input: unknown): Record<string, unknown> {
 
     if (raw.sql_or_migration_regexes !== undefined) {
         normalized.sql_or_migration_regexes = normalizeStringArray(raw.sql_or_migration_regexes, 'paths.sql_or_migration_regexes', { allowScalar: true });
+    }
+
+    if (raw.test_refactor_changed_lines_threshold !== undefined) {
+        normalized.test_refactor_changed_lines_threshold = normalizeInteger(
+            raw.test_refactor_changed_lines_threshold,
+            'paths.test_refactor_changed_lines_threshold',
+            { minimum: 1 }
+        );
     }
 
     if (raw.code_like_regexes !== undefined) {

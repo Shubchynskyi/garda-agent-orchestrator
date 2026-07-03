@@ -86,6 +86,10 @@ export interface ReviewRemediationFixClassification {
         matched_signals: string[];
         semantic_changed_files: string[];
         semantic_scope_source: 'expanded_files' | 'impact_analysis_files' | 'current_changed_files';
+        test_refactor_trigger_reason: string | null;
+        test_refactor_trigger_files: string[];
+        test_refactor_changed_lines_threshold: number;
+        test_refactor_changed_lines_total: number | null;
     };
     review_reuse_decision_order: 'classification_before_reuse';
     non_test_review_reuse_candidate: boolean;

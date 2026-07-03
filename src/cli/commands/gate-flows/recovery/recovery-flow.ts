@@ -12,7 +12,7 @@ import {
 import { type TokenEconomyConfig } from '../../../../gates/review-context/review-context-token-economy';
 import { getClassificationConfig } from '../../../../gates/preflight/classify-change';
 import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../../gates/preflight/build-scoped-diff';
-import { getPreflightContext } from '../../../../gates/compile/compile-gate';
+import { getPreflightContext, getWorkspaceSnapshot } from '../../../../gates/compile/compile-gate';
 import {
     getCurrentWorkflowConfigFileHashes,
     getWorkflowConfigChangedFiles
@@ -461,7 +461,11 @@ export async function runRestartReviewCycleCommand(
         scopeBoundary,
         [],
         undefined,
-        classificationConfig.test_trigger_regexes
+        classificationConfig.test_trigger_regexes,
+        undefined,
+        {
+            testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold
+        }
     );
     let remediationImpactAnalysis: ReviewRemediationImpactAnalysis;
     const taskSummary = String(options.taskIntent || previousTaskMode.task_summary || '').trim();
@@ -486,7 +490,11 @@ export async function runRestartReviewCycleCommand(
                 scopeBoundary,
                 [],
                 remediationImpactAnalysis,
-                classificationConfig.test_trigger_regexes
+                classificationConfig.test_trigger_regexes,
+                undefined,
+                {
+                    testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold
+                }
             );
         } catch (error: unknown) {
             const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
@@ -631,6 +639,12 @@ export async function runRestartReviewCycleCommand(
             emitMetrics: options.emitMetrics
         } as CompileGateCommandOptions);
         ensureStepPassed('compile-gate', compileResult);
+        const remediationWorkspaceSnapshot = getWorkspaceSnapshot(
+            repoRoot,
+            replayScope.detectionSource,
+            replayScope.includeUntracked ?? !replayScope.useStaged,
+            normalizeChangedFiles(refreshedPreflight.changed_files as unknown[])
+        ) as Record<string, unknown>;
 
         const requiredReviewBatches = getReviewExecutionPreparationBatches(
             refreshedRequiredReviews,
@@ -642,7 +656,11 @@ export async function runRestartReviewCycleCommand(
             requiredReviewTypes,
             remediationImpactAnalysis,
             classificationConfig.test_trigger_regexes,
-            refreshedPreflight.preflight
+            refreshedPreflight.preflight,
+            {
+                testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold,
+                changedFileStats: remediationWorkspaceSnapshot.changed_file_stats
+            }
         );
         const sharedTokenEconomyConfigPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
         const sharedTokenEconomyConfigData: TokenEconomyConfig | null = (

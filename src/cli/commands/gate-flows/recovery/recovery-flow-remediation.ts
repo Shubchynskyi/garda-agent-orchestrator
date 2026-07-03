@@ -283,6 +283,58 @@ function groupReviewRemediationFiles(
     return Object.fromEntries(Object.entries(groups).filter(([, entries]) => entries.length > 0));
 }
 
+const DEFAULT_TEST_REFACTOR_CHANGED_LINES_THRESHOLD = 20;
+const TEST_DOMAIN_STRUCTURAL_PATH_PATTERN =
+    /(^|\/)(?:__fixtures__|fixtures?|__mocks__|mocks?|helpers?|harness|support|setup|factories|factory|snapshots?)(?:\/|\.|-|_|$)|(?:test|spec)[-_]?(?:helpers?|fixtures?|harness|support|setup|factories?|mocks?)|(?:helpers?|fixtures?|harness|support|setup|factories?|mocks?)[-_]?(?:test|spec)/iu;
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function normalizeImpactAnalysisSearchText(summary: string): string {
+    return summary.replace(/\\/gu, '/').toLocaleLowerCase();
+}
+
+function findAllNeedleIndexes(haystack: string, needle: string): number[] {
+    const indexes: number[] = [];
+    if (!needle) {
+        return indexes;
+    }
+    let fromIndex = 0;
+    while (fromIndex < haystack.length) {
+        const index = haystack.indexOf(needle, fromIndex);
+        if (index < 0) {
+            break;
+        }
+        indexes.push(index);
+        fromIndex = index + Math.max(needle.length, 1);
+    }
+    return indexes;
+}
+
+function isNegatedFileMention(summary: string, index: number, needleLength: number): boolean {
+    const before = summary.slice(Math.max(0, index - 120), index);
+    const after = summary.slice(index + needleLength, Math.min(summary.length, index + needleLength + 140));
+    const marker = '__remediation_file__';
+    const around = `${before}${marker}${after}`;
+    const markerPattern = escapeRegExp(marker);
+    const directNegationPatterns = [
+        new RegExp(`\\b(?:no|without)\\s+(?:product\\s+|source\\s+)?(?:changes?|edits?|modifications?|touches?)\\s+(?:to|in|for)?\\s*[^.;,]{0,60}${markerPattern}`, 'iu'),
+        new RegExp(`\\b(?:not|never)\\s+(?:changed|modified|touched)\\s+[^.;,]{0,60}${markerPattern}`, 'iu'),
+        new RegExp(`${markerPattern}[^.;,]{0,80}\\b(?:unchanged|unmodified|untouched|not\\s+(?:changed|modified|touched)|stay(?:s|ed)?\\s+unchanged|remain(?:s|ed)?\\s+unchanged)\\b`, 'iu')
+    ];
+    return directNegationPatterns.some((pattern) => pattern.test(around));
+}
+
+function getPositiveSummaryClauses(summary: string): string[] {
+    return summary
+        .replace(/\\/gu, '/')
+        .split(/[.;\n\r]+/u)
+        .map((clause) => clause.trim())
+        .filter(Boolean)
+        .filter((clause) => !/\b(?:no|not|never|without)\b[^.;\n\r]{0,80}\b(?:api|public\s+api|runtime|behavior|contract|security|artifact|product|source)\b|\b(?:api|public\s+api|runtime|behavior|contract|security|artifact|product|source)\b[^.;\n\r]{0,80}\b(?:unchanged|unmodified|untouched|not\s+(?:changed|modified|touched)|stay(?:s|ed)?\s+unchanged|remain(?:s|ed)?\s+unchanged)\b/iu.test(clause));
+}
+
 function getReviewRemediationSemanticFileScope(
     scopeBoundary: ReviewRemediationScopeBoundary,
     impactAnalysis?: ReviewRemediationImpactAnalysis,
@@ -316,10 +368,14 @@ function getMentionedCurrentChangedFiles(
     summary: string,
     currentChangedFiles: readonly string[]
 ): string[] {
-    const normalizedSummary = summary.replace(/\\/gu, '/').toLocaleLowerCase();
-    return normalizeChangedFiles(currentChangedFiles).filter((entry) => (
-        normalizedSummary.includes(entry.toLocaleLowerCase())
-    ));
+    const normalizedSummary = normalizeImpactAnalysisSearchText(summary);
+    return normalizeChangedFiles(currentChangedFiles).filter((entry) => {
+        const normalizedEntry = entry.toLocaleLowerCase();
+        const mentionIndexes = findAllNeedleIndexes(normalizedSummary, normalizedEntry);
+        return mentionIndexes.some((index) => (
+            !isNegatedFileMention(normalizedSummary, index, normalizedEntry.length)
+        ));
+    });
 }
 
 function getTestOnlyImpactAnalysisFileScope(
@@ -353,7 +409,7 @@ function getReviewRemediationSemanticSignals(
     changedFiles: string[];
     scopeSource: 'expanded_files' | 'impact_analysis_files' | 'current_changed_files';
 } {
-    const summary = impactAnalysis?.summary.toLocaleLowerCase() || '';
+    const summary = impactAnalysis?.summary || '';
     const semanticFileScope = getReviewRemediationSemanticFileScope(
         scopeBoundary,
         impactAnalysis,
@@ -369,7 +425,8 @@ function getReviewRemediationSemanticSignals(
         };
     }
     const files = semanticFileScope.files.join('\n').toLocaleLowerCase();
-    const text = `${summary}\n${files}`;
+    const positiveSummary = getPositiveSummaryClauses(summary).join('\n').toLocaleLowerCase();
+    const text = `${positiveSummary}\n${files}`;
     const matches: Array<{ category: ReviewRemediationSemanticCategory; signal: string; pattern: RegExp }> = [
         {
             category: 'security_sensitive',
@@ -443,12 +500,134 @@ function getReviewRemediationSemanticSignals(
     };
 }
 
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1
+        ? value
+        : fallback;
+}
+
+function getPreflightChangedFileStats(
+    preflightPayload?: unknown,
+    changedFileStatsOverride?: unknown
+): Record<string, { changed_lines: number }> {
+    const stats: Record<string, { changed_lines: number }> = {};
+    for (const statsSource of [
+        isRecord(preflightPayload) && isRecord(preflightPayload.metrics)
+            ? preflightPayload.metrics.changed_file_stats
+            : undefined,
+        changedFileStatsOverride
+    ]) {
+        if (!isRecord(statsSource)) {
+            continue;
+        }
+        for (const [rawPath, rawStats] of Object.entries(statsSource)) {
+            if (!isRecord(rawStats)) {
+                continue;
+            }
+            const [normalizedPath] = normalizeChangedFiles([rawPath]);
+            if (!normalizedPath) {
+                continue;
+            }
+            const changedLines = Number(rawStats.changed_lines);
+            if (Number.isFinite(changedLines) && changedLines >= 0) {
+                stats[normalizedPath] = { changed_lines: changedLines };
+            }
+        }
+    }
+    return stats;
+}
+
+function getChangedLinesForFiles(
+    preflightPayload: unknown,
+    files: readonly string[],
+    changedFileStatsOverride?: unknown
+): number | null {
+    const stats = getPreflightChangedFileStats(preflightPayload, changedFileStatsOverride);
+    const normalizedFiles = normalizeChangedFiles(files);
+    let matchedStats = 0;
+    let changedLinesTotal = 0;
+    for (const file of normalizedFiles) {
+        const directStats = stats[file];
+        const relatedStats = directStats
+            ?? Object.entries(stats).find(([statsFile]) => pathsReferToSameRelativeFile(statsFile, file))?.[1];
+        if (!relatedStats) {
+            continue;
+        }
+        matchedStats += 1;
+        changedLinesTotal += relatedStats.changed_lines;
+    }
+    return matchedStats > 0 ? changedLinesTotal : null;
+}
+
+function getStructuralTestDomainFiles(files: readonly string[]): string[] {
+    return normalizeChangedFiles(files).filter((file) => TEST_DOMAIN_STRUCTURAL_PATH_PATTERN.test(file));
+}
+
+function assessTestRefactorInvalidation(options: {
+    semanticChangedFiles: readonly string[];
+    scopeBoundary: ReviewRemediationScopeBoundary;
+    preflightPayload?: unknown;
+    changedLinesThreshold?: number;
+    changedFileStats?: unknown;
+}): {
+    invalidatesRefactor: boolean;
+    reason: string | null;
+    triggerFiles: string[];
+    changedLinesThreshold: number;
+    changedLinesTotal: number | null;
+} {
+    const changedLinesThreshold = normalizePositiveInteger(
+        options.changedLinesThreshold,
+        DEFAULT_TEST_REFACTOR_CHANGED_LINES_THRESHOLD
+    );
+    const semanticChangedFiles = normalizeChangedFiles(options.semanticChangedFiles);
+    const expandedTestFiles = normalizeChangedFiles(options.scopeBoundary.allowedTestOnlyExpansionFiles)
+        .filter((file) => semanticChangedFiles.some((semanticFile) => pathsReferToSameRelativeFile(file, semanticFile)));
+    if (expandedTestFiles.length > 0) {
+        return {
+            invalidatesRefactor: true,
+            reason: 'new_test_file',
+            triggerFiles: expandedTestFiles,
+            changedLinesThreshold,
+            changedLinesTotal: getChangedLinesForFiles(options.preflightPayload, semanticChangedFiles, options.changedFileStats)
+        };
+    }
+    const structuralTestFiles = getStructuralTestDomainFiles(semanticChangedFiles);
+    if (structuralTestFiles.length > 0) {
+        return {
+            invalidatesRefactor: true,
+            reason: 'structural_test_domain_file',
+            triggerFiles: structuralTestFiles,
+            changedLinesThreshold,
+            changedLinesTotal: getChangedLinesForFiles(options.preflightPayload, semanticChangedFiles, options.changedFileStats)
+        };
+    }
+    const changedLinesTotal = getChangedLinesForFiles(options.preflightPayload, semanticChangedFiles, options.changedFileStats);
+    if (changedLinesTotal !== null && changedLinesTotal > changedLinesThreshold) {
+        return {
+            invalidatesRefactor: true,
+            reason: 'test_domain_changed_lines_threshold',
+            triggerFiles: semanticChangedFiles,
+            changedLinesThreshold,
+            changedLinesTotal
+        };
+    }
+    return {
+        invalidatesRefactor: false,
+        reason: null,
+        triggerFiles: [],
+        changedLinesThreshold,
+        changedLinesTotal
+    };
+}
+
 export function classifyReviewRemediationFix(
     scopeBoundary: ReviewRemediationScopeBoundary,
     requiredReviewTypes: readonly string[] = [],
     impactAnalysis?: ReviewRemediationImpactAnalysis,
     testTriggerRegexes: readonly string[] = [],
-    preflightPayload?: unknown
+    preflightPayload?: unknown,
+    options: { testRefactorChangedLinesThreshold?: number; changedFileStats?: unknown } = {}
 ): ReviewRemediationFixClassification {
     const normalizedRequiredReviewTypes = [...new Set(
         requiredReviewTypes.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean)
@@ -476,6 +655,13 @@ export function classifyReviewRemediationFix(
         : semantic.rationale;
     const impactAnalysisSource: ReviewRemediationFixClassification['evidence']['impact_analysis_source'] =
         impactAnalysis?.source || 'missing';
+    const testRefactorInvalidation = assessTestRefactorInvalidation({
+        semanticChangedFiles: semantic.category === 'test_coverage_only' ? semantic.changedFiles : [],
+        scopeBoundary,
+        preflightPayload,
+        changedLinesThreshold: options.testRefactorChangedLinesThreshold,
+        changedFileStats: options.changedFileStats
+    });
     const base = {
         status: 'CLASSIFIED' as const,
         category: semantic.category,
@@ -488,7 +674,11 @@ export function classifyReviewRemediationFix(
             impact_analysis_source: impactAnalysisSource,
             matched_signals: semantic.matchedSignals,
             semantic_changed_files: semantic.changedFiles,
-            semantic_scope_source: semantic.scopeSource
+            semantic_scope_source: semantic.scopeSource,
+            test_refactor_trigger_reason: testRefactorInvalidation.reason,
+            test_refactor_trigger_files: testRefactorInvalidation.triggerFiles,
+            test_refactor_changed_lines_threshold: testRefactorInvalidation.changedLinesThreshold,
+            test_refactor_changed_lines_total: testRefactorInvalidation.changedLinesTotal
         },
         review_reuse_decision_order: 'classification_before_reuse' as const
     };
@@ -505,15 +695,23 @@ export function classifyReviewRemediationFix(
         };
     }
     if (scopeBoundary.allowedTestOnlyExpansionFiles.length > 0 || semantic.category === 'test_coverage_only') {
+        const testRefactorInvalidatedReviewTypes = !failClosed
+            && testRefactorInvalidation.invalidatesRefactor
+            && normalizedRequiredReviewTypes.includes('refactor')
+            ? ['refactor']
+            : [];
+        const invalidatedReviewTypes = normalizedRequiredReviewTypes.includes('test')
+            ? ['test', ...testRefactorInvalidatedReviewTypes, ...(failClosed ? nonTestReviewTypes : [])].sort()
+            : failClosed ? nonTestReviewTypes : testRefactorInvalidatedReviewTypes;
         return {
             ...base,
             non_test_review_reuse_candidate: !failClosed,
             test_review_reuse_candidate: false,
             blocked_before_reuse: false,
-            invalidated_review_types: normalizedRequiredReviewTypes.includes('test')
-                ? ['test', ...(failClosed ? nonTestReviewTypes : [])].sort()
-                : failClosed ? nonTestReviewTypes : [],
-            preserved_review_types: failClosed ? [] : nonTestReviewTypes
+            invalidated_review_types: invalidatedReviewTypes,
+            preserved_review_types: failClosed
+                ? []
+                : nonTestReviewTypes.filter((entry) => !invalidatedReviewTypes.includes(entry))
         };
     }
     if (semantic.category === 'test_hook_isolation' && !failClosed) {

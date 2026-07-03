@@ -296,17 +296,22 @@ export async function tryReuseReviewEvidence(options: {
     if (latestCompilePassSequence == null) {
         return reject('task timeline has no compile pass before the current review cycle');
     }
-    const hasCurrentCycleReviewEvidence = timelineEvents.some((entry) => (
-        entry.sequence > latestCompilePassSequence
-        && (
-            (entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
-                && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === options.reviewType)
-            || (entry.event_type === 'REVIEW_RECORDED'
-                && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === options.reviewType)
-        )
-    ));
-    if (hasCurrentCycleReviewEvidence) {
-        return reject('current review cycle already has routing or review-recorded evidence for this review type');
+    const hasFreshCurrentCycleReviewEvidence = timelineEvents.some((entry) => {
+        if (
+            entry.sequence <= latestCompilePassSequence
+            || (
+                entry.event_type !== 'REVIEWER_DELEGATION_ROUTED'
+                && entry.event_type !== 'REVIEW_RECORDED'
+            )
+            || String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() !== options.reviewType
+        ) {
+            return false;
+        }
+        return entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
+            || entry.details?.reused_existing_review !== true;
+    });
+    if (hasFreshCurrentCycleReviewEvidence) {
+        return reject('current review cycle already has fresh routing or review-recorded evidence for this review type');
     }
 
     const { candidates, latestReceiptReadFailure } = collectHistoricalReviewReuseCandidates({

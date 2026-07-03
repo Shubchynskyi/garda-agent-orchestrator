@@ -189,6 +189,7 @@ export const pathsSchema: Record<string, unknown> = Object.freeze({
         fast_path_allowed_regexes:   { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Allowed file patterns for fast path.' },
         fast_path_sensitive_regexes: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Sensitive file patterns that block fast path.' },
         sql_or_migration_regexes:    { type: 'array', items: { type: 'string', minLength: 1 }, description: 'SQL/migration file patterns.' },
+        test_refactor_changed_lines_threshold: { type: 'integer', minimum: 1, description: 'Changed-line threshold where test-only failed-review remediation also invalidates test-scoped refactor review.' },
         triggers: {
             type: 'object',
             description: 'Regex trigger patterns per review type.',

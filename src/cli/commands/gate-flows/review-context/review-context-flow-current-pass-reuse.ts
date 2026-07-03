@@ -15,6 +15,9 @@ import {
     assertReviewTreeStateFresh
 } from '../../../../gates/review/review-tree-state';
 import {
+    getReviewContextFullSuiteValidationViolations
+} from '../../../../gates/review-context/review-context-validation-evidence';
+import {
     resolveReviewerPromptArtifactBinding
 } from '../../../../gates/review/review-prompt-artifact';
 import {
@@ -254,6 +257,17 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
     const reviewContext = readJsonRecord(options.reviewContextPath);
     if (!reviewContext) {
         return reject(`existing review context is missing or corrupt at ${gateHelpers.normalizePath(options.reviewContextPath)}`);
+    }
+    const fullSuiteViolations = getReviewContextFullSuiteValidationViolations({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightPath: options.preflightPath,
+        preflightSha256: currentPreflightHash,
+        reviewContext
+    });
+    if (fullSuiteViolations.length > 0) {
+        return reject(fullSuiteViolations[0]);
     }
     const reviewContextSha256 = normalizeOptionalSha256(gateHelpers.fileSha256(options.reviewContextPath));
     const reviewTreeStateSha256 = getReviewTreeStateSha256FromContext(reviewContext);

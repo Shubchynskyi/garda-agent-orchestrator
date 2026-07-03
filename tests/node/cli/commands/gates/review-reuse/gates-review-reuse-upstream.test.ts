@@ -36,6 +36,73 @@ import {
     getReviewTreeStateSha256FromFixtureContext
 } from './gates-review-reuse-fixtures';
 
+function sha256File(filePath: string): string {
+    const crypto = require('node:crypto');
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath, 'utf8')).digest('hex');
+}
+
+function enablePreReviewFullSuite(repoRoot: string): void {
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as {
+        full_suite_validation: {
+            enabled: boolean;
+            command: string;
+            placement: string;
+        };
+    };
+    workflowConfig.full_suite_validation.enabled = true;
+    workflowConfig.full_suite_validation.command = 'npm test';
+    workflowConfig.full_suite_validation.placement = 'after_compile_before_reviews';
+    fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
+}
+
+function writeFullSuitePassEvidence(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    revision: string
+): string {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    const latestCompile = [...readTaskTimelineEvents(repoRoot, taskId)]
+        .reverse()
+        .find((event) => event.event_type === 'COMPILE_GATE_PASSED');
+    assert.ok(latestCompile);
+    const compileTimestamp = String((latestCompile as Record<string, unknown>).timestamp_utc || '').trim();
+    assert.ok(compileTimestamp);
+    const outputArtifactPath = path.join(reviewsRoot, `${taskId}-full-suite-${revision}.log`);
+    fs.writeFileSync(outputArtifactPath, `full suite pass ${revision}\n`, 'utf8');
+    const cycleBinding = {
+        task_id: taskId,
+        preflight_path: preflightPath.replace(/\\/g, '/'),
+        preflight_sha256: sha256File(preflightPath),
+        compile_gate_timestamp: compileTimestamp
+    };
+    const artifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
+    fs.writeFileSync(artifactPath, `${JSON.stringify({
+        task_id: taskId,
+        status: 'PASSED',
+        enabled: true,
+        command: 'npm test',
+        placement: 'after_compile_before_reviews',
+        exit_code: 0,
+        timed_out: false,
+        duration_ms: 1000,
+        output_artifact_path: outputArtifactPath.replace(/\\/g, '/'),
+        compact_summary: [`# full suite pass ${revision}`],
+        failure_chunks: [],
+        violations: [],
+        warnings: [],
+        cycle_binding: cycleBinding
+    }, null, 2)}\n`, 'utf8');
+    appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'FULL_SUITE_VALIDATION_PASSED', 'PASS', 'Full suite validation passed.', {
+        command: 'npm test',
+        placement: 'after_compile_before_reviews',
+        cycle_binding: cycleBinding,
+        artifact_path: artifactPath.replace(/\\/g, '/')
+    });
+    return artifactPath;
+}
+
 describe('cli/commands/gates - review reuse upstream reuse', () => {
     it('reuses current-cycle code review evidence and unblocks downstream test review when runtime code scope is unchanged', async () => {
         const repoRoot = createTempRepo();
@@ -488,6 +555,126 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         assert.equal(reuseAcceptedDetails.review_type, 'code');
         assert.equal(reuseAcceptedDetails.current_pass_review_evidence, true);
         assert.equal(reuseAcceptedDetails.output_path, reviewContextPath.replace(/\\/g, '/'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rebuilds stale full-suite current-pass context and rematerializes strict reuse without fresh reviewer routing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-full-suite-rebind-reused-current-pass';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        enablePreReviewFullSuite(repoRoot);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Rebuild stale full-suite review context while preserving strict review reuse'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        writeCompilePassEvidence(repoRoot, taskId, priorPreflightPath);
+        writeFullSuitePassEvidence(repoRoot, taskId, priorPreflightPath, 'prior');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+        const firstFullSuitePath = writeFullSuitePassEvidence(repoRoot, taskId, preflightPath, 'first-current');
+        const firstFullSuiteSha256 = sha256File(firstFullSuitePath);
+
+        const firstBuild = await runBuildReviewContextCommand({
+            reviewType: 'code',
+            depth: '2',
+            preflightPath,
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+        assert.equal(firstBuild.reusedReviewEvidence, true, firstBuild.outputLines.join('\n'));
+        assert.ok(firstBuild.outputLines.includes('ReviewReuseDecision: accepted'), firstBuild.outputLines.join('\n'));
+        const firstContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const firstFullSuiteEvidence = firstContext.full_suite_validation as Record<string, unknown>;
+        assert.equal(firstFullSuiteEvidence.artifact_sha256, firstFullSuiteSha256);
+
+        const secondFullSuitePath = writeFullSuitePassEvidence(repoRoot, taskId, preflightPath, 'second-current');
+        const secondFullSuiteSha256 = sha256File(secondFullSuitePath);
+        assert.notEqual(secondFullSuiteSha256, firstFullSuiteSha256);
+
+        const secondBuild = await runBuildReviewContextCommand({
+            reviewType: 'code',
+            depth: '2',
+            preflightPath,
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+        const secondOutput = secondBuild.outputLines.join('\n');
+        assert.equal(secondBuild.reusedReviewEvidence, true, secondOutput);
+        assert.ok(secondBuild.outputLines.includes('CurrentPassReviewEvidence: rejected'), secondOutput);
+        assert.ok(
+            secondBuild.outputLines.some((line) => line.includes('review context full-suite validation binding is stale')),
+            secondOutput
+        );
+        assert.ok(secondBuild.outputLines.includes('ReviewReuseDecision: accepted'), secondOutput);
+        assert.ok(!secondBuild.outputLines.some((line) => line.includes('review context rebuild skipped')), secondOutput);
+
+        const secondContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const secondFullSuiteEvidence = secondContext.full_suite_validation as Record<string, unknown>;
+        assert.equal(secondFullSuiteEvidence.artifact_sha256, secondFullSuiteSha256);
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latestCompileSequence = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        assert.ok(latestCompileSequence >= 0);
+        const codeReviewEventsAfterCompile = events
+            .map((event, index) => ({ event, index }))
+            .filter(({ event, index }) => {
+                const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+                    ? event.details as Record<string, unknown>
+                    : {};
+                return (
+                    index > latestCompileSequence
+                    && (
+                        event.event_type === 'REVIEWER_DELEGATION_ROUTED'
+                        || event.event_type === 'REVIEW_RECORDED'
+                    )
+                    && String(details.review_type || details.reviewType || '').trim().toLowerCase() === 'code'
+                );
+            });
+        assert.equal(codeReviewEventsAfterCompile.filter(({ event }) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 0);
+        const currentCycleRecorded = codeReviewEventsAfterCompile.filter(({ event }) => event.event_type === 'REVIEW_RECORDED');
+        assert.equal(currentCycleRecorded.length, 2);
+        assert.ok(currentCycleRecorded.every(({ event }) => (
+            (event.details as Record<string, unknown>).reused_existing_review === true
+        )));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
