@@ -61,6 +61,7 @@ import {
 } from './workflow-command-parsing';
 import {
     normalizeOutputPath,
+    normalizeWorkflowConfigMutationSource,
     refreshWorkflowProtectedManifest,
     resolveActualChangedFields,
     writeWorkflowConfig,
@@ -794,6 +795,10 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
 
     let auditPath: string | null = null;
     let protectedManifestPath: string | null = null;
+    const auditWriteOptions = {
+        mutationSource: normalizeWorkflowConfigMutationSource(options.mutationSource),
+        targetRoot: roots.targetRoot
+    };
     if (changed) {
         const safeSelfGuardHardening = requestedFields.length === 1
             && requestedFields[0] === 'orchestrator_work_policy.mode'
@@ -808,7 +813,8 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
                 roots.configPath,
                 actualWorkflowConfigChangedFields,
                 currentSerialized,
-                nextSerialized
+                nextSerialized,
+                auditWriteOptions
             );
         }
         if (optionalSkillSelectionPolicyChanged && optionalSkillSelectionPolicyNextConfig && optionalSkillSelectionPolicyNextSerialized) {
@@ -818,7 +824,8 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
                 roots.optionalSkillSelectionPolicyPath,
                 optionalSkillSelectionPolicyFields,
                 optionalSkillSelectionPolicyCurrentSerialized ?? '',
-                optionalSkillSelectionPolicyNextSerialized
+                optionalSkillSelectionPolicyNextSerialized,
+                auditWriteOptions
             );
         }
         protectedManifestPath = refreshWorkflowProtectedManifest(resolveProtectedManifestRefreshRoot(roots));
@@ -830,7 +837,8 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             roots.configPath,
             ['task_reset.enabled'],
             currentFileText,
-            currentFileText
+            currentFileText,
+            auditWriteOptions
         );
         protectedManifestPath = refreshWorkflowProtectedManifest(resolveProtectedManifestRefreshRoot(roots));
     }

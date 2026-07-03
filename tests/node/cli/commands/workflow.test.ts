@@ -175,6 +175,8 @@ test('workflow set updates optional skill selection policy without rewriting wor
         const latestAudit = JSON.parse(auditLines[auditLines.length - 1]);
         assert.deepEqual(latestAudit.changed_fields, ['optional_skill_selection_policy.mode']);
         assert.match(latestAudit.config_path, /optional-skill-selection-policy\.json$/u);
+        assert.equal(latestAudit.mutation_source, 'cli');
+        assert.deepEqual(latestAudit.active_task_ids, []);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

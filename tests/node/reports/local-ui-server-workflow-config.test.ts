@@ -551,6 +551,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal(execute.stdout, 'updated');
         assert.equal(executedCommands.length, 1);
         assert.match(executedCommands[0], /workflow set --full-suite-green-summary-max-lines 7/u);
+        assert.match(executedCommands[0], /--mutation-source local-ui/u);
         const auditLines = fs.readFileSync(execute.audit_path, 'utf8').trim().split(/\r?\n/u);
         assert.ok(auditLines.length >= 3);
         assert.match(auditLines[auditLines.length - 1], /"action_id":"setting:full-suite-green-summary-max-lines"/u);
@@ -613,6 +614,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal(compileCommandExecute.proposed_value, 'npm run typecheck');
         assert.equal(executedCommands.length, 4);
         assert.match(executedCommands[3], /workflow set --compile-gate-command "npm run typecheck"/u);
+        assert.match(executedCommands[3], /--mutation-source local-ui/u);
         const compileCommandAuditLines = fs.readFileSync(compileCommandExecute.audit_path, 'utf8').trim().split(/\r?\n/u);
         assert.ok(compileCommandAuditLines.length >= 3);
         assert.match(compileCommandAuditLines[compileCommandAuditLines.length - 1], /"action_id":"setting:compile-gate-command"/u);
@@ -639,6 +641,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.match(executedCommands[4], /workflow set --optional-check-rule-id custom_focus/u);
         assert.match(executedCommands[4], /--optional-check-rule-enabled false/u);
         assert.match(executedCommands[4], /--optional-check-rule-exclude-test-only true/u);
+        assert.match(executedCommands[4], /--mutation-source local-ui/u);
         const optionalRuleAuditLines = fs.readFileSync(optionalRuleExecute.audit_path, 'utf8').trim().split(/\r?\n/u);
         assert.ok(optionalRuleAuditLines.length >= 3);
         assert.match(optionalRuleAuditLines[optionalRuleAuditLines.length - 1], /"action_id":"setting:optional-check-rule:upsert:custom_focus"/u);

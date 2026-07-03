@@ -52,6 +52,7 @@ export interface FinalCloseoutArtifact {
         review_execution_policy_mode?: EffectiveReviewExecutionPolicyMode | null;
         review_execution_policy_summary_line?: string | null;
         full_suite_timeout?: FinalCloseoutFullSuiteTimeoutSummary | null;
+        workflow_config_audit?: FinalCloseoutWorkflowConfigAuditSummary | null;
     } | null;
     docs: FinalCloseoutDocsSummary;
     project_memory?: FinalCloseoutProjectMemorySummary | null;
@@ -102,6 +103,24 @@ export interface FinalCloseoutFullSuiteTimeoutSummary {
     forecast_warning: string | null;
     forecast_excluded_sample_count: number | null;
     forecast_excluded_sample_reasons: Record<string, number>;
+    visible_summary_line: string;
+}
+
+export interface FinalCloseoutWorkflowConfigAuditSummary {
+    status: 'none' | 'audited' | 'unaudited';
+    changed_files: string[];
+    audited_files: string[];
+    unaudited_files: string[];
+    records: Array<{
+        timestamp_utc: string | null;
+        mutation_source: string;
+        actor: string | null;
+        config_path: string;
+        changed_fields: string[];
+        active_task_ids: string[];
+        active_task_id: string | null;
+        audit_path: string;
+    }>;
     visible_summary_line: string;
 }
 

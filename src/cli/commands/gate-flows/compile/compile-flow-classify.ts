@@ -38,6 +38,7 @@ import { evaluateProtectedManifestBaselineAllowance, getProtectedManifestLifecyc
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../../../../gates/task-mode/task-mode';
 import {
     getCurrentWorkflowConfigChanges,
+    getAuditedWorkflowConfigChangeProvenance,
     getWorkflowConfigChangedFiles,
     getWorkflowConfigControlPlanePaths,
     getWorkflowConfigWorkViolations
@@ -389,14 +390,30 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         if (workflowConfigChanges.scan_error) {
             result.triggers.workflow_config_workspace_scan_error = workflowConfigChanges.scan_error;
         }
+        const auditedWorkflowConfigProvenance = getAuditedWorkflowConfigChangeProvenance({
+            repoRoot,
+            changedFiles: changedWorkflowConfigFiles,
+            currentFileHashes: workflowConfigChanges.current_file_hashes,
+            taskId: taskModeEvidence.task_id
+        });
+        if (auditedWorkflowConfigProvenance.records.length > 0 || auditedWorkflowConfigProvenance.unaudited_files.length > 0) {
+            result.triggers.workflow_config_audit_provenance = auditedWorkflowConfigProvenance;
+        }
+        const acceptedAuditedWorkflowConfigFiles = auditedWorkflowConfigProvenance.accepted
+            ? auditedWorkflowConfigProvenance.audited_files
+            : [];
         const changedProtectedFiles = mergePathLists(
-            subtractPathList(getChangedProtectedFiles(result), trustedWorkflowConfigBaselineFiles),
-            changedWorkflowConfigFiles
+            subtractPathList(getChangedProtectedFiles(result), [
+                ...trustedWorkflowConfigBaselineFiles,
+                ...acceptedAuditedWorkflowConfigFiles
+            ]),
+            auditedWorkflowConfigProvenance.accepted ? [] : changedWorkflowConfigFiles
         );
         result.triggers.changed_protected_files = changedProtectedFiles;
         result.triggers.protected_control_plane_changed = changedProtectedFiles.length > 0;
         if (preflightErrors.length === 0) {
             preflightErrors.push(...getWorkflowConfigWorkViolations({
+                repoRoot,
                 changedFiles: changedWorkflowConfigFiles,
                 taskModeEvidence,
                 phaseLabel: 'preflight classification',

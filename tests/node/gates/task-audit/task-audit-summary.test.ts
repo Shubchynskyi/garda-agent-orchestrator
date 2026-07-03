@@ -594,6 +594,9 @@ describe('gates/task-audit-summary', () => {
         it('surfaces task-mode workflow-config authorization in audit and closeout output', () => {
             const plannedChangedFiles = ['garda-agent-orchestrator/live/config/workflow-config.json'];
             const dirtyBaselineChangedFiles = ['src/gates/next-step/next-step.ts'];
+            const workflowConfigPath = path.join(tmpDir, ...plannedChangedFiles[0].split('/'));
+            const beforeWorkflowConfigText = fs.readFileSync(workflowConfigPath, 'utf8');
+            const beforeWorkflowConfigSha256 = computeFileSha256(workflowConfigPath);
             writePreflight(reviewsDir, TASK_ID, {
                 changed_files: plannedChangedFiles,
                 metrics: { changed_lines_total: 3 },
@@ -614,6 +617,9 @@ describe('gates/task-audit-summary', () => {
                 orchestrator_work: true,
                 workflow_config_work: true,
                 planned_changed_files: plannedChangedFiles,
+                workflow_config_file_hashes: {
+                    [plannedChangedFiles[0]]: beforeWorkflowConfigSha256
+                },
                 dirty_workspace_baseline: {
                     detection_source: 'git_auto',
                     include_untracked: true,
@@ -632,6 +638,35 @@ describe('gates/task-audit-summary', () => {
                 outcome: 'PASS',
                 decision: 'NO_DOC_UPDATES'
             });
+            const workflowConfig = JSON.parse(beforeWorkflowConfigText) as Record<string, unknown>;
+            const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
+            fullSuiteValidation.out_of_scope_failure_policy = 'audit_and_warn';
+            fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
+            const afterWorkflowConfigSha256 = computeFileSha256(workflowConfigPath);
+            const workflowConfigAuditPath = path.join(
+                tmpDir,
+                'garda-agent-orchestrator',
+                'runtime',
+                'workflow-config-audit.jsonl'
+            );
+            fs.writeFileSync(workflowConfigAuditPath, `${JSON.stringify({
+                schema_version: 1,
+                event_source: 'workflow-config-set',
+                timestamp_utc: '2026-04-29T00:00:05.000Z',
+                actor: 'local_ui',
+                command: 'workflow set',
+                mutation_source: 'local-ui',
+                config_path: workflowConfigPath.replace(/\\/g, '/'),
+                changed_fields: ['full_suite_validation.out_of_scope_failure_policy'],
+                active_task_ids: [TASK_ID],
+                active_task_id: TASK_ID,
+                ui_session: {
+                    action_session: 'enabled',
+                    running_marker: true
+                },
+                before_sha256: beforeWorkflowConfigSha256,
+                after_sha256: afterWorkflowConfigSha256
+            })}\n`, 'utf8');
             writeIntegrityEventSequence(eventsDir, TASK_ID, [
                 { event_type: 'TASK_MODE_ENTERED' },
                 { event_type: 'RULE_PACK_LOADED' },
@@ -694,6 +729,17 @@ describe('gates/task-audit-summary', () => {
             ));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Current audited changed files: 1.'));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Preflight changed lines: 3.'));
+            assert.equal(result.final_closeout.workflow?.workflow_config_audit?.status, 'audited');
+            assert.deepEqual(
+                result.final_closeout.workflow?.workflow_config_audit?.audited_files,
+                plannedChangedFiles
+            );
+            assert.ok(formatTaskAuditSummaryText(result).includes(
+                'Workflow-config audit warning: guarded workflow-config changed during this task; source=local-ui'
+            ));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(
+                'Workflow-config audit warning: guarded workflow-config changed during this task; source=local-ui'
+            ));
         });
 
         it('surfaces reviewer timing provenance only in operator audit output', () => {

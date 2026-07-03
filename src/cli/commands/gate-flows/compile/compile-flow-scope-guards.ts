@@ -140,6 +140,7 @@ export function evaluateCompileWorkflowConfigGuard(params: {
         workflowConfigControlPlanePaths: getWorkflowConfigControlPlanePaths(params.repoRoot)
     });
     const violations = getWorkflowConfigWorkViolations({
+        repoRoot: params.repoRoot,
         changedFiles,
         taskModeEvidence: params.taskModeEvidence,
         phaseLabel: params.phaseLabel,

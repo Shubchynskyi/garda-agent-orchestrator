@@ -17,6 +17,7 @@ import { runCompletionGate } from '../../../../../../src/gates/completion';
 import { isWorkflowConfigControlPlanePath, writeProtectedControlPlaneManifest } from '../../../../../../src/gates/shared/helpers';
 import { getTaskModeEvidence } from '../../../../../../src/gates/task-mode';
 import {
+    getAuditedWorkflowConfigChangeProvenance,
     getCurrentWorkflowConfigChanges,
     getCurrentWorkflowConfigFileHashes,
     getWorkflowConfigControlPlanePaths,
@@ -1578,6 +1579,67 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             const payload = JSON.parse(result.outputText);
             assert.equal(payload.triggers.protected_control_plane_manifest_status, 'MATCH');
             assert.deepEqual(payload.triggers.changed_workflow_config_files, []);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('treats guarded local UI workflow-config changes during an active task as audited preflight warnings', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-local-ui-audited-during-task';
+        const repoRoot = prepareTaskRepo(taskId);
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+
+        try {
+            const workflowResult = captureConsole(() => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--full-suite-out-of-scope-failure-policy', 'audit_and_warn',
+                '--mutation-source', 'local-ui',
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', new Date().toISOString()
+            ], PACKAGE_JSON));
+            assert.ok(workflowResult && workflowResult.action === 'set');
+            assert.equal(workflowResult.status, 'CHANGED');
+            assert.ok(workflowResult.audit_path);
+            const latestAudit = JSON.parse(fs.readFileSync(String(workflowResult.audit_path), 'utf8').trim().split(/\r?\n/u).at(-1) || '{}');
+            assert.equal(latestAudit.mutation_source, 'local-ui');
+            assert.deepEqual(latestAudit.active_task_ids, [taskId]);
+
+            const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId);
+            const changes = getCurrentWorkflowConfigChanges(repoRoot, taskModeEvidence.workflow_config_file_hashes, {
+                allowProtectedManifestFallback: false
+            });
+            assert.deepEqual(changes.changed_files, ['garda-agent-orchestrator/live/config/workflow-config.json']);
+            const provenance = getAuditedWorkflowConfigChangeProvenance({
+                repoRoot,
+                changedFiles: changes.changed_files,
+                currentFileHashes: changes.current_file_hashes,
+                taskId
+            });
+            assert.equal(provenance.accepted, true);
+            assert.equal(provenance.records[0]?.mutation_source, 'local-ui');
+            assert.deepEqual(getWorkflowConfigWorkViolations({
+                repoRoot,
+                changedFiles: changes.changed_files,
+                taskModeEvidence,
+                phaseLabel: 'preflight classification',
+                baselineFileHashes: changes.baseline_file_hashes,
+                currentFileHashes: changes.current_file_hashes
+            }), []);
+
+            const result = runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Update app flow after UI workflow setting changed',
+                emitMetrics: false
+            });
+            const payload = JSON.parse(result.outputText);
+            assert.deepEqual(payload.triggers.changed_workflow_config_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+            assert.deepEqual(payload.triggers.changed_protected_files, []);
+            assert.equal(payload.triggers.workflow_config_audit_provenance.accepted, true);
+            assert.equal(payload.triggers.workflow_config_audit_provenance.records[0].mutation_source, 'local-ui');
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

@@ -14,7 +14,8 @@ import type {
     FinalCloseoutFullSuiteTimeoutSummary,
     FinalCloseoutProjectMemorySummary,
     FinalCloseoutReviewTimingAuditSummary,
-    FinalCloseoutTaskCycleDiagnostics
+    FinalCloseoutTaskCycleDiagnostics,
+    FinalCloseoutWorkflowConfigAuditSummary
 } from './task-audit-summary';
 import type {
     FinalCloseoutAuditedScopeProvenance,
@@ -31,6 +32,11 @@ import { buildFinalCloseoutProjectMemorySummary } from './task-audit-summary-pro
 import {
     collectKnownNonBlockingSignals
 } from '../shared/known-nonblocking-signals';
+import {
+    getAuditedWorkflowConfigChangeProvenance,
+    getCurrentWorkflowConfigChanges,
+    normalizeWorkflowConfigFileHashes
+} from '../workflow-config/workflow-config-work';
 
 export interface BuildFinalCloseoutArtifactInput {
     repoRoot: string;
@@ -90,6 +96,48 @@ function readTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode: Record<string,
         .map((entry) => toPosix(String(entry || '').trim()))
         .filter(Boolean))]
         .sort((left, right) => left.localeCompare(right));
+}
+
+function buildWorkflowConfigAuditSummary(input: BuildFinalCloseoutArtifactInput): FinalCloseoutWorkflowConfigAuditSummary {
+    const workflowConfigBaseline = normalizeWorkflowConfigFileHashes(input.taskMode?.workflow_config_file_hashes);
+    const changes = getCurrentWorkflowConfigChanges(input.repoRoot, workflowConfigBaseline, {
+        allowProtectedManifestFallback: false
+    });
+    const provenance = getAuditedWorkflowConfigChangeProvenance({
+        repoRoot: input.repoRoot,
+        changedFiles: changes.changed_files,
+        currentFileHashes: changes.current_file_hashes,
+        taskId: input.taskId
+    });
+    const status = changes.changed_files.length === 0
+        ? 'none'
+        : provenance.accepted
+            ? 'audited'
+            : 'unaudited';
+    const firstTimestamp = provenance.records[0]?.timestamp_utc || null;
+    const sources = [...new Set(provenance.records.map((record) => record.mutation_source))].sort();
+    const fields = [...new Set(provenance.records.flatMap((record) => record.changed_fields))].sort();
+    return {
+        status,
+        changed_files: changes.changed_files,
+        audited_files: provenance.audited_files,
+        unaudited_files: provenance.unaudited_files,
+        records: provenance.records.map((record) => ({
+            timestamp_utc: record.timestamp_utc,
+            mutation_source: record.mutation_source,
+            actor: record.actor,
+            config_path: record.config_path,
+            changed_fields: record.changed_fields,
+            active_task_ids: record.active_task_ids,
+            active_task_id: record.active_task_id,
+            audit_path: record.audit_path
+        })),
+        visible_summary_line: status === 'none'
+            ? 'Workflow-config audit: no in-task workflow-config changes detected.'
+            : status === 'audited'
+                ? `Workflow-config audit warning: guarded workflow-config changed during this task; source=${sources.join(', ') || 'unknown'}; fields=${fields.join(', ') || 'unknown'}; files=${provenance.audited_files.join(', ')}; first_timestamp=${firstTimestamp || 'unknown'}; gates were refreshed against current config evidence.`
+                : `Workflow-config audit warning: unaudited workflow-config drift detected; files=${provenance.unaudited_files.join(', ')}.`
+    };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -376,6 +424,7 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
         projectMemory
     });
     const fullSuiteTimeoutSummary = buildFullSuiteTimeoutSummary(input.fullSuiteValidation);
+    const workflowConfigAuditSummary = buildWorkflowConfigAuditSummary(input);
 
     return {
         schema_version: 1,
@@ -441,7 +490,8 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
             visible_summary_line: `Mandatory full-suite: ${input.fullSuiteValidationRequiredForLifecycle ? 'true' : 'false'}`,
             review_execution_policy_mode: input.reviewExecutionPolicyMode,
             review_execution_policy_summary_line: buildReviewExecutionPolicySummaryLine(input.reviewExecutionPolicyMode),
-            full_suite_timeout: fullSuiteTimeoutSummary
+            full_suite_timeout: fullSuiteTimeoutSummary,
+            workflow_config_audit: workflowConfigAuditSummary
         },
         docs: input.docsSummary,
         project_memory: projectMemory,

@@ -259,6 +259,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         allowProtectedManifestFallback: false
     });
     const workflowConfigWorkViolations = getWorkflowConfigWorkViolations({
+        repoRoot,
         changedFiles: [
             ...workflowConfigChanges.changed_files,
             ...protectedControlPlaneWorkflowConfigChangedFilesAtCompletion

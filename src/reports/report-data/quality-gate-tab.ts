@@ -31,14 +31,11 @@ function getRuleStatuses(rule: OptionalQualityCheckRule, baselineRule: OptionalQ
     if (rule.enabled === false) {
         statuses.push('disabled');
     }
-    const ruleExclusions = normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories);
-    const baselineExclusions = normalizeOptionalQualityCheckScopeCategories(baselineRule?.excluded_scope_categories);
     if (
         baselineRule
         && (
             rule.title !== baselineRule.title
             || rule.prompt !== baselineRule.prompt
-            || ruleExclusions.join('\n') !== baselineExclusions.join('\n')
         )
     ) {
         statuses.push('locally_edited');
@@ -47,15 +44,18 @@ function getRuleStatuses(rule: OptionalQualityCheckRule, baselineRule: OptionalQ
 }
 
 function buildPresentRule(rule: OptionalQualityCheckRule, baselineRule: OptionalQualityCheckRule | undefined): ReportQualityGateRule {
+    const reportRule = baselineRule
+        ? { ...rule, title: baselineRule.title, prompt: baselineRule.prompt }
+        : rule;
     return {
-        id: rule.id,
-        title: rule.title,
-        prompt: rule.prompt,
+        id: reportRule.id,
+        title: reportRule.title,
+        prompt: reportRule.prompt,
         enabled: rule.enabled !== false,
         excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories),
         present: true,
         source: baselineRule ? 'baseline' : 'custom',
-        statuses: getRuleStatuses(rule, baselineRule),
+        statuses: getRuleStatuses(reportRule, baselineRule),
         baseline_title: baselineRule?.title ?? null,
         baseline_prompt: baselineRule?.prompt ?? null,
         baseline_excluded_scope_categories: baselineRule

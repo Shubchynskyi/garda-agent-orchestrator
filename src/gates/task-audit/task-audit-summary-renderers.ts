@@ -262,6 +262,13 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         lines.push(closeout.workflow.review_execution_policy_summary_line);
     }
 
+    if (
+        closeout.workflow?.workflow_config_audit
+        && closeout.workflow.workflow_config_audit.status !== 'none'
+    ) {
+        lines.push(closeout.workflow.workflow_config_audit.visible_summary_line);
+    }
+
     if (closeout.project_memory?.visible_summary_line) {
         lines.push(closeout.project_memory.visible_summary_line);
     }
@@ -511,6 +518,12 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     if (summary.final_closeout.workflow?.review_execution_policy_summary_line) {
         lines.push(`  ${summary.final_closeout.workflow.review_execution_policy_summary_line}`);
+    }
+    if (
+        summary.final_closeout.workflow?.workflow_config_audit
+        && summary.final_closeout.workflow.workflow_config_audit.status !== 'none'
+    ) {
+        lines.push(`  WorkflowConfigAudit: ${summary.final_closeout.workflow.workflow_config_audit.visible_summary_line}`);
     }
     if (summary.final_closeout.project_memory?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.project_memory.visible_summary_line}`);

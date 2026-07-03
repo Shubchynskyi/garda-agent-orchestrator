@@ -90,6 +90,7 @@ export type {
     FinalCloseoutReviewTimingAuditEntry,
     FinalCloseoutReviewTimingAuditSummary,
     FinalCloseoutTaskCycleDiagnostics,
+    FinalCloseoutWorkflowConfigAuditSummary,
     PointInTimeSnapshot,
     TaskAuditSummaryOptions,
     TaskAuditSummaryResult

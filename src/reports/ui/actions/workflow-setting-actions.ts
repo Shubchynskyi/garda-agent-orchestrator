@@ -212,7 +212,9 @@ function buildUiSettingCommand(
         '--operator-confirmed',
         'yes',
         '--operator-confirmed-at-utc',
-        timestampUtc
+        timestampUtc,
+        '--mutation-source',
+        'local-ui'
     ];
     return buildUiActionCommand(repoRoot, args);
 }
@@ -413,7 +415,9 @@ export function buildUiOptionalCheckRuleAction(
         '--operator-confirmed',
         'yes',
         '--operator-confirmed-at-utc',
-        timestampUtc
+        timestampUtc,
+        '--mutation-source',
+        'local-ui'
     ];
     const label = value.action === 'delete'
         ? `Remove optional check rule ${value.rule_id}`

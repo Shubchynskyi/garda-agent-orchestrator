@@ -152,6 +152,7 @@ export interface ClassifyChangeTriggers {
     isolation_mode_pre_task_warning?: string;
     changed_workflow_config_files?: string[];
     workflow_config_file_hashes?: Record<string, string | null>;
+    workflow_config_audit_provenance?: unknown;
     workflow_config_workspace_scan_error?: string;
     dirty_workspace_baseline_changed_files?: string[];
     dirty_workspace_baseline_changed_files_sha256?: string | null;

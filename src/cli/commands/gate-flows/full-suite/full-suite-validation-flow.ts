@@ -160,6 +160,7 @@ export async function runFullSuiteValidationCommand(
     });
     workflowConfigBaseline = workflowConfigChanges.baseline_file_hashes;
     const workflowConfigViolations = getWorkflowConfigWorkViolations({
+        repoRoot,
         changedFiles: workflowConfigChanges.changed_files,
         taskModeEvidence,
         phaseLabel: 'full-suite validation',
@@ -443,6 +444,7 @@ export async function runFullSuiteValidationCommand(
         allowProtectedManifestFallback: false
     });
     const postWorkflowConfigViolations = getWorkflowConfigWorkViolations({
+        repoRoot,
         changedFiles: postWorkflowConfigChanges.changed_files,
         taskModeEvidence,
         phaseLabel: 'full-suite validation output validation',

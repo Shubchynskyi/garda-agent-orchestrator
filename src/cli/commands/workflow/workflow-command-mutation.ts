@@ -4,7 +4,16 @@ import { createHash } from 'node:crypto';
 
 import { writeProtectedControlPlaneManifest } from '../../../gates/protected-control-plane/protected-control-plane';
 import { validateWorkflowConfig } from '../../../schemas/config-artifacts';
-import type { WorkflowFileConfigData } from './workflow-command-types';
+import { resolveActiveTaskIds } from '../../../core/task-queue/active-task-state';
+import type {
+    WorkflowConfigMutationSource,
+    WorkflowFileConfigData
+} from './workflow-command-types';
+
+export interface WorkflowConfigAuditWriteOptions {
+    mutationSource?: WorkflowConfigMutationSource | null;
+    targetRoot?: string | null;
+}
 
 export function getWorkflowConfigField(config: WorkflowFileConfigData, fieldPath: string): unknown {
     return fieldPath.split('.').reduce<unknown>((current, segment) => {
@@ -48,23 +57,60 @@ export function normalizeOutputPath(value: string): string {
     return path.normalize(value).replace(/\\/g, '/');
 }
 
+export function normalizeWorkflowConfigMutationSource(value: unknown): WorkflowConfigMutationSource {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'local-ui' || normalized === 'cli' || normalized === 'manual') {
+        return normalized;
+    }
+    if (!normalized) {
+        return 'cli';
+    }
+    throw new Error('--mutation-source must be one of: cli, local-ui, manual.');
+}
+
+function resolveAuditActiveTaskIds(bundleRoot: string, targetRoot: string | null | undefined): string[] {
+    const resolvedTargetRoot = targetRoot && targetRoot.trim()
+        ? targetRoot
+        : path.dirname(bundleRoot);
+    try {
+        return [...resolveActiveTaskIds(resolvedTargetRoot, bundleRoot, [], {
+            includeAmbiguousRuntimeTasks: false,
+            includeStaleRuntimeActiveTasks: false
+        })].sort((left, right) => left.localeCompare(right));
+    } catch {
+        return [];
+    }
+}
+
 export function writeWorkflowConfigAuditRecord(
     bundleRoot: string,
     configPath: string,
     changedFields: string[],
     beforeText: string,
-    afterText: string
+    afterText: string,
+    options: WorkflowConfigAuditWriteOptions = {}
 ): string {
     const auditPath = path.join(bundleRoot, 'runtime', 'workflow-config-audit.jsonl');
     fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    const mutationSource = normalizeWorkflowConfigMutationSource(options.mutationSource);
+    const activeTaskIds = resolveAuditActiveTaskIds(bundleRoot, options.targetRoot);
     const record = {
         schema_version: 1,
         event_source: 'workflow-config-set',
         timestamp_utc: new Date().toISOString(),
-        actor: 'operator_command',
+        actor: mutationSource === 'local-ui' ? 'local_ui' : 'operator_command',
         command: 'workflow set',
+        mutation_source: mutationSource,
         config_path: normalizeOutputPath(configPath),
         changed_fields: changedFields,
+        active_task_ids: activeTaskIds,
+        active_task_id: activeTaskIds.length === 1 ? activeTaskIds[0] : null,
+        ui_session: mutationSource === 'local-ui'
+            ? {
+                action_session: 'enabled',
+                running_marker: true
+            }
+            : null,
         before_sha256: sha256Text(beforeText),
         after_sha256: sha256Text(afterText)
     };
