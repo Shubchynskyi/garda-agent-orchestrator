@@ -32,6 +32,7 @@ import { formatFullSuitePerformanceGuidance } from '../gates/full-suite/full-sui
 import { getWorkflowConfigPath, isConfiguredCompileGateCommand } from '../core/workflow-config';
 import { readLatestScopeBudgetStatus } from '../core/scope-budget-status';
 import type {
+    AgentInitializationPendingCheckpoint,
     AgentInitializationPendingReason,
     AgentInitState,
     AgentInitStateResult,
@@ -319,58 +320,59 @@ function resolveAssistantLanguageState(
     return { assistantLanguage, assistantLanguageConfirmed };
 }
 
-function resolveAgentInitializationPendingReason(
+function resolveAgentInitializationPendingReasons(
     primaryInitializationComplete: boolean,
     agentInitStateResult: AgentInitStateResult,
     answers: InitAnswers | null,
     sourceOfTruth: string | null,
     currentActiveAgentFiles: string[],
     missingProjectCommands: string[]
-): AgentInitializationPendingReason {
+): AgentInitializationPendingCheckpoint[] {
     if (!primaryInitializationComplete) {
-        return null;
+        return [];
     }
     if (agentInitStateResult.error) {
-        return 'AGENT_STATE_INVALID';
+        return ['AGENT_STATE_INVALID'];
     }
     if (!agentInitStateResult.state) {
-        return 'AGENT_HANDOFF_REQUIRED';
+        return ['AGENT_HANDOFF_REQUIRED'];
     }
     if (!doesAgentInitStateMatchAnswers(agentInitStateResult.state, {
         AssistantLanguage: answers && answers.AssistantLanguage,
         SourceOfTruth: sourceOfTruth,
         ActiveAgentFiles: currentActiveAgentFiles
     })) {
-        return 'AGENT_STATE_STALE';
+        return ['AGENT_STATE_STALE'];
     }
+    const pendingReasons: AgentInitializationPendingCheckpoint[] = [];
     if (!agentInitStateResult.state.AssistantLanguageConfirmed) {
-        return 'LANGUAGE_CONFIRMATION_PENDING';
+        pendingReasons.push('LANGUAGE_CONFIRMATION_PENDING');
     }
     if (!agentInitStateResult.state.ActiveAgentFilesConfirmed) {
-        return 'ACTIVE_AGENT_FILES_PENDING';
+        pendingReasons.push('ACTIVE_AGENT_FILES_PENDING');
     }
     if (!agentInitStateResult.state.ProjectRulesUpdated) {
-        return 'PROJECT_RULES_PENDING';
+        pendingReasons.push('PROJECT_RULES_PENDING');
     }
     if (!agentInitStateResult.state.SkillsPromptCompleted) {
-        return 'SKILLS_PROMPT_PENDING';
+        pendingReasons.push('SKILLS_PROMPT_PENDING');
     }
     if (!agentInitStateResult.state.OrdinaryDocPathsConfirmed) {
-        return 'ORDINARY_DOC_PATHS_PENDING';
+        pendingReasons.push('ORDINARY_DOC_PATHS_PENDING');
     }
     if (
         !agentInitStateResult.state.ProjectMemoryInitialized
         || !agentInitStateResult.state.ProjectMemoryValidated
     ) {
-        return 'PROJECT_MEMORY_PENDING';
+        pendingReasons.push('PROJECT_MEMORY_PENDING');
     }
     if (missingProjectCommands.length > 0) {
-        return 'PROJECT_COMMANDS_PENDING';
+        pendingReasons.push('PROJECT_COMMANDS_PENDING');
     }
     if (!agentInitStateResult.state.VerificationPassed || !agentInitStateResult.state.ManifestValidationPassed) {
-        return 'VALIDATION_PENDING';
+        pendingReasons.push('VALIDATION_PENDING');
     }
-    return null;
+    return pendingReasons;
 }
 
 export function getAgentInitializationReadinessSnapshot(
@@ -418,7 +420,7 @@ export function getAgentInitializationReadinessSnapshot(
         && usagePresent
     );
     const currentActiveAgentFiles = resolveCurrentActiveAgentFiles(answers, canonicalEntrypoint);
-    const agentInitializationPendingReason = resolveAgentInitializationPendingReason(
+    const agentInitializationPendingReasons = resolveAgentInitializationPendingReasons(
         primaryInitializationComplete,
         agentInitStateResult,
         answers,
@@ -426,6 +428,7 @@ export function getAgentInitializationReadinessSnapshot(
         currentActiveAgentFiles,
         missingProjectCommands
     );
+    const agentInitializationPendingReason = agentInitializationPendingReasons[0] || null;
 
     return {
         bundlePath,
@@ -599,7 +602,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         answers,
         agentInitStateResult.state
     );
-    const agentInitializationPendingReason = resolveAgentInitializationPendingReason(
+    const agentInitializationPendingReasons = resolveAgentInitializationPendingReasons(
         primaryInitializationComplete,
         agentInitStateResult,
         answers,
@@ -607,6 +610,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         currentActiveAgentFiles,
         missingProjectCommands
     );
+    const agentInitializationPendingReason = agentInitializationPendingReasons[0] || null;
     const providerComplianceResult = readProviderComplianceResult(
         resolvedTargetRoot,
         bundlePresent,
@@ -677,6 +681,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         agentInitStatePath: agentInitStateResult.statePath,
         agentInitStateError: agentInitStateResult.error,
         agentInitState: agentInitStateResult.state,
+        agentInitializationPendingReasons,
         activeAgentFiles: activeAgentFilesValue,
         liveVersionError: liveVersionState.error,
         primaryInitializationComplete,

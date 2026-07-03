@@ -20,6 +20,7 @@ export interface LiveVersionPayload {
 export type AgentInitStateResult = ReturnType<typeof readAgentInitStateSafe>;
 export type AgentInitState = NonNullable<AgentInitStateResult['state']>;
 export type AgentInitializationPendingReason = CliStatusSnapshot['agentInitializationPendingReason'];
+export type AgentInitializationPendingCheckpoint = Exclude<AgentInitializationPendingReason, null>;
 export type TimelineSummary = ReturnType<typeof collectTimelineSummaryForStatus>;
 export type SourceBundleParityResult = ReturnType<typeof detectSourceBundleParity>;
 
@@ -44,6 +45,7 @@ export interface StatusSnapshot extends CliStatusSnapshot {
     usagePresent: boolean;
     agentInitStatePath: string;
     agentInitState: AgentInitState | null;
+    agentInitializationPendingReasons: AgentInitializationPendingCheckpoint[];
     timelineTaskCount: number;
     timelineHealthy: number;
     timelineWarnings: string[];

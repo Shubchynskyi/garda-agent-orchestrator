@@ -932,6 +932,89 @@ test('getStatusSnapshot blocks ready while project memory is not initialized', (
     }
 });
 
+test('getStatusSnapshot lists incomplete agent-init checkpoints even when verify passed', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: false,
+                ProjectRulesUpdated: false,
+                SkillsPromptCompleted: false,
+                OrdinaryDocPathsConfirmed: false,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md'],
+                ProjectMemoryInitialized: false,
+                ProjectMemoryValidated: false
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.agentInitializationPendingReason, 'ACTIVE_AGENT_FILES_PENDING');
+        assert.deepEqual(snapshot.agentInitializationPendingReasons, [
+            'ACTIVE_AGENT_FILES_PENDING',
+            'PROJECT_RULES_PENDING',
+            'SKILLS_PROMPT_PENDING',
+            'ORDINARY_DOC_PATHS_PENDING',
+            'PROJECT_MEMORY_PENDING'
+        ]);
+        assert.equal(snapshot.agentInitializationComplete, false);
+        assert.equal(snapshot.readyForTasks, false);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Agent setup required'));
+        assert.ok(output.includes('AgentInitPendingCheckpoints: 5'));
+        assert.ok(output.includes('VerifyCheckpoint: PASS'));
+        assert.ok(output.includes('ManifestValidationCheckpoint: PASS'));
+        assert.ok(output.includes('Active agent files: confirm active provider entrypoint files'));
+        assert.ok(output.includes('Project rules: update or accept project-specific live rules'));
+        assert.ok(output.includes('Specialist skills: ask the optional specialist-skills question'));
+        assert.ok(output.includes('Ordinary docs: confirm ordinary document paths'));
+        assert.ok(output.includes('Project memory: run agent-init to refresh project-memory checkpoints'));
+        assert.ok(output.includes('ProjectMemoryInitRefreshPrompt: Initialize or refresh Garda project memory.'));
+    } finally {
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
+test('getStatusSnapshot keeps validation failure distinct from passed verify with incomplete setup', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                OrdinaryDocPathsConfirmed: true,
+                VerificationPassed: false,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md'],
+                ProjectMemoryInitialized: true,
+                ProjectMemoryValidated: true
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.agentInitializationPendingReason, 'VALIDATION_PENDING');
+        assert.deepEqual(snapshot.agentInitializationPendingReasons, ['VALIDATION_PENDING']);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('AgentInitPendingCheckpoints: 1'));
+        assert.ok(output.includes('VerifyCheckpoint: FAIL'));
+        assert.ok(output.includes('ManifestValidationCheckpoint: PASS'));
+        assert.ok(output.includes('Validation: rerun agent-init validation until verify and manifest validation both pass.'));
+        assert.ok(!output.includes('Project memory: run agent-init to refresh project-memory checkpoints'));
+    } finally {
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
 test('getStatusSnapshot keeps malformed agent-init state distinct from project-memory pending', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
     try {

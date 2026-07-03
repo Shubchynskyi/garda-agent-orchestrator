@@ -5,7 +5,7 @@ import {
 import {
     formatToxinSummaryLines
 } from '../../runtime/toxin-metrics';
-import type { StatusSnapshot } from './status-types';
+import type { AgentInitializationPendingCheckpoint, StatusSnapshot } from './status-types';
 
 function buildHeadlineText(snapshot: StatusSnapshot): string {
     if (snapshot.readyForTasks) {
@@ -150,6 +150,70 @@ function buildPendingCheckpointLine(snapshot: StatusSnapshot): string | null {
     }
 }
 
+function getPendingCheckpointReasons(snapshot: StatusSnapshot): AgentInitializationPendingCheckpoint[] {
+    if (Array.isArray(snapshot.agentInitializationPendingReasons) && snapshot.agentInitializationPendingReasons.length > 0) {
+        return snapshot.agentInitializationPendingReasons;
+    }
+    return snapshot.agentInitializationPendingReason ? [snapshot.agentInitializationPendingReason] : [];
+}
+
+function formatCheckpointState(value: boolean | null | undefined): string {
+    if (value === true) {
+        return 'PASS';
+    }
+    if (value === false) {
+        return 'FAIL';
+    }
+    return 'UNKNOWN';
+}
+
+function formatPendingCheckpointDetail(
+    reason: AgentInitializationPendingCheckpoint,
+    snapshot: StatusSnapshot
+): string {
+    switch (reason) {
+        case 'AGENT_HANDOFF_REQUIRED':
+            return 'Agent handoff: launch the agent with AGENT_INIT_PROMPT.md, then run agent-init.';
+        case 'LANGUAGE_CONFIRMATION_PENDING':
+            return 'Assistant language: confirm the assistant language during AGENT_INIT_PROMPT flow.';
+        case 'ACTIVE_AGENT_FILES_PENDING':
+            return 'Active agent files: confirm active provider entrypoint files during AGENT_INIT_PROMPT flow.';
+        case 'AGENT_STATE_STALE':
+            return 'Agent-init state: rerun AGENT_INIT_PROMPT flow because state no longer matches init answers.';
+        case 'PROJECT_RULES_PENDING':
+            return 'Project rules: update or accept project-specific live rules, then rerun agent-init.';
+        case 'SKILLS_PROMPT_PENDING':
+            return 'Specialist skills: ask the optional specialist-skills question; user decline is allowed.';
+        case 'ORDINARY_DOC_PATHS_PENDING':
+            return 'Ordinary docs: confirm ordinary document paths during AGENT_INIT_PROMPT flow.';
+        case 'PROJECT_MEMORY_PENDING':
+            return `Project memory: run agent-init to refresh project-memory checkpoints. ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`;
+        case 'PROJECT_COMMANDS_PENDING':
+            return `Project commands: configure missing command checkpoint(s): ${snapshot.missingProjectCommands.join(', ') || 'unknown'}.`;
+        case 'VALIDATION_PENDING':
+            return 'Validation: rerun agent-init validation until verify and manifest validation both pass.';
+        case 'AGENT_STATE_INVALID':
+            return 'Agent-init state: repair invalid runtime/agent-init-state.json, then rerun agent-init.';
+        default:
+            return String(reason);
+    }
+}
+
+function appendAgentInitCheckpointLines(lines: string[], snapshot: StatusSnapshot): void {
+    const pendingReasons = getPendingCheckpointReasons(snapshot);
+    if (pendingReasons.length === 0) {
+        return;
+    }
+
+    lines.push(`AgentInitPendingCheckpoints: ${pendingReasons.length}`);
+    lines.push(`VerifyCheckpoint: ${formatCheckpointState(snapshot.agentInitState?.VerificationPassed)}`);
+    lines.push(`ManifestValidationCheckpoint: ${formatCheckpointState(snapshot.agentInitState?.ManifestValidationPassed)}`);
+    lines.push('Pending agent-init checkpoints:');
+    for (const reason of pendingReasons) {
+        lines.push(`  - ${formatPendingCheckpointDetail(reason, snapshot)}`);
+    }
+}
+
 function appendTimelineLines(lines: string[], snapshot: StatusSnapshot): void {
     if (snapshot.timelineTaskCount === 0 && snapshot.timelineWarnings.length === 0) {
         return;
@@ -245,7 +309,8 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     if (pendingCheckpointLine) {
         lines.push(pendingCheckpointLine);
     }
-    if (snapshot.agentInitializationPendingReason === 'PROJECT_MEMORY_PENDING') {
+    appendAgentInitCheckpointLines(lines, snapshot);
+    if (getPendingCheckpointReasons(snapshot).includes('PROJECT_MEMORY_PENDING')) {
         lines.push(`ProjectMemoryInitRefreshPrompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`);
     }
     if (snapshot.initAnswersError) {
