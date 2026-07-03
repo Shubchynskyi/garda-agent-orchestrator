@@ -100,6 +100,9 @@ import {
     readOptionalSkillSelectionTimelineEvidence
 } from '../../runtime/optional-skill-selection';
 import {
+    suggestSkills
+} from '../../runtime/skills';
+import {
     readStartupCycleReadiness
 } from './next-step-startup-readiness';
 import {
@@ -417,6 +420,7 @@ export interface NextStepOptionalSkillSelectionSummary {
     pending_activation_skill_ids: string[];
     recommended_missing_pack_ids: string[];
     as_is_reason: string | null;
+    changed_paths: string[];
     changed_paths_count: number;
     visible_summary_line: string | null;
     activation_commands: string[];
@@ -1339,9 +1343,12 @@ function buildOptionalSkillSelectionSummary(
     const policyMode = rawPolicyMode ? normalizeOptionalSkillSelectionPolicyMode(rawPolicyMode) : null;
     const decision = String(preflightOptionalRecord.decision || artifactPayload?.decision || '').trim() || null;
     const asIsReason = String(artifactPayload?.as_is_reason || '').trim() || null;
-    const changedPathsCount = Array.isArray(artifactPayload?.changed_paths)
-        ? artifactPayload.changed_paths.length
-        : 0;
+    const changedPaths = Array.isArray(artifactPayload?.changed_paths)
+        ? artifactPayload.changed_paths
+            .map((entry) => String(entry || '').trim())
+            .filter(Boolean)
+        : [];
+    const changedPathsCount = changedPaths.length;
     const visibleSummaryLine = String(preflightOptionalRecord.visible_summary_line || artifactPayload?.visible_summary_line || '').trim() || null;
     const skillCatalogPath = String(artifactPayload?.headlines_path || '').trim() || null;
     const timelineEvidence = artifactPayload
@@ -1376,6 +1383,7 @@ function buildOptionalSkillSelectionSummary(
         pending_activation_skill_ids: pendingActivationSkillIds,
         recommended_missing_pack_ids: recommendedMissingPackIds,
         as_is_reason: asIsReason,
+        changed_paths: changedPaths,
         changed_paths_count: changedPathsCount,
         visible_summary_line: visibleSummaryLine,
         activation_commands: decision === 'selected_installed_skills' ? activationCommands : [],
@@ -1412,10 +1420,39 @@ function getPendingOptionalSkillActivationCommand(
     return command ? { skillId: pendingSkillId, command } : null;
 }
 
+function getAvailableRelevantOptionalSkillSuggestions(input: {
+    repoRoot: string;
+    taskText: string;
+    changedPaths: string[];
+}): string[] {
+    try {
+        const result = suggestSkills(
+            path.join(input.repoRoot, resolveBundleNameForTarget(input.repoRoot)),
+            input.repoRoot,
+            {
+                taskText: input.taskText,
+                changedPaths: input.changedPaths,
+                limit: 5,
+                packLimit: 0
+            }
+        );
+        return result.availableRelevantSkills
+            .map((skill) => String(skill.id || '').trim())
+            .filter(Boolean)
+            .sort();
+    } catch {
+        return [];
+    }
+}
+
 function getMandatoryOptionalSkillRemediationCommand(
     optionalSkillSelection: NextStepOptionalSkillSelectionSummary | null,
     cliPrefix: string,
-    taskText: string
+    taskText: string,
+    options: {
+        repoRoot: string;
+        reclassifyCommand: string;
+    }
 ): { label: string; command: string; reason: string } | null {
     if (!optionalSkillSelection || !isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillSelection.policy_mode)) {
         return null;
@@ -1433,7 +1470,24 @@ function getMandatoryOptionalSkillRemediationCommand(
             command: `${cliPrefix} skills add ${quoteCommandValue(recommendedPackId)} --target-root "."`,
             reason:
                 `Mandatory optional skill selection recommended missing pack ${formatNextStepInlineValue(recommendedPackId)}, ` +
-                'but no installed specialist skill is selected. Install or create an appropriate specialist skill, then rerun classify-change and activate the selected skill before implementation.'
+            'but no installed specialist skill is selected. Install or create an appropriate specialist skill, then rerun classify-change and activate the selected skill before implementation.'
+        };
+    }
+    const relevantInstalledSuggestionIds = optionalSkillSelection.decision === 'as_is'
+        ? getAvailableRelevantOptionalSkillSuggestions({
+            repoRoot: options.repoRoot,
+            taskText,
+            changedPaths: optionalSkillSelection.changed_paths
+        })
+        : [];
+    if (relevantInstalledSuggestionIds.length > 0) {
+        return {
+            label: 'Rematerialize optional skill selection',
+            command: options.reclassifyCommand,
+            reason:
+                `Mandatory optional skill selection produced decision ${formatNextStepInlineValue(optionalSkillSelection.decision || 'unknown')}, ` +
+                `but installed relevant skill suggestion(s) are already available: ${formatNextStepInlineList(relevantInstalledSuggestionIds)}. ` +
+                'Rerun classify-change to materialize selected_installed_skills evidence, then activate the selected skill before implementation.'
         };
     }
     return {
@@ -2488,7 +2542,20 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const mandatoryOptionalSkillRemediation = getMandatoryOptionalSkillRemediationCommand(
         optionalSkillSelectionSummary,
         cliPrefix,
-        taskEntry?.title || taskId
+        taskEntry?.title || taskId,
+        {
+            repoRoot,
+            reclassifyCommand: buildClassifyChangeCommand({
+                repoRoot,
+                cliPrefix,
+                taskId,
+                taskMode,
+                taskModePath,
+                preflightCommandPath,
+                includePlannedScope: false,
+                changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
+            })
+        }
     );
     if (mandatoryOptionalSkillRemediation) {
         return buildResult({

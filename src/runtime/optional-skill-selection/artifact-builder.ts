@@ -8,8 +8,18 @@ import {
 } from '../skill-headlines';
 import {
     containsAtWordBoundary,
-    textMatchesFuzzyVariant
+    textMatchesFuzzyVariant,
+    buildSuggestionContext,
+    scoreSkillSuggestion,
+    type SignalMatches,
+    type SkillScoringEntry,
+    type SuggestionContext
 } from '../skill-resolution';
+import {
+    getSkillsIndexConfigPath,
+    readSkillsIndex,
+    type SkillsIndexSkillEntry
+} from '../skill-index';
 
 import {
     type BuildOptionalSkillSelectionOptions,
@@ -18,6 +28,7 @@ import {
     type OptionalSkillSelectionAsIsReason,
     type OptionalSkillSelectionEntry,
     type OptionalSkillSelectionRecommendedPack,
+    type OptionalSkillSelectionReasonCode,
     type MatchGroups,
     type SkillCandidateScore,
     type PackCandidateScore,
@@ -39,8 +50,11 @@ import { getOptionalSkillSelectionArtifactPath } from './artifact-store';
 
 export function buildEmptyMatches(): MatchGroups {
     return {
+        stack_signals: [],
         task_signals: [],
-        changed_path_signals: []
+        changed_path_signals: [],
+        project_path_signals: [],
+        aliases_or_tags: []
     };
 }
 
@@ -316,13 +330,22 @@ export function scoreSignalBuckets(
     };
 }
 
-export function getReasonCodes(matches: MatchGroups): Array<'task_signals' | 'changed_path_signals'> {
-    const reasons: Array<'task_signals' | 'changed_path_signals'> = [];
+export function getReasonCodes(matches: MatchGroups): OptionalSkillSelectionReasonCode[] {
+    const reasons: OptionalSkillSelectionReasonCode[] = [];
+    if ((matches.stack_signals || []).length > 0) {
+        reasons.push('stack_signals');
+    }
     if (matches.task_signals.length > 0) {
         reasons.push('task_signals');
     }
     if (matches.changed_path_signals.length > 0) {
         reasons.push('changed_path_signals');
+    }
+    if ((matches.project_path_signals || []).length > 0) {
+        reasons.push('project_path_signals');
+    }
+    if ((matches.aliases_or_tags || []).length > 0) {
+        reasons.push('aliases_or_tags');
     }
     return reasons;
 }
@@ -330,8 +353,17 @@ export function getReasonCodes(matches: MatchGroups): Array<'task_signals' | 'ch
 export function summarizeReasonCodes(reasonCodes: readonly string[]): string {
     const hasTaskSignals = reasonCodes.includes('task_signals');
     const hasPathSignals = reasonCodes.includes('changed_path_signals');
+    const hasProjectDiscoverySignals = reasonCodes.includes('stack_signals')
+        || reasonCodes.includes('project_path_signals')
+        || reasonCodes.includes('aliases_or_tags');
     if (hasTaskSignals && hasPathSignals) {
         return 'task_text+paths';
+    }
+    if (hasTaskSignals && hasProjectDiscoverySignals) {
+        return 'task_text+project';
+    }
+    if (hasPathSignals && hasProjectDiscoverySignals) {
+        return 'paths+project';
     }
     if (hasTaskSignals) {
         return 'task_text';
@@ -339,7 +371,72 @@ export function summarizeReasonCodes(reasonCodes: readonly string[]): string {
     if (hasPathSignals) {
         return 'paths';
     }
+    if (hasProjectDiscoverySignals) {
+        return 'project_discovery';
+    }
     return 'none';
+}
+
+function addMatches(target: string[] | undefined, values: readonly string[] | undefined): string[] {
+    const next = Array.isArray(target) ? target : [];
+    for (const value of values || []) {
+        addMatch(next, value);
+    }
+    return next;
+}
+
+function mergeSuggestionMatches(target: MatchGroups, source: SignalMatches): MatchGroups {
+    return {
+        stack_signals: addMatches(target.stack_signals, source.stack_signals),
+        task_signals: addMatches(target.task_signals, source.task_signals),
+        changed_path_signals: addMatches(target.changed_path_signals, source.changed_path_signals),
+        project_path_signals: addMatches(target.project_path_signals, source.project_path_signals),
+        aliases_or_tags: addMatches(target.aliases_or_tags, source.aliases_or_tags)
+    };
+}
+
+function hasDirectSuggestionEvidence(matches: SignalMatches): boolean {
+    return matches.task_signals.length > 0
+        || matches.changed_path_signals.length > 0
+        || matches.aliases_or_tags.length > 0;
+}
+
+function hasProjectDiscoveryEvidence(matches: SignalMatches): boolean {
+    return matches.stack_signals.length > 0 || matches.project_path_signals.length > 0;
+}
+
+function readSkillsIndexById(bundleRoot: string): Map<string, SkillsIndexSkillEntry> {
+    if (!pathExists(getSkillsIndexConfigPath(bundleRoot))) {
+        return new Map();
+    }
+    try {
+        const index = readSkillsIndex(bundleRoot);
+        return new Map(index.payload.skills.map((skill) => [skill.id, skill]));
+    } catch {
+        return new Map();
+    }
+}
+
+function buildSelectionScoringEntry(
+    skill: SkillsHeadlineSkillEntry,
+    indexedSkill: SkillsIndexSkillEntry | undefined
+): SkillScoringEntry {
+    return {
+        id: skill.id,
+        name: skill.name,
+        pack: skill.pack || skill.id,
+        summary: skill.summary,
+        tags: [...skill.tags],
+        aliases: [...skill.aliases],
+        stack_signals: indexedSkill?.stack_signals ? [...indexedSkill.stack_signals] : [],
+        task_signals: [...skill.task_signals],
+        changed_path_signals: [...skill.changed_path_signals],
+        priority: typeof indexedSkill?.priority === 'number' && Number.isFinite(indexedSkill.priority) ? indexedSkill.priority : 50,
+        deprecated: Boolean(indexedSkill?.deprecated),
+        implemented: skill.implemented !== false,
+        source: skill.source === 'baseline' ? 'builtin_pack' : skill.source,
+        directory: skill.directory || skill.id
+    };
 }
 
 export function selectInstalledSkills(
@@ -347,9 +444,16 @@ export function selectInstalledSkills(
     taskTextLower: string,
     changedPathsLower: string[],
     skills: SkillsHeadlineSkillEntry[],
-    options: { allowReviewBoundSkills?: boolean } = {}
+    options: {
+        allowReviewBoundSkills?: boolean;
+        allowProjectDiscoverySelection?: boolean;
+        suggestionContext?: SuggestionContext | null;
+    } = {}
 ): SkillCandidateScore[] {
     const candidates: SkillCandidateScore[] = [];
+    const indexedSkillsById = options.suggestionContext
+        ? readSkillsIndexById(bundleRoot)
+        : new Map<string, SkillsIndexSkillEntry>();
     for (const skill of skills) {
         if (skill.review_binding !== 'general_purpose' && options.allowReviewBoundSkills !== true) {
             continue;
@@ -364,7 +468,26 @@ export function selectInstalledSkills(
         const primarySignals = collectPrimarySignals(skill);
         const secondarySignals = collectSecondarySignals(skill);
         const scored = scoreSignalBuckets(taskTextLower, changedPathsLower, primarySignals, secondarySignals);
-        if (scored.score <= 0) {
+        let score = scored.score;
+        let matches = scored.matches;
+        let strongMatch = scored.strong_match;
+        if (options.suggestionContext) {
+            const suggestion = scoreSkillSuggestion(
+                buildSelectionScoringEntry(skill, indexedSkillsById.get(skill.id)),
+                options.suggestionContext,
+                skill.pack ? [skill.pack] : []
+            );
+            if (suggestion) {
+                matches = mergeSuggestionMatches(matches, suggestion.matches);
+                const discoveryEvidence = hasProjectDiscoveryEvidence(suggestion.matches);
+                const discoveryScore = suggestion.score + (discoveryEvidence ? 25 : 0);
+                score = Math.max(score, discoveryScore);
+                strongMatch = strongMatch
+                    || hasDirectSuggestionEvidence(suggestion.matches)
+                    || (options.allowProjectDiscoverySelection === true && discoveryEvidence);
+            }
+        }
+        if (score <= 0) {
             continue;
         }
         const mixedCodeAndDocsScope = skillLooksDocumentationOrProcess(skill) && hasNonDocumentationChangedPaths(changedPathsLower);
@@ -375,15 +498,15 @@ export function selectInstalledSkills(
             continue;
         }
         candidates.push({
-            score: scored.score,
-            strong_match: mixedCodeAndDocsScope ? false : scored.strong_match,
+            score,
+            strong_match: mixedCodeAndDocsScope ? false : strongMatch,
             entry: {
                 id: skill.id,
                 pack: skill.pack || null,
                 source: skill.source,
                 allowed_skill_path: toPortableBundlePath(bundleRoot, skillPath),
-                reason_codes: getReasonCodes(scored.matches),
-                matches: scored.matches
+                reason_codes: getReasonCodes(matches),
+                matches
             }
         });
     }
@@ -506,6 +629,10 @@ export function buildOptionalSkillSelectionArtifact(
     );
     const taskTextLower = normalizeText(taskText);
     const changedPathsLower = changedPaths.map((entry) => normalizeText(entry));
+    const targetRoot = String(options.targetRoot || '').trim();
+    const suggestionContext = targetRoot
+        ? buildSuggestionContext(targetRoot, taskText, changedPaths)
+        : null;
     const loadedHeadlines = options.loadedHeadlinesCache
         ? {
             headlinesPath: options.loadedHeadlinesCache.headlinesPath,
@@ -534,7 +661,9 @@ export function buildOptionalSkillSelectionArtifact(
         asIsReason = 'policy_off';
     } else {
         const scoredSkills = selectInstalledSkills(bundleRoot, taskTextLower, changedPathsLower, availableSkills, {
-            allowReviewBoundSkills: policyConfig.mode === 'mandatory'
+            allowReviewBoundSkills: policyConfig.mode === 'mandatory',
+            allowProjectDiscoverySelection: policyConfig.mode === 'mandatory',
+            suggestionContext
         });
         const topSkillScore = scoredSkills[0]?.score || 0;
         selectedInstalledSkills = scoredSkills

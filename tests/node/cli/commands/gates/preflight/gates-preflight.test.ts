@@ -100,6 +100,96 @@ function seedNodeBackendOptionalSkillFixture(
     return path.join(skillRoot, 'SKILL.md');
 }
 
+function seedDevopsOptionalSkillFixture(
+    repoRoot: string,
+    policyMode: 'required' | 'strict' = 'required'
+): string {
+    const orchestratorRoot = getOrchestratorRoot(repoRoot);
+    const configDir = path.join(orchestratorRoot, 'live', 'config');
+    const skillRoot = path.join(orchestratorRoot, 'live', 'skills', 'devops-k8s');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(
+        path.join(configDir, 'garda.config.json'),
+        JSON.stringify({
+            version: 1,
+            configs: {
+                'optional-skill-selection-policy': 'optional-skill-selection-policy.json',
+                'skill-packs': 'skill-packs.json'
+            }
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'skill-packs.json'),
+        JSON.stringify({ version: 1, installed_packs: ['devops-k8s'] }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'optional-skill-selection-policy.json'),
+        JSON.stringify({ version: 1, mode: policyMode }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(skillRoot, 'skill.json'),
+        JSON.stringify({
+            id: 'devops-k8s',
+            pack: 'devops-k8s',
+            name: 'DevOps K8s',
+            summary: 'Container and Kubernetes delivery specialist.',
+            tags: ['kubernetes', 'docker', 'deployment'],
+            aliases: ['k8s', 'kubernetes', 'docker'],
+            task_signals: ['deployment', 'rollout', 'container'],
+            changed_path_signals: ['k8s/', 'helm/', 'deploy/', 'Dockerfile'],
+            references: [],
+            cost_hint: 'medium',
+            priority: 85,
+            autoload: 'suggest'
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# DevOps K8s\n\nUse for deployment and container work.\n', 'utf8');
+    fs.writeFileSync(
+        path.join(configDir, 'skills-index.json'),
+        JSON.stringify({
+            version: 1,
+            packs: [{
+                id: 'devops-k8s',
+                label: 'DevOps K8s',
+                description: 'Container and Kubernetes delivery specialist.',
+                tags: ['kubernetes', 'docker', 'deployment'],
+                recommended_for: ['container deployment'],
+                skill_count: 1,
+                ready_skill_count: 1,
+                placeholder_skill_count: 0,
+                implemented: true,
+                collides_with_baseline: false
+            }],
+            skills: [{
+                id: 'devops-k8s',
+                name: 'DevOps K8s',
+                pack: 'devops-k8s',
+                summary: 'Container and Kubernetes delivery specialist.',
+                tags: ['kubernetes', 'docker', 'deployment'],
+                aliases: ['k8s', 'kubernetes', 'docker'],
+                stack_signals: ['Dockerfile', 'docker-compose.yml', 'docker-compose.yaml', 'k8s/', 'helm/'],
+                task_signals: ['deployment', 'rollout', 'container'],
+                changed_path_signals: ['k8s/', 'helm/', 'deploy/', 'Dockerfile'],
+                references: [],
+                cost_hint: 'medium',
+                priority: 85,
+                autoload: 'suggest',
+                deprecated: false,
+                replaced_by: null,
+                implemented: true,
+                template_skill_path: 'template/skill-packs/devops-k8s/skills/devops-k8s/SKILL.md'
+            }]
+        }, null, 2),
+        'utf8'
+    );
+    return path.join(skillRoot, 'SKILL.md');
+}
+
 function writeWorkflowConfig(repoRoot: string, payload: string): string {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -1568,6 +1658,52 @@ describe('cli/commands/gates — preflight', () => {
             (persistedPayload.optional_skill_selection as Record<string, unknown>).artifact_path,
             path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-900-optional-skill-selection.json').replace(/\\/g, '/')
         );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change selects mandatory installed devops skill from project discovery surface', () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-devops.json');
+        const taskId = 'T-909-devops-parity';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Tune JVM heap without changing deployment manifests'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        seedDevopsOptionalSkillFixture(repoRoot, 'required');
+        fs.writeFileSync(
+            path.join(repoRoot, 'docker-compose.yml'),
+            'services:\n  app:\n    image: example/app\n',
+            'utf8'
+        );
+        fs.mkdirSync(path.join(repoRoot, 'src', 'main', 'kotlin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'main', 'kotlin', 'App.kt'), 'fun main() {}\n', 'utf8');
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/main/kotlin/App.kt'],
+            taskId,
+            taskIntent: 'Tune JVM heap.',
+            outputPath,
+            emitMetrics: false
+        });
+
+        assert.match(result.outputText, /"mode": "FULL_PATH"/);
+        const preflightPayload = JSON.parse(fs.readFileSync(outputPath, 'utf8')) as Record<string, unknown>;
+        const optionalSkillSelection = preflightPayload.optional_skill_selection as Record<string, unknown>;
+        assert.equal(optionalSkillSelection.policy_mode, 'mandatory');
+        assert.equal(optionalSkillSelection.decision, 'selected_installed_skills');
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-optional-skill-selection.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+        const selectedSkills = artifact.selected_installed_skills as Array<Record<string, unknown>>;
+        assert.deepEqual(selectedSkills.map((entry) => entry.id), ['devops-k8s']);
+        assert.ok((selectedSkills[0].reason_codes as string[]).includes('stack_signals'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

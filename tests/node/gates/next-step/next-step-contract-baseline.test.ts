@@ -282,6 +282,82 @@ function seedOptionalSkillSelectionPreflight(
     seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
 }
 
+function seedDevopsSuggestionSurface(repoRoot: string): void {
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const configDir = path.join(orchestratorRoot, 'live', 'config');
+    const skillRoot = path.join(orchestratorRoot, 'live', 'skills', 'devops-k8s');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.mkdirSync(path.join(orchestratorRoot, 'template', 'skill-packs'), { recursive: true });
+    fs.cpSync(
+        path.join(process.cwd(), 'template', 'skill-packs', 'devops-k8s'),
+        path.join(orchestratorRoot, 'template', 'skill-packs', 'devops-k8s'),
+        { recursive: true }
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'skill-packs.json'),
+        JSON.stringify({ version: 1, installed_packs: ['devops-k8s'] }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'skills-index.json'),
+        JSON.stringify({
+            version: 1,
+            packs: [{
+                id: 'devops-k8s',
+                label: 'DevOps K8s',
+                description: 'Container and Kubernetes delivery specialist.',
+                tags: ['kubernetes', 'docker', 'deployment'],
+                recommended_for: ['container deployment'],
+                skill_count: 1,
+                ready_skill_count: 1,
+                placeholder_skill_count: 0,
+                implemented: true,
+                collides_with_baseline: false
+            }],
+            skills: [{
+                id: 'devops-k8s',
+                name: 'DevOps K8s',
+                pack: 'devops-k8s',
+                summary: 'Container and Kubernetes delivery specialist.',
+                tags: ['kubernetes', 'docker', 'deployment'],
+                aliases: ['k8s', 'kubernetes', 'docker'],
+                stack_signals: ['Dockerfile', 'docker-compose.yml', 'docker-compose.yaml', 'k8s/', 'helm/'],
+                task_signals: ['deployment', 'rollout', 'container'],
+                changed_path_signals: ['k8s/', 'helm/', 'deploy/', 'Dockerfile'],
+                references: [],
+                cost_hint: 'medium',
+                priority: 85,
+                autoload: 'suggest',
+                deprecated: false,
+                replaced_by: null,
+                implemented: true,
+                template_skill_path: 'template/skill-packs/devops-k8s/skills/devops-k8s/SKILL.md'
+            }]
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(skillRoot, 'skill.json'),
+        JSON.stringify({
+            id: 'devops-k8s',
+            pack: 'devops-k8s',
+            name: 'DevOps K8s',
+            summary: 'Container and Kubernetes delivery specialist.',
+            tags: ['kubernetes', 'docker', 'deployment'],
+            aliases: ['k8s', 'kubernetes', 'docker'],
+            task_signals: ['deployment', 'rollout', 'container'],
+            changed_path_signals: ['k8s/', 'helm/', 'deploy/', 'Dockerfile'],
+            references: [],
+            cost_hint: 'medium',
+            priority: 85,
+            autoload: 'suggest'
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# DevOps K8s\n', 'utf8');
+}
+
 afterEach(() => {
     for (const repoRoot of tempRoots.splice(0)) {
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -886,6 +962,73 @@ describe('next-step refactor contract baseline', () => {
         assert.match(result.reason, /Install or create an appropriate specialist skill/u);
         assert.match(text, /^OptionalSkillDecision: policy=mandatory; decision=recommended_missing_packs;/mu);
         assert.match(text, /Resolve mandatory optional-skill selection/u);
+    });
+
+    it('routes mandatory as_is with available installed suggestion to classify-change rematerialization', () => {
+        const repoRoot = makeContractRepo();
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        seedDevopsSuggestionSurface(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'docker-compose.yml'), 'services: {}\n', 'utf8');
+        const optionalSkillArtifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: TASK_ID,
+            timestamp_utc: '2026-01-01T00:00:04.000Z',
+            policy_mode: 'mandatory',
+            decision: 'as_is',
+            selected_installed_skills: [],
+            recommended_missing_packs: [],
+            as_is_reason: 'no_relevant_installed_skill',
+            task_text_present: true,
+            task_text_sha256: 'fixture-task-text',
+            changed_paths: ['src/main/kotlin/App.kt'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: 'fixture-preflight',
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: 'fixture-headlines',
+            visible_summary_line: 'Optional skills: as_is (reason: no_relevant_installed_skill)'
+        };
+        writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            scope_category: 'code',
+            changed_files: ['src/main/kotlin/App.kt'],
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            optional_skill_selection: {
+                artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
+                policy_mode: 'mandatory',
+                decision: 'as_is',
+                visible_summary_line: 'Optional skills: as_is (reason: no_relevant_installed_skill)'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
+            output_path: normalizeForTimeline(preflightPath)
+        }, '2026-01-01T00:00:04.500Z');
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'optional-skill-remediation');
+        assert.equal(result.commands.length, 1);
+        assert.equal(result.commands[0]?.label, 'Rematerialize optional skill selection');
+        assert.match(result.commands[0]?.command || '', /gate classify-change/u);
+        assert.doesNotMatch(result.commands[0]?.command || '', /skills suggest/u);
+        assert.match(result.reason, /devops-k8s/u);
     });
 
     it('does not route mandatory baseline-only as_is selection to skills suggest remediation', () => {

@@ -29,14 +29,14 @@ type SignalMatchCategory =
     | 'project_path_signals'
     | 'aliases_or_tags';
 
-interface ProjectDiscoveryData {
+export interface ProjectDiscoveryData {
     source: string;
     detectedStacks: string[];
     topLevelDirectories: string[];
     relativeFiles: string[];
 }
 
-interface SuggestionContext {
+export interface SuggestionContext {
     discovery: ProjectDiscoveryData;
     taskText: string;
     taskTextLower: string;
@@ -66,7 +66,7 @@ export interface SkillSuggestion {
     matches: SignalMatches;
 }
 
-interface SkillScoringEntry {
+export interface SkillScoringEntry {
     id: string;
     name: string;
     pack: string;
@@ -295,7 +295,7 @@ function createEmptySignalMatches(): SignalMatches {
     };
 }
 
-function buildSuggestionContext(targetRoot: string, taskText: unknown, changedPaths: unknown): SuggestionContext {
+export function buildSuggestionContext(targetRoot: string, taskText: unknown, changedPaths: unknown): SuggestionContext {
     const discovery = getProjectDiscovery(targetRoot) as ProjectDiscoveryData;
     const normalizedChangedPaths = normalizeStringArray(changedPaths)
         .map((item) => normalizeChangedPath(targetRoot, item))
@@ -321,7 +321,7 @@ function buildSuggestionContext(targetRoot: string, taskText: unknown, changedPa
     };
 }
 
-function scoreSkillSuggestion(
+export function scoreSkillSuggestion(
     skill: SkillScoringEntry,
     context: SuggestionContext,
     installedPackIds: readonly string[]

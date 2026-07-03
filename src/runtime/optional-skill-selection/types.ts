@@ -47,9 +47,19 @@ export type OptionalSkillSelectionDecision =
     | 'recommended_missing_packs'
     | 'as_is';
 
+export type OptionalSkillSelectionReasonCode =
+    | 'stack_signals'
+    | 'task_signals'
+    | 'changed_path_signals'
+    | 'project_path_signals'
+    | 'aliases_or_tags';
+
 export interface MatchGroups {
+    stack_signals?: string[];
     task_signals: string[];
     changed_path_signals: string[];
+    project_path_signals?: string[];
+    aliases_or_tags?: string[];
 }
 
 export interface OptionalSkillSelectionEntry {
@@ -57,7 +67,7 @@ export interface OptionalSkillSelectionEntry {
     pack: string | null;
     source: 'installed_optional' | 'custom_live';
     allowed_skill_path: string;
-    reason_codes: Array<'task_signals' | 'changed_path_signals'>;
+    reason_codes: OptionalSkillSelectionReasonCode[];
     matches: MatchGroups;
 }
 
@@ -65,7 +75,7 @@ export interface OptionalSkillSelectionRecommendedPack {
     id: string;
     label: string;
     ready_skill_ids: string[];
-    reason_codes: Array<'task_signals' | 'changed_path_signals'>;
+    reason_codes: OptionalSkillSelectionReasonCode[];
     matches: MatchGroups;
 }
 
@@ -106,6 +116,7 @@ export interface OptionalSkillSelectionArtifactData {
 export interface BuildOptionalSkillSelectionOptions {
     taskText?: string | null;
     changedPaths?: string[] | null;
+    targetRoot?: string | null;
     preflightPath?: string | null;
     preflightSha256?: string | null;
     loadedHeadlinesCache?: {

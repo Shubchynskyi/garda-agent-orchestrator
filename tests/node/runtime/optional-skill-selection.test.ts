@@ -21,6 +21,7 @@ import {
     type OptionalSkillSelectionArtifactData
 } from '../../../src/runtime/optional-skill-selection';
 import { readSkillsHeadlines } from '../../../src/runtime/skill-headlines';
+import { writeSkillsIndex } from '../../../src/runtime/skill-index';
 
 const NODE_BACKEND_SKILL_SOURCE = path.join(
     process.cwd(),
@@ -591,6 +592,64 @@ test('buildOptionalSkillSelectionArtifact selects review-bound installed skills 
         assert.equal(artifact.payload.decision, 'selected_installed_skills');
         assert.deepEqual(artifact.payload.selected_installed_skills.map((entry) => entry.id), ['devops-k8s']);
         assert.deepEqual(artifact.payload.selected_installed_skills[0]?.reason_codes, ['task_signals', 'changed_path_signals']);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildOptionalSkillSelectionArtifact selects installed devops skill from skills-suggest project discovery surface', () => {
+    const bundleRoot = makeBundleRoot();
+    const workspaceRoot = path.join(bundleRoot, 'workspace');
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(workspaceRoot, { recursive: true });
+        fs.cpSync(
+            path.join(process.cwd(), 'template', 'skill-packs'),
+            path.join(bundleRoot, 'template', 'skill-packs'),
+            { recursive: true }
+        );
+        fs.copyFileSync(
+            path.join(process.cwd(), 'template', 'config', 'garda.config.json'),
+            path.join(bundleRoot, 'live', 'config', 'garda.config.json')
+        );
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'skill-packs.json'),
+            JSON.stringify({ version: 1, installed_packs: ['devops-k8s'] }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'mandatory' }, null, 2),
+            'utf8'
+        );
+        fs.cpSync(
+            DEVOPS_K8S_SKILL_SOURCE,
+            path.join(bundleRoot, 'live', 'skills', 'devops-k8s'),
+            { recursive: true }
+        );
+        writeSkillsIndex(bundleRoot);
+        fs.writeFileSync(
+            path.join(workspaceRoot, 'docker-compose.yml'),
+            'services:\n  app:\n    image: example/app\n',
+            'utf8'
+        );
+        fs.mkdirSync(path.join(workspaceRoot, 'src', 'main', 'kotlin'), { recursive: true });
+        fs.writeFileSync(path.join(workspaceRoot, 'src', 'main', 'kotlin', 'App.kt'), 'fun main() {}\n', 'utf8');
+
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Tune JVM heap.',
+            changedPaths: ['src/main/kotlin/App.kt'],
+            targetRoot: workspaceRoot
+        });
+
+        assert.equal(artifact.payload.decision, 'selected_installed_skills');
+        assert.deepEqual(artifact.payload.selected_installed_skills.map((entry) => entry.id), ['devops-k8s']);
+        assert.ok(
+            artifact.payload.selected_installed_skills[0]?.reason_codes.includes('stack_signals'),
+            JSON.stringify(artifact.payload.selected_installed_skills[0])
+        );
+        assert.match(artifact.payload.visible_summary_line, /project_discovery/);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

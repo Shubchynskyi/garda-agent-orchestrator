@@ -672,7 +672,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         resolvedTaskId,
                         {
                             taskText: optionalSkillTaskText,
-                            changedPaths: result.changed_files as string[]
+                            changedPaths: result.changed_files as string[],
+                            targetRoot: repoRoot
                         }
                     );
                     result.optional_skill_selection = {
@@ -710,6 +711,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         {
                             taskText: optionalSkillTaskText,
                             changedPaths: result.changed_files as string[],
+                            targetRoot: repoRoot,
                             preflightPath: outputPath,
                             preflightSha256,
                             preparedArtifact: optionalSkillSelectionPreview,
