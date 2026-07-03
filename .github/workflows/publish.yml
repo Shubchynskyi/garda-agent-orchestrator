@@ -1,0 +1,129 @@
+# Tag-driven npm release workflow for Garda Agent Orchestrator.
+# The publish job uses npm Trusted Publishing/OIDC and waits for the
+# npm-release GitHub Environment approval before npm can publish.
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  validate:
+    name: Validate release package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Validate tag and package version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != v* ]]; then
+            echo "Publish workflow must run from a v* tag." >&2
+            exit 1
+          fi
+
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
+          LOCK_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"
+          VERSION_FILE="$(node -e "process.stdout.write(require('node:fs').readFileSync('VERSION', 'utf8').trim())")"
+
+          if [[ "${TAG_VERSION}" != "${PACKAGE_VERSION}" || "${TAG_VERSION}" != "${LOCK_VERSION}" || "${TAG_VERSION}" != "${LOCK_ROOT_VERSION}" || "${TAG_VERSION}" != "${VERSION_FILE}" ]]; then
+            echo "Release tag v${TAG_VERSION} does not match package/version metadata." >&2
+            echo "package.json=${PACKAGE_VERSION} package-lock=${LOCK_VERSION} package-lock-root=${LOCK_ROOT_VERSION} VERSION=${VERSION_FILE}" >&2
+            exit 1
+          fi
+
+          echo "Release tag v${TAG_VERSION} matches package.json, package-lock.json, package-lock root, and VERSION."
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Run local release proof
+        run: npm run release:preflight
+
+      - name: Record package dry run
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm pack --dry-run | tee "$RUNNER_TEMP/npm-pack-dry-run.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-pack-dry-run-${{ github.ref_name }}
+          path: ${{ runner.temp }}/npm-pack-dry-run.txt
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: validate
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Final publish sanity checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
+          LOCK_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"
+          VERSION_FILE="$(node -e "process.stdout.write(require('node:fs').readFileSync('VERSION', 'utf8').trim())")"
+
+          if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != v* ]]; then
+            echo "Publish job must run from a v* tag." >&2
+            exit 1
+          fi
+          if [[ "${PACKAGE_NAME}" != "garda-agent-orchestrator" ]]; then
+            echo "Unexpected package name: ${PACKAGE_NAME}" >&2
+            exit 1
+          fi
+          if [[ "${TAG_VERSION}" != "${PACKAGE_VERSION}" || "${TAG_VERSION}" != "${LOCK_VERSION}" || "${TAG_VERSION}" != "${LOCK_ROOT_VERSION}" || "${TAG_VERSION}" != "${VERSION_FILE}" ]]; then
+            echo "Release tag v${TAG_VERSION} does not match package/version metadata." >&2
+            exit 1
+          fi
+
+          node --version
+          NPM_VERSION="$(npm --version)"
+          echo "npm ${NPM_VERSION}"
+          node -e "const version = process.argv[1]; const [major, minor, patch] = version.split('.').map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) { throw new Error('npm CLI 11.5.1+ is required for Trusted Publishing.'); }" "${NPM_VERSION}"
+
+      - name: Re-run release proof after approval
+        run: npm run release:preflight
+
+      - name: Publish with npm Trusted Publishing
+        run: npm publish

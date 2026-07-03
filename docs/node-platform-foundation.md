@@ -80,6 +80,12 @@ Release handoff archives are split by purpose. `npm run archive:source` writes a
 
 Direct `npm pack` and `npm pack --dry-run` are guarded by `prepack`, which runs the same clean-worktree preflight before package preparation and again after `build:publish-runtime`.
 
+### Tag-driven npm publishing
+
+The npm publish path is `.github/workflows/publish.yml`, triggered by `v*` tags. The workflow runs a pre-approval `validate` job on GitHub-hosted Ubuntu with Node 24, checks the tag against package metadata and `VERSION`, runs `npm ci`, runs `npm run release:preflight`, and records `npm pack --dry-run` output.
+
+The `publish` job depends on validation, targets the GitHub Environment `npm-release`, and must wait for GitHub Environment approval before publishing. Release handoff evidence must capture that `npm-release` has non-empty `required_reviewers` before the matching `v*` tag is pushed; the workflow's `environment: npm-release` line alone is not sufficient proof of the approval gate. It uses npm Trusted Publishing with OIDC through `permissions: contents: read, id-token: write`, `actions/setup-node@v6` registry configuration, cache disabled for the release build, a final release proof rerun, and plain `npm publish`. Do not add long-lived npm publish tokens to this workflow. Trusted Publishing for public GitHub Actions packages automatically generates npm provenance when the registry accepts the OIDC publish.
+
 ### `npm run release:preflight`
 
 Runs the final operator-facing release readiness gate before the expensive release validation path:
@@ -88,7 +94,7 @@ Runs the final operator-facing release readiness gate before the expensive relea
 2. `npm run test:release-smoke`
 3. `npm run validate:release`
 
-`npm run validate:release-readiness` is a short checklist gate. It verifies static alignment for package scripts, shipped package files, production audit wiring, CI release validation, lifecycle update smoke wiring, runtime-state documentation, manifest validation guidance, security document package/manifest surface, and the tracked `docs/release-readiness.md` checklist before the release is cut. `npm run test:release-smoke` then exercises high-signal runtime contracts for task id parsing, task-event append integrity, next-step startup routing, and status/doctor formatting. It intentionally does not replace `npm run validate:release`; the latter remains the build/test/pack/install proof and includes `npm run test:packaging` for package smoke coverage.
+`npm run validate:release-readiness` is a short checklist gate. It verifies static alignment for package scripts, shipped package files, production audit wiring, CI release validation, lifecycle update smoke wiring, runtime-state documentation, manifest validation guidance, security document package/manifest surface, the tag-driven npm Trusted Publishing workflow/docs, and the tracked `docs/release-readiness.md` checklist before the release is cut. `npm run test:release-smoke` then exercises high-signal runtime contracts for task id parsing, task-event append integrity, next-step startup routing, and status/doctor formatting. It intentionally does not replace `npm run validate:release`; the latter remains the build/test/pack/install proof and includes `npm run test:packaging` for package smoke coverage.
 
 Copy-paste slow smoke command:
 
@@ -128,7 +134,7 @@ The lifecycle smoke installs from a `file://` clone of the current workflow bran
 
 ### Node 22 Compatibility Contract
 
-Node 22.13+ is an official Garda 1.1.x compatibility runtime line. Node 24 remains the primary baseline, but the public runtime contract now requires every official support surface to include both Node 22.13+ and Node 24:
+Node 22.13+ is an official Garda 1.2.x compatibility runtime line. Node 24 remains the primary baseline, but the public runtime contract now requires every official support surface to include both Node 22.13+ and Node 24:
 
 1. `package.json` engines allow `^22.13.0 || >=24.0.0`.
 2. CI runs typecheck, full tests, release validation, and smoke coverage on Node 22.13+ and Node 24.

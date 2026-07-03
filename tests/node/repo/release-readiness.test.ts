@@ -138,10 +138,19 @@ function updatePackageScripts(repoRoot: string, update: (scripts: Record<string,
 }
 
 function buildReleaseChecklist(openItem?: string): string {
-    const checklistItems = RELEASE_BLOCKERS.map((taskId) => {
+    const releaseBlockers = RELEASE_BLOCKERS.map((taskId) => {
         const status = taskId === openItem ? ' ' : 'x';
         return `- [${status}] ${taskId} fixture release blocker`;
-    }).join('\n');
+    });
+    const trustedPublishItems = [
+        '- [x] Trusted Publishing workflow uses `publish.yml`.',
+        '- [x] GitHub Environment `npm-release` gates publish.',
+        '- [x] GitHub Environment `npm-release` required reviewers are captured as release evidence.',
+        '- [x] npm Trusted Publisher settings use `Shubchynskyi` / `garda-agent-orchestrator` / `publish.yml`.',
+        '- [x] Allowed action is `npm publish`.',
+        '- [x] Publishing access moves to Require two-factor authentication and disallow tokens after verification.',
+        '- [x] Post-publish verification runs npx --yes garda-agent-orchestrator@1.1.0 --version.'
+    ];
     return [
         '# Release Readiness',
         '',
@@ -149,7 +158,7 @@ function buildReleaseChecklist(openItem?: string): string {
         '',
         '## 1.1.0',
         '',
-        checklistItems,
+        releaseBlockers.concat(trustedPublishItems).join('\n'),
         '',
         '## 1.2.0'
     ].join('\n');
@@ -262,6 +271,87 @@ function buildSbomWorkflow(): string {
     ].join('\n');
 }
 
+function buildPublishWorkflow(): string {
+    return [
+        'name: Publish',
+        'on:',
+        '  push:',
+        '    tags:',
+        "      - 'v*'",
+        'permissions:',
+        '  contents: read',
+        'env:',
+        "  NODE_VERSION: '24'",
+        'jobs:',
+        '  validate:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - uses: actions/checkout@v6',
+        '      - uses: actions/setup-node@v6',
+        '        with:',
+        '          node-version: ${{ env.NODE_VERSION }}',
+        '          package-manager-cache: false',
+        '      - run: |',
+        '          set -euo pipefail',
+        '          if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != v* ]]; then',
+        '            exit 1',
+        '          fi',
+        '          TAG_VERSION="${GITHUB_REF_NAME#v}"',
+        '          PACKAGE_VERSION="$(node -p "require(\'./package.json\').version")"',
+        '          LOCK_VERSION="$(node -p "require(\'./package-lock.json\').version")"',
+        '          LOCK_ROOT_VERSION="$(node -p "require(\'./package-lock.json\').packages[\'\'].version")"',
+        '          VERSION_FILE="$(node -e "process.stdout.write(require(\'node:fs\').readFileSync(\'VERSION\', \'utf8\').trim())")"',
+        '          if [[ "${TAG_VERSION}" != "${PACKAGE_VERSION}" || "${TAG_VERSION}" != "${LOCK_VERSION}" || "${TAG_VERSION}" != "${LOCK_ROOT_VERSION}" || "${TAG_VERSION}" != "${VERSION_FILE}" ]]; then',
+        '            exit 1',
+        '          fi',
+        '      - run: npm ci --no-fund --no-audit',
+        '      - run: npm run release:preflight',
+        '      - run: |',
+        '          set -euo pipefail',
+        '          npm pack --dry-run | tee "$RUNNER_TEMP/npm-pack-dry-run.txt"',
+        '      - uses: actions/upload-artifact@v4',
+        '        with:',
+        '          path: ${{ runner.temp }}/npm-pack-dry-run.txt',
+        '          if-no-files-found: error',
+        '  publish:',
+        '    needs: validate',
+        '    runs-on: ubuntu-latest',
+        '    environment: npm-release',
+        '    permissions:',
+        '      contents: read',
+        '      id-token: write',
+        '    steps:',
+        '      - uses: actions/checkout@v6',
+        '      - uses: actions/setup-node@v6',
+        '        with:',
+        '          node-version: ${{ env.NODE_VERSION }}',
+        '          registry-url: https://registry.npmjs.org',
+        '          package-manager-cache: false',
+        '      - run: npm ci --no-fund --no-audit',
+        '      - run: |',
+        '          set -euo pipefail',
+        '          TAG_VERSION="${GITHUB_REF_NAME#v}"',
+        '          PACKAGE_NAME="$(node -p "require(\'./package.json\').name")"',
+        '          PACKAGE_VERSION="$(node -p "require(\'./package.json\').version")"',
+        '          LOCK_VERSION="$(node -p "require(\'./package-lock.json\').version")"',
+        '          LOCK_ROOT_VERSION="$(node -p "require(\'./package-lock.json\').packages[\'\'].version")"',
+        '          VERSION_FILE="$(node -e "process.stdout.write(require(\'node:fs\').readFileSync(\'VERSION\', \'utf8\').trim())")"',
+        '          if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != v* ]]; then',
+        '            exit 1',
+        '          fi',
+        '          if [[ "${PACKAGE_NAME}" != "garda-agent-orchestrator" ]]; then',
+        '            exit 1',
+        '          fi',
+        '          if [[ "${TAG_VERSION}" != "${PACKAGE_VERSION}" || "${TAG_VERSION}" != "${LOCK_VERSION}" || "${TAG_VERSION}" != "${LOCK_ROOT_VERSION}" || "${TAG_VERSION}" != "${VERSION_FILE}" ]]; then',
+        '            exit 1',
+        '          fi',
+        '          NPM_VERSION="$(npm --version)"',
+        '          node -e "const version = process.argv[1]; const [major, minor, patch] = version.split(\'.\').map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) { throw new Error(\'npm CLI 11.5.1+ is required for Trusted Publishing.\'); }" "${NPM_VERSION}"',
+        '      - run: npm run release:preflight',
+        '      - run: npm publish'
+    ].join('\n');
+}
+
 function buildBranchProtectionDoc(): string {
     return [
         '# Branch Protection',
@@ -352,7 +442,16 @@ function createReadinessFixture(openChecklistItem?: string): string {
         path.join(repoRoot, 'docs', 'run-methods.md'),
         [
             'npm run validate:release',
-            'node .\\bin\\garda.js gate validate-manifest --manifest-path MANIFEST.md'
+            'node .\\bin\\garda.js gate validate-manifest --manifest-path MANIFEST.md',
+            '.github/workflows/publish.yml',
+            'npm-release',
+            'required_reviewers',
+            'release evidence',
+            'Trusted Publisher',
+            'Shubchynskyi',
+            'publish.yml',
+            'Require two-factor authentication and disallow tokens',
+            'npm publish'
         ].join('\n')
     );
     writeFile(
@@ -361,7 +460,14 @@ function createReadinessFixture(openChecklistItem?: string): string {
             '### npm run validate:release',
             'The cross-platform lifecycle smoke proves update runtime behavior.',
             'Full-suite optimization compatibility guardrails',
-            'GARDA_NODE_FOUNDATION_TEST_SHARDS'
+            'GARDA_NODE_FOUNDATION_TEST_SHARDS',
+            'Tag-driven npm publishing',
+            '.github/workflows/publish.yml',
+            'npm Trusted Publishing',
+            'GitHub Environment approval',
+            'required_reviewers',
+            'OIDC',
+            'npm publish'
         ].join('\n')
     );
     writeFile(
@@ -371,6 +477,7 @@ function createReadinessFixture(openChecklistItem?: string): string {
     writeFile(path.join(repoRoot, '.github', 'workflows', 'security.yml'), buildSecurityWorkflow());
     writeFile(path.join(repoRoot, '.github', 'workflows', 'secret-scanning.yml'), buildSecretScanningWorkflow());
     writeFile(path.join(repoRoot, '.github', 'workflows', 'sbom.yml'), buildSbomWorkflow());
+    writeFile(path.join(repoRoot, '.github', 'workflows', 'publish.yml'), buildPublishWorkflow());
 
     initializeGitIndex(repoRoot);
 
@@ -393,8 +500,436 @@ test('release readiness passes when package, CI, docs, security, and checklist c
         assert.match(output, /Readiness alignment:/);
         assert.match(output, /Unused-symbol enforcement: quality includes typecheck:unused/);
         assert.match(output, /security-ci: existing release-security CI checks are present and labelled blocking or informational/);
+        assert.match(output, /trusted-publish-workflow: npm Trusted Publishing workflow is tag-driven/);
+        assert.match(output, /trusted-publish-docs: release docs document the tag-driven npm Trusted Publishing operator path/);
         assert.match(output, /Release-security baseline: readiness labels npm audit and gitleaks as blocking/);
+        assert.match(output, /Trusted Publishing path: pushing the matching v\* tag runs/);
         assert.doesNotMatch(output, /Security\/audit proof:/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish workflow is missing', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        fs.unlinkSync(path.join(repoRoot, '.github', 'workflows', 'publish.yml'));
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish\.yml present=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish workflow falls back to npm tokens', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                '- run: npm publish',
+                [
+                    '- run: npm publish',
+                    '        env:',
+                    '          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}'
+                ].join('\n')
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish workflow avoids npm tokens, --provenance override, and self-hosted runners=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish workflow allows manual dispatch', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                'on:\n  push:',
+                'on:\n  workflow_dispatch:\n  push:'
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish\.yml is v\*-tag driven without manual dispatch=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish tag trigger is not under push', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                'on:\n  push:\n    tags:',
+                'on:\n  release:\n    tags:'
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish\.yml is v\*-tag driven without manual dispatch=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish workflow omits Node version pin', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace("env:\n  NODE_VERSION: '24'\n", '')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish workflow pins Node 24 for Trusted Publishing=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish workflow downgrades Node version pin', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace("NODE_VERSION: '24'", "NODE_VERSION: '22'")
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish workflow pins Node 24 for Trusted Publishing=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish validate job only echoes version markers', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                /      - run: \|\n(?:          .+\n)+?      - run: npm ci --no-fund --no-audit/u,
+                [
+                    '      - run: |',
+                    '          echo "${GITHUB_REF_NAME}"',
+                    '          node -p "require(\'./package.json\').version"',
+                    '          node -p "require(\'./package-lock.json\').version"',
+                    '          cat VERSION',
+                    '      - run: npm ci --no-fund --no-audit'
+                ].join('\n')
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /validate job has fail-closed tag\/version guard=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish validate guard markers are only comments', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                /      - run: \|\n(?:          .+\n)+?      - run: npm ci --no-fund --no-audit/u,
+                [
+                    '      - run: |',
+                    '          # set -euo pipefail',
+                    '          # GITHUB_REF_TYPE',
+                    '          # GITHUB_REF_NAME',
+                    '          # TAG_VERSION="${GITHUB_REF_NAME#v}"',
+                    '          # PACKAGE_VERSION="$(node -p "require(\'./package.json\').version")"',
+                    '          # LOCK_VERSION="$(node -p "require(\'./package-lock.json\').version")"',
+                    '          # LOCK_ROOT_VERSION="$(node -p "require(\'./package-lock.json\').packages[\'\'].version")"',
+                    '          # VERSION_FILE="$(node -e "process.stdout.write(require(\'node:fs\').readFileSync(\'VERSION\', \'utf8\').trim())")"',
+                    '          # ${TAG_VERSION}" != "${PACKAGE_VERSION}',
+                    '          # ${TAG_VERSION}" != "${LOCK_VERSION}',
+                    '          # ${TAG_VERSION}" != "${LOCK_ROOT_VERSION}',
+                    '          # ${TAG_VERSION}" != "${VERSION_FILE}',
+                    '          # exit 1',
+                    '      - run: npm ci --no-fund --no-audit'
+                ].join('\n')
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /validate job has fail-closed tag\/version guard=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish dry-run artifact is written inside checkout', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8')
+                .replace('npm pack --dry-run | tee "$RUNNER_TEMP/npm-pack-dry-run.txt"', 'npm pack --dry-run | tee npm-pack-dry-run.txt')
+                .replace('path: ${{ runner.temp }}/npm-pack-dry-run.txt', 'path: npm-pack-dry-run.txt')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /validate job records npm pack dry-run output outside the checkout=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish dry-run pipeline omits pipefail', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                '      - run: |\n          set -euo pipefail\n          npm pack --dry-run | tee "$RUNNER_TEMP/npm-pack-dry-run.txt"',
+                '      - run: npm pack --dry-run | tee "$RUNNER_TEMP/npm-pack-dry-run.txt"'
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /validate job records npm pack dry-run output outside the checkout=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish environment approval is missing', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace('    environment: npm-release\n', '')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish job is npm-release environment gated and uses id-token OIDC npm publish=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish OIDC permission is missing', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace('      id-token: write\n', '')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish job is npm-release environment gated and uses id-token OIDC npm publish=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish sanity checks only echo markers', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                /      - run: npm ci --no-fund --no-audit\n      - run: \|\n(?:          .+\n)+?      - run: npm run release:preflight/u,
+                [
+                    '      - run: npm ci --no-fund --no-audit',
+                    '      - run: |',
+                    '          echo "${GITHUB_REF_NAME}"',
+                    '          echo "garda-agent-orchestrator"',
+                    '          echo "npm CLI 11.5.1+"',
+                    '      - run: npm run release:preflight'
+                ].join('\n')
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish job has fail-closed package and npm CLI sanity guard=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish sanity guard markers are inside heredoc text', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                /      - run: npm ci --no-fund --no-audit\n      - run: \|\n(?:          .+\n)+?      - run: npm run release:preflight/u,
+                [
+                    '      - run: npm ci --no-fund --no-audit',
+                    '      - run: |',
+                    "          cat <<'EOF'",
+                    '          set -euo pipefail',
+                    '          GITHUB_REF_TYPE',
+                    '          GITHUB_REF_NAME',
+                    '          TAG_VERSION="${GITHUB_REF_NAME#v}"',
+                    '          PACKAGE_NAME="$(node -p "require(\'./package.json\').name")"',
+                    '          PACKAGE_VERSION="$(node -p "require(\'./package.json\').version")"',
+                    '          LOCK_VERSION="$(node -p "require(\'./package-lock.json\').version")"',
+                    '          LOCK_ROOT_VERSION="$(node -p "require(\'./package-lock.json\').packages[\'\'].version")"',
+                    '          VERSION_FILE="$(node -e "process.stdout.write(require(\'node:fs\').readFileSync(\'VERSION\', \'utf8\').trim())")"',
+                    '          ${PACKAGE_NAME}" != "garda-agent-orchestrator"',
+                    '          ${TAG_VERSION}" != "${PACKAGE_VERSION}',
+                    '          ${TAG_VERSION}" != "${LOCK_VERSION}',
+                    '          ${TAG_VERSION}" != "${LOCK_ROOT_VERSION}',
+                    '          ${TAG_VERSION}" != "${VERSION_FILE}',
+                    '          NPM_VERSION="$(npm --version)"',
+                    '          npm CLI 11.5.1+',
+                    '          major < 11',
+                    '          minor < 5',
+                    '          patch < 1',
+                    '          EOF',
+                    '      - run: npm run release:preflight'
+                ].join('\n')
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish job has fail-closed package and npm CLI sanity guard=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish command is only heredoc text', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                '      - run: npm publish',
+                [
+                    '      - run: |',
+                    "          cat <<'EOF'",
+                    '          npm publish',
+                    '          EOF'
+                ].join('\n')
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish job is npm-release environment gated and uses id-token OIDC npm publish=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish operator docs are missing', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(path.join(repoRoot, 'docs', 'run-methods.md'), 'npm run validate:release\n');
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /docs\/run-methods\.md documents GitHub Environment and npm Trusted Publisher setup=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-docs:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when trusted publish required reviewer proof docs are missing', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const runMethodsPath = path.join(repoRoot, 'docs', 'run-methods.md');
+        writeFile(
+            runMethodsPath,
+            fs.readFileSync(runMethodsPath, 'utf8').replace('required_reviewers\nrelease evidence\n', '')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /docs\/run-methods\.md documents GitHub Environment and npm Trusted Publisher setup=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-docs:')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -724,7 +1259,7 @@ test('release readiness does not read local TASK.md as release blocker truth', (
         const output = formatReleaseReadinessResult(result);
 
         assert.equal(result.passed, true, output);
-        assert.match(output, /ReleaseChecklistItems: 19/);
+        assert.match(output, /ReleaseChecklistItems: 26/);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
