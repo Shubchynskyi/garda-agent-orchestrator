@@ -207,7 +207,7 @@ describe('gates/task-audit-summary', () => {
                     details: {
                         review_type: 'code',
                         code_scope_sha256: index < 2 ? currentCodeScopeSha256 : createHash('sha256').update(`old-code-scope-${index}`).digest('hex'),
-                        reused_existing_review: index === 3
+                        reused_existing_review: index === 1
                     }
                 });
             }
@@ -228,20 +228,20 @@ describe('gates/task-audit-summary', () => {
             });
 
             assert.equal(result.review_attempt_summary?.total_attempts, 5);
-            assert.equal(result.review_attempt_summary?.total_non_test_attempts, 4);
-            assert.equal(result.review_attempt_summary?.current_scope_non_test_attempts, 2);
+            assert.equal(result.review_attempt_summary?.total_non_test_attempts, 3);
+            assert.equal(result.review_attempt_summary?.current_scope_non_test_attempts, 1);
             assert.equal(result.review_attempt_summary?.fresh_non_test_attempts, 3);
             assert.equal(result.review_attempt_summary?.reused_non_test_attempts, 1);
             assert.equal(result.review_attempt_summary?.scope_hash_count_by_review_type?.code, 3);
             assert.deepEqual(result.review_attempt_summary?.current_scope_counts_by_review_type?.code, {
-                total: 2,
+                total: 1,
                 pass: 0,
                 fail: 0,
-                missing_or_invalid: 2
+                missing_or_invalid: 1
             });
-            assert.equal(result.final_closeout.review_attempt_summary?.current_scope_non_test_attempts, 2);
-            assert.ok(formatTaskAuditSummaryText(result).includes('Review cycle attempts: total=5; non_test=4; current_scope_non_test=2; fresh_non_test=3; reused_non_test=1; scope_hashes_by_type=code=3, test=1'));
-            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review cycle attempts: total=5; non_test=4; current_scope_non_test=2; fresh_non_test=3; reused_non_test=1; scope_hashes_by_type=code=3, test=1'));
+            assert.equal(result.final_closeout.review_attempt_summary?.current_scope_non_test_attempts, 1);
+            assert.ok(formatTaskAuditSummaryText(result).includes('Review cycle attempts: total=5; non_test=3; current_scope_non_test=1; fresh_non_test=3; reused_non_test=1; scope_hashes_by_type=code=3, test=1'));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review cycle attempts: total=5; non_test=3; current_scope_non_test=1; fresh_non_test=3; reused_non_test=1; scope_hashes_by_type=code=3, test=1'));
         });
 
         it('uses workflow review-cycle exclusions for audit and closeout non-test attempt totals', () => {

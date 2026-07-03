@@ -32,6 +32,8 @@ import {
     type TimelineEventEntry
 } from '../completion/completion-evidence';
 import {
+    fileSha256,
+    joinOrchestratorPath,
     normalizePath
 } from '../shared/helpers';
 import {
@@ -166,6 +168,11 @@ interface ReviewCycleGuardReadResult {
     latestFailedReview: NextStepReviewCycleLatestFailedReview | null;
 }
 
+interface ReviewCycleArtifactVerdictResult {
+    failed: boolean | null;
+    invalidSnapshot: boolean;
+}
+
 const REVIEW_VERDICT_PASS_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(REVIEW_CONTRACTS));
 const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(
     REVIEW_CONTRACTS.map(([reviewType, passToken]) => [reviewType, passToken.replace(/\bPASSED\b/g, 'FAILED')])
@@ -288,15 +295,15 @@ function getTimelineReviewFailure(eventType: string, details: Record<string, unk
     if (verdictToken.endsWith('PASSED')) {
         return false;
     }
-    if (
-        eventType === 'REVIEW_RECORDED'
-        && String(details?.review_artifact_path || details?.reviewArtifactPath || '').trim()
-    ) {
-        return null;
-    }
     const normalizedOutcome = String(outcome || '').trim().toUpperCase();
     if (normalizedOutcome === 'FAIL') {
         return true;
+    }
+    if (
+        eventType === 'REVIEW_RECORDED'
+        && String(details?.review_artifact_snapshot_path || details?.reviewArtifactSnapshotPath || '').trim()
+    ) {
+        return null;
     }
     if (normalizedOutcome === 'PASS') {
         return false;
@@ -304,49 +311,193 @@ function getTimelineReviewFailure(eventType: string, details: Record<string, unk
     return null;
 }
 
-function reviewRecordedArtifactHasFailToken(
-    repoRoot: string,
-    reviewType: string,
-    details: Record<string, unknown> | null,
-    verdictCache: Map<string, boolean>
-): boolean {
-    const failToken = REVIEW_VERDICT_FAIL_TOKENS[reviewType] || '';
-    const artifactPathText = String(details?.review_artifact_path || details?.reviewArtifactPath || '').trim();
-    if (!failToken || !artifactPathText) {
-        return false;
-    }
+function normalizeReviewCycleSha256(value: unknown): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
+function resolveReviewCycleArtifactPath(repoRoot: string, artifactPathText: string): string | null {
     const resolvedArtifactPath = path.isAbsolute(artifactPathText)
         ? path.resolve(artifactPathText)
         : path.resolve(repoRoot, artifactPathText);
     const resolvedRepoRoot = path.resolve(repoRoot);
     const relativeToRepo = path.relative(resolvedRepoRoot, resolvedArtifactPath);
     if (relativeToRepo.startsWith('..') || path.isAbsolute(relativeToRepo)) {
-        return false;
+        return null;
     }
     if (!fs.existsSync(resolvedArtifactPath) || !fs.statSync(resolvedArtifactPath).isFile()) {
+        return null;
+    }
+    return resolvedArtifactPath;
+}
+
+function resolveReviewCycleReviewsRoot(repoRoot: string): string {
+    return path.resolve(joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews')));
+}
+
+function resolveCanonicalReviewCycleSnapshotPath(
+    repoRoot: string,
+    candidatePath: unknown,
+    expectedFileName: string
+): string | null {
+    const normalizedCandidate = String(candidatePath || '').trim();
+    if (!normalizedCandidate) {
+        return null;
+    }
+    const resolvedPath = resolveReviewCycleArtifactPath(repoRoot, normalizedCandidate);
+    if (!resolvedPath) {
+        return null;
+    }
+    const expectedPath = path.resolve(resolveReviewCycleReviewsRoot(repoRoot), expectedFileName);
+    return path.resolve(resolvedPath) === expectedPath ? resolvedPath : null;
+}
+
+function readReviewCycleJsonRecord(filePath: string): Record<string, unknown> | null {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+        return isPlainRecord(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+function validateReviewCycleReceiptSnapshotBinding(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: Record<string, unknown> | null,
+    reviewArtifactSnapshotSha256: string
+): boolean {
+    const receiptSnapshotPath = details?.receipt_snapshot_path ?? details?.receiptSnapshotPath;
+    const receiptSnapshotSha256 = normalizeReviewCycleSha256(details?.receipt_snapshot_sha256 ?? details?.receiptSnapshotSha256);
+    const hasReceiptSnapshotEvidence = Boolean(String(receiptSnapshotPath || '').trim() || receiptSnapshotSha256);
+    if (!hasReceiptSnapshotEvidence) {
+        return true;
+    }
+    if (!receiptSnapshotSha256) {
         return false;
+    }
+    const resolvedReceiptPath = resolveCanonicalReviewCycleSnapshotPath(
+        repoRoot,
+        receiptSnapshotPath,
+        `${taskId}-${reviewType}-receipt-${receiptSnapshotSha256}.json`
+    );
+    if (!resolvedReceiptPath || fileSha256(resolvedReceiptPath) !== receiptSnapshotSha256) {
+        return false;
+    }
+    const receipt = readReviewCycleJsonRecord(resolvedReceiptPath);
+    if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
+        return false;
+    }
+    return normalizeReviewCycleSha256(receipt.review_artifact_sha256) === reviewArtifactSnapshotSha256;
+}
+
+function resolveValidatedReviewCycleArtifactForVerdict(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    details: Record<string, unknown> | null;
+}): { resolvedPath: string | null; invalidSnapshot: boolean } {
+    const snapshotPathText = String(
+        options.details?.review_artifact_snapshot_path
+        || options.details?.reviewArtifactSnapshotPath
+        || ''
+    ).trim();
+    if (!snapshotPathText) {
+        return { resolvedPath: null, invalidSnapshot: false };
+    }
+    const snapshotSha256 = normalizeReviewCycleSha256(
+        options.details?.review_artifact_snapshot_sha256
+        ?? options.details?.reviewArtifactSnapshotSha256
+    );
+    if (!snapshotSha256) {
+        return { resolvedPath: null, invalidSnapshot: true };
+    }
+    const recordedArtifactSha256 = normalizeReviewCycleSha256(
+        options.details?.review_artifact_sha256
+        ?? options.details?.reviewArtifactSha256
+    );
+    if (recordedArtifactSha256 && recordedArtifactSha256 !== snapshotSha256) {
+        return { resolvedPath: null, invalidSnapshot: true };
+    }
+    const resolvedSnapshotPath = resolveCanonicalReviewCycleSnapshotPath(
+        options.repoRoot,
+        snapshotPathText,
+        `${options.taskId}-${options.reviewType}-artifact-${snapshotSha256}.md`
+    );
+    if (!resolvedSnapshotPath || fileSha256(resolvedSnapshotPath) !== snapshotSha256) {
+        return { resolvedPath: null, invalidSnapshot: true };
+    }
+    if (!validateReviewCycleReceiptSnapshotBinding(
+        options.repoRoot,
+        options.taskId,
+        options.reviewType,
+        options.details,
+        snapshotSha256
+    )) {
+        return { resolvedPath: null, invalidSnapshot: true };
+    }
+    return { resolvedPath: resolvedSnapshotPath, invalidSnapshot: false };
+}
+
+function readReviewCycleArtifactPrefix(resolvedArtifactPath: string): string {
+    const file = fs.openSync(resolvedArtifactPath, 'r');
+    try {
+        const buffer = Buffer.alloc(128 * 1024);
+        const bytesRead = fs.readSync(file, buffer, 0, buffer.length, 0);
+        return buffer.subarray(0, bytesRead).toString('utf8');
+    } finally {
+        fs.closeSync(file);
+    }
+}
+
+function getReviewCycleArtifactVerdict(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: Record<string, unknown> | null,
+    verdictCache: Map<string, ReviewCycleArtifactVerdictResult>
+): ReviewCycleArtifactVerdictResult {
+    const passToken = REVIEW_VERDICT_PASS_TOKENS[reviewType] || '';
+    const failToken = REVIEW_VERDICT_FAIL_TOKENS[reviewType] || '';
+    if (!passToken || !failToken) {
+        return { failed: null, invalidSnapshot: false };
+    }
+    const artifactResolution = resolveValidatedReviewCycleArtifactForVerdict({
+        repoRoot,
+        taskId,
+        reviewType,
+        details
+    });
+    if (artifactResolution.invalidSnapshot) {
+        return { failed: null, invalidSnapshot: true };
+    }
+    const resolvedArtifactPath = artifactResolution.resolvedPath;
+    if (!resolvedArtifactPath) {
+        return { failed: null, invalidSnapshot: false };
     }
     const cacheKey = `${reviewType}|${resolvedArtifactPath}`;
     const cached = verdictCache.get(cacheKey);
     if (cached !== undefined) {
         return cached;
     }
-    const file = fs.openSync(resolvedArtifactPath, 'r');
-    let content = '';
-    try {
-        const buffer = Buffer.alloc(128 * 1024);
-        const bytesRead = fs.readSync(file, buffer, 0, buffer.length, 0);
-        content = buffer.subarray(0, bytesRead).toString('utf8');
-    } finally {
-        fs.closeSync(file);
+    const content = readReviewCycleArtifactPrefix(resolvedArtifactPath);
+    if (!content.includes(passToken) && !content.includes(failToken)) {
+        const result = { failed: null, invalidSnapshot: false };
+        verdictCache.set(cacheKey, result);
+        return result;
     }
-    if (!content.includes(failToken)) {
-        verdictCache.set(cacheKey, false);
-        return false;
-    }
-    const failed = extractReviewVerdictToken(content, REVIEW_VERDICT_PASS_TOKENS[reviewType] || null, failToken, reviewType) === failToken;
-    verdictCache.set(cacheKey, failed);
-    return failed;
+    const verdictToken = extractReviewVerdictToken(content, passToken, failToken, reviewType);
+    const result = {
+        failed: verdictToken === failToken
+            ? true
+            : verdictToken === passToken
+                ? false
+                : null,
+        invalidSnapshot: false
+    };
+    verdictCache.set(cacheKey, result);
+    return result;
 }
 
 function parseReviewCycleTimelineLine(line: string, sequence: number): TimelineEventEntry | null {
@@ -388,6 +539,7 @@ function buildLatestFailedReviewSummary(
 function readReviewCycleGuardAttempts(
     repoRoot: string,
     timelinePath: string,
+    taskId: string,
     reviewCycleGuardConfig: ReturnType<typeof normalizeReviewCycleGuardConfig>,
     currentPreflightFingerprints: DomainScopeFingerprints | null
 ): ReviewCycleGuardReadResult {
@@ -410,7 +562,7 @@ function readReviewCycleGuardAttempts(
         currentScope: boolean;
         lastSequence: number;
     }>();
-    const verdictCache = new Map<string, boolean>();
+    const verdictCache = new Map<string, ReviewCycleArtifactVerdictResult>();
     const excludedReviewTypes = new Set(reviewCycleGuardConfig.excluded_review_types.map((entry) => entry.trim().toLowerCase()).filter(Boolean));
     let malformedReviewCycleEvent = false;
     let latestFailedReview: NextStepReviewCycleLatestFailedReview | null = null;
@@ -447,13 +599,23 @@ function readReviewCycleGuardAttempts(
             ? `${reviewType}|${reviewerIdentity}|${reviewContextSha256}`
             : `${event.event_type}:${event.sequence}`;
         const timelineFailure = getTimelineReviewFailure(event.event_type, event.details, event.outcome || null);
-        const artifactFailed = timelineFailure == null && event.event_type === 'REVIEW_RECORDED'
-            ? reviewRecordedArtifactHasFailToken(repoRoot, reviewType, event.details, verdictCache)
-            : false;
-        const failed = timelineFailure ?? artifactFailed;
+        const hasArtifactEvidence = Boolean(getTimelineDetailText(event.details, [
+            'review_artifact_snapshot_path',
+            'reviewArtifactSnapshotPath',
+            'review_artifact_path',
+            'reviewArtifactPath'
+        ]));
+        const artifactVerdict = event.event_type === 'REVIEW_RECORDED' && hasArtifactEvidence
+            ? getReviewCycleArtifactVerdict(repoRoot, taskId, reviewType, event.details, verdictCache)
+            : { failed: null, invalidSnapshot: false };
+        if (artifactVerdict.invalidSnapshot) {
+            malformedReviewCycleEvent = true;
+        }
+        const failed = timelineFailure ?? artifactVerdict.failed ?? false;
         const hasReviewArtifactPath = Boolean(getTimelineDetailText(event.details, ['review_artifact_path', 'reviewArtifactPath']));
         const passed = !failed && (
             timelineFailure === false
+            || artifactVerdict.failed === false
             || (event.outcome === 'PASS' && !hasReviewArtifactPath)
         );
         const reused = event.details?.reused_existing_review === true || event.details?.reusedExistingReview === true;
@@ -469,14 +631,14 @@ function readReviewCycleGuardAttempts(
             failed: nextFailed,
             passed: nextPassed,
             latestEventFailed: Boolean(failed),
-            reused: Boolean(existing?.reused || reused),
+            reused: existing ? Boolean(existing.reused && reused) : reused,
             scopeHash: existing?.scopeHash || scopeHash,
             currentScope: Boolean(existing?.currentScope || currentScope),
             lastSequence: event.sequence
         });
         const countedReviewType = reviewType.trim().toLowerCase();
         const countsTowardGuard = countedReviewType && !excludedReviewTypes.has(countedReviewType);
-        if (!existingFailed && nextFailed && countsTowardGuard) {
+        if (!existingFailed && nextFailed && countsTowardGuard && !reused) {
             latestFailedReview = buildLatestFailedReviewSummary(event, countedReviewType, event.details);
         }
         return false;
@@ -594,21 +756,21 @@ function buildReviewCycleAttemptDiagnostics(
         recordReviewCycleFreshReuse(freshReused, attempt);
         freshReusedByType.set(reviewType, freshReused);
         if (countsTowardGuard) {
-            cumulativeTotalNonTestReviewCount += 1;
-            if (attempt.failed) {
-                cumulativeFailedNonTestReviewCount += 1;
-            }
             if (attempt.reused) {
                 reusedNonTestReviewCount += 1;
             } else {
+                cumulativeTotalNonTestReviewCount += 1;
                 freshNonTestReviewCount += 1;
+                if (attempt.failed) {
+                    cumulativeFailedNonTestReviewCount += 1;
+                }
             }
         }
 
         if (!attempt.scopeHash) {
             if (attempt.currentScope) {
                 currentScopeTotalAttemptCount += 1;
-                if (countsTowardGuard) {
+                if (countsTowardGuard && !attempt.reused) {
                     const currentScopeCounts = currentScopeCountsByType.get(reviewType) || createReviewCycleAttemptCountSummary();
                     recordReviewCycleAttemptCount(currentScopeCounts, attempt);
                     currentScopeCountsByType.set(reviewType, currentScopeCounts);
@@ -650,7 +812,7 @@ function buildReviewCycleAttemptDiagnostics(
 
         if (attempt.currentScope) {
             currentScopeTotalAttemptCount += 1;
-            if (countsTowardGuard) {
+            if (countsTowardGuard && !attempt.reused) {
                 const currentScopeCounts = currentScopeCountsByType.get(reviewType) || createReviewCycleAttemptCountSummary();
                 recordReviewCycleAttemptCount(currentScopeCounts, attempt);
                 currentScopeCountsByType.set(reviewType, currentScopeCounts);
@@ -797,6 +959,7 @@ export function readReviewCycleGuardEvaluation(
     const reviewCycleAttempts = readReviewCycleGuardAttempts(
         repoRoot,
         timelinePath,
+        taskId,
         reviewCycleGuardConfig,
         readCurrentReviewCyclePreflightFingerprints(eventsRoot, taskId)
     );

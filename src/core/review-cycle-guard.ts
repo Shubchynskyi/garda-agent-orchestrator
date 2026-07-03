@@ -16,6 +16,7 @@ export interface ReviewCycleAttempt {
     failed: boolean;
     passed?: boolean;
     latestEventFailed?: boolean;
+    reused?: boolean;
 }
 
 export interface ReviewCycleGuardViolation {
@@ -117,7 +118,7 @@ export function evaluateReviewCycleGuard(
 
     for (const attempt of input.attempts) {
         const reviewType = attempt.reviewType.trim().toLowerCase();
-        if (!reviewType || excluded.has(reviewType)) {
+        if (!reviewType || excluded.has(reviewType) || attempt.reused === true) {
             continue;
         }
         countsByReviewType[reviewType] ??= { total: 0, failed: 0, passed: 0, pending: 0 };

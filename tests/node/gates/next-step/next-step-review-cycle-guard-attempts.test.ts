@@ -501,6 +501,63 @@ describe('gates/next-step review cycle guard attempts', () => {
         assert.equal(result.next_gate, 'compile-gate');
     });
 
+    it('does not count reused non-test review evidence toward fresh review-cycle limits', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 15,
+                    max_total_non_test_reviews: 1,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, api: true, performance: true, security: true });
+        for (const reviewType of ['code', 'api', 'performance']) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+                review_type: reviewType,
+                reviewer_identity: `agent:reused-${reviewType}`,
+                review_context_sha256: sha256Text(`reused-${reviewType}-context`),
+                reused_existing_review: true
+            });
+        }
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'security',
+            reviewer_identity: 'agent:fresh-security-fail-under-total-limit',
+            review_context_sha256: sha256Text('fresh-security-fail-under-total-limit'),
+            summary: 'fresh failure should not be amplified by reused reviews'
+        });
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'test',
+            reviewer_identity: 'agent:test-fail-excluded-after-reuse',
+            review_context_sha256: sha256Text('test-fail-excluded-after-reuse'),
+            summary: 'test failure is excluded from non-test guard accounting'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.equal(result.review_cycle_block, null);
+        assert.equal(text.includes('NextGate: review-cycle-attempt-guard'), false);
+    });
+
     it('keeps scanning review-cycle timeline after total limit to report the latest failed review', () => {
         const repoRoot = makeTempRepo();
         writeJson(
@@ -564,7 +621,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         assert.ok(formatNextStepText(result).includes('ReviewCycleLimits: max_total_non_test_reviews=1; max_failed_non_test_reviews=15'));
     });
 
-    it('counts failed review records by reading review artifact verdict when timeline outcome only confirms recording success', () => {
+    it('counts failed review records by reading immutable review artifact snapshot verdicts', () => {
         const repoRoot = makeTempRepo();
         writeJson(
             path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
@@ -593,13 +650,19 @@ describe('gates/next-step review cycle guard attempts', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, security: true });
         const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-security.md`);
-        fs.writeFileSync(artifactPath, '# security review\n\nSECURITY REVIEW FAILED\n', 'utf8');
+        const artifactContent = '# security review\n\nSECURITY REVIEW FAILED\n';
+        fs.writeFileSync(artifactPath, artifactContent, 'utf8');
+        const artifactSha256 = sha256Text(artifactContent);
+        const artifactSnapshotPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-security-artifact-${artifactSha256}.md`);
+        fs.writeFileSync(artifactSnapshotPath, artifactContent, 'utf8');
         for (let index = 0; index < 2; index += 1) {
             appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'security',
                 reviewer_identity: `agent:legacy-security-${index}`,
                 review_context_sha256: sha256Text(`legacy-security-context-${index}`),
-                review_artifact_path: artifactPath
+                review_artifact_path: artifactPath,
+                review_artifact_snapshot_path: artifactSnapshotPath,
+                review_artifact_snapshot_sha256: artifactSha256
             });
         }
 
@@ -607,6 +670,159 @@ describe('gates/next-step review cycle guard attempts', () => {
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
         assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+    });
+
+    it('keeps historical PASS verdict from immutable snapshot when mutable review artifact is later overwritten', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code.md`);
+        const passContent = '# code review\n\nCODE REVIEW PASSED\n';
+        const passSha256 = sha256Text(passContent);
+        const artifactSnapshotPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-artifact-${passSha256}.md`);
+        fs.writeFileSync(artifactPath, passContent, 'utf8');
+        fs.writeFileSync(artifactSnapshotPath, passContent, 'utf8');
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+                review_type: 'code',
+                reviewer_identity: `agent:historical-pass-${index}`,
+                review_context_sha256: sha256Text(`historical-pass-context-${index}`),
+                review_artifact_path: artifactPath,
+                review_artifact_snapshot_path: artifactSnapshotPath,
+                review_artifact_snapshot_sha256: passSha256
+            });
+        }
+        fs.writeFileSync(artifactPath, '# code review\n\nCODE REVIEW FAILED\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.equal(result.review_cycle_block, null);
+    });
+
+    it('keeps legacy path-only PASS outcome when mutable review artifact is later overwritten', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code.md`);
+        fs.writeFileSync(artifactPath, '# code review\n\nCODE REVIEW PASSED\n', 'utf8');
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+                review_type: 'code',
+                reviewer_identity: `agent:legacy-path-pass-${index}`,
+                review_context_sha256: sha256Text(`legacy-path-pass-context-${index}`),
+                review_artifact_path: artifactPath
+            });
+        }
+        fs.writeFileSync(artifactPath, '# code review\n\nCODE REVIEW FAILED\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.equal(result.review_cycle_block, null);
+    });
+
+    it('does not let a forged PASS snapshot override explicit failed review outcomes', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, security: true });
+        const passContent = '# security review\n\nSECURITY REVIEW PASSED\n';
+        const passSha256 = sha256Text(passContent);
+        const forgedSnapshotPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-security-artifact-${passSha256}.md`);
+        fs.writeFileSync(forgedSnapshotPath, passContent, 'utf8');
+        const mismatchedSnapshotSha256 = sha256Text('different snapshot content');
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+                review_type: 'security',
+                reviewer_identity: `agent:forged-security-${index}`,
+                review_context_sha256: sha256Text(`forged-security-context-${index}`),
+                review_artifact_snapshot_path: forgedSnapshotPath,
+                review_artifact_snapshot_sha256: mismatchedSnapshotSha256,
+                summary: `explicit security failure with forged PASS snapshot ${index}`
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('timeline_integrity=1>0'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.equal(
+            result.review_cycle_block?.latest_failed_review?.summary,
+            'explicit security failure with forged PASS snapshot 1'
+        );
     });
 
     it('does not block successful repeated review attempts when context hash is missing', () => {
@@ -848,16 +1064,16 @@ describe('gates/next-step review cycle guard attempts', () => {
         const text = formatNextStepText(result);
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
-        assert.ok(result.reason.includes('failed_non_test_review_count=48>15'));
-        assert.ok(result.reason.includes('total_non_test_review_count=48>30'));
+        assert.ok(result.reason.includes('failed_non_test_review_count=45>15'));
+        assert.ok(result.reason.includes('total_non_test_review_count=45>30'));
         assert.ok(result.reason.includes('cumulative_total_attempts=54'));
-        assert.ok(result.reason.includes('cumulative_non_test_reviews=48'));
+        assert.ok(result.reason.includes('cumulative_non_test_reviews=45'));
         assert.ok(result.reason.includes('current_scope_non_test_reviews=3'));
         assert.ok(result.reason.includes('fresh_non_test_reviews=45'));
         assert.ok(result.reason.includes('reused_non_test_reviews=3'));
         assert.ok(result.reason.includes('fresh_reused_by_type=code:fresh=45,reused=3|test:fresh=6,reused=0'));
         assert.ok(result.reason.includes('top_scope_hashes_by_type=code:unique=20'));
-        assert.equal(result.review_cycle_block?.cumulative_total_non_test_review_count, 48);
+        assert.equal(result.review_cycle_block?.cumulative_total_non_test_review_count, 45);
         assert.equal(result.review_cycle_block?.current_scope_total_non_test_review_count, 3);
         assert.equal(result.review_cycle_block?.fresh_non_test_review_count, 45);
         assert.equal(result.review_cycle_block?.reused_non_test_review_count, 3);
@@ -869,14 +1085,14 @@ describe('gates/next-step review cycle guard attempts', () => {
             pending: 0
         });
         assert.deepEqual(result.review_cycle_block?.counts_by_review_type.code, {
-            total: 48,
+            total: 45,
             passed: 0,
-            failed: 48,
+            failed: 45,
             pending: 0
         });
         assert.equal(result.review_cycle_block?.counts_by_review_type.test, undefined);
         assert.equal(result.review_cycle_block?.latest_failed_review?.summary, 'T-004-3 failed code review attempt 47');
-        assert.ok(text.includes('ReviewCycleCumulativeCounts: total_non_test_reviews=48; failed_non_test_reviews=48; fresh_non_test_reviews=45; reused_non_test_reviews=3'));
+        assert.ok(text.includes('ReviewCycleCumulativeCounts: total_non_test_reviews=45; failed_non_test_reviews=45; fresh_non_test_reviews=45; reused_non_test_reviews=3'));
         assert.ok(text.includes('ReviewCycleCurrentScopeCounts: total_non_test_reviews=3; failed_non_test_reviews=3'));
         assert.ok(text.includes('"code": unique=20'));
     });

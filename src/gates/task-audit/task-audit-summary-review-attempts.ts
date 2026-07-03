@@ -350,16 +350,16 @@ function buildReviewAttemptDiagnostics(
         recordReviewAttemptFreshReuse(freshReused, attempt);
         freshReusedByType.set(reviewType, freshReused);
         if (countsTowardNonTest) {
-            totalNonTestAttempts += 1;
             if (attempt.reusedExistingReview) {
                 reusedNonTestAttempts += 1;
             } else {
+                totalNonTestAttempts += 1;
                 freshNonTestAttempts += 1;
             }
         }
         if (attempt.currentScope) {
             currentScopeTotalAttempts += 1;
-            if (countsTowardNonTest) {
+            if (countsTowardNonTest && !attempt.reusedExistingReview) {
                 const currentScopeCounts = currentScopeCountsByType.get(reviewType) || createReviewAttemptCountSummary();
                 recordReviewAttemptCount(currentScopeCounts, attempt);
                 currentScopeCountsByType.set(reviewType, currentScopeCounts);
