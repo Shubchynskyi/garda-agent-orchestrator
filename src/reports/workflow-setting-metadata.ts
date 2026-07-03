@@ -189,13 +189,13 @@ const canonicalOptionalSkillSelectionPolicyOptions: WorkflowSettingOption[] = CA
             return {
                 value: mode,
                 label: 'Mandatory',
-                description: 'Require a selected installed specialist skill before implementation starts when policy matching selects one.'
+                description: 'Require a selected installed optional or custom live specialist skill before implementation starts when policy matching selects one.'
             };
         default:
             return {
                 value: mode,
                 label: 'Optional',
-                description: 'Show specialist-skill suggestions and recommended packs without blocking ordinary task work.'
+                description: 'Show installed optional, custom live specialist-skill, and recommended pack suggestions without blocking ordinary task work.'
             };
     }
 });
@@ -252,7 +252,7 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'optional-skill-selection-mode',
         key: 'optional_skill_selection_policy.mode',
         label: 'Specialist-skill selection mode',
-        description: 'Controls whether task start keeps specialist-skill matching off, optional, or mandatory. Legacy advisory/required/strict values remain read-compatible and are rewritten to canonical modes when saved.',
+        description: 'Controls whether task start keeps installed optional and custom live specialist-skill matching off, optional, or mandatory. Legacy advisory/required/strict values remain read-compatible and are rewritten to canonical modes when saved.',
         flag: '--optional-skill-selection-mode',
         value_type: 'enum',
         options: optionalSkillSelectionPolicyOptions

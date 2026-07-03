@@ -406,6 +406,13 @@ export interface NextStepOptionalSkillSelectionSummary {
     policy_mode: string | null;
     decision: string | null;
     selected_skill_ids: string[];
+    selected_skill_sources: string[];
+    selected_skill_details: Array<{
+        id: string;
+        pack: string | null;
+        source: string;
+        allowed_skill_path: string;
+    }>;
     activated_skill_ids: string[];
     pending_activation_skill_ids: string[];
     recommended_missing_pack_ids: string[];
@@ -1236,6 +1243,34 @@ function readStringArrayFromObjects(value: unknown, fieldName: string): string[]
         .sort();
 }
 
+function readOptionalSkillSelectionDetails(value: unknown): NextStepOptionalSkillSelectionSummary['selected_skill_details'] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value
+        .map((entry) => {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                return null;
+            }
+            const raw = entry as Record<string, unknown>;
+            const id = String(raw.id || '').trim();
+            const source = String(raw.source || '').trim();
+            const allowedSkillPath = String(raw.allowed_skill_path || '').trim();
+            if (!id || !source || !allowedSkillPath) {
+                return null;
+            }
+            const pack = String(raw.pack || '').trim() || null;
+            return {
+                id,
+                pack,
+                source,
+                allowed_skill_path: allowedSkillPath
+            };
+        })
+        .filter((entry): entry is NextStepOptionalSkillSelectionSummary['selected_skill_details'][number] => entry !== null)
+        .sort((left, right) => left.id.localeCompare(right.id));
+}
+
 function buildOptionalSkillTaskStartInstruction(input: {
     policyMode: string | null;
     selectedSkillIds: string[];
@@ -1296,6 +1331,8 @@ function buildOptionalSkillSelectionSummary(
     );
     const artifactPayload = artifact?.payload || null;
     const selectedSkillIds = readStringArrayFromObjects(artifactPayload?.selected_installed_skills, 'id');
+    const selectedSkillSources = readStringArrayFromObjects(artifactPayload?.selected_installed_skills, 'source');
+    const selectedSkillDetails = readOptionalSkillSelectionDetails(artifactPayload?.selected_installed_skills);
     const recommendedMissingPackIds = readStringArrayFromObjects(artifactPayload?.recommended_missing_packs, 'id');
     const rawPolicyMode = String(preflightOptionalRecord.policy_mode || artifactPayload?.policy_mode || '').trim();
     const policyMode = rawPolicyMode ? normalizeOptionalSkillSelectionPolicyMode(rawPolicyMode) : null;
@@ -1329,6 +1366,8 @@ function buildOptionalSkillSelectionSummary(
         policy_mode: policyMode,
         decision,
         selected_skill_ids: selectedSkillIds,
+        selected_skill_sources: selectedSkillSources,
+        selected_skill_details: selectedSkillDetails,
         activated_skill_ids: activatedSkillIds,
         pending_activation_skill_ids: pendingActivationSkillIds,
         recommended_missing_pack_ids: recommendedMissingPackIds,

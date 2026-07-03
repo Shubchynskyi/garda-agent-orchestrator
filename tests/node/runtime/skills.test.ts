@@ -83,6 +83,25 @@ function seedBaselineSkills(repoRoot: string, bundleRoot: string) {
     );
 }
 
+function writeCustomTelegramSkill(bundleRoot: string, directory = 'telegram-tdlight') {
+    const skillRoot = path.join(bundleRoot, 'live', 'skills', directory);
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(path.join(skillRoot, 'skill.json'), JSON.stringify({
+        id: 'telegram-tdlight',
+        name: 'Telegram TDLight',
+        summary: 'Custom Telegram TDLight specialist for session, webhook, and client runtime work.',
+        tags: ['custom', 'telegram', 'tdlight'],
+        aliases: ['telegram-tdlight', 'tdlight'],
+        task_signals: ['telegram tdlight', 'tdlight session', 'telegram client'],
+        changed_path_signals: ['src/telegram/', 'telegram/tdlight'],
+        references: [],
+        cost_hint: 'medium',
+        priority: 75,
+        autoload: 'suggest'
+    }, null, 2), 'utf8');
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# Telegram TDLight\n\nUse for Telegram TDLight client runtime work.\n', 'utf8');
+}
+
 test('built-in skill pack lifecycle installs, validates, lists, and removes packs', () => {
     const repoRoot = findRepoRoot();
     const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-'));
@@ -261,6 +280,40 @@ test('suggestSkills separates already-available skills from optional additions',
 
         assert.ok(result.availableRelevantSkills.some((skill) => skill.id === 'frontend-react'));
         assert.ok(!result.suggestedSkills.some((skill) => skill.id === 'frontend-react'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('suggestSkills treats custom live work skills as available specialist skills', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-custom-suggest-'));
+    const workspaceRoot = path.join(bundleRoot, 'workspace');
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+        writeCustomTelegramSkill(bundleRoot);
+
+        fs.mkdirSync(path.join(workspaceRoot, 'src', 'telegram'), { recursive: true });
+        fs.writeFileSync(path.join(workspaceRoot, 'src', 'telegram', 'client.ts'), 'export const client = true;\n', 'utf8');
+
+        const result = suggestSkills(bundleRoot, workspaceRoot, {
+            taskText: 'Fix Telegram TDLight session recovery',
+            changedPaths: ['src/telegram/client.ts']
+        });
+
+        const customSkill = result.availableRelevantSkills.find((skill) => skill.id === 'telegram-tdlight');
+        assert.ok(customSkill, `Expected custom skill in available suggestions: ${JSON.stringify(result.availableRelevantSkills)}`);
+        assert.equal(customSkill.source, 'custom_live');
+        assert.equal(customSkill.pack, 'custom');
+        assert.ok(!result.suggestedSkills.some((skill) => skill.id === 'telegram-tdlight'));
+        assert.ok(!result.availableRelevantPacks.some((pack) => pack.id === 'custom'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

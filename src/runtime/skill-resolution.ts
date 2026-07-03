@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { pathExists } from '../core/filesystem';
 import { getProjectDiscovery } from '../materialization/project-discovery';
 import { emitSkillSuggestedEvent } from './skill-telemetry';
 
@@ -12,6 +13,8 @@ import {
     readSkillsIndex
 } from './skill-index';
 import type { SkillsIndexPackEntry, SkillsIndexSkillEntry } from './skill-index';
+import { loadSkillsHeadlines } from './optional-skill-selection/headlines-cache';
+import type { SkillsHeadlineSkillEntry } from './skill-headlines';
 
 import {
     getSkillPacksConfigPath,
@@ -58,7 +61,26 @@ export interface SkillSuggestion {
     summary: string;
     score: number;
     installed: boolean;
+    source?: 'builtin_pack' | 'installed_optional' | 'custom_live';
+    directory?: string | null;
     matches: SignalMatches;
+}
+
+interface SkillScoringEntry {
+    id: string;
+    name: string;
+    pack: string;
+    summary: string;
+    tags: string[];
+    aliases: string[];
+    stack_signals: string[];
+    task_signals: string[];
+    changed_path_signals: string[];
+    priority: number;
+    deprecated: boolean;
+    implemented: boolean;
+    source?: 'builtin_pack' | 'installed_optional' | 'custom_live';
+    directory?: string | null;
 }
 
 interface PackSuggestionAggregate {
@@ -300,7 +322,7 @@ function buildSuggestionContext(targetRoot: string, taskText: unknown, changedPa
 }
 
 function scoreSkillSuggestion(
-    skill: SkillsIndexSkillEntry,
+    skill: SkillScoringEntry,
     context: SuggestionContext,
     installedPackIds: readonly string[]
 ): SkillSuggestion | null {
@@ -358,7 +380,9 @@ function scoreSkillSuggestion(
         pack: skill.pack,
         summary: skill.summary,
         score,
-        installed: installedPackIds.includes(skill.pack),
+        installed: skill.source === 'custom_live' || skill.source === 'installed_optional' || installedPackIds.includes(skill.pack),
+        source: skill.source || (installedPackIds.includes(skill.pack) ? 'installed_optional' : 'builtin_pack'),
+        directory: skill.directory || null,
         matches: {
             stack_signals: stackMatches,
             task_signals: taskMatches,
@@ -367,6 +391,71 @@ function scoreSkillSuggestion(
             aliases_or_tags: aliasMatches
         }
     };
+}
+
+function toIndexScoringEntry(
+    skill: SkillsIndexSkillEntry,
+    installedPackIds: readonly string[],
+    customLiveSkillsById: ReadonlyMap<string, SkillsHeadlineSkillEntry>
+): SkillScoringEntry {
+    const customLiveSkill = customLiveSkillsById.get(skill.id);
+    return {
+        ...skill,
+        source: customLiveSkill
+            ? 'custom_live'
+            : installedPackIds.includes(skill.pack)
+                ? 'installed_optional'
+                : 'builtin_pack',
+        directory: customLiveSkill?.directory || null
+    };
+}
+
+function hasLiveSkillEntrypoint(bundleRoot: string, skill: SkillsHeadlineSkillEntry): boolean {
+    const skillDirectory = String(skill.directory || skill.id || '').trim();
+    if (!skillDirectory) {
+        return false;
+    }
+    return pathExists(path.join(bundleRoot, 'live', 'skills', skillDirectory, 'SKILL.md'));
+}
+
+function getCustomLiveSkills(bundleRoot: string): SkillsHeadlineSkillEntry[] {
+    const loadedHeadlines = loadSkillsHeadlines(bundleRoot, 'optional');
+    const skills = Array.isArray(loadedHeadlines?.skills) ? loadedHeadlines.skills : [];
+    return skills
+        .filter((skill) => (
+            skill.source === 'custom_live'
+            && skill.implemented !== false
+            && skill.review_binding === 'general_purpose'
+            && hasLiveSkillEntrypoint(bundleRoot, skill)
+        ))
+        .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function toCustomLiveScoringEntry(skill: SkillsHeadlineSkillEntry): SkillScoringEntry {
+    return {
+        id: skill.id,
+        name: skill.name,
+        pack: skill.pack || 'custom',
+        summary: skill.summary,
+        tags: [...skill.tags],
+        aliases: [...skill.aliases],
+        stack_signals: [],
+        task_signals: [...skill.task_signals],
+        changed_path_signals: [...skill.changed_path_signals],
+        priority: 50,
+        deprecated: false,
+        implemented: skill.implemented !== false,
+        source: 'custom_live',
+        directory: skill.directory || skill.id
+    };
+}
+
+function isSkillAvailableLocally(skill: SkillSuggestion, liveSkillDirectorySet: ReadonlySet<string>): boolean {
+    if (skill.source === 'custom_live') {
+        return true;
+    }
+    const directory = String(skill.directory || '').trim();
+    return liveSkillDirectorySet.has(skill.id) || (!!directory && liveSkillDirectorySet.has(directory));
 }
 
 // Same-pack dedupe – keeps the top-N suggestion list diverse across packs
@@ -476,10 +565,21 @@ export function suggestSkills(bundleRoot: string, targetRoot: string, options: S
     const packIndex = new Map<string, SkillsIndexPackEntry>(payload.packs.map((pack: SkillsIndexPackEntry) => [pack.id, pack]));
     const limit = normalizeNonNegativeInteger(options.limit, 7) || 7;
     const packLimit = normalizeNonNegativeInteger(options.packLimit, 5) || 5;
+    const customLiveSkills = getCustomLiveSkills(bundleRoot);
+    const customLiveSkillsById = new Map(customLiveSkills.map((skill) => [skill.id, skill]));
+    const indexedSkillIds = new Set(payload.skills.map((skill: SkillsIndexSkillEntry) => skill.id));
+    const supplementalCustomLiveSkills = customLiveSkills
+        .filter((skill) => !indexedSkillIds.has(skill.id))
+        .map(toCustomLiveScoringEntry);
 
-    const allSkillSuggestions = payload.skills
-        .filter((skill: SkillsIndexSkillEntry) => skill.implemented !== false)
-        .map((skill: SkillsIndexSkillEntry) => scoreSkillSuggestion(skill, context, installedPackIds))
+    const allSkillSuggestions = [
+        ...payload.skills
+            .filter((skill: SkillsIndexSkillEntry) => skill.implemented !== false)
+            .map((skill: SkillsIndexSkillEntry) => toIndexScoringEntry(skill, installedPackIds, customLiveSkillsById)),
+        ...supplementalCustomLiveSkills
+    ]
+        .filter((skill) => skill.implemented !== false)
+        .map((skill) => scoreSkillSuggestion(skill, context, installedPackIds))
         .filter((skill): skill is SkillSuggestion => skill !== null)
         .sort((left: SkillSuggestion, right: SkillSuggestion) => {
             if (right.score !== left.score) {
@@ -488,15 +588,21 @@ export function suggestSkills(bundleRoot: string, targetRoot: string, options: S
             return left.id.localeCompare(right.id);
         });
 
-    const availableRelevantSkillsFull = allSkillSuggestions.filter((skill: SkillSuggestion) => liveSkillDirectorySet.has(skill.id));
+    const availableRelevantSkillsFull = allSkillSuggestions.filter((skill: SkillSuggestion) => (
+        isSkillAvailableLocally(skill, liveSkillDirectorySet)
+    ));
     const suggestedSkillsFull = allSkillSuggestions.filter((skill: SkillSuggestion) => (
-        !liveSkillDirectorySet.has(skill.id) &&
+        !isSkillAvailableLocally(skill, liveSkillDirectorySet) &&
         skill.score >= SUGGESTED_SKILL_MIN_SCORE
     ));
 
     // Pack aggregation uses the full (non-deduped) skill lists so pack
     // scores and match summaries remain comprehensive.
-    const availableRelevantPacks = aggregatePackSuggestions(availableRelevantSkillsFull, packIndex, installedPackIds);
+    const availableRelevantPacks = aggregatePackSuggestions(
+        availableRelevantSkillsFull.filter((skill) => skill.source !== 'custom_live'),
+        packIndex,
+        installedPackIds
+    );
     const suggestedPacks = aggregatePackSuggestions(suggestedSkillsFull, packIndex, installedPackIds)
         .filter((pack) => !pack.installed && pack.score >= SUGGESTED_PACK_MIN_SCORE);
 

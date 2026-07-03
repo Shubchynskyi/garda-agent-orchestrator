@@ -740,6 +740,80 @@ describe('next-step refactor contract baseline', () => {
         assert.match(text, /^OptionalSkillTaskStartInstruction: .*compact skill catalog/mu);
     });
 
+    it('renders custom live optional skill source details for selected work skills', () => {
+        const repoRoot = makeContractRepo();
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const optionalSkillArtifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: TASK_ID,
+            timestamp_utc: '2026-01-01T00:00:00.000Z',
+            policy_mode: 'advisory',
+            decision: 'selected_installed_skills',
+            selected_installed_skills: [
+                {
+                    id: 'telegram-tdlight',
+                    pack: 'custom',
+                    source: 'custom_live',
+                    allowed_skill_path: 'garda-agent-orchestrator/live/skills/telegram-tdlight/SKILL.md',
+                    reason_codes: ['task_signals', 'changed_path_signals'],
+                    matches: { task_signals: ['telegram tdlight'], changed_path_signals: ['src/telegram/'] }
+                }
+            ],
+            recommended_missing_packs: [],
+            as_is_reason: null,
+            task_text_present: true,
+            task_text_sha256: 'fixture-task-text',
+            changed_paths: ['src/telegram/client.ts'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: 'fixture-preflight',
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: 'fixture-headlines',
+            visible_summary_line: 'Optional skills: telegram-tdlight (reason: task_text+paths)'
+        };
+        writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            scope_category: 'code',
+            changed_files: ['src/telegram/client.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            optional_skill_selection: {
+                artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
+                policy_mode: 'advisory',
+                decision: 'selected_installed_skills',
+                visible_summary_line: 'Optional skills: telegram-tdlight (reason: task_text+paths)'
+            }
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.deepEqual(result.optional_skill_selection?.selected_skill_ids, ['telegram-tdlight']);
+        assert.deepEqual(result.optional_skill_selection?.selected_skill_sources, ['custom_live']);
+        assert.deepEqual(result.optional_skill_selection?.selected_skill_details, [{
+            id: 'telegram-tdlight',
+            pack: 'custom',
+            source: 'custom_live',
+            allowed_skill_path: 'garda-agent-orchestrator/live/skills/telegram-tdlight/SKILL.md'
+        }]);
+        assert.match(
+            text,
+            /^OptionalSkillSelectedDetails: telegram-tdlight:custom_live:garda-agent-orchestrator\/live\/skills\/telegram-tdlight\/SKILL\.md$/mu
+        );
+    });
+
     it('routes mandatory missing-pack decisions to optional-skill remediation before compile', () => {
         const repoRoot = makeContractRepo();
         const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');

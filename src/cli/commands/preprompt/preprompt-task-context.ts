@@ -515,6 +515,8 @@ export function buildOptionalSkillsDiagnostics(
                 decision: null,
                 selected_installed_skills: [],
                 selected_installed_skill_paths: [],
+                selected_installed_skill_sources: [],
+                selected_installed_skill_details: [],
                 selected_installed_skill_activation_ready: false,
                 selected_installed_skill_activation_blocker: null,
                 selected_installed_skill_activation_commands: [],
@@ -592,6 +594,15 @@ export function buildOptionalSkillsDiagnostics(
         const requiresMaterializedArtifact = isMandatoryPolicy;
         const selectedSkillIds = preview.payload.selected_installed_skills.map((entry) => entry.id);
         const selectedSkillPaths = preview.payload.selected_installed_skills.map((entry) => entry.allowed_skill_path);
+        const selectedSkillSources = preview.payload.selected_installed_skills.map((entry) => entry.source);
+        const selectedSkillDetails = preview.payload.selected_installed_skills.map((entry) => ({
+            id: entry.id,
+            pack: entry.pack,
+            source: entry.source,
+            allowed_skill_path: entry.allowed_skill_path,
+            reason_codes: [...entry.reason_codes],
+            matches: entry.matches
+        }));
         const recommendedPackIds = preview.payload.recommended_missing_packs.map((entry) => entry.id);
         const activationReady = (
             preview.payload.selected_installed_skills.length > 0
@@ -659,6 +670,8 @@ export function buildOptionalSkillsDiagnostics(
             decision: preview.payload.decision,
             selected_installed_skills: selectedSkillIds,
             selected_installed_skill_paths: selectedSkillPaths,
+            selected_installed_skill_sources: selectedSkillSources,
+            selected_installed_skill_details: selectedSkillDetails,
             selected_installed_skill_activation_ready: activationReady,
             selected_installed_skill_activation_blocker: activationBlocker,
             selected_installed_skill_activation_commands: activationCommands,

@@ -105,6 +105,59 @@ function seedNodeBackendOptionalSkillFixture(
     }
 }
 
+function seedTelegramCustomSkillFixture(
+    bundleRoot: string,
+    options: {
+        policyMode?: 'optional' | 'mandatory' | 'advisory' | 'required' | 'strict' | 'off' | null;
+    } = {}
+): void {
+    const configDir = path.join(bundleRoot, 'live', 'config');
+    const skillRoot = path.join(bundleRoot, 'live', 'skills', 'telegram-tdlight');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(
+        path.join(configDir, 'garda.config.json'),
+        JSON.stringify({
+            version: 1,
+            configs: {
+                'optional-skill-selection-policy': 'optional-skill-selection-policy.json',
+                'skill-packs': 'skill-packs.json'
+            }
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'skill-packs.json'),
+        JSON.stringify({ version: 1, installed_packs: [] }, null, 2),
+        'utf8'
+    );
+    if (options.policyMode !== null) {
+        fs.writeFileSync(
+            path.join(configDir, 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: options.policyMode || 'advisory' }, null, 2),
+            'utf8'
+        );
+    }
+    fs.writeFileSync(
+        path.join(skillRoot, 'skill.json'),
+        JSON.stringify({
+            id: 'telegram-tdlight',
+            name: 'Telegram TDLight',
+            summary: 'Custom Telegram TDLight specialist for session and client runtime work.',
+            tags: ['custom', 'telegram', 'tdlight'],
+            aliases: ['telegram-tdlight', 'tdlight'],
+            task_signals: ['telegram tdlight', 'tdlight session'],
+            changed_path_signals: ['src/telegram/'],
+            references: [],
+            cost_hint: 'medium',
+            priority: 75,
+            autoload: 'suggest'
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# Telegram TDLight\n', 'utf8');
+}
+
 
 
 function sha256File(filePath: string): string {
@@ -244,6 +297,67 @@ test('preprompt task --json shows optional skill selection preview from headline
         assert.match(String(optionalSkills.task_start_instruction || ''), /Selected optional skill\(s\): node-backend/);
         assert.match(String(optionalSkills.task_start_instruction || ''), /activate the selected skill/i);
         assert.match(String(optionalSkills.visible_summary_line || ''), /Optional skills: node-backend/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json shows custom live specialist skill source details', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Fix Telegram TDLight session recovery'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            changed_files: ['src/telegram/client.ts']
+        });
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedTelegramCustomSkillFixture(bundleRoot, {
+            policyMode: 'advisory'
+        });
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const diagnostics = payload.diagnostics as Record<string, unknown>;
+        const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
+        assert.equal(optionalSkills.policy_mode, 'optional');
+        assert.equal(optionalSkills.decision, 'selected_installed_skills');
+        assert.deepEqual(optionalSkills.selected_installed_skills, ['telegram-tdlight']);
+        assert.deepEqual(optionalSkills.selected_installed_skill_sources, ['custom_live']);
+        assert.deepEqual(optionalSkills.selected_installed_skill_paths, [
+            'garda-agent-orchestrator/live/skills/telegram-tdlight/SKILL.md'
+        ]);
+        const details = optionalSkills.selected_installed_skill_details as Array<Record<string, unknown>>;
+        assert.equal(details[0].id, 'telegram-tdlight');
+        assert.equal(details[0].source, 'custom_live');
+        assert.equal(details[0].pack, 'custom');
+        assert.match(String(optionalSkills.task_start_instruction || ''), /Selected optional skill\(s\): telegram-tdlight/);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

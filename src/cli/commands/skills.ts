@@ -160,7 +160,7 @@ export function buildSkillsSuggestOutput(result: SkillSuggestResult): string {
                 skill.matches.project_path_signals.length > 0 ? `project=${skill.matches.project_path_signals.join('|')}` : null,
                 skill.matches.aliases_or_tags.length > 0 ? `alias=${skill.matches.aliases_or_tags.join('|')}` : null
             ].filter(Boolean).join('; ');
-            lines.push(`  ${padRight(skill.id, 28)} already-available pack=${skill.pack}${reasons ? ` ${reasons}` : ''}`);
+            lines.push(`  ${padRight(skill.id, 28)} already-available source=${skill.source || 'builtin_pack'} pack=${skill.pack}${reasons ? ` ${reasons}` : ''}`);
         }
     }
     lines.push('');
@@ -198,7 +198,7 @@ export function buildSkillsSuggestOutput(result: SkillSuggestResult): string {
                 skill.matches.project_path_signals.length > 0 ? `project=${skill.matches.project_path_signals.join('|')}` : null,
                 skill.matches.aliases_or_tags.length > 0 ? `alias=${skill.matches.aliases_or_tags.join('|')}` : null
             ].filter(Boolean).join('; ');
-            lines.push(`  ${padRight(skill.id, 28)} score=${skill.score.toFixed(2)} pack=${skill.pack} summary=${skill.summary}${reasons ? ` ${reasons}` : ''}`);
+            lines.push(`  ${padRight(skill.id, 28)} score=${skill.score.toFixed(2)} source=${skill.source || 'builtin_pack'} pack=${skill.pack} summary=${skill.summary}${reasons ? ` ${reasons}` : ''}`);
         }
     }
     return lines.join('\n');

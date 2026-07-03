@@ -250,6 +250,11 @@ export function formatNextStepText(result: NextStepResult): string {
         if (optionalSkills.selected_skill_ids.length > 0) {
             lines.push(`OptionalSkillSelected: ${optionalSkills.selected_skill_ids.join(', ')}`);
         }
+        if (optionalSkills.selected_skill_details.length > 0) {
+            lines.push(`OptionalSkillSelectedDetails: ${optionalSkills.selected_skill_details.map((entry) => `${entry.id}:${entry.source}:${entry.allowed_skill_path}`).join(', ')}`);
+        } else if (optionalSkills.selected_skill_sources.length > 0) {
+            lines.push(`OptionalSkillSelectedSources: ${optionalSkills.selected_skill_sources.join(', ')}`);
+        }
         if (optionalSkills.activated_skill_ids.length > 0) {
             lines.push(`OptionalSkillActivatedCurrentCycle: ${optionalSkills.activated_skill_ids.join(', ')}`);
         }

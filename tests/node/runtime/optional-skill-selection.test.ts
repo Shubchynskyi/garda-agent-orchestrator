@@ -57,6 +57,35 @@ function seedOptionalSkillWorkspace(bundleRoot: string): void {
     );
 }
 
+function writeCustomTelegramSkill(
+    bundleRoot: string,
+    options: {
+        id?: string;
+        directory?: string;
+        tags?: string[];
+        summary?: string;
+    } = {}
+): void {
+    const skillId = options.id || 'telegram-tdlight';
+    const directory = options.directory || skillId;
+    const skillRoot = path.join(bundleRoot, 'live', 'skills', directory);
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(path.join(skillRoot, 'skill.json'), JSON.stringify({
+        id: skillId,
+        name: skillId,
+        summary: options.summary || 'Custom Telegram TDLight specialist for session, webhook, and client runtime work.',
+        tags: options.tags || ['custom', 'telegram', 'tdlight'],
+        aliases: [skillId, 'tdlight'],
+        task_signals: ['telegram tdlight', 'tdlight session', 'telegram client'],
+        changed_path_signals: ['src/telegram/', 'telegram/tdlight'],
+        references: [],
+        cost_hint: 'medium',
+        priority: 75,
+        autoload: 'suggest'
+    }, null, 2), 'utf8');
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), `# ${skillId}\n`, 'utf8');
+}
+
 function writeSkillsHeadlinesFixture(bundleRoot: string, payload: Record<string, unknown>): void {
     fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
     fs.writeFileSync(
@@ -133,6 +162,38 @@ test('buildOptionalSkillSelectionArtifact selects matching installed optional sk
             /live\/skills\/node-backend\/SKILL\.md$/
         );
         assert.match(artifact.payload.visible_summary_line, /Optional skills: node-backend/);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildOptionalSkillSelectionArtifact selects custom live work skills without treating review skills as work skills', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        writeCustomTelegramSkill(bundleRoot);
+        writeCustomTelegramSkill(bundleRoot, {
+            id: 'telegram-tdlight-review',
+            directory: 'telegram-tdlight-review',
+            tags: ['custom', 'telegram', 'review'],
+            summary: 'Custom review specialist for Telegram TDLight review work.'
+        });
+
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Fix Telegram TDLight session recovery',
+            changedPaths: ['src/telegram/client.ts']
+        });
+
+        assert.equal(artifact.payload.decision, 'selected_installed_skills');
+        assert.deepEqual(artifact.payload.selected_installed_skills.map((entry) => entry.id), ['telegram-tdlight']);
+        assert.equal(artifact.payload.selected_installed_skills[0].source, 'custom_live');
+        assert.equal(artifact.payload.selected_installed_skills[0].pack, 'custom');
+        assert.match(
+            artifact.payload.selected_installed_skills[0].allowed_skill_path,
+            /live\/skills\/telegram-tdlight\/SKILL\.md$/
+        );
+        assert.ok(!artifact.payload.selected_installed_skills.some((entry) => entry.id === 'telegram-tdlight-review'));
+        assert.match(artifact.payload.visible_summary_line, /Optional skills: telegram-tdlight/);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
