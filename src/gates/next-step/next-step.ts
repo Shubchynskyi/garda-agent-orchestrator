@@ -417,6 +417,7 @@ export interface NextStepOptionalSkillSelectionSummary {
     pending_activation_skill_ids: string[];
     recommended_missing_pack_ids: string[];
     as_is_reason: string | null;
+    changed_paths_count: number;
     visible_summary_line: string | null;
     activation_commands: string[];
     skill_catalog_path: string | null;
@@ -1338,6 +1339,9 @@ function buildOptionalSkillSelectionSummary(
     const policyMode = rawPolicyMode ? normalizeOptionalSkillSelectionPolicyMode(rawPolicyMode) : null;
     const decision = String(preflightOptionalRecord.decision || artifactPayload?.decision || '').trim() || null;
     const asIsReason = String(artifactPayload?.as_is_reason || '').trim() || null;
+    const changedPathsCount = Array.isArray(artifactPayload?.changed_paths)
+        ? artifactPayload.changed_paths.length
+        : 0;
     const visibleSummaryLine = String(preflightOptionalRecord.visible_summary_line || artifactPayload?.visible_summary_line || '').trim() || null;
     const skillCatalogPath = String(artifactPayload?.headlines_path || '').trim() || null;
     const timelineEvidence = artifactPayload
@@ -1372,6 +1376,7 @@ function buildOptionalSkillSelectionSummary(
         pending_activation_skill_ids: pendingActivationSkillIds,
         recommended_missing_pack_ids: recommendedMissingPackIds,
         as_is_reason: asIsReason,
+        changed_paths_count: changedPathsCount,
         visible_summary_line: visibleSummaryLine,
         activation_commands: decision === 'selected_installed_skills' ? activationCommands : [],
         skill_catalog_path: skillCatalogPath,
@@ -1416,6 +1421,9 @@ function getMandatoryOptionalSkillRemediationCommand(
         return null;
     }
     if (optionalSkillSelection.decision === 'selected_installed_skills') {
+        return null;
+    }
+    if (optionalSkillSelection.decision === 'as_is' && optionalSkillSelection.changed_paths_count === 0) {
         return null;
     }
     const recommendedPackId = optionalSkillSelection.recommended_missing_pack_ids[0] || null;

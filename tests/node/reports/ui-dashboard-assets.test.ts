@@ -650,6 +650,9 @@ test('quality gate rule table renders long localized disabled rows in responsive
     assert.match(html, /Сохранение отключено/u);
     assert.match(UI_DASHBOARD_STYLES, /\.quality-gate-rule-table th, \.quality-gate-rule-table td \{ overflow-wrap: anywhere; \}/u);
     assert.match(UI_DASHBOARD_STYLES, /\.quality-gate-rule-table input, \.quality-gate-rule-table select \{ width: 100%; min-width: 0; \}/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.quality-gate-detail \.quality-gate-rule-table th:nth-child\(8\) \{ width: 13%; min-width: 150px; \}/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.quality-gate-rule-table th:nth-child\(8\), \.quality-gate-rule-table td\.quality-gate-rule-actions \{ position: sticky; right: 0;/u);
+    assert.match(html, /class="quality-gate-rule-actions"/u);
 });
 
 test('quality gate rule table renders new custom row before custom rules and baseline rules', () => {
@@ -829,6 +832,7 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
     assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-code_simplification-exclude-test-only')), false);
     assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'optional-rule-code_simplification-exclude-test-only')), true);
     assert.equal(htmlTagHasChecked(htmlTagById(html, 'input', 'optional-rule-project_style_fit-exclude-test-only')), false);
+    assert.match(html, /<td class="quality-gate-rule-actions">/u);
     assert.equal(htmlTagHasDisabled(htmlButtonByRuleAction(html, 'code_simplification', 'upsert')), false);
     assert.match(htmlButtonByRuleAction(html, 'code_simplification', 'upsert'), /data-quality-gate-rule-source="baseline"/u);
     assert.equal(htmlTagHasDisabled(htmlButtonByRuleAction(html, 'code_simplification', 'delete')), true);

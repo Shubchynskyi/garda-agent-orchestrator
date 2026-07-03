@@ -259,9 +259,6 @@ function normalizeOptionalQualityCheckRule(input: unknown): OptionalQualityCheck
             prompt,
             enabled: input.enabled === undefined ? baselineRule.enabled : input.enabled === true
         } as OptionalQualityCheckRule;
-        if (!hasOwn(input, 'excluded_scope_categories')) {
-            delete normalizedRule.excluded_scope_categories;
-        }
         return applyRuleScopeExclusions(normalizedRule, input);
     }
     const customRule = {
@@ -353,9 +350,6 @@ function mergeOptionalQualityCheckRulesWithBaseline(
                         prompt: existingRule.prompt,
                         enabled: existingRule.enabled !== false
                     };
-                if (!hasOwn(existingRule, 'excluded_scope_categories')) {
-                    delete preservedRule.excluded_scope_categories;
-                }
                 mergedRules.push(applyRuleScopeExclusions(preservedRule, existingRule));
                 mergedRuleIds.add(existingRule.id);
             }

@@ -112,8 +112,6 @@ function applyOptionalCheckRuleScopeOptions(
         nextRule = { ...nextRule };
         if (hasOwn(existing, 'excluded_scope_categories')) {
             nextRule.excluded_scope_categories = normalizeOptionalQualityCheckScopeCategories(existing.excluded_scope_categories);
-        } else {
-            delete nextRule.excluded_scope_categories;
         }
     }
     if (typeof options.optionalCheckRuleExcludeTestOnly !== 'string') {

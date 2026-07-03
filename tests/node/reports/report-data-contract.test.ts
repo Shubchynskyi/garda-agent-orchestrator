@@ -756,9 +756,20 @@ test('buildReportDataContract exposes quality gate baseline and custom rule stat
     assert.ok(removedBaselineRule);
     config.optional_quality_checks.rules = config.optional_quality_checks.rules
         .filter((rule) => rule.id !== removedBaselineRule.id)
-        .map((rule) => rule.id === 'code_simplification'
-            ? { ...rule, prompt: `${rule.prompt} Local edit.` }
-            : rule);
+        .map((rule) => {
+            if (rule.id === 'code_simplification') {
+                return { ...rule, prompt: `${rule.prompt} Local edit.` };
+            }
+            if (rule.id === 'unnecessary_abstraction') {
+                const nextRule = { ...rule };
+                delete (nextRule as { excluded_scope_categories?: string[] }).excluded_scope_categories;
+                return nextRule;
+            }
+            if (rule.id === 'size_growth') {
+                return { ...rule, excluded_scope_categories: [] };
+            }
+            return rule;
+        });
     config.optional_quality_checks.rules.push({
         id: 'custom_focus',
         title: 'Custom focus',
@@ -773,12 +784,20 @@ test('buildReportDataContract exposes quality gate baseline and custom rule stat
     });
 
     const canonicalized = report.quality_gate_tab.rules.find((rule) => rule.id === 'code_simplification');
+    const inheritedDefaultScope = report.quality_gate_tab.rules.find((rule) => rule.id === 'unnecessary_abstraction');
+    const explicitScopeOptOut = report.quality_gate_tab.rules.find((rule) => rule.id === 'size_growth');
     const restored = report.quality_gate_tab.rules.find((rule) => rule.id === removedBaselineRule.id);
     const custom = report.quality_gate_tab.rules.find((rule) => rule.id === 'custom_focus');
     assert.ok(canonicalized);
-    assert.deepEqual(canonicalized.statuses, ['active']);
+    assert.deepEqual(canonicalized.statuses, ['locally_edited']);
     assert.equal(canonicalized.source, 'baseline');
     assert.equal(canonicalized.prompt, 'Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.');
+    assert.ok(inheritedDefaultScope);
+    assert.deepEqual(inheritedDefaultScope.excluded_scope_categories, ['test-only']);
+    assert.deepEqual(inheritedDefaultScope.statuses, ['active']);
+    assert.ok(explicitScopeOptOut);
+    assert.deepEqual(explicitScopeOptOut.excluded_scope_categories, []);
+    assert.deepEqual(explicitScopeOptOut.statuses, ['locally_edited']);
     assert.ok(restored);
     assert.equal(restored.present, true);
     assert.equal(restored.source, 'baseline');

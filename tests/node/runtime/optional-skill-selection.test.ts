@@ -30,6 +30,14 @@ const NODE_BACKEND_SKILL_SOURCE = path.join(
     'skills',
     'node-backend'
 );
+const DEVOPS_K8S_SKILL_SOURCE = path.join(
+    process.cwd(),
+    'template',
+    'skill-packs',
+    'devops-k8s',
+    'skills',
+    'devops-k8s'
+);
 
 function makeBundleRoot(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'gao-optional-skills-'));
@@ -539,6 +547,112 @@ test('buildOptionalSkillSelectionArtifact produces explicit as_is fallback when 
     }
 });
 
+test('buildOptionalSkillSelectionArtifact selects review-bound installed skills under mandatory policy', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'mandatory' }, null, 2),
+            'utf8'
+        );
+        fs.cpSync(
+            DEVOPS_K8S_SKILL_SOURCE,
+            path.join(bundleRoot, 'live', 'skills', 'devops-k8s'),
+            { recursive: true }
+        );
+
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Fix docker compose deployment memory and rollout settings.',
+            changedPaths: ['docker-compose.server.yml', 'scripts/ci-deploy.sh'],
+            loadedHeadlinesCache: {
+                headlinesPath: path.join(bundleRoot, 'live', 'config', 'skills-headlines.json'),
+                headlinesSha256: 'fixture-headlines-sha',
+                materializationNeeded: false,
+                skills: [{
+                    id: 'devops-k8s',
+                    directory: 'devops-k8s',
+                    name: 'DevOps K8s',
+                    summary: 'Container and Kubernetes delivery specialist.',
+                    pack: 'devops-k8s',
+                    source: 'installed_optional' as const,
+                    implemented: true,
+                    review_binding: 'review_bound' as const,
+                    aliases: ['docker', 'container', 'deployment'],
+                    task_signals: ['deployment', 'container', 'rollout'],
+                    changed_path_signals: ['docker-compose', 'scripts/ci-deploy.sh'],
+                    tags: ['docker', 'deployment']
+                }],
+                optional_packs: [],
+                payload: null
+            }
+        });
+
+        assert.equal(artifact.payload.decision, 'selected_installed_skills');
+        assert.deepEqual(artifact.payload.selected_installed_skills.map((entry) => entry.id), ['devops-k8s']);
+        assert.deepEqual(artifact.payload.selected_installed_skills[0]?.reason_codes, ['task_signals', 'changed_path_signals']);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('getOptionalSkillSelectionArtifactViolations accepts mandatory review-bound selected skills from installed packs', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'mandatory' }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'skill-packs.json'),
+            JSON.stringify({ version: 1, installed_packs: ['devops-k8s'] }, null, 2),
+            'utf8'
+        );
+        fs.cpSync(
+            DEVOPS_K8S_SKILL_SOURCE,
+            path.join(bundleRoot, 'live', 'skills', 'devops-k8s'),
+            { recursive: true }
+        );
+        const loadedHeadlinesCache = {
+            headlinesPath: path.join(bundleRoot, 'live', 'config', 'skills-headlines.json'),
+            headlinesSha256: 'fixture-headlines-sha',
+            materializationNeeded: false,
+            skills: [{
+                id: 'devops-k8s',
+                directory: 'devops-k8s',
+                name: 'DevOps K8s',
+                summary: 'Container and Kubernetes delivery specialist.',
+                pack: 'devops-k8s',
+                source: 'installed_optional' as const,
+                implemented: true,
+                review_binding: 'review_bound' as const,
+                aliases: ['docker', 'container', 'deployment'],
+                task_signals: ['deployment', 'container', 'rollout'],
+                changed_path_signals: ['docker-compose', 'scripts/ci-deploy.sh'],
+                tags: ['docker', 'deployment']
+            }],
+            optional_packs: []
+        };
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Fix docker compose deployment memory and rollout settings.',
+            changedPaths: ['docker-compose.server.yml', 'scripts/ci-deploy.sh'],
+            loadedHeadlinesCache: { ...loadedHeadlinesCache, payload: null }
+        });
+
+        const violations = getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact, {
+            expectedPolicyMode: 'mandatory',
+            enforceMandatorySelection: true,
+            loadedHeadlinesCache
+        });
+
+        assert.deepEqual(violations, []);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('getOptionalSkillSelectionGateViolations ignores a missing artifact when policy mode is advisory', () => {
     const bundleRoot = makeBundleRoot();
     try {
@@ -562,6 +676,26 @@ test('getOptionalSkillSelectionGateViolations blocks DONE-path progression when 
 
         const violations = getOptionalSkillSelectionGateViolations(bundleRoot, 'T-149');
         assert.ok(violations.some((entry) => entry.includes('Optional skill selection artifact is missing for current task cycle')));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('getOptionalSkillSelectionGateViolations allows mandatory as_is evidence for baseline-only preflight scope', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'mandatory' }, null, 2),
+            'utf8'
+        );
+        writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Baseline task start before implementation diff exists.',
+            changedPaths: []
+        });
+
+        assert.deepEqual(getOptionalSkillSelectionGateViolations(bundleRoot, 'T-149'), []);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

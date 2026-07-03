@@ -887,4 +887,65 @@ describe('next-step refactor contract baseline', () => {
         assert.match(text, /^OptionalSkillDecision: policy=mandatory; decision=recommended_missing_packs;/mu);
         assert.match(text, /Resolve mandatory optional-skill selection/u);
     });
+
+    it('does not route mandatory baseline-only as_is selection to skills suggest remediation', () => {
+        const repoRoot = makeContractRepo();
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const optionalSkillArtifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: TASK_ID,
+            timestamp_utc: '2026-01-01T00:00:04.000Z',
+            policy_mode: 'mandatory',
+            decision: 'as_is',
+            selected_installed_skills: [],
+            recommended_missing_packs: [],
+            as_is_reason: 'low_confidence_match',
+            task_text_present: true,
+            task_text_sha256: 'fixture-task-text',
+            changed_paths: [],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: 'fixture-preflight',
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: 'fixture-headlines',
+            visible_summary_line: 'Optional skills: as_is (reason: low_confidence_match)'
+        };
+        writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            scope_category: 'empty',
+            changed_files: [],
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            optional_skill_selection: {
+                artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
+                policy_mode: 'mandatory',
+                decision: 'as_is',
+                visible_summary_line: 'Optional skills: as_is (reason: low_confidence_match)'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
+            output_path: normalizeForTimeline(preflightPath)
+        }, '2026-01-01T00:00:04.500Z');
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'optional-skill-remediation', result.reason);
+        assert.ok(!result.commands.some((entry) => entry.command.includes('skills suggest')));
+        assert.equal(result.optional_skill_selection?.changed_paths_count, 0);
+    });
 });

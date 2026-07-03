@@ -346,11 +346,12 @@ export function selectInstalledSkills(
     bundleRoot: string,
     taskTextLower: string,
     changedPathsLower: string[],
-    skills: SkillsHeadlineSkillEntry[]
+    skills: SkillsHeadlineSkillEntry[],
+    options: { allowReviewBoundSkills?: boolean } = {}
 ): SkillCandidateScore[] {
     const candidates: SkillCandidateScore[] = [];
     for (const skill of skills) {
-        if (skill.review_binding !== 'general_purpose') {
+        if (skill.review_binding !== 'general_purpose' && options.allowReviewBoundSkills !== true) {
             continue;
         }
         if (skill.source !== 'installed_optional' && skill.source !== 'custom_live') {
@@ -532,7 +533,9 @@ export function buildOptionalSkillSelectionArtifact(
     if (policyConfig.mode === 'off') {
         asIsReason = 'policy_off';
     } else {
-        const scoredSkills = selectInstalledSkills(bundleRoot, taskTextLower, changedPathsLower, availableSkills);
+        const scoredSkills = selectInstalledSkills(bundleRoot, taskTextLower, changedPathsLower, availableSkills, {
+            allowReviewBoundSkills: policyConfig.mode === 'mandatory'
+        });
         const topSkillScore = scoredSkills[0]?.score || 0;
         selectedInstalledSkills = scoredSkills
             .filter((candidate) => candidate.strong_match && candidate.score >= SKILL_SELECTION_THRESHOLD)

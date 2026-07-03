@@ -421,7 +421,54 @@ test('workflow set refreshes stale optional quality baseline version when writin
             id: baselineRule.id,
             title: baselineRule.title,
             prompt: baselineRule.prompt,
-            enabled: false
+            enabled: false,
+            excluded_scope_categories: baselineRule.excluded_scope_categories
+        });
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set preserves explicit optional quality scope opt-out when refreshing stale baseline rules', () => {
+    const staleBaselineVersion = '2026-06-25.t839';
+    const baselineRule = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0];
+    const explicitOptOutRule = {
+        ...baselineRule,
+        excluded_scope_categories: []
+    };
+    const bundleRoot = createBundleRoot({}, {
+        optional_quality_checks: {
+            enabled: true,
+            baseline_version: staleBaselineVersion,
+            rules: [
+                explicitOptOutRule,
+                ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.slice(1).map((rule) => ({ ...rule }))
+            ]
+        }
+    });
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-id', baselineRule.id,
+            '--optional-check-rule-enabled', 'false',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const disabledBaselineRule = parsedConfig.optional_quality_checks.rules.find(
+            (rule: { id: string }) => rule.id === baselineRule.id
+        );
+        assert.deepEqual(disabledBaselineRule, {
+            id: baselineRule.id,
+            title: baselineRule.title,
+            prompt: baselineRule.prompt,
+            enabled: false,
+            excluded_scope_categories: []
         });
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });

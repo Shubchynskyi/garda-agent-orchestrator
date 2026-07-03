@@ -31,11 +31,17 @@ function getRuleStatuses(rule: OptionalQualityCheckRule, baselineRule: OptionalQ
     if (rule.enabled === false) {
         statuses.push('disabled');
     }
+    const ruleExclusions = normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories);
+    const baselineExclusions = baselineRule
+        ? normalizeOptionalQualityCheckScopeCategories(baselineRule.excluded_scope_categories)
+        : [];
     if (
         baselineRule
         && (
             rule.title !== baselineRule.title
             || rule.prompt !== baselineRule.prompt
+            || ruleExclusions.length !== baselineExclusions.length
+            || ruleExclusions.some((entry, index) => entry !== baselineExclusions[index])
         )
     ) {
         statuses.push('locally_edited');
@@ -55,7 +61,7 @@ function buildPresentRule(rule: OptionalQualityCheckRule, baselineRule: Optional
         excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories),
         present: true,
         source: baselineRule ? 'baseline' : 'custom',
-        statuses: getRuleStatuses(reportRule, baselineRule),
+        statuses: getRuleStatuses(rule, baselineRule),
         baseline_title: baselineRule?.title ?? null,
         baseline_prompt: baselineRule?.prompt ?? null,
         baseline_excluded_scope_categories: baselineRule

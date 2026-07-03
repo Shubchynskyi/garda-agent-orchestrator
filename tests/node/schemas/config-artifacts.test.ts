@@ -437,6 +437,7 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
             title: 'Locally edited shipped title',
             prompt: 'Locally edited shipped prompt.',
             enabled: false,
+            excluded_scope_categories: baselineRule.excluded_scope_categories,
             local_note: 'operator-owned'
         }
     );

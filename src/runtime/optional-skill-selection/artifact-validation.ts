@@ -235,7 +235,10 @@ export function getOptionalSkillSelectionArtifactViolations(
     const currentSelectableSkillsById = new Map<string, SkillsHeadlineSkillEntry>(
         (validateAgainstCurrentInventory ? (loadedHeadlines?.payload.skills || []) : [])
             .filter((skill) => (
-                skill.review_binding === 'general_purpose'
+                (
+                    skill.review_binding === 'general_purpose'
+                    || (isMandatoryOptionalSkillSelectionPolicyMode(policyMode) && skill.review_binding === 'review_bound')
+                )
                 && (skill.source === 'installed_optional' || skill.source === 'custom_live')
                 && skill.implemented !== false
             ))
@@ -342,7 +345,14 @@ export function getOptionalSkillSelectionArtifactViolations(
     if (decision === 'as_is' && !payload.as_is_reason) {
         violations.push("Decision 'as_is' requires an explicit as_is_reason.");
     }
-    if (options.enforceMandatorySelection === true && isMandatoryOptionalSkillSelectionPolicyMode(policyMode)) {
+    const baselineOnlyMandatoryAsIs = decision === 'as_is'
+        && Array.isArray(payload.changed_paths)
+        && payload.changed_paths.length === 0;
+    if (
+        options.enforceMandatorySelection === true
+        && isMandatoryOptionalSkillSelectionPolicyMode(policyMode)
+        && !baselineOnlyMandatoryAsIs
+    ) {
         if (decision !== 'selected_installed_skills') {
             violations.push("Policy mode 'mandatory' requires decision 'selected_installed_skills'.");
         }
