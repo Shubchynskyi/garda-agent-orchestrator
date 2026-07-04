@@ -10,7 +10,10 @@ import {
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
-import { evaluateHiddenReviewTimingTrust } from '../review/review-timing-trust';
+import {
+    evaluateHiddenReviewTimingTrust,
+    stripReviewTimingProvenanceTimestamps
+} from '../review/review-timing-trust';
 import {
     normalizeCycleBindingPath,
     parseTimestamp,
@@ -204,7 +207,7 @@ function buildReviewTimingAuditEntry(
     const timingTrust = evaluateHiddenReviewTimingTrust({
         reviewType,
         reusedExistingReview,
-        reviewerProvenance: provenance,
+        reviewerProvenance: stripReviewTimingProvenanceTimestamps(provenance),
         reviewResultRecordedAtUtc,
         recordedAtUtc: readAuditTimestamp(receipt.recorded_at_utc),
         reviewOutputSourceMtimeUtc,

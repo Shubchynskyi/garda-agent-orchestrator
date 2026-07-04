@@ -38,7 +38,10 @@ import {
     resolveReviewerRoutingPolicy
 } from '../review/reviewer-routing';
 import { isTrivialReview } from './completion-verdict-findings';
-import { evaluateHiddenReviewTimingTrust } from '../review/review-timing-trust';
+import {
+    evaluateHiddenReviewTimingTrust,
+    stripReviewTimingProvenanceTimestamps
+} from '../review/review-timing-trust';
 import {
     createEmptyReviewSkillEvidenceResult,
     getRequiredReviewKeys,
@@ -591,7 +594,7 @@ export function validateReviewSkillEvidence(
                         const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
                             reviewType: key,
                             reusedExistingReview,
-                            reviewerProvenance: receiptReviewerProvenance,
+                            reviewerProvenance: stripReviewTimingProvenanceTimestamps(receiptReviewerProvenance),
                             reviewResultRecordedAtUtc: typeof receipt.review_result_recorded_at_utc === 'string'
                                 ? receipt.review_result_recorded_at_utc
                                 : null,

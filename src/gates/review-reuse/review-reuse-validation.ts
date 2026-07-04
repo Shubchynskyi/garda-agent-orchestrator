@@ -13,10 +13,15 @@ import {
 } from './';
 import type { ReviewDependencyTimelineEvent } from '../review/review-dependencies';
 import {
+    validateStrictReusedReviewEvidence,
     validateHistoricalReviewRecordedReceiptSnapshot,
     validateHistoricalReviewRecordedReviewArtifactPath,
     validateHistoricalReviewRecordedTelemetryEventMatch
 } from './review-reuse-telemetry';
+import {
+    evaluateHiddenReviewTimingTrust,
+    stripReviewTimingProvenanceTimestamps
+} from '../review/review-timing-trust';
 
 export interface HistoricalReviewReuseCandidate {
     telemetryReceiptPath: string;
@@ -501,12 +506,72 @@ export function validateHistoricalReviewReuseCandidate(options: {
         reusedFromCodeScopeSha256: receipt.reused_existing_review === true ? expectedCodeScopeSha256 : undefined,
         reviewerExecutionMode,
         reviewerIdentity,
-        reviewerProvenance: historicalReviewerProvenance as unknown as Record<string, unknown>,
+        reviewerProvenance: { ...historicalReviewerProvenance },
         maxEventSequenceExclusive: options.latestCompilePassSequence,
         verifyReceiptSnapshot: true
     }).matched;
     if (!historicalRecordedEvent) {
         return { accepted: false, reason: 'historical REVIEW_RECORDED telemetry does not match the prior receipt' };
+    }
+
+    let historicalRecordedEventDetails = isRecord(sourceEventResolution.event?.details)
+        ? sourceEventResolution.event?.details as Record<string, unknown>
+        : null;
+    if (receipt.reused_existing_review === true) {
+        const strictReuseValidation = validateStrictReusedReviewEvidence({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            events: options.timelineEvents,
+            receiptPath: options.candidate.telemetryReceiptPath,
+            receiptSha256: sourceReceiptSha256,
+            reviewContextSha256: sourceReceiptContextSha256,
+            reviewContextReuseSha256: sourceReceiptContextReuseSha256,
+            reviewTreeStateSha256: sourceReceiptReviewTreeStateSha256,
+            reviewScopeSha256: sourceReceiptReviewScopeSha256,
+            codeScopeSha256: sourceReceiptCodeScopeSha256,
+            reviewArtifactSha256: historicalReviewArtifactSha256,
+            reusedFromReceiptPath,
+            reusedFromReceiptSha256,
+            reusedFromReviewContextSha256: expectedContextSha256,
+            reusedFromReviewContextReuseSha256: expectedContextReuseSha256,
+            reusedFromReviewTreeStateSha256: expectedReviewTreeStateSha256,
+            reusedFromReviewScopeSha256: expectedReviewScopeSha256,
+            reusedFromCodeScopeSha256: expectedCodeScopeSha256,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            reviewerProvenance: { ...historicalReviewerProvenance },
+            latestCompileEventSequence: options.latestCompilePassSequence
+        });
+        if (!strictReuseValidation.valid) {
+            return {
+                accepted: false,
+                reason: 'historical reused review evidence is missing strict reused evidence telemetry: '
+                    + strictReuseValidation.reason
+            };
+        }
+        historicalRecordedEventDetails = strictReuseValidation.historicalReviewRecordedDetails;
+    }
+    const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
+        reviewType: options.reviewType,
+        reusedExistingReview: receipt.reused_existing_review === true,
+        reviewerProvenance: stripReviewTimingProvenanceTimestamps(historicalReviewerProvenance),
+        reviewResultRecordedAtUtc: typeof receipt.review_result_recorded_at_utc === 'string'
+            ? receipt.review_result_recorded_at_utc
+            : null,
+        recordedAtUtc: typeof receipt.recorded_at_utc === 'string' ? receipt.recorded_at_utc : null,
+        reviewOutputSourceMtimeUtc: typeof receipt.review_output_source_mtime_utc === 'string'
+            ? receipt.review_output_source_mtime_utc
+            : null,
+        strictReusedReviewRecordedDetails: historicalRecordedEventDetails,
+        timelineEvents: options.timelineEvents,
+        latestCompileSequence: options.latestCompilePassSequence
+    });
+    if (!hiddenTimingTrust.trusted) {
+        return {
+            accepted: false,
+            reason: hiddenTimingTrust.message || 'historical review evidence failed hidden review timing trust validation'
+        };
     }
 
     const acceptableContextReuseHashes = [

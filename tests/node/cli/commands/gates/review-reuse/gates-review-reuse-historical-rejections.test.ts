@@ -1031,6 +1031,79 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('does not reuse historical review evidence when the delegated reviewer invocation window is too short', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-915-no-historical-reuse-too-short-window';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject historical review evidence whose delegated reviewer invocation window is too short'
+        });
+
+        const scopedPreflightInput = {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        };
+        const priorPreflightPath = writePreflight(repoRoot, taskId, scopedPreflightInput, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            priorPreflightPath,
+            reviewContextPath,
+            'agent:code-reviewer',
+            {
+                invocationTimingOverride: {
+                    launchPreparedAtUtc: '2026-04-28T00:00:00.000Z',
+                    delegationStartedAtUtc: '2026-04-28T00:00:01.000Z',
+                    launchedAtUtc: '2026-04-28T00:00:01.000Z',
+                    // Delegated work window (delegation start -> launch completion) is only 4s,
+                    // below the mandatory minimum delegated-work-window threshold.
+                    launchCompletedAtUtc: '2026-04-28T00:00:05.000Z',
+                    invocationAttestedAtUtc: '2026-04-28T00:00:05.500Z'
+                }
+            }
+        );
+
+        const preflightPath = writePreflight(repoRoot, taskId, scopedPreflightInput);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const result = await runBuildReviewContextCommand({
+            reviewType: 'code',
+            depth: '2',
+            preflightPath,
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+
+        assert.equal(result.reusedReviewEvidence, false, result.outputLines.join('\n'));
+        const hiddenViolation = result.outputLines.find((line) => line.includes('not sufficiently trustworthy'));
+        assert.ok(hiddenViolation, result.outputLines.join('\n'));
+        assert.match(hiddenViolation as string, /Launch a real subagent using built-in tools/);
+        assert.equal(
+            /timing|threshold|elapsed|duration|seconds|too_short|impossible_ordering|missing_timing/i.test(hiddenViolation as string),
+            false
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('does not reuse prior code-review evidence when receipt scope hashes diverge from historical REVIEW_RECORDED telemetry', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-no-tampered-scope-binding';

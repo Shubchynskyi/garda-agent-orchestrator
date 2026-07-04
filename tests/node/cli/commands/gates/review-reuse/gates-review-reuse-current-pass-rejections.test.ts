@@ -16,6 +16,9 @@ import {
     writeCompilePassEvidence,
     writePreflight,
     getReviewTreeStateSha256FromFixtureContext} from './gates-review-reuse-fixtures';
+import {
+    tryAcceptCurrentPassReviewEvidence
+} from '../../../../../../src/cli/commands/gate-flows/review-context/review-context-flow-current-pass-reuse';
 
 describe('cli/commands/gates - current-cycle review reuse rejections', () => {
     it('rebuilds current-cycle fresh PASS context when review-recorded telemetry lacks integrity', async () => {
@@ -322,6 +325,121 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
         assert.ok(result.outputLines.some((line) => line.includes('review context tree_state is stale')));
         const rebuiltContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
         assert.notEqual(getReviewTreeStateSha256FromFixtureContext(rebuiltContext), originalTreeStateSha256);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rebuilds current-cycle reused PASS context when hidden timing trust distrusts the attested reviewer timing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-915-current-pass-hidden-timing-distrust';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject current reused PASS evidence when hidden timing trust distrusts the attested reviewer timing'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const firstBuild = await runBuildReviewContextCommand({
+            reviewType: 'code',
+            depth: '2',
+            preflightPath,
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+        assert.equal(firstBuild.reusedReviewEvidence, true, firstBuild.outputLines.join('\n'));
+
+        const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
+        const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        const reviewerProvenance = receipt.reviewer_provenance as Record<string, unknown>;
+        const timelineLines = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim().length > 0);
+        let updatedInvocationEvent = false;
+        const tamperedTimeline = timelineLines.map((line) => {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            const integrity = event.integrity && typeof event.integrity === 'object' && !Array.isArray(event.integrity)
+                ? event.integrity as Record<string, unknown>
+                : null;
+            const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+                ? event.details as Record<string, unknown>
+                : null;
+            if (
+                event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                && integrity
+                && details
+                && Number(integrity.task_sequence) === Number(reviewerProvenance.task_sequence)
+                && String(integrity.event_sha256 || '').trim().toLowerCase()
+                    === String(reviewerProvenance.event_sha256 || '').trim().toLowerCase()
+            ) {
+                details.launch_prepared_at_utc = '2026-04-28T00:00:00.000Z';
+                details.delegation_started_at_utc = '2026-04-28T00:00:01.000Z';
+                details.launched_at_utc = '2026-04-28T00:00:01.000Z';
+                details.launch_completed_at_utc = '2026-04-28T00:00:05.000Z';
+                details.invocation_attested_at_utc = '2026-04-28T00:00:05.500Z';
+                updatedInvocationEvent = true;
+            }
+            return JSON.stringify(event);
+        });
+        assert.equal(updatedInvocationEvent, true);
+        fs.writeFileSync(timelinePath, `${tamperedTimeline.join('\n')}\n`, 'utf8');
+
+        const secondCurrentPass = tryAcceptCurrentPassReviewEvidence({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            preflightPath,
+            preflightPayload: JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+            reviewContextPath
+        });
+
+        assert.equal(secondCurrentPass.accepted, false, JSON.stringify(secondCurrentPass, null, 2));
+        const hiddenViolation = secondCurrentPass.reason;
+        assert.match(hiddenViolation, /not sufficiently trustworthy/);
+        assert.match(hiddenViolation, /Launch a real subagent using built-in tools/);
+        assert.equal(
+            /timing|threshold|elapsed|duration|seconds|too_short|impossible_ordering|missing_timing/i.test(hiddenViolation),
+            false
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

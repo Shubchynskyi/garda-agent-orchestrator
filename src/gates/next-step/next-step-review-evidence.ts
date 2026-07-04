@@ -14,7 +14,8 @@ import {
     type ReviewReuseTelemetryEventLike
 } from '../review-reuse/review-reuse-telemetry';
 import {
-    evaluateHiddenReviewTimingTrust
+    evaluateHiddenReviewTimingTrust,
+    stripReviewTimingProvenanceTimestamps
 } from '../review/review-timing-trust';
 import {
     fileSha256,
@@ -446,7 +447,7 @@ export function getHiddenReviewTimingTrustRemediation(
     const timingTrust = evaluateHiddenReviewTimingTrust({
         reviewType: state.reviewType,
         reusedExistingReview: state.reusedExistingReview,
-        reviewerProvenance: state.reviewerProvenance,
+        reviewerProvenance: stripReviewTimingProvenanceTimestamps(state.reviewerProvenance),
         reviewResultRecordedAtUtc: state.reviewResultRecordedAtUtc,
         recordedAtUtc: state.recordedAtUtc,
         reviewOutputSourceMtimeUtc: state.reviewOutputSourceMtimeUtc,

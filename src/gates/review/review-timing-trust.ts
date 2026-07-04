@@ -55,6 +55,25 @@ export interface HiddenReviewTimingTrustResult {
     message: string | null;
 }
 
+export function stripReviewTimingProvenanceTimestamps(
+    provenance: ReviewTimingTrustProvenance | null | undefined
+): ReviewTimingTrustProvenance | null {
+    if (!provenance) {
+        return null;
+    }
+    return {
+        controller_event_type: provenance.controller_event_type ?? null,
+        task_sequence: provenance.task_sequence ?? null,
+        prev_event_sha256: provenance.prev_event_sha256 ?? null,
+        event_sha256: provenance.event_sha256 ?? null,
+        launch_prepared_at_utc: null,
+        delegation_started_at_utc: null,
+        launched_at_utc: null,
+        launch_completed_at_utc: null,
+        invocation_attested_at_utc: null
+    };
+}
+
 function normalizedEventType(value: unknown): string {
     return String(value || '').trim().toUpperCase();
 }

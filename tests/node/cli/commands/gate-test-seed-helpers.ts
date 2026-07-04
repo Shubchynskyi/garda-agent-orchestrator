@@ -1119,6 +1119,13 @@ export function seedReusableReviewEvidence(
         taskModePath?: string | null;
         omitInvocationTreeState?: boolean;
         receiptReviewContextSha256Override?: string | null;
+        invocationTimingOverride?: {
+            launchPreparedAtUtc?: string;
+            delegationStartedAtUtc?: string;
+            launchedAtUtc?: string;
+            launchCompletedAtUtc?: string;
+            invocationAttestedAtUtc?: string;
+        };
     } = {}
 ): string {
     const crypto = require('node:crypto');
@@ -1223,14 +1230,14 @@ export function seedReusableReviewEvidence(
         reviewer_launch_attestation_source: launchEvidence.attestationSource,
         reviewer_launch_tool: launchEvidence.launchTool,
         provider_invocation_id: launchEvidence.providerInvocationId,
-        launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
-        delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
-        launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
-        launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        launch_prepared_at_utc: options.invocationTimingOverride?.launchPreparedAtUtc ?? TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        delegation_started_at_utc: options.invocationTimingOverride?.delegationStartedAtUtc ?? TEST_REVIEW_LAUNCHED_AT_UTC,
+        launched_at_utc: options.invocationTimingOverride?.launchedAtUtc ?? TEST_REVIEW_LAUNCHED_AT_UTC,
+        launch_completed_at_utc: options.invocationTimingOverride?.launchCompletedAtUtc ?? TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
         launch_input_mode: launchEvidence.launchInputMode,
         launch_input_sha256: launchEvidence.launchInputSha256,
         copy_paste_reviewer_launch_prompt_sha256: launchEvidence.copyPastePromptSha256,
-        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
+        invocation_attested_at_utc: options.invocationTimingOverride?.invocationAttestedAtUtc ?? TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
     };
     if (!options.omitInvocationTreeState) {
         invocationDetails.review_tree_state_sha256 = reviewTreeStateSha256;

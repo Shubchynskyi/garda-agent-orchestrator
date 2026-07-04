@@ -24,7 +24,10 @@ import {
     normalizeReviewReceiptEvidenceFields,
     type ReviewEvidenceReviewerProvenance
 } from '../review/review-evidence-contract';
-import { evaluateHiddenReviewTimingTrust } from '../review/review-timing-trust';
+import {
+    evaluateHiddenReviewTimingTrust,
+    stripReviewTimingProvenanceTimestamps
+} from '../review/review-timing-trust';
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from '../review/reviewer-routing';
 import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
@@ -518,7 +521,7 @@ export function validateReviewArtifactGateEligibility(options: {
                             const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
                                 reviewType: reviewKey,
                                 reusedExistingReview,
-                                reviewerProvenance,
+                                reviewerProvenance: stripReviewTimingProvenanceTimestamps(reviewerProvenance),
                                 reviewResultRecordedAtUtc: typeof validatedReceipt?.review_result_recorded_at_utc === 'string'
                                     ? validatedReceipt.review_result_recorded_at_utc
                                     : null,
@@ -596,7 +599,7 @@ export function validateReviewArtifactGateEligibility(options: {
                                 const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
                                     reviewType: reviewKey,
                                     reusedExistingReview,
-                                    reviewerProvenance,
+                                    reviewerProvenance: stripReviewTimingProvenanceTimestamps(reviewerProvenance),
                                     reviewResultRecordedAtUtc: typeof validatedReceipt?.review_result_recorded_at_utc === 'string'
                                         ? validatedReceipt.review_result_recorded_at_utc
                                         : null,

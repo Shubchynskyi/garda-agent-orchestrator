@@ -28,6 +28,10 @@ import {
 import {
     validateStrictReusedReviewEvidence
 } from '../../../../gates/review-reuse/review-reuse-telemetry';
+import {
+    evaluateHiddenReviewTimingTrust,
+    stripReviewTimingProvenanceTimestamps
+} from '../../../../gates/review/review-timing-trust';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import {
     readTimelineEventsSummary,
@@ -360,6 +364,7 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
     if (!reviewerExecutionMode || !reviewerIdentity) {
         return reject('review receipt is missing a trusted reviewer execution mode or identity');
     }
+    const reviewerProvenance = normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
     if (receipt.reused_existing_review === true) {
         const strictReuseValidation = validateStrictReusedReviewEvidence({
             repoRoot: options.repoRoot,
@@ -385,8 +390,8 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
             reusedFromCodeScopeSha256: normalizeOptionalSha256(receipt.reused_from_code_scope_sha256),
             reviewerExecutionMode,
             reviewerIdentity,
-            reviewerProvenance: isRecord(receipt.reviewer_provenance)
-                ? receipt.reviewer_provenance
+            reviewerProvenance: reviewerProvenance
+                ? { ...reviewerProvenance }
                 : null,
             latestCompileEventSequence: latestCompilePassSequence
         });
@@ -396,15 +401,34 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
                 strictReuseValidation.reason
             );
         }
+        const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
+            reviewType: options.reviewType,
+            reusedExistingReview: true,
+            reviewerProvenance: stripReviewTimingProvenanceTimestamps(reviewerProvenance),
+            reviewResultRecordedAtUtc: typeof receipt.review_result_recorded_at_utc === 'string'
+                ? receipt.review_result_recorded_at_utc
+                : null,
+            recordedAtUtc: typeof receipt.recorded_at_utc === 'string' ? receipt.recorded_at_utc : null,
+            reviewOutputSourceMtimeUtc: typeof receipt.review_output_source_mtime_utc === 'string'
+                ? receipt.review_output_source_mtime_utc
+                : null,
+            strictReusedReviewRecordedDetails: strictReuseValidation.historicalReviewRecordedDetails,
+            timelineEvents,
+            latestCompileSequence: latestCompilePassSequence
+        });
+        if (!hiddenTimingTrust.trusted) {
+            return reject(
+                hiddenTimingTrust.message || 'current-cycle reused PASS receipt failed hidden review timing trust validation'
+            );
+        }
     } else {
-        const provenance = normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
-        const invocationEvent = provenance?.controller_event_type === 'REVIEWER_INVOCATION_ATTESTED'
+        const invocationEvent = reviewerProvenance?.controller_event_type === 'REVIEWER_INVOCATION_ATTESTED'
             ? findMatchingInvocationAttestation({
                 timelineEvents,
                 latestCompilePassSequence,
                 taskId: options.taskId,
                 reviewType: options.reviewType,
-                eventSha256: provenance.event_sha256,
+                eventSha256: reviewerProvenance.event_sha256,
                 reviewContextSha256,
                 reviewTreeStateSha256,
                 reviewerExecutionMode,
@@ -412,8 +436,8 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
             })
             : null;
         if (
-            !provenance
-            || provenance.controller_event_type !== 'REVIEWER_INVOCATION_ATTESTED'
+            !reviewerProvenance
+            || reviewerProvenance.controller_event_type !== 'REVIEWER_INVOCATION_ATTESTED'
             || !invocationEvent
         ) {
             return reject('fresh PASS receipt is missing matching current-cycle reviewer invocation attestation');
