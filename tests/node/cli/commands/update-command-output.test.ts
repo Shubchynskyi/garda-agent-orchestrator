@@ -7,10 +7,13 @@ import * as path from 'node:path';
 import type { PackageJsonLike } from '../../../../src/cli/commands/cli-types';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 import { OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE } from '../../../../src/core/workflow-config';
+import { printUpdateAnnouncementSections } from '../../../../src/cli/commands/shared-command-utils';
 
 type UpdateCommandModule = typeof import('../../../../src/cli/commands/update-command');
 
 const WORKFLOW_CONFIG_MERGE_STATUS = 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied';
+const UPDATE_WARNING_TEXT = 'Review bundled announcement warnings before rollout.';
+const QUALITY_GATE_ACTIONS_LINE = '    - After updating, run garda ui --actions and open the Quality Gate settings to review the default rules, adjust test-only exclusions, and add rules that match your project.';
 
 function makeCacheModule(resolvedPath: string, exportsValue: Record<string, unknown>): NodeJS.Module {
     return {
@@ -204,6 +207,16 @@ function assertPlainLine(lines: string[], expected: string): void {
     assert.equal(plainLines(lines).includes(expected), true, `missing line: ${expected}`);
 }
 
+function findRenderedLine(lines: string[], expected: string): string | undefined {
+    return lines.find((line) => stripAnsi(line) === expected);
+}
+
+function assertColoredLine(lines: string[], expected: string, ansiPattern: RegExp): void {
+    const line = findRenderedLine(lines, expected);
+    assert.notEqual(line, undefined, `missing rendered line: ${expected}`);
+    assert.match(line as string, ansiPattern);
+}
+
 function assertHumanUpdateOutputOmitsRawDiagnostics(lines: string[]): void {
     const text = plainLines(lines).join('\n');
     assert.equal(/\n(?:TargetRoot|RepoUrl|ReleaseProvenanceStatus|ReleaseProvenanceSummary|ReleaseProvenanceRecommendation|CurrentVersion|LatestVersion|UpdateApplied|CheckUpdateResult|PreviousVersion|UpdatedVersion|ResolvedPackageVersion|ResolvedPackageIntegrity):/u.test(`\n${text}`), false);
@@ -230,7 +243,8 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                     projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_INIT_REFRESH_PROMPT,
                     rollbackSnapshotPath: 'stale-snapshot',
                     rollbackStatus: 'STALE',
-                    updateReportPath: 'stale-report'
+                    updateReportPath: 'stale-report',
+                    updateAnnouncementWarnings: [UPDATE_WARNING_TEXT]
                 };
             }
         });
@@ -303,10 +317,15 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assertPlainLine(plainTextLines, 'Detailed diagnostics are available in the update report and with --json.');
             assertHumanUpdateOutputOmitsRawDiagnostics(plainTextLines);
             assertHumanUpdateOutputOmitsInternalHandoffDetails(plainTextLines);
-            assert.equal(plainTextLines.includes('UpdateMessages:'), true);
-            assert.equal(plainTextLines.includes('  1.1.0 - Major registry note'), true);
-            assert.equal(plainTextLines.includes('ReleaseNotes:'), true);
-            assert.equal(plainTextLines.includes('    - added versioned notes'), true);
+            assertPlainLine(plainTextLines, 'UpdateMessages:');
+            assertPlainLine(plainTextLines, '  1.1.0 - Major registry note');
+            assertPlainLine(plainTextLines, 'ReleaseNotes:');
+            assertPlainLine(plainTextLines, '    - added versioned notes');
+            assertColoredLine(plainTextLines, 'UpdateMessages:', /^\u001b\[36mUpdateMessages:\u001b\[0m$/);
+            assertColoredLine(plainTextLines, '  1.1.0 - Major registry note', /^\u001b\[32m  1\.1\.0 - Major registry note\u001b\[0m$/);
+            assertColoredLine(plainTextLines, '    - Re-check new workflow affordances.', /^\u001b\[32m    - Re-check new workflow affordances\.\u001b\[0m$/);
+            assertColoredLine(plainTextLines, 'ReleaseNotes:', /^\u001b\[36mReleaseNotes:\u001b\[0m$/);
+            assertColoredLine(plainTextLines, '    - added versioned notes', /^\u001b\[32m    - added versioned notes\u001b\[0m$/);
             assert.equal(require.cache[fixture.bundleUpdateModulePath], undefined);
 
             const noColorLines = await captureConsoleLogsWithNoColor(async () => {
@@ -377,7 +396,8 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
                     projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_INIT_REFRESH_PROMPT,
                     rollbackSnapshotPath: 'stale-snapshot',
                     rollbackStatus: 'STALE',
-                    updateReportPath: 'stale-report'
+                    updateReportPath: 'stale-report',
+                    updateAnnouncementWarnings: [UPDATE_WARNING_TEXT]
                 };
             }
         });
@@ -445,8 +465,11 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
             assertPlainLine(plainTextLines, 'Detailed diagnostics are available in the update report and with --json.');
             assertHumanUpdateOutputOmitsRawDiagnostics(plainTextLines);
             assertHumanUpdateOutputOmitsInternalHandoffDetails(plainTextLines);
-            assert.equal(plainTextLines.includes('UpdateMessages:'), true);
-            assert.equal(plainTextLines.includes('ReleaseNotes:'), true);
+            assertPlainLine(plainTextLines, 'UpdateMessages:');
+            assertPlainLine(plainTextLines, 'ReleaseNotes:');
+            assertColoredLine(plainTextLines, 'UpdateMessages:', /^\u001b\[36mUpdateMessages:\u001b\[0m$/);
+            assertColoredLine(plainTextLines, '  1.1.0 - Major registry note', /^\u001b\[32m  1\.1\.0 - Major registry note\u001b\[0m$/);
+            assertColoredLine(plainTextLines, 'ReleaseNotes:', /^\u001b\[36mReleaseNotes:\u001b\[0m$/);
             assert.equal(require.cache[fixture.bundleUpdateModulePath], undefined);
 
             const jsonLines = await captureConsoleLogs(async () => {
@@ -476,6 +499,58 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
     } finally {
         fixture.cleanup();
     }
+});
+
+test('printUpdateAnnouncementSections highlights garda ui actions in yellow within update messages', async () => {
+    const messageResult = {
+        updateMessages: [
+            {
+                version: '1.2.0',
+                title: 'Optional quality gate controls',
+                body: [
+                    'After updating, run garda ui --actions and open the Quality Gate settings to review the default rules, adjust test-only exclusions, and add rules that match your project.'
+                ]
+            }
+        ]
+    };
+
+    const coloredLines = await captureConsoleLogsWithForcedColor(async () => {
+        printUpdateAnnouncementSections(messageResult);
+    });
+    assertPlainLine(coloredLines, 'UpdateMessages:');
+    assertPlainLine(coloredLines, QUALITY_GATE_ACTIONS_LINE);
+    assertColoredLine(
+        coloredLines,
+        QUALITY_GATE_ACTIONS_LINE,
+        /^\u001b\[32m    - After updating, run \u001b\[0m\u001b\[33mgarda ui --actions\u001b\[0m\u001b\[32m and open the Quality Gate settings to review the default rules, adjust test-only exclusions, and add rules that match your project\.\u001b\[0m$/
+    );
+
+    const noColorLines = await captureConsoleLogsWithNoColor(async () => {
+        printUpdateAnnouncementSections(messageResult);
+    });
+    assert.equal(/\u001b\[/.test(noColorLines.join('\n')), false);
+    assertPlainLine(noColorLines, QUALITY_GATE_ACTIONS_LINE);
+});
+
+test('printUpdateAnnouncementSections renders warnings in yellow and keeps no-color plain text', async () => {
+    const warningResult = {
+        updateAnnouncementWarnings: [UPDATE_WARNING_TEXT]
+    };
+
+    const coloredLines = await captureConsoleLogsWithForcedColor(async () => {
+        printUpdateAnnouncementSections(warningResult);
+    });
+    assertPlainLine(coloredLines, 'UpdateAnnouncementWarnings:');
+    assertPlainLine(coloredLines, `- ${UPDATE_WARNING_TEXT}`);
+    assertColoredLine(coloredLines, 'UpdateAnnouncementWarnings:', /^\u001b\[33mUpdateAnnouncementWarnings:\u001b\[0m$/);
+    assertColoredLine(coloredLines, `- ${UPDATE_WARNING_TEXT}`, /^\u001b\[33m- Review bundled announcement warnings before rollout\.\u001b\[0m$/);
+
+    const noColorLines = await captureConsoleLogsWithNoColor(async () => {
+        printUpdateAnnouncementSections(warningResult);
+    });
+    assert.equal(/\u001b\[/.test(noColorLines.join('\n')), false);
+    assertPlainLine(noColorLines, 'UpdateAnnouncementWarnings:');
+    assertPlainLine(noColorLines, `- ${UPDATE_WARNING_TEXT}`);
 });
 
 test('handleCheckUpdate --apply corrects stale lifecycle UpdatedVersion after deferred version sync', async () => {

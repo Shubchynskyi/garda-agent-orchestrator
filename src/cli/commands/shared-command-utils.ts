@@ -10,7 +10,7 @@ import { collectUpdateAnnouncements } from '../../lifecycle/update-announcements
 import { compareVersionStrings } from '../../lifecycle/generic-utils';
 import { runUpdate } from '../../lifecycle/update';
 import { type CheckUpdateRunnerOptions } from '../../lifecycle/check-update';
-import { getBundlePath } from './cli-helpers';
+import { cyan, getBundlePath, green, yellow } from './cli-helpers';
 
 export type ParsedOptionValue = string | boolean | string[] | undefined;
 export type ParsedOptionsRecord = Record<string, ParsedOptionValue>;
@@ -126,14 +126,43 @@ function stripMarkdownBulletPrefix(line: string): string {
     return line.replace(/^[-*]\s+/, '').trim();
 }
 
-function printAnnouncementSection(title: string, lines: string[]): void {
+type AnnouncementSectionTone = 'default' | 'warning';
+const ANNOUNCEMENT_COMMAND_HIGHLIGHTS = Object.freeze([
+    'garda ui --actions'
+]);
+
+function colorAnnouncementSectionTitle(title: string, tone: AnnouncementSectionTone): string {
+    if (tone === 'warning') {
+        return yellow(`${title}:`);
+    }
+    return cyan(`${title}:`);
+}
+
+function colorAnnouncementSectionLine(line: string, tone: AnnouncementSectionTone): string {
+    if (tone === 'warning') {
+        return yellow(line);
+    }
+
+    for (const commandText of ANNOUNCEMENT_COMMAND_HIGHLIGHTS) {
+        const commandIndex = line.indexOf(commandText);
+        if (commandIndex >= 0) {
+            const prefix = line.slice(0, commandIndex);
+            const suffix = line.slice(commandIndex + commandText.length);
+            return `${green(prefix)}${yellow(commandText)}${green(suffix)}`;
+        }
+    }
+
+    return green(line);
+}
+
+function printAnnouncementSection(title: string, lines: string[], tone: AnnouncementSectionTone = 'default'): void {
     if (lines.length === 0) {
         return;
     }
     console.log('');
-    console.log(`${title}:`);
+    console.log(colorAnnouncementSectionTitle(title, tone));
     for (const line of lines) {
-        console.log(line);
+        console.log(colorAnnouncementSectionLine(line, tone));
     }
 }
 
@@ -176,7 +205,7 @@ export function printUpdateAnnouncementSections(result: Record<string, unknown> 
 
     printAnnouncementSection('UpdateMessages', updateMessageLines);
     printAnnouncementSection('ReleaseNotes', releaseNoteLines);
-    printAnnouncementSection('UpdateAnnouncementWarnings', warnings.map((line) => `- ${line}`));
+    printAnnouncementSection('UpdateAnnouncementWarnings', warnings.map((line) => `- ${line}`), 'warning');
 }
 
 export function normalizeYesNo(value: unknown, label: string): string {
