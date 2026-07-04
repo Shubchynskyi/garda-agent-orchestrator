@@ -642,13 +642,11 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.match(qualityGateNode.innerHTML, /Удалено/u);
     assert.match(qualityGateNode.innerHTML, /quality-gate-rule-table/u);
     assert.match(qualityGateNode.innerHTML, /code_simplification/u);
-    assert.match(qualityGateNode.innerHTML, /Последняя проверка/u);
-    assert.match(qualityGateNode.innerHTML, /Требует доработки/u);
-    assert.match(qualityGateNode.innerHTML, /Scope/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Последняя проверка/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Skipped by scope/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /size_growth/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Rule is excluded for current scope category: test-only\./u);
     assert.match(qualityGateNode.innerHTML, /test-only/u);
-    assert.match(qualityGateNode.innerHTML, /Skipped by scope/u);
-    assert.match(qualityGateNode.innerHTML, /size_growth/u);
-    assert.match(qualityGateNode.innerHTML, /Rule is excluded for current scope category: test-only\./u);
     assert.match(qualityGateNode.innerHTML, /Excluded scopes/u);
     assert.match(qualityGateNode.innerHTML, /Exclude test-only/u);
     assert.match(qualityGateNode.innerHTML, /Other scopes/u);
@@ -660,20 +658,6 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.doesNotMatch(qualityGateNode.innerHTML, /Bounded answer summary rendering added\./u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Extract parser helpers before review\./u);
     assert.match(qualityGateNode.innerHTML, /garda ui --actions/u);
-
-    (context.currentSettingsPayload.quality_gate as { latest_check: Record<string, unknown> }).latest_check = {
-        ...context.currentSettingsPayload.quality_gate.latest_check,
-        evidence_status: 'stale',
-        effect: 'stale',
-        summary: 'Latest quality checklist artifact is stale: Workflow config hash changed after the quality checklist was recorded.',
-        stale_reason_codes: ['effective_policy_changed'],
-        stale_reasons: ['Workflow config effective quality policy changed after the quality checklist was recorded.']
-    };
-    vm.runInNewContext('renderQualityGate(null);', context);
-
-    assert.match(qualityGateNode.innerHTML, /Устарело/u);
-    assert.doesNotMatch(qualityGateNode.innerHTML, /Latest quality checklist artifact is stale/u);
-    assert.doesNotMatch(qualityGateNode.innerHTML, /Workflow config hash changed/u);
 });
 
 test('task detail quality checklist diagnostics localize effective policy changes', () => {
@@ -881,6 +865,82 @@ test('system state renders quality baseline diagnostics with localized labels', 
     assert.doesNotMatch(systemStateNode.innerHTML, /2026-06-25\.t842/u);
     assert.match(systemStateNode.innerHTML, /Отсутствующие поставляемые правила/u);
     assert.match(systemStateNode.innerHTML, /duplicated_logic_contracts/u);
+});
+
+test('system state hides scope-budget signal card and excludes it from overall health', () => {
+    const systemStateNode = {
+        innerHTML: '',
+        querySelectorAll: () => []
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => [],
+            getElementById: (id: string) => id === 'system-state-panel' ? systemStateNode : null
+        },
+        window: {
+            localStorage: null,
+            prompt: () => null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        actionTextPacks: {},
+        actionCategoryTextPacks: {},
+        fallbackLanguage: 'en',
+        initialLanguage: 'ru',
+        actionToken: '',
+        currentActionsPayload: null,
+        currentReport: null,
+        gardaSwitchNode: null,
+        actionStatusNode: { innerHTML: '' },
+        sessionSummaryNode: { innerHTML: '' },
+        sessionCountdownNode: { max: '', value: '' },
+        sessionPollTimer: null,
+        lastActivityPingAt: 0,
+        fetch: async () => ({ json: async () => ({}) }),
+        setInterval: () => 0,
+        clearInterval: () => {}
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_SESSION_ACTIONS}\nrenderSystemState({
+        generated_at_utc: '2026-05-16T00:00:00.000Z',
+        system_state: {
+            overall: { status: 'ok', label: 'Healthy', summary: 'Core System State signals look healthy.', generated_at_utc: '2026-05-16T00:00:00.000Z' },
+            garda: null,
+            ui_actions: null,
+            task_queue: null,
+            workflow: null,
+            quality_baseline: null,
+            project_memory: null,
+            protected_manifest: null,
+            runtime: {},
+            configuration_files: [],
+            signals: [
+                {
+                    id: 'scope-budget',
+                    label: 'Scope budget guard',
+                    status: 'error',
+                    summary: 'Scope budget exceeded for the active task.',
+                    remediation: null,
+                    value: {}
+                },
+                {
+                    id: 'workflow-readiness',
+                    label: 'Workflow readiness',
+                    status: 'ok',
+                    summary: 'Workflow configuration is valid.',
+                    remediation: null,
+                    value: {}
+                }
+            ]
+        }
+    });`, context);
+
+    assert.doesNotMatch(systemStateNode.innerHTML, /Scope budget guard/u);
+    assert.doesNotMatch(systemStateNode.innerHTML, /Scope budget exceeded for the active task\./u);
+    assert.match(systemStateNode.innerHTML, /Workflow configuration is valid\./u);
+    assert.match(systemStateNode.innerHTML, /Core System State signals look healthy\./u);
+    assert.doesNotMatch(systemStateNode.innerHTML, /data-blockers/u);
 });
 
 test('quality gate tab keeps baseline rule content immutable while enabled state remains editable', () => {

@@ -215,11 +215,11 @@ function systemWorstHealth(signals) {
 }
 function isPrimarySystemHealthSignal(signal) {
   const id = signal && signal.id ? String(signal.id) : '';
-  return !id.startsWith('config-file-');
+  return !id.startsWith('config-file-') && id !== 'scope-budget';
 }
 function isVisibleSystemSignal(signal) {
   const id = signal && signal.id ? String(signal.id) : '';
-  return id !== 'garda-switch' && id !== 'task-queue';
+  return id !== 'garda-switch' && id !== 'task-queue' && id !== 'scope-budget';
 }
 function shouldRenderSystemSignalSourcePath(signal) {
   const id = signal && signal.id ? String(signal.id) : '';

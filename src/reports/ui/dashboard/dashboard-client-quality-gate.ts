@@ -25,101 +25,6 @@ function qualityGateListValue(values) {
   const items = Array.isArray(values) ? values.map(item => String(item || '').trim()).filter(Boolean) : [];
   return items.length > 0 ? items.join(', ') : '-';
 }
-function qualityGateEvidenceLabel(status) {
-  if (status === 'current') return t('qualityGateEvidenceCurrent');
-  if (status === 'stale') return t('qualityGateEvidenceStale');
-  if (status === 'missing') return t('qualityGateEvidenceMissing');
-  if (status === 'invalid') return t('qualityGateEvidenceInvalid');
-  return status || '-';
-}
-function qualityGateEffectLabel(effect) {
-  if (effect === 'passed') return t('qualityGateEffectPassed');
-  if (effect === 'helped') return t('qualityGateEffectHelped');
-  if (effect === 'warned') return t('qualityGateEffectWarned');
-  if (effect === 'required_rework') return t('qualityGateEffectRequiredRework');
-  if (effect === 'disabled') return t('qualityGateEffectDisabled');
-  if (effect === 'missing') return t('qualityGateEffectMissing');
-  if (effect === 'invalid') return t('qualityGateEffectInvalid');
-  if (effect === 'stale') return t('qualityGateEffectStale');
-  return effect || '-';
-}
-function qualityGateLatestSummaryText(latest) {
-  if (!latest) return '';
-  if (latest.evidence_status === 'missing') return t('qualityGateEvidenceMissing');
-  if (latest.evidence_status === 'disabled') return t('qualityGateEffectDisabled');
-  if (latest.evidence_status === 'invalid') return t('qualityGateEvidenceInvalid');
-  if (latest.evidence_status === 'stale') return t('qualityGateEvidenceStale');
-  if (latest.effect === 'required_rework') return t('qualityGateEffectRequiredRework') + ' (' + (latest.action_required_count || 0) + ')';
-  if (latest.effect === 'warned') return t('qualityGateEffectWarned');
-  if (latest.effect === 'helped') return t('qualityGateEffectHelped') + ' (' + (latest.action_taken_count || 0) + ')';
-  if (latest.effect === 'disabled') return t('qualityGateEffectDisabled');
-  return t('qualityGateEffectPassed');
-}
-function qualityGateDiagnosticLabel(code) {
-  if (code === 'artifact_json_invalid') return t('qualityGateEvidenceInvalid') + ': artifact JSON';
-  if (code === 'status_unsupported') return t('qualityGateEvidenceInvalid') + ': ' + t('statusColumn');
-  if (code === 'checklist_id_mismatch') return t('qualityGateEvidenceInvalid') + ': checklist_id';
-  if (code === 'task_id_mismatch') return t('qualityGateEvidenceInvalid') + ': task_id';
-  if (code === 'preflight_path_missing') return t('qualityGateEvidenceInvalid') + ': preflight_path';
-  if (code === 'preflight_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': preflight_sha256';
-  if (code === 'workflow_config_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': workflow_config_sha256';
-  if (code === 'changed_file_evidence_missing') return t('qualityGateEvidenceInvalid') + ': changed_file_evidence';
-  if (code === 'changed_files_missing') return t('qualityGateEvidenceInvalid') + ': changed_files';
-  if (code === 'changed_files_count_missing') return t('qualityGateEvidenceInvalid') + ': changed_files_count';
-  if (code === 'changed_files_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': changed_files_sha256';
-  if (code === 'scope_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': scope_sha256';
-  if (code === 'scope_content_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': scope_content_sha256';
-  if (code === 'path_outside_repository') return t('qualityGateEvidenceInvalid') + ': ' + t('artifactPath');
-  if (code === 'referenced_artifact_missing') return t('qualityGateEvidenceMissing') + ': ' + t('artifactPath');
-  if (code === 'effective_policy_changed') return t('qualityGateEvidenceStale') + ': ' + t('qualityGateRuleSet');
-  if (code === 'workflow_config_hash_changed') return t('qualityGateEvidenceStale') + ': ' + t('workflowConfigPath');
-  if (code === 'referenced_artifact_hash_changed') return t('qualityGateEvidenceStale') + ': ' + t('artifactPath');
-  if (code === 'changed_files_mismatch') return t('qualityGateEvidenceStale') + ': ' + t('qualityGateChangedFiles');
-  if (code === 'scope_binding_mismatch') return t('qualityGateEvidenceStale') + ': scope';
-  if (code === 'scope_content_mismatch') return t('qualityGateEvidenceStale') + ': scope_content_sha256';
-  if (code === 'newer_preflight_exists') return t('qualityGateEvidenceStale') + ': preflight';
-  return t('qualityGateEvidenceStale') + ': ' + (code || 'unknown');
-}
-function renderQualityGateLatestDiagnostics(latest) {
-  const codes = latest && Array.isArray(latest.stale_reason_codes) ? latest.stale_reason_codes : [];
-  const fallbackCount = latest && Array.isArray(latest.stale_reasons) ? latest.stale_reasons.length : 0;
-  if (codes.length === 0 && fallbackCount === 0) {
-    return '';
-  }
-  const items = codes.length > 0 ? codes : ['unknown'];
-  return '<ul class="quality-gate-items">' + items.map(code => '<li>' + safe(qualityGateDiagnosticLabel(code)) + '</li>').join('') + '</ul>';
-}
-function renderQualityGateSkippedByScopeRules(latest) {
-  const rules = latest && Array.isArray(latest.skipped_by_scope_rules) ? latest.skipped_by_scope_rules : [];
-  if (rules.length === 0) {
-    return '<p class="empty">No rules were skipped by scope.</p>';
-  }
-  return '<div class="workflow-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe('Excluded scopes') + '</th><th>' + safe('Skip reason') + '</th></tr></thead><tbody>'
-    + rules.map(rule => '<tr><td><code>' + safe(rule.rule_id || '') + '</code></td><td>' + safe(rule.title || '') + '</td><td><code>' + safe(qualityGateListValue(rule.excluded_scope_categories)) + '</code></td><td>' + safe(rule.scope_skip_reason || '-') + '</td></tr>').join('')
-    + '</tbody></table></div>';
-}
-function renderQualityGateLatestCheck(latest) {
-  if (!latest) {
-    return '';
-  }
-  return '<section class="quality-gate-block"><h3>' + safe(t('qualityGateLatestCheck')) + '</h3>'
-    + '<section class="quality-gate-summary">'
-    + metric(t('qualityGateEvidenceState'), qualityGateEvidenceLabel(latest.evidence_status))
-    + metric(t('qualityGateEffect'), qualityGateEffectLabel(latest.effect))
-    + metric('Scope', latest.scope_category || '-')
-    + metric(t('qualityGateChangedFiles'), latest.changed_files_count)
-    + metric('Enabled rules', latest.enabled_rule_count)
-    + metric('Active rules', latest.active_rule_count)
-    + metric('Skipped by scope', latest.skipped_by_scope_rule_count)
-    + metric(t('qualityGateAnswers'), latest.answer_count)
-    + metric(t('qualityGateActionsRequired'), latest.action_required_count)
-    + '</section>'
-    + '<p class="empty">' + safe(qualityGateLatestSummaryText(latest)) + '</p>'
-    + renderQualityGateLatestDiagnostics(latest)
-    + '<h4>' + safe('Skipped by scope') + '</h4>'
-    + renderQualityGateSkippedByScopeRules(latest)
-    + '</section>';
-}
 function renderQualityGateResult(result) {
   currentQualityGateSettingResult = result;
   if (!qualityGateStatusNode) {
@@ -244,7 +149,6 @@ function renderQualityGate(report) {
     + metric(t('qualityGateCustomRules'), tab.custom_rule_count)
     + '</section>'
     + renderQualityGateToggle(settingsPayload.settings || [], disabled)
-    + renderQualityGateLatestCheck(tab.latest_check)
     + '<section class="quality-gate-block"><h3>' + safe(t('qualityGateRuleSet')) + '</h3>'
     + (rules.length === 0 ? '<p class="empty">' + safe(t('qualityGateRulesEmpty')) + '</p>' : '<div class="workflow-table quality-gate-rule-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('qualityGateSourceColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('gardaSwitchState')) + '</th><th>' + safe('Excluded scopes') + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + renderQualityGateRuleRows(rules, disabled) + '</tbody></table></div>')
     + '</section>';
