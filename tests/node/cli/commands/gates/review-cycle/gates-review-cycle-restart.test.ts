@@ -1896,11 +1896,18 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
-        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
+        const output = restartResult.outputLines.join('\n');
+        assert.match(output, /COHERENT_CYCLE_RESTARTED/);
         assert.match(
-            restartResult.outputLines.join('\n'),
+            output,
             new RegExp(escapeRegExp(customTaskModePath.replace(/\\/g, '/')))
         );
+        assert.match(output, /PreflightSummary: mode=/);
+        assert.match(output, /scope_category=/);
+        assert.match(output, /changed_files=1/);
+        assert.match(output, /required_reviews=/);
+        assert.match(output, /\(full detail: see PreflightPath\)/);
+        assert.doesNotMatch(output, /PreflightSummary: \{/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1966,9 +1973,16 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
-        assert.match(restartResult.outputLines.join('\n'), /REVIEW_CYCLE_RESTARTED/);
-        assert.match(restartResult.outputLines.join('\n'), /PreparedReviewTypes: code/);
-        assert.match(restartResult.outputLines.join('\n'), /LaunchRequiredReviewTypes: code/);
+        const output = restartResult.outputLines.join('\n');
+        assert.match(output, /REVIEW_CYCLE_RESTARTED/);
+        assert.match(output, /PreparedReviewTypes: code/);
+        assert.match(output, /LaunchRequiredReviewTypes: code/);
+        assert.match(output, /PreflightSummary: mode=/);
+        assert.match(output, /scope_category=/);
+        assert.match(output, /changed_files=2/);
+        assert.match(output, /required_reviews=code, test/);
+        assert.match(output, /\(full detail: see PreflightPath\)/);
+        assert.doesNotMatch(output, /PreflightSummary: \{/);
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const restartEvent = [...events].reverse().find((event) => event.event_type === 'REVIEW_CYCLE_RESTARTED') as Record<string, unknown> | undefined;
         assert.ok(restartEvent, 'review-cycle restart must persist a task event after compile pass');

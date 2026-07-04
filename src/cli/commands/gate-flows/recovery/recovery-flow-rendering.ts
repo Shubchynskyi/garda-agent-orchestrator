@@ -10,6 +10,26 @@ export function formatReviewTypeList(reviewTypes: readonly string[]): string {
     return reviewTypes.length > 0 ? reviewTypes.join(', ') : 'none';
 }
 
+function formatPreflightSummaryValue(value: unknown): string {
+    const text = String(value || '').trim();
+    return text.length > 0 ? text : 'unknown';
+}
+
+function buildPreflightSummaryLine(input: {
+    mode: unknown;
+    scopeCategory: unknown;
+    changedFilesCount: number;
+    requiredReviewTypes: readonly string[];
+}): string {
+    return (
+        `PreflightSummary: mode=${formatPreflightSummaryValue(input.mode)}; `
+        + `scope_category=${formatPreflightSummaryValue(input.scopeCategory)}; `
+        + `changed_files=${input.changedFilesCount}; `
+        + `required_reviews=${formatReviewTypeList(input.requiredReviewTypes)} `
+        + '(full detail: see PreflightPath)'
+    );
+}
+
 export function buildCoherentCycleRestartedOutput(input: {
     taskId: string;
     taskModePath: string;
@@ -17,7 +37,10 @@ export function buildCoherentCycleRestartedOutput(input: {
     detectionSource: string;
     plannedChangedFilesCount: number;
     changedFilesCount: unknown;
-    preflightSummary: string;
+    preflightMode: unknown;
+    preflightScopeCategory: unknown;
+    preflightChangedFilesCount: number;
+    preflightRequiredReviewTypes: readonly string[];
 }): string[] {
     return [
         'COHERENT_CYCLE_RESTARTED',
@@ -28,7 +51,12 @@ export function buildCoherentCycleRestartedOutput(input: {
         `PlannedChangedFilesCount: ${input.plannedChangedFilesCount}`,
         `ChangedFilesCount: ${input.changedFilesCount}`,
         'NextStep: materialize review artifacts for the new compile cycle, then rerun required-reviews-check, doc-impact-gate, and completion-gate.',
-        `PreflightSummary: ${input.preflightSummary.trim().replace(/\s+/g, ' ')}`
+        buildPreflightSummaryLine({
+            mode: input.preflightMode,
+            scopeCategory: input.preflightScopeCategory,
+            changedFilesCount: input.preflightChangedFilesCount,
+            requiredReviewTypes: input.preflightRequiredReviewTypes
+        })
     ];
 }
 
@@ -55,7 +83,10 @@ export function buildReviewCycleRestartedOutput(input: {
     pendingReviewTypes: readonly string[];
     pendingReason: string | null;
     nextStep: string;
-    preflightSummary: string;
+    preflightMode: unknown;
+    preflightScopeCategory: unknown;
+    preflightChangedFilesCount: number;
+    preflightRequiredReviewTypes: readonly string[];
 }): string[] {
     return [
         'REVIEW_CYCLE_RESTARTED',
@@ -84,6 +115,11 @@ export function buildReviewCycleRestartedOutput(input: {
             ]
             : []),
         `NextStep: ${input.nextStep}`,
-        `PreflightSummary: ${input.preflightSummary.trim().replace(/\s+/g, ' ')}`
+        buildPreflightSummaryLine({
+            mode: input.preflightMode,
+            scopeCategory: input.preflightScopeCategory,
+            changedFilesCount: input.preflightChangedFilesCount,
+            requiredReviewTypes: input.preflightRequiredReviewTypes
+        })
     ];
 }

@@ -130,6 +130,13 @@ function toNonNegativeCount(value: unknown, fallback: number): number {
     return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function collectRequiredReviewTypes(requiredReviews: Record<string, boolean>): string[] {
+    return Object.entries(requiredReviews)
+        .filter(([, required]) => required === true)
+        .map(([reviewType]) => reviewType)
+        .sort();
+}
+
 function appendRestartCompletedEvidence(input: {
     repoRoot: string;
     taskId: string;
@@ -334,7 +341,7 @@ export async function runRestartCoherentCycleCommand(
             options.preflightOutputPath || resolvedPreflightPath,
             'PreflightOutputPath'
         );
-        const classifyResult = runClassifyChangeCommand({
+        runClassifyChangeCommand({
             repoRoot,
             taskId: resolvedTaskId,
             taskModePath: resolvedTaskModePath,
@@ -399,7 +406,10 @@ export async function runRestartCoherentCycleCommand(
                 detectionSource: replayScope.detectionSource,
                 plannedChangedFilesCount: replayScope.plannedChangedFiles.length,
                 changedFilesCount: refreshedPreflight.changed_files_count,
-                preflightSummary: classifyResult.outputText
+                preflightMode: refreshedPreflight.preflight.mode,
+                preflightScopeCategory: refreshedPreflight.preflight.scope_category,
+                preflightChangedFilesCount: refreshedPreflight.changed_files_count,
+                preflightRequiredReviewTypes: collectRequiredReviewTypes(refreshedRequiredReviews)
             }),
             exitCode: 0
         };
@@ -602,7 +612,7 @@ export async function runRestartReviewCycleCommand(
             }));
         }
 
-        const classifyResult = runClassifyChangeCommand({
+        runClassifyChangeCommand({
             repoRoot,
             taskId: resolvedTaskId,
             taskModePath: resolvedTaskModePath || undefined,
@@ -883,7 +893,10 @@ export async function runRestartReviewCycleCommand(
                 pendingReviewTypes,
                 pendingReason,
                 nextStep,
-                preflightSummary: classifyResult.outputText
+                preflightMode: refreshedPreflight.preflight.mode,
+                preflightScopeCategory: refreshedPreflight.preflight.scope_category,
+                preflightChangedFilesCount: refreshedPreflight.changed_files_count,
+                preflightRequiredReviewTypes: collectRequiredReviewTypes(refreshedRequiredReviews)
             }),
             exitCode: 0
         };
