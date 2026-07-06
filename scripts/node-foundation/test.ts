@@ -6,6 +6,10 @@ import {
     formatNodeFoundationTestMarker,
     NODE_FOUNDATION_TEST_MARKERS
 } from '../../src/core/node-foundation-test-shard-markers';
+import {
+    buildNodeFoundationShardFailureDiagnostics,
+    hasGreenNodeTestSummaryContent
+} from '../../src/core/node-foundation-test-shard-log-analysis';
 import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } from './build';
 
 const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
@@ -531,17 +535,18 @@ function resolveDurationTelemetryPath(repoRoot: string, requestedDurationFile: s
 }
 
 function isTestDurationTelemetryEntry(value: unknown): value is TestDurationTelemetryEntry {
-    return !!value
-        && typeof value === 'object'
-        && !Array.isArray(value)
-        && typeof (value as TestDurationTelemetryEntry).file === 'string'
-        && typeof (value as TestDurationTelemetryEntry).duration_ms === 'number'
-        && Number.isFinite((value as TestDurationTelemetryEntry).duration_ms)
-        && (value as TestDurationTelemetryEntry).duration_ms > 0
-        && typeof (value as TestDurationTelemetryEntry).samples === 'number'
-        && Number.isFinite((value as TestDurationTelemetryEntry).samples)
-        && (value as TestDurationTelemetryEntry).samples > 0
-        && typeof (value as TestDurationTelemetryEntry).updated_at_utc === 'string';
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+    const record = value as Record<string, unknown>;
+    return typeof record.file === 'string'
+        && typeof record.duration_ms === 'number'
+        && Number.isFinite(record.duration_ms)
+        && record.duration_ms > 0
+        && typeof record.samples === 'number'
+        && Number.isFinite(record.samples)
+        && record.samples > 0
+        && typeof record.updated_at_utc === 'string';
 }
 
 function readTestDurationTelemetry(telemetryPath: string): TestDurationTelemetry {
@@ -745,7 +750,7 @@ function buildTestFileWeights(
     return selectedTestFiles.map((file) => {
         const key = compiledTestFileToTelemetryKey(buildResult, file);
         const entry = telemetry.entries[key];
-        let fallbackSize = 1;
+        let fallbackSize: number;
         try {
             fallbackSize = Math.max(1, fs.statSync(file).size);
         } catch {
@@ -1047,6 +1052,7 @@ async function runSingleNodeTestProcess(
         runtimeConfig
     );
     diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
+    diagnoseFailedShardSummary(result);
     await recordTestDurationTelemetry(telemetryPath, buildResult, [result]);
     return result.exitCode;
 }
@@ -1070,20 +1076,7 @@ function getTailLines(text: string, maxLines: number): string[] {
 }
 
 function hasGreenNodeTestSummary(logPath: string): boolean {
-    const content = readTextFileIfExists(logPath);
-    const lastFailCount = getLastNodeTestSummaryCount(content, 'fail');
-    const lastCancelledCount = getLastNodeTestSummaryCount(content, 'cancelled');
-    return lastFailCount === 0 && lastCancelledCount === 0;
-}
-
-function getLastNodeTestSummaryCount(content: string, label: 'fail' | 'cancelled'): number | null {
-    const regex = new RegExp(`(?:^|\\n)ℹ ${label} (\\d+)(?:\\r?\\n|$)`, 'gu');
-    let lastCount: number | null = null;
-    let match: RegExpExecArray | null = null;
-    while ((match = regex.exec(content)) !== null) {
-        lastCount = Number(match[1]);
-    }
-    return lastCount;
+    return hasGreenNodeTestSummaryContent(readTextFileIfExists(logPath));
 }
 
 function resolveShardLogDir(repoRoot: string, buildRoot: string, requestedShardLogDir: string | null): string {
@@ -1397,6 +1390,27 @@ function diagnoseGreenSummaryShardFailure(
     }
 }
 
+function diagnoseFailedShardSummary(result: NodeTestShardResult): void {
+    if (result.exitCode === 0 || result.timedOut) {
+        return;
+    }
+
+    const content = readTextFileIfExists(result.logPath);
+    if (hasGreenNodeTestSummaryContent(content)) {
+        return;
+    }
+
+    const shardLabel = `${result.shardIndex + 1}/${result.shardCount}`;
+    for (const line of buildNodeFoundationShardFailureDiagnostics({
+        shardLabel,
+        exitCode: result.exitCode,
+        logPath: result.logPath,
+        logContent: content
+    })) {
+        console.error(line);
+    }
+}
+
 async function runShardedNodeTestProcesses(
     repoRoot: string,
     buildResult: BuildResult,
@@ -1479,6 +1493,7 @@ async function runShardedNodeTestProcesses(
             const result = await runNodeTestShard(repoRoot, optionArgs, shardFiles, shardIndex, totalShardCount, shardLogDir, runtimeConfig);
             scheduledResults[shardIndex] = result;
             diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
+            diagnoseFailedShardSummary(result);
         }
     }));
     for (const result of scheduledResults) {
@@ -1498,6 +1513,7 @@ async function runShardedNodeTestProcesses(
         );
         results.push(result);
         diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
+        diagnoseFailedShardSummary(result);
     }
     const updatedTelemetry = await recordTestDurationTelemetry(telemetryPath, buildResult, results);
     if (updatedTelemetry) {

@@ -14,6 +14,10 @@ import {
     runTsc,
     type BuildInputFingerprint
 } from '../../../scripts/node-foundation/build';
+import { removeTempRepoWithRetry } from '../cli/commands/gate-test-repo-bootstrap';
+
+const WINDOWS_TEMP_CLEANUP_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800, 1200] as const;
+const DEFAULT_TEMP_CLEANUP_RETRY_DELAYS_MS = [25, 50, 100, 200] as const;
 const {
     acquireBuildRootLock,
     getBuildRootLockPath,
@@ -44,6 +48,70 @@ const buildScriptsWrapper = require('../../../scripts/node-foundation/build-scri
     ) => { accepted: boolean; reason: string };
     runProcess: (command: string, args: string[], cwd: string, options?: { timeoutMs?: number }) => void;
 };
+
+function sleepSync(delayMs: number): void {
+    if (delayMs <= 0) {
+        return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+}
+
+function getTempCleanupRetryDelays(): readonly number[] {
+    return process.platform === 'win32'
+        ? WINDOWS_TEMP_CLEANUP_RETRY_DELAYS_MS
+        : DEFAULT_TEMP_CLEANUP_RETRY_DELAYS_MS;
+}
+
+function removeTempTree(tempRoot: string): void {
+    removeTempRepoWithRetry(tempRoot, { retryDelaysMs: getTempCleanupRetryDelays() });
+}
+
+function removeNodeModulesJunction(fixtureRoot: string): void {
+    const nodeModulesPath = path.join(fixtureRoot, 'node_modules');
+    if (!fs.existsSync(nodeModulesPath)) {
+        return;
+    }
+
+    try {
+        const stats = fs.lstatSync(nodeModulesPath);
+        if (stats.isSymbolicLink()) {
+            fs.unlinkSync(nodeModulesPath);
+            return;
+        }
+    } catch {
+        // Fall through to junction/rmdir handling.
+    }
+
+    try {
+        fs.rmdirSync(nodeModulesPath);
+        return;
+    } catch {
+        // Fall through.
+    }
+
+    try {
+        fs.rmSync(nodeModulesPath, { recursive: false, force: true });
+    } catch {
+        // Best effort before parent cleanup retries.
+    }
+}
+
+function cleanupBuildScriptsFixture(tempRoot: string): void {
+    const fixtureRoot = path.join(tempRoot, 'repo');
+    if (process.platform === 'win32') {
+        sleepSync(75);
+        removeNodeModulesJunction(fixtureRoot);
+        const lockPath = path.join(fixtureRoot, '.scripts-build.lock');
+        if (fs.existsSync(lockPath)) {
+            try {
+                releaseBuildRootLock(lockPath);
+            } catch {
+                removeTempRepoWithRetry(lockPath, { retryDelaysMs: [25, 50, 100] });
+            }
+        }
+    }
+        removeTempTree(tempRoot);
+}
 
 function writeTextFile(filePath: string, content: string): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -140,6 +208,7 @@ function createBuildScriptsFixture(repoRoot: string): string {
         'tsconfig.scripts.json',
         'src/bin',
         'src/core/node-foundation-test-shard-markers.ts',
+        'src/core/node-foundation-test-shard-log-analysis.ts',
         'scripts/node-foundation'
     ];
 
@@ -189,7 +258,7 @@ test('releaseBuildRootLock retries transient Windows-style removal failures', ()
         assert.equal(fs.existsSync(lockPath), false);
     } finally {
         mutableFs.rmSync = originalRmSync;
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -221,7 +290,7 @@ test('withBuildRootLock serializes concurrent workers without leaving lock direc
         assertSerializedRanges(eventLogPath, 2);
         assert.ok(!fs.existsSync(`${buildRoot}.lock`), 'build root lock directory must be removed after workers finish');
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -245,7 +314,7 @@ test('acquireBuildRootLock reclaims orphaned lock directory without owner metada
         assert.equal(owner.pid, process.pid);
     } finally {
         releaseBuildRootLock(lockPath);
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -270,7 +339,7 @@ test('acquireBuildRootLock reclaims orphaned lock directory with corrupt owner m
         assert.equal(owner.pid, process.pid);
     } finally {
         releaseBuildRootLock(lockPath);
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -298,7 +367,7 @@ test('acquireBuildRootLock does not reclaim orphaned lock directory within metad
             }
         );
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -334,7 +403,7 @@ test('acquireBuildRootLock does not reclaim aged lock when owner PID is still al
         );
         assert.ok(fs.existsSync(lockPath), 'live-owner lock must remain in place after timeout');
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -386,7 +455,7 @@ test('acquireBuildRootLock keeps foreign-host partial metadata until stale timeo
         assert.equal(owner.pid, process.pid);
     } finally {
         releaseBuildRootLock(lockPath);
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -415,7 +484,7 @@ test('acquireBuildRootLock does not reclaim missing owner metadata during extend
         );
         assert.ok(fs.existsSync(lockPath), 'lock should remain during extended initialization grace');
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -463,7 +532,7 @@ test('acquireBuildRootLock does not treat transient owner metadata read failures
         assert.ok(fs.existsSync(lockPath), 'transient read failures must not reclaim a live lock');
     } finally {
         mutableFs.readFileSync = originalReadFileSync;
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -499,7 +568,7 @@ test('build-scripts wrapper serializes concurrent workers and leaves a usable sc
         assert.ok(fs.existsSync(path.join(fixtureRoot, 'bin', 'garda.js')));
         assert.ok(!fs.existsSync(path.join(fixtureRoot, '.scripts-build.lock')), 'wrapper lock directory must be removed after build');
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupBuildScriptsFixture(tempRoot);
     }
 });
 
@@ -530,7 +599,7 @@ test('build input fingerprint changes when source or config inputs change', () =
         assert.notEqual(afterSourceChange.sha256, before.sha256);
         assert.notEqual(afterConfigChange.sha256, afterSourceChange.sha256);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -558,7 +627,7 @@ test('publish-runtime fingerprint changes when build-prep scripts change', () =>
 
         assert.notEqual(after.sha256, before.sha256);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removeTempTree(tempRoot);
     }
 });
 
@@ -582,7 +651,7 @@ test('build-scripts wrapper reuses current compiled wrapper build by fingerprint
         assert.equal(secondFingerprint.sha256, firstFingerprint.sha256);
         assert.equal(secondStat.mtimeMs, firstStat.mtimeMs);
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupBuildScriptsFixture(tempRoot);
     }
 });
 
@@ -616,7 +685,7 @@ test('build-scripts prebuilt test entry still requires a current fingerprint', (
         } else {
             process.env.GARDA_NODE_FOUNDATION_TEST_PREBUILT = originalPrebuiltEnv;
         }
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupBuildScriptsFixture(tempRoot);
     }
 });
 
@@ -693,7 +762,7 @@ function createReusableBuildFixture(kind: BuildInputFingerprint['kind']): {
     return {
         buildRoot,
         cleanup() {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeTempTree(tempRoot);
         },
         fingerprint,
         manifestPath,
@@ -822,7 +891,7 @@ test('build-scripts wrapper reclaims orphaned lock directory without owner metad
         assert.ok(fs.existsSync(path.join(fixtureRoot, '.scripts-build', 'scripts', 'node-foundation', 'build.js')));
         assert.ok(!fs.existsSync(lockPath), 'wrapper should reclaim abandoned lock directory and remove it after build');
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        cleanupBuildScriptsFixture(tempRoot);
     }
 });
 

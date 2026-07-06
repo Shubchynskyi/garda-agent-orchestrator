@@ -35,7 +35,7 @@ jobs:
           - '22.13.0'
           - '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -63,7 +63,7 @@ jobs:
           - '22.13.0'
           - '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -81,6 +81,15 @@ jobs:
           FORCE_COLOR: '1'
         run: npm run test:unit
 
+      - name: Upload node foundation shard logs
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: node-foundation-shard-logs-test-unit-node-${{ matrix.node-version }}
+          path: .node-build/test-shard-logs/**
+          if-no-files-found: ignore
+          retention-days: 15
+
   # ── 3. Gate tests (next-step, review, routing, workflow evidence) ─────────────
   test-gates:
     name: Gate Tests / Node ${{ matrix.node-version }}
@@ -93,7 +102,7 @@ jobs:
           - '22.13.0'
           - '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -112,6 +121,15 @@ jobs:
           GARDA_NODE_FOUNDATION_TEST_SHARDS: '2'
         run: npm run test:gates
 
+      - name: Upload node foundation shard logs
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: node-foundation-shard-logs-test-gates-node-${{ matrix.node-version }}
+          path: .node-build/test-shard-logs/**
+          if-no-files-found: ignore
+          retention-days: 15
+
   # ── 4. CLI tests (command surfaces, gate flows, review handlers) ──────────────
   test-cli:
     name: CLI Tests / Node ${{ matrix.node-version }}
@@ -124,7 +142,7 @@ jobs:
           - '22.13.0'
           - '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -143,6 +161,15 @@ jobs:
           GARDA_NODE_FOUNDATION_TEST_SHARDS: '2'
         run: npm run test:cli
 
+      - name: Upload node foundation shard logs
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: node-foundation-shard-logs-test-cli-node-${{ matrix.node-version }}
+          path: .node-build/test-shard-logs/**
+          if-no-files-found: ignore
+          retention-days: 15
+
   # ── 5. Lifecycle tests (setup, update, on/off, uninstall, cleanup) ────────────
   test-lifecycle:
     name: Lifecycle Tests / Node ${{ matrix.node-version }}
@@ -155,7 +182,7 @@ jobs:
           - '22.13.0'
           - '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -173,6 +200,15 @@ jobs:
           FORCE_COLOR: '1'
         run: npm run test:lifecycle
 
+      - name: Upload node foundation shard logs
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: node-foundation-shard-logs-test-lifecycle-node-${{ matrix.node-version }}
+          path: .node-build/test-shard-logs/**
+          if-no-files-found: ignore
+          retention-days: 15
+
   # ── 5b. Binary & Materialization tests (bin, materialization) ────────────────
   test-bin:
     name: Binary Tests / Node ${{ matrix.node-version }}
@@ -185,7 +221,7 @@ jobs:
           - '22.13.0'
           - '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -203,6 +239,15 @@ jobs:
           FORCE_COLOR: '1'
         run: npm run test:bin
 
+      - name: Upload node foundation shard logs
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: node-foundation-shard-logs-test-bin-node-${{ matrix.node-version }}
+          path: .node-build/test-shard-logs/**
+          if-no-files-found: ignore
+          retention-days: 15
+
   # ── 6. Release validation matrix (version parity + build + quality + pack smoke)
   validate-release:
     name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}
@@ -218,7 +263,7 @@ jobs:
           - '22.13.0'
           - '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -248,7 +293,7 @@ jobs:
           - '22.13.0'
           - '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -361,7 +406,7 @@ jobs:
 
       - name: Upload smoke failure evidence
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: smoke-failure-evidence-${{ matrix.os }}-node${{ matrix.node-version }}
           path: smoke-failure-evidence/

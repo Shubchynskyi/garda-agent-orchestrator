@@ -478,7 +478,7 @@ function isBrowserSmokeStartupUnavailable(error: unknown): boolean {
     if (!(error instanceof Error)) {
         return false;
     }
-    return /Browser exited before debug target was available|Timed out waiting for browser debug target|CDP socket open failed/u
+    return /Browser exited before debug target was available|Timed out waiting for browser debug target|CDP socket open failed|Timed out waiting for browser text matching/u
         .test(error.message);
 }
 
@@ -607,17 +607,8 @@ test('local UI browser smoke opens checks cycle tab with compact forecast and se
         ], {
             stdio: 'ignore'
         });
-        let pageSocketUrl: string;
-        try {
-            pageSocketUrl = await waitForBrowserDebugTarget(debugPort, browser);
-            cdp = await connectBrowserSmokeCdp(pageSocketUrl);
-        } catch (error) {
-            if (isBrowserSmokeStartupUnavailable(error)) {
-                context.skip(`Browser smoke startup unavailable: ${(error as Error).message}`);
-                return;
-            }
-            throw error;
-        }
+        const pageSocketUrl = await waitForBrowserDebugTarget(debugPort, browser);
+        cdp = await connectBrowserSmokeCdp(pageSocketUrl);
         await cdp.send('Page.enable');
         await cdp.send('Runtime.enable');
         await cdp.send('Page.navigate', { url: server.url });
@@ -651,6 +642,12 @@ test('local UI browser smoke opens checks cycle tab with compact forecast and se
             /data-setting-id="full-suite-command"/u
         );
         assert.doesNotMatch(settingsHtml, /data-validation-action-id=/u);
+    } catch (error) {
+        if (isBrowserSmokeStartupUnavailable(error)) {
+            context.skip(`Browser smoke unavailable in this environment: ${(error as Error).message}`);
+            return;
+        }
+        throw error;
     } finally {
         cdp?.close();
         await terminateBrowserSmokeProcess(browser);

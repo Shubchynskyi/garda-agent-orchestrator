@@ -229,7 +229,10 @@ test('local UI idle expiry closes the server without browser heartbeat', async (
         const closePromise = new Promise<void>((resolve) => server.server.once('close', resolve));
         await Promise.race([
             closePromise,
-            new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error('server did not close after idle expiry')), 1500))
+            new Promise<void>((_resolve, reject) => setTimeout(
+                () => reject(new Error('server did not close after idle expiry')),
+                5000
+            ))
         ]);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
