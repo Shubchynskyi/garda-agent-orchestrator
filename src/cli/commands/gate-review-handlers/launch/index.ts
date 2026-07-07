@@ -4,4 +4,5 @@ export * from './review-artifact-path-support';
 export * from './review-launch-artifact-validation';
 export * from './review-launch-input-attestation';
 export * from './reviewer-handoff-support';
+export * from './reviewer-launch-command-templates';
 export * from './reviewer-identity-options';
