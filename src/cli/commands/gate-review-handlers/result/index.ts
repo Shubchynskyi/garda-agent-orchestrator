@@ -1,4 +1,6 @@
 export * from './review-result-handlers';
+export * from './review-result-handler-contract';
+export * from './review-result-output-safety';
 export * from './review-artifact-materialization';
 export * from './review-dependency-timeline';
 export * from './review-output-input';

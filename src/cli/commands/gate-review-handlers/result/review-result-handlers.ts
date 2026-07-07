@@ -14,9 +14,6 @@ import {
     emitReviewRecordedEventAsync
 } from '../../../../gate-runtime/lifecycle-events';
 import {
-    redactSecretText
-} from '../../../../core/redaction';
-import {
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
 } from '../../../../gate-runtime/reviewer-session-contract';
 import {
@@ -38,7 +35,6 @@ import * as gateHelpers from '../../../../gates/shared/helpers';
 import { normalizePath } from '../../../../gates/shared/helpers';
 import {
     assertRequiredUpstreamReviewDependencies,
-    type ReviewDependencyTimelineEvent
 } from '../../../../gates/review/review-dependencies';
 import {
     REVIEW_EVIDENCE_REQUIRED_TRUST_LEVEL
@@ -50,18 +46,8 @@ import {
     isNonTestReviewScope
 } from '../../../../gates/review-reuse/review-reuse';
 import {
-    assertReviewTreeStateFresh
-} from '../../../../gates/review/review-tree-state';
-import {
     resolveReviewerPromptArtifactBinding
 } from '../../../../gates/review/review-prompt-artifact';
-import type {
-    getReviewArtifactFindingsEvidence,
-    normalizeCanonicalReviewSectionHeadings
-} from '../../../../gates/completion/completion';
-import type {
-    resolveRuntimeReviewerIdentity
-} from '../../../../gates/review/reviewer-routing';
 import { REVIEW_CONTRACTS } from '../../../../gates/required-reviews/required-reviews-check';
 import {
     cleanupReviewTempSourceArtifact
@@ -71,12 +57,24 @@ import {
     parseOptions
 } from '../../cli-helpers';
 import {
-    buildGateCommandPrefix,
-    quotePowerShellCliValue
-} from '../../gate-flows/task-mode/task-mode-command-format';
-import {
     type ParsedOptionsRecord
 } from '../../shared-command-utils';
+import {
+    type ReviewResultHandlers,
+    type ReviewResultHandlersDependencies,
+    type ReviewerExecutionMode,
+    recordReviewReceiptOptionDefinitions,
+    recordReviewResultOptionDefinitions
+} from './review-result-handler-contract';
+import {
+    appendSafeReviewOutputRetryInstruction,
+    assertReviewOutputNotOlderThanDelegation,
+    assertReviewTreeStateFreshOrHistoricalFailure,
+    buildSafeReviewOutputRetryInstruction,
+    getDelegationStartedAtUtc,
+    isFailedReviewVerdictToken,
+    sha256ReviewArtifactContent
+} from './review-result-output-safety';
 import {
     materializeReviewContent
 } from './review-artifact-materialization';
@@ -90,150 +88,6 @@ import {
     assertReviewReceiptRoutingMatchesContext
 } from './review-receipt-validation';
 import { assertReviewLifecycleGuard } from '../../../../gates/review/review-lifecycle-guard';
-
-type ReviewerExecutionMode = 'delegated_subagent';
-type RuntimeReviewerIdentity = ReturnType<typeof resolveRuntimeReviewerIdentity>;
-type ReviewFindingsEvidence = ReturnType<typeof getReviewArtifactFindingsEvidence>;
-
-interface ParsedReviewerIdentity {
-    reviewerExecutionMode: ReviewerExecutionMode;
-    reviewerIdentity: string;
-    reviewerFallbackReason: string | null;
-}
-
-interface ResolvedCanonicalReviewPaths {
-    preflightPath: string;
-    reviewsRoot: string;
-    artifactPath: string;
-    contextPath: string;
-}
-
-interface ReviewMaterializationAnalysis {
-    violations: string[];
-    findingsEvidence: ReviewFindingsEvidence;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-interface ReviewResultHandlersDependencies {
-    analyzeEarlyReviewMaterialization: (options: {
-        artifactPath: string;
-        reviewContent: string;
-        verdictToken: string;
-        expectedPassVerdict: string;
-        requirePassValidationNotes: boolean;
-    }) => ReviewMaterializationAnalysis;
-    assertExplicitReviewContextRuntimeIdentity: (options: {
-        repoRoot: string;
-        taskId: string;
-        reviewType: string;
-        contextPath: string;
-        reviewerRouting: Record<string, unknown> | null;
-        taskModePath?: string | null;
-    }) => RuntimeReviewerIdentity;
-    assertReviewContextContractOrThrow: (options: {
-        taskId: string;
-        reviewType: string;
-        contextPath: string;
-        reviewContext: Record<string, unknown> | null;
-        preflightPath: string;
-        preflightSha256: string | null;
-        preflightPayload?: Record<string, unknown> | null;
-        requireStrictBindingMetadata?: boolean;
-        repoRoot?: string;
-    }) => void;
-    assertReviewContextRuntimeIdentityMetadataPresent: (options: {
-        reviewType: string;
-        contextPath: string;
-        reviewContext: Record<string, unknown> | null;
-        reviewerRouting: Record<string, unknown> | null;
-    }) => void;
-    assertRoutingCompatibility: (options: {
-        reviewType: string;
-        runtimeIdentity: RuntimeReviewerIdentity;
-        currentRouting: Record<string, unknown> | null;
-        reviewerExecutionMode: ReviewerExecutionMode;
-        reviewerFallbackReason: string | null;
-    }) => void;
-    buildLosslessPassReviewNormalization: (options: {
-        reviewType: string;
-        reviewContent: string;
-        expectedPassVerdict: string;
-        findingsEvidence: ReviewFindingsEvidence;
-    }) => string | null;
-    buildMinimalPassReviewTemplateHint: (reviewType: string, expectedPassVerdict: string) => string;
-    buildPassReviewTemplateHintMessage: (options: {
-        reviewType: string;
-        verdictToken: string;
-        expectedPassVerdict: string;
-        reviewContent: string;
-        findingsEvidence: ReviewFindingsEvidence;
-    }) => string | null;
-    findMatchingReviewerInvocationAttestationEvent: (
-        timelineEvents: readonly ReviewDependencyTimelineEvent[],
-        options: {
-            taskId: string;
-            reviewType: string;
-            reviewerExecutionMode: ReviewerExecutionMode;
-            reviewerIdentity: string;
-            reviewContextSha256: string;
-            reviewTreeStateSha256?: string | null;
-            routingEventSha256: string;
-        }
-    ) => ReviewDependencyTimelineEvent | null;
-    findMatchingRoutingEvent: (
-        timelineEvents: readonly ReviewDependencyTimelineEvent[],
-        reviewType: string,
-        reviewerExecutionMode: ReviewerExecutionMode,
-        reviewerIdentity: string,
-        reviewerFallbackReason: string | null
-    ) => ReviewDependencyTimelineEvent | null;
-    getReviewTreeStateSha256: (reviewContext: Record<string, unknown>) => string;
-    isLosslessPassNormalizationEligibleViolation: (violation: string) => boolean;
-    parseReviewerIdentity: (options: ParsedOptionsRecord, modeRequiredMessage: string) => ParsedReviewerIdentity;
-    readReviewOutputFromStdin: () => Promise<string>;
-    normalizeReviewSectionHeadings: typeof normalizeCanonicalReviewSectionHeadings;
-    resolveCanonicalReviewPaths: (
-        repoRoot: string,
-        taskId: string,
-        reviewType: string,
-        preflightPathValue: unknown,
-        reviewContextPathValue: unknown
-    ) => ResolvedCanonicalReviewPaths;
-    reviewContextRequiresPassValidationNotes: (contextPath: string, repoRoot: string) => boolean;
-}
-
-function recordReviewResultOptionDefinitions(): Record<string, { key: string; type: 'string' | 'boolean' }> {
-    return {
-        '--task-id': { key: 'taskId', type: 'string' },
-        '--review-type': { key: 'reviewType', type: 'string' },
-        '--preflight-path': { key: 'preflightPath', type: 'string' },
-        '--task-mode-path': { key: 'taskModePath', type: 'string' },
-        '--review-output-path': { key: 'reviewOutputPath', type: 'string' },
-        '--review-output-stdin': { key: 'reviewOutputStdin', type: 'boolean' },
-        '--review-context-path': { key: 'reviewContextPath', type: 'string' },
-        '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
-        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
-        '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
-        '--repo-root': { key: 'repoRoot', type: 'string' }
-    };
-}
-
-function recordReviewReceiptOptionDefinitions(): Record<string, { key: string; type: 'string' }> {
-    return {
-        '--task-id': { key: 'taskId', type: 'string' },
-        '--review-type': { key: 'reviewType', type: 'string' },
-        '--preflight-path': { key: 'preflightPath', type: 'string' },
-        '--review-context-path': { key: 'reviewContextPath', type: 'string' },
-        '--task-mode-path': { key: 'taskModePath', type: 'string' },
-        '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
-        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
-        '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
-        '--repo-root': { key: 'repoRoot', type: 'string' }
-    };
-}
 
 async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     repoRoot: string;
@@ -566,141 +420,6 @@ async function recordReviewReceiptFromArtifacts(options: {
     });
 }
 
-function sha256ReviewArtifactContent(content: string): string {
-    return createHash('sha256')
-        .update(redactSecretText(content))
-        .digest('hex');
-}
-
-function buildSafeReviewOutputRetryInstruction(taskId: string, reviewType: string): string {
-    return [
-        'Safe recovery:',
-        `fix the reviewer output and rerun record-review-result for '${taskId}' '${reviewType}'.`,
-        'The canonical raw review-output artifact is replaced only after validation and receipt recording succeed.'
-    ].join(' ');
-}
-
-function appendSafeReviewOutputRetryInstruction(error: unknown, taskId: string, reviewType: string): Error {
-    const message = error instanceof Error ? error.message : String(error);
-    const instruction = buildSafeReviewOutputRetryInstruction(taskId, reviewType);
-    if (message.includes(instruction)) {
-        return error instanceof Error ? error : new Error(message);
-    }
-    return new Error(`${message}\n\n${instruction}`);
-}
-
-function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown>): string | null {
-    const treeState = isPlainRecord(reviewContext.tree_state)
-        ? reviewContext.tree_state
-        : null;
-    const sha256 = String(treeState?.tree_state_sha256 ?? treeState?.treeStateSha256 ?? '').trim().toLowerCase();
-    return sha256 || null;
-}
-
-function isFailedReviewVerdictToken(verdictToken: string, expectedFailVerdict: string): boolean {
-    const normalizedVerdict = verdictToken.trim().toUpperCase();
-    const normalizedExpectedFail = expectedFailVerdict.trim().toUpperCase();
-    return normalizedVerdict === normalizedExpectedFail || normalizedVerdict.endsWith(' REVIEW FAILED');
-}
-
-function assertReviewTreeStateFreshOrHistoricalFailure(options: {
-    repoRoot: string;
-    reviewContext: Record<string, unknown>;
-    contextPath: string;
-    gateName: string;
-    allowHistoricalFailedReviewResult: boolean;
-}): string | null {
-    try {
-        assertReviewTreeStateFresh({
-            repoRoot: options.repoRoot,
-            reviewContext: options.reviewContext,
-            contextPath: options.contextPath,
-            gateName: options.gateName
-        });
-        return null;
-    } catch (error: unknown) {
-        if (!options.allowHistoricalFailedReviewResult) {
-            throw error;
-        }
-        if (!getReviewContextTreeStateSha256(options.reviewContext)) {
-            throw error;
-        }
-        const reason = error instanceof Error ? error.message : String(error);
-        return reason.trim() || 'review context tree-state became stale before failed review result materialization';
-    }
-}
-
-function parseUtcTimestampMs(value: unknown): number | null {
-    const text = String(value || '').trim();
-    if (!text) {
-        return null;
-    }
-    const parsed = Date.parse(text);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-function getDelegationStartedAtUtc(value: unknown): string | null {
-    const record = value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
-    const text = String(record?.delegation_started_at_utc ?? '').trim();
-    return text || null;
-}
-
-function assertReviewOutputNotOlderThanDelegation(options: {
-    taskId: string;
-    reviewType: string;
-    preflightPath: string;
-    repoRoot: string;
-    reviewerExecutionMode: string;
-    reviewerIdentity: string;
-    reviewOutputSourcePath: string | null | undefined;
-    reviewOutputSourceMtimeUtc: string | null | undefined;
-    delegationStartedAtUtc: string | null | undefined;
-}): void {
-    const reviewOutputSourceMtimeMs = parseUtcTimestampMs(options.reviewOutputSourceMtimeUtc);
-    const delegationStartedAtMs = parseUtcTimestampMs(options.delegationStartedAtUtc);
-    if (reviewOutputSourceMtimeMs == null) {
-        return;
-    }
-    const stdinGateCommand = [
-        `${buildGateCommandPrefix(options.repoRoot)} gate record-review-result`,
-        '--task-id', quotePowerShellCliValue(options.taskId),
-        '--review-type', quotePowerShellCliValue(options.reviewType),
-        '--preflight-path', quotePowerShellCliValue(options.preflightPath),
-        '--review-output-stdin',
-        '--repo-root', quotePowerShellCliValue(options.repoRoot),
-        '--reviewer-execution-mode', quotePowerShellCliValue(options.reviewerExecutionMode),
-        '--reviewer-identity', quotePowerShellCliValue(options.reviewerIdentity)
-    ].join(' ');
-    const stdinCommand = options.reviewOutputSourcePath
-        ? `Get-Content -Raw -LiteralPath ${quotePowerShellCliValue(options.reviewOutputSourcePath)} | ${stdinGateCommand}`
-        : stdinGateCommand;
-    if (delegationStartedAtMs == null) {
-        throw new Error(
-            `Review output path-mode timing is ambiguous for '${options.reviewType}': ` +
-            'delegation_started_at_utc is missing or invalid, so path metadata cannot prove post-delegation authorship. ' +
-            'Receipt materialization remains blocked.\n\n' +
-            'Safe recovery: rerun record-review-result by piping the same delegated reviewer output through stdin after ' +
-            `delegation evidence exists. PowerShell-safe command:\n${stdinCommand}\n` +
-            'Do not backdate delegation evidence or edit file mtimes to bypass this check.'
-        );
-    }
-    if (reviewOutputSourceMtimeMs >= delegationStartedAtMs) {
-        return;
-    }
-    throw new Error(
-        `Review output path-mode timing is impossible for '${options.reviewType}': ` +
-        `review_output_source_mtime_utc (${options.reviewOutputSourceMtimeUtc}) is earlier than ` +
-        `delegation_started_at_utc (${options.delegationStartedAtUtc}). ` +
-        'This usually means the delegated reviewer wrote the output file before delegation-start evidence was recorded, ' +
-        'so path metadata cannot prove post-delegation authorship. Receipt materialization remains blocked.\n\n' +
-        'Safe recovery: rerun record-review-result by piping the same delegated reviewer output through stdin after ' +
-        `delegation evidence exists. PowerShell-safe command:\n${stdinCommand}\n` +
-        'Do not backdate delegation evidence or edit file mtimes to bypass this check.'
-    );
-}
-
 async function handleRecordReviewResultWithDependencies(
     gateArgv: string[],
     dependencies: ReviewResultHandlersDependencies
@@ -976,10 +695,7 @@ async function handleRecordReviewReceiptWithDependencies(
     console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
 }
 
-export function createReviewResultHandlers(dependencies: ReviewResultHandlersDependencies): {
-    handleRecordReviewResult: (gateArgv: string[]) => Promise<void>;
-    handleRecordReviewReceipt: (gateArgv: string[]) => Promise<void>;
-} {
+export function createReviewResultHandlers(dependencies: ReviewResultHandlersDependencies): ReviewResultHandlers {
     return {
         handleRecordReviewResult: (gateArgv) => handleRecordReviewResultWithDependencies(gateArgv, dependencies),
         handleRecordReviewReceipt: (gateArgv) => handleRecordReviewReceiptWithDependencies(gateArgv, dependencies)
