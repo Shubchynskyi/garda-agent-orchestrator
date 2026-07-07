@@ -212,6 +212,9 @@ import {
     resolveNextStepPreGuardRoute
 } from './next-step-pre-review-routing';
 import {
+    buildBaselineOnlyPreImplementationRoute
+} from './next-step-pre-implementation-routing';
+import {
     buildNextStepQualityChecklistSummary,
     markQualityChecklistReadinessStaleForWorkspace,
     readQualityChecklistReadiness,
@@ -3023,6 +3026,24 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             title: qualityChecklistRoute.title,
             reason: qualityChecklistRoute.reason,
             commands: qualityChecklistRoute.commands
+        });
+    }
+
+    const baselineOnlyPreImplementationRoute = buildBaselineOnlyPreImplementationRoute({
+        repoRoot,
+        taskEntry,
+        taskMode,
+        preflight,
+        compileGatePassed: isGatePassed(summary, 'compile-gate')
+    });
+    if (baselineOnlyPreImplementationRoute) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: baselineOnlyPreImplementationRoute.nextGate,
+            title: baselineOnlyPreImplementationRoute.title,
+            reason: baselineOnlyPreImplementationRoute.reason,
+            commands: []
         });
     }
 

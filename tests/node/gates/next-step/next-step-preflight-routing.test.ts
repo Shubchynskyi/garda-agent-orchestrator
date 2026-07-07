@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
+import { computeTaskPlanDigest, validateTaskPlan } from '../../../../src/schemas/task-plan';
 
 import { resolveNextStep } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
@@ -339,6 +340,52 @@ function writePreflight(
     return preflightPath;
 }
 
+function writeBaselineOnlyPreflight(
+    repoRoot: string,
+    taskId: string,
+    options: {
+        seedPostPreflight?: boolean;
+    } = {}
+): string {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+    writeJson(preflightPath, {
+        task_id: taskId,
+        detection_source: snapshot.detection_source,
+        mode: 'FULL_PATH',
+        scope_category: 'empty',
+        metrics: {
+            changed_lines_total: snapshot.changed_lines_total,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256
+        },
+        required_reviews: { ...ALL_REVIEW_FLAGS },
+        changed_files: [],
+        review_execution_policy: {
+            mode: 'code_first_optional',
+            visible_summary_line: 'Review execution policy: code_first_optional'
+        },
+        profile_guardrails: {
+            zero_diff_no_reviewable_scope: true
+        },
+        zero_diff_guard: {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true,
+            no_op_artifact_suffix: '-no-op.json',
+            rationale: 'Preflight on a clean workspace is baseline-only.'
+        }
+    });
+    appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+        output_path: normalizeForTimeline(preflightPath)
+    });
+    if (options.seedPostPreflight !== false) {
+        seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+    }
+    return preflightPath;
+}
+
 
 
 
@@ -388,6 +435,286 @@ describe('gates/next-step preflight routing', () => {
             '80-task-workflow.md',
             '90-skill-catalog.md'
         ]);
+    });
+
+    it('routes baseline-only code-changing task intent to implementation instead of compile', () => {
+        for (const taskSummary of [
+            'Route planned code-changing tasks to implementation before compile',
+            'Route planned code changing tasks to implementation before compile',
+            'Enforce next-step implementation routing before compile',
+            'Rename next-step implementation state before compile',
+            'Harden next-step preflight scope before compile',
+            'Validate next-step planned scope before compile',
+            'Prevent next-step compile before implementation'
+        ]) {
+            const repoRoot = makeTempRepo();
+            initGitRepo(repoRoot);
+            writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+                taskId: TASK_ID,
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary,
+                startBanner: 'Garda captures my mind',
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            }));
+            appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+            seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+            seedHandshake(repoRoot, TASK_ID);
+            seedShellSmoke(repoRoot, TASK_ID);
+            writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'implementation', taskSummary);
+            assert.equal(result.commands.length, 0);
+            assert.match(result.reason, /BASELINE_ONLY with no reviewable diff/u);
+            assert.match(result.reason, /Do not run compile-gate/u);
+        }
+    });
+
+    it('surfaces ignored structured planned files before compile', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot, { gitignoreContent: 'ignored-plan/**\n' });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Create ignored planned file before compile',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['ignored-plan/generated.ts']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'materialize-planned-scope', result.reason);
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /Structured planned files: "ignored-plan\/generated\.ts"/u);
+        assert.match(result.reason, /Planned files ignored by git scope: "ignored-plan\/generated\.ts"/u);
+    });
+
+    it('uses attached JSON task-plan scope files with canonical plan digest', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot, { gitignoreContent: 'ignored-plan/**\n' });
+        const planRelativePath = `garda-agent-orchestrator/runtime/plans/${TASK_ID}.json`;
+        const planPath = path.join(repoRoot, ...planRelativePath.split('/'));
+        fs.mkdirSync(path.dirname(planPath), { recursive: true });
+        const plan = validateTaskPlan({
+            schema_version: 1,
+            task_id: TASK_ID,
+            status: 'approved',
+            goal: 'Create ignored generated file before compile',
+            scope_files: ['ignored-plan/generated.ts'],
+            risk_level: 'low',
+            steps: [
+                { id: 'materialize', title: 'Create ignored generated file' }
+            ]
+        });
+        const planSha256 = computeTaskPlanDigest(plan);
+        fs.writeFileSync(planPath, `${JSON.stringify({ ...plan, plan_sha256: planSha256 }, null, 2)}\n`, 'utf8');
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Create ignored planned file before compile',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plan: {
+                plan_path: planRelativePath,
+                plan_sha256: planSha256,
+                plan_summary: 'Create ignored generated file'
+            }
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'materialize-planned-scope', result.reason);
+        assert.match(result.reason, /Structured planned files: "ignored-plan\/generated\.ts"/u);
+        assert.match(result.reason, /Planned files ignored by git scope: "ignored-plan\/generated\.ts"/u);
+    });
+
+    it('ignores unauthorized attached JSON task-plan scope before compile', () => {
+        const cases = [
+            {
+                name: 'wrong task id',
+                planTaskId: 'T-NEXT-OTHER',
+                status: 'approved',
+                taskModeSha256: 'computed',
+                expectedDiagnostic: /Attached task plan ignored: plan task_id 'T-NEXT-OTHER' does not match active task 'T-NEXT-1'\./u
+            },
+            {
+                name: 'draft plan',
+                planTaskId: TASK_ID,
+                status: 'draft',
+                taskModeSha256: 'computed',
+                expectedDiagnostic: /Attached task plan ignored: plan status is 'draft', not approved\./u
+            },
+            {
+                name: 'missing task-mode sha',
+                planTaskId: TASK_ID,
+                status: 'approved',
+                taskModeSha256: '',
+                expectedDiagnostic: /Attached task plan ignored: task-mode plan_sha256 is missing\./u
+            }
+        ] as const;
+        for (const testCase of cases) {
+            const repoRoot = makeTempRepo();
+            initGitRepo(repoRoot, { gitignoreContent: 'ignored-plan/**\n' });
+            const planRelativePath = `garda-agent-orchestrator/runtime/plans/${testCase.name.replace(/\s+/gu, '-')}.json`;
+            const planPath = path.join(repoRoot, ...planRelativePath.split('/'));
+            fs.mkdirSync(path.dirname(planPath), { recursive: true });
+            const plan = validateTaskPlan({
+                schema_version: 1,
+                task_id: testCase.planTaskId,
+                status: testCase.status,
+                goal: 'Create ignored generated file before compile',
+                scope_files: ['ignored-plan/generated.ts'],
+                risk_level: 'low',
+                steps: [
+                    { id: 'materialize', title: 'Create ignored generated file' }
+                ]
+            });
+            const planSha256 = computeTaskPlanDigest(plan);
+            fs.writeFileSync(planPath, `${JSON.stringify({ ...plan, plan_sha256: planSha256 }, null, 2)}\n`, 'utf8');
+            const taskModeArtifact = buildTaskModeArtifact({
+                taskId: TASK_ID,
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary: 'Create ignored planned file before compile',
+                startBanner: 'Garda captures my mind',
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved',
+                plan: {
+                    plan_path: planRelativePath,
+                    plan_sha256: planSha256,
+                    plan_summary: 'Create ignored generated file'
+                }
+            });
+            if (testCase.taskModeSha256 !== 'computed' && taskModeArtifact.plan) {
+                taskModeArtifact.plan.plan_sha256 = testCase.taskModeSha256;
+            }
+            writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), taskModeArtifact);
+            appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+            seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+            seedHandshake(repoRoot, TASK_ID);
+            seedShellSmoke(repoRoot, TASK_ID);
+            writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'implementation', testCase.name);
+            assert.equal(result.commands.length, 0);
+            assert.match(result.reason, /No authorized structured planned files are available/u);
+            assert.match(result.reason, testCase.expectedDiagnostic);
+            assert.doesNotMatch(result.reason, /Structured planned files: "ignored-plan\/generated\.ts"/u);
+        }
+    });
+
+    it('does not treat optional Markdown working-plan scope as gate-owned planned files', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot, { gitignoreContent: 'ignored-plan/**\n' });
+        const markdownPlanRelativePath = `garda-agent-orchestrator/runtime/plans/${TASK_ID}.md`;
+        const markdownPlanPath = path.join(repoRoot, ...markdownPlanRelativePath.split('/'));
+        fs.mkdirSync(path.dirname(markdownPlanPath), { recursive: true });
+        fs.writeFileSync(markdownPlanPath, [
+            `# ${TASK_ID} working plan`,
+            '',
+            '## Scope',
+            '- ignored-plan/generated.ts',
+            ''
+        ].join('\n'), 'utf8');
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Record optional executor guidance',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            markdownWorkingPlan: {
+                format: 'markdown',
+                working_plan_path: markdownPlanRelativePath,
+                working_plan_sha256: fileSha256(markdownPlanPath),
+                byte_count: fs.statSync(markdownPlanPath).size
+            }
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+        assert.doesNotMatch(result.reason, /Structured planned files/u);
+        assert.doesNotMatch(result.reason, /ignored-plan\/generated\.ts/u);
+    });
+
+    it('keeps baseline-only no-op intent on the compile path before no-op audit', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Close out already done audit-only task',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.match(result.commands[0].command, /gate compile-gate/u);
+    });
+
+    it('continues normal implemented diffs to compile gate', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.match(result.commands[0].command, /gate compile-gate/u);
     });
 
     it('uses task-mode planned scope when building the initial classify-change command', () => {
