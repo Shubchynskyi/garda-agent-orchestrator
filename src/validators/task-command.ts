@@ -15,7 +15,7 @@ export interface ExecutableTaskQueueResolution {
     queuePresent: boolean;
 }
 
-const DEFAULT_TASK_ID = 'T-001';
+const DEFAULT_TASK_ID_PLACEHOLDER = '<task-id>';
 const DEFAULT_TASK_DEPTH = 2;
 const EXECUTABLE_TASK_STATUSES = new Set(['TODO', 'IN_PROGRESS', 'IN_REVIEW']);
 const NO_EXECUTABLE_TASKS_COMMAND = 'No executable tasks found in TASK.md Active Queue; add or reopen a task before starting task execution.';
@@ -49,9 +49,7 @@ export function readActiveProfileHint(bundlePath: string): ProfileTaskHint {
         };
     }
 
-    const activeProfile = typeof profilesData.active_profile === 'string'
-        ? profilesData.active_profile.trim()
-        : '';
+    const activeProfile = profilesData.active_profile.trim();
     if (!activeProfile) {
         return {
             activeProfile: null,
@@ -121,13 +119,13 @@ export function resolveProfileAwareExecuteTaskRecommendation(
 
 export function buildProfileAwareExecuteTaskNextCommand(
     bundlePath: string,
-    taskId = DEFAULT_TASK_ID
+    taskId = DEFAULT_TASK_ID_PLACEHOLDER
 ): string {
     readActiveProfileHint(bundlePath);
     return buildExecuteTaskCommand(taskId);
 }
 
-export function buildProfileAwareNextLine(bundlePath: string, taskId = DEFAULT_TASK_ID, cliCommand = 'node bin/garda.js'): string {
+export function buildProfileAwareNextLine(bundlePath: string, taskId = DEFAULT_TASK_ID_PLACEHOLDER, cliCommand = 'node bin/garda.js'): string {
     const hint = readActiveProfileHint(bundlePath);
     const command = buildExecuteTaskCommand(taskId);
     if (!hint.activeProfile) {
@@ -147,5 +145,5 @@ export function buildProfileAwareQueueNextLine(
         readActiveProfileHint(bundlePath);
         return `Next: ${NO_EXECUTABLE_TASKS_COMMAND}`;
     }
-    return buildProfileAwareNextLine(bundlePath, resolution.taskId || DEFAULT_TASK_ID, cliCommand);
+    return buildProfileAwareNextLine(bundlePath, resolution.taskId || DEFAULT_TASK_ID_PLACEHOLDER, cliCommand);
 }

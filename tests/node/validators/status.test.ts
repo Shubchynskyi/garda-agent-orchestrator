@@ -594,7 +594,7 @@ test('getStatusSnapshot marks workspace ready only after AGENT_INIT_PROMPT initi
         assert.equal(snapshot.agentInitializationComplete, true);
         assert.equal(snapshot.readyForTasks, true);
         assert.equal(snapshot.agentInitializationPendingReason, null);
-        assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
+        assert.equal(snapshot.recommendedNextCommand, 'Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
     } finally {
         cleanupStatusTempDir(tmpDir);
     }
@@ -1138,7 +1138,7 @@ test('getStatusSnapshot recommends profile depth in next command when profile is
         writeProfilesConfig(bundlePath, { active_profile: 'fast', depth: 3 });
 
         const snapshot = getStatusSnapshot(tmpDir);
-        assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
+        assert.equal(snapshot.recommendedNextCommand, 'Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
     } finally {
         cleanupStatusTempDir(tmpDir);
     }

@@ -43,7 +43,7 @@ function extractReleaseChecklistItems(checklistMarkdown: string, version: string
             continue;
         }
 
-        const match = line.match(/^-\s+\[(x|X| )\]\s+(.+?)\s*$/u);
+        const match = line.match(/^-\s+\[([xX ])\]\s+(.+?)\s*$/u);
         if (!match) {
             continue;
         }
@@ -454,10 +454,10 @@ function validateSecurityCiBaselineContract(repoRoot: string): { passed: boolean
         'google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.0'
     )
         && blockHasNonCommentLine(osvScanArgsBlock, '--lockfile=package-lock.json');
-    const gitleaksStep = getWorkflowUseStepBlock(secretScanningWorkflow, 'gitleaks/gitleaks-action@v2');
+    const gitleaksStep = getWorkflowUseStepBlock(secretScanningWorkflow, 'gitleaks/gitleaks-action@v3.0.0');
     const gitleaksBlocking = gitleaksStep !== null
         && blockHasNonCommentLine(getYamlKeyBlock(gitleaksStep, 'env'), 'GITLEAKS_CONFIG: .gitleaks.toml');
-    const uploadArtifactStep = getWorkflowUseStepBlock(sbomWorkflow, 'actions/upload-artifact@v4');
+    const uploadArtifactStep = getWorkflowUseStepBlock(sbomWorkflow, 'actions/upload-artifact@v7.0.1');
     const sbomInformational = extractWorkflowRunScripts(sbomWorkflow)
         .some((script) => scriptHasExecutableCommand(script, 'npx --yes @cyclonedx/cyclonedx-npm'))
         && uploadArtifactStep !== null
@@ -512,7 +512,7 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
     const validateSetupWith = getYamlKeyBlock(validateSetupNode, 'with');
     const publishSetupWith = getYamlKeyBlock(publishSetupNode, 'with');
     const publishPermissions = getYamlKeyBlock(publishJob, 'permissions');
-    const validateUploadArtifact = getWorkflowUseStepBlock(validateJob || '', 'actions/upload-artifact@v4');
+    const validateUploadArtifact = getWorkflowUseStepBlock(validateJob || '', 'actions/upload-artifact@v7.0.1');
     const validateUploadWith = getYamlKeyBlock(validateUploadArtifact, 'with');
     const validateRunScripts = validateJob === null ? [] : extractWorkflowRunScripts(validateJob);
     const publishRunScripts = publishJob === null ? [] : extractWorkflowRunScripts(publishJob);
@@ -548,10 +548,9 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
         '${TAG_VERSION}" != "${LOCK_ROOT_VERSION}',
         '${TAG_VERSION}" != "${VERSION_FILE}',
         'NPM_VERSION="$(npm --version)"',
-        'npm CLI 11.5.1+',
+        'npm CLI 11.15.0+',
         'major < 11',
-        'minor < 5',
-        'patch < 1'
+        'minor < 15'
     ]);
     const tagDrivenOnly = tagTriggers.includes('v*') && !publishWorkflow.includes('workflow_dispatch:');
     const nodeVersionPinned = yamlBlockHasScalarValue(workflowEnv, 'NODE_VERSION', ['24', '24.x']);
@@ -562,7 +561,7 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
     ]) && blockHasNonCommentLine(validateUploadWith, 'path: ${{ runner.temp }}/npm-pack-dry-run.txt');
     const validateJobContract = validateJob !== null
         && blockHasNonCommentLine(validateJob, 'runs-on: ubuntu-latest')
-        && workflowHasUseStep(validateJob, 'actions/checkout@v6')
+        && workflowHasUseStep(validateJob, 'actions/checkout@v7.0.0')
         && validateSetupNode !== null
         && nodeVersionPinned
         && blockHasNonCommentLine(validateSetupWith, "node-version: ${{ env.NODE_VERSION }}")
@@ -580,16 +579,18 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
         && blockHasNonCommentLine(publishJob, 'environment: npm-release')
         && blockHasNonCommentLine(publishPermissions, 'contents: read')
         && blockHasNonCommentLine(publishPermissions, 'id-token: write')
-        && workflowHasUseStep(publishJob, 'actions/checkout@v6')
+        && workflowHasUseStep(publishJob, 'actions/checkout@v7.0.0')
         && publishSetupNode !== null
         && nodeVersionPinned
         && blockHasNonCommentLine(publishSetupWith, "node-version: ${{ env.NODE_VERSION }}")
         && blockHasNonCommentLine(publishSetupWith, 'registry-url: https://registry.npmjs.org')
         && blockHasNonCommentLine(publishSetupWith, 'package-manager-cache: false')
         && workflowJobHasRunStep(publishJob, 'npm ci --no-fund --no-audit')
+        && workflowJobHasRunStep(publishJob, 'npm install -g npm@^11.15.0')
         && publishSanityGuard
         && workflowJobHasRunStep(publishJob, 'npm run release:preflight')
-        && workflowJobHasExactRunLine(publishJob, 'npm publish');
+        && workflowJobHasExactRunLine(publishJob, 'npm stage publish')
+        && !workflowJobHasExactRunLine(publishJob, 'npm publish');
     const tokenlessOidc = !publishWorkflow.includes('NODE_AUTH_TOKEN')
         && !publishWorkflow.includes('NPM_TOKEN')
         && !publishWorkflow.includes('--provenance')
@@ -603,7 +604,7 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
         { passed: packDryRunArtifactOutsideCheckout, detail: 'validate job records npm pack dry-run output outside the checkout' },
         { passed: validateJobContract, detail: 'validate job checks tag/version metadata, release proof, and npm pack dry-run' },
         { passed: publishSanityGuard, detail: 'publish job has fail-closed package and npm CLI sanity guard' },
-        { passed: publishJobContract, detail: 'publish job is npm-release environment gated and uses id-token OIDC npm publish' },
+        { passed: publishJobContract, detail: 'publish job is npm-release environment bound and uses id-token OIDC npm stage publish' },
         { passed: tokenlessOidc, detail: 'publish workflow avoids npm tokens, --provenance override, and self-hosted runners' }
     ];
 
@@ -625,33 +626,34 @@ function validateTrustedPublishDocsContract(repoRoot: string, version: string | 
         'Trusted Publishing',
         '`publish.yml`',
         '`npm-release`',
-        'required reviewers',
-        'release evidence',
+        'release-tag restricted',
         '`Shubchynskyi`',
         '`garda-agent-orchestrator`',
-        '`npm publish`',
+        '`npm stage publish`',
+        'npm-side staged approval',
         'Require two-factor authentication and disallow tokens',
         versionCommand
     ].every((marker) => releaseReadiness.includes(marker));
     const runbookDocumentsOperatorSetup = [
         '.github/workflows/publish.yml',
         'npm-release',
-        'required_reviewers',
-        'release evidence',
+        'selected deployment branches/tags',
+        'v*',
         'Trusted Publisher',
         'Shubchynskyi',
         'publish.yml',
+        'npm staged publishing approval',
         'Require two-factor authentication and disallow tokens',
-        'npm publish'
+        'npm stage publish'
     ].every((marker) => runMethods.includes(marker));
     const platformDocsNameTagDrivenRelease = [
-        'Tag-driven npm publishing',
+        'Tag-driven npm staged publishing',
         '.github/workflows/publish.yml',
         'npm Trusted Publishing',
-        'GitHub Environment approval',
-        'required_reviewers',
+        'npm staged approval',
+        'v*',
         'OIDC',
-        'npm publish'
+        'npm stage publish'
     ].every((marker) => platformDocs.includes(marker));
 
     const checks = [
@@ -841,7 +843,7 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         checks,
         violations,
         'trusted-publish-workflow',
-        'npm Trusted Publishing workflow is tag-driven, approval-gated, tokenless, and provenance-ready',
+        'npm Trusted Publishing workflow is tag-driven, stage-only, tokenless, and provenance-ready',
         trustedPublishWorkflow.passed,
         trustedPublishWorkflow.details
     );
@@ -897,7 +899,7 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         'Unused-symbol enforcement: quality includes typecheck:unused with --noUnusedLocals and --noUnusedParameters before lint, coverage, and production npm audit.',
         'Security/audit alignment: quality includes production npm audit and security/SBOM/threat-model docs are present in source, package files, and MANIFEST.',
         'Release-security baseline: readiness labels npm audit and gitleaks as blocking, OSV and SBOM as informational, and reports action-pinning plus update-source provenance policy without adding a duplicate security pipeline.',
-        'Trusted Publishing path: pushing the matching v* tag runs .github/workflows/publish.yml, validates the package before approval, then waits for the npm-release GitHub Environment before tokenless OIDC npm publish.',
+        'Trusted Publishing path: pushing the matching v* tag runs .github/workflows/publish.yml, validates the package before staging, then uses npm-release OIDC trusted publishing for tokenless npm stage publish; npm-side staged approval with 2FA makes the package public.',
         `Post-publish verification: confirm npm latest, package integrity/provenance visibility, and npx --yes garda-agent-orchestrator@${version || '<version>'} --version.`
     ];
 

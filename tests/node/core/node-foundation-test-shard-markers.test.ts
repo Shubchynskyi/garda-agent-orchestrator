@@ -120,3 +120,39 @@ test('node foundation shard log analysis treats green summaries as non-failure d
     assert.equal(hasGreenNodeTestSummaryContent(logContent), true);
     assert.deepEqual(extractFailingNodeTestLines(logContent), []);
 });
+
+test('node foundation shard log analysis parses TAP reporter summaries and not ok lines', () => {
+    const logContent = [
+        '# Subtest: local UI idle expiry closes the server without browser heartbeat',
+        'not ok 412 - local UI idle expiry closes the server without browser heartbeat',
+        '  ---',
+        '  duration_ms: 5012.4',
+        '  error: \'server did not close after idle expiry\'',
+        '  ...',
+        '1..1803',
+        '# tests 2058',
+        '# suites 58',
+        '# pass 2057',
+        '# fail 1',
+        '# cancelled 0'
+    ].join('\n');
+
+    assert.equal(getLastNodeTestSummaryCount(logContent, 'fail'), 1);
+    assert.equal(getLastNodeTestSummaryCount(logContent, 'pass'), 2057);
+    assert.equal(hasGreenNodeTestSummaryContent(logContent), false);
+    assert.deepEqual(extractFailingNodeTestLines(logContent), [
+        'not ok - local UI idle expiry closes the server without browser heartbeat'
+    ]);
+
+    const diagnostics = buildNodeFoundationShardFailureDiagnostics({
+        shardLabel: '1/1',
+        exitCode: 1,
+        logPath: '.node-build/test-shard-logs/run-2422/shard-01-of-01.log',
+        logContent
+    });
+    assert.ok(diagnostics.some((line) => line.includes('NODE_FOUNDATION_TEST_SHARD_FAILURE_SUMMARY 1/1 exit=1 fail=1')));
+    assert.ok(diagnostics.some((line) =>
+        line.includes('NODE_FOUNDATION_TEST_SHARD_FAILURE_TEST 1/1 not ok - local UI idle expiry closes the server without browser heartbeat')
+    ));
+    assert.ok(diagnostics.some((line) => line.includes('NODE_FOUNDATION_TEST_SHARD_FAILURE_TAIL 1/1 not ok 412')));
+});

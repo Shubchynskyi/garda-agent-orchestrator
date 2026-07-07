@@ -1,6 +1,6 @@
 # Tag-driven npm release workflow for Garda Agent Orchestrator.
-# The publish job uses npm Trusted Publishing/OIDC and waits for the
-# npm-release GitHub Environment approval before npm can publish.
+# The publish job uses npm Trusted Publishing/OIDC to stage the package.
+# The public release still requires npm staged approval with maintainer 2FA.
 name: Publish
 
 on:
@@ -23,7 +23,7 @@ jobs:
     name: Validate release package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -66,14 +66,14 @@ jobs:
           set -euo pipefail
           npm pack --dry-run | tee "$RUNNER_TEMP/npm-pack-dry-run.txt"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: npm-pack-dry-run-${{ github.ref_name }}
           path: ${{ runner.temp }}/npm-pack-dry-run.txt
           if-no-files-found: error
 
   publish:
-    name: Publish to npm
+    name: Stage package on npm
     runs-on: ubuntu-latest
     needs: validate
     environment: npm-release
@@ -81,7 +81,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -91,6 +91,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --no-fund --no-audit
+
+      - name: Ensure npm supports staged publishing
+        run: npm install -g npm@^11.15.0
 
       - name: Final publish sanity checks
         shell: bash
@@ -120,10 +123,10 @@ jobs:
           node --version
           NPM_VERSION="$(npm --version)"
           echo "npm ${NPM_VERSION}"
-          node -e "const version = process.argv[1]; const [major, minor, patch] = version.split('.').map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) { throw new Error('npm CLI 11.5.1+ is required for Trusted Publishing.'); }" "${NPM_VERSION}"
+          node -e "const version = process.argv[1]; const [major, minor] = version.split('.').map(Number); if (!Number.isFinite(major) || !Number.isFinite(minor) || major < 11 || (major === 11 && minor < 15)) { throw new Error('npm CLI 11.15.0+ is required for npm staged publishing.'); }" "${NPM_VERSION}"
 
-      - name: Re-run release proof after approval
+      - name: Re-run release proof before staging
         run: npm run release:preflight
 
-      - name: Publish with npm Trusted Publishing
-        run: npm publish
+      - name: Stage package with npm Trusted Publishing
+        run: npm stage publish

@@ -188,7 +188,7 @@ test('handleStats help documents positional task stats usage', () => {
     });
 
     assert.ok(text.includes('garda stats "<task-id>"'));
-    assert.ok(text.includes('garda stats "T-001"'));
+    assert.ok(text.includes('garda stats "<task-id>"'));
     assert.ok(text.includes('Use a positional task id or --task-id'));
 });
 
@@ -258,4 +258,3 @@ test('stats JSON formatters remain uncolored in color mode', () => {
     assert.equal(hasAnsi(aggregateJson), false);
     assert.equal(JSON.parse(aggregateJson).per_task[0].task_id, 'T-123');
 });
-

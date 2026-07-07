@@ -195,8 +195,8 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} stats`,
-            `${PRIMARY_CLI_NAME} stats "T-001"`,
-            `${PRIMARY_CLI_NAME} stats --task-id "T-001"`,
+            `${PRIMARY_CLI_NAME} stats "<task-id>"`,
+            `${PRIMARY_CLI_NAME} stats --task-id "<task-id>"`,
             `${PRIMARY_CLI_NAME} stats --json`
         ]),
         hints: Object.freeze([
@@ -212,9 +212,9 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
             `${PRIMARY_CLI_NAME} task help`
         ]),
         examples: Object.freeze([
-            `${PRIMARY_CLI_NAME} task "T-001" stats`,
-            `${PRIMARY_CLI_NAME} task "T-001" events`,
-            `${PRIMARY_CLI_NAME} task "T-001" events --include-details`
+            `${PRIMARY_CLI_NAME} task "<task-id>" stats`,
+            `${PRIMARY_CLI_NAME} task "<task-id>" events`,
+            `${PRIMARY_CLI_NAME} task "<task-id>" events --include-details`
         ]),
         hints: Object.freeze([
             'This namespace is read-only and does not change task lifecycle state.',
@@ -351,7 +351,7 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
             `${PRIMARY_CLI_NAME} cleanup policy`,
             `${PRIMARY_CLI_NAME} cleanup policy edit`,
             `${PRIMARY_CLI_NAME} cleanup batch-task-purge --runtime-retention-older-than-days 30 --runtime-retention-keep-latest-tasks 20 --dry-run`,
-            `${PRIMARY_CLI_NAME} cleanup task-purge --task-id "T-100" --dry-run`
+            `${PRIMARY_CLI_NAME} cleanup task-purge --task-id "<task-id>" --dry-run`
         ]),
         hints: Object.freeze([
             'Use dry-run first when removing runtime artifacts.',

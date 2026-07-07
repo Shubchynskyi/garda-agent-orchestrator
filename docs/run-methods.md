@@ -36,7 +36,7 @@ garda-agent-orchestrator
 
 ## 3. Run Through `npx` From Published npm Package
 
-Use this after `npm publish`.
+Use this after the package is public on npm.
 Use this only when you want a temporary run without global install.
 Use the package name with `npx`; the shorter `garda` and `gao` names are CLI aliases after install, not npm package names.
 
@@ -147,25 +147,28 @@ npm run validate:clean-worktree
 
 Direct `npm pack` and `npm pack --dry-run` run the package `prepack` lifecycle, which enforces a clean worktree before package preparation and again after `build:publish-runtime`.
 
-## 8.1 Tag-Driven npm Publish
+## 8.1 Tag-Driven npm Staged Publish
 
 The primary npm release path is now tag-driven through `.github/workflows/publish.yml`, not a local `npm publish`.
 
 Before pushing `v1.2.0`, complete these repository and registry checks:
 
 1. Run `npm run release:preflight` from a clean local worktree.
-2. Configure the GitHub repository Environment `npm-release` with required reviewer approval. Before pushing the tag, capture release evidence for the environment settings with GitHub REST or UI output showing `required_reviewers` is non-empty for `npm-release`; the publish job must not run from an environment that only exists by name. A `git push origin v1.2.0` must create a pending publish job; it must not publish until an operator approves the environment deployment in GitHub Actions.
+2. Configure the GitHub repository Environment `npm-release` for release tags. Use selected deployment branches/tags so only tags matching `v*` can deploy to this environment. GitHub required reviewers are optional for the solo-maintainer flow and must not be treated as the release approval control when no second reviewer exists.
 3. On npmjs.com, open the `garda-agent-orchestrator` package settings and configure Trusted Publisher:
    - Publisher: GitHub Actions.
    - Organization or user: `Shubchynskyi`.
    - Repository: `garda-agent-orchestrator`.
    - Workflow filename: `publish.yml`.
-   - Environment name: `npm-release` when the npm UI supports environment binding.
-   - Allowed action: `npm publish`.
-4. Keep old automation tokens disabled or unused during the first OIDC publish attempt, but do not remove the rollback path until the Trusted Publishing run succeeds.
-5. Push the matching tag only after package metadata, `VERSION`, changelog, and `docs/release-readiness.md` all name the same version.
+   - Environment name: `npm-release`.
+   - Allowed action: `npm stage publish`.
+4. Enable 2FA for the maintainer account and use npm staged publishing approval as the human release approval. `npm stage publish` runs non-interactively in CI with npm CLI `11.15.0+`; the staged package becomes public only after npm-side approval with 2FA through npmjs.com or the npm CLI.
+5. Keep old automation tokens disabled or unused during the first OIDC staged publish attempt, but do not remove the rollback path until the Trusted Publishing staging run succeeds.
+6. Push the matching tag only after package metadata, `VERSION`, changelog, and `docs/release-readiness.md` all name the same version.
 
-After the GitHub Actions publish job completes, verify:
+After the GitHub Actions publish job completes, inspect the staged package on npm and approve it with maintainer 2FA. Do not claim the package is public until npm staged approval completes.
+
+After npm staged approval completes, verify:
 
 ```text
 npm view garda-agent-orchestrator@latest version dist.integrity

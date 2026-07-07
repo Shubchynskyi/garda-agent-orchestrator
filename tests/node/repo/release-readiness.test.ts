@@ -145,9 +145,10 @@ function buildReleaseChecklist(openItem?: string): string {
     const trustedPublishItems = [
         '- [x] Trusted Publishing workflow uses `publish.yml`.',
         '- [x] GitHub Environment `npm-release` gates publish.',
-        '- [x] GitHub Environment `npm-release` required reviewers are captured as release evidence.',
+        '- [x] GitHub Environment `npm-release` is release-tag restricted.',
         '- [x] npm Trusted Publisher settings use `Shubchynskyi` / `garda-agent-orchestrator` / `publish.yml`.',
-        '- [x] Allowed action is `npm publish`.',
+        '- [x] Allowed action is `npm stage publish`.',
+        '- [x] npm-side staged approval with maintainer 2FA is documented.',
         '- [x] Publishing access moves to Require two-factor authentication and disallow tokens after verification.',
         '- [x] Post-publish verification runs npx --yes garda-agent-orchestrator@1.1.0 --version.'
     ];
@@ -235,7 +236,7 @@ function buildSecurityWorkflow(): string {
     return [
         'npm-audit:',
         '  steps:',
-        '    - uses: actions/checkout@v6',
+        '    - uses: actions/checkout@v7.0.0',
         '    - uses: actions/setup-node@v6',
         '    - run: npm audit --audit-level=high --no-fund',
         'osv-scan:',
@@ -250,9 +251,9 @@ function buildSecretScanningWorkflow(): string {
     return [
         'gitleaks:',
         '  steps:',
-        '    - uses: actions/checkout@v6',
+        '    - uses: actions/checkout@v7.0.0',
         '    - name: Run gitleaks',
-        '      uses: gitleaks/gitleaks-action@v2',
+        '      uses: gitleaks/gitleaks-action@v3.0.0',
         '      env:',
         '        GITLEAKS_CONFIG: .gitleaks.toml'
     ].join('\n');
@@ -262,10 +263,10 @@ function buildSbomWorkflow(): string {
     return [
         'sbom:',
         '  steps:',
-        '    - uses: actions/checkout@v6',
+        '    - uses: actions/checkout@v7.0.0',
         '    - uses: actions/setup-node@v6',
         '    - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json',
-        '    - uses: actions/upload-artifact@v4',
+        '    - uses: actions/upload-artifact@v7.0.1',
         '      with:',
         '        if-no-files-found: error'
     ].join('\n');
@@ -286,7 +287,7 @@ function buildPublishWorkflow(): string {
         '  validate:',
         '    runs-on: ubuntu-latest',
         '    steps:',
-        '      - uses: actions/checkout@v6',
+        '      - uses: actions/checkout@v7.0.0',
         '      - uses: actions/setup-node@v6',
         '        with:',
         '          node-version: ${{ env.NODE_VERSION }}',
@@ -309,7 +310,7 @@ function buildPublishWorkflow(): string {
         '      - run: |',
         '          set -euo pipefail',
         '          npm pack --dry-run | tee "$RUNNER_TEMP/npm-pack-dry-run.txt"',
-        '      - uses: actions/upload-artifact@v4',
+        '      - uses: actions/upload-artifact@v7.0.1',
         '        with:',
         '          path: ${{ runner.temp }}/npm-pack-dry-run.txt',
         '          if-no-files-found: error',
@@ -321,13 +322,14 @@ function buildPublishWorkflow(): string {
         '      contents: read',
         '      id-token: write',
         '    steps:',
-        '      - uses: actions/checkout@v6',
+        '      - uses: actions/checkout@v7.0.0',
         '      - uses: actions/setup-node@v6',
         '        with:',
         '          node-version: ${{ env.NODE_VERSION }}',
         '          registry-url: https://registry.npmjs.org',
         '          package-manager-cache: false',
         '      - run: npm ci --no-fund --no-audit',
+        '      - run: npm install -g npm@^11.15.0',
         '      - run: |',
         '          set -euo pipefail',
         '          TAG_VERSION="${GITHUB_REF_NAME#v}"',
@@ -346,9 +348,9 @@ function buildPublishWorkflow(): string {
         '            exit 1',
         '          fi',
         '          NPM_VERSION="$(npm --version)"',
-        '          node -e "const version = process.argv[1]; const [major, minor, patch] = version.split(\'.\').map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) { throw new Error(\'npm CLI 11.5.1+ is required for Trusted Publishing.\'); }" "${NPM_VERSION}"',
+        '          node -e "const version = process.argv[1]; const [major, minor] = version.split(\'.\').map(Number); if (!Number.isFinite(major) || !Number.isFinite(minor) || major < 11 || (major === 11 && minor < 15)) { throw new Error(\'npm CLI 11.15.0+ is required for npm staged publishing.\'); }" "${NPM_VERSION}"',
         '      - run: npm run release:preflight',
-        '      - run: npm publish'
+        '      - run: npm stage publish'
     ].join('\n');
 }
 
@@ -445,13 +447,14 @@ function createReadinessFixture(openChecklistItem?: string): string {
             'node .\\bin\\garda.js gate validate-manifest --manifest-path MANIFEST.md',
             '.github/workflows/publish.yml',
             'npm-release',
-            'required_reviewers',
-            'release evidence',
+            'selected deployment branches/tags',
+            'v*',
             'Trusted Publisher',
             'Shubchynskyi',
             'publish.yml',
+            'npm staged publishing approval',
             'Require two-factor authentication and disallow tokens',
-            'npm publish'
+            'npm stage publish'
         ].join('\n')
     );
     writeFile(
@@ -461,13 +464,13 @@ function createReadinessFixture(openChecklistItem?: string): string {
             'The cross-platform lifecycle smoke proves update runtime behavior.',
             'Full-suite optimization compatibility guardrails',
             'GARDA_NODE_FOUNDATION_TEST_SHARDS',
-            'Tag-driven npm publishing',
+            'Tag-driven npm staged publishing',
             '.github/workflows/publish.yml',
             'npm Trusted Publishing',
-            'GitHub Environment approval',
-            'required_reviewers',
+            'npm staged approval',
+            'v*',
             'OIDC',
-            'npm publish'
+            'npm stage publish'
         ].join('\n')
     );
     writeFile(
@@ -533,9 +536,9 @@ test('release readiness fails when trusted publish workflow falls back to npm to
         writeFile(
             workflowPath,
             fs.readFileSync(workflowPath, 'utf8').replace(
-                '- run: npm publish',
+                '- run: npm stage publish',
                 [
-                    '- run: npm publish',
+                    '- run: npm stage publish',
                     '        env:',
                     '          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}'
                 ].join('\n')
@@ -646,7 +649,7 @@ test('release readiness fails when trusted publish validate job only echoes vers
         writeFile(
             workflowPath,
             fs.readFileSync(workflowPath, 'utf8').replace(
-                /      - run: \|\n(?:          .+\n)+?      - run: npm ci --no-fund --no-audit/u,
+                /[ ]{6}- run: \|\n(?:[ ]{10}.+\n)+?[ ]{6}- run: npm ci --no-fund --no-audit/u,
                 [
                     '      - run: |',
                     '          echo "${GITHUB_REF_NAME}"',
@@ -676,7 +679,7 @@ test('release readiness fails when trusted publish validate guard markers are on
         writeFile(
             workflowPath,
             fs.readFileSync(workflowPath, 'utf8').replace(
-                /      - run: \|\n(?:          .+\n)+?      - run: npm ci --no-fund --no-audit/u,
+                /[ ]{6}- run: \|\n(?:[ ]{10}.+\n)+?[ ]{6}- run: npm ci --no-fund --no-audit/u,
                 [
                     '      - run: |',
                     '          # set -euo pipefail',
@@ -753,7 +756,7 @@ test('release readiness fails when trusted publish dry-run pipeline omits pipefa
     }
 });
 
-test('release readiness fails when trusted publish environment approval is missing', () => {
+test('release readiness fails when trusted publish environment binding is missing', () => {
     const repoRoot = createReadinessFixture();
     try {
         const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
@@ -766,7 +769,7 @@ test('release readiness fails when trusted publish environment approval is missi
         const output = formatReleaseReadinessResult(result);
 
         assert.equal(result.passed, false);
-        assert.match(output, /publish job is npm-release environment gated and uses id-token OIDC npm publish=false/);
+        assert.match(output, /publish job is npm-release environment bound and uses id-token OIDC npm stage publish=false/);
         assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -786,7 +789,7 @@ test('release readiness fails when trusted publish OIDC permission is missing', 
         const output = formatReleaseReadinessResult(result);
 
         assert.equal(result.passed, false);
-        assert.match(output, /publish job is npm-release environment gated and uses id-token OIDC npm publish=false/);
+        assert.match(output, /publish job is npm-release environment bound and uses id-token OIDC npm stage publish=false/);
         assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -800,13 +803,14 @@ test('release readiness fails when trusted publish sanity checks only echo marke
         writeFile(
             workflowPath,
             fs.readFileSync(workflowPath, 'utf8').replace(
-                /      - run: npm ci --no-fund --no-audit\n      - run: \|\n(?:          .+\n)+?      - run: npm run release:preflight/u,
+                /[ ]{6}- run: npm ci --no-fund --no-audit\n[ ]{6}- run: npm install -g npm@\^11\.15\.0\n[ ]{6}- run: \|\n(?:[ ]{10}.+\n)+?[ ]{6}- run: npm run release:preflight/u,
                 [
                     '      - run: npm ci --no-fund --no-audit',
+                    '      - run: npm install -g npm@^11.15.0',
                     '      - run: |',
                     '          echo "${GITHUB_REF_NAME}"',
                     '          echo "garda-agent-orchestrator"',
-                    '          echo "npm CLI 11.5.1+"',
+                    '          echo "npm CLI 11.15.0+"',
                     '      - run: npm run release:preflight'
                 ].join('\n')
             )
@@ -830,9 +834,10 @@ test('release readiness fails when trusted publish sanity guard markers are insi
         writeFile(
             workflowPath,
             fs.readFileSync(workflowPath, 'utf8').replace(
-                /      - run: npm ci --no-fund --no-audit\n      - run: \|\n(?:          .+\n)+?      - run: npm run release:preflight/u,
+                /[ ]{6}- run: npm ci --no-fund --no-audit\n[ ]{6}- run: npm install -g npm@\^11\.15\.0\n[ ]{6}- run: \|\n(?:[ ]{10}.+\n)+?[ ]{6}- run: npm run release:preflight/u,
                 [
                     '      - run: npm ci --no-fund --no-audit',
+                    '      - run: npm install -g npm@^11.15.0',
                     '      - run: |',
                     "          cat <<'EOF'",
                     '          set -euo pipefail',
@@ -850,10 +855,9 @@ test('release readiness fails when trusted publish sanity guard markers are insi
                     '          ${TAG_VERSION}" != "${LOCK_ROOT_VERSION}',
                     '          ${TAG_VERSION}" != "${VERSION_FILE}',
                     '          NPM_VERSION="$(npm --version)"',
-                    '          npm CLI 11.5.1+',
+                    '          npm CLI 11.15.0+',
                     '          major < 11',
-                    '          minor < 5',
-                    '          patch < 1',
+                    '          minor < 15',
                     '          EOF',
                     '      - run: npm run release:preflight'
                 ].join('\n')
@@ -871,6 +875,26 @@ test('release readiness fails when trusted publish sanity guard markers are insi
     }
 });
 
+test('release readiness fails when trusted publish workflow uses direct npm publish', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace('      - run: npm stage publish', '      - run: npm publish')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish job is npm-release environment bound and uses id-token OIDC npm stage publish=false/);
+        assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('release readiness fails when trusted publish command is only heredoc text', () => {
     const repoRoot = createReadinessFixture();
     try {
@@ -878,11 +902,11 @@ test('release readiness fails when trusted publish command is only heredoc text'
         writeFile(
             workflowPath,
             fs.readFileSync(workflowPath, 'utf8').replace(
-                '      - run: npm publish',
+                '      - run: npm stage publish',
                 [
                     '      - run: |',
                     "          cat <<'EOF'",
-                    '          npm publish',
+                    '          npm stage publish',
                     '          EOF'
                 ].join('\n')
             )
@@ -892,7 +916,7 @@ test('release readiness fails when trusted publish command is only heredoc text'
         const output = formatReleaseReadinessResult(result);
 
         assert.equal(result.passed, false);
-        assert.match(output, /publish job is npm-release environment gated and uses id-token OIDC npm publish=false/);
+        assert.match(output, /publish job is npm-release environment bound and uses id-token OIDC npm stage publish=false/);
         assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -915,13 +939,13 @@ test('release readiness fails when trusted publish operator docs are missing', (
     }
 });
 
-test('release readiness fails when trusted publish required reviewer proof docs are missing', () => {
+test('release readiness fails when trusted publish tag restriction docs are missing', () => {
     const repoRoot = createReadinessFixture();
     try {
         const runMethodsPath = path.join(repoRoot, 'docs', 'run-methods.md');
         writeFile(
             runMethodsPath,
-            fs.readFileSync(runMethodsPath, 'utf8').replace('required_reviewers\nrelease evidence\n', '')
+            fs.readFileSync(runMethodsPath, 'utf8').replace('selected deployment branches/tags\nv*\n', '')
         );
 
         const result = validateReleaseReadiness(repoRoot);
@@ -1013,7 +1037,7 @@ test('release readiness rejects commented release-security action uses', () => {
                 'gitleaks:',
                 '  steps:',
                 '    - name: Run gitleaks',
-                '      # uses: gitleaks/gitleaks-action@v2',
+                '      # uses: gitleaks/gitleaks-action@v3.0.0',
                 '      env:',
                 '        GITLEAKS_CONFIG: .gitleaks.toml'
             ].join('\n')
@@ -1038,7 +1062,7 @@ test('release readiness rejects commented OSV lockfile argument', () => {
             [
                 'npm-audit:',
                 '  steps:',
-                '    - uses: actions/checkout@v6',
+                '    - uses: actions/checkout@v7.0.0',
                 '    - uses: actions/setup-node@v6',
                 '    - run: npm audit --audit-level=high --no-fund',
                 'osv-scan:',
@@ -1068,9 +1092,9 @@ test('release readiness rejects commented gitleaks config', () => {
             [
                 'gitleaks:',
                 '  steps:',
-                '    - uses: actions/checkout@v6',
+                '    - uses: actions/checkout@v7.0.0',
                 '    - name: Run gitleaks',
-                '      uses: gitleaks/gitleaks-action@v2',
+                '      uses: gitleaks/gitleaks-action@v3.0.0',
                 '      env:',
                 '        # GITLEAKS_CONFIG: .gitleaks.toml'
             ].join('\n')
@@ -1095,10 +1119,10 @@ test('release readiness rejects commented SBOM artifact failure policy', () => {
             [
                 'sbom:',
                 '  steps:',
-                '    - uses: actions/checkout@v6',
+                '    - uses: actions/checkout@v7.0.0',
                 '    - uses: actions/setup-node@v6',
                 '    - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json',
-                '    - uses: actions/upload-artifact@v4',
+                '    - uses: actions/upload-artifact@v7.0.1',
                 '      with:',
                 '        # if-no-files-found: error'
             ].join('\n')
@@ -1123,7 +1147,7 @@ test('release readiness rejects misplaced OSV lockfile argument outside OSV scan
             [
                 'npm-audit:',
                 '  steps:',
-                '    - uses: actions/checkout@v6',
+                '    - uses: actions/checkout@v7.0.0',
                 '    - uses: actions/setup-node@v6',
                 '    - run: npm audit --audit-level=high --no-fund',
                 'osv-scan:',
@@ -1157,9 +1181,9 @@ test('release readiness rejects misplaced gitleaks config outside gitleaks step'
             [
                 'gitleaks:',
                 '  steps:',
-                '    - uses: actions/checkout@v6',
+                '    - uses: actions/checkout@v7.0.0',
                 '    - name: Run gitleaks',
-                '      uses: gitleaks/gitleaks-action@v2',
+                '      uses: gitleaks/gitleaks-action@v3.0.0',
                 '    - name: Unrelated env',
                 '      env:',
                 '        GITLEAKS_CONFIG: .gitleaks.toml',
@@ -1186,10 +1210,10 @@ test('release readiness rejects misplaced SBOM artifact failure policy outside u
             [
                 'sbom:',
                 '  steps:',
-                '    - uses: actions/checkout@v6',
+                '    - uses: actions/checkout@v7.0.0',
                 '    - uses: actions/setup-node@v6',
                 '    - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json',
-                '    - uses: actions/upload-artifact@v4',
+                '    - uses: actions/upload-artifact@v7.0.1',
                 '      with:',
                 '        name: sbom-cyclonedx',
                 '    - name: Unrelated upload policy',
@@ -1259,7 +1283,7 @@ test('release readiness does not read local TASK.md as release blocker truth', (
         const output = formatReleaseReadinessResult(result);
 
         assert.equal(result.passed, true, output);
-        assert.match(output, /ReleaseChecklistItems: 26/);
+        assert.match(output, /ReleaseChecklistItems: 27/);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

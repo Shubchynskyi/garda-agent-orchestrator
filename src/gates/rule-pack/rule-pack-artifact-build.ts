@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
-import { normalizePath, resolvePathInsideRepo } from '../shared/helpers';
-import { validatePreflightForReview } from '../required-reviews/required-reviews-check';
+import { normalizePath, resolvePathInsideRepo } from '../shared';
+import { validatePreflightForReview } from '../required-reviews';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../task-mode';
 import { buildRulePackBindingSha256, getPreflightClassificationBinding } from './rule-pack-binding';
 import { readExistingRulePackArtifact, resolveRulePackArtifactPath } from './rule-pack-artifact-store';
@@ -10,6 +10,7 @@ import {
     buildRuleFileHashes,
     getRulePackRequiredEntryFiles,
     getRulePackRequiredFilesFromPreflight,
+    getRulePackStageKey,
     normalizeLoadedRuleFiles
 } from './rule-pack-selection';
 import {
@@ -17,7 +18,6 @@ import {
     type RulePackArtifact,
     type RulePackStageArtifact
 } from './rule-pack-types';
-import { getRulePackStageKey } from './rule-pack-selection';
 
 export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): RulePackArtifact {
     const repoRoot = path.resolve(options.repoRoot);
@@ -70,7 +70,7 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
             effectiveDepth = taskModeEvidence.effective_depth;
         }
 
-        // T-030: Prefer risk-aware promoted depth from preflight when available
+        // Prefer risk-aware promoted depth from preflight when available.
         const preflightRiskAwareDepth = validatedPreflight.preflight?.risk_aware_depth;
         if (preflightRiskAwareDepth && typeof preflightRiskAwareDepth.effective_depth === 'number') {
             effectiveDepth = preflightRiskAwareDepth.effective_depth;

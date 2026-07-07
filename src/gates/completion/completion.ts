@@ -8,24 +8,26 @@ import {
     getProtectedControlPlaneRoots,
     scanProtectedPathHashes,
     evaluateProtectedControlPlaneManifest
-} from '../shared/helpers';
-import { detectCodeChanged, preflightRequiresAnyReview } from '../preflight/preflight-code-change';
-import { evaluateIsolationModePostTask, loadIsolationModeConfig } from '../isolation/isolation-mode';
-import { validateSandbox } from '../isolation/isolation-sandbox';
+} from '../shared';
+import { detectCodeChanged, preflightRequiresAnyReview } from '../preflight';
+import { evaluateIsolationModePostTask, loadIsolationModeConfig, validateSandbox } from '../isolation';
 import {
     detectProtectedDirtyWorkspaceDrift,
     getProtectedDirtyWorkspaceScopeFromPreflight
-} from '../workspace/dirty-worktree-protection';
-import { getProtectedManifestLifecycleGuard } from '../protected-control-plane/protected-manifest-guard';
-import { getNoOpEvidence } from '../task-mode/no-op';
-import { getHandshakeEvidence, getHandshakeEvidenceViolations } from '../diagnostics/handshake-diagnostics';
-import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from '../diagnostics/shell-smoke-preflight';
-import { getRulePackEvidence, getRulePackEvidenceViolations } from '../rule-pack/rule-pack';
+} from '../workspace';
+import { getProtectedManifestLifecycleGuard } from '../protected-control-plane';
+import { getNoOpEvidence, getTaskModeEvidence, getTaskModeEvidenceViolations } from '../task-mode';
+import {
+    getHandshakeEvidence,
+    getHandshakeEvidenceViolations,
+    getShellSmokeEvidence,
+    getShellSmokeEvidenceViolations
+} from '../diagnostics';
+import { getRulePackEvidence, getRulePackEvidenceViolations } from '../rule-pack';
 import {
     resolveRuntimeReviewerIdentity,
     resolveReviewerRoutingPolicy
-} from '../review/reviewer-routing';
-import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../task-mode/task-mode';
+} from '../review';
 import {
     collectOrderedTimelineEvents,
     readJsonArtifact,
@@ -48,10 +50,10 @@ import {
     loadFullSuiteValidationConfig,
     isFullSuiteNotRequiredForDocsOnlyScope,
     isFullSuiteNotRequiredForZeroDiffNoReviewableScope
-} from '../full-suite/full-suite-validation';
+} from '../full-suite';
 import {
     getProjectMemoryImpactLifecycleEvidence
-} from '../project-memory-impact/project-memory-impact';
+} from '../project-memory-impact';
 import {
     validateStrictDeferredReviewFollowups,
     type DeferredFollowupValidationResult
@@ -59,7 +61,7 @@ import {
 import {
     getCurrentWorkflowConfigChanges,
     getWorkflowConfigWorkViolations
-} from '../workflow-config/workflow-config-work';
+} from '../workflow-config';
 import { resolveReviewExecutionPolicyModeFromPreflight } from '../../core/review-execution-policy';
 import { validateProjectMemoryImpactForCompletion } from './completion-project-memory';
 import {
@@ -68,7 +70,7 @@ import {
 } from './completion-required-review-evidence';
 import { collectFullSuiteValidationEvidence } from './completion-full-suite-evidence';
 
-export { detectCodeChanged, preflightRequiresAnyReview } from '../preflight/preflight-code-change';
+export { detectCodeChanged, preflightRequiresAnyReview } from '../preflight';
 
 export {
     quotePowerShellCliValue,
@@ -193,9 +195,9 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const hasProtectedSnapshotDigest = /^[a-f0-9]{64}$/.test(preflightProtectedSnapshotDigest);
     const orchestratorWork = !!taskModeEvidence.orchestrator_work;
 
-    // T-1010: Re-scan protected paths at completion to detect tampering
-    // T-1011: When isolation mode is enabled, enforcement level governs
-    //         whether drift is a hard error (STRICT) or a logged warning (LOG_ONLY).
+    // Re-scan protected paths at completion to detect tampering.
+    // When isolation mode is enabled, enforcement level governs whether drift is
+    // a hard error (STRICT) or a logged warning (LOG_ONLY).
     const isolationConfig = loadIsolationModeConfig(repoRoot);
     const isolationWarnings: string[] = [];
     let currentProtectedSnapshot: Record<string, string> | null = null;
@@ -287,7 +289,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     errors.push(...getShellSmokeEvidenceViolations(shellSmokeEvidence));
     errors.push(...dirtyWorkspaceProtectionEvidence.violations);
 
-    // T-1011: post-task isolation mode enforcement (complements T-1010 drift check above)
+    // Post-task isolation mode enforcement complements the protected drift check above.
     if (hasProtectedSnapshot && !orchestratorWork && isolationConfig.enabled) {
         const typedSnapshot: Record<string, string> = {};
         for (const [k, v] of Object.entries(preflightProtectedSnapshot)) {
@@ -298,7 +300,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         isolationWarnings.push(...isolationEvidence.warnings);
     }
 
-    // T-1011: Sandbox integrity check at completion
+    // Sandbox integrity check at completion.
     if (isolationConfig.enabled && isolationConfig.use_sandbox && !orchestratorWork) {
         const sandboxState = validateSandbox(repoRoot);
         if (sandboxState.exists) {
@@ -407,7 +409,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         errors
     });
 
-    // T-003: review-skill invocation evidence for code-changing tasks
+    // Review-skill invocation evidence for code-changing tasks.
     const reviewSkillEvidence = validateReviewSkillEvidence(
         orderedEvents,
         requiredReviews,
@@ -428,7 +430,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     stageSequence.review_artifact_keys = reviewSkillEvidence.artifact_keys;
     stageSequence.reviewer_execution_modes = reviewSkillEvidence.reviewer_execution_modes;
 
-    // T-1005: Build reviewer routing enforcement summary
+    // Build reviewer routing enforcement summary.
     const routingPolicy = resolveReviewerRoutingPolicy(executionProvider, runtimeIdentity.execution_provider_source);
     const reviewerRoutingEnforcement = {
         canonical_source_of_truth: runtimeIdentity.canonical_source_of_truth,

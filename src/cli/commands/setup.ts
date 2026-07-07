@@ -18,10 +18,7 @@ import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getNodeBundleCliCommand } from '../../materialization/command-constants';
 import { getStatusSnapshot } from '../../validators/status';
 import { readActiveProfileHint } from '../../validators/task-command';
-import {
-    buildAgentReportBlock,
-    getAgentReportMessages
-} from './cli-format-output';
+import { buildAgentReportBlock, getAgentReportMessages } from './cli-format-output';
 import {
     acquireSourceRoot,
     bold,
@@ -69,7 +66,7 @@ import { runInit } from '../../materialization/init';
 import { hasMaterializedWorkflowConfigBaseline } from '../../core/workflow-config';
 import { validateManifest } from '../../validators/validate-manifest';
 import { runVerify } from '../../validators/verify';
-import { writeProtectedControlPlaneManifest } from '../../gates/shared/helpers';
+import { writeProtectedControlPlaneManifest } from '../../gates/shared';
 
 export const SETUP_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
@@ -267,7 +264,7 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const optionalSkillsSummary = reportMessages.summaries.askDuringAgentInit;
     const deployedCliCommand = getNodeBundleCliCommand();
     const activeProfileLine = buildActiveProfileGuidance(activeProfileHint.activeProfile, deployedCliCommand);
-    const firstTaskPrompt = buildTaskStartNavigatorPrompt('T-001');
+    const firstTaskPrompt = buildTaskStartNavigatorPrompt();
     const lines = [
         buildAgentReportBlock({
             context: 'setup_handoff',

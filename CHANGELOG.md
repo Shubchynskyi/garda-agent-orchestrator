@@ -2,11 +2,12 @@
 
 ## 1.2.0
 
-### Release And Package Publishing
-- Prepared npm Trusted Publishing through a tag-driven `.github/workflows/publish.yml` workflow with pre-approval release validation, `npm pack --dry-run` evidence, `npm-release` environment approval, OIDC `id-token: write`, and tokenless `npm publish`.
-- Updated release readiness validation to check the Trusted Publishing workflow and operator docs so future release prep cannot drift back to local token-based publishing.
-- Documented npmjs.com Trusted Publisher settings, GitHub Environment approval, post-publish provenance verification, exact-version install verification, and post-verification token restrictions.
-- Aligned package metadata for the planned `1.2.0` release.
+- Added the new optional quality checklist gate: before review, the agent can run a separate checklist-based quality pass and receive concrete follow-up items.
+- Added configurable quality rules: they can be enabled, disabled, and edited through the UI (`garda ui --actions`).
+- Improved `next-step` navigation: reduced the number of cases where the navigator could send the agent through an unnecessary extra review cycle.
+- Improved review reuse: previous reviews are reused more carefully, with domain, lane, timing trust, full-suite binding, and telemetry checks, so reviews are not rerun unnecessarily while stale evidence is not accepted.
+- Added normalized specialist-skill modes: `off`, `optional`, and `mandatory`. Legacy `advisory`/`required`/`strict` values remain readable for compatibility. Custom specialist skills, pack recommendations, and UI settings were improved.
+- Refined the local UI: workflow settings, quality gate, profiles, review limits, task reset actions, and system state are clearer.
 
 ## 1.1.1
 

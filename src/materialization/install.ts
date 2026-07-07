@@ -105,6 +105,11 @@ function getCommitGuardManagedBlockPattern(global = false): RegExp {
     );
 }
 
+function getOptionalStringField(record: Record<string, unknown> | null, field: string): string | null {
+    const value = record?.[field];
+    return typeof value === 'string' ? value : null;
+}
+
 function replaceCommitGuardManagedBlocks(content: string, managedBlock: string): string {
     let inserted = false;
     return content.replace(getCommitGuardManagedBlockPattern(true), function () {
@@ -556,7 +561,7 @@ export function runInstall(options: RunInstallOptions) {
         applyEntrypointManagedBlock(profile.relativePath, block);
     }
 
-    // T-1009: preserve user-retained entrypoints on update.
+    // Preserve user-retained entrypoints on update.
     // Previously, any managed file not in ActiveAgentFiles was removed.
     // Now we detect pre-existing managed files on disk and preserve them
     // as redirect entrypoints / provider bridges instead of deleting them.
@@ -689,7 +694,7 @@ export function runInstall(options: RunInstallOptions) {
         activeEntryFiles, providerOrchestratorProfiles, enableClaudeOrchestratorFullAccess, qwenExists,
         providerMinimalism
     );
-    let gitignoreAdded = 0;
+    let gitignoreAdded: number;
     const gitignorePath = path.join(targetRoot, '.gitignore');
     const agentignorePath = path.join(targetRoot, '.agentignore');
     let agentignoreUpdated = false;
@@ -828,18 +833,10 @@ export function runInstall(options: RunInstallOptions) {
         preCommitHookUpdated: commitGuardHookUpdated,
         liveVersionWritten,
         protectedControlPlaneManifestWritten,
-        workflowConfigMergeStatus: typeof initResult?.workflowConfigMergeStatus === 'string'
-            ? initResult.workflowConfigMergeStatus
-            : null,
-        optionalQualityChecksNotice: typeof initResult?.optionalQualityChecksNotice === 'string'
-            ? initResult.optionalQualityChecksNotice
-            : null,
-        projectMemoryMaintenanceSummaryLine: typeof initResult?.projectMemoryMaintenanceSummaryLine === 'string'
-            ? initResult.projectMemoryMaintenanceSummaryLine
-            : null,
-        projectMemoryRefreshHandoffPrompt: typeof initResult?.projectMemoryRefreshHandoffPrompt === 'string'
-            ? initResult.projectMemoryRefreshHandoffPrompt
-            : null,
+        workflowConfigMergeStatus: getOptionalStringField(initResult, 'workflowConfigMergeStatus'),
+        optionalQualityChecksNotice: getOptionalStringField(initResult, 'optionalQualityChecksNotice'),
+        projectMemoryMaintenanceSummaryLine: getOptionalStringField(initResult, 'projectMemoryMaintenanceSummaryLine'),
+        projectMemoryRefreshHandoffPrompt: getOptionalStringField(initResult, 'projectMemoryRefreshHandoffPrompt'),
         backupRoot: dryRun ? null : backupRoot
     };
     });

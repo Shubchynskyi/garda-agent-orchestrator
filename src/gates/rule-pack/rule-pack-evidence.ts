@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
-import { fileSha256, normalizePath, resolvePathInsideRepo } from '../shared/helpers';
-import { validatePreflightForReview } from '../required-reviews/required-reviews-check';
+import { fileSha256, normalizePath, resolvePathInsideRepo } from '../shared';
+import { validatePreflightForReview } from '../required-reviews';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../task-mode';
 import { buildRulePackBindingSha256, getStageRulePackBindingSha256 } from './rule-pack-binding';
 import { resolveRulePackArtifactPath } from './rule-pack-artifact-store';
@@ -153,7 +153,7 @@ export function getRulePackEvidence(
             result.evidence_status = 'EVIDENCE_TASK_MODE_INVALID';
             return result;
         }
-        // T-030: Prefer risk-aware promoted depth from preflight when available
+        // Prefer risk-aware promoted depth from preflight when available.
         let evidenceEffectiveDepth = taskModeEvidence.effective_depth || 2;
         const evidenceRiskAwareDepth = validatedPreflight.preflight?.risk_aware_depth;
         if (evidenceRiskAwareDepth && typeof evidenceRiskAwareDepth.effective_depth === 'number') {

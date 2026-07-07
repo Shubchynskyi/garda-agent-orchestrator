@@ -29,7 +29,7 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
     const fakeResult = buildFakeDoctorResult();
     const output = formatDoctorResult(fakeResult);
     assert.ok(output.includes('Doctor: PASSED'));
-    assert.ok(output.includes('Next: Execute task T-001'));
+    assert.ok(output.includes('Next: Execute task <task-id>'));
 });
 
 test('formatDoctorResult does not default to T-001 when TASK.md has no executable active-queue tasks', () => {
@@ -55,7 +55,7 @@ test('formatDoctorResult does not default to T-001 when TASK.md has no executabl
 
         assert.ok(output.includes('Doctor: PASSED'));
         assert.ok(output.includes('Next: No executable tasks found in TASK.md Active Queue; add or reopen a task before starting task execution.'));
-        assert.ok(!output.includes('Next: Execute task T-001'));
+        assert.ok(!output.includes('Next: Execute task <task-id>'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -80,11 +80,11 @@ Release handoff archives are split by purpose. `npm run archive:source` writes a
 
 Direct `npm pack` and `npm pack --dry-run` are guarded by `prepack`, which runs the same clean-worktree preflight before package preparation and again after `build:publish-runtime`.
 
-### Tag-driven npm publishing
+### Tag-driven npm staged publishing
 
-The npm publish path is `.github/workflows/publish.yml`, triggered by `v*` tags. The workflow runs a pre-approval `validate` job on GitHub-hosted Ubuntu with Node 24, checks the tag against package metadata and `VERSION`, runs `npm ci`, runs `npm run release:preflight`, and records `npm pack --dry-run` output.
+The npm release path is `.github/workflows/publish.yml`, triggered by `v*` tags. The workflow runs a pre-stage `validate` job on GitHub-hosted Ubuntu with Node 24, checks the tag against package metadata and `VERSION`, runs `npm ci`, runs `npm run release:preflight`, and records `npm pack --dry-run` output.
 
-The `publish` job depends on validation, targets the GitHub Environment `npm-release`, and must wait for GitHub Environment approval before publishing. Release handoff evidence must capture that `npm-release` has non-empty `required_reviewers` before the matching `v*` tag is pushed; the workflow's `environment: npm-release` line alone is not sufficient proof of the approval gate. It uses npm Trusted Publishing with OIDC through `permissions: contents: read, id-token: write`, `actions/setup-node@v6` registry configuration, cache disabled for the release build, a final release proof rerun, and plain `npm publish`. Do not add long-lived npm publish tokens to this workflow. Trusted Publishing for public GitHub Actions packages automatically generates npm provenance when the registry accepts the OIDC publish.
+The `publish` job depends on validation and targets the GitHub Environment `npm-release`. The environment should be restricted to selected release tags matching `v*`, and the same environment name must be configured on the npm Trusted Publisher entry. GitHub required reviewers are optional for this solo-maintainer flow; the human approval step is npm staged approval with maintainer 2FA after CI stages the package. The job uses npm Trusted Publishing with OIDC through `permissions: contents: read, id-token: write`, `actions/setup-node@v6` registry configuration, cache disabled for the release build, an explicit npm CLI `11.15.0+` upgrade for `npm stage`, a final release proof rerun, and plain `npm stage publish`. Do not add long-lived npm publish tokens to this workflow. Trusted Publishing for public GitHub Actions packages automatically generates npm provenance when the registry accepts the staged publish and the package is approved.
 
 ### `npm run release:preflight`
 

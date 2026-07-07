@@ -11,7 +11,7 @@ import {
     buildSetupStepsText,
     handleSetup
 } from '../../../../src/cli/commands/setup';
-import { evaluateProtectedControlPlaneManifest } from '../../../../src/gates/shared/helpers';
+import { evaluateProtectedControlPlaneManifest } from '../../../../src/gates/shared';
 import type { StatusSnapshot } from '../../../../src/validators/status';
 
 import {
@@ -1306,7 +1306,7 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Next stage: launch your agent'));
     assert.ok(text.includes('CLAUDE.md, AGENTS.md'));
     assert.ok(text.includes('AGENT_INIT_PROMPT.md'));
-    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through the orchestrator.'));
+    assert.ok(text.includes('Execute task <task-id> from TASK.md strictly through the orchestrator.'));
     assert.ok(text.includes('Use `next-step` as the navigator'));
     assert.ok(text.includes('launch a sub-agent using your internal tools'));
     assert.ok(text.includes('profile current|list|use|create'));
@@ -1351,7 +1351,7 @@ test('buildSetupHandoffText renders scannable plain human sections', () => {
     assert.ok(!text.includes('Project Memory Refresh'));
     assert.ok(text.includes('Give your agent:'));
     assert.ok(text.includes('AGENT_INIT_PROMPT.md"'));
-    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through the orchestrator.'));
+    assert.ok(text.includes('Execute task <task-id> from TASK.md strictly through the orchestrator.'));
     assert.ok(text.includes('next-step "<task-id>"'));
     assert.match(text.trimEnd(), /and complete the agent-init flow, then run .* agent-init --target-root ".*"$/);
 });
@@ -1369,7 +1369,7 @@ test('buildSetupHandoffText colors human setup handoff when FORCE_COLOR is set',
     assert.ok(text.includes('\u001b[36mAgent Initialization\u001b[0m'));
     assert.ok(text.includes('\u001b[32mPrimary setup is complete.\u001b[0m'));
     assert.ok(text.includes('\u001b[33mNext stage: launch your agent and give it the init prompt.\u001b[0m'));
-    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through the orchestrator.'));
+    assert.ok(text.includes('Execute task <task-id> from TASK.md strictly through the orchestrator.'));
     assert.ok(text.includes('AGENT_INIT_PROMPT.md"'));
 });
 

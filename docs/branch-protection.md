@@ -47,10 +47,11 @@ protection and release-readiness diagnostics stay explicit.
 
 ### GitHub Action pinning decision
 
-The CI and security workflows remain version-tag pinned (`actions/*@v6`,
-`actions/upload-artifact@v4`, `gitleaks/gitleaks-action@v2`, and
-`google/osv-scanner-action/...@v2.3.0`) and are intentionally not SHA-pinned
-at this time. This is an operator-maintainability tradeoff,
+The CI and security workflows remain version-tag pinned
+(`actions/checkout@v7.0.0`, `actions/setup-node@v6`,
+`actions/upload-artifact@v7.0.1`, `gitleaks/gitleaks-action@v3.0.0`, and
+`google/osv-scanner-action/...@v2.3.0`) and are intentionally not SHA-pinned at
+this time. This is an operator-maintainability tradeoff,
 not a provenance guarantee. Release-sensitive operators should review
 action update diffs before broadening branch protection, and this
 decision does not replace future provenance or release-signing work.

@@ -67,7 +67,7 @@ export const taskPlanSchema: Record<string, unknown> = Object.freeze({
     type: 'object',
     properties: {
         schema_version: { type: 'integer', minimum: 1, description: 'Schema version of this plan artifact.' },
-        task_id: { type: 'string', minLength: 1, description: 'Task identifier (e.g. T-048).' },
+        task_id: { type: 'string', minLength: 1, description: 'Task identifier.' },
         status: {
             type: 'string',
             enum: [...PLAN_STATUS_VALUES],

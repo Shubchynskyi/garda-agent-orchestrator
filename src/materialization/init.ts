@@ -33,7 +33,7 @@ import {
     resolveBundleName
 } from '../core/constants';
 import { buildSetupStartBannerSentence } from '../core/orchestrator-start-banner';
-import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
+import { writeProtectedControlPlaneManifest } from '../gates/shared';
 import { isSourceCheckoutRoot } from '../validators/workspace-layout/source-runtime';
 import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
 import {
@@ -69,7 +69,7 @@ import {
     type ProjectMemoryBootstrapReport
 } from './project-memory/project-memory-builder';
 import { withLifecycleOperationLock } from '../lifecycle/common';
-import { validateCompileGateCommand } from '../gates/compile/compile-gate';
+import { validateCompileGateCommand } from '../gates/compile';
 export { mergeConfig } from '../core/config-merge';
 
 interface RunInitOptions {
@@ -381,7 +381,7 @@ export function runInit(options: RunInitOptions) {
     const projectMemorySeed = seedProjectMemoryFromTemplate({ templateRoot, liveRoot, dryRun });
     const seededDirs = projectMemorySeed.seededDirectory ? 1 : 0;
 
-    // T-075: migrate user-authored content from context rules into project-memory
+    // Migrate user-authored content from context rules into project-memory.
     // (runs BEFORE rule materialization so current live/legacy content is still readable)
     const migrationResult = migrateContextRulesToProjectMemory({
         bundleRoot, targetRoot, templateRoot, dryRun
@@ -674,7 +674,7 @@ export function runInit(options: RunInitOptions) {
         const inventoryLines = buildSourceInventoryLines(sourceInventory, timestampIso);
         fs.writeFileSync(sourceInventoryPath, inventoryLines.join('\r\n'), 'utf8');
 
-        // Init report (including T-075 migration details)
+        // Init report, including project-memory migration details.
         const initReportLines = buildInitReportLines({
             timestampIso, projectName, targetRoot, ruleSourceMap,
             ruleFiles: RULE_FILES, copiedSupportDirs,

@@ -111,29 +111,6 @@ const IGNORED_ROOTS = [
 ];
 const FILE_EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.cjs'];
 
-const NEXT_STEP_HELPER_BUDGET_FOLLOW_UPS: Record<string, LargeModuleTaskReference> = {
-    'src/gates/next-step/next-step-compile-full-suite-readiness.ts': {
-        task_id: 'T-725-1',
-        status: 'TODO',
-        title: 'Split next-step compile and full-suite readiness helper'
-    },
-    'src/gates/next-step/next-step-review-evidence.ts': {
-        task_id: 'T-725-2',
-        status: 'TODO',
-        title: 'Split next-step review evidence helper'
-    },
-    'src/gates/next-step/next-step-task-queue-transitions.ts': {
-        task_id: 'T-725-3',
-        status: 'TODO',
-        title: 'Split next-step task queue transition helper'
-    },
-    'src/gates/next-step/next-step-review-artifact-readers.ts': {
-        task_id: 'T-725-4',
-        status: 'TODO',
-        title: 'Split next-step review artifact reader helper'
-    }
-};
-
 function normalizeRelativePath(pathValue: string): string {
     return pathValue.replace(/\\/g, '/');
 }
@@ -345,23 +322,11 @@ function describeNextStepResponsibility(relativePath: string): string {
     return `next-step helper: ${stem || 'shared helper'}`;
 }
 
-function mergeNextStepBudgetFollowUp(
-    relativePath: string,
-    ownerTasks: readonly LargeModuleTaskReference[]
-): LargeModuleTaskReference[] {
-    const followUp = NEXT_STEP_HELPER_BUDGET_FOLLOW_UPS[relativePath];
-    if (!followUp) return [...ownerTasks];
-    const matchingFollowUp = ownerTasks.find((task) => task.task_id === followUp.task_id);
-    if (!matchingFollowUp) return [...ownerTasks];
-    return [matchingFollowUp, ...ownerTasks.filter((task) => task.task_id !== followUp.task_id)].slice(0, 8);
-}
-
 function formatTaskIdList(tasks: readonly LargeModuleTaskReference[]): string {
     return tasks.map((task) => task.task_id).join(', ');
 }
 
 function buildNextStepBudgetExceptionReason(
-    relativePath: string,
     overBudget: boolean,
     ownerTasks: readonly LargeModuleTaskReference[]
 ): string | null {
@@ -369,13 +334,6 @@ function buildNextStepBudgetExceptionReason(
     const openOwnerTasks = ownerTasks.filter((task) => isOpenFollowUp(task.status));
     if (openOwnerTasks.length > 0) {
         return `Report-only budget exception: tracked by ${formatTaskIdList(openOwnerTasks)}; keep this helper visible until the decomposition follow-up completes.`;
-    }
-    const followUp = NEXT_STEP_HELPER_BUDGET_FOLLOW_UPS[relativePath];
-    if (followUp) {
-        if (!ownerTasks.some((task) => task.task_id === followUp.task_id)) {
-            return `Report-only budget exception: expected follow-up ${followUp.task_id} is missing from TASK.md; keep this helper visible until the queue row exists or the helper is split.`;
-        }
-        return `Report-only budget exception: tracked by ${followUp.task_id}; keep this helper visible until the decomposition follow-up completes.`;
     }
     return 'Report-only budget exception: keep a concrete decomposition follow-up before raising this diagnostic threshold.';
 }
@@ -392,7 +350,7 @@ function buildNextStepModuleBudget(
                     ? NEXT_STEP_COORDINATOR_LINE_BUDGET
                     : NEXT_STEP_HELPER_LINE_BUDGET;
                 const overBudget = entry.line_count > lineBudget;
-                const ownerTasks = mergeNextStepBudgetFollowUp(entry.relative_path, entry.owner_tasks);
+                const ownerTasks = entry.owner_tasks.slice(0, 8);
                 return {
                     relative_path: entry.relative_path,
                     role,
@@ -402,7 +360,7 @@ function buildNextStepModuleBudget(
                     budget_status: overBudget ? 'OVER_BUDGET' : 'WITHIN_BUDGET',
                     owner_tasks: ownerTasks,
                     todo_follow_up_exists: ownerTasks.some((task) => isOpenFollowUp(task.status)),
-                    exception_reason: buildNextStepBudgetExceptionReason(entry.relative_path, overBudget, ownerTasks)
+                    exception_reason: buildNextStepBudgetExceptionReason(overBudget, ownerTasks)
                 };
             })
     );

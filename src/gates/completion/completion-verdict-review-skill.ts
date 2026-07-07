@@ -12,7 +12,7 @@ import {
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
 import { getReviewSkillCandidates } from '../../core/review-capabilities';
-import { fileSha256, normalizePath } from '../shared/helpers';
+import { fileSha256, normalizePath } from '../shared';
 import {
     normalizeTimelineDetailString,
     getTimelineSkillId,
@@ -21,27 +21,21 @@ import {
     findLatestTimelineEvent
 } from './completion-evidence';
 import type { TimelineEventEntry } from './completion-evidence';
-import { resolveReviewContextRoutingIdentity } from '../review-context/review-context-routing';
+import { resolveReviewContextRoutingIdentity } from '../review-context';
 import {
+    evaluateHiddenReviewTimingTrust,
+    getMandatoryDelegatedReviewTrustViolation,
     getRequiredUpstreamReviewsFromRecord,
-    normalizeRequiredReviewRecord
-} from '../review/review-dependencies';
+    normalizeRequiredReviewRecord,
+    normalizeRuntimeIdentitySource,
+    resolveReviewerRoutingPolicy,
+    stripReviewTimingProvenanceTimestamps,
+    validateReviewReceiptEvidenceContract
+} from '../review';
 import {
     validateStrictReusedReviewEvidence
 } from '../review-reuse/review-reuse-telemetry';
-import { getMandatoryDelegatedReviewTrustViolation } from '../review/review-trust-policy';
-import {
-    validateReviewReceiptEvidenceContract
-} from '../review/review-evidence-contract';
-import {
-    normalizeRuntimeIdentitySource,
-    resolveReviewerRoutingPolicy
-} from '../review/reviewer-routing';
 import { isTrivialReview } from './completion-verdict-findings';
-import {
-    evaluateHiddenReviewTimingTrust,
-    stripReviewTimingProvenanceTimestamps
-} from '../review/review-timing-trust';
 import {
     createEmptyReviewSkillEvidenceResult,
     getRequiredReviewKeys,
@@ -598,9 +592,7 @@ export function validateReviewSkillEvidence(
                             reviewResultRecordedAtUtc: typeof receipt.review_result_recorded_at_utc === 'string'
                                 ? receipt.review_result_recorded_at_utc
                                 : null,
-                            recordedAtUtc: typeof receipt.recorded_at_utc === 'string'
-                                ? receipt.recorded_at_utc
-                                : null,
+                            recordedAtUtc: receipt.recorded_at_utc,
                             reviewOutputSourceMtimeUtc: typeof receipt.review_output_source_mtime_utc === 'string'
                                 ? receipt.review_output_source_mtime_utc
                                 : null,
@@ -620,7 +612,7 @@ export function validateReviewSkillEvidence(
                             `('${String(receipt.reviewer_execution_mode)}').`
                         );
                     }
-                    // T-1005: Enforce receipt field presence (not just consistency)
+                    // Enforce receipt field presence, not just consistency.
                     if (!receiptExecutionMode) {
                         result.violations.push(
                             `Required review '${key}' receipt is missing reviewer_execution_mode. ` +
@@ -826,7 +818,7 @@ export function validateReviewSkillEvidence(
                             }
                         }
                     }
-                    // T-1005: Provider policy enforcement against receipt fields
+                    // Provider policy enforcement against receipt fields.
                     if (receiptExecutionMode) {
                         if (routingPolicy.delegation_required && receiptExecutionMode !== 'delegated_subagent') {
                             result.violations.push(

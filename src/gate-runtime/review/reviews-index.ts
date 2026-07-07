@@ -189,9 +189,7 @@ export function isIndexStale(
     }
     if (typeof cached.directoryEntryCount === 'number' && getDirectoryEntryCount(reviewsDir) !== cached.directoryEntryCount) return true;
 
-    if (Date.now() - cached.generatedAtMs > maxStalenessMs) return true;
-
-    return false;
+    return Date.now() - cached.generatedAtMs > maxStalenessMs;
 }
 
 export function parseReviewArtifactFileName(fileName: string): { taskId: string; artifactType: string } | null {
@@ -205,7 +203,7 @@ export function parseReviewArtifactFileName(fileName: string): { taskId: string;
                 return { taskId, artifactType: suffix.slice(1) };
             }
         }
-        // Also match compressed variants (e.g. T-001-preflight.json.gz)
+        // Also match compressed variants of the same artifact suffix.
         const gzSuffix = `${suffix}.gz`;
         if (fileName.endsWith(gzSuffix)) {
             const taskId = fileName.slice(0, fileName.length - gzSuffix.length);

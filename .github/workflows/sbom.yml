@@ -36,7 +36,7 @@ jobs:
     name: Generate SBOM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-node@v6
         with:
@@ -50,7 +50,7 @@ jobs:
         run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json --spec-version 1.5 --output-reproducible
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: sbom-cyclonedx
           path: sbom.cdx.json

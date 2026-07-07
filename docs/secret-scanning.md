@@ -27,7 +27,7 @@ gitleaks automatically on:
 - manual `workflow_dispatch`.
 
 The workflow uses the official
-[gitleaks-action](https://github.com/gitleaks/gitleaks-action) v2 with
+[gitleaks-action](https://github.com/gitleaks/gitleaks-action) v3 with
 `fetch-depth: 0` so the full commit history is scanned.
 
 ## Local Usage

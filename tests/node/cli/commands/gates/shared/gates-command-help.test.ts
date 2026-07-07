@@ -270,7 +270,7 @@ describe('cli/commands/gates command help and syntax remediation', () => {
 
         const overviewOutput = stripAnsi(buildGateCommandOverviewText(path.resolve('.')));
         assert.ok(!overviewOutput.includes('--requested-depth "2"'));
-        assert.ok(overviewOutput.includes('gate enter-task-mode --task-id "T-178" --entry-mode "EXPLICIT_TASK_EXECUTION" --task-summary'));
+        assert.ok(overviewOutput.includes('gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --task-summary'));
     });
 
     it('uses deployed-workspace CLI prefixes for help and remediation outside a source checkout', () => {

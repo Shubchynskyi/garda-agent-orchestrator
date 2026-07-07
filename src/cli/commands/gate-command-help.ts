@@ -623,8 +623,8 @@ export function buildGateCommandOverviewText(repoRoot = process.cwd()): string {
         `  ${dim('Use per-gate help to inspect exact syntax before execution.')}`,
         '',
         bold('Examples'),
-        `  ${green(`${cliPrefix} gate enter-task-mode --task-id "T-178" --entry-mode "EXPLICIT_TASK_EXECUTION" --task-summary "<task summary>" --provider "Codex" --repo-root "."`)}`,
-        `  ${green(`${cliPrefix} gate task-audit-summary --task-id "T-178" --as-json --repo-root "."`)}`
+        `  ${green(`${cliPrefix} gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --task-summary "<task summary>" --provider "Codex" --repo-root "."`)}`,
+        `  ${green(`${cliPrefix} gate task-audit-summary --task-id "<task-id>" --as-json --repo-root "."`)}`
     ].join('\n');
 }
 

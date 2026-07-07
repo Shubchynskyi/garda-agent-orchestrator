@@ -117,8 +117,8 @@ test('collectLargeModuleReport marks over-budget next-step modules with diagnost
             path.join(tmpDir, 'TASK.md'),
             [
                 '| ID | Status | Priority | Area | Title | Model | Date | Profile | Notes |',
-                '| T-725-4 | 🟦 TODO | P3 | workflow/next-step-review-artifact-reader-split | Split review artifact reader | gpt-5.5 | 2026-06-05 | balanced | Follow-up for `src/gates/next-step/next-step-review-artifact-readers.ts`. |',
-                '| T-800 | 🟦 TODO | P3 | workflow/next-step-owned-helper-split | Split owned next-step helper | gpt-5.5 | 2026-06-05 | balanced | Follow-up for `src/gates/next-step/next-step-owned-helper.ts`. |'
+                '| T-900-4 | 🟦 TODO | P3 | workflow/next-step-review-artifact-reader-split | Split review artifact reader | gpt-5.5 | 2026-06-05 | balanced | Follow-up for `src/gates/next-step/next-step-review-artifact-readers.ts`. |',
+                '| T-901 | 🟦 TODO | P3 | workflow/next-step-owned-helper-split | Split owned next-step helper | gpt-5.5 | 2026-06-05 | balanced | Follow-up for `src/gates/next-step/next-step-owned-helper.ts`. |'
             ].join('\n') + '\n'
         );
         writeFile(
@@ -156,21 +156,21 @@ test('collectLargeModuleReport marks over-budget next-step modules with diagnost
         assert.equal(modules.get('src/gates/next-step/next-step-review-artifact-readers.ts')?.line_budget, 700);
         assert.equal(modules.get('src/gates/next-step/next-step-review-artifact-readers.ts')?.budget_status, 'OVER_BUDGET');
         assert.deepEqual(modules.get('src/gates/next-step/next-step-review-artifact-readers.ts')?.owner_tasks, [{
-            task_id: 'T-725-4',
+            task_id: 'T-900-4',
             status: '🟦 TODO',
             title: 'Split review artifact reader'
         }]);
         assert.equal(modules.get('src/gates/next-step/next-step-review-artifact-readers.ts')?.todo_follow_up_exists, true);
         assert.equal(
             modules.get('src/gates/next-step/next-step-review-artifact-readers.ts')?.exception_reason,
-            'Report-only budget exception: tracked by T-725-4; keep this helper visible until the decomposition follow-up completes.'
+            'Report-only budget exception: tracked by T-900-4; keep this helper visible until the decomposition follow-up completes.'
         );
         assert.equal(modules.get('src/gates/next-step/next-step-review-evidence.ts')?.budget_status, 'OVER_BUDGET');
         assert.equal(modules.get('src/gates/next-step/next-step-review-evidence.ts')?.owner_tasks.length, 0);
         assert.equal(modules.get('src/gates/next-step/next-step-review-evidence.ts')?.todo_follow_up_exists, false);
         assert.equal(
             modules.get('src/gates/next-step/next-step-review-evidence.ts')?.exception_reason,
-            'Report-only budget exception: expected follow-up T-725-2 is missing from TASK.md; keep this helper visible until the queue row exists or the helper is split.'
+            expectedReason
         );
         assert.equal(modules.get('src/gates/next-step/next-step-broad-helper.ts')?.line_budget, 700);
         assert.equal(modules.get('src/gates/next-step/next-step-broad-helper.ts')?.budget_status, 'OVER_BUDGET');
@@ -178,40 +178,40 @@ test('collectLargeModuleReport marks over-budget next-step modules with diagnost
         assert.equal(modules.get('src/gates/next-step/next-step-broad-helper.ts')?.todo_follow_up_exists, false);
         assert.equal(modules.get('src/gates/next-step/next-step-owned-helper.ts')?.budget_status, 'OVER_BUDGET');
         assert.deepEqual(modules.get('src/gates/next-step/next-step-owned-helper.ts')?.owner_tasks, [{
-            task_id: 'T-800',
+            task_id: 'T-901',
             status: '🟦 TODO',
             title: 'Split owned next-step helper'
         }]);
         assert.equal(
             modules.get('src/gates/next-step/next-step-owned-helper.ts')?.exception_reason,
-            'Report-only budget exception: tracked by T-800; keep this helper visible until the decomposition follow-up completes.'
+            'Report-only budget exception: tracked by T-901; keep this helper visible until the decomposition follow-up completes.'
         );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('collectLargeModuleReport accepts all T-725 next-step helper follow-up rows together', () => {
+test('collectLargeModuleReport accepts TASK.md next-step helper follow-up rows together', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'large-module-report-'));
     try {
         const helperFollowUps = [
             {
-                taskId: 'T-725-1',
+                taskId: 'T-902-1',
                 title: 'Split next-step compile and full-suite readiness helper',
                 relativePath: 'src/gates/next-step/next-step-compile-full-suite-readiness.ts'
             },
             {
-                taskId: 'T-725-2',
+                taskId: 'T-902-2',
                 title: 'Split next-step review evidence helper',
                 relativePath: 'src/gates/next-step/next-step-review-evidence.ts'
             },
             {
-                taskId: 'T-725-3',
+                taskId: 'T-902-3',
                 title: 'Split next-step task queue transition helper',
                 relativePath: 'src/gates/next-step/next-step-task-queue-transitions.ts'
             },
             {
-                taskId: 'T-725-4',
+                taskId: 'T-902-4',
                 title: 'Split next-step review artifact reader helper',
                 relativePath: 'src/gates/next-step/next-step-review-artifact-readers.ts'
             }

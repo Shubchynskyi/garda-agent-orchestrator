@@ -114,8 +114,8 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'Selectors such as review-evidence.json and full-suite-retry-evidence.json live under the task root and should be purged with the task.'
         ],
         examples: [
-            'runtime/manual-validation/T-775-1/review-evidence.json',
-            'runtime/manual-validation/T-775-1/full-suite-retry-evidence.json'
+            'runtime/manual-validation/<task-id>/review-evidence.json',
+            'runtime/manual-validation/<task-id>/full-suite-retry-evidence.json'
         ]
     },
     {
@@ -134,7 +134,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'Plan retention should follow the same task age/count policy as other task-owned runtime artifacts.'
         ],
         examples: [
-            'runtime/plans/T-775-1.md'
+            'runtime/plans/<task-id>.md'
         ]
     },
     {
@@ -153,8 +153,8 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'Task purge should delete only task-keyed impact/update artifacts and leave shared bootstrap diagnostics alone.'
         ],
         examples: [
-            'runtime/project-memory/T-775-1-impact.json',
-            'runtime/project-memory/T-775-1-update.json'
+            'runtime/project-memory/<task-id>-impact.json',
+            'runtime/project-memory/<task-id>-update.json'
         ]
     },
     {
@@ -193,8 +193,8 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'Task purge removes only artifacts owned by the selected task id; shared review indexes are rebuilt separately.'
         ],
         examples: [
-            'runtime/reviews/T-775-1-preflight.json',
-            'runtime/reviews/T-775-1-final-closeout.json'
+            'runtime/reviews/<task-id>-preflight.json',
+            'runtime/reviews/<task-id>-final-closeout.json'
         ]
     },
     {
@@ -236,7 +236,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'Task purge may delete them, but shared aggregates built from them must be repaired instead of deleted wholesale.'
         ],
         examples: [
-            'runtime/task-events/T-775-1.jsonl'
+            'runtime/task-events/<task-id>.jsonl'
         ]
     },
     {
@@ -258,7 +258,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'They should never outlive the owning per-task JSONL file after purge.'
         ],
         examples: [
-            'runtime/task-events/T-775-1.completeness.json'
+            'runtime/task-events/<task-id>.completeness.json'
         ]
     },
     {
@@ -316,7 +316,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'If a task is purged, its ledger should disappear with the rest of the task-owned runtime artifacts.'
         ],
         examples: [
-            'runtime/task-ledger/T-775-1.json'
+            'runtime/task-ledger/<task-id>.json'
         ]
     },
     {
@@ -335,8 +335,8 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'Terminal cleanup may delete them earlier, but task purge should remove any residue deterministically.'
         ],
         examples: [
-            'runtime/tmp/reviews/T-775-1/code/review-output.md',
-            'runtime/tmp/reviews/T-775-1/security/reviewer-launch.json'
+            'runtime/tmp/reviews/<task-id>/code/review-output.md',
+            'runtime/tmp/reviews/<task-id>/security/reviewer-launch.json'
         ]
     },
     {
@@ -355,8 +355,8 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'Ownership-aware purge may delete only entries whose name or nested review scratch path resolves to the selected task id.'
         ],
         examples: [
-            'runtime/tmp/T-536-full-suite-validation-test.log',
-            'runtime/tmp/T-709-2-full-suite-sharded.log'
+            'runtime/tmp/<task-id>-full-suite-validation-test.log',
+            'runtime/tmp/<task-id>-full-suite-sharded.log'
         ]
     },
     {

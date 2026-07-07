@@ -89,6 +89,7 @@ jobs:
           path: .node-build/test-shard-logs/**
           if-no-files-found: ignore
           retention-days: 15
+          include-hidden-files: true
 
   # ── 3. Gate tests (next-step, review, routing, workflow evidence) ─────────────
   test-gates:
@@ -129,6 +130,7 @@ jobs:
           path: .node-build/test-shard-logs/**
           if-no-files-found: ignore
           retention-days: 15
+          include-hidden-files: true
 
   # ── 4. CLI tests (command surfaces, gate flows, review handlers) ──────────────
   test-cli:
@@ -169,6 +171,7 @@ jobs:
           path: .node-build/test-shard-logs/**
           if-no-files-found: ignore
           retention-days: 15
+          include-hidden-files: true
 
   # ── 5. Lifecycle tests (setup, update, on/off, uninstall, cleanup) ────────────
   test-lifecycle:
@@ -208,6 +211,7 @@ jobs:
           path: .node-build/test-shard-logs/**
           if-no-files-found: ignore
           retention-days: 15
+          include-hidden-files: true
 
   # ── 5b. Binary & Materialization tests (bin, materialization) ────────────────
   test-bin:
@@ -247,6 +251,7 @@ jobs:
           path: .node-build/test-shard-logs/**
           if-no-files-found: ignore
           retention-days: 15
+          include-hidden-files: true
 
   # ── 6. Release validation matrix (version parity + build + quality + pack smoke)
   validate-release:

@@ -121,7 +121,7 @@ const SUGGESTED_SKILL_MIN_SCORE = 75;
 const SUGGESTED_PACK_MIN_SCORE = 75;
 
 // Fuzzy alias expansion – deterministic, reviewable synonym groups for
-// abbreviation ↔ full-name matching (T-078).
+// abbreviation ↔ full-name matching.
 // Each inner array is a group of equivalent terms.  Matching is symmetric:
 // if signal says "kubernetes" and text says "k8s" (or vice-versa), the
 // alias layer bridges the gap.  All terms are compared lowercased.
@@ -424,7 +424,7 @@ function getCustomLiveSkills(bundleRoot: string): SkillsHeadlineSkillEntry[] {
     return skills
         .filter((skill) => (
             skill.source === 'custom_live'
-            && skill.implemented !== false
+            && skill.implemented
             && skill.review_binding === 'general_purpose'
             && hasLiveSkillEntrypoint(bundleRoot, skill)
         ))
@@ -444,7 +444,7 @@ function toCustomLiveScoringEntry(skill: SkillsHeadlineSkillEntry): SkillScoring
         changed_path_signals: [...skill.changed_path_signals],
         priority: 50,
         deprecated: false,
-        implemented: skill.implemented !== false,
+        implemented: skill.implemented,
         source: 'custom_live',
         directory: skill.directory || skill.id
     };
@@ -458,8 +458,8 @@ function isSkillAvailableLocally(skill: SkillSuggestion, liveSkillDirectorySet: 
     return liveSkillDirectorySet.has(skill.id) || (!!directory && liveSkillDirectorySet.has(directory));
 }
 
-// Same-pack dedupe – keeps the top-N suggestion list diverse across packs
-// (T-080).  The strongest skill per pack is always preserved.  Additional
+// Same-pack dedupe – keeps the top-N suggestion list diverse across packs.
+// The strongest skill per pack is always preserved.  Additional
 // same-pack skills survive only when they contribute evidence in a signal
 // category the primary skill does not cover.
 export const MATCH_CATEGORIES = Object.freeze([
@@ -574,11 +574,11 @@ export function suggestSkills(bundleRoot: string, targetRoot: string, options: S
 
     const allSkillSuggestions = [
         ...payload.skills
-            .filter((skill: SkillsIndexSkillEntry) => skill.implemented !== false)
+            .filter((skill: SkillsIndexSkillEntry) => skill.implemented)
             .map((skill: SkillsIndexSkillEntry) => toIndexScoringEntry(skill, installedPackIds, customLiveSkillsById)),
         ...supplementalCustomLiveSkills
     ]
-        .filter((skill) => skill.implemented !== false)
+        .filter((skill) => skill.implemented)
         .map((skill) => scoreSkillSuggestion(skill, context, installedPackIds))
         .filter((skill): skill is SkillSuggestion => skill !== null)
         .sort((left: SkillSuggestion, right: SkillSuggestion) => {
@@ -606,7 +606,7 @@ export function suggestSkills(bundleRoot: string, targetRoot: string, options: S
     const suggestedPacks = aggregatePackSuggestions(suggestedSkillsFull, packIndex, installedPackIds)
         .filter((pack) => !pack.installed && pack.score >= SUGGESTED_PACK_MIN_SCORE);
 
-    // Dedupe same-pack skills to keep top-N diverse across packs (T-080).
+    // Dedupe same-pack skills to keep top-N diverse across packs.
     const suggestedDedupe = dedupeSkillsByPack(suggestedSkillsFull);
     const availableDedupe = dedupeSkillsByPack(availableRelevantSkillsFull);
 

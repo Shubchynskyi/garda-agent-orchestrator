@@ -845,7 +845,7 @@ describe('runInit with project-memory migration', () => {
             assert.equal(result.projectMemoryMigration.status, 'migrated');
 
             const report = fs.readFileSync(result.initReportPath, 'utf8');
-            assert.ok(report.includes('Project-Memory Migration (T-075)'), 'init report must include migration section');
+            assert.ok(report.includes('Project-Memory Migration'), 'init report must include migration section');
             assert.ok(report.includes('migrated'), 'init report must include migration status');
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });

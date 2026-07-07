@@ -52,7 +52,7 @@ function getWorkflowJobBlock(raw: string, jobId: string): string {
     const lines = raw.split(/\r?\n/);
     const jobStart = lines.findIndex((line) => line === `  ${jobId}:`);
     assert.notEqual(jobStart, -1, `Workflow must define job '${jobId}'`);
-    const nextJob = lines.findIndex((line, index) => index > jobStart && /^  [A-Za-z0-9_-]+:\s*$/u.test(line));
+    const nextJob = lines.findIndex((line, index) => index > jobStart && /^ {2}[A-Za-z0-9_-]+:\s*$/u.test(line));
     return lines.slice(jobStart, nextJob === -1 ? undefined : nextJob).join('\n');
 }
 
@@ -94,7 +94,7 @@ test('CI workflow smoke job covers supported Node runtime lines', () => {
     const raw = getRawContent(loadCiWorkflow());
     const smokeJob = getWorkflowJobBlock(raw, 'smoke');
 
-    assert.match(smokeJob, /name:\s*Smoke \/ \$\{\{\s*matrix\.os\s*\}\} \/ Node \$\{\{\s*matrix\.node-version\s*\}\}/);
+    assert.match(smokeJob, /name:\s*Smoke \/ \$\{\{\s*matrix\.os\s*}} \/ Node \$\{\{\s*matrix\.node-version\s*}}/);
     assertSupportedNodeMatrix(raw, 'smoke', 'CI smoke job');
 });
 
@@ -103,7 +103,7 @@ test('scheduled smoke workflow covers supported Node runtime lines', () => {
     const smokeJob = getWorkflowJobBlock(raw, 'smoke');
 
     assert.match(raw, /^\s+smoke:/m, 'Scheduled smoke workflow must define a smoke job');
-    assert.match(smokeJob, /name:\s*Smoke \/ \$\{\{\s*matrix\.os\s*\}\} \/ Node \$\{\{\s*matrix\.node-version\s*\}\}/);
+    assert.match(smokeJob, /name:\s*Smoke \/ \$\{\{\s*matrix\.os\s*}} \/ Node \$\{\{\s*matrix\.node-version\s*}}/);
     assert.deepEqual(
         extractYamlListAfterKey(smokeJob, 'os'),
         ['ubuntu-latest', 'windows-latest', 'macos-latest']
@@ -156,8 +156,8 @@ test('smoke job has failure-conditional artifact upload step', () => {
     );
     assert.match(
         raw,
-        /uses:\s*actions\/upload-artifact@v4/,
-        'Upload step must use actions/upload-artifact@v4'
+        /uses:\s*actions\/upload-artifact@v7\.0\.1/,
+        'Upload step must use actions/upload-artifact@v7.0.1'
     );
 });
 
@@ -192,7 +192,7 @@ test('upload artifact uses per-OS naming', () => {
     const raw = getRawContent(loadCiWorkflow());
     assert.match(
         raw,
-        /smoke-failure-evidence-\$\{\{\s*matrix\.os\s*\}\}/,
+        /smoke-failure-evidence-\$\{\{\s*matrix\.os\s*}}/,
         'Artifact name must include matrix.os for per-platform disambiguation'
     );
 });

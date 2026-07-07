@@ -352,7 +352,6 @@ export function extractMigrationContent(
     const lines = ruleContent.split(/\r?\n/);
     const sections: MigrationSection[] = [];
     let current: MigrationSection | null = null;
-    let preambleLines: string[] = [];
 
     for (const line of lines) {
         const h2 = line.match(/^## (.+)$/);
@@ -361,8 +360,6 @@ export function extractMigrationContent(
             current = { heading: h2[1].trim(), lines: [] };
         } else if (current) {
             current.lines.push(line);
-        } else {
-            preambleLines.push(line);
         }
     }
     if (current) sections.push(current);
@@ -416,7 +413,7 @@ export function extractMigrationContent(
 
 
 export function buildMigrationReportLines(migrationResult: ProjectMemoryMigrationResult): string[] {
-    const lines = ['', '## Project-Memory Migration (T-075)'];
+    const lines = ['', '## Project-Memory Migration'];
 
     if (migrationResult.status === 'already_migrated') {
         lines.push('- Status: skipped (marker file present; migration already completed).');
