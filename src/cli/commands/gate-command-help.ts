@@ -30,6 +30,7 @@ const TASK_ID_POSITIONAL_RE = /^T-[A-Z0-9-]+$/i;
 const BOOLEAN_GATE_OPTIONS = new Set([
     '--allow-plan-drift',
     '--as-json',
+    '--answers-stdin',
     '--behavior-changed',
     '--changelog-updated',
     '--clear-dead-marker',
@@ -263,9 +264,13 @@ function buildPreflightGateHelpEntries(
             )
         },
         'quality-checklist': {
-            ...createSingleUsageEntry(
-                'Record the configured optional quality checklist as machine-readable advisory gate evidence; answers-json must include one answer object per active rule for the current preflight scope. Use ACTION_REQUIRED only for follow-up the implementation agent should address before compile/review/full-suite; this gate never replaces reviewer receipts.',
-                `${cliPrefix} gate quality-checklist --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --answers-json "<JSON array with one answer object per active optional_quality_checks rule for the current preflight scope>" --repo-root "."`,
+            ...createGateHelpEntry(
+                'Record the configured optional quality checklist as machine-readable advisory gate evidence; answers input must include one answer object per active rule for the current preflight scope. Prefer --answers-path or --answers-stdin for PowerShell-safe JSON input. Use ACTION_REQUIRED only for follow-up the implementation agent should address before compile/review/full-suite; this gate never replaces reviewer receipts.',
+                [
+                    `${cliPrefix} gate quality-checklist --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --answers-path "${buildBundleRelativePath(bundleName, `runtime/tmp/${TASK_ID_PLACEHOLDER}-quality-checklist-answers.json`)}" --repo-root "."`,
+                    `Get-Content -Raw -LiteralPath "${buildBundleRelativePath(bundleName, `runtime/tmp/${TASK_ID_PLACEHOLDER}-quality-checklist-answers.json`)}" | ${cliPrefix} gate quality-checklist --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --answers-stdin --repo-root "."`,
+                    `${cliPrefix} gate quality-checklist --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --answers-json "<JSON array with one answer object per active optional_quality_checks rule for the current preflight scope>" --repo-root "."`
+                ],
                 true
             )
         },

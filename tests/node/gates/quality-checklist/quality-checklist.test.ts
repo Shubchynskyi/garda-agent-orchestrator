@@ -484,6 +484,136 @@ describe('quality-checklist gate', () => {
         }
     });
 
+    it('reads answers from a repo-local JSON file', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-answers-path' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(fixture.repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'quality-answers.json');
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, JSON.stringify(buildPassAnswers()), 'utf8');
+
+            const result = runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath,
+                emitMetrics: false
+            });
+
+            assert.equal(result.exitCode, 0);
+            assert.ok(result.outputLines.includes('QUALITY_CHECKLIST_PASSED'));
+            const artifactPathLine = result.outputLines.find((line) => line.startsWith('QualityChecklistArtifactPath: '));
+            assert.ok(artifactPathLine);
+            const artifact = JSON.parse(fs.readFileSync(artifactPathLine.replace('QualityChecklistArtifactPath: ', ''), 'utf8'));
+            assert.equal(artifact.status, 'PASS');
+            assert.equal(artifact.answers.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('reads answers from stdin text without logging the raw JSON', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-answers-stdin' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const rawAnswers = JSON.stringify(buildPassAnswers());
+
+            const result = runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersStdin: true,
+                answersStdinText: rawAnswers,
+                emitMetrics: false
+            });
+
+            assert.equal(result.exitCode, 0);
+            assert.ok(result.outputLines.includes('QUALITY_CHECKLIST_PASSED'));
+            assert.equal(result.outputLines.join('\n').includes(rawAnswers), false);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('reports invalid JSON from answers-path without echoing file contents', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-invalid-answers-path' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(fixture.repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'invalid-quality-answers.json');
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, '[{"rule_id":"code_simplification",', 'utf8');
+
+            assert.throws(() => runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath,
+                emitMetrics: false
+            }), (error: unknown) => {
+                assert.ok(error instanceof Error);
+                assert.match(error.message, /AnswersPath must be valid JSON/u);
+                assert.equal(error.message.includes('code_simplification'), false);
+                return true;
+            });
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects answers-path symlinks that resolve outside the repo root', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-answers-path-realpath-escape' });
+        const outsideDir = path.join(path.dirname(fixture.repoRoot), `${fixture.taskId}-outside`);
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            fs.mkdirSync(outsideDir, { recursive: true });
+            const outsideAnswersPath = path.join(outsideDir, 'quality-answers.json');
+            fs.writeFileSync(outsideAnswersPath, JSON.stringify(buildPassAnswers()), 'utf8');
+
+            const symlinkPath = path.join(fixture.repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'outside-quality-answers.json');
+            fs.mkdirSync(path.dirname(symlinkPath), { recursive: true });
+            try {
+                fs.symlinkSync(outsideAnswersPath, symlinkPath, 'file');
+            } catch (error: unknown) {
+                if (process.platform === 'win32') {
+                    return;
+                }
+                throw error;
+            }
+
+            assert.throws(() => runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath: symlinkPath,
+                emitMetrics: false
+            }), /AnswersPath must resolve inside repo root/u);
+        } finally {
+            fs.rmSync(outsideDir, { recursive: true, force: true });
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects ambiguous answers input modes instead of applying precedence', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-answers-ambiguous' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(fixture.repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'quality-answers.json');
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, JSON.stringify(buildPassAnswers()), 'utf8');
+
+            assert.throws(() => runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersJson: JSON.stringify(buildPassAnswers()),
+                answersPath,
+                emitMetrics: false
+            }), /pass only one of --answers-json, --answers-path, or --answers-stdin/u);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
     it('rejects explicit artifact paths outside the repo root', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-artifact-escape' });
         try {

@@ -479,12 +479,13 @@ export function buildQualityChecklistCommand(
     preflightCommandPath: string,
     taskModePath: string | null
 ): string {
+    const answersPath = buildBundleRelativePath(repoRoot, `runtime/tmp/${taskId}-quality-checklist-answers.json`);
     return [
         `${cliPrefix} gate quality-checklist`,
         `--task-id "${taskId}"`,
         `--preflight-path "${preflightCommandPath}"`,
         ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
-        '--answers-json "<JSON array with one answer object per active optional_quality_checks rule for the current preflight scope>"',
+        `--answers-path "${answersPath}"`,
         '--repo-root "."'
     ].join(' ');
 }

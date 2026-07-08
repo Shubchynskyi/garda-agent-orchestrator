@@ -455,6 +455,10 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         assert.equal(result.exitCode, 0);
         const combinedOutput = stripAnsi(result.logs.join('\n'));
         assert.ok(combinedOutput.includes('one answer object per active rule for the current preflight scope'));
+        assert.ok(combinedOutput.includes('PowerShell-safe JSON input'));
+        assert.ok(combinedOutput.includes('--answers-path "garda-agent-orchestrator/runtime/tmp/<task-id>-quality-checklist-answers.json"'));
+        assert.ok(combinedOutput.includes('Get-Content -Raw -LiteralPath "garda-agent-orchestrator/runtime/tmp/<task-id>-quality-checklist-answers.json"'));
+        assert.ok(combinedOutput.includes('--answers-stdin'));
         assert.equal(combinedOutput.includes('one answer object per enabled rule'), false);
         assert.ok(combinedOutput.includes('<JSON array with one answer object per active optional_quality_checks rule for the current preflight scope>'));
         assert.equal(combinedOutput.includes('"rule_id":"code_simplification"'), false);

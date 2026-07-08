@@ -203,7 +203,9 @@ describe('gates/next-step quality checklist routing', () => {
         assert.match(result.quality_checklist?.visible_summary_line || '', /active_rules=7; skipped_by_scope=0/u);
         assert.equal(result.commands[0].label, 'Run quality checklist');
         assert.ok(result.commands[0].command.includes('gate quality-checklist'));
-        assert.ok(result.commands[0].command.includes('active optional_quality_checks rule for the current preflight scope'));
+        assert.ok(result.commands[0].command.includes('--answers-path'));
+        assert.ok(result.commands[0].command.includes(`${TASK_ID}-quality-checklist-answers.json`));
+        assert.equal(result.commands[0].command.includes('--answers-json'), false);
         assert.ok(!result.commands[0].command.includes('gate compile-gate'));
     });
 
@@ -224,7 +226,8 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.quality_checklist?.active_rule_count, 4);
         assert.equal(result.quality_checklist?.skipped_by_scope_rule_count, 3);
         assert.match(result.reason, /Active rules for scope "test-only": 4; skipped_by_scope=3/u);
-        assert.ok(result.commands[0].command.includes('active optional_quality_checks rule for the current preflight scope'));
+        assert.ok(result.commands[0].command.includes('--answers-path'));
+        assert.equal(result.commands[0].command.includes('--answers-json'), false);
     });
 
     it('includes canonical rule ids when stale moved rule config needs checklist answers', () => {

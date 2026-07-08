@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { EXIT_GATE_FAILURE } from '../../../exit-codes';
@@ -24,6 +25,9 @@ export interface QualityChecklistCommandOptions {
     taskId?: unknown;
     preflightPath?: unknown;
     answersJson?: unknown;
+    answersPath?: unknown;
+    answersStdin?: unknown;
+    answersStdinText?: unknown;
     actionTaken?: unknown;
     actionsTaken?: unknown;
     actionRequired?: unknown;
@@ -33,7 +37,7 @@ export interface QualityChecklistCommandOptions {
     emitMetrics?: unknown;
 }
 
-function parseAnswersJson(value: unknown): unknown {
+function parseAnswersJson(value: unknown, label = 'AnswersJson'): unknown {
     const raw = String(value || '').trim();
     if (!raw) {
         return [];
@@ -42,7 +46,7 @@ function parseAnswersJson(value: unknown): unknown {
         return JSON.parse(raw);
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`AnswersJson must be valid JSON: ${message}`);
+        throw new Error(`${label} must be valid JSON: ${message}`);
     }
 }
 
@@ -60,10 +64,78 @@ function resolveQualityChecklistOutputPath(pathValue: string, repoRoot: string, 
     );
 }
 
+function hasTextInput(value: unknown): boolean {
+    return String(value ?? '').trim().length > 0;
+}
+
+function resolveAnswersPath(pathValue: unknown, repoRoot: string): string {
+    const rawPath = String(pathValue || '').trim();
+    if (!rawPath) {
+        throw new Error('AnswersPath must not be empty.');
+    }
+    return requireResolvedPath(
+        gateHelpers.resolvePathInsideRepo(rawPath, repoRoot, { allowMissing: false, enforceInside: true }),
+        'AnswersPath'
+    );
+}
+
+function realpathSync(pathValue: string): string {
+    return fs.realpathSync.native(pathValue);
+}
+
+function resolveRealAnswersPathInsideRepo(answersPath: string, repoRoot: string): string {
+    const repoRealPath = realpathSync(repoRoot);
+    const answersRealPath = realpathSync(answersPath);
+    if (!gateHelpers.isPathInsideRoot(answersRealPath, repoRealPath)) {
+        throw new Error(`AnswersPath must resolve inside repo root: ${gateHelpers.normalizePath(answersPath)}`);
+    }
+    return answersRealPath;
+}
+
+function readAnswersPath(pathValue: unknown, repoRoot: string): string {
+    const answersPath = resolveAnswersPath(pathValue, repoRoot);
+    const realAnswersPath = resolveRealAnswersPathInsideRepo(answersPath, repoRoot);
+    if (!fs.existsSync(realAnswersPath) || !fs.statSync(realAnswersPath).isFile()) {
+        throw new Error(`AnswersPath must be an existing file inside the repo root: ${gateHelpers.normalizePath(answersPath)}`);
+    }
+    return fs.readFileSync(realAnswersPath, 'utf8');
+}
+
+function readAnswersStdin(options: QualityChecklistCommandOptions): string {
+    if (options.answersStdinText !== undefined) {
+        return String(options.answersStdinText);
+    }
+    return fs.readFileSync(0, 'utf8');
+}
+
+function resolveQualityChecklistAnswers(options: QualityChecklistCommandOptions, repoRoot: string): unknown {
+    const inputModes = [
+        hasTextInput(options.answersJson) ? '--answers-json' : null,
+        hasTextInput(options.answersPath) ? '--answers-path' : null,
+        parseBooleanOption(options.answersStdin, false) ? '--answers-stdin' : null
+    ].filter((entry): entry is string => Boolean(entry));
+    if (inputModes.length > 1) {
+        throw new Error(
+            `Quality checklist answers input is ambiguous; pass only one of --answers-json, --answers-path, or --answers-stdin. ` +
+            `Received: ${inputModes.join(', ')}.`
+        );
+    }
+    if (inputModes.length === 0) {
+        return [];
+    }
+    if (inputModes[0] === '--answers-path') {
+        return parseAnswersJson(readAnswersPath(options.answersPath, repoRoot), 'AnswersPath');
+    }
+    if (inputModes[0] === '--answers-stdin') {
+        return parseAnswersJson(readAnswersStdin(options), 'AnswersStdin');
+    }
+    return parseAnswersJson(options.answersJson, 'AnswersJson');
+}
+
 export function runQualityChecklistCommand(options: QualityChecklistCommandOptions): { outputLines: string[]; exitCode: number } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
-    const answers = parseAnswersJson(options.answersJson);
+    const answers = resolveQualityChecklistAnswers(options, repoRoot);
     const artifact = buildQualityChecklistArtifact({
         repoRoot,
         taskId: String(options.taskId || '').trim(),

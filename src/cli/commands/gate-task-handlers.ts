@@ -388,6 +388,8 @@ export async function handleQualityChecklist(gateArgv: string[]): Promise<void> 
         '--task-id': { key: 'taskId', type: 'string' },
         '--preflight-path': { key: 'preflightPath', type: 'string' },
         '--answers-json': { key: 'answersJson', type: 'string' },
+        '--answers-path': { key: 'answersPath', type: 'string' },
+        '--answers-stdin': { key: 'answersStdin', type: 'boolean' },
         '--action-taken': { key: 'actionTaken', type: 'string[]' },
         '--actions-taken': { key: 'actionsTaken', type: 'string[]' },
         '--action-required': { key: 'actionRequired', type: 'string[]' },
