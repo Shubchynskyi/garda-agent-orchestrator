@@ -532,6 +532,21 @@ function readLatestReviewGateOverrideSkippedReviewTypes(eventsRoot: string, task
     return new Set();
 }
 
+function readLatestTaskEventSequence(eventsRoot: string, taskId: string, eventTypes: readonly string[]): number | null {
+    const expectedTypes = new Set(eventTypes.map((eventType) => String(eventType || '').trim().toUpperCase()));
+    const orderedEvents = readOrderedTaskEvents(path.join(eventsRoot, `${taskId}.jsonl`)).events;
+    for (let index = orderedEvents.length - 1; index >= 0; index -= 1) {
+        const event = orderedEvents[index];
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        if (!expectedTypes.has(eventType)) {
+            continue;
+        }
+        const sequence = Number(event.sequence);
+        return Number.isInteger(sequence) ? sequence : index;
+    }
+    return null;
+}
+
 function fileExists(filePath: string): boolean {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
 }
@@ -2140,6 +2155,38 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         return fs.existsSync(markerPath) ? normalizePath(markerPath) : null;
     })();
     const reviewGateAlreadyPassed = isGatePassed(summary, 'required-reviews-check');
+    const latestReviewGatePassSequence = reviewGateAlreadyPassed
+        ? readLatestTaskEventSequence(eventsRoot, taskId, ['REVIEW_GATE_PASSED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE'])
+        : null;
+    const latestCompilePassSequence = reviewGateAlreadyPassed
+        ? readLatestTaskEventSequence(eventsRoot, taskId, ['COMPILE_GATE_PASSED'])
+        : null;
+    const latestCompletionFailureSequence = reviewGateAlreadyPassed
+        ? readLatestTaskEventSequence(eventsRoot, taskId, ['COMPLETION_GATE_FAILED'])
+        : null;
+    const postReviewGateFreshnessRecoveryActive = Boolean(
+        reviewGateAlreadyPassed
+        && latestReviewGatePassSequence != null
+        && (
+            (
+                latestCompilePassSequence != null
+                && latestCompilePassSequence > latestReviewGatePassSequence
+            )
+            || (
+                latestCompletionFailureSequence != null
+                && latestCompletionFailureSequence > latestReviewGatePassSequence
+            )
+        )
+    );
+    const postReviewGateFreshnessRecoveryReason = latestCompletionFailureSequence != null
+        && latestReviewGatePassSequence != null
+        && latestCompletionFailureSequence > latestReviewGatePassSequence
+        ? `COMPLETION_GATE_FAILED seq ${latestCompletionFailureSequence} followed review gate pass seq ${latestReviewGatePassSequence}`
+        : latestCompilePassSequence != null
+            && latestReviewGatePassSequence != null
+            && latestCompilePassSequence > latestReviewGatePassSequence
+            ? `COMPILE_GATE_PASSED seq ${latestCompilePassSequence} followed review gate pass seq ${latestReviewGatePassSequence}`
+            : 'post-review closeout recovery needs current-cycle review binding';
     const reviewGateOverrideSkippedReviewTypes = reviewGateAlreadyPassed
         ? readLatestReviewGateOverrideSkippedReviewTypes(eventsRoot, taskId)
         : new Set<string>();
@@ -3178,6 +3225,77 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             state,
             (candidateState) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, candidateState)
         );
+        if (
+            state
+            && state.ready
+            && state.contextExists
+            && state.domainScopeCurrent
+            && !state.failed
+            && !currentReviewEvidenceSatisfied
+        ) {
+            const reuseRecoveryTrigger = postReviewGateFreshnessRecoveryActive
+                ? `Review gate already passed, but ${postReviewGateFreshnessRecoveryReason}`
+                : `Current '${reviewType}' PASS evidence is lane-domain current but not bound as current-cycle review evidence after the latest compile`;
+            const reviewContextChain = buildReviewGateChainStatusSummary({
+                repoRoot,
+                eventsRoot,
+                taskId,
+                reviewType,
+                edgeId: postReviewGateFreshnessRecoveryActive
+                    ? 'post-review-gate-to-review-reuse'
+                    : 'compile-to-review-reuse',
+                reason: postReviewGateFreshnessRecoveryActive
+                    ? `post-review gate freshness recovery must materialize '${reviewType}' current-cycle reuse before closeout`
+                    : `latest compile evidence is current before materializing '${reviewType}' current-cycle review reuse`,
+                preflightPath: preflightCommandPath,
+                reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
+                depth: reviewDepth
+            });
+            if (!scopedDiffReadiness.ready) {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'build-scoped-diff',
+                    title: postReviewGateFreshnessRecoveryActive
+                        ? `Prepare '${reviewType}' scoped diff metadata for post-review reuse.`
+                        : `Prepare '${reviewType}' scoped diff metadata for review reuse.`,
+                    reason:
+                        `${scopedDiffReadiness.reason} ${reuseRecoveryTrigger}; ` +
+                        `Prepare scoped metadata so build-review-context can materialize reuse instead of launching a fresh reviewer. ` +
+                        `${reviewerReadinessChain} ${reviewContextChain}`,
+                    commands: [
+                        buildCommand(
+                            'Build scoped diff',
+                            buildScopedDiffCommand({
+                                cliPrefix,
+                                reviewType,
+                                preflightCommandPath,
+                                outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                                metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                            })
+                        )
+                    ]
+                });
+            }
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'build-review-context',
+                title: postReviewGateFreshnessRecoveryActive
+                    ? `Materialize '${reviewType}' review reuse before closeout.`
+                    : `Materialize '${reviewType}' review reuse before continuing.`,
+                reason:
+                    `${reuseRecoveryTrigger}. Rebuild the review context to materialize reuse before rerunning ` +
+                    `required-reviews-check or continuing dependent review work, without launching a fresh reviewer. ` +
+                    `${reviewerReadinessChain} ${reviewContextChain}`,
+                commands: [
+                    buildCommand(
+                        'Build review context',
+                        buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
+                    )
+                ]
+            });
+        }
         const blockedDependencyRoute = resolveReviewLaunchableLanePreparationRoute({
             reviewPolicyMode: reviewPolicy.mode,
             reviewType,

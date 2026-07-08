@@ -184,7 +184,7 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.ok(!result.reason.includes('latest review phase predates the upstream review record'));
     });
 
-    it('routes restarted downstream test rebind directly to test when upstream code evidence is current', () => {
+    it('materializes upstream code reuse before restarted downstream test rebind', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, {
@@ -241,12 +241,11 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /Prepare 'test' review context/);
-        assert.ok(result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
-        assert.doesNotMatch(result.title, /Materialize 'code' review reuse/);
-        assert.doesNotMatch(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('prepare-reviewer-launch'));
     });
 
     it('does not rebind downstream strict-sequential review after the review gate passed', () => {
@@ -275,7 +274,7 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.ok(!result.reason.includes('latest review phase predates the upstream review record'));
     });
 
-    it('routes directly to downstream test after test-only remediation when upstream code evidence is current', () => {
+    it('materializes upstream code reuse after test-only remediation before downstream test', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, {
@@ -306,15 +305,14 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /Prepare 'test' review context/);
-        assert.ok(result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
-        assert.doesNotMatch(result.title, /Materialize 'code' review reuse/);
-        assert.doesNotMatch(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('prepare-reviewer-launch'));
     });
 
-    it('routes failed test review back to test after a test-only remediation delta', () => {
+    it('materializes upstream code reuse before failed test review after a test-only remediation delta', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         const workflowConfigPath = path.join(
@@ -375,16 +373,15 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /Refresh 'test' review context after implementation changes/);
-        assert.match(result.reason, /A previous 'test' review recorded 'TEST REVIEW FAILED'/);
-        assert.ok(result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('full-suite-validation'));
-        assert.doesNotMatch(result.title, /Materialize 'code' review reuse/);
+        assert.ok(!result.commands[0].command.includes('prepare-reviewer-launch'));
     });
 
-    it('does not relaunch upstream performance after failed test review plus test-only remediation', () => {
+    it('materializes upstream code reuse before failed test review plus test-only remediation', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         const workflowConfigPath = path.join(
@@ -451,11 +448,10 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /Refresh 'test' review context after implementation changes/);
-        assert.match(result.reason, /A previous 'test' review recorded 'TEST REVIEW FAILED'/);
-        assert.ok(result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
         assert.ok(!result.commands[0].command.includes('--review-type "performance"'));
         assert.ok(!result.commands[0].command.includes('full-suite-validation'));
@@ -594,9 +590,8 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.equal(result.review.next_review_type, 'refactor', result.reason);
-        assert.match(result.title, /Materialize 'code' review reuse before downstream 'refactor'/);
-        assert.match(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse/);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
         assert.ok(!result.commands[0].command.includes('--review-type "refactor"'));
@@ -607,9 +602,9 @@ describe('gates/next-step review reuse rebind routing', () => {
         const securityResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(securityResult.next_gate, 'build-review-context', securityResult.reason);
-        assert.equal(securityResult.review.next_review_type, 'refactor', securityResult.reason);
-        assert.match(securityResult.title, /Materialize 'security' review reuse before downstream 'refactor'/);
-        assert.match(securityResult.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
+        assert.equal(securityResult.review.next_review_type, 'security', securityResult.reason);
+        assert.match(securityResult.title, /Materialize 'security' review reuse/);
+        assert.match(securityResult.reason, /not bound as current-cycle review evidence/);
         assert.ok(!securityResult.commands[0].command.includes('--review-type "code"'));
         assert.ok(securityResult.commands[0].command.includes('--review-type "security"'));
         assert.ok(!securityResult.commands[0].command.includes('--review-type "refactor"'));
@@ -619,7 +614,11 @@ describe('gates/next-step review reuse rebind routing', () => {
             'materialize current-cycle review reuse',
             'rerun navigator before downstream review/check gates'
         ]);
-        assert.deepEqual(securityResult.invalidation_impact?.reuse_candidates, ['none indicated']);
+        assert.deepEqual(securityResult.invalidation_impact?.reuse_candidates, [
+            'security (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'refactor (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'test (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
+        ]);
     });
 
     it('re-materializes stale upstream reuse after a later compile before downstream refactor', () => {
@@ -670,8 +669,8 @@ describe('gates/next-step review reuse rebind routing', () => {
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
         assert.equal(result.review.next_review_type, 'code', result.reason);
-        assert.match(result.title, /Prepare 'code' review context/);
-        assert.match(result.reason, /review-context artifact is stale for the current preflight/);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.match(result.reason, /not bound as current-cycle review evidence/);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
         assert.ok(!result.commands[0].command.includes('--review-type "refactor"'));
@@ -681,15 +680,21 @@ describe('gates/next-step review reuse rebind routing', () => {
             'review context',
             'reviewer routing',
             'reviewer launch/invocation',
-            'review artifact/receipt'
+            'review artifact/receipt',
+            'review gate evidence'
         ]);
         assert.deepEqual(result.invalidation_impact?.affected_review_lanes, ['code', 'security', 'refactor', 'test']);
-        assert.deepEqual(result.invalidation_impact?.reuse_candidates, ['none indicated']);
+        assert.deepEqual(result.invalidation_impact?.reuse_candidates, [
+            'code (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'security (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'refactor (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'test (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
+        ]);
 
         const text = formatNextStepText(result);
         assert.match(text, /InvalidationImpact:/);
         assert.match(text, /AffectedReviewLanes: code, security, refactor, test/);
-        assert.match(text, /ReuseCandidates: none indicated/);
+        assert.match(text, /ReuseCandidates: code \(current PASS evidence may be rebound/);
     });
 
     it('routes review-gate stale upstream failures to upstream rebind instead of retrying the review gate', () => {
@@ -730,8 +735,8 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.match(result.title, /Recover stale upstream 'code' review evidence/);
-        assert.ok(result.reason.includes('required-reviews-check failed after compile'), result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.ok(result.reason.includes('not bound as current-cycle review evidence'), result.reason);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.deepEqual(result.invalidation_impact?.stale_artifact_classes, [
             'preflight/scope',
@@ -742,13 +747,15 @@ describe('gates/next-step review reuse rebind routing', () => {
             'review artifact/receipt',
             'review gate evidence'
         ]);
-        assert.deepEqual(result.invalidation_impact?.affected_review_lanes, ['code', 'test']);
+        assert.deepEqual(result.invalidation_impact?.affected_review_lanes, ['code']);
         assert.deepEqual(result.invalidation_impact?.minimal_recovery_chain, [
             'build-review-context',
             'materialize current-cycle review reuse',
             'rerun navigator before downstream review/check gates'
         ]);
-        assert.deepEqual(result.invalidation_impact?.reuse_candidates, ['none indicated']);
+        assert.deepEqual(result.invalidation_impact?.reuse_candidates, [
+            'code (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
+        ]);
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
@@ -790,8 +797,8 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.match(result.title, /Recover stale upstream 'code' review evidence/);
-        assert.ok(result.reason.includes('required-reviews-check failed after compile'), result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.ok(result.reason.includes('not bound as current-cycle review evidence'), result.reason);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
         assert.ok(!result.commands[0].command.includes('prepare-reviewer-launch'));
@@ -802,7 +809,7 @@ describe('gates/next-step review reuse rebind routing', () => {
         ]);
     });
 
-    it('advances lane-domain-current historical PASS evidence to required-reviews-check after coherent-cycle restart', () => {
+    it('routes lane-domain-current historical PASS evidence to review reuse after coherent-cycle restart', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         const changedFiles = ['src/app.ts', 'tests/rebound-context.test.ts'];
@@ -838,10 +845,11 @@ describe('gates/next-step review reuse rebind routing', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'required-reviews-check', result.reason);
-        assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-        assert.ok(result.commands[0].command.includes('{"code":true,"test":true}'), result.commands[0].command);
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.match(result.title, /Prepare|Rebind|Materialize/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'), result.commands[0].command);
+        assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+        assert.ok(!result.commands[0].command.includes('prepare-reviewer-launch'));
     });
 
     it('routes review-gate stale upstream failures even when upstream context is current after a later compile', () => {
@@ -873,11 +881,15 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.match(result.title, /Recover stale upstream 'code' review evidence/);
-        assert.ok(result.reason.includes('required-reviews-check failed after compile'), result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.ok(result.reason.includes('not bound as current-cycle review evidence'), result.reason);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
-        assert.match(result.reason, /reuse eligibility validation can run/);
-        assert.deepEqual(result.invalidation_impact?.reuse_candidates, ['none indicated']);
+        assert.deepEqual(result.invalidation_impact?.reuse_candidates, [
+            'code (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'security (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'refactor (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'test (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
+        ]);
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
@@ -1002,8 +1014,8 @@ describe('gates/next-step review reuse rebind routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.review.next_review_type, 'code', result.reason);
-        assert.match(result.title, /Prepare 'code' review context/);
-        assert.match(result.reason, /review-context artifact is stale for the current preflight/);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.match(result.reason, /not bound as current-cycle review evidence/);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });

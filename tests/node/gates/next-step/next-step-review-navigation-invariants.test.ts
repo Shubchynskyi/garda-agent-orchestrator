@@ -7,6 +7,7 @@ import * as fx from './next-step-review-reuse-fixtures';
 const {
     ALL_REVIEW_FLAGS,
     appendEvent,
+    fileSha256,
     fs,
     makeTempRepo,
     markReviewEvidenceAsStrictReuse,
@@ -15,8 +16,10 @@ const {
     reviewsRoot,
     seedCompilePass,
     seedGitAutoCompilePass,
+    seedHandshake,
     seedPostPreflightRulePack,
     seedReviewGatePass,
+    seedShellSmoke,
     seedStartedTask,
     TASK_ID,
     writeGitAutoPreflight,
@@ -148,6 +151,60 @@ describe('gates/next-step post-review navigation invariants', () => {
         assertNoUnexpectedReviewWork(result);
     });
 
+    it('materializes review reuse after post-review closeout compile refresh without launching reviewers', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true
+        }, {
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL', {
+            violations: [
+                "Required review 'code' was recorded before the latest COMPILE_GATE_PASSED."
+            ]
+        });
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true
+        }, {
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        const reboundPreflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+        const compileEvidencePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`);
+        appendEvent(repoRoot, TASK_ID, 'COHERENT_CYCLE_RESTARTED', 'PASS', {
+            restart_event_schema_version: 1,
+            task_id: TASK_ID,
+            event_type: 'COHERENT_CYCLE_RESTARTED',
+            task_mode_path: taskModePath.replace(/\\/g, '/'),
+            task_mode_sha256: fileSha256(taskModePath),
+            preflight_path: reboundPreflightPath.replace(/\\/g, '/'),
+            preflight_sha256: fileSha256(reboundPreflightPath),
+            compile_evidence_path: compileEvidencePath.replace(/\\/g, '/'),
+            compile_evidence_sha256: fileSha256(compileEvidencePath),
+            detected_changed_files_count: 1,
+            elapsed_ms: 1,
+            restart_reason: 'coherent_cycle_restart_after_downstream_boundary_or_invalid_preflight_order',
+            next_step_summary: 'continue to current-cycle review reuse after closeout recovery'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse/);
+        assert.ok(result.reason.includes('not bound as current-cycle review evidence'), result.reason);
+        assert.ok(commandText(result).includes('--review-type "code"'), commandText(result));
+        assertNoUnexpectedReviewWork(result, { allowBuildReviewContext: true });
+    });
+
     it('treats review gate override skipped lanes as satisfied for closeout routing', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -248,7 +305,7 @@ describe('gates/next-step post-review navigation invariants', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
-        assert.match(result.title, /Prepare 'code' review context/);
+        assert.match(result.title, /Materialize 'code' review reuse/);
         assert.ok(commandText(result).includes('--review-type "code"'));
         assertNoUnexpectedReviewWork(result, { allowBuildReviewContext: true });
     });

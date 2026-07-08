@@ -8,7 +8,6 @@ import {
     normalizeSourceOfTruthValue,
     resolveRuntimeReviewerIdentity
 } from '../review/reviewer-routing';
-import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-scope-fingerprints';
 import { resolveBundleName } from '../../core/constants';
 import { REVIEW_CONTRACTS, resolveExpectedReviewVerdicts, testExpectedVerdict } from './required-reviews-check-contracts';
 import { readReviewDependencyTimelineEvents } from './required-reviews-check-dependencies';
@@ -303,11 +302,6 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
         const reviewArtifact = reviewArtifacts[reviewKey];
         if (reviewArtifact) {
-            const allowLaneDomainPreflightBinding = reviewContextLaneScopeMatchesCurrentPreflight(
-                reviewKey,
-                reviewArtifact.reviewContext || null,
-                preflightPayload
-            );
             const validation = validateReviewArtifactGateEligibility({
                 resolvedTaskId,
                 reviewKey,
@@ -322,7 +316,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                 executionProvider,
                 executionProviderSource: options.executionProviderSource,
                 allowLegacyReviewContextIdentityFallback,
-                allowLaneDomainPreflightBinding,
+                allowLaneDomainPreflightBinding: false,
                 timelineEvents,
                 repoRoot: options.repoRoot || null,
                 treeStateFreshnessCache

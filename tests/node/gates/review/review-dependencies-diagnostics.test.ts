@@ -470,7 +470,7 @@ test('review dependency diagnostics classify missing upstream pass blockers', ()
     }
 });
 
-test('review dependency diagnostics accept lane-domain-current upstream PASS recorded before latest compile', () => {
+test('review dependency diagnostics require reuse telemetry for lane-domain-current upstream PASS recorded before latest compile', () => {
     const fixture = createHistoricalLaneDomainReviewDependencyFixture({
         taskId: 'T-592-lane-domain-current',
         contextLaneHash: 'a'.repeat(64),
@@ -487,8 +487,9 @@ test('review dependency diagnostics accept lane-domain-current upstream PASS rec
         });
 
         assert.equal(diagnostics.requiredUpstreamReviews[0], 'code');
-        assert.ok(diagnostics.statuses[0].ready, JSON.stringify(diagnostics.statuses[0]));
-        assert.equal(diagnostics.statuses[0].blockerCode, null);
+        assert.equal(diagnostics.statuses[0].ready, false);
+        assert.equal(diagnostics.statuses[0].blockerCode, 'missing_upstream_pass');
+        assert.match(diagnostics.statuses[0].reason, /current-cycle REVIEW_RECORDED reuse telemetry/);
     } finally {
         fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
     }

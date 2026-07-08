@@ -25,8 +25,7 @@ import {
     toRepoDisplayPath
 } from './next-step-command-formatters';
 import {
-    timelineHasDelegatedReviewInvocationAttestation,
-    timelineHasHistoricalDelegatedReviewInvocationAttestation
+    timelineHasDelegatedReviewInvocationAttestation
 } from './next-step-review-invocation-evidence';
 import {
     fileExists,
@@ -195,11 +194,11 @@ export function reviewStateHasSatisfiedEvidence(
     if (getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state)) {
         return false;
     }
-    if (state.domainScopeCurrent && !state.reusedExistingReview) {
-        return timelineHasHistoricalDelegatedReviewInvocationAttestation(eventsRoot, taskId, state);
-    }
     if (state.reusedExistingReview) {
         return timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state);
+    }
+    if (state.domainScopeCurrent && !state.contextCurrent) {
+        return false;
     }
     return timelineHasDelegatedReviewInvocationAttestation(repoRoot, eventsRoot, taskId, state);
 }
@@ -295,11 +294,11 @@ export function reviewStateHasCurrentRecordedEvidence(
     if (getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state)) {
         return false;
     }
-    if (state.domainScopeCurrent && !state.reusedExistingReview && !state.failed) {
-        return timelineHasHistoricalDelegatedReviewInvocationAttestation(eventsRoot, taskId, state);
-    }
     if (state.reusedExistingReview) {
         return timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state);
+    }
+    if (state.domainScopeCurrent && !state.contextCurrent && !state.failed) {
+        return false;
     }
     return timelineHasDelegatedReviewInvocationAttestation(repoRoot, eventsRoot, taskId, state);
 }
@@ -469,7 +468,6 @@ export function findReviewGateStaleContextPrecheckRecovery(params: {
         if (
             !state?.ready
             || !state.contextExists
-            || state.contextCurrent
             || !state.domainScopeCurrent
             || state.failed
         ) {
