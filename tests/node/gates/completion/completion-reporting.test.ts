@@ -1,13 +1,49 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import {
+    buildCoherentCycleRestartCommand,
     buildCompletionGateSuccessAfterCommand,
     buildReviewCycleRestartCommand,
     formatCompletionGateResult
 } from '../../../../src/gates/completion/completion-reporting';
 
 describe('gates/completion-reporting', () => {
+    it('carries attributed workflow-config scope in coherent-cycle restart guidance', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-completion-restart-scope-'));
+        try {
+            const preflightPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-123-preflight.json');
+            fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                changed_files: ['src/app.ts'],
+                triggers: {
+                    changed_workflow_config_files: ['garda-agent-orchestrator/live/config/workflow-config.json'],
+                    workflow_config_file_hashes: {
+                        'garda-agent-orchestrator/live/config/workflow-config.json': 'a'.repeat(64)
+                    }
+                }
+            }, null, 2) + '\n', 'utf8');
+
+            const command = buildCoherentCycleRestartCommand(
+                repoRoot,
+                'T-123',
+                preflightPath,
+                null,
+                null,
+                null
+            );
+
+            assert.match(command, /gate restart-coherent-cycle/);
+            assert.ok(command.includes("--changed-file 'garda-agent-orchestrator/live/config/workflow-config.json'"), command);
+            assert.ok(command.includes("--changed-file 'src/app.ts'"), command);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('renders review-cycle restart guidance with a non-valid impact-analysis placeholder', () => {
         const command = buildReviewCycleRestartCommand(
             'D:/repo',
