@@ -1,4 +1,10 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+    getBundleCliCommand,
+    getSourceCliCommand,
+    resolveBundleNameForTarget
+} from '../../../../core/constants';
 import { EXIT_GATE_FAILURE } from '../../../exit-codes';
 import {
     parseOperatorConfirmationYes,
@@ -24,6 +30,7 @@ import {
     resolveReviewCycleSplitDecisionPreflightPath
 } from '../../../../gates/review-cycle/review-cycle-split-decision';
 import * as gateHelpers from '../../../../gates/shared/helpers';
+import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 import {
     resolveDefaultMetricsPath,
     resolvePathForWrite,
@@ -89,6 +96,40 @@ function parseExcludedReviewTypes(value: unknown): string[] {
         .filter(Boolean);
 }
 
+function buildCliPrefix(repoRoot: string): string {
+    return fs.existsSync(path.join(path.resolve(repoRoot), 'bin', 'garda.js'))
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleNameForTarget(repoRoot));
+}
+
+function buildNextStepCommand(repoRoot: string, taskId: string): string {
+    return `${buildCliPrefix(repoRoot)} next-step "${taskId}" --repo-root "."`;
+}
+
+function formatReviewCycleContinuationOutput(params: {
+    status: string;
+    action: string;
+    reason: string;
+    command?: string | null;
+    commandReference?: string | null;
+    detailsPath: string;
+    legacyLines: string[];
+}): string[] {
+    return [
+        ...buildOperatorNextActionBlock({
+            status: params.status,
+            gate: 'record-review-cycle-continuation',
+            action: params.action,
+            reason: params.reason,
+            command: params.command,
+            commandReference: params.commandReference,
+            detailsPath: params.detailsPath
+        }),
+        '',
+        ...params.legacyLines
+    ];
+}
+
 function validateReviewCycleOperatorConfirmation(
     actionLabel: string,
     rawOperatorConfirmed: unknown,
@@ -142,27 +183,35 @@ export function runRecordReviewCycleContinuationCommand(
         '--max-failed-non-test-reviews'
     );
     const excludedReviewTypes = parseExcludedReviewTypes(options.excludedReviewTypes);
+    const artifactPath = resolveReviewCycleContinuationArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
 
     const existingApproval = findReviewCycleContinuationApprovalInCurrentAttempt({
         eventsRoot: path.join(orchestratorRoot, 'runtime', 'task-events'),
         taskId
     });
     if (existingApproval.exists) {
+        const duplicateReason = 'one-shot review-cycle continuation was already recorded for the current task attempt.';
         return {
-            outputLines: [
-                'REVIEW_CYCLE_CONTINUATION_REJECTED',
-                `TaskId: ${taskId}`,
-                `Decision: ${decision}`,
-                'Reason: one-shot review-cycle continuation was already recorded for the current task attempt.',
-                `ExistingApprovalSequence: ${existingApproval.sequence ?? 'unknown'}`,
-                `ExistingArtifactSha256: ${existingApproval.artifact_sha256 || 'unknown'}`,
-                'NextAction: split/decompose the task or choose an explicit terminal/operator decision.'
-            ],
+            outputLines: formatReviewCycleContinuationOutput({
+                status: 'REJECTED',
+                action: 'Split or decompose the task, or choose an explicit terminal operator decision.',
+                reason: duplicateReason,
+                commandReference: 'split/decompose the task or choose an explicit terminal/operator decision',
+                detailsPath: artifactPath,
+                legacyLines: [
+                    'REVIEW_CYCLE_CONTINUATION_REJECTED',
+                    `TaskId: ${taskId}`,
+                    `Decision: ${decision}`,
+                    `Reason: ${duplicateReason}`,
+                    `ExistingApprovalSequence: ${existingApproval.sequence ?? 'unknown'}`,
+                    `ExistingArtifactSha256: ${existingApproval.artifact_sha256 || 'unknown'}`,
+                    'NextStep: split/decompose the task or choose an explicit terminal/operator decision.'
+                ]
+            }),
             exitCode: EXIT_GATE_FAILURE
         };
     }
 
-    const artifactPath = resolveReviewCycleContinuationArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
     const artifact = buildReviewCycleContinuationArtifact({
         taskId,
         decision,
@@ -216,16 +265,23 @@ export function runRecordReviewCycleContinuationCommand(
     );
 
     return {
-        outputLines: [
-            'REVIEW_CYCLE_CONTINUATION_RECORDED',
-            `TaskId: ${taskId}`,
-            `Decision: ${decision}`,
-            'OneShot: true',
-            `BaselineTotalNonTestReviews: ${baselineTotal}`,
-            `BaselineFailedNonTestReviews: ${baselineFailed}`,
-            `ArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
-            'WorkflowConfigMutated: false'
-        ],
+        outputLines: formatReviewCycleContinuationOutput({
+            status: 'RECORDED',
+            action: 'Rerun the navigator to continue the approved review-cycle continuation.',
+            reason: 'One-shot review-cycle continuation approved.',
+            command: buildNextStepCommand(repoRoot, taskId),
+            detailsPath: artifactPath,
+            legacyLines: [
+                'REVIEW_CYCLE_CONTINUATION_RECORDED',
+                `TaskId: ${taskId}`,
+                `Decision: ${decision}`,
+                'OneShot: true',
+                `BaselineTotalNonTestReviews: ${baselineTotal}`,
+                `BaselineFailedNonTestReviews: ${baselineFailed}`,
+                `ArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+                'WorkflowConfigMutated: false'
+            ]
+        }),
         exitCode: 0
     };
 }

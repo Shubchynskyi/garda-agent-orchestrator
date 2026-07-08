@@ -391,11 +391,17 @@ describe('next-step refactor contract baseline', () => {
 
         const text = formatNextStepText(resolveNextStep({ taskId: TASK_ID, repoRoot }));
 
+        assert.equal(text.split('\n')[0], 'Next action:');
+        assert.match(text, /^  Gate: enter-task-mode$/mu);
+        assert.match(text, /^  Command: node bin\/garda\.js gate enter-task-mode /mu);
+        assert.match(text, /^  DetailsPath: garda-agent-orchestrator\/runtime\/task-events\/T-CONTRACT-1\.jsonl$/mu);
+        assert.match(text, /^  Details: For structured diagnostics, rerun the navigator with --as-json\.$/mu);
         assert.match(text, /^GARDA_NEXT_STEP$/mu);
         assert.match(text, new RegExp(`^Task: ${TASK_ID}$`, 'mu'));
         assert.match(text, /^Navigator: node bin\/garda\.js next-step "T-CONTRACT-1" --repo-root "\."$/mu);
         assert.match(text, /^Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints\.$/mu);
         assert.match(text, /^Commands:$/mu);
+        assert.equal((text.match(/^Commands:$/gmu) || []).length, 1);
         assert.match(text, /^  Enter task mode: node bin\/garda\.js gate enter-task-mode /mu);
         assert.match(text, /^AfterCommand: rerun node bin\/garda\.js next-step "T-CONTRACT-1" --repo-root "\." after the command above completes\.$/mu);
         assert.doesNotMatch(text, /\[object Object\]/u);
@@ -744,7 +750,9 @@ describe('next-step refactor contract baseline', () => {
         assert.match(result.commands[0]?.command || '', /gate task-events-summary --task-id "T-CONTRACT-1" --as-json/u);
         assert.doesNotMatch(result.commands[0]?.command || '', /activate-optional-skill/u);
         assert.match(text, /^OptionalSkillTimelineInvalidJson: true$/mu);
-        assert.match(text, /Repair malformed task timeline/u);
+        assert.match(result.title, /Repair malformed task timeline/u);
+        assert.match(text, /^  Do: Inspect task timeline integrity$/mu);
+        assert.doesNotMatch(text, /^Title:/mu);
     });
 
     it('surfaces compact catalog guidance when optional-skill evidence recommends missing packs', () => {
@@ -960,8 +968,14 @@ describe('next-step refactor contract baseline', () => {
         assert.equal(result.commands[0]?.label, 'Install optional skill pack telegram-bot');
         assert.match(result.commands[0]?.command || '', /skills add "telegram-bot" --target-root "\."/u);
         assert.match(result.reason, /Install or create an appropriate specialist skill/u);
+        assert.equal(text.split('\n')[0], 'Next action:');
+        assert.match(text, /^  Gate: optional-skill-remediation$/mu);
+        assert.match(text, /^  Command: node bin\/garda\.js skills add "telegram-bot" --target-root "\."$/mu);
+        assert.equal((text.match(/^Commands:$/gmu) || []).length, 1);
         assert.match(text, /^OptionalSkillDecision: policy=mandatory; decision=recommended_missing_packs;/mu);
-        assert.match(text, /Resolve mandatory optional-skill selection/u);
+        assert.match(result.title, /Resolve mandatory optional-skill selection/u);
+        assert.match(text, /^  Do: Install optional skill pack telegram-bot$/mu);
+        assert.doesNotMatch(text, /^Title:/mu);
     });
 
     it('routes mandatory as_is with available installed suggestion to classify-change rematerialization', () => {

@@ -17,6 +17,7 @@ import {
     loadPostPreflightRulePack,
     loadTaskEntryRulePack,
     markAsSourceCheckout,
+    normalizePath,
     os,
     path,
     readTaskTimelineEvents,
@@ -392,8 +393,11 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
-        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
-        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+        const restartOutput = restartResult.outputLines.join('\n');
+        assert.equal(restartResult.outputLines[0], 'Next action:');
+        assert.match(restartOutput, /COHERENT_CYCLE_RESTARTED/);
+        assert.match(restartOutput, /^  Command: node bin\/garda\.js next-step "T-903a-restart-coherent-cycle" --repo-root "\."$/mu);
+        assert.match(restartOutput, /DetectionSource: explicit_changed_files/);
 
         const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
@@ -405,6 +409,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const restartArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-coherent-cycle-restart.json`);
         const compileEvidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
         const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        assert.match(restartOutput, new RegExp(`DetailsPath: ${escapeRegExp(normalizePath(restartArtifactPath))}`, 'u'));
         assert.equal(restartDetails.restart_event_schema_version, 1);
         assert.equal(restartDetails.task_id, taskId);
         assert.equal(restartDetails.event_type, 'COHERENT_CYCLE_RESTARTED');
@@ -1058,6 +1063,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         });
         assert.equal(reviewRestartResult.exitCode, 0, reviewRestartResult.outputLines.join('\n'));
         const output = reviewRestartResult.outputLines.join('\n');
+        assert.equal(reviewRestartResult.outputLines[0], 'Next action:');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /PreparedReviewTypes: code/);
         assert.match(output, /LaunchRequiredReviewTypes: code/);
@@ -1161,7 +1167,9 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0);
-        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+        const restartOutput = restartResult.outputLines.join('\n');
+        assert.match(restartOutput, /^  Command: node garda-agent-orchestrator\/bin\/garda\.js next-step "T-903a-restart-coherent-cycle-git-auto" --repo-root "\."$/mu);
+        assert.match(restartOutput, /DetectionSource: explicit_changed_files/);
 
         const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
@@ -1392,6 +1400,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
 
         const output = restartResult.outputLines.join('\n');
+        assert.equal(restartResult.outputLines[0], 'Next action:');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /PreparedReviewTypes: code/);
         assert.match(output, /LaunchRequiredReviewTypes: code/);
@@ -2112,6 +2121,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const restartArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-cycle-restart.json`);
         const compileEvidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
         const remediationArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`);
+        assert.match(output, new RegExp(`DetailsPath: ${escapeRegExp(normalizePath(restartArtifactPath))}`, 'u'));
         assert.equal(restartDetails.restart_event_schema_version, 1);
         assert.equal(restartDetails.task_id, taskId);
         assert.equal(restartDetails.event_type, 'REVIEW_CYCLE_RESTARTED');

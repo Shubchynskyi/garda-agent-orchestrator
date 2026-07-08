@@ -19,6 +19,7 @@ import type {
 import {
     formatKnownNonBlockingSignals
 } from '../shared/known-nonblocking-signals';
+import { buildOperatorNextActionBlock } from '../shared/operator-action-output';
 
 export function buildCommand(label: string, command: string): NextStepCommand {
     return { label, command };
@@ -80,15 +81,32 @@ export function toRepoDisplayPath(repoRoot: string, filePath: string): string {
 }
 
 export function formatNextStepText(result: NextStepResult): string {
+    const primaryCommand = result.commands.length === 1 ? result.commands[0] : null;
+    const commandReference = result.status === 'DONE'
+        ? 'none'
+        : result.commands.length > 1
+            ? `choose one of the ${result.commands.length} Commands entries below`
+            : 'inspect diagnostics; no executable command is available';
+    const detailsPath = result.final_report?.closeout_json_path
+        || `garda-agent-orchestrator/runtime/task-events/${result.task_id}.jsonl`;
     const lines = [
+        ...buildOperatorNextActionBlock({
+            status: result.status,
+            gate: result.next_gate || 'none',
+            action: primaryCommand?.label || result.title,
+            reason: result.reason,
+            command: primaryCommand?.command,
+            commandReference,
+            detailsPath,
+            detailsHint: `For structured diagnostics, rerun the navigator with --as-json.`
+        }),
+        '',
         'GARDA_NEXT_STEP',
         `Task: ${result.task_id}`,
         `Navigator: ${result.navigator_command}`,
         'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.',
         `Status: ${result.status}`,
-        `NextGate: ${result.next_gate || 'none'}`,
-        `Title: ${result.title}`,
-        `Reason: ${result.reason}`
+        `NextGate: ${result.next_gate || 'none'}`
     ];
     if (result.warnings.length > 0) {
         lines.push('Warnings:');

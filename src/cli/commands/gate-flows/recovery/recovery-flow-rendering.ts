@@ -1,4 +1,5 @@
 import * as gateHelpers from '../../../../gates/shared/helpers';
+import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 
 interface PreparedReviewContextSummary {
     reviewType: string;
@@ -32,8 +33,10 @@ function buildPreflightSummaryLine(input: {
 
 export function buildCoherentCycleRestartedOutput(input: {
     taskId: string;
+    navigatorCommand: string;
     taskModePath: string;
     preflightPath: string;
+    restartArtifactPath: string;
     detectionSource: string;
     plannedChangedFilesCount: number;
     changedFilesCount: unknown;
@@ -43,6 +46,15 @@ export function buildCoherentCycleRestartedOutput(input: {
     preflightRequiredReviewTypes: readonly string[];
 }): string[] {
     return [
+        ...buildOperatorNextActionBlock({
+            status: 'PASSED',
+            gate: 'next-step',
+            action: 'Rerun the navigator for the refreshed coherent cycle.',
+            reason: 'Coherent cycle restarted and compile evidence refreshed.',
+            command: input.navigatorCommand,
+            detailsPath: input.restartArtifactPath
+        }),
+        '',
         'COHERENT_CYCLE_RESTARTED',
         `TaskId: ${input.taskId}`,
         `TaskModePath: ${gateHelpers.normalizePath(input.taskModePath)}`,
@@ -62,8 +74,10 @@ export function buildCoherentCycleRestartedOutput(input: {
 
 export function buildReviewCycleRestartedOutput(input: {
     taskId: string;
+    navigatorCommand: string;
     preflightPath: string;
     remediationArtifactPath: string;
+    restartArtifactPath: string;
     detectionSource: string;
     impactAnalysisSource: string;
     affectedFilesCount: number;
@@ -89,6 +103,15 @@ export function buildReviewCycleRestartedOutput(input: {
     preflightRequiredReviewTypes: readonly string[];
 }): string[] {
     return [
+        ...buildOperatorNextActionBlock({
+            status: 'PASSED',
+            gate: 'next-step',
+            action: input.nextStep,
+            reason: `Review remediation cycle restarted; launch/reuse plan: ${formatReviewTypeList(input.launchRequiredReviewTypes)} required, ${formatReviewTypeList(input.reusedReviewTypes)} reused.`,
+            command: input.navigatorCommand,
+            detailsPath: input.restartArtifactPath
+        }),
+        '',
         'REVIEW_CYCLE_RESTARTED',
         `TaskId: ${input.taskId}`,
         `PreflightPath: ${gateHelpers.normalizePath(input.preflightPath)}`,

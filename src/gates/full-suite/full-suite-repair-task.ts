@@ -4,6 +4,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+    getBundleCliCommand,
+    getSourceCliCommand,
+    resolveBundleNameForTarget
+} from '../../core/constants';
+import {
     withTaskQueueStatusSyncLock
 } from '../../cli/commands/gate-flows/task/task-queue-sync';
 import {
@@ -29,6 +34,7 @@ import {
     joinOrchestratorPath,
     normalizePath
 } from '../shared/helpers';
+import { buildOperatorNextActionBlock } from '../shared/operator-action-output';
 
 const REPAIR_ARTIFACT_SCHEMA_VERSION = 1;
 const WIP_MANIFEST_SCHEMA_VERSION = 1;
@@ -69,6 +75,90 @@ interface CapturedPatchEvidence {
     sha256: string;
     bytes: number;
     empty: boolean;
+}
+
+function buildCliPrefix(repoRoot: string): string {
+    return fs.existsSync(path.join(path.resolve(repoRoot), 'bin', 'garda.js'))
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleNameForTarget(repoRoot));
+}
+
+function buildNextStepCommand(repoRoot: string, taskId: string | null | undefined): string | null {
+    const normalizedTaskId = String(taskId || '').trim();
+    return normalizedTaskId
+        ? `${buildCliPrefix(repoRoot)} next-step "${normalizedTaskId}" --repo-root "."`
+        : null;
+}
+
+function quoteCommandValue(value: string): string {
+    return `'${normalizePath(value).replace(/'/g, `''`)}'`;
+}
+
+function toRepoRelativeCommandPath(repoRoot: string, filePath: string): string {
+    const relativePath = path.relative(repoRoot, filePath);
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        return normalizePath(filePath);
+    }
+    return normalizePath(relativePath);
+}
+
+function buildRestoreFullSuiteRepairWipCommand(params: {
+    repoRoot: string;
+    taskId: string;
+    fullSuiteArtifactPath: string;
+    manifestPath: string;
+    childTaskId?: string | null;
+}): string {
+    const parts = [
+        `${buildCliPrefix(params.repoRoot)} gate restore-full-suite-repair-wip`,
+        '--task-id', quoteCommandValue(params.taskId),
+        '--full-suite-artifact-path', quoteCommandValue(toRepoRelativeCommandPath(params.repoRoot, params.fullSuiteArtifactPath)),
+        '--manifest-path', quoteCommandValue(toRepoRelativeCommandPath(params.repoRoot, params.manifestPath))
+    ];
+    const normalizedChildTaskId = String(params.childTaskId || '').trim();
+    if (normalizedChildTaskId) {
+        parts.push('--child-task-id', quoteCommandValue(normalizedChildTaskId));
+    }
+    parts.push('--repo-root', quoteCommandValue('.'));
+    return parts.join(' ');
+}
+
+function formatFullSuiteRepairOutput(params: {
+    repoRoot: string;
+    taskId?: string | null;
+    gate?: string | null;
+    status: string;
+    action: string;
+    reason?: string | null;
+    command?: string | null;
+    commandReference?: string | null;
+    detailsPath?: string | null;
+    detailsHint?: string | null;
+    legacyLines: string[];
+}): string[] {
+    const explicitCommand = Object.prototype.hasOwnProperty.call(params, 'command')
+        ? params.command || null
+        : undefined;
+    const command = explicitCommand === undefined && params.status !== 'BLOCKED'
+        ? buildNextStepCommand(params.repoRoot, params.taskId)
+        : explicitCommand || null;
+    const commandReference = !command && params.status === 'BLOCKED'
+        ? params.commandReference || 'resolve blockers listed in details before retrying'
+        : params.commandReference;
+    return [
+        ...buildOperatorNextActionBlock({
+            status: params.status,
+            gate: params.gate || 'full-suite-repair-task',
+            action: params.action,
+            reason: params.reason,
+            command,
+            commandReference,
+            detailsPath: params.detailsPath,
+            detailsHint: params.detailsHint
+        }),
+        '',
+        ...params.legacyLines
+    ];
 }
 
 interface CapturedTrackedFileEvidence {
@@ -767,7 +857,15 @@ export function materializeFullSuiteRepairTask(params: {
             wip_manifest_path: null,
             split_required_artifact_path: null,
             violations,
-            output_lines: ['FULL_SUITE_REPAIR_TASK_BLOCKED', ...violations.map((violation) => `Violation: ${violation}`)]
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId: params.taskId,
+                status: 'BLOCKED',
+                action: 'Fix full-suite repair proposal evidence before retrying materialization.',
+                reason: violations.join(' '),
+                detailsPath: fullSuiteArtifactPath,
+                legacyLines: ['FULL_SUITE_REPAIR_TASK_BLOCKED', ...violations.map((violation) => `Violation: ${violation}`)]
+            })
         };
     }
     const currentEvidence = readFullSuiteRepairTaskMaterializationEvidence({
@@ -786,12 +884,20 @@ export function materializeFullSuiteRepairTask(params: {
             wip_manifest_path: String(safeReadJson(artifactPath)?.wip_manifest_path || ''),
             split_required_artifact_path: String(safeReadJson(artifactPath)?.split_required_artifact_path || ''),
             violations: [],
-            output_lines: [
-                'FULL_SUITE_REPAIR_TASK_ALREADY_MATERIALIZED',
-                `ChildTaskId: ${proposal.suggested_task_id}`,
-                `ArtifactPath: ${normalizePath(artifactPath)}`,
-                `Reason: ${currentEvidence.reason}`
-            ]
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId: params.taskId,
+                status: 'ALREADY_MATERIALIZED',
+                action: 'Continue parent routing through the existing repair child.',
+                reason: currentEvidence.reason,
+                detailsPath: artifactPath,
+                legacyLines: [
+                    'FULL_SUITE_REPAIR_TASK_ALREADY_MATERIALIZED',
+                    `ChildTaskId: ${proposal.suggested_task_id}`,
+                    `ArtifactPath: ${normalizePath(artifactPath)}`,
+                    `Reason: ${currentEvidence.reason}`
+                ]
+            })
         };
     }
     const preflightScope = readPreflightChangedFileScope(repoRoot, preflightPath, params.taskId);
@@ -818,13 +924,21 @@ export function materializeFullSuiteRepairTask(params: {
             wip_manifest_path: null,
             split_required_artifact_path: null,
             violations: scopeViolations,
-            output_lines: [
-                'FULL_SUITE_REPAIR_TASK_BLOCKED',
-                `TaskId: ${params.taskId}`,
-                `ChildTaskId: ${proposal.suggested_task_id}`,
-                `ArtifactPath: ${normalizePath(artifactPath)}`,
-                ...scopeViolations.map((violation) => `Violation: ${violation}`)
-            ]
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId: params.taskId,
+                status: 'BLOCKED',
+                action: 'Resolve repair materialization scope blockers before retrying.',
+                reason: scopeViolations.join(' '),
+                detailsPath: artifactPath,
+                legacyLines: [
+                    'FULL_SUITE_REPAIR_TASK_BLOCKED',
+                    `TaskId: ${params.taskId}`,
+                    `ChildTaskId: ${proposal.suggested_task_id}`,
+                    `ArtifactPath: ${normalizePath(artifactPath)}`,
+                    ...scopeViolations.map((violation) => `Violation: ${violation}`)
+                ]
+            })
         };
     }
 
@@ -907,13 +1021,21 @@ export function materializeFullSuiteRepairTask(params: {
             wip_manifest_path: null,
             split_required_artifact_path: latchResult?.artifact_path || null,
             violations,
-            output_lines: [
-                'FULL_SUITE_REPAIR_TASK_BLOCKED',
-                `TaskId: ${params.taskId}`,
-                `ChildTaskId: ${proposal.suggested_task_id}`,
-                `ArtifactPath: ${normalizePath(artifactPath)}`,
-                ...violations.map((violation) => `Violation: ${violation}`)
-            ]
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId: params.taskId,
+                status: 'BLOCKED',
+                action: 'Resolve repair task materialization failures before retrying.',
+                reason: violations.join(' '),
+                detailsPath: artifactPath,
+                legacyLines: [
+                    'FULL_SUITE_REPAIR_TASK_BLOCKED',
+                    `TaskId: ${params.taskId}`,
+                    `ChildTaskId: ${proposal.suggested_task_id}`,
+                    `ArtifactPath: ${normalizePath(artifactPath)}`,
+                    ...violations.map((violation) => `Violation: ${violation}`)
+                ]
+            })
         };
     }
 
@@ -981,16 +1103,25 @@ export function materializeFullSuiteRepairTask(params: {
         wip_manifest_path: normalizePath(manifestPath),
         split_required_artifact_path: latchResult.artifact_path,
         violations,
-        output_lines: [
-            status === 'MATERIALIZED' ? 'FULL_SUITE_REPAIR_TASK_MATERIALIZED' : 'FULL_SUITE_REPAIR_TASK_BLOCKED',
-            `TaskId: ${params.taskId}`,
-            `ChildTaskId: ${proposal.suggested_task_id}`,
-            `ArtifactPath: ${normalizePath(artifactPath)}`,
-            `WipManifestPath: ${normalizePath(manifestPath)}`,
-            `SplitRequiredArtifactPath: ${latchResult.artifact_path}`,
-            ...violations.map((violation) => `Violation: ${violation}`),
-            `NextAction: run node bin/garda.js next-step "${params.taskId}" --repo-root "."; parent routing should continue via the repair child.`
-        ]
+        output_lines: formatFullSuiteRepairOutput({
+            repoRoot,
+            taskId: params.taskId,
+            status,
+            action: 'Continue parent routing through the repair child.',
+            reason: 'Full-suite timeout repair task materialized and parent WIP suspended.',
+            detailsPath: artifactPath,
+            detailsHint: 'Parent routing should continue via the repair child.',
+            legacyLines: [
+                status === 'MATERIALIZED' ? 'FULL_SUITE_REPAIR_TASK_MATERIALIZED' : 'FULL_SUITE_REPAIR_TASK_BLOCKED',
+                `TaskId: ${params.taskId}`,
+                `ChildTaskId: ${proposal.suggested_task_id}`,
+                `ArtifactPath: ${normalizePath(artifactPath)}`,
+                `WipManifestPath: ${normalizePath(manifestPath)}`,
+                `SplitRequiredArtifactPath: ${latchResult.artifact_path}`,
+                ...violations.map((violation) => `Violation: ${violation}`),
+                `NextStep: run ${buildNextStepCommand(repoRoot, params.taskId) || 'next-step'}; parent routing should continue via the repair child.`
+            ]
+        })
     };
 }
 
@@ -1213,7 +1344,16 @@ export function restoreFullSuiteRepairWip(params: {
             manifest_path: normalizePath(path.resolve(repoRoot, String(params.manifestPath || ''))),
             restored_files: [],
             violations: [message],
-            output_lines: ['FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED', `Violation: ${message}`]
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId: params.taskId,
+                gate: 'full-suite-repair-wip-restore',
+                status: 'BLOCKED',
+                action: 'Fix the restore input paths before retrying WIP restore.',
+                reason: message,
+                detailsPath: params.manifestPath ? path.resolve(repoRoot, String(params.manifestPath)) : null,
+                legacyLines: ['FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED', `Violation: ${message}`]
+            })
         };
     }
     const taskId = String(params.taskId || '').trim();
@@ -1265,7 +1405,16 @@ export function restoreFullSuiteRepairWip(params: {
             manifest_path: normalizePath(manifestPath),
             restored_files: [],
             violations,
-            output_lines: ['FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED', ...violations.map((violation) => `Violation: ${violation}`)]
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId,
+                gate: 'full-suite-repair-wip-restore',
+                status: 'BLOCKED',
+                action: 'Resolve WIP restore blockers before retrying restore.',
+                reason: violations.join(' '),
+                detailsPath: manifestPath,
+                legacyLines: ['FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED', ...violations.map((violation) => `Violation: ${violation}`)]
+            })
         };
     }
     if (params.dryRun) {
@@ -1274,12 +1423,28 @@ export function restoreFullSuiteRepairWip(params: {
             manifest_path: normalizePath(manifestPath),
             restored_files: [],
             violations: [],
-            output_lines: [
-                'FULL_SUITE_REPAIR_WIP_RESTORE_DRY_RUN_OK',
-                `ManifestPath: ${normalizePath(manifestPath)}`,
-                `TrackedFiles: ${manifest.tracked_files.length}`,
-                `UntrackedFiles: ${manifest.untracked_files.length}`
-            ]
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId,
+                gate: 'full-suite-repair-wip-restore',
+                status: 'DRY_RUN_OK',
+                action: 'Run restore without --dry-run when ready to restore parent WIP.',
+                reason: 'Dry run verified the WIP manifest can be restored.',
+                command: buildRestoreFullSuiteRepairWipCommand({
+                    repoRoot,
+                    taskId,
+                    fullSuiteArtifactPath,
+                    manifestPath,
+                    childTaskId: manifest.child_task_id
+                }),
+                detailsPath: manifestPath,
+                legacyLines: [
+                    'FULL_SUITE_REPAIR_WIP_RESTORE_DRY_RUN_OK',
+                    `ManifestPath: ${normalizePath(manifestPath)}`,
+                    `TrackedFiles: ${manifest.tracked_files.length}`,
+                    `UntrackedFiles: ${manifest.untracked_files.length}`
+                ]
+            })
         };
     }
 
@@ -1309,7 +1474,16 @@ export function restoreFullSuiteRepairWip(params: {
             manifest_path: normalizePath(manifestPath),
             restored_files: [],
             violations: [`patch restore failed: ${message}`],
-            output_lines: ['FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED', `Violation: patch restore failed: ${message}`]
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId,
+                gate: 'full-suite-repair-wip-restore',
+                status: 'BLOCKED',
+                action: 'Fix patch restore blockers before retrying WIP restore.',
+                reason: `patch restore failed: ${message}`,
+                detailsPath: manifestPath,
+                legacyLines: ['FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED', `Violation: patch restore failed: ${message}`]
+            })
         };
     }
     for (const entry of manifest.untracked_files) {
@@ -1322,10 +1496,19 @@ export function restoreFullSuiteRepairWip(params: {
                 manifest_path: normalizePath(manifestPath),
                 restored_files: [...restoredFiles].sort(),
                 violations: [`untracked artifact ${entry.path} sha256 mismatch: expected=${entry.sha256}; actual=${actualSha256}`],
-                output_lines: [
-                    'FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED',
-                    `Violation: untracked artifact ${entry.path} sha256 mismatch: expected=${entry.sha256}; actual=${actualSha256}`
-                ]
+                output_lines: formatFullSuiteRepairOutput({
+                    repoRoot,
+                    taskId,
+                    gate: 'full-suite-repair-wip-restore',
+                    status: 'BLOCKED',
+                    action: 'Fix the captured untracked artifact before retrying WIP restore.',
+                    reason: `untracked artifact ${entry.path} sha256 mismatch: expected=${entry.sha256}; actual=${actualSha256}`,
+                    detailsPath: manifestPath,
+                    legacyLines: [
+                        'FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED',
+                        `Violation: untracked artifact ${entry.path} sha256 mismatch: expected=${entry.sha256}; actual=${actualSha256}`
+                    ]
+                })
             };
         }
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -1354,12 +1537,21 @@ export function restoreFullSuiteRepairWip(params: {
             manifest_path: normalizePath(manifestPath),
             restored_files: [...restoredFiles].sort(),
             violations: [violation],
-            output_lines: [
-                'FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED',
-                `ManifestPath: ${normalizePath(manifestPath)}`,
-                `RestoredFiles: ${[...restoredFiles].sort().join(', ') || 'none'}`,
-                `Violation: ${violation}`
-            ]
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId,
+                gate: 'full-suite-repair-wip-restore',
+                status: 'BLOCKED',
+                action: 'Fix parent task status sync before continuing.',
+                reason: violation,
+                detailsPath: manifestPath,
+                legacyLines: [
+                    'FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED',
+                    `ManifestPath: ${normalizePath(manifestPath)}`,
+                    `RestoredFiles: ${[...restoredFiles].sort().join(', ') || 'none'}`,
+                    `Violation: ${violation}`
+                ]
+            })
         };
     }
 
@@ -1368,11 +1560,20 @@ export function restoreFullSuiteRepairWip(params: {
         manifest_path: normalizePath(manifestPath),
         restored_files: [...restoredFiles].sort(),
         violations: [],
-        output_lines: [
-            'FULL_SUITE_REPAIR_WIP_RESTORED',
-            `ManifestPath: ${normalizePath(manifestPath)}`,
-            `RestoredFiles: ${[...restoredFiles].sort().join(', ') || 'none'}`,
-            `ParentStatusSync: ${parentResume.outcome}${parentResume.error_message ? ` (${parentResume.error_message})` : ''}`
-        ]
+        output_lines: formatFullSuiteRepairOutput({
+            repoRoot,
+            taskId,
+            gate: 'full-suite-repair-wip-restore',
+            status: 'RESTORED',
+            action: 'Continue the parent task through the navigator.',
+            reason: 'Full-suite repair parent WIP restored after repair child completion.',
+            detailsPath: manifestPath,
+            legacyLines: [
+                'FULL_SUITE_REPAIR_WIP_RESTORED',
+                `ManifestPath: ${normalizePath(manifestPath)}`,
+                `RestoredFiles: ${[...restoredFiles].sort().join(', ') || 'none'}`,
+                `ParentStatusSync: ${parentResume.outcome}${parentResume.error_message ? ` (${parentResume.error_message})` : ''}`
+            ]
+        })
     };
 }

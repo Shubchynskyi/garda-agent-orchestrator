@@ -2930,6 +2930,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 reviewCycleBlock.choices = reviewCycleBlock.choices.filter((choice) => choice !== 'allow_one_more_cycle');
                 reviewCycleBlock.operator_choice_guidance = reviewCycleBlock.operator_choice_guidance
                     .filter((guidance) => !guidance.startsWith('allow_one_more_cycle:'));
+                reviewCycleBlock.operator_choice_guidance.push(
+                    'continuation_already_recorded: A one-shot continuation was already recorded for this task attempt; do not offer or accept another one. Continue by splitting/decomposing the task or choosing an explicit terminal/operator decision.'
+                );
             }
             const autoSplitEnabled = reviewCycleBlock.auto_split_enabled;
             const continuationDecisionGuidance = continuationAlreadyRecorded

@@ -433,9 +433,11 @@ describe('gates/command-timeout-diagnostics', () => {
             });
 
             const lines = formatCommandTimeoutDiagnosticsResult(artifact);
-            assert.ok(lines[0].includes('COMMAND_TIMEOUT_DIAGNOSTICS_PASSED'));
+            assert.equal(lines[0], 'Next action:');
+            assert.ok(lines.some(l => l.includes('COMMAND_TIMEOUT_DIAGNOSTICS_PASSED')));
             assert.ok(lines.some(l => l.includes('T-910')));
             assert.ok(lines.some(l => l.includes('Summary:')));
+            assert.ok(lines.some(l => l.includes('DetailsPath: garda-agent-orchestrator/runtime/reviews/T-910-command-timeout.json')));
         });
 
         it('formats FAIL artifact with violations', () => {
@@ -447,9 +449,12 @@ describe('gates/command-timeout-diagnostics', () => {
             });
 
             const lines = formatCommandTimeoutDiagnosticsResult(artifact);
-            assert.ok(lines[0].includes('COMMAND_TIMEOUT_DIAGNOSTICS_FAILED'));
+            assert.equal(lines[0], 'Next action:');
+            assert.ok(lines.some(l => l.includes('COMMAND_TIMEOUT_DIAGNOSTICS_FAILED')));
             assert.ok(lines.some(l => l.includes('Violations:')));
             assert.ok(lines.some(l => l.includes('SuspectedLayer:')));
+            assert.ok(lines.some(l => l.includes('Do: Fix the timed-out or unsafe command evidence before continuing.')));
+            assert.ok(lines.some(l => l.includes('CommandText: run test')));
         });
     });
 

@@ -151,6 +151,22 @@ function markRepairChildDone(repoRoot: string): void {
     setTaskStatus(repoRoot, CHILD_TASK_ID, 'DONE');
 }
 
+function assertOperatorNextActionOutput(lines: string[], marker: string): void {
+    assert.equal(lines[0], 'Next action:');
+    assert.ok(lines.some((line) => line === marker), lines.join('\n'));
+    assert.equal(lines.some((line) => line.startsWith('NextAction:')), false, lines.join('\n'));
+}
+
+function assertBlockedOperatorOutputHasNoNavigatorCommand(lines: string[]): void {
+    assert.ok(lines.some((line) => line === '  Command: none'), lines.join('\n'));
+    assert.ok(lines.some((line) => line.startsWith('  CommandReference:')), lines.join('\n'));
+    assert.equal(
+        lines.some((line) => line.startsWith('  Command: ') && line.includes(' next-step ')),
+        false,
+        lines.join('\n')
+    );
+}
+
 function refreshMaterializationManifestSha(repoRoot: string, manifestPath: string): void {
     const artifactPath = path.join(
         repoRoot,
@@ -193,6 +209,7 @@ describe('full-suite repair task materialization', () => {
         });
 
         assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        assertOperatorNextActionOutput(materialized.output_lines, 'FULL_SUITE_REPAIR_TASK_MATERIALIZED');
         assert.ok(materialized.wip_manifest_path);
         assert.equal(normalizeNewlines(fs.readFileSync(appPath, 'utf8')), 'export const value = 1;\n');
         assert.equal(runGit(repoRoot, ['diff', '--name-only']).trim(), '');
@@ -214,6 +231,7 @@ describe('full-suite repair task materialization', () => {
         });
 
         assert.equal(restored.status, 'RESTORED', restored.output_lines.join('\n'));
+        assertOperatorNextActionOutput(restored.output_lines, 'FULL_SUITE_REPAIR_WIP_RESTORED');
         assert.equal(normalizeNewlines(fs.readFileSync(appPath, 'utf8')), 'export const value = 3;\n');
         assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/);
         assert.match(runGit(repoRoot, ['diff', '--', 'src/app.ts']), /[-]export const value = 2;[\s\S]*[+]export const value = 3;/);
@@ -240,6 +258,8 @@ describe('full-suite repair task materialization', () => {
         });
 
         assert.equal(restored.status, 'BLOCKED');
+        assertOperatorNextActionOutput(restored.output_lines, 'FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED');
+        assertBlockedOperatorOutputHasNoNavigatorCommand(restored.output_lines);
         assert.ok(restored.violations.some((violation) => violation.includes(`repair child ${CHILD_TASK_ID} must be DONE`)));
         assert.equal(normalizeNewlines(fs.readFileSync(appPath, 'utf8')), 'export const value = 1;\n');
         assert.equal(runGit(repoRoot, ['diff', '--name-only']).trim(), '');
@@ -260,6 +280,8 @@ describe('full-suite repair task materialization', () => {
         });
 
         assert.equal(materialized.status, 'BLOCKED');
+        assertOperatorNextActionOutput(materialized.output_lines, 'FULL_SUITE_REPAIR_TASK_BLOCKED');
+        assertBlockedOperatorOutputHasNoNavigatorCommand(materialized.output_lines);
         assert.equal(materialized.wip_manifest_path, null);
         assert.equal(materialized.split_required_artifact_path, null);
         assert.ok(materialized.violations.some((violation) => violation.includes('tracked changes outside current preflight scope: README.md')));
@@ -307,6 +329,82 @@ describe('full-suite repair task materialization', () => {
         assert.ok(materialized.violations.some((violation) => violation.includes('scratch/T-FULL-SUITE-REPAIR/notes.txt')));
         assert.equal(fs.readFileSync(scratchPath, 'utf8'), 'operator scratch outside capture roots\n');
         assert.equal(runGit(repoRoot, ['status', '--short', '--untracked-files=all']).includes('?? scratch/T-FULL-SUITE-REPAIR/notes.txt'), true);
+    });
+
+    it('prepends operator next action blocks for already-materialized and dry-run outputs', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+
+        const alreadyMaterialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(alreadyMaterialized.status, 'ALREADY_MATERIALIZED', alreadyMaterialized.output_lines.join('\n'));
+        assertOperatorNextActionOutput(alreadyMaterialized.output_lines, 'FULL_SUITE_REPAIR_TASK_ALREADY_MATERIALIZED');
+
+        markRepairChildDone(repoRoot);
+        const dryRun = restoreMaterializedWip({
+            repoRoot,
+            fullSuitePath,
+            manifestPath: materialized.wip_manifest_path || '',
+            dryRun: true
+        });
+        assert.equal(dryRun.status, 'DRY_RUN_OK', dryRun.output_lines.join('\n'));
+        assertOperatorNextActionOutput(dryRun.output_lines, 'FULL_SUITE_REPAIR_WIP_RESTORE_DRY_RUN_OK');
+        assert.ok(dryRun.output_lines.some((line) => line.includes('Command: node garda-agent-orchestrator/bin/garda.js gate restore-full-suite-repair-wip')));
+        assert.ok(dryRun.output_lines.some((line) => line.includes("--manifest-path 'garda-agent-orchestrator/runtime/wip/")));
+        assert.ok(dryRun.output_lines.some((line) => line.includes(`--child-task-id '${CHILD_TASK_ID}'`)));
+        const restoreCommandLine = dryRun.output_lines.find((line) => line.includes('Command: node garda-agent-orchestrator/bin/garda.js gate restore-full-suite-repair-wip'));
+        assert.equal(restoreCommandLine?.includes('--dry-run'), false);
+    });
+
+    it('single-quotes restore command paths with PowerShell metacharacters', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const metacharFullSuitePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'reviews',
+            "pwsh-$(whoami)`x`'tail",
+            'full-suite-validation.json'
+        );
+        fs.mkdirSync(path.dirname(metacharFullSuitePath), { recursive: true });
+        fs.copyFileSync(fullSuitePath, metacharFullSuitePath);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: metacharFullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+
+        markRepairChildDone(repoRoot);
+        const dryRun = restoreMaterializedWip({
+            repoRoot,
+            fullSuitePath: metacharFullSuitePath,
+            manifestPath: materialized.wip_manifest_path || '',
+            dryRun: true
+        });
+
+        assert.equal(dryRun.status, 'DRY_RUN_OK', dryRun.output_lines.join('\n'));
+        const restoreCommandLine = dryRun.output_lines.find((line) => line.includes('Command: node garda-agent-orchestrator/bin/garda.js gate restore-full-suite-repair-wip')) || '';
+        assert.ok(restoreCommandLine.includes("--full-suite-artifact-path 'garda-agent-orchestrator/runtime/reviews/pwsh-$(whoami)`x`''tail/full-suite-validation.json'"));
+        assert.ok(restoreCommandLine.includes("--manifest-path 'garda-agent-orchestrator/runtime/wip/"));
+        assert.ok(restoreCommandLine.includes(`--child-task-id '${CHILD_TASK_ID}'`));
+        assert.equal(restoreCommandLine.includes('--full-suite-artifact-path "'), false);
+        assert.equal(restoreCommandLine.includes('--manifest-path "'), false);
     });
 
     it('does not suspend WIP when durable repair task materialization fails', () => {
@@ -509,6 +607,7 @@ describe('full-suite repair task materialization', () => {
         });
 
         assert.equal(restored.status, 'BLOCKED');
+        assertBlockedOperatorOutputHasNoNavigatorCommand(restored.output_lines);
         assert.ok(restored.violations.some((violation) => violation.includes('untracked artifact garda-agent-orchestrator/runtime/tmp/T-FULL-SUITE-REPAIR-scratch.log sha256 mismatch')));
     });
 
@@ -657,6 +756,7 @@ describe('full-suite repair task materialization', () => {
         });
 
         assert.equal(restored.status, 'BLOCKED');
+        assertBlockedOperatorOutputHasNoNavigatorCommand(restored.output_lines);
         assert.ok(restored.violations.some((violation) => violation.includes('ManifestPath escapes repo root')));
     });
 });

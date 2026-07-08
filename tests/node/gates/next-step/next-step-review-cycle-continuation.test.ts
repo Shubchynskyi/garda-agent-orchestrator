@@ -146,6 +146,7 @@ describe('gates/next-step review cycle continuation', () => {
             operatorConfirmedAtUtc: new Date().toISOString()
         });
         assert.equal(firstResult.exitCode, 0);
+        assertOperatorContinuationOutput(firstResult.outputLines, 'REVIEW_CYCLE_CONTINUATION_RECORDED');
         const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-review-cycle-continuation.json`);
         const firstArtifactSha256 = fileSha256(artifactPath);
 
@@ -165,6 +166,7 @@ describe('gates/next-step review cycle continuation', () => {
 
         assert.equal(secondResult.exitCode, 3);
         assert.equal(fileSha256(artifactPath), firstArtifactSha256);
+        assertOperatorContinuationOutput(secondResult.outputLines, 'REVIEW_CYCLE_CONTINUATION_REJECTED');
         assert.ok(secondResult.outputLines.includes('REVIEW_CYCLE_CONTINUATION_REJECTED'));
         assert.ok(
             secondResult.outputLines.some((line) => line.includes('already recorded for the current task attempt'))
@@ -288,6 +290,14 @@ function sha256Text(value: string): string {
 
 function normalizeForTimeline(filePath: string): string {
     return filePath.replace(/\\/g, '/');
+}
+
+function assertOperatorContinuationOutput(outputLines: string[], marker: string): void {
+    assert.equal(outputLines[0], 'Next action:');
+    assert.ok(outputLines.includes(marker), outputLines.join('\n'));
+    assert.ok(outputLines.some((line) => line.includes('Gate: record-review-cycle-continuation')));
+    assert.ok(outputLines.some((line) => line.includes('DetailsPath:')));
+    assert.equal(outputLines.some((line) => line.startsWith('NextAction:')), false, outputLines.join('\n'));
 }
 
 function appendEvent(

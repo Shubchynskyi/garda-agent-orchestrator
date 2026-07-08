@@ -21,6 +21,7 @@ import {
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 import { buildRecordReviewResultCommand } from './reviewer-handoff-support';
 import { isPlannedReviewerIdentity } from '../../../../gate-runtime/review/reviewer-identity-contract';
+import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 
 export interface CompleteReviewerLaunchHandlerDependencies {
     assertPreparedReviewerLaunchArtifact: typeof import('../index').assertPreparedReviewerLaunchArtifact;
@@ -349,6 +350,39 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
 
     const invocationId = effectiveProviderInvocationId || effectiveControllerInvocationId;
     const invocationIdLabel = effectiveProviderInvocationId ? 'ProviderInvocationId' : 'ControllerInvocationId';
+    const recordCommand = getStringField(preparedArtifact, 'record_invocation_command', 'recordInvocationCommand');
+    const reviewOutputPath = getStringField(completedArtifact, 'review_output_path', 'reviewOutputPath')
+        || '<ReviewOutputPath>';
+    const recordReviewResultCommand = options.recordInvocation === true
+        ? buildRecordReviewResultCommand({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            preflightPath,
+            reviewContextPath: contextPath,
+            reviewOutputPath,
+            taskModePath: options.taskModePath ? String(options.taskModePath) : null
+        })
+        : '';
+    console.log(buildOperatorNextActionBlock({
+        status: 'PASSED',
+        gate: 'complete-reviewer-launch',
+        action: options.recordInvocation === true
+            ? 'Record delegated review result'
+            : 'Record delegated review invocation',
+        reason: `Reviewer launch completion recorded for '${reviewType}'.`,
+        command: options.recordInvocation === true
+            ? recordReviewResultCommand
+            : (recordCommand || undefined),
+        commandReference: options.recordInvocation === true
+            ? undefined
+            : 'run RecordInvocationCommand below',
+        detailsPath: launchArtifactPath,
+        detailsHint: 'Completion attestation and next review-recording command are listed below.'
+    }).join('\n'));
+    console.log('');
     console.log(`REVIEWER_LAUNCH_COMPLETED: ${reviewType}`);
     console.log(`ReviewerIdentity: ${reviewerIdentity}`);
     console.log(`LaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
@@ -368,7 +402,6 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         console.log(`LaunchInputArtifactSha256: ${launchInputAttestation.artifactSha256}`);
     }
     console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
-    const recordCommand = getStringField(preparedArtifact, 'record_invocation_command', 'recordInvocationCommand');
     if (recordCommand) {
         console.log(`RecordInvocationCommand: ${recordCommand}`);
     }
@@ -383,24 +416,11 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
             ...(options.taskModePath ? ['--task-mode-path', String(options.taskModePath)] : []),
             '--repo-root', repoRoot
         ]);
-        const reviewOutputPath = getStringField(completedArtifact, 'review_output_path', 'reviewOutputPath')
-            || '<ReviewOutputPath>';
-        const recordReviewResultCommand = buildRecordReviewResultCommand({
-            repoRoot,
-            taskId,
-            reviewType,
-            reviewerExecutionMode,
-            reviewerIdentity,
-            preflightPath,
-            reviewContextPath: contextPath,
-            reviewOutputPath,
-            taskModePath: options.taskModePath ? String(options.taskModePath) : null
-        });
         console.log(`RecordReviewResultCommand: ${recordReviewResultCommand}`);
-        console.log('NextAction: record-review-invocation was attested by complete-reviewer-launch; run RecordReviewResultCommand after the delegated reviewer returns.');
+        console.log('NextStep: record-review-invocation was attested by complete-reviewer-launch; run RecordReviewResultCommand after the delegated reviewer returns.');
         return;
     }
-    console.log('NextAction: run RecordInvocationCommand to attest the invocation.');
+    console.log('NextStep: run RecordInvocationCommand to attest the invocation.');
 }
 
 ;

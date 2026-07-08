@@ -31,6 +31,9 @@ import {
     type CompileGateCommandOptions
 } from '../compile/compile-flow';
 import {
+    buildNextStepRecoveryCommand
+} from '../compile/compile-flow-shared-evidence';
+import {
     buildMandatoryCurrentCycleOptionalSkillActivationIndex,
     computeOptionalSkillSelectionFingerprint,
     isMandatoryOptionalSkillSelectionPolicyMode,
@@ -169,7 +172,7 @@ function appendRestartCompletedEvidence(input: {
     restartReason: string;
     nextStepSummary: string;
     extraDetails?: Record<string, unknown>;
-}): void {
+}): string {
     const artifactPath = resolveDefaultReviewsPath(input.repoRoot, `${input.taskId}${input.artifactSuffix}`);
     const baseDetails = {
         restart_event_schema_version: 1,
@@ -212,6 +215,7 @@ function appendRestartCompletedEvidence(input: {
         },
         { actor: 'orchestrator' }
     );
+    return artifactPath;
 }
 
 function toPlainRecord(value: unknown): Record<string, unknown> | null {
@@ -530,7 +534,7 @@ export async function runRestartCoherentCycleCommand(
         } as CompileGateCommandOptions);
         ensureStepPassed('compile-gate', compileResult);
         const nextStepSummary = 'materialize review artifacts for the new compile cycle, then rerun required-reviews-check, doc-impact-gate, and completion-gate.';
-        appendRestartCompletedEvidence({
+        const restartArtifactPath = appendRestartCompletedEvidence({
             repoRoot,
             taskId: resolvedTaskId,
             eventType: 'COHERENT_CYCLE_RESTARTED',
@@ -559,8 +563,10 @@ export async function runRestartCoherentCycleCommand(
         return {
             outputLines: buildCoherentCycleRestartedOutput({
                 taskId: resolvedTaskId,
+                navigatorCommand: buildNextStepRecoveryCommand(repoRoot, resolvedTaskId),
                 taskModePath: resolvedTaskModePath,
                 preflightPath: refreshedPreflightPath,
+                restartArtifactPath,
                 detectionSource: replayScope.detectionSource,
                 plannedChangedFilesCount: replayScope.plannedChangedFiles.length,
                 changedFilesCount: refreshedPreflight.changed_files_count,
@@ -1091,7 +1097,7 @@ export async function runRestartReviewCycleCommand(
         const reviewContextsRefreshStatus = pendingReviewTypes.length > 0
             ? 'partially_prepared_dependency_blocked'
             : 'prepared_or_reused';
-        appendRestartCompletedEvidence({
+        const restartArtifactPath = appendRestartCompletedEvidence({
             repoRoot,
             taskId: resolvedTaskId,
             eventType: 'REVIEW_CYCLE_RESTARTED',
@@ -1133,8 +1139,10 @@ export async function runRestartReviewCycleCommand(
         return {
             outputLines: buildReviewCycleRestartedOutput({
                 taskId: resolvedTaskId,
+                navigatorCommand: buildNextStepRecoveryCommand(repoRoot, resolvedTaskId),
                 preflightPath: refreshedPreflightPath,
                 remediationArtifactPath,
+                restartArtifactPath,
                 detectionSource: replayScope.detectionSource,
                 affectedFilesCount: scopeBoundary.currentChangedFiles.length,
                 impactAnalysisSource: remediationImpactAnalysis.source,
