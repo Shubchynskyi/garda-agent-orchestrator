@@ -1,0 +1,51 @@
+import { normalizePath } from './helpers';
+
+export interface OperatorNextActionBlockInput {
+    status?: string | null;
+    gate?: string | null;
+    action: string;
+    reason?: string | null;
+    command?: string | null;
+    commandReference?: string | null;
+    detailsPath?: string | null;
+    detailsHint?: string | null;
+}
+
+const MAX_REASON_CHARS = 220;
+
+function compactOperatorText(value: string | null | undefined, maxChars = MAX_REASON_CHARS): string {
+    const compact = String(value || '').replace(/\s+/g, ' ').trim();
+    if (compact.length <= maxChars) {
+        return compact;
+    }
+    return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+export function buildOperatorNextActionBlock(input: OperatorNextActionBlockInput): string[] {
+    const lines = ['Next action:'];
+    if (input.status) {
+        lines.push(`  Status: ${compactOperatorText(input.status, 80)}`);
+    }
+    if (input.gate) {
+        lines.push(`  Gate: ${compactOperatorText(input.gate, 80)}`);
+    }
+    lines.push(`  Do: ${compactOperatorText(input.action, 160) || 'Inspect details before continuing.'}`);
+    if (input.reason) {
+        lines.push(`  Reason: ${compactOperatorText(input.reason)}`);
+    }
+    if (input.command) {
+        lines.push(`  Command: ${input.command}`);
+    } else {
+        lines.push('  Command: none');
+    }
+    if (input.commandReference) {
+        lines.push(`  CommandReference: ${compactOperatorText(input.commandReference, 160)}`);
+    }
+    if (input.detailsPath) {
+        lines.push(`  DetailsPath: ${normalizePath(input.detailsPath)}`);
+    }
+    if (input.detailsHint) {
+        lines.push(`  Details: ${compactOperatorText(input.detailsHint, 180)}`);
+    }
+    return lines;
+}

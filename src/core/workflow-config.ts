@@ -27,6 +27,10 @@ import {
     normalizeOptionalQualityChecksConfig,
     type OptionalQualityChecksConfig
 } from './optional-quality-checks';
+import {
+    DEFAULT_REVIEW_DELEGATION_CONFIG,
+    type ReviewDelegationConfig
+} from './review-delegation-policy';
 
 export {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
@@ -55,6 +59,19 @@ export type {
     OptionalQualityCheckRule,
     OptionalQualityChecksConfig
 } from './optional-quality-checks';
+export {
+    GARDA_NO_DELEGATE_ENV,
+    DEFAULT_REVIEW_DELEGATION_CONFIG,
+    isTruthyNoDelegateEnvValue,
+    normalizeReviewDelegationConfig,
+    resolveReviewDelegationConfigPath,
+    resolveReviewDelegationPolicy
+} from './review-delegation-policy';
+export type {
+    ReviewDelegationConfig,
+    ReviewDelegationPolicyResult,
+    ReviewDelegationPolicySource
+} from './review-delegation-policy';
 
 export interface FullSuiteValidationConfig {
     enabled: boolean;
@@ -157,6 +174,7 @@ export interface WorkflowConfigData {
     compile_gate: CompileGateConfig;
     full_suite_validation: FullSuiteValidationConfig;
     review_execution_policy: ReviewExecutionPolicyConfig;
+    review_delegation: ReviewDelegationConfig;
     scope_budget_guard: ScopeBudgetGuardConfig;
     review_cycle_guard: ReviewCycleGuardConfig;
     project_memory_maintenance: ProjectMemoryMaintenanceConfig;
@@ -203,6 +221,7 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
         placement: 'after_compile_before_reviews'
     }),
     review_execution_policy: Object.freeze(buildDefaultReviewExecutionPolicyConfig()),
+    review_delegation: DEFAULT_REVIEW_DELEGATION_CONFIG,
     scope_budget_guard: DEFAULT_SCOPE_BUDGET_GUARD_CONFIG,
     review_cycle_guard: DEFAULT_REVIEW_CYCLE_GUARD_CONFIG,
     project_memory_maintenance: Object.freeze({

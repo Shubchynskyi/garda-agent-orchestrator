@@ -90,7 +90,7 @@ describe('gates/required-reviews-check', () => {
             assert.ok(result.violations.some((violation) => violation.includes('Task timeline missing or unreadable')));
         });
 
-        it('accepts lane-domain-current historical review evidence without requiring a fresh context binding', () => {
+        it('rejects lane-domain-current historical review evidence until current-cycle reuse is materialized', () => {
             const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-review-lane-domain-'));
             const taskId = 'T-888-lane-domain';
             const reviewsRoot = path.join(tempRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
@@ -209,7 +209,7 @@ describe('gates/required-reviews-check', () => {
                                 'Validated `src/gates/next-step/next-step-review-evidence.ts` and `src/gates/required-reviews/required-reviews-check-output.ts` against the lane-domain-current review reuse contract. The review confirmed that the historical review context is intentionally bound to the previous preflight while the current preflight carries the same code-lane domain scope fingerprint.',
                                 '',
                                 '## Findings by Severity',
-                                'None. The direct required-review gate should accept this artifact only because reviewer provenance, tree-state binding, verdict, timing evidence, and lane-domain scope all match.',
+                                'None. The direct required-review gate must reject this artifact until the historical PASS evidence is rebound as current-cycle reuse.',
                                 '',
                                 '## Deferred Findings',
                                 'none',
@@ -284,8 +284,15 @@ describe('gates/required-reviews-check', () => {
                     }
                 });
 
-                assert.equal(result.status, 'PASSED', result.violations.join('\n'));
-                assert.deepEqual(result.violations, []);
+                assert.equal(result.status, 'FAILED');
+                assert.ok(
+                    result.violations.some((violation) => violation.includes('points to preflight')),
+                    result.violations.join('\n')
+                );
+                assert.ok(
+                    result.violations.some((violation) => violation.includes('missing matching REVIEWER_DELEGATION_ROUTED telemetry in the current cycle')),
+                    result.violations.join('\n')
+                );
             } finally {
                 fs.rmSync(tempRoot, { recursive: true, force: true });
             }

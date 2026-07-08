@@ -29,7 +29,7 @@ export interface ReviewerHandoffBindings {
 }
 
 function quoteReviewerLaunchCommandValue(value: string): string {
-    return `"${value.replace(/\\/g, '/').replace(/"/g, '\\"')}"`;
+    return `'${value.replace(/\\/g, '/').replace(/'/g, `''`)}'`;
 }
 
 function quoteRecordReviewResultCommandValue(value: string): string {
@@ -90,6 +90,62 @@ export function buildRecordReviewInvocationCommand(options: {
         '--reviewer-launch-artifact-path', quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewerLaunchArtifactPath)),
         '--repo-root', quoteReviewerLaunchCommandValue('.')
     ];
+    return commandParts.join(' ');
+}
+
+export function buildCompleteReviewerLaunchCommand(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerExecutionMode: 'delegated_subagent';
+    reviewerIdentity: string;
+    reviewContextPath: string;
+    reviewerLaunchArtifactPath: string;
+    providerInvocationId?: string | null;
+    controllerInvocationId?: string | null;
+    attestationSource: string;
+    launchInputMode: 'copy_paste_prompt' | 'launch_artifact_path';
+    launchInputArtifactPath?: string | null;
+    launchInputSha256: string;
+    forkContext: boolean;
+    recordInvocation?: boolean;
+}): string {
+    const cliPrefix = buildReviewerHandoffCliPrefix(options.repoRoot);
+    const commandParts = [
+        `${cliPrefix} gate complete-reviewer-launch`,
+        '--task-id', quoteReviewerLaunchCommandValue(options.taskId),
+        '--review-type', quoteReviewerLaunchCommandValue(options.reviewType),
+        '--review-context-path', quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewContextPath)),
+        '--reviewer-execution-mode', quoteReviewerLaunchCommandValue(options.reviewerExecutionMode),
+        '--reviewer-identity', quoteReviewerLaunchCommandValue(options.reviewerIdentity),
+        '--reviewer-launch-artifact-path', quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewerLaunchArtifactPath))
+    ];
+    if (options.providerInvocationId) {
+        commandParts.push('--provider-invocation-id', quoteReviewerLaunchCommandValue(options.providerInvocationId));
+    } else if (options.controllerInvocationId) {
+        commandParts.push('--controller-invocation-id', quoteReviewerLaunchCommandValue(options.controllerInvocationId));
+    }
+    commandParts.push(
+        '--attestation-source', quoteReviewerLaunchCommandValue(options.attestationSource),
+        '--launch-input-mode', quoteReviewerLaunchCommandValue(options.launchInputMode),
+    );
+    if (options.launchInputMode === 'launch_artifact_path') {
+        const launchInputArtifactPath = String(options.launchInputArtifactPath || '').trim();
+        if (launchInputArtifactPath) {
+            commandParts.push(
+                '--launch-input-artifact-path',
+                quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, launchInputArtifactPath))
+            );
+        }
+    }
+    commandParts.push(
+        '--launch-input-sha256', quoteReviewerLaunchCommandValue(options.launchInputSha256),
+        '--fork-context', options.forkContext ? 'true' : 'false'
+    );
+    if (options.recordInvocation) {
+        commandParts.push('--record-invocation');
+    }
+    commandParts.push('--repo-root', quoteReviewerLaunchCommandValue('.'));
     return commandParts.join(' ');
 }
 

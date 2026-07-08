@@ -7,6 +7,7 @@ import {
     quoteCommandValue,
     toRepoDisplayPath
 } from './next-step-command-formatters';
+import { resolveRestartCommandChangedFiles } from '../recovery/restart-command-scope';
 
 const PROVIDER_INVOCATION_ID_PLACEHOLDER = '<provider-owned invocation id from delegated reviewer launch result>';
 const PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER = '<provider-owned attestation source from delegated reviewer launch result>';
@@ -220,14 +221,20 @@ export function buildRestartReviewCycleCommand(
     taskId: string,
     taskIntent: string,
     preflightCommandPath: string,
-    taskModePath: string | null
+    taskModePath: string | null,
+    additionalChangedFiles: readonly string[] = []
 ): string {
+    const changedFiles = [...new Set([
+        ...resolveRestartCommandChangedFiles(repoRoot, preflightCommandPath),
+        ...additionalChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean)
+    ])].sort();
     return [
         `${cliPrefix} gate restart-review-cycle`,
         `--task-id "${taskId}"`,
         `--task-intent ${quoteCommandValue(taskIntent)}`,
         `--preflight-path ${quoteCommandValue(preflightCommandPath)}`,
         `--impact-analysis ${quoteCommandValue('<replace with main-agent remediation impact analysis>')}`,
+        ...changedFiles.map((changedFile) => `--changed-file ${quoteCommandValue(changedFile)}`),
         ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
         '--repo-root "."'
     ].join(' ');

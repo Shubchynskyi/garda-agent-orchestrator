@@ -4,8 +4,10 @@ import { getReviewArtifactFindingsEvidence } from '../completion';
 import { normalizePath } from '../shared/helpers';
 import { getNoOpEvidence } from '../task-mode/no-op';
 import { createReviewTreeStateFreshnessCache } from '../review/review-tree-state';
-import { normalizeSourceOfTruthValue } from '../review/reviewer-routing';
-import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-scope-fingerprints';
+import {
+    normalizeSourceOfTruthValue,
+    resolveRuntimeReviewerIdentity
+} from '../review/reviewer-routing';
 import { resolveBundleName } from '../../core/constants';
 import { REVIEW_CONTRACTS, resolveExpectedReviewVerdicts, testExpectedVerdict } from './required-reviews-check-contracts';
 import { readReviewDependencyTimelineEvents } from './required-reviews-check-dependencies';
@@ -224,6 +226,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const errors = [...validatedPreflight.errors];
     const resolvedTaskId = validatedPreflight.resolved_task_id;
     const requiredReviews = validatedPreflight.required_reviews;
+    const requiredReviewTypes = getRequiredReviewTypesForAuthorshipAttestation(requiredReviews, skipReviews).requiredTypes;
     const verdicts = resolveExpectedReviewVerdicts(requiredReviews, options.verdicts, skipReviews);
     const preflightPayload = resolvePreflightPayloadForReviewValidation({
         preflightPayload: options.preflightPayload,
@@ -251,6 +254,32 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         }
     }
 
+    if (requiredReviewTypes.length > 0 && resolvedTaskId && options.repoRoot) {
+        const runtimeIdentity = resolveRuntimeReviewerIdentity({
+            repoRoot: options.repoRoot,
+            taskId: resolvedTaskId,
+            allowLegacyFallback: true
+        });
+        if (runtimeIdentity.identity_status !== 'resolved') {
+            errors.push(
+                `Runtime reviewer identity must stay resolved for mandatory review evidence, got '${runtimeIdentity.identity_status}'.`
+            );
+        }
+        errors.push(...runtimeIdentity.violations);
+        if (runtimeIdentity.reviewer_subagent_launch_status !== 'launchable') {
+            const launchReason = runtimeIdentity.reviewer_subagent_launch_reason
+                || 'Reviewer subagent launch is not currently attested.';
+            const launchRemediation = runtimeIdentity.reviewer_subagent_launch_remediation
+                ? ` ${runtimeIdentity.reviewer_subagent_launch_remediation}`
+                : '';
+            errors.push(
+                `Mandatory review evidence cannot pass because delegated reviewer launch is ` +
+                `'${runtimeIdentity.reviewer_subagent_launch_status}' for required reviews ` +
+                `${requiredReviewTypes.join(', ')}. ${launchReason}${launchRemediation}`
+            );
+        }
+    }
+
     const reviewChecks: Record<string, unknown> = {};
     const treeStateFreshnessCache = options.repoRoot
         ? createReviewTreeStateFreshnessCache()
@@ -273,11 +302,6 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
         const reviewArtifact = reviewArtifacts[reviewKey];
         if (reviewArtifact) {
-            const allowLaneDomainPreflightBinding = reviewContextLaneScopeMatchesCurrentPreflight(
-                reviewKey,
-                reviewArtifact.reviewContext || null,
-                preflightPayload
-            );
             const validation = validateReviewArtifactGateEligibility({
                 resolvedTaskId,
                 reviewKey,
@@ -292,7 +316,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                 executionProvider,
                 executionProviderSource: options.executionProviderSource,
                 allowLegacyReviewContextIdentityFallback,
-                allowLaneDomainPreflightBinding,
+                allowLaneDomainPreflightBinding: false,
                 timelineEvents,
                 repoRoot: options.repoRoot || null,
                 treeStateFreshnessCache

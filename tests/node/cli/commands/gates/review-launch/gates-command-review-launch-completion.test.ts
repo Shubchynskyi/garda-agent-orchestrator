@@ -15,7 +15,12 @@ import {
     seedPromptBoundReviewFixture,
     seedRoutedReviewerLaunchFixture
 } from './gates-command-review-launch-fixtures';
-import { buildRecordReviewResultCommand } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
+import {
+    buildCompleteReviewerLaunchCommand,
+    buildRecordReviewResultCommand
+} from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
+import { stringSha256 } from '../../../../../../src/cli/commands/gate-review-handlers/launch/review-launch-input-attestation';
+import { GARDA_NO_DELEGATE_ENV } from '../../../../../../src/core/review-delegation-policy';
 
 describe('cli/commands/gates review launch completion', () => {
     it('record-review-result handoff command single-quotes shell-substitution metacharacters', () => {
@@ -137,6 +142,12 @@ describe('cli/commands/gates review launch completion', () => {
         }
 
         assert.equal(observedCompleteExitCode, 0, `complete-reviewer-launch should succeed, got exit code ${observedCompleteExitCode}`);
+        const completeOutput = capturedLines.join('\n');
+        assert.ok(capturedLines[0]?.startsWith('Next action:\n'));
+        assert.ok(completeOutput.includes('  Gate: complete-reviewer-launch'));
+        assert.ok(completeOutput.includes('  Do: Record delegated review invocation'));
+        assert.ok(completeOutput.includes('  Command: node '));
+        assert.equal(capturedLines.some((line) => line.startsWith('NextAction:')), false);
         assert.ok(capturedLines.some((line) => line.includes('REVIEWER_LAUNCH_COMPLETED: code')));
 
         const completedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
@@ -229,6 +240,19 @@ describe('cli/commands/gates review launch completion', () => {
         ], { cwd: repoRoot });
 
         assert.equal(started.exitCode, 0, started.errors.join('\n'));
+        const startedOutput = started.logs.join('\n');
+        assert.ok(started.logs[0]?.startsWith('Next action:\n'));
+        assert.ok(startedOutput.includes('  Gate: record-reviewer-delegation-started'));
+        assert.ok(startedOutput.includes('  Do: Wait for delegated reviewer completion'));
+        assert.ok(startedOutput.includes('  Command: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch'));
+        assert.ok(startedOutput.includes(`--reviewer-identity '${fixture.reviewerIdentity}'`));
+        assert.ok(startedOutput.includes("--provider-invocation-id 'cursor-subagent-T-693-code'"));
+        assert.ok(startedOutput.includes("--attestation-source 'cursor_subagent'"));
+        assert.ok(startedOutput.includes("--launch-input-mode 'launch_artifact_path'"));
+        assert.ok(startedOutput.includes('--launch-input-artifact-path'));
+        assert.ok(startedOutput.includes('--record-invocation'));
+        assert.ok(started.logs.some((line) => line.startsWith('CompleteReviewerLaunchCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
+        assert.equal(started.logs.some((line) => line.startsWith('NextAction:')), false);
         assert.ok(started.logs.some((line) => line.includes('REVIEWER_DELEGATION_STARTED: code')));
         const startedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
         assert.equal(startedArtifact.attestation_state, 'delegation_started');
@@ -247,6 +271,127 @@ describe('cli/commands/gates review launch completion', () => {
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-reviewer-delegation-started preserves copy-paste launch mode in completion command', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-693-delegation-copy-paste-command';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+        const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        const copyPastePrompt = String(preparedArtifact.copy_paste_reviewer_launch_prompt);
+        const copyPastePromptSha256 = stringSha256(copyPastePrompt);
+
+        const started = await runCliWithCapturedOutput([
+            'gate',
+            'record-reviewer-delegation-started',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'cursor-copy-paste-693',
+            '--attestation-source', 'cursor_subagent',
+            '--launch-input-mode', 'copy_paste_prompt',
+            '--launch-input-sha256', copyPastePromptSha256,
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+
+        assert.equal(started.exitCode, 0, started.errors.join('\n'));
+        const startedOutput = started.logs.join('\n');
+        assert.ok(startedOutput.includes('  Command: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch'));
+        assert.ok(startedOutput.includes("--launch-input-mode 'copy_paste_prompt'"));
+        assert.ok(startedOutput.includes(`--launch-input-sha256 '${copyPastePromptSha256}'`));
+        assert.equal(startedOutput.includes('--launch-input-artifact-path'), false);
+        const startedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(startedArtifact.launch_input_mode, 'copy_paste_prompt');
+        assert.equal(startedArtifact.launch_input_sha256, copyPastePromptSha256);
+        assert.equal(startedArtifact.launch_input_artifact_path, undefined);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch handoff command single-quotes shell-substitution metacharacters', () => {
+        const command = buildCompleteReviewerLaunchCommand({
+            repoRoot: 'D:/repo',
+            taskId: 'T-693',
+            reviewType: 'code',
+            reviewerExecutionMode: 'delegated_subagent',
+            reviewerIdentity: 'agent:reviewer-$(whoami)`x`"q";echo pwn;\'tail',
+            reviewContextPath: 'D:/repo/garda-agent-orchestrator/runtime/reviews/T-693-code-review-context.json',
+            reviewerLaunchArtifactPath: 'D:/repo/garda-agent-orchestrator/runtime/tmp/reviews/T-693/code/reviewer-launch.json',
+            providerInvocationId: 'provider-$(whoami)`x`"q";echo pwn;\'tail',
+            attestationSource: 'codex_$(whoami)`x`"q";echo pwn;\'tail',
+            launchInputMode: 'copy_paste_prompt',
+            launchInputSha256: 'a'.repeat(64),
+            forkContext: false,
+            recordInvocation: true
+        });
+
+        assert.ok(command.includes("--reviewer-identity 'agent:reviewer-$(whoami)`x`\"q\";echo pwn;''tail'"));
+        assert.ok(command.includes("--provider-invocation-id 'provider-$(whoami)`x`\"q\";echo pwn;''tail'"));
+        assert.ok(command.includes("--attestation-source 'codex_$(whoami)`x`\"q\";echo pwn;''tail'"));
+        assert.ok(command.includes("--launch-input-mode 'copy_paste_prompt'"));
+        assert.equal(command.includes('--launch-input-artifact-path'), false);
+        assert.ok(!command.includes('--reviewer-identity "'));
+        assert.ok(!command.includes('--provider-invocation-id "'));
+        assert.ok(!command.includes('--attestation-source "'));
+    });
+
+    it('record-reviewer-delegation-started fails closed when no-delegate mode is active', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-693-delegation-started-no-delegate';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+
+        const previousNoDelegate = process.env[GARDA_NO_DELEGATE_ENV];
+        process.env[GARDA_NO_DELEGATE_ENV] = '1';
+        try {
+            const started = await runCliWithCapturedOutput([
+                'gate',
+                'record-reviewer-delegation-started',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath,
+                '--provider-invocation-id', 'cursor-subagent-T-693-no-delegate-code',
+                '--attestation-source', 'cursor_subagent',
+                ...launchArtifactInputArgsForTest(launchArtifactPath),
+                '--fork-context', 'false'
+            ], { cwd: repoRoot });
+
+            assert.notEqual(started.exitCode, 0);
+            assert.ok(
+                started.errors.some((line) => line.includes("Reviewer delegation start for review 'code' is blocked")),
+                started.errors.join('\n')
+            );
+            assert.ok(
+                started.errors.some((line) => line.includes('GARDA_NO_DELEGATE is active')),
+                started.errors.join('\n')
+            );
+        } finally {
+            if (previousNoDelegate === undefined) {
+                delete process.env[GARDA_NO_DELEGATE_ENV];
+            } else {
+                process.env[GARDA_NO_DELEGATE_ENV] = previousNoDelegate;
+            }
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('complete-reviewer-launch accepts planned routing identity after delegation rebind', async () => {
@@ -319,6 +464,12 @@ describe('cli/commands/gates review launch completion', () => {
         ], { cwd: repoRoot });
 
         assert.equal(complete.exitCode, 0, complete.errors.join('\n'));
+        const completeOutput = complete.logs.join('\n');
+        assert.ok(complete.logs[0]?.startsWith('Next action:\n'));
+        assert.ok(completeOutput.includes('  Gate: complete-reviewer-launch'));
+        assert.ok(completeOutput.includes('  Do: Record delegated review result'));
+        assert.ok(completeOutput.includes('  Command: node garda-agent-orchestrator/bin/garda.js gate record-review-result'));
+        assert.equal(complete.logs.some((line) => line.startsWith('NextAction:')), false);
         assert.ok(complete.logs.some((line) => line.includes('REVIEWER_LAUNCH_COMPLETED: code')));
         const completedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
         assert.equal(completedArtifact.attestation_state, 'launched');
@@ -375,6 +526,11 @@ describe('cli/commands/gates review launch completion', () => {
         ], { cwd: repoRoot });
 
         assert.equal(complete.exitCode, 0, complete.errors.join('\n'));
+        const completeOutput = complete.logs.join('\n');
+        assert.ok(complete.logs[0]?.startsWith('Next action:\n'));
+        assert.ok(completeOutput.includes('  Gate: complete-reviewer-launch'));
+        assert.ok(completeOutput.includes('  Command: node garda-agent-orchestrator/bin/garda.js gate record-review-result'));
+        assert.equal(complete.logs.some((line) => line.startsWith('NextAction:')), false);
         const completedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
         const completedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
         assert.notEqual(completedLaunchArtifactSha256, preparedLaunchArtifactSha256);

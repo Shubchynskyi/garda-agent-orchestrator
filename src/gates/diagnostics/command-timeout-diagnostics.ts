@@ -11,6 +11,7 @@ import {
     resolvePathInsideRepo,
     toPosix
 } from '../shared/helpers';
+import { buildOperatorNextActionBlock } from '../shared/operator-action-output';
 
 export type TimeoutPhase =
     | 'pre_launch'
@@ -567,8 +568,22 @@ export function getCommandTimeoutEvidenceViolations(result: CommandTimeoutEviden
     }
 }
 
-export function formatCommandTimeoutDiagnosticsResult(artifact: CommandTimeoutDiagnosticsArtifact): string[] {
+export function formatCommandTimeoutDiagnosticsResult(
+    artifact: CommandTimeoutDiagnosticsArtifact,
+    detailsPath?: string | null
+): string[] {
+    const defaultDetailsPath = detailsPath || `garda-agent-orchestrator/runtime/reviews/${artifact.task_id}-command-timeout.json`;
     const lines: string[] = [
+        ...buildOperatorNextActionBlock({
+            status: artifact.outcome,
+            gate: 'command-timeout-diagnostics',
+            action: artifact.outcome === 'PASS'
+                ? 'Continue with the normal navigator route.'
+                : 'Fix the timed-out or unsafe command evidence before continuing.',
+            reason: artifact.summary,
+            detailsPath: defaultDetailsPath
+        }),
+        '',
         artifact.outcome === 'PASS' ? 'COMMAND_TIMEOUT_DIAGNOSTICS_PASSED' : 'COMMAND_TIMEOUT_DIAGNOSTICS_FAILED',
         `TaskId: ${artifact.task_id}`,
         `Provider: ${artifact.provider || 'unknown'}`,
@@ -584,6 +599,9 @@ export function formatCommandTimeoutDiagnosticsResult(artifact: CommandTimeoutDi
             const icon = cmd.timed_out ? '-' : cmd.timeout_phase === 'pre_launch' ? '-' : '+';
             const timing = cmd.elapsed_ms != null ? ` (${cmd.elapsed_ms}ms)` : '';
             lines.push(`  [${icon}] ${cmd.command_label}: ${cmd.timeout_phase}${timing}`);
+            if (cmd.command_text) {
+                lines.push(`      CommandText: ${cmd.command_text}`);
+            }
             lines.push(`      Diagnosis: ${cmd.diagnosis}`);
             if (cmd.suspected_layer !== 'unknown') {
                 lines.push(`      SuspectedLayer: ${cmd.suspected_layer}`);

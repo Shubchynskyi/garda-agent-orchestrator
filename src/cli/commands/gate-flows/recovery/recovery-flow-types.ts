@@ -57,6 +57,12 @@ export interface ReviewRemediationImpactAnalysis {
     summary: string;
     required_topics: string[];
     affected_files: string[];
+    ignored_remediation_targets?: Array<{
+        path: string;
+        sha256?: string | null;
+        reason?: string | null;
+        source?: string | null;
+    }>;
 }
 
 export type ReviewRemediationSemanticCategory =

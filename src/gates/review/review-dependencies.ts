@@ -328,11 +328,13 @@ export function assessUpstreamReviewDependencyStatus(options: {
             'review receipt is not bound to the current preflight artifact and review-context lane-domain evidence is not current'
         );
     }
-    if (!currentCycleRecordedEvent && !domainScopeCurrent) {
+    if (!currentCycleRecordedEvent) {
         return blockedDependencyStatus(
             options.upstreamReviewType,
             'missing_upstream_pass',
-            'no current-cycle REVIEW_RECORDED evidence and historical review-context lane-domain evidence is not current'
+            domainScopeCurrent
+                ? 'historical review-context lane-domain evidence is current, but current-cycle REVIEW_RECORDED reuse telemetry is required before dependent reviews'
+                : 'no current-cycle REVIEW_RECORDED evidence and historical review-context lane-domain evidence is not current'
         );
     }
 
@@ -364,7 +366,7 @@ export function assessUpstreamReviewDependencyStatus(options: {
             receipt
         },
         allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled,
-        allowLaneDomainPreflightBinding: domainScopeCurrent,
+        allowLaneDomainPreflightBinding: false,
         timelineEvents: options.timelineEvents,
         repoRoot
     });

@@ -16,6 +16,7 @@ export function formatHandshakeDiagnosticsResult(artifact: HandshakeDiagnosticsA
         `ReviewerExpectedExecutionMode: ${artifact.reviewer_expected_execution_mode || 'unknown'}`,
         `ReviewerSubagentLaunchStatus: ${artifact.reviewer_subagent_launch_status || 'unknown'}`,
         `ReviewerSubagentLaunchRoute: ${artifact.reviewer_subagent_launch_route || 'none'}`,
+        `NoDelegateMode: ${artifact.no_delegate_mode_active === true ? 'active' : 'inactive'} (${artifact.no_delegate_mode_source || 'none'})`,
         `StartTaskRouter: ${artifact.start_task_router_path} (${artifact.start_task_router_exists ? 'exists' : 'missing'})`,
         `ExecutionContext: ${artifact.execution_context}`,
         `CliPath: ${artifact.cli_path}`,

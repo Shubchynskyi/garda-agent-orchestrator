@@ -79,6 +79,18 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
     const reviewerSubagentLaunchRemediation = String(options.reviewerSubagentLaunchRemediation || '').trim()
         || identity.reviewer_subagent_launch_remediation
         || null;
+    const noDelegateModeActive = typeof options.noDelegateModeActive === 'boolean'
+        ? options.noDelegateModeActive
+        : identity.no_delegate_mode.active;
+    const noDelegateModeSource = String(options.noDelegateModeSource || '').trim()
+        || identity.no_delegate_mode.source
+        || null;
+    const noDelegateModeReason = String(options.noDelegateModeReason || '').trim()
+        || identity.no_delegate_mode.reason
+        || null;
+    const noDelegateModeRemediation = String(options.noDelegateModeRemediation || '').trim()
+        || identity.no_delegate_mode.remediation
+        || null;
     const diagnostics: HandshakeDiagnostic[] = [];
     const precheckViolations = Array.isArray(options.precheckViolations)
         ? options.precheckViolations.map((entry) => String(entry || '').trim()).filter(Boolean)
@@ -110,6 +122,10 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
             reviewer_subagent_launch_route: reviewerSubagentLaunchRoute,
             reviewer_subagent_launch_reason: reviewerSubagentLaunchReason,
             reviewer_subagent_launch_remediation: reviewerSubagentLaunchRemediation,
+            no_delegate_mode_active: noDelegateModeActive,
+            no_delegate_mode_source: noDelegateModeSource,
+            no_delegate_mode_reason: noDelegateModeReason,
+            no_delegate_mode_remediation: noDelegateModeRemediation,
             runtime_identity_status: runtimeIdentityStatus,
             runtime_identity_violations: runtimeIdentityViolations,
             start_task_router_path: SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
@@ -204,6 +220,20 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
                 ? `${reviewerSubagentLaunchReason || 'Reviewer subagent launchability is unknown for this runtime session.'} ${reviewerSubagentLaunchRemediation}`
                 : (reviewerSubagentLaunchReason || 'Reviewer subagent launchability is unknown for this runtime session.')
         );
+    }
+
+    if (noDelegateModeActive) {
+        diagnostics.push({
+            check: 'no_delegate_mode',
+            status: 'error',
+            detail: noDelegateModeReason || `No-delegate mode is active from '${noDelegateModeSource || 'unknown'}'.`
+        });
+    } else {
+        diagnostics.push({
+            check: 'no_delegate_mode',
+            status: 'ok',
+            detail: 'No-delegate mode is inactive.'
+        });
     }
 
     if (!canonicalSourceOfTruth) {
@@ -371,6 +401,10 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         reviewer_subagent_launch_route: reviewerSubagentLaunchRoute,
         reviewer_subagent_launch_reason: reviewerSubagentLaunchReason,
         reviewer_subagent_launch_remediation: reviewerSubagentLaunchRemediation,
+        no_delegate_mode_active: noDelegateModeActive,
+        no_delegate_mode_source: noDelegateModeSource,
+        no_delegate_mode_reason: noDelegateModeReason,
+        no_delegate_mode_remediation: noDelegateModeRemediation,
         runtime_identity_status: runtimeIdentityStatus,
         runtime_identity_violations: runtimeIdentityViolations,
         start_task_router_path: startTaskRouterPath,

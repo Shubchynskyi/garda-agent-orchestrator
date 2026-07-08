@@ -767,6 +767,32 @@ test('workflow set updates task reset availability with audit record', () => {
     }
 });
 
+test('workflow set updates no-delegate mode with audit record', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--no-delegate', 'true',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.equal(result.review_delegation.no_delegate, true);
+        assert.ok(result.changed_fields.includes('review_delegation.no_delegate'));
+        assert.ok(result.audit_path);
+        assert.ok(output.includes('Review delegation: no-delegate active'));
+        assert.ok(output.includes('NoDelegateMode: true'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.review_delegation.no_delegate, true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow set can repair task reset audit evidence when config is already enabled', () => {
     const bundleRoot = createBundleRoot();
     const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
@@ -1229,6 +1255,7 @@ test('workflow help describes project-memory update as the default policy', () =
     assert.ok(helpText.includes('--scope-budget on|off|--scope-budget-enabled true|false'));
     assert.ok(helpText.includes('--review-cycle on|off|--review-cycle-enabled true|false'));
     assert.ok(helpText.includes('--review-cycle-auto-split on|off|--review-cycle-auto-split-enabled true|false'));
+    assert.ok(helpText.includes('workflow set --no-delegate true|false'));
     assert.ok(helpText.includes('--project-memory on|off|--project-memory-enabled true|false'));
     assert.ok(helpText.includes('workflow set --project-memory on --project-memory-mode update'));
     assert.ok(helpText.includes('workflow set --task-reset on --operator-confirmed yes --operator-confirmed-at-utc'));

@@ -32,6 +32,7 @@ import {
     removeArtifactIfExists
 } from '../../shared-command-utils';
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
+import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 type SupersededReviewerLaunchArtifactSnapshot = import('../index').SupersededReviewerLaunchArtifactSnapshot;
 
 export type PrepareReviewerLaunchHandler = (gateArgv: string[]) => Promise<void>;
@@ -348,6 +349,16 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             && preparedMismatches.length === 0
         ) {
             const existingLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
+            console.log(buildOperatorNextActionBlock({
+                status: 'PASSED',
+                gate: 'prepare-reviewer-launch',
+                action: 'Launch one clean-context delegated reviewer',
+                reason: `Current reviewer launch metadata is already prepared for '${reviewType}'.`,
+                commandReference: 'launch the reviewer from ReviewerLaunchInputArtifactPath, then run RecordReviewerDelegationStartedCommand below',
+                detailsPath: launchArtifactPath,
+                detailsHint: 'Current launch artifact paths, hashes, and copy-paste reviewer instructions are listed below.'
+            }).join('\n'));
+            console.log('');
             console.log(`REVIEWER_LAUNCH_PREPARED: ${reviewType}`);
             console.log(`ReviewerIdentity: ${reviewerIdentity}`);
             console.log(`RepoRoot: ${toReviewerHandoffAbsolutePath(repoRoot, repoRoot)}`);
@@ -388,7 +399,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`RecordReviewerDelegationStartedCommand: ${recordReviewerDelegationStartedCommand}`);
             console.log(`CompleteReviewerLaunchCommand: ${completeReviewerLaunchCommand}`);
             printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-            console.log(`NextAction: existing reviewer launch metadata is current; ${buildReviewerLaunchNextAction()}`);
+            console.log(`NextStep: existing reviewer launch metadata is current; ${buildReviewerLaunchNextAction()}`);
             return;
         }
         if (
@@ -653,6 +664,16 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     writeReviewArtifactJson(launchArtifactPath, preparedArtifactWithCommands);
     const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
 
+    console.log(buildOperatorNextActionBlock({
+        status: 'PASSED',
+        gate: 'prepare-reviewer-launch',
+        action: 'Launch one clean-context delegated reviewer',
+        reason: `Reviewer launch metadata prepared for '${reviewType}'.`,
+        commandReference: 'launch the reviewer from ReviewerLaunchInputArtifactPath, then run RecordReviewerDelegationStartedCommand below',
+        detailsPath: launchArtifactPath,
+        detailsHint: 'Launch artifact paths, hashes, and copy-paste reviewer instructions are listed below.'
+    }).join('\n'));
+    console.log('');
     console.log(`REVIEWER_LAUNCH_PREPARED: ${reviewType}`);
     console.log(`ReviewerIdentity: ${reviewerIdentity}`);
     console.log(`RepoRoot: ${toReviewerHandoffAbsolutePath(repoRoot, repoRoot)}`);
@@ -704,7 +725,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`CompleteReviewerLaunchCommand: ${completeReviewerLaunchCommand}`);
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
     printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-    console.log(`NextAction: ${buildReviewerLaunchNextAction()}`);
+    console.log(`NextStep: ${buildReviewerLaunchNextAction()}`);
 }
 
 ;

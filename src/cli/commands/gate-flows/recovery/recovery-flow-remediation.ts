@@ -8,6 +8,10 @@ import {
     getTaskManualValidationBoundaryFiles,
     isTestLikeRemediationPath
 } from '../../../../gates/review-remediation/review-remediation-scope-boundary';
+import {
+    extractGuardedIgnoredRemediationTargets,
+    type GuardedIgnoredRemediationTarget
+} from '../../../../gates/review-remediation/ignored-remediation-targets';
 import { normalizeChangedFiles } from './recovery-flow-shared';
 import type {
     ResolvedReplayScope,
@@ -89,12 +93,25 @@ const REMEDIATION_IMPACT_ANALYSIS_TOPIC_CHECKS = Object.freeze([
 const REMEDIATION_IMPACT_ANALYSIS_DETAIL_MIN_CHARS = 8;
 const REMEDIATION_IMPACT_ANALYSIS_FILE_MAX_BYTES = 64 * 1024;
 
+function normalizeImpactAnalysisEntryValue(value: unknown): string {
+    if (Array.isArray(value)) {
+        return value.map((entry) => normalizeImpactAnalysisEntryValue(entry)).filter(Boolean).join(', ');
+    }
+    if (value && typeof value === 'object') {
+        return Object.entries(value as Record<string, unknown>)
+            .filter(([, entryValue]) => entryValue !== null && entryValue !== undefined && String(entryValue).trim())
+            .map(([key, entryValue]) => `${key}: ${normalizeImpactAnalysisEntryValue(entryValue)}`)
+            .join(', ');
+    }
+    return String(value || '').trim();
+}
+
 function normalizeImpactAnalysisText(value: unknown): string {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
         const record = value as Record<string, unknown>;
         return Object.entries(record)
             .filter(([, entryValue]) => entryValue !== null && entryValue !== undefined && String(entryValue).trim())
-            .map(([key, entryValue]) => `${key}: ${Array.isArray(entryValue) ? entryValue.join(', ') : String(entryValue).trim()}`)
+            .map(([key, entryValue]) => `${key}: ${normalizeImpactAnalysisEntryValue(entryValue)}`)
             .join('; ');
     }
     return String(value || '').trim();
@@ -108,7 +125,7 @@ function isPathInsideDirectory(candidatePath: string, rootPath: string): boolean
 function readImpactAnalysisPath(
     repoRoot: string,
     impactAnalysisPath: string
-): { summary: string; source: 'file' } {
+): { summary: string; source: 'file'; ignoredRemediationTargets: GuardedIgnoredRemediationTarget[] } {
     const resolvedRepoRoot = fs.realpathSync.native(path.resolve(repoRoot));
     const candidatePath = path.isAbsolute(impactAnalysisPath)
         ? path.resolve(impactAnalysisPath)
@@ -142,17 +159,20 @@ function readImpactAnalysisPath(
     }
     const rawContent = fs.readFileSync(realImpactPath, 'utf8').trim();
     if (!rawContent) {
-        return { summary: '', source: 'file' };
+        return { summary: '', source: 'file', ignoredRemediationTargets: [] };
     }
     try {
+        const parsed = JSON.parse(rawContent) as unknown;
         return {
-            summary: normalizeImpactAnalysisText(JSON.parse(rawContent) as unknown),
-            source: 'file'
+            summary: normalizeImpactAnalysisText(parsed),
+            source: 'file',
+            ignoredRemediationTargets: extractGuardedIgnoredRemediationTargets(parsed)
         };
     } catch {
         return {
             summary: rawContent,
-            source: 'file'
+            source: 'file',
+            ignoredRemediationTargets: []
         };
     }
 }
@@ -218,7 +238,8 @@ export function resolveReviewRemediationImpactAnalysis(
     const pathValue = String(options.impactAnalysisPath || '').trim();
     const source = pathValue ? readImpactAnalysisPath(repoRoot, pathValue) : {
         summary: normalizeImpactAnalysisText(options.impactAnalysis),
-        source: 'inline' as const
+        source: 'inline' as const,
+        ignoredRemediationTargets: extractGuardedIgnoredRemediationTargets(options.impactAnalysis)
     };
     const summary = source.summary.trim();
     const violations = validateReviewRemediationImpactAnalysis(summary, affectedFiles);
@@ -234,7 +255,8 @@ export function resolveReviewRemediationImpactAnalysis(
         source: source.source,
         summary,
         required_topics: [...REMEDIATION_IMPACT_ANALYSIS_TOPICS],
-        affected_files: normalizeChangedFiles(affectedFiles)
+        affected_files: normalizeChangedFiles(affectedFiles),
+        ignored_remediation_targets: source.ignoredRemediationTargets
     };
 }
 
@@ -761,14 +783,17 @@ export function writeReviewRemediationCycleArtifact(
 
 export function resolveReviewRemediationClassifyChangedFiles(
     replayScope: ResolvedReplayScope,
-    scopeBoundary: ReviewRemediationScopeBoundary
+    scopeBoundary: ReviewRemediationScopeBoundary,
+    extraChangedFiles: readonly string[] = []
 ): string[] | undefined {
-    if (replayScope.changedFiles === undefined) {
+    const normalizedExtraChangedFiles = normalizeChangedFiles(extraChangedFiles);
+    if (replayScope.changedFiles === undefined && normalizedExtraChangedFiles.length === 0) {
         return undefined;
     }
     return normalizeChangedFiles([
         ...scopeBoundary.previousChangedFiles,
-        ...replayScope.changedFiles,
-        ...scopeBoundary.allowedTestOnlyExpansionFiles
+        ...(replayScope.changedFiles ?? []),
+        ...scopeBoundary.allowedTestOnlyExpansionFiles,
+        ...normalizedExtraChangedFiles
     ]);
 }

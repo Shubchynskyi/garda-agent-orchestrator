@@ -17,11 +17,16 @@ import {
 import {
     isPlannedReviewerIdentity
 } from '../../../../gate-runtime/review/reviewer-identity-contract';
+import {
+    resolveRuntimeReviewerIdentity
+} from '../../../../gates/review/reviewer-routing';
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
 import {
     type ParsedOptionsRecord
 } from '../../shared-command-utils';
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
+import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
+import { buildCompleteReviewerLaunchCommand } from './reviewer-handoff-support';
 
 export interface ReviewerDelegationStartedHandlerDependencies {
     assertPreparedReviewerLaunchArtifact: typeof import('../index').assertPreparedReviewerLaunchArtifact;
@@ -99,6 +104,31 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     });
     if (!fs.existsSync(contextPath) || !fs.statSync(contextPath).isFile()) {
         throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
+    }
+    const runtimeIdentity = resolveRuntimeReviewerIdentity({
+        repoRoot,
+        taskId,
+        taskModePath: String(options.taskModePath || '').trim(),
+        allowLegacyFallback: true
+    });
+    if (runtimeIdentity.identity_status !== 'resolved') {
+        throw new Error(
+            `Reviewer delegation start requires resolved runtime reviewer identity, got '${runtimeIdentity.identity_status}'.`
+        );
+    }
+    if (runtimeIdentity.violations.length > 0) {
+        throw new Error(runtimeIdentity.violations.join(' '));
+    }
+    if (runtimeIdentity.reviewer_subagent_launch_status !== 'launchable') {
+        const launchReason = runtimeIdentity.reviewer_subagent_launch_reason
+            || 'Reviewer subagent launch is not currently attested.';
+        const launchRemediation = runtimeIdentity.reviewer_subagent_launch_remediation
+            ? ` ${runtimeIdentity.reviewer_subagent_launch_remediation}`
+            : '';
+        throw new Error(
+            `Reviewer delegation start for review '${reviewType}' is blocked because reviewer subagent launch is ` +
+            `'${runtimeIdentity.reviewer_subagent_launch_status}'. ${launchReason}${launchRemediation}`
+        );
     }
     const { reviewerExecutionMode, reviewerIdentity } = parseReviewerIdentity(
         options,
@@ -310,6 +340,23 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     const startedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
     const invocationId = providerInvocationId || controllerInvocationId;
     const invocationIdLabel = providerInvocationId ? 'ProviderInvocationId' : 'ControllerInvocationId';
+    const completeReviewerLaunchCommand = buildCompleteReviewerLaunchCommand({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewerExecutionMode: 'delegated_subagent',
+        reviewerIdentity,
+        reviewContextPath: contextPath,
+        reviewerLaunchArtifactPath: launchArtifactPath,
+        providerInvocationId: providerInvocationId || null,
+        controllerInvocationId: controllerInvocationId || null,
+        attestationSource,
+        launchInputMode: launchInputAttestation.mode,
+        launchInputArtifactPath: launchInputAttestation.artifactPath,
+        launchInputSha256: launchInputAttestation.sha256,
+        forkContext: options.forkContext === true,
+        recordInvocation: true
+    });
     const startedEvent = await emitReviewerDelegationStartedEventAsync(
         gateHelpers.joinOrchestratorPath(repoRoot, ''),
         taskId,
@@ -347,6 +394,16 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
             'The lifecycle event could not be persisted.'
         );
     }
+    console.log(buildOperatorNextActionBlock({
+        status: 'PASSED',
+        gate: 'record-reviewer-delegation-started',
+        action: 'Wait for delegated reviewer completion',
+        reason: `Delegated reviewer start recorded for '${reviewType}'.`,
+        command: completeReviewerLaunchCommand,
+        detailsPath: launchArtifactPath,
+        detailsHint: 'Delegation identity, invocation id, and launch-input evidence are listed below.'
+    }).join('\n'));
+    console.log('');
     console.log(`REVIEWER_DELEGATION_STARTED: ${reviewType}`);
     console.log(`ReviewerIdentity: ${reviewerIdentity}`);
     console.log(`LaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
@@ -358,6 +415,7 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     if (launchInputAttestation.artifactPath) {
         console.log(`LaunchInputArtifactPath: ${normalizePath(launchInputAttestation.artifactPath)}`);
     }
-    console.log('NextAction: after the delegated reviewer returns, run complete-reviewer-launch to record completion attestation.');
+    console.log(`CompleteReviewerLaunchCommand: ${completeReviewerLaunchCommand}`);
+    console.log('NextStep: after the delegated reviewer returns, run complete-reviewer-launch to record completion attestation.');
 };
 }

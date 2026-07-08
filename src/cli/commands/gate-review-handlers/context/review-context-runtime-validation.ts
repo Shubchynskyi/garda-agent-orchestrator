@@ -46,6 +46,18 @@ export function assertRoutingCompatibility(
     const providerLabel = runtimeIdentity.execution_provider
         || runtimeIdentity.canonical_source_of_truth
         || String(currentRouting?.execution_provider || currentRouting?.source_of_truth || 'unknown');
+    if (runtimeIdentity.reviewer_subagent_launch_status !== 'launchable') {
+        const launchReason = runtimeIdentity.reviewer_subagent_launch_reason
+            || 'Reviewer subagent launch is not currently attested.';
+        const launchRemediation = runtimeIdentity.reviewer_subagent_launch_remediation
+            ? ` ${runtimeIdentity.reviewer_subagent_launch_remediation}`
+            : '';
+        throw new Error(
+            `Review '${reviewType}' cannot route delegated reviewer evidence for provider '${providerLabel}' ` +
+            `because reviewer subagent launch is '${runtimeIdentity.reviewer_subagent_launch_status}'. ` +
+            `${launchReason}${launchRemediation}`
+        );
+    }
     if (reviewerExecutionMode !== REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE) {
         throw new Error(
             `Review '${reviewType}' must use delegated_subagent for provider '${providerLabel}'.`

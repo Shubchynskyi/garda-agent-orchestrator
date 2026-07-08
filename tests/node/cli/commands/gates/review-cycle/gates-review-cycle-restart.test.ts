@@ -17,6 +17,7 @@ import {
     loadPostPreflightRulePack,
     loadTaskEntryRulePack,
     markAsSourceCheckout,
+    normalizePath,
     os,
     path,
     readTaskTimelineEvents,
@@ -32,10 +33,12 @@ import {
     runShellSmokeForTask,
     seedInitAnswers,
     seedRemediationRepoBase,
+    seedNodeBackendOptionalSkillFixture,
     seedReusableReviewEvidence,
     seedTaskQueue,
     serializeTaskPlan,
     validateTaskPlan,
+    writeOptionalSkillSelectionArtifact,
     writePreflight,
     writeProtectedControlPlaneManifest,
     writeReceiptBackedReviewArtifact,
@@ -390,8 +393,11 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
-        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
-        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+        const restartOutput = restartResult.outputLines.join('\n');
+        assert.equal(restartResult.outputLines[0], 'Next action:');
+        assert.match(restartOutput, /COHERENT_CYCLE_RESTARTED/);
+        assert.match(restartOutput, /^  Command: node bin\/garda\.js next-step "T-903a-restart-coherent-cycle" --repo-root "\."$/mu);
+        assert.match(restartOutput, /DetectionSource: explicit_changed_files/);
 
         const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
@@ -403,6 +409,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const restartArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-coherent-cycle-restart.json`);
         const compileEvidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
         const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        assert.match(restartOutput, new RegExp(`DetailsPath: ${escapeRegExp(normalizePath(restartArtifactPath))}`, 'u'));
         assert.equal(restartDetails.restart_event_schema_version, 1);
         assert.equal(restartDetails.task_id, taskId);
         assert.equal(restartDetails.event_type, 'COHERENT_CYCLE_RESTARTED');
@@ -435,6 +442,126 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         )) as Record<string, unknown>;
         assert.equal(refreshedTaskModeArtifact.start_banner, 'Garda rewrites my code');
         assert.equal(refreshedTaskModeArtifact.orchestrator_work, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-coherent-cycle rebinds mandatory optional-skill activation into the refreshed recovery cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-942-restart-coherent-optional-skill-rebind';
+        const taskSummary = 'Implement request validation for a Node.js API endpoint';
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        writeProtectedControlPlaneManifest(repoRoot);
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'strict');
+        seedTaskQueue(repoRoot, taskId);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace('Update app flow', taskSummary),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const validate = () => true;\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'api', 'orders.ts'),
+            'export const validate = (input: unknown) => Boolean(input);\n',
+            'utf8'
+        );
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'restart-coherent-optional-skill-rebind'
+        );
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary,
+            plannedChangedFiles: ['src/api/orders.ts'],
+            orchestratorWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString()
+        });
+        assert.equal(taskModeResult.exitCode, 0, taskModeResult.outputLines.join('\n'));
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        loadTaskEntryRulePack(repoRoot, taskId, taskModePath);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            taskSummary,
+            ['src/api/orders.ts'],
+            `${taskId}-preflight.json`,
+            taskModePath
+        );
+        const artifact = writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+            taskText: taskSummary,
+            changedPaths: ['src/api/orders.ts'],
+            preflightPath,
+            preflightSha256: fileSha256(preflightPath)
+        });
+        assert.equal(artifact.payload.decision, 'selected_installed_skills');
+        assert.equal(artifact.payload.selected_installed_skills[0]?.id, 'node-backend');
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', taskModePath);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: node-backend',
+            {
+                skill_id: 'node-backend',
+                pack_id: 'node-backend',
+                trigger_reason: 'optional_skill_selection',
+                optional_skill_selection_fingerprint_sha256: artifact.payload.selection_fingerprint_sha256
+            }
+        );
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0, compileResult.outputLines.join('\n'));
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const lastPreflightIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'PREFLIGHT_CLASSIFIED');
+        const reboundSkillIndex = findLastTimelineEventIndex(events, (event) => (
+            event.event_type === 'SKILL_SELECTED'
+            && (event.details as Record<string, unknown> | null)?.skill_id === 'node-backend'
+            && (event.details as Record<string, unknown> | null)?.trigger_reason === 'optional_skill_selection'
+            && (event.details as Record<string, unknown> | null)?.optional_skill_selection_fingerprint_sha256 === artifact.payload.selection_fingerprint_sha256
+        ));
+        const lastCompileIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        assert.ok(lastPreflightIndex >= 0);
+        assert.ok(reboundSkillIndex > lastPreflightIndex);
+        assert.ok(lastCompileIndex > reboundSkillIndex);
+        const restartEvent = [...events].reverse().find((event) => event.event_type === 'COHERENT_CYCLE_RESTARTED') as Record<string, unknown> | undefined;
+        assert.ok(restartEvent, 'coherent restart must persist a passed restart event');
+        assert.deepEqual(
+            (restartEvent.details as Record<string, unknown>).optional_skill_activation_rebound_skill_ids,
+            ['node-backend']
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -936,6 +1063,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         });
         assert.equal(reviewRestartResult.exitCode, 0, reviewRestartResult.outputLines.join('\n'));
         const output = reviewRestartResult.outputLines.join('\n');
+        assert.equal(reviewRestartResult.outputLines[0], 'Next action:');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /PreparedReviewTypes: code/);
         assert.match(output, /LaunchRequiredReviewTypes: code/);
@@ -1039,7 +1167,9 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0);
-        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+        const restartOutput = restartResult.outputLines.join('\n');
+        assert.match(restartOutput, /^  Command: node garda-agent-orchestrator\/bin\/garda\.js next-step "T-903a-restart-coherent-cycle-git-auto" --repo-root "\."$/mu);
+        assert.match(restartOutput, /DetectionSource: explicit_changed_files/);
 
         const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
@@ -1270,6 +1400,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
 
         const output = restartResult.outputLines.join('\n');
+        assert.equal(restartResult.outputLines[0], 'Next action:');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /PreparedReviewTypes: code/);
         assert.match(output, /LaunchRequiredReviewTypes: code/);
@@ -1990,6 +2121,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const restartArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-cycle-restart.json`);
         const compileEvidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
         const remediationArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`);
+        assert.match(output, new RegExp(`DetailsPath: ${escapeRegExp(normalizePath(restartArtifactPath))}`, 'u'));
         assert.equal(restartDetails.restart_event_schema_version, 1);
         assert.equal(restartDetails.task_id, taskId);
         assert.equal(restartDetails.event_type, 'REVIEW_CYCLE_RESTARTED');

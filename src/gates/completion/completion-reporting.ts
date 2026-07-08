@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import { getBundleCliCommand, getSourceCliCommand, resolveBundleName } from '../../core/constants';
 import { isOrchestratorSourceCheckout } from '../shared/helpers';
 import { buildReviewTrustSummaryFromCompatibilityArtifacts } from '../review/review-trust-summary';
+import { resolveRestartCommandChangedFiles } from '../recovery/restart-command-scope';
 
 export function quotePowerShellCliValue(value: string): string {
     return `'${String(value).replace(/'/g, "''")}'`;
@@ -14,7 +15,7 @@ export function buildCoherentCycleRestartCommand(
     taskModePath: string | null,
     commandsPath: string | null,
     outputFiltersPath: string | null,
-    options: { requiresOperatorConfirmation?: boolean } = {}
+    options: { requiresOperatorConfirmation?: boolean; changedFiles?: readonly string[] } = {}
 ): string {
     const cliPrefix = isOrchestratorSourceCheckout(repoRoot)
         ? getSourceCliCommand()
@@ -33,6 +34,12 @@ export function buildCoherentCycleRestartCommand(
     }
     if (outputFiltersPath) {
         parts.push(`--output-filters-path ${quotePowerShellCliValue(outputFiltersPath)}`);
+    }
+    const changedFiles = options.changedFiles
+        ? [...new Set(options.changedFiles.map((entry) => String(entry || '').trim()).filter(Boolean))].sort()
+        : resolveRestartCommandChangedFiles(repoRoot, preflightPath);
+    for (const changedFile of changedFiles) {
+        parts.push(`--changed-file ${quotePowerShellCliValue(changedFile)}`);
     }
     if (options.requiresOperatorConfirmation === true) {
         parts.push('--operator-confirmed yes');
@@ -67,6 +74,9 @@ export function buildReviewCycleRestartCommand(
     }
     if (outputFiltersPath) {
         parts.push(`--output-filters-path ${quotePowerShellCliValue(outputFiltersPath)}`);
+    }
+    for (const changedFile of resolveRestartCommandChangedFiles(repoRoot, preflightPath)) {
+        parts.push(`--changed-file ${quotePowerShellCliValue(changedFile)}`);
     }
     return parts.join(' ');
 }

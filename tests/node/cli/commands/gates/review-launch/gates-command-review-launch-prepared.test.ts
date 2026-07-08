@@ -218,7 +218,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             'reviewer_launch_input_artifact_sha256'
         ]);
         assert.ok(String(launchArtifact.record_invocation_command).includes('gate record-review-invocation'));
-        assert.ok(String(launchArtifact.record_invocation_command).includes(`--reviewer-identity "${fixture.reviewerIdentity}"`));
+        assert.ok(String(launchArtifact.record_invocation_command).includes(`--reviewer-identity '${fixture.reviewerIdentity}'`));
         const commandReviewContextPath = path.relative(repoRoot, fixture.reviewContextPath).replace(/\\/g, '/');
         const commandLaunchArtifactPath = path.relative(repoRoot, launchArtifactPath).replace(/\\/g, '/');
         const commandLaunchInputArtifactPath = path.relative(repoRoot, launchInputArtifactPath).replace(/\\/g, '/');
@@ -260,6 +260,13 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(launchPreparedDetails?.launch_prepared_at_utc, launchArtifact.launch_prepared_at_utc);
         assert.equal(launchPreparedDetails?.reviewer_launch_input_artifact_path, launchInputArtifactPath.replace(/\\/g, '/'));
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
+        const capturedOutput = capturedLogs.join('\n');
+        assert.ok(capturedLogs[0]?.startsWith('Next action:\n'));
+        assert.ok(capturedOutput.includes('  Gate: prepare-reviewer-launch'));
+        assert.ok(capturedOutput.includes('  Do: Launch one clean-context delegated reviewer'));
+        assert.ok(capturedOutput.includes('  Command: none'));
+        assert.ok(capturedOutput.includes('  CommandReference: launch the reviewer from ReviewerLaunchInputArtifactPath'));
+        assert.equal(capturedLogs.some((line) => line.startsWith('NextAction:')), false);
         assert.ok(capturedLogs.some((line) => line.includes('REVIEWER_LAUNCH_PREPARED: code')));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextSha256: ${fixture.reviewContextSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewTreeStateSha256: ${fixture.reviewTreeStateSha256}`)));
@@ -311,7 +318,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplateSha256: ${outputTemplateSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
         assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
-        assert.ok(capturedLogs.some((line) => line.includes('NextAction: After `prepare-reviewer-launch`, launch one clean-context delegated reviewer')));
+        assert.ok(capturedLogs.some((line) => line.includes('NextStep: After `prepare-reviewer-launch`, launch one clean-context delegated reviewer')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
@@ -866,7 +873,12 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             fs.readdirSync(path.dirname(launchArtifactPath)).some((entry) => entry.includes('-superseded-')),
             false
         );
-        assert.ok(capturedLogs.some((line) => line.includes('NextAction: existing reviewer launch metadata is current')));
+        const capturedOutput = capturedLogs.join('\n');
+        assert.ok(capturedLogs[0]?.startsWith('Next action:\n'));
+        assert.ok(capturedOutput.includes('  Gate: prepare-reviewer-launch'));
+        assert.ok(capturedOutput.includes('Current reviewer launch metadata is already prepared'));
+        assert.equal(capturedLogs.some((line) => line.startsWith('NextAction:')), false);
+        assert.ok(capturedLogs.some((line) => line.includes('NextStep: existing reviewer launch metadata is current')));
         assert.ok(capturedLogs.some((line) => line.includes('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('OneShotLaunchState: default_handoff_ready_not_review_evidence')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));

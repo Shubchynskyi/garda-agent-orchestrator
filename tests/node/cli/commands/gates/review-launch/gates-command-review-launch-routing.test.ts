@@ -468,36 +468,30 @@ describe('cli/commands/gates review launch routing', () => {
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
-        const previousExitCode = process.exitCode;
-        const previousCwd = process.cwd();
-        process.exitCode = 0;
-        let rerouteExitCode = 0;
-        try {
-            process.chdir(repoRoot);
-            await recordReviewRoutingViaCli({
-                taskId,
-                reviewType: 'code',
-                repoRoot,
-                reviewerExecutionMode: 'delegated_subagent',
-                reviewerIdentity: 'agent:first-code-reviewer'
-            });
-            process.exitCode = 0;
-            await runCliMainWithHandling([
-                'gate',
-                'record-review-routing',
-                '--task-id', taskId,
-                '--review-type', 'code',
-                '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'delegated_subagent',
-                '--reviewer-identity', 'agent:replacement-code-reviewer'
-            ]);
-            rerouteExitCode = process.exitCode ?? 0;
-        } finally {
-            process.chdir(previousCwd);
-            process.exitCode = previousExitCode;
-        }
+        await recordReviewRoutingViaCli({
+            taskId,
+            reviewType: 'code',
+            repoRoot,
+            reviewerExecutionMode: 'delegated_subagent',
+            reviewerIdentity: 'agent:first-code-reviewer'
+        });
+        const routing = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', 'agent:replacement-code-reviewer'
+        ], { cwd: repoRoot });
 
-        assert.equal(rerouteExitCode, 0);
+        assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
+        const routingOutput = routing.logs.join('\n');
+        assert.ok(routing.logs[0]?.startsWith('Next action:\n'));
+        assert.ok(routingOutput.includes('  Gate: record-review-routing'));
+        assert.ok(routingOutput.includes(`  Command: node garda-agent-orchestrator/bin/garda.js next-step "${taskId}" --repo-root "."`));
+        assert.equal(routing.logs.some((line) => line.startsWith('NextAction:')), false);
+        assert.ok(routing.logs.some((line) => line.includes('REVIEW_ROUTING_RECORDED: code')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:replacement-code-reviewer');
         const events = readTaskTimelineEvents(repoRoot, taskId);

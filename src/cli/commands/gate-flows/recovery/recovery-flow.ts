@@ -17,6 +17,11 @@ import {
     getCurrentWorkflowConfigFileHashes,
     getWorkflowConfigChangedFiles
 } from '../../../../gates/workflow-config/workflow-config-work';
+import {
+    assessExplicitIgnoredRemediationTargets,
+    readTaskReviewArtifactTexts,
+    type IgnoredRemediationTargetAssessment
+} from '../../../../gates/review-remediation/ignored-remediation-targets';
 import { buildReviewContextPreflightDiffExpectations } from '../../../../gates/review-context/review-context-contract';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../../../../gates/task-mode/task-mode';
 import * as gateHelpers from '../../../../gates/shared/helpers';
@@ -25,6 +30,20 @@ import {
     runCompileGateCommand,
     type CompileGateCommandOptions
 } from '../compile/compile-flow';
+import {
+    buildNextStepRecoveryCommand
+} from '../compile/compile-flow-shared-evidence';
+import {
+    buildMandatoryCurrentCycleOptionalSkillActivationIndex,
+    computeOptionalSkillSelectionFingerprint,
+    isMandatoryOptionalSkillSelectionPolicyMode,
+    isOptionalSkillSelectionPolicyConfigured,
+    readOptionalSkillSelectionArtifact,
+    readOptionalSkillSelectionPolicyConfig,
+    readOptionalSkillSelectionTimelineEvidence,
+    type OptionalSkillSelectionArtifact
+} from '../../../../runtime/optional-skill-selection';
+import { SKILL_TELEMETRY_ACTOR } from '../../../../runtime/skill-telemetry';
 import {
     resolveDefaultReviewsPath,
     writeJsonArtifact
@@ -153,7 +172,7 @@ function appendRestartCompletedEvidence(input: {
     restartReason: string;
     nextStepSummary: string;
     extraDetails?: Record<string, unknown>;
-}): void {
+}): string {
     const artifactPath = resolveDefaultReviewsPath(input.repoRoot, `${input.taskId}${input.artifactSuffix}`);
     const baseDetails = {
         restart_event_schema_version: 1,
@@ -196,6 +215,7 @@ function appendRestartCompletedEvidence(input: {
         },
         { actor: 'orchestrator' }
     );
+    return artifactPath;
 }
 
 function toPlainRecord(value: unknown): Record<string, unknown> | null {
@@ -258,6 +278,132 @@ function resolveRestartAllowedDirtyWorkflowConfigFiles(
         .sort();
 }
 
+interface RestartOptionalSkillActivationSnapshot {
+    selectionFingerprintSha256: string;
+    activatedSkills: Array<{ id: string; pack: string | null }>;
+}
+
+interface RestartOptionalSkillActivationRebind {
+    reboundSkillIds: string[];
+    selectionFingerprintSha256: string | null;
+}
+
+function getOptionalSkillSelectionFingerprint(payload: OptionalSkillSelectionArtifact): string {
+    return String(payload.selection_fingerprint_sha256 || computeOptionalSkillSelectionFingerprint(payload)).trim();
+}
+
+function getSelectedOptionalSkills(payload: OptionalSkillSelectionArtifact): Array<{ id: string; pack: string | null }> {
+    return Array.isArray(payload.selected_installed_skills)
+        ? payload.selected_installed_skills
+            .map((entry) => ({
+                id: String(entry.id || '').trim(),
+                pack: entry.pack || null
+            }))
+            .filter((entry) => entry.id)
+        : [];
+}
+
+function readRestartOptionalSkillActivationSnapshot(
+    orchestratorRoot: string,
+    taskId: string
+): RestartOptionalSkillActivationSnapshot | null {
+    if (!isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)) {
+        return null;
+    }
+    const policyConfig = readOptionalSkillSelectionPolicyConfig(orchestratorRoot);
+    if (!isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode)) {
+        return null;
+    }
+    const artifact = readOptionalSkillSelectionArtifact(orchestratorRoot, taskId);
+    if (!artifact) {
+        return null;
+    }
+    const selectionFingerprintSha256 = getOptionalSkillSelectionFingerprint(artifact.payload);
+    if (!selectionFingerprintSha256) {
+        return null;
+    }
+    const selectedSkills = getSelectedOptionalSkills(artifact.payload);
+    if (selectedSkills.length === 0) {
+        return null;
+    }
+    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, taskId);
+    if (!timelineEvidence.exists || timelineEvidence.invalidJson) {
+        return null;
+    }
+    const activationIndex = buildMandatoryCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence);
+    const activatedSkills = selectedSkills.filter((skill) => activationIndex.has(skill.id));
+    return activatedSkills.length > 0
+        ? { selectionFingerprintSha256, activatedSkills }
+        : null;
+}
+
+async function rebindRestartOptionalSkillActivationsForCurrentCycle(input: {
+    orchestratorRoot: string;
+    taskId: string;
+    snapshot: RestartOptionalSkillActivationSnapshot | null;
+}): Promise<RestartOptionalSkillActivationRebind> {
+    const emptyRebind = {
+        reboundSkillIds: [],
+        selectionFingerprintSha256: input.snapshot?.selectionFingerprintSha256 || null
+    };
+    if (!input.snapshot) {
+        return emptyRebind;
+    }
+    if (!isOptionalSkillSelectionPolicyConfigured(input.orchestratorRoot)) {
+        return emptyRebind;
+    }
+    const policyConfig = readOptionalSkillSelectionPolicyConfig(input.orchestratorRoot);
+    if (!isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode)) {
+        return emptyRebind;
+    }
+    const artifact = readOptionalSkillSelectionArtifact(input.orchestratorRoot, input.taskId);
+    if (!artifact) {
+        return emptyRebind;
+    }
+    const currentSelectionFingerprintSha256 = getOptionalSkillSelectionFingerprint(artifact.payload);
+    if (currentSelectionFingerprintSha256 !== input.snapshot.selectionFingerprintSha256) {
+        return {
+            reboundSkillIds: [],
+            selectionFingerprintSha256: currentSelectionFingerprintSha256 || null
+        };
+    }
+
+    const selectedSkills = getSelectedOptionalSkills(artifact.payload);
+    const rebindableSkillIds = new Set(input.snapshot.activatedSkills.map((skill) => skill.id));
+    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(input.orchestratorRoot, input.taskId);
+    const currentActivationIndex = timelineEvidence.exists && !timelineEvidence.invalidJson
+        ? buildMandatoryCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence)
+        : new Map<string, number>();
+    const reboundSkillIds: string[] = [];
+    for (const selectedSkill of selectedSkills) {
+        if (currentActivationIndex.has(selectedSkill.id) || !rebindableSkillIds.has(selectedSkill.id)) {
+            continue;
+        }
+        appendMandatoryTaskEvent(
+            input.orchestratorRoot,
+            input.taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            `Skill selected: ${selectedSkill.id}`,
+            {
+                telemetry_type: 'skill_activation',
+                skill_id: selectedSkill.id,
+                reference_path: null,
+                trigger_reason: 'optional_skill_selection',
+                ...(selectedSkill.pack ? { pack_id: selectedSkill.pack } : {}),
+                optional_skill_selection_fingerprint_sha256: currentSelectionFingerprintSha256
+            },
+            { actor: SKILL_TELEMETRY_ACTOR }
+        );
+        reboundSkillIds.push(selectedSkill.id);
+    }
+
+    return {
+        reboundSkillIds,
+        selectionFingerprintSha256: currentSelectionFingerprintSha256
+    };
+}
+
 export async function runRestartCoherentCycleCommand(
     options: RestartCoherentCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
@@ -289,6 +435,11 @@ export async function runRestartCoherentCycleCommand(
         : [];
 
     try {
+        const optionalSkillActivationSnapshot = readRestartOptionalSkillActivationSnapshot(
+            resolveOrchestratorRoot(repoRoot),
+            resolvedTaskId
+        );
+
         ensureStepPassed('enter-task-mode', runEnterTaskModeCommand({
             repoRoot,
             taskId: resolvedTaskId,
@@ -366,6 +517,11 @@ export async function runRestartCoherentCycleCommand(
             emitMetrics: options.emitMetrics
         }));
 
+        const optionalSkillActivationRebind = await rebindRestartOptionalSkillActivationsForCurrentCycle({
+            orchestratorRoot: resolveOrchestratorRoot(repoRoot),
+            taskId: resolvedTaskId,
+            snapshot: optionalSkillActivationSnapshot
+        });
         const compileResult = await runCompileGateCommand({
             repoRoot,
             taskId: resolvedTaskId,
@@ -378,7 +534,7 @@ export async function runRestartCoherentCycleCommand(
         } as CompileGateCommandOptions);
         ensureStepPassed('compile-gate', compileResult);
         const nextStepSummary = 'materialize review artifacts for the new compile cycle, then rerun required-reviews-check, doc-impact-gate, and completion-gate.';
-        appendRestartCompletedEvidence({
+        const restartArtifactPath = appendRestartCompletedEvidence({
             repoRoot,
             taskId: resolvedTaskId,
             eventType: 'COHERENT_CYCLE_RESTARTED',
@@ -395,14 +551,22 @@ export async function runRestartCoherentCycleCommand(
             ),
             elapsedMs: Date.now() - startedAt,
             restartReason: 'coherent_cycle_restart_after_downstream_boundary_or_invalid_preflight_order',
-            nextStepSummary
+            nextStepSummary,
+            extraDetails: optionalSkillActivationRebind.reboundSkillIds.length > 0
+                ? {
+                    optional_skill_activation_rebound_skill_ids: optionalSkillActivationRebind.reboundSkillIds,
+                    optional_skill_activation_rebind_fingerprint_sha256: optionalSkillActivationRebind.selectionFingerprintSha256
+                }
+                : undefined
         });
 
         return {
             outputLines: buildCoherentCycleRestartedOutput({
                 taskId: resolvedTaskId,
+                navigatorCommand: buildNextStepRecoveryCommand(repoRoot, resolvedTaskId),
                 taskModePath: resolvedTaskModePath,
                 preflightPath: refreshedPreflightPath,
+                restartArtifactPath,
                 detectionSource: replayScope.detectionSource,
                 plannedChangedFilesCount: replayScope.plannedChangedFiles.length,
                 changedFilesCount: refreshedPreflight.changed_files_count,
@@ -447,24 +611,29 @@ export async function runRestartReviewCycleCommand(
     const previousPreflight = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
     const replayScope = resolveReviewCycleReplayScope(options, previousPreflight, previousTaskMode);
     const previousChangedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
-    const currentRemediationChangedFiles = resolveCurrentRemediationChangedFiles(repoRoot, replayScope);
+    let currentRemediationChangedFiles = resolveCurrentRemediationChangedFiles(repoRoot, replayScope);
     const taskModeArtifactRelativePath = resolvedTaskModePath
         ? gateHelpers.normalizePath(path.relative(repoRoot, path.resolve(resolvedTaskModePath)))
         : '';
     const taskModeIndexRelativePath = taskModeArtifactRelativePath
         ? gateHelpers.normalizePath(path.join(path.dirname(taskModeArtifactRelativePath), 'reviews-index.json'))
         : '';
-    const allowedBoundaryFiles = [
+    const baseAllowedBoundaryFiles = [
         ...(previousTaskMode.dirty_workspace_baseline?.changed_files || []),
         taskModeArtifactRelativePath,
         taskModeIndexRelativePath,
         ...getTaskManualValidationBoundaryFiles(resolvedTaskId, currentRemediationChangedFiles)
     ].filter(Boolean);
     const classificationConfig = getClassificationConfig(repoRoot);
-    const scopeBoundary = assessReviewRemediationScopeBoundary(
+    let ignoredRemediationTargetAssessment: IgnoredRemediationTargetAssessment = {
+        targets: [],
+        allowedBoundaryFiles: [],
+        violations: []
+    };
+    let scopeBoundary = assessReviewRemediationScopeBoundary(
         previousChangedFiles,
         currentRemediationChangedFiles,
-        allowedBoundaryFiles,
+        baseAllowedBoundaryFiles,
         classificationConfig.test_trigger_regexes
     );
     let remediationFixClassification = classifyReviewRemediationFix(
@@ -483,6 +652,10 @@ export async function runRestartReviewCycleCommand(
         throw new Error('Task intent could not be resolved for review-cycle restart.');
     }
     try {
+        const optionalSkillActivationSnapshot = readRestartOptionalSkillActivationSnapshot(
+            resolveOrchestratorRoot(repoRoot),
+            resolvedTaskId
+        );
         const refreshedPreflightPath = resolveRecoveryPreflightPath(
             repoRoot,
             resolvedTaskId,
@@ -495,16 +668,6 @@ export async function runRestartReviewCycleCommand(
                 repoRoot,
                 options,
                 scopeBoundary.currentChangedFiles
-            );
-            remediationFixClassification = classifyReviewRemediationFix(
-                scopeBoundary,
-                [],
-                remediationImpactAnalysis,
-                classificationConfig.test_trigger_regexes,
-                undefined,
-                {
-                    testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold
-                }
             );
         } catch (error: unknown) {
             const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
@@ -549,6 +712,89 @@ export async function runRestartReviewCycleCommand(
                 `Artifact: ${gateHelpers.normalizePath(artifactPath)}.`
             );
         }
+
+        ignoredRemediationTargetAssessment = assessExplicitIgnoredRemediationTargets({
+            repoRoot,
+            taskId: resolvedTaskId,
+            currentChangedFiles: scopeBoundary.currentChangedFiles,
+            explicitChangedFiles: replayScope.changedFiles ?? [],
+            guardedTargets: remediationImpactAnalysis.ignored_remediation_targets ?? [],
+            impactAnalysisSummary: remediationImpactAnalysis.summary,
+            reviewEvidenceTexts: readTaskReviewArtifactTexts(repoRoot, resolvedTaskId),
+            taskMode: previousTaskMode as unknown as Record<string, unknown>
+        });
+        if (ignoredRemediationTargetAssessment.violations.length > 0) {
+            const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
+                schema_version: 1,
+                task_id: resolvedTaskId,
+                status: 'BLOCKED',
+                reason: 'ignored_remediation_target_invalid',
+                previous_preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
+                previous_preflight_sha256: fs.existsSync(resolvedPreflightPath)
+                    ? gateHelpers.fileSha256(resolvedPreflightPath)
+                    : null,
+                detection_source: replayScope.detectionSource,
+                impact_analysis: remediationImpactAnalysis,
+                ignored_remediation_targets: {
+                    status: 'BLOCKED',
+                    targets: ignoredRemediationTargetAssessment.targets,
+                    violations: ignoredRemediationTargetAssessment.violations
+                },
+                remediation_fix_classification: remediationFixClassification,
+                remediation_scope: {
+                    status: scopeBoundary.status,
+                    previous_changed_files: scopeBoundary.previousChangedFiles,
+                    current_changed_files: scopeBoundary.currentChangedFiles,
+                    expanded_files: scopeBoundary.expandedFiles,
+                    expanded_non_test_files: scopeBoundary.expandedNonTestFiles,
+                    allowed_test_only_expansion_files: scopeBoundary.allowedTestOnlyExpansionFiles
+                },
+                refresh_points: {
+                    preflight: 'not_run_ignored_remediation_target_blocked',
+                    post_preflight_rule_pack: 'not_run_ignored_remediation_target_blocked',
+                    compile: 'not_run_ignored_remediation_target_blocked',
+                    review_contexts: 'not_run_ignored_remediation_target_blocked'
+                },
+                reuse_boundaries: {
+                    non_test_changes_must_stay_within_previous_preflight_scope: true,
+                    test_only_expansion_allowed: true,
+                    explicit_ignored_remediation_targets_require_hash_and_review_relevance: true,
+                    expanded_non_test_files_block_reuse: true
+                }
+            });
+            throw new Error(
+                `restart-review-cycle blocked ignored remediation target evidence: ` +
+                `${ignoredRemediationTargetAssessment.violations.join('; ')}. ` +
+                `Artifact: ${gateHelpers.normalizePath(artifactPath)}.`
+            );
+        }
+        currentRemediationChangedFiles = normalizeChangedFiles([
+            ...currentRemediationChangedFiles,
+            ...ignoredRemediationTargetAssessment.allowedBoundaryFiles
+        ]);
+        scopeBoundary = assessReviewRemediationScopeBoundary(
+            previousChangedFiles,
+            currentRemediationChangedFiles,
+            [
+                ...baseAllowedBoundaryFiles,
+                ...ignoredRemediationTargetAssessment.allowedBoundaryFiles
+            ],
+            classificationConfig.test_trigger_regexes
+        );
+        remediationImpactAnalysis = {
+            ...remediationImpactAnalysis,
+            affected_files: normalizeChangedFiles(scopeBoundary.currentChangedFiles)
+        };
+        remediationFixClassification = classifyReviewRemediationFix(
+            scopeBoundary,
+            [],
+            remediationImpactAnalysis,
+            classificationConfig.test_trigger_regexes,
+            undefined,
+            {
+                testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold
+            }
+        );
 
         if (scopeBoundary.status === 'BLOCKED') {
             const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
@@ -618,7 +864,11 @@ export async function runRestartReviewCycleCommand(
             taskModePath: resolvedTaskModePath || undefined,
             outputPath: refreshedPreflightPath,
             taskIntent: taskSummary,
-            changedFiles: resolveReviewRemediationClassifyChangedFiles(replayScope, scopeBoundary),
+            changedFiles: resolveReviewRemediationClassifyChangedFiles(
+                replayScope,
+                scopeBoundary,
+                ignoredRemediationTargetAssessment.allowedBoundaryFiles
+            ),
             useStaged: replayScope.useStaged,
             includeUntracked: replayScope.includeUntracked,
             emitMetrics: options.emitMetrics
@@ -638,6 +888,11 @@ export async function runRestartReviewCycleCommand(
             emitMetrics: options.emitMetrics
         }));
 
+        const optionalSkillActivationRebind = await rebindRestartOptionalSkillActivationsForCurrentCycle({
+            orchestratorRoot: resolveOrchestratorRoot(repoRoot),
+            taskId: resolvedTaskId,
+            snapshot: optionalSkillActivationSnapshot
+        });
         const compileResult = await runCompileGateCommand({
             repoRoot,
             taskId: resolvedTaskId,
@@ -651,7 +906,7 @@ export async function runRestartReviewCycleCommand(
         ensureStepPassed('compile-gate', compileResult);
         const remediationWorkspaceSnapshot = getWorkspaceSnapshot(
             repoRoot,
-            replayScope.detectionSource,
+            String(refreshedPreflight.detection_source || replayScope.detectionSource),
             replayScope.includeUntracked ?? !replayScope.useStaged,
             normalizeChangedFiles(refreshedPreflight.changed_files as unknown[])
         ) as Record<string, unknown>;
@@ -804,6 +1059,11 @@ export async function runRestartReviewCycleCommand(
                 : null,
             detection_source: replayScope.detectionSource,
             impact_analysis: remediationImpactAnalysis,
+            ignored_remediation_targets: {
+                status: ignoredRemediationTargetAssessment.violations.length > 0 ? 'BLOCKED' : 'OK',
+                targets: ignoredRemediationTargetAssessment.targets,
+                violations: ignoredRemediationTargetAssessment.violations
+            },
             remediation_fix_classification: remediationFixClassification,
             remediation_scope: {
                 status: scopeBoundary.status,
@@ -830,13 +1090,14 @@ export async function runRestartReviewCycleCommand(
             reuse_boundaries: {
                 non_test_changes_must_stay_within_previous_preflight_scope: true,
                 test_only_expansion_allowed: true,
+                explicit_ignored_remediation_targets_require_hash_and_review_relevance: true,
                 expanded_non_test_files_block_reuse: true
             }
         });
         const reviewContextsRefreshStatus = pendingReviewTypes.length > 0
             ? 'partially_prepared_dependency_blocked'
             : 'prepared_or_reused';
-        appendRestartCompletedEvidence({
+        const restartArtifactPath = appendRestartCompletedEvidence({
             repoRoot,
             taskId: resolvedTaskId,
             eventType: 'REVIEW_CYCLE_RESTARTED',
@@ -865,15 +1126,23 @@ export async function runRestartReviewCycleCommand(
                 launch_required_review_types: launchRequiredReviewTypes,
                 reused_review_types: reusedReviewTypes,
                 pending_review_types: pendingReviewTypes,
-                pending_reason: pendingReason
+                pending_reason: pendingReason,
+                ...(optionalSkillActivationRebind.reboundSkillIds.length > 0
+                    ? {
+                        optional_skill_activation_rebound_skill_ids: optionalSkillActivationRebind.reboundSkillIds,
+                        optional_skill_activation_rebind_fingerprint_sha256: optionalSkillActivationRebind.selectionFingerprintSha256
+                    }
+                    : {})
             }
         });
 
         return {
             outputLines: buildReviewCycleRestartedOutput({
                 taskId: resolvedTaskId,
+                navigatorCommand: buildNextStepRecoveryCommand(repoRoot, resolvedTaskId),
                 preflightPath: refreshedPreflightPath,
                 remediationArtifactPath,
+                restartArtifactPath,
                 detectionSource: replayScope.detectionSource,
                 affectedFilesCount: scopeBoundary.currentChangedFiles.length,
                 impactAnalysisSource: remediationImpactAnalysis.source,

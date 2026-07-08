@@ -3,6 +3,7 @@ import {
     assert,
     createTempRepo,
     describe,
+    fileSha256,
     findLastTimelineEventIndex,
     fs,
     getReviewsRoot,
@@ -12,11 +13,13 @@ import {
     loadTaskEntryRulePack,
     markAsSourceCheckout,
     path,
+    prepareScopedDiffFixture,
     readTaskTimelineEvents,
     runCompileGateCommand,
     runEnterTaskMode,
     runExplicitPreflight,
     runHandshakeForTask,
+    runRestartReviewCycleCommandRaw,
     runRestartReviewCycleCommand,
     runShellSmokeForTask,
     seedInitAnswers,
@@ -26,8 +29,183 @@ import {
     writeProtectedControlPlaneManifest,
     writeProfilesConfig,
     writeReviewCapabilitiesConfig,
+    writeReceiptBackedReviewArtifact,
     writeSimpleCompileCommandsFile
 } from './gates-review-cycle-fixtures';
+import { resolveNextStep } from '../../../../../../src/gates/next-step/next-step';
+
+const IGNORED_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
+const ROOT_IGNORED_CHANGELOG_PATH = 'CHANGELOG.md';
+
+function writeRepoFile(repoRoot: string, relativePath: string, content: string): void {
+    const filePath = path.join(repoRoot, ...relativePath.split('/'));
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function appendIgnoredChangelogRule(repoRoot: string, changelogPath = IGNORED_CHANGELOG_PATH): void {
+    fs.appendFileSync(
+        path.join(repoRoot, '.gitignore'),
+        `${changelogPath}\n`,
+        'utf8'
+    );
+}
+
+function buildIgnoredChangelogImpactAnalysis(changelogPath = IGNORED_CHANGELOG_PATH): string {
+    return [
+        `Reviewer finding: failed review requires release-note remediation in ${changelogPath}.`,
+        `Intended fix: update only the ignored changelog remediation target ${changelogPath}.`,
+        `Affected files/contracts: ${changelogPath} is the affected release-note artifact and runtime contracts stay unchanged.`,
+        `API/runtime/artifact/test impact: artifact impact is limited to the release-note evidence in ${changelogPath}.`,
+        'Possible side effects: review reuse must fail closed if code or runtime behavior changes appear.',
+        'Required targeted checks: restart-review-cycle must refresh preflight, compile, and review context evidence.',
+        'Scope or review-type changes: the ignored changelog is in scope only because the failed review named it.',
+        'Related blockers/follow-up: no separate follow-up is needed for this same failed-review blocker.'
+    ].join(' ');
+}
+
+async function prepareIgnoredChangelogFixture(
+    taskId: string,
+    suffix: string,
+    changelogPath = IGNORED_CHANGELOG_PATH,
+    plannedChangedFiles = ['src/app.ts']
+): Promise<{
+    repoRoot: string;
+    preflightPath: string;
+    commandsPath: string;
+    outputFiltersPath: string;
+}> {
+    const repoRoot = createTempRepo();
+    seedRemediationRepoBase(repoRoot);
+    appendIgnoredChangelogRule(repoRoot, changelogPath);
+    writeReviewCapabilitiesConfig(repoRoot);
+    writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+    writeRepoFile(repoRoot, changelogPath, '# Changelog\n\n- Initial ignored release note.\n');
+    const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, suffix);
+    initializeGitRepo(repoRoot);
+    seedTaskQueue(repoRoot, taskId);
+    seedInitAnswers(repoRoot, 'Codex');
+
+    runEnterTaskMode({
+        repoRoot,
+        taskId,
+        taskSummary: 'Restart review cycle with explicit ignored changelog remediation',
+        plannedChangedFiles
+    });
+    loadTaskEntryRulePack(repoRoot, taskId);
+    runHandshakeForTask(repoRoot, taskId);
+    runShellSmokeForTask(repoRoot, taskId);
+    const preflightPath = runExplicitPreflight(
+        repoRoot,
+        taskId,
+        'Restart review cycle with explicit ignored changelog remediation',
+        ['src/app.ts']
+    );
+    loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+    const compileResult = await runCompileGateCommand({
+        repoRoot,
+        taskId,
+        preflightPath,
+        commandsPath,
+        outputFiltersPath,
+        emitMetrics: false
+    });
+    assert.equal(compileResult.exitCode, 0);
+    return {
+        repoRoot,
+        preflightPath,
+        commandsPath,
+        outputFiltersPath
+    };
+}
+
+function writeFailedIgnoredChangelogReviewRequest(
+    repoRoot: string,
+    taskId: string,
+    changelogPath = IGNORED_CHANGELOG_PATH
+): void {
+    writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'CODE REVIEW FAILED', [
+        '# Code Review',
+        '',
+        `Finding: failed review requires release-note remediation in ${changelogPath}.`,
+        '',
+        'CODE REVIEW FAILED',
+        '',
+        '## Findings by Severity',
+        `- Blocking: add the explicit ignored changelog target ${changelogPath}.`,
+        '',
+        '## Residual Risks',
+        'The release-note artifact remains missing from the current review-cycle recovery scope.',
+        '',
+        '## Verdict',
+        'CODE REVIEW FAILED'
+    ]);
+}
+
+function writeFailedIgnoredChangelogPathFirstReviewRequest(
+    repoRoot: string,
+    taskId: string,
+    changelogPath = IGNORED_CHANGELOG_PATH
+): void {
+    writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'CODE REVIEW FAILED', [
+        '# Code Review',
+        '',
+        `${changelogPath} is missing the required release-note entry for this failed review.`,
+        '',
+        'CODE REVIEW FAILED',
+        '',
+        '## Findings by Severity',
+        `- Blocking: ${changelogPath} is required for release-note remediation.`,
+        '',
+        '## Residual Risks',
+        'The release-note artifact remains missing from the current review-cycle recovery scope.',
+        '',
+        '## Verdict',
+        'CODE REVIEW FAILED'
+    ]);
+}
+
+function writeFailedIgnoredChangelogExampleOnlyReviewRequest(
+    repoRoot: string,
+    taskId: string,
+    changelogPath = IGNORED_CHANGELOG_PATH
+): void {
+    writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'CODE REVIEW FAILED', [
+        '# Code Review',
+        '',
+        `High: support path-first findings such as ${changelogPath} is missing the required release-note entry.`,
+        '',
+        'CODE REVIEW FAILED',
+        '',
+        '## Findings by Severity',
+        'High: update the parser behavior; the example path is not the requested remediation target.',
+        '',
+        '## Residual Risks',
+        'none',
+        '',
+        '## Verdict',
+        'CODE REVIEW FAILED'
+    ]);
+}
+
+function writeFailedSourceOnlyReviewRequest(repoRoot: string, taskId: string): void {
+    writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'CODE REVIEW FAILED', [
+        '# Code Review',
+        '',
+        'Finding: failed review requires source remediation in src/app.ts.',
+        '',
+        'CODE REVIEW FAILED',
+        '',
+        '## Findings by Severity',
+        '- Blocking: update src/app.ts for the failed review.',
+        '',
+        '## Residual Risks',
+        'The source remediation remains incomplete.',
+        '',
+        '## Verdict',
+        'CODE REVIEW FAILED'
+    ]);
+}
 
 describe('cli/commands/gates – review-cycle remediation suite', () => {
     it('restart-review-cycle reuses unaffected security and refactor evidence after test hook remediation invalidates code', { concurrency: false }, async () => {
@@ -1922,6 +2100,733 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         assert.deepEqual(
             (remediationArtifact.remediation_scope as Record<string, unknown>).expanded_files,
             ['tests/baseline.test.ts']
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle accepts an explicit ignored changelog remediation target named by the blocker', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-accepted';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-accepted');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Added the failed-review release note.\n');
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        writeFailedIgnoredChangelogReviewRequest(repoRoot, taskId);
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: [IGNORED_CHANGELOG_PATH],
+            impactAnalysis: buildIgnoredChangelogImpactAnalysis(),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, [
+            IGNORED_CHANGELOG_PATH,
+            'src/app.ts'
+        ]);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const ignoredTargets = remediationArtifact.ignored_remediation_targets as Record<string, unknown>;
+        assert.equal(ignoredTargets.status, 'OK');
+        assert.deepEqual(
+            (ignoredTargets.targets as Array<Record<string, unknown>>).map((target) => target.path),
+            [IGNORED_CHANGELOG_PATH]
+        );
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).expanded_non_test_files,
+            []
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle accepts a path-first ignored changelog blocker finding', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-path-first';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-path-first');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Added the path-first failed-review release note.\n');
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        writeFailedIgnoredChangelogPathFirstReviewRequest(repoRoot, taskId);
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: [IGNORED_CHANGELOG_PATH],
+            impactAnalysis: buildIgnoredChangelogImpactAnalysis(),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.deepEqual(
+            (remediationArtifact.ignored_remediation_targets as Record<string, unknown>).violations,
+            []
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle accepts a root ignored changelog target named by a path-first blocker', { concurrency: false }, async () => {
+        const taskId = 'T-940-root-ignored-changelog-path-first';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(
+            taskId,
+            'root-ignored-changelog-path-first',
+            ROOT_IGNORED_CHANGELOG_PATH
+        );
+
+        writeRepoFile(repoRoot, ROOT_IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Added the root ignored release note.\n');
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        writeFailedIgnoredChangelogPathFirstReviewRequest(repoRoot, taskId, ROOT_IGNORED_CHANGELOG_PATH);
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: [ROOT_IGNORED_CHANGELOG_PATH],
+            impactAnalysis: buildIgnoredChangelogImpactAnalysis(ROOT_IGNORED_CHANGELOG_PATH),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.ok((refreshedPreflight.changed_files as string[]).includes(ROOT_IGNORED_CHANGELOG_PATH));
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const targets = (remediationArtifact.ignored_remediation_targets as Record<string, unknown>)
+            .targets as Array<Record<string, unknown>>;
+        assert.deepEqual(targets.map((target) => target.path), [ROOT_IGNORED_CHANGELOG_PATH]);
+        assert.equal(targets[0].sha256, fileSha256(path.join(repoRoot, ROOT_IGNORED_CHANGELOG_PATH)));
+        assert.deepEqual(targets[0].approved_by, ['review_finding']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle accepts an ignored changelog remediation target approved by task plan', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-task-plan';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(
+            taskId,
+            'ignored-changelog-task-plan',
+            IGNORED_CHANGELOG_PATH,
+            ['src/app.ts', IGNORED_CHANGELOG_PATH]
+        );
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        writeFailedSourceOnlyReviewRequest(repoRoot, taskId);
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Added the task-plan approved release note.\n');
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: [IGNORED_CHANGELOG_PATH],
+            impactAnalysis: buildIgnoredChangelogImpactAnalysis(),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.ok((refreshedPreflight.changed_files as string[]).includes(IGNORED_CHANGELOG_PATH));
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const targets = (remediationArtifact.ignored_remediation_targets as Record<string, unknown>)
+            .targets as Array<Record<string, unknown>>;
+        assert.deepEqual(targets.map((target) => target.path), [IGNORED_CHANGELOG_PATH]);
+        assert.deepEqual(targets[0].approved_by, ['task_plan']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle rejects an explicit ignored file that is not approved by blocker evidence', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-unapproved';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-unapproved');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Unapproved ignored release note.\n');
+        const restartResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts', IGNORED_CHANGELOG_PATH],
+            impactAnalysis: [
+                'Reviewer finding: failed review requires a same-task remediation pass for src/app.ts.',
+                'Intended fix: update only src/app.ts and preserve the original source boundary.',
+                'Affected files and contracts: src/app.ts is the affected file and public contracts stay unchanged.',
+                'API/runtime/artifact/test impact: runtime evidence and compile proof are refreshed for src/app.ts.',
+                'Possible side effects: unrelated docs or artifacts must not be absorbed by review-cycle recovery.',
+                'Required targeted checks: compile gate and review-cycle scope assertions cover the source fix.',
+                'Scope or review-type changes: ignored artifacts are outside this failed-review remediation scope.',
+                'Related blocker or follow-up decision: any release note work must be a separate follow-up.'
+            ].join(' '),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
+        const output = restartResult.outputLines.join('\n');
+        assert.match(output, /ignored remediation target .* is not approved/);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(remediationArtifact.status, 'BLOCKED');
+        assert.equal(remediationArtifact.reason, 'ignored_remediation_target_invalid');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle rejects ignored-only changed-file self-approval through impact analysis', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-impact-only';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-impact-only');
+
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Impact-only ignored release note.\n');
+        const restartResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: [IGNORED_CHANGELOG_PATH],
+            impactAnalysis: buildIgnoredChangelogImpactAnalysis(),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(restartResult.outputLines.join('\n'), /ignored remediation target .* is not approved/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle ignores impact-analysis-only ignored path mentions outside changed scope', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-impact-mention-unchanged';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-impact-mention-unchanged');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts'],
+            impactAnalysis: [
+                'Reviewer finding: failed review requires a same-task remediation pass for src/app.ts.',
+                'Intended fix: update only src/app.ts and preserve the original source boundary.',
+                'Affected files and contracts: src/app.ts is the affected file and public contracts stay unchanged.',
+                'API/runtime/artifact/test impact: runtime evidence and compile proof are refreshed for src/app.ts.',
+                `Possible side effects: do not update ${IGNORED_CHANGELOG_PATH}; release notes stay outside this remediation.`,
+                'Required targeted checks: compile gate and review-cycle scope assertions cover the source fix.',
+                'Scope or review-type changes: ignored artifacts are outside this failed-review remediation scope.',
+                'Related blocker or follow-up decision: any release note work must be a separate follow-up.'
+            ].join(' '),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle ignores generated review markdown when approving ignored remediation targets', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-generated-context-only';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-generated-context-only');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Context-only ignored release note.\n');
+        fs.writeFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.md`),
+            [
+                '# Generated Review Context',
+                '',
+                `This generated handoff mentions ${IGNORED_CHANGELOG_PATH}, but it is not the failed review output.`
+            ].join('\n'),
+            'utf8'
+        );
+
+        const restartResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts', IGNORED_CHANGELOG_PATH],
+            impactAnalysis: [
+                'Reviewer finding: failed review requires a same-task remediation pass for src/app.ts.',
+                'Intended fix: update only src/app.ts and preserve the original source boundary.',
+                'Affected files and contracts: src/app.ts is the affected file and public contracts stay unchanged.',
+                'API/runtime/artifact/test impact: runtime evidence and compile proof are refreshed for src/app.ts.',
+                'Possible side effects: generated review context must not approve ignored remediation targets.',
+                'Required targeted checks: restart-review-cycle rejects context-only ignored-file mentions.',
+                'Scope or review-type changes: ignored artifacts are outside this failed-review remediation scope.',
+                'Related blocker or follow-up decision: any release note work must be a separate follow-up.'
+            ].join(' '),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(restartResult.outputLines.join('\n'), /ignored remediation target .* is not approved/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle rejects ignored paths mentioned only as failed-review diagnostics', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-diagnostic-only';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-diagnostic-only');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Diagnostic-only ignored release note.\n');
+        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'CODE REVIEW FAILED', [
+            '# Code Review',
+            '',
+            `Diagnostic reproduction: the resolver accepted ${IGNORED_CHANGELOG_PATH} when it appeared in unrelated context text.`,
+            '',
+            '## Findings by Severity',
+            'High: restrict ignored remediation approval to actionable failed-review requests and guarded evidence.',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'CODE REVIEW FAILED'
+        ]);
+
+        const restartResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts', IGNORED_CHANGELOG_PATH],
+            impactAnalysis: [
+                'Reviewer finding: failed review requires a same-task remediation pass for src/app.ts.',
+                'Intended fix: update only src/app.ts and preserve the original source boundary.',
+                'Affected files and contracts: src/app.ts is the affected file and public contracts stay unchanged.',
+                'API/runtime/artifact/test impact: runtime evidence and compile proof are refreshed for src/app.ts.',
+                'Possible side effects: diagnostic examples in failed reviews must not approve ignored paths.',
+                'Required targeted checks: restart-review-cycle rejects diagnostic-only ignored-file mentions.',
+                'Scope or review-type changes: ignored artifacts are outside this failed-review remediation scope.',
+                'Related blocker or follow-up decision: any release note work must be a separate follow-up.'
+            ].join(' '),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(restartResult.outputLines.join('\n'), /ignored remediation target .* is not approved/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle rejects ignored paths mentioned only in failed-review examples', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-example-only';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-example-only');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Example-only ignored release note.\n');
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        writeFailedIgnoredChangelogExampleOnlyReviewRequest(repoRoot, taskId);
+        const restartResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts', IGNORED_CHANGELOG_PATH],
+            impactAnalysis: [
+                'Reviewer finding: failed review requires a same-task remediation pass for src/app.ts.',
+                'Intended fix: update only src/app.ts and preserve the original source boundary.',
+                'Affected files and contracts: src/app.ts is the affected file and public contracts stay unchanged.',
+                'API/runtime/artifact/test impact: runtime evidence and compile proof are refreshed for src/app.ts.',
+                'Possible side effects: example wording in failed reviews must not approve ignored paths.',
+                'Required targeted checks: restart-review-cycle rejects example-only ignored-file mentions.',
+                'Scope or review-type changes: ignored artifacts are outside this failed-review remediation scope.',
+                'Related blocker or follow-up decision: any release note work must be a separate follow-up.'
+            ].join(' '),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(restartResult.outputLines.join('\n'), /ignored remediation target .* is not approved/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle rejects negated failed-review ignored path mentions', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-negated-review';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-negated-review');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Negated ignored release note.\n');
+        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'CODE REVIEW FAILED', [
+            '# Code Review',
+            '',
+            `Do not update ${IGNORED_CHANGELOG_PATH}; remove this ignored release-note change from the remediation scope.`,
+            '',
+            '## Findings by Severity',
+            'High: keep ignored release-note artifacts outside this failed-review remediation.',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'CODE REVIEW FAILED'
+        ]);
+
+        const restartResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts', IGNORED_CHANGELOG_PATH],
+            impactAnalysis: [
+                'Reviewer finding: failed review requires a same-task remediation pass for src/app.ts.',
+                'Intended fix: update only src/app.ts and preserve the original source boundary.',
+                'Affected files and contracts: src/app.ts is the affected file and public contracts stay unchanged.',
+                'API/runtime/artifact/test impact: runtime evidence and compile proof are refreshed for src/app.ts.',
+                'Possible side effects: negated failed-review text must not approve ignored paths.',
+                'Required targeted checks: restart-review-cycle rejects negated ignored-file mentions.',
+                'Scope or review-type changes: ignored artifacts are outside this failed-review remediation scope.',
+                'Related blocker or follow-up decision: any release note work must be a separate follow-up.'
+            ].join(' '),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(restartResult.outputLines.join('\n'), /ignored remediation target .* is not approved/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle accepts current guarded hash evidence for an ignored remediation target', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-current-guard';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-current-guard');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        writeFailedSourceOnlyReviewRequest(repoRoot, taskId);
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Updated with guarded hash evidence.\n');
+        const currentSha256 = fileSha256(path.join(repoRoot, ...IGNORED_CHANGELOG_PATH.split('/')));
+        const impactAnalysisPath = path.join(getReviewsRoot(repoRoot), `${taskId}-impact-analysis.json`);
+        fs.writeFileSync(impactAnalysisPath, JSON.stringify({
+            'reviewer finding': 'failed review requires source remediation; guarded ignored-file evidence supplies release-note scope',
+            'intended fix': `carry the ignored changelog remediation target ${IGNORED_CHANGELOG_PATH} only through guarded current hash evidence`,
+            'affected files and contracts': `${IGNORED_CHANGELOG_PATH} is the affected artifact; runtime contracts stay unchanged`,
+            'api/runtime/artifact/test impact': `artifact impact is limited to ${IGNORED_CHANGELOG_PATH} with compile evidence refreshed`,
+            'possible side effects': 'review reuse must fail closed if guarded ignored-file evidence is stale or hashless',
+            'required targeted checks': 'restart-review-cycle must accept a matching guarded ignored-file hash',
+            'scope or review-type changes': 'the ignored changelog is in scope only with current guarded hash evidence',
+            'related blocker or follow-up decision': 'no follow-up is needed for current guarded evidence',
+            ignored_remediation_targets: [
+                {
+                    path: IGNORED_CHANGELOG_PATH,
+                    sha256: currentSha256,
+                    reason: 'current guarded evidence approves ignored remediation'
+                }
+            ]
+        }, null, 2), 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: [IGNORED_CHANGELOG_PATH],
+            impactAnalysisPath,
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.ok((refreshedPreflight.changed_files as string[]).includes(IGNORED_CHANGELOG_PATH));
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const targets = (remediationArtifact.ignored_remediation_targets as Record<string, unknown>)
+            .targets as Array<Record<string, unknown>>;
+        assert.deepEqual(targets.map((target) => target.path), [IGNORED_CHANGELOG_PATH]);
+        assert.equal(targets[0].sha256, currentSha256);
+        assert.deepEqual(targets[0].approved_by, ['guarded_remediation_evidence']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle rejects stale guarded hash evidence for an ignored remediation target', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-stale-hash';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-stale-hash');
+        const oldSha256 = fileSha256(path.join(repoRoot, ...IGNORED_CHANGELOG_PATH.split('/')));
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Updated after hash capture.\n');
+        const impactAnalysisPath = path.join(getReviewsRoot(repoRoot), `${taskId}-impact-analysis.json`);
+        fs.writeFileSync(impactAnalysisPath, JSON.stringify({
+            'reviewer finding': `failed review requires release-note remediation in ${IGNORED_CHANGELOG_PATH}`,
+            'intended fix': `update the ignored changelog remediation target ${IGNORED_CHANGELOG_PATH}`,
+            'affected files and contracts': `${IGNORED_CHANGELOG_PATH} and src/app.ts are the affected files; runtime contracts stay unchanged`,
+            'api/runtime/artifact/test impact': `artifact impact is limited to ${IGNORED_CHANGELOG_PATH} with compile evidence refreshed`,
+            'possible side effects': 'review reuse must fail closed if guarded ignored-file evidence is stale',
+            'required targeted checks': 'restart-review-cycle must validate the ignored file hash before preflight refresh',
+            'scope or review-type changes': 'the ignored changelog is in scope only with current guarded hash evidence',
+            'related blocker or follow-up decision': 'no follow-up is needed for current guarded evidence',
+            ignored_remediation_targets: [
+                {
+                    path: IGNORED_CHANGELOG_PATH,
+                    sha256: oldSha256,
+                    reason: 'failed review requested changelog remediation'
+                }
+            ]
+        }, null, 2), 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts', IGNORED_CHANGELOG_PATH],
+            impactAnalysisPath,
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(restartResult.outputLines.join('\n'), /ignored remediation target hash mismatch/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle rejects hashless guarded evidence for an ignored remediation target', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-hashless-guard';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-hashless-guard');
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Updated without guarded hash.\n');
+        const impactAnalysisPath = path.join(getReviewsRoot(repoRoot), `${taskId}-impact-analysis.json`);
+        fs.writeFileSync(impactAnalysisPath, JSON.stringify({
+            'reviewer finding': `failed review requires release-note remediation in ${IGNORED_CHANGELOG_PATH}`,
+            'intended fix': `update the ignored changelog remediation target ${IGNORED_CHANGELOG_PATH}`,
+            'affected files and contracts': `${IGNORED_CHANGELOG_PATH} and src/app.ts are the affected files; runtime contracts stay unchanged`,
+            'api/runtime/artifact/test impact': `artifact impact is limited to ${IGNORED_CHANGELOG_PATH} with compile evidence refreshed`,
+            'possible side effects': 'review reuse must fail closed if guarded ignored-file evidence is missing a hash',
+            'required targeted checks': 'restart-review-cycle must require a current hash for guarded ignored-file evidence',
+            'scope or review-type changes': 'the ignored changelog is in scope only with current guarded hash evidence',
+            'related blocker or follow-up decision': 'no follow-up is needed for current guarded evidence',
+            ignored_remediation_targets: [
+                {
+                    path: IGNORED_CHANGELOG_PATH,
+                    reason: 'hashless guarded evidence must not approve ignored remediation'
+                }
+            ]
+        }, null, 2), 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts', IGNORED_CHANGELOG_PATH],
+            impactAnalysisPath,
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(restartResult.outputLines.join('\n'), /guarded evidence must include current sha256/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle refreshes mixed tracked and explicit ignored remediation scope', { concurrency: false }, async () => {
+        const taskId = 'T-940-ignored-changelog-mixed';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'ignored-changelog-mixed');
+
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 3;\n');
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Documented the source remediation.\n');
+        writeFailedIgnoredChangelogReviewRequest(repoRoot, taskId);
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts', IGNORED_CHANGELOG_PATH],
+            impactAnalysis: [
+                `Reviewer finding: failed review requires source remediation in src/app.ts and release-note remediation in ${IGNORED_CHANGELOG_PATH}.`,
+                `Intended fix: update src/app.ts and the explicit ignored changelog ${IGNORED_CHANGELOG_PATH}.`,
+                `Affected files/contracts: src/app.ts and ${IGNORED_CHANGELOG_PATH} are affected while public contracts stay unchanged.`,
+                'API/runtime/artifact/test impact: runtime evidence comes from src/app.ts and artifact evidence comes from the ignored changelog.',
+                'Possible side effects: review reuse must fail closed if source behavior or ignored artifact evidence drifts.',
+                'Required targeted checks: compile gate and review-cycle scope assertions cover the mixed remediation.',
+                'Scope or review-type changes: refreshed preflight must include both tracked and explicit ignored files.',
+                'Related blockers/follow-up: both changes resolve the same failed-review blocker.'
+            ].join(' '),
+            emitMetrics: false
+        });
+
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, [
+            IGNORED_CHANGELOG_PATH,
+            'src/app.ts'
+        ]);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.deepEqual(
+            (remediationArtifact.ignored_remediation_targets as Record<string, unknown>).violations,
+            []
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('next-step includes explicit ignored changelog remediation in failed-review restart command', { concurrency: false }, async () => {
+        const taskId = 'T-940-next-step-ignored-changelog';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'next-step-ignored-changelog');
+        void commandsPath;
+        void outputFiltersPath;
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Added reviewer-requested note.\n');
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        writeFailedIgnoredChangelogPathFirstReviewRequest(repoRoot, taskId);
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+
+        const nextStep = resolveNextStep({ taskId, repoRoot });
+        const commandText = nextStep.commands.map((command) => command.command).join('\n');
+        assert.match(commandText, /restart-review-cycle/);
+        assert.match(commandText, new RegExp(`--changed-file "${IGNORED_CHANGELOG_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('next-step does not include example-only ignored changelog mentions in failed-review restart command', { concurrency: false }, async () => {
+        const taskId = 'T-940-next-step-example-only-ignored-changelog';
+        const {
+            repoRoot,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath
+        } = await prepareIgnoredChangelogFixture(taskId, 'next-step-example-only-ignored-changelog');
+        void commandsPath;
+        void outputFiltersPath;
+        writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Example-only reviewer note.\n');
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        writeFailedIgnoredChangelogExampleOnlyReviewRequest(repoRoot, taskId);
+        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+
+        const nextStep = resolveNextStep({ taskId, repoRoot });
+        const commandText = nextStep.commands.map((command) => command.command).join('\n');
+        assert.match(commandText, /restart-review-cycle/);
+        assert.doesNotMatch(
+            commandText,
+            new RegExp(`--changed-file "${IGNORED_CHANGELOG_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`)
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

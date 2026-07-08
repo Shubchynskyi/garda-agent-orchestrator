@@ -378,7 +378,7 @@ export function runCommandTimeoutDiagnosticsCommand(options: CommandTimeoutDiagn
         artifactHash
     );
 
-    const outputLines = formatCommandTimeoutDiagnosticsResult(artifact);
+    const outputLines = formatCommandTimeoutDiagnosticsResult(artifact, artifactPath);
     outputLines.push(`CommandTimeoutArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`);
 
     return {

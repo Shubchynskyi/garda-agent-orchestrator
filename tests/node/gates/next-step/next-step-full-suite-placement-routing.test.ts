@@ -958,6 +958,10 @@ describe('gates/next-step', () => {
         assert.ok(result.commands.every((command) => command.command.includes(`--task-id "${TASK_ID}"`)));
         assert.ok(result.commands.every((command) => command.command.includes(`--child-task-id "${TASK_ID}-F1"`)));
         assert.ok(result.commands.every((command) => command.command.includes(`${TASK_ID}-full-suite-validation.json`)));
+        const formatted = formatNextStepText(result);
+        assert.match(formatted, /Command: none/);
+        assert.match(formatted, /CommandReference: choose one of the 2 Commands entries below/);
+        assert.doesNotMatch(formatted, /Command: inspect diagnostics; no executable command is available/);
         assert.ok(!result.reason.includes('completed because all explicit children are DONE'));
     });
 

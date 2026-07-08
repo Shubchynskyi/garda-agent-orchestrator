@@ -26,6 +26,12 @@ import {
     parseReviewerIdentity,
     resolveReviewerIdentityOption
 } from './reviewer-identity-options';
+import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
+import {
+    getBundleCliCommand,
+    getSourceCliCommand,
+    resolveBundleNameForTarget
+} from '../../../../core/constants';
 
 export interface ReviewRoutingLaunchHandlerDependencies {
     assertExplicitReviewContextRuntimeIdentity: typeof import('../index').assertExplicitReviewContextRuntimeIdentity;
@@ -65,6 +71,16 @@ export interface ReviewRoutingLaunchHandlerDependencies {
     snapshotSupersededReviewerLaunchArtifact: typeof import('../index').snapshotSupersededReviewerLaunchArtifact;
     stringSha256: typeof import('../index').stringSha256;
     toReviewerHandoffAbsolutePath: typeof import('../index').toReviewerHandoffAbsolutePath;
+}
+
+function buildCliPrefix(repoRoot: string): string {
+    return fs.existsSync(path.join(path.resolve(repoRoot), 'bin', 'garda.js'))
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleNameForTarget(repoRoot));
+}
+
+function buildNavigatorCommand(repoRoot: string, taskId: string): string {
+    return `${buildCliPrefix(repoRoot)} next-step "${taskId}" --repo-root "."`;
 }
 
 export function createReviewRoutingLaunchHandlers(deps: ReviewRoutingLaunchHandlerDependencies) {
@@ -220,6 +236,16 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
         }
         throw routingError;
     }
+    console.log(buildOperatorNextActionBlock({
+        status: 'PASSED',
+        gate: 'record-review-routing',
+        action: 'Record fresh delegated review routing',
+        reason: `Routing telemetry recorded for '${reviewType}'.`,
+        command: buildNavigatorCommand(repoRoot, taskId),
+        detailsPath: contextPath,
+        detailsHint: 'Review routing details and context hashes are listed below.'
+    }).join('\n'));
+    console.log('');
     console.log(
         `REVIEW_ROUTING_RECORDED: ${reviewType} ` +
         `(Context: ${toReviewerHandoffAbsolutePath(repoRoot, contextPath)}, Sha256: ${routingUpdate.contextSha256 || 'n/a'})`

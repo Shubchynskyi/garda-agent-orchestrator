@@ -23,6 +23,7 @@ import {
     buildDefaultWorkflowConfig,
     normalizeFullSuiteValidationPlacement,
     normalizeOptionalQualityCheckChangedFileRegexes,
+    normalizeReviewDelegationConfig,
     normalizeOptionalQualityCheckScopeCategories,
     normalizeOptionalQualityChecksConfig,
     type OrchestratorWorkPolicyMode
@@ -38,7 +39,7 @@ const VALID_WORKFLOW_FULL_SUITE_FAILURE_POLICIES = new Set(['AUDIT_AND_BLOCK', '
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeyList = ['compile_gate', 'full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'auto_backup', 'optional_quality_checks', 'orchestrator_work_policy'] as const;
+    const knownKeyList = ['compile_gate', 'full_suite_validation', 'review_execution_policy', 'review_delegation', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'auto_backup', 'optional_quality_checks', 'orchestrator_work_policy'] as const;
     const knownKeys = new Set(knownKeyList);
     assertNoCaseMismatchedKnownKeys(
         raw,
@@ -136,6 +137,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         if (raw.review_cycle_guard !== undefined) {
             normalized.review_cycle_guard = validateReviewCycleGuardSection(raw.review_cycle_guard);
         }
+        if (raw.review_delegation !== undefined) {
+            normalized.review_delegation = validateReviewDelegationSection(raw.review_delegation);
+        }
         if (raw.project_memory_maintenance !== undefined) {
             normalized.project_memory_maintenance = validateProjectMemoryMaintenanceSection(raw.project_memory_maintenance);
         }
@@ -180,6 +184,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
     if (raw.review_cycle_guard !== undefined) {
         normalized.review_cycle_guard = validateReviewCycleGuardSection(raw.review_cycle_guard);
     }
+    if (raw.review_delegation !== undefined) {
+        normalized.review_delegation = validateReviewDelegationSection(raw.review_delegation);
+    }
     if (raw.project_memory_maintenance !== undefined) {
         normalized.project_memory_maintenance = validateProjectMemoryMaintenanceSection(raw.project_memory_maintenance);
     }
@@ -196,6 +203,31 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         normalized.orchestrator_work_policy = validateOrchestratorWorkPolicySection(raw.orchestrator_work_policy);
     }
     return normalized;
+}
+
+function validateReviewDelegationSection(input: unknown): Record<string, unknown> {
+    const section = ensurePlainObject(input, 'workflow-config.review_delegation');
+    const sectionKnownKeys = ['no_delegate'];
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        sectionKnownKeys,
+        'workflow-config.review_delegation'
+    );
+    assertNoUnknownKeys(
+        section,
+        sectionKnownKeys,
+        'workflow-config.review_delegation'
+    );
+
+    const defaults = buildDefaultWorkflowConfig().review_delegation as unknown as Record<string, unknown>;
+    return normalizeReviewDelegationConfig({
+        ...defaults,
+        ...section,
+        no_delegate: normalizeBooleanLike(
+            section.no_delegate ?? defaults.no_delegate,
+            'workflow-config.review_delegation.no_delegate'
+        )
+    }) as unknown as Record<string, unknown>;
 }
 
 function validateCompileGateSection(input: unknown): Record<string, unknown> {
