@@ -26,6 +26,17 @@ import {
     type CompileGateCommandOptions
 } from '../compile/compile-flow';
 import {
+    buildMandatoryCurrentCycleOptionalSkillActivationIndex,
+    computeOptionalSkillSelectionFingerprint,
+    isMandatoryOptionalSkillSelectionPolicyMode,
+    isOptionalSkillSelectionPolicyConfigured,
+    readOptionalSkillSelectionArtifact,
+    readOptionalSkillSelectionPolicyConfig,
+    readOptionalSkillSelectionTimelineEvidence,
+    type OptionalSkillSelectionArtifact
+} from '../../../../runtime/optional-skill-selection';
+import { SKILL_TELEMETRY_ACTOR } from '../../../../runtime/skill-telemetry';
+import {
     resolveDefaultReviewsPath,
     writeJsonArtifact
 } from '../../gates/gates-artifacts';
@@ -258,6 +269,132 @@ function resolveRestartAllowedDirtyWorkflowConfigFiles(
         .sort();
 }
 
+interface RestartOptionalSkillActivationSnapshot {
+    selectionFingerprintSha256: string;
+    activatedSkills: Array<{ id: string; pack: string | null }>;
+}
+
+interface RestartOptionalSkillActivationRebind {
+    reboundSkillIds: string[];
+    selectionFingerprintSha256: string | null;
+}
+
+function getOptionalSkillSelectionFingerprint(payload: OptionalSkillSelectionArtifact): string {
+    return String(payload.selection_fingerprint_sha256 || computeOptionalSkillSelectionFingerprint(payload)).trim();
+}
+
+function getSelectedOptionalSkills(payload: OptionalSkillSelectionArtifact): Array<{ id: string; pack: string | null }> {
+    return Array.isArray(payload.selected_installed_skills)
+        ? payload.selected_installed_skills
+            .map((entry) => ({
+                id: String(entry.id || '').trim(),
+                pack: entry.pack || null
+            }))
+            .filter((entry) => entry.id)
+        : [];
+}
+
+function readRestartOptionalSkillActivationSnapshot(
+    orchestratorRoot: string,
+    taskId: string
+): RestartOptionalSkillActivationSnapshot | null {
+    if (!isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)) {
+        return null;
+    }
+    const policyConfig = readOptionalSkillSelectionPolicyConfig(orchestratorRoot);
+    if (!isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode)) {
+        return null;
+    }
+    const artifact = readOptionalSkillSelectionArtifact(orchestratorRoot, taskId);
+    if (!artifact) {
+        return null;
+    }
+    const selectionFingerprintSha256 = getOptionalSkillSelectionFingerprint(artifact.payload);
+    if (!selectionFingerprintSha256) {
+        return null;
+    }
+    const selectedSkills = getSelectedOptionalSkills(artifact.payload);
+    if (selectedSkills.length === 0) {
+        return null;
+    }
+    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, taskId);
+    if (!timelineEvidence.exists || timelineEvidence.invalidJson) {
+        return null;
+    }
+    const activationIndex = buildMandatoryCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence);
+    const activatedSkills = selectedSkills.filter((skill) => activationIndex.has(skill.id));
+    return activatedSkills.length > 0
+        ? { selectionFingerprintSha256, activatedSkills }
+        : null;
+}
+
+async function rebindRestartOptionalSkillActivationsForCurrentCycle(input: {
+    orchestratorRoot: string;
+    taskId: string;
+    snapshot: RestartOptionalSkillActivationSnapshot | null;
+}): Promise<RestartOptionalSkillActivationRebind> {
+    const emptyRebind = {
+        reboundSkillIds: [],
+        selectionFingerprintSha256: input.snapshot?.selectionFingerprintSha256 || null
+    };
+    if (!input.snapshot) {
+        return emptyRebind;
+    }
+    if (!isOptionalSkillSelectionPolicyConfigured(input.orchestratorRoot)) {
+        return emptyRebind;
+    }
+    const policyConfig = readOptionalSkillSelectionPolicyConfig(input.orchestratorRoot);
+    if (!isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode)) {
+        return emptyRebind;
+    }
+    const artifact = readOptionalSkillSelectionArtifact(input.orchestratorRoot, input.taskId);
+    if (!artifact) {
+        return emptyRebind;
+    }
+    const currentSelectionFingerprintSha256 = getOptionalSkillSelectionFingerprint(artifact.payload);
+    if (currentSelectionFingerprintSha256 !== input.snapshot.selectionFingerprintSha256) {
+        return {
+            reboundSkillIds: [],
+            selectionFingerprintSha256: currentSelectionFingerprintSha256 || null
+        };
+    }
+
+    const selectedSkills = getSelectedOptionalSkills(artifact.payload);
+    const rebindableSkillIds = new Set(input.snapshot.activatedSkills.map((skill) => skill.id));
+    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(input.orchestratorRoot, input.taskId);
+    const currentActivationIndex = timelineEvidence.exists && !timelineEvidence.invalidJson
+        ? buildMandatoryCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence)
+        : new Map<string, number>();
+    const reboundSkillIds: string[] = [];
+    for (const selectedSkill of selectedSkills) {
+        if (currentActivationIndex.has(selectedSkill.id) || !rebindableSkillIds.has(selectedSkill.id)) {
+            continue;
+        }
+        appendMandatoryTaskEvent(
+            input.orchestratorRoot,
+            input.taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            `Skill selected: ${selectedSkill.id}`,
+            {
+                telemetry_type: 'skill_activation',
+                skill_id: selectedSkill.id,
+                reference_path: null,
+                trigger_reason: 'optional_skill_selection',
+                ...(selectedSkill.pack ? { pack_id: selectedSkill.pack } : {}),
+                optional_skill_selection_fingerprint_sha256: currentSelectionFingerprintSha256
+            },
+            { actor: SKILL_TELEMETRY_ACTOR }
+        );
+        reboundSkillIds.push(selectedSkill.id);
+    }
+
+    return {
+        reboundSkillIds,
+        selectionFingerprintSha256: currentSelectionFingerprintSha256
+    };
+}
+
 export async function runRestartCoherentCycleCommand(
     options: RestartCoherentCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
@@ -289,6 +426,11 @@ export async function runRestartCoherentCycleCommand(
         : [];
 
     try {
+        const optionalSkillActivationSnapshot = readRestartOptionalSkillActivationSnapshot(
+            resolveOrchestratorRoot(repoRoot),
+            resolvedTaskId
+        );
+
         ensureStepPassed('enter-task-mode', runEnterTaskModeCommand({
             repoRoot,
             taskId: resolvedTaskId,
@@ -366,6 +508,11 @@ export async function runRestartCoherentCycleCommand(
             emitMetrics: options.emitMetrics
         }));
 
+        const optionalSkillActivationRebind = await rebindRestartOptionalSkillActivationsForCurrentCycle({
+            orchestratorRoot: resolveOrchestratorRoot(repoRoot),
+            taskId: resolvedTaskId,
+            snapshot: optionalSkillActivationSnapshot
+        });
         const compileResult = await runCompileGateCommand({
             repoRoot,
             taskId: resolvedTaskId,
@@ -395,7 +542,13 @@ export async function runRestartCoherentCycleCommand(
             ),
             elapsedMs: Date.now() - startedAt,
             restartReason: 'coherent_cycle_restart_after_downstream_boundary_or_invalid_preflight_order',
-            nextStepSummary
+            nextStepSummary,
+            extraDetails: optionalSkillActivationRebind.reboundSkillIds.length > 0
+                ? {
+                    optional_skill_activation_rebound_skill_ids: optionalSkillActivationRebind.reboundSkillIds,
+                    optional_skill_activation_rebind_fingerprint_sha256: optionalSkillActivationRebind.selectionFingerprintSha256
+                }
+                : undefined
         });
 
         return {
@@ -483,6 +636,10 @@ export async function runRestartReviewCycleCommand(
         throw new Error('Task intent could not be resolved for review-cycle restart.');
     }
     try {
+        const optionalSkillActivationSnapshot = readRestartOptionalSkillActivationSnapshot(
+            resolveOrchestratorRoot(repoRoot),
+            resolvedTaskId
+        );
         const refreshedPreflightPath = resolveRecoveryPreflightPath(
             repoRoot,
             resolvedTaskId,
@@ -638,6 +795,11 @@ export async function runRestartReviewCycleCommand(
             emitMetrics: options.emitMetrics
         }));
 
+        const optionalSkillActivationRebind = await rebindRestartOptionalSkillActivationsForCurrentCycle({
+            orchestratorRoot: resolveOrchestratorRoot(repoRoot),
+            taskId: resolvedTaskId,
+            snapshot: optionalSkillActivationSnapshot
+        });
         const compileResult = await runCompileGateCommand({
             repoRoot,
             taskId: resolvedTaskId,
@@ -865,7 +1027,13 @@ export async function runRestartReviewCycleCommand(
                 launch_required_review_types: launchRequiredReviewTypes,
                 reused_review_types: reusedReviewTypes,
                 pending_review_types: pendingReviewTypes,
-                pending_reason: pendingReason
+                pending_reason: pendingReason,
+                ...(optionalSkillActivationRebind.reboundSkillIds.length > 0
+                    ? {
+                        optional_skill_activation_rebound_skill_ids: optionalSkillActivationRebind.reboundSkillIds,
+                        optional_skill_activation_rebind_fingerprint_sha256: optionalSkillActivationRebind.selectionFingerprintSha256
+                    }
+                    : {})
             }
         });
 
