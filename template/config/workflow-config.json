@@ -67,7 +67,7 @@
   },
   "optional_quality_checks": {
     "enabled": true,
-    "baseline_version": "2026-07-02.t898",
+    "baseline_version": "2026-07-08.t934",
     "rules": [
       {
         "id": "code_simplification",
@@ -119,6 +119,42 @@
         "title": "Test and verification scope",
         "prompt": "Check whether the focused tests and mandatory gates cover the behavioral risk without adding unrelated slow coverage.",
         "enabled": true
+      },
+      {
+        "id": "ops_shell_strict_error_handling",
+        "title": "Ops shell strict error handling",
+        "prompt": "For shell or ops-script changes, check strict shell behavior, error propagation, exit-code handling, traps or cleanup paths, and cross-shell or platform portability.",
+        "enabled": true,
+        "included_changed_file_regexes": [
+          "(^|/)[^/]+\\.(?:sh|bash|zsh|ps1|cmd|bat)$",
+          "(^|/)(?:scripts|ops|operations|bin|tools|ci|deploy|deployment|backup|restore)(?:/|$).+\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$",
+          "(^|/)(?:[^/]*[._-])?(?:deploy|deployment|backup|restore|ops)(?:[._-][^/]*)?\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$",
+          "(^|/)\\.github/workflows/.*(?:deploy|deployment|backup|restore|release|ops).*\\.ya?ml$"
+        ]
+      },
+      {
+        "id": "ops_deploy_backup_idempotency",
+        "title": "Ops deploy and backup idempotency",
+        "prompt": "For deploy, backup, restore, or operations scripts, check idempotency, safe retries, dry-run or confirmation semantics, rollback or cleanup behavior, and restore verification where backup data is involved.",
+        "enabled": true,
+        "included_changed_file_regexes": [
+          "(^|/)[^/]+\\.(?:sh|bash|zsh|ps1|cmd|bat)$",
+          "(^|/)(?:scripts|ops|operations|bin|tools|ci|deploy|deployment|backup|restore)(?:/|$).+\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$",
+          "(^|/)(?:[^/]*[._-])?(?:deploy|deployment|backup|restore|ops)(?:[._-][^/]*)?\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$",
+          "(^|/)\\.github/workflows/.*(?:deploy|deployment|backup|restore|release|ops).*\\.ya?ml$"
+        ]
+      },
+      {
+        "id": "ops_secret_env_loading",
+        "title": "Ops secrets and environment loading",
+        "prompt": "For shell or ops changes, check secret handling, log redaction, env-file loading safety, and whether duplicated environment-loading snippets should reuse or extract a shared helper.",
+        "enabled": true,
+        "included_changed_file_regexes": [
+          "(^|/)[^/]+\\.(?:sh|bash|zsh|ps1|cmd|bat)$",
+          "(^|/)(?:scripts|ops|operations|bin|tools|ci|deploy|deployment|backup|restore)(?:/|$).+\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$",
+          "(^|/)(?:[^/]*[._-])?(?:deploy|deployment|backup|restore|ops)(?:[._-][^/]*)?\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$",
+          "(^|/)\\.github/workflows/.*(?:deploy|deployment|backup|restore|release|ops).*\\.ya?ml$"
+        ]
       }
     ]
   }

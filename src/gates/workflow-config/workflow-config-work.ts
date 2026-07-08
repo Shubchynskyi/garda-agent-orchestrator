@@ -314,7 +314,11 @@ const COMPATIBILITY_TASK_RESET_KEYS = ['enabled'];
 const COMPATIBILITY_AUTO_BACKUP_KEYS = ['enabled', 'interval_days', 'keep_latest'];
 const COMPATIBILITY_OPTIONAL_QUALITY_CHECKS_KEYS = ['baseline_version', 'enabled', 'rules'];
 const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_REQUIRED_KEYS = ['enabled', 'id', 'prompt', 'title'];
-const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_OPTIONAL_KEYS = ['excluded_scope_categories'];
+const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_OPTIONAL_KEYS = [
+    'excluded_scope_categories',
+    'included_scope_categories',
+    'included_changed_file_regexes'
+];
 const COMPATIBILITY_ORCHESTRATOR_WORK_POLICY_KEYS = ['mode'];
 
 function hasExactOwnKeys(record: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
@@ -401,6 +405,33 @@ function hasCompatibleOptionalQualityRuleScopeExclusions(
     const defaultExclusions = normalizeStringList(defaultRule.excluded_scope_categories);
     return defaultExclusions.length > 0
         && arraysEqual(normalizeStringList(rule.excluded_scope_categories), defaultExclusions);
+}
+
+function hasCompatibleOptionalQualityRuleStrictScopeList(
+    rule: Record<string, unknown>,
+    defaultRule: Record<string, unknown>,
+    key: 'included_scope_categories' | 'included_changed_file_regexes'
+): boolean {
+    const defaultHasList = hasOwnKey(defaultRule, key);
+    const ruleHasList = hasOwnKey(rule, key);
+    if (!defaultHasList) {
+        return !ruleHasList;
+    }
+    if (!ruleHasList) {
+        return false;
+    }
+    const defaultList = normalizeStringList(defaultRule[key]);
+    return defaultList.length > 0
+        && arraysEqual(normalizeStringList(rule[key]), defaultList);
+}
+
+function hasCompatibleOptionalQualityRuleScopeFilters(
+    rule: Record<string, unknown>,
+    defaultRule: Record<string, unknown>
+): boolean {
+    return hasCompatibleOptionalQualityRuleScopeExclusions(rule, defaultRule)
+        && hasCompatibleOptionalQualityRuleStrictScopeList(rule, defaultRule, 'included_scope_categories')
+        && hasCompatibleOptionalQualityRuleStrictScopeList(rule, defaultRule, 'included_changed_file_regexes');
 }
 
 function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
@@ -594,7 +625,7 @@ function isExactDefaultOptionalQualityChecksCompatibilityBaseline(input: unknown
             && rule.id === defaultRule.id
             && rule.title === defaultRule.title
             && rule.prompt === defaultRule.prompt
-            && hasCompatibleOptionalQualityRuleScopeExclusions(rule, defaultRule);
+            && hasCompatibleOptionalQualityRuleScopeFilters(rule, defaultRule);
     });
 }
 

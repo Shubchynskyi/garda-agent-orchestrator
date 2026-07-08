@@ -4,6 +4,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+    isOptionalQualityCheckRuleActiveForScope
+} from '../../../../src/core/workflow-config';
+import {
     buildDefaultWorkflowConfig,
     resolveNextStep,
     type FullSuiteValidationConfig
@@ -67,26 +70,42 @@ function buildQualityChecklistRuleSnapshot(options: {
     rules?: WorkflowConfig['optional_quality_checks']['rules'];
     titlePrefix?: string;
     promptPrefix?: string;
+    scopeCategory?: string;
+    changedFiles?: readonly string[];
 } = {}): Array<Record<string, unknown>> {
     const rules = options.rules ?? buildDefaultWorkflowConfig().optional_quality_checks.rules;
+    const scopeCategory = options.scopeCategory ?? 'mixed';
+    const changedFiles = options.changedFiles ?? ['src/app.ts'];
     return rules.map((rule) => ({
         id: rule.id,
         title: `${options.titlePrefix ?? ''}${rule.title}`,
         prompt: `${options.promptPrefix ?? ''}${rule.prompt}`,
         enabled: rule.enabled,
+        included_scope_categories: rule.included_scope_categories ?? [],
+        included_changed_file_regexes: rule.included_changed_file_regexes ?? [],
         excluded_scope_categories: rule.excluded_scope_categories ?? [],
-        scope_applicability: rule.enabled === false ? 'disabled' : 'active'
+        scope_applicability: rule.enabled === false
+            ? 'disabled'
+            : isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles)
+                ? 'active'
+                : 'skipped_by_scope'
     }));
 }
 
 function buildQualityChecklistAnswers(options: {
     rules?: WorkflowConfig['optional_quality_checks']['rules'];
     omitRuleIds?: readonly string[];
+    scopeCategory?: string;
+    changedFiles?: readonly string[];
 } = {}): Array<Record<string, unknown>> {
     const omitted = new Set(options.omitRuleIds ?? []);
     const rules = options.rules ?? buildDefaultWorkflowConfig().optional_quality_checks.rules;
+    const scopeCategory = options.scopeCategory ?? 'mixed';
+    const changedFiles = options.changedFiles ?? ['src/app.ts'];
     return rules
-        .filter((rule) => rule.enabled !== false && !omitted.has(rule.id))
+        .filter((rule) => (
+            isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles) && !omitted.has(rule.id)
+        ))
         .map((rule) => ({
             rule_id: rule.id,
             status: 'PASS',
@@ -200,7 +219,7 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.quality_checklist?.evidence_status, 'missing');
         assert.equal(result.quality_checklist?.effect, 'missing');
         assert.match(result.quality_checklist?.visible_summary_line || '', /QualityChecklist: enabled=true; required=true/u);
-        assert.match(result.quality_checklist?.visible_summary_line || '', /active_rules=7; skipped_by_scope=0/u);
+        assert.match(result.quality_checklist?.visible_summary_line || '', /active_rules=7; skipped_by_scope=3/u);
         assert.equal(result.commands[0].label, 'Run quality checklist');
         assert.ok(result.commands[0].command.includes('gate quality-checklist'));
         assert.ok(result.commands[0].command.includes('--answers-path'));
@@ -222,10 +241,10 @@ describe('gates/next-step quality checklist routing', () => {
 
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
         assert.equal(result.quality_checklist?.scope_category, 'test-only');
-        assert.equal(result.quality_checklist?.enabled_rule_count, 7);
+        assert.equal(result.quality_checklist?.enabled_rule_count, 10);
         assert.equal(result.quality_checklist?.active_rule_count, 4);
-        assert.equal(result.quality_checklist?.skipped_by_scope_rule_count, 3);
-        assert.match(result.reason, /Active rules for scope "test-only": 4; skipped_by_scope=3/u);
+        assert.equal(result.quality_checklist?.skipped_by_scope_rule_count, 6);
+        assert.match(result.reason, /Active rules for scope "test-only": 4; skipped_by_scope=6/u);
         assert.ok(result.commands[0].command.includes('--answers-path'));
         assert.equal(result.commands[0].command.includes('--answers-json'), false);
     });
@@ -239,7 +258,7 @@ describe('gates/next-step quality checklist routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
-        assert.match(result.reason, /baseline_version '2026-06-26\.t843' differs from shipped '2026-07-02\.t898'/u);
+        assert.match(result.reason, /baseline_version '2026-06-26\.t843' differs from shipped '2026-07-08\.t934'/u);
         assert.match(result.reason, /classifier_intent_edge_cases/u);
         assert.match(result.reason, /custom_garda_classifier_intent_edge_cases/u);
         assert.match(result.reason, /Canonical enabled quality-check rule ids/u);

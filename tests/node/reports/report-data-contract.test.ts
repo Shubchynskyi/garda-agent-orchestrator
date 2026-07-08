@@ -5,7 +5,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
+import {
+    buildDefaultWorkflowConfig,
+    getOptionalQualityCheckRuleScopeSkipReason,
+    isOptionalQualityCheckRuleActiveForScope
+} from '../../../src/core/workflow-config';
 import { buildScopeContentFingerprint } from '../../../src/gates/compile/compile-gate';
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 import {
@@ -24,6 +28,8 @@ import type {
 import { writeRollbackRecords } from '../../../src/lifecycle/common';
 
 type WorkflowConfig = ReturnType<typeof buildDefaultWorkflowConfig>;
+const DEFAULT_QUALITY_CHECK_SCOPE_CATEGORY = 'mixed';
+const DEFAULT_QUALITY_CHECK_CHANGED_FILES = Object.freeze(['src/reports/report-data-contract.ts']);
 
 function makeTempRepo(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-report-data-'));
@@ -447,15 +453,28 @@ function buildQualityChecklistRuleSnapshot(options: {
     rules?: WorkflowConfig['optional_quality_checks']['rules'];
     titlePrefix?: string;
     promptPrefix?: string;
+    scopeCategory?: string;
+    changedFiles?: readonly string[];
 } = {}): Array<Record<string, unknown>> {
     const rules = options.rules ?? buildDefaultWorkflowConfig().optional_quality_checks.rules;
+    const scopeCategory = options.scopeCategory ?? DEFAULT_QUALITY_CHECK_SCOPE_CATEGORY;
+    const changedFiles = options.changedFiles ?? DEFAULT_QUALITY_CHECK_CHANGED_FILES;
     return rules.map((rule) => ({
         id: rule.id,
         title: `${options.titlePrefix ?? ''}${rule.title}`,
         prompt: `${options.promptPrefix ?? ''}${rule.prompt}`,
         enabled: rule.enabled,
         excluded_scope_categories: rule.excluded_scope_categories ?? [],
-        scope_applicability: rule.enabled === false ? 'disabled' : 'active'
+        included_scope_categories: rule.included_scope_categories ?? [],
+        included_changed_file_regexes: rule.included_changed_file_regexes ?? [],
+        scope_applicability: rule.enabled === false
+            ? 'disabled'
+            : isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles)
+                ? 'active'
+                : 'skipped_by_scope',
+        ...(getOptionalQualityCheckRuleScopeSkipReason(rule, scopeCategory, changedFiles)
+            ? { scope_skip_reason: getOptionalQualityCheckRuleScopeSkipReason(rule, scopeCategory, changedFiles) }
+            : {})
     }));
 }
 
@@ -463,11 +482,15 @@ function buildQualityChecklistAnswers(options: {
     status: string;
     rules?: WorkflowConfig['optional_quality_checks']['rules'];
     omitRuleIds?: readonly string[];
+    scopeCategory?: string;
+    changedFiles?: readonly string[];
 }): Array<Record<string, unknown>> {
     const omitted = new Set(options.omitRuleIds ?? []);
     const rules = options.rules ?? buildDefaultWorkflowConfig().optional_quality_checks.rules;
+    const scopeCategory = options.scopeCategory ?? DEFAULT_QUALITY_CHECK_SCOPE_CATEGORY;
+    const changedFiles = options.changedFiles ?? DEFAULT_QUALITY_CHECK_CHANGED_FILES;
     return rules
-        .filter((rule) => rule.enabled !== false && !omitted.has(rule.id))
+        .filter((rule) => isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles) && !omitted.has(rule.id))
         .map((rule) => ({
             rule_id: rule.id,
             status: options.status,

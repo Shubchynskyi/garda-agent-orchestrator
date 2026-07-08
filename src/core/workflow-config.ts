@@ -31,6 +31,8 @@ import {
 export {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
     LEGACY_OPTIONAL_QUALITY_CHECK_RULES,
+    OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES,
+    OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_CONFIG_ONLY,
     OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE,
@@ -38,10 +40,14 @@ export {
     buildDefaultOptionalQualityChecksConfig,
     formatOptionalQualityChecksRuleSetDiagnostics,
     getBaselineOptionalQualityCheckRule,
+    getOptionalQualityCheckRuleScopeSkipReason,
+    isOptionalQualityCheckRuleActiveForScope,
     isOptionalQualityCheckRuleExcludedForScope,
+    hasOptionalQualityCheckRuleScopeInclusion,
     isExactLegacyOptionalQualityChecksGeneratedDefault,
     isBaselineOptionalQualityCheckRuleId,
     mergeOptionalQualityChecksWithBaseline,
+    normalizeOptionalQualityCheckChangedFileRegexes,
     normalizeOptionalQualityCheckScopeCategories,
     normalizeOptionalQualityChecksConfig
 } from './optional-quality-checks';

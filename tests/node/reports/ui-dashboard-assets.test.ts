@@ -526,10 +526,10 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                 config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
                 status: 'present',
                 enabled: true,
-                baseline_version: '2026-07-02.t898',
-                shipped_baseline_version: '2026-07-02.t898',
-                baseline_version_label: '2026-07-02',
-                shipped_baseline_version_label: '2026-07-02',
+                baseline_version: '2026-07-08.t934',
+                shipped_baseline_version: '2026-07-08.t934',
+                baseline_version_label: '2026-07-08',
+                shipped_baseline_version_label: '2026-07-08',
                 baseline_rule_count: 1,
                 custom_rule_count: 1,
                 deleted_baseline_rule_count: 1,
@@ -630,12 +630,12 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.doesNotMatch(qualityGateNode.innerHTML, /Поставляемый baseline/u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Текущий baseline/u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Удалённые baseline-правила/u);
-    assert.doesNotMatch(qualityGateNode.innerHTML, /2026-07-02\.t898/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /2026-07-08\.t934/u);
     assert.equal(context.qualityGateConfigPathNode.textContent, '');
     assert.match(qualityGateNode.innerHTML, /Установленный набор правил/u);
     assert.match(qualityGateNode.innerHTML, /Поставляемый набор правил/u);
-    assert.match(qualityGateNode.innerHTML, /2026-07-02/u);
-    assert.doesNotMatch(qualityGateNode.innerHTML, /\(T-898\)/u);
+    assert.match(qualityGateNode.innerHTML, /2026-07-08/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /\(T-934\)/u);
     assert.match(qualityGateNode.innerHTML, /Изменено локально/u);
     assert.match(qualityGateNode.innerHTML, /Пользовательское/u);
     assert.match(qualityGateNode.innerHTML, /Отключено/u);
@@ -841,7 +841,7 @@ test('system state renders quality baseline diagnostics with localized labels', 
                 remediation: 'Run update or workflow validation.',
                 value: {
                     installed_baseline_version: '2026-06-25.t842',
-                    shipped_baseline_version: '2026-07-02.t898',
+                    shipped_baseline_version: '2026-07-08.t934',
                     installed_baseline_rule_count: 9,
                     shipped_baseline_rule_count: 12,
                     missing_shipped_rule_ids: ['duplicated_logic_contracts']
@@ -860,8 +860,8 @@ test('system state renders quality baseline diagnostics with localized labels', 
     assert.match(systemStateNode.innerHTML, /Установленный набор правил/u);
     assert.match(systemStateNode.innerHTML, /Поставляемый набор правил/u);
     assert.match(systemStateNode.innerHTML, /2026-06-25/u);
-    assert.match(systemStateNode.innerHTML, /2026-07-02/u);
-    assert.doesNotMatch(systemStateNode.innerHTML, /\(T-842\)|\(T-898\)/u);
+    assert.match(systemStateNode.innerHTML, /2026-07-08/u);
+    assert.doesNotMatch(systemStateNode.innerHTML, /\(T-842\)|\(T-934\)/u);
     assert.doesNotMatch(systemStateNode.innerHTML, /2026-06-25\.t842/u);
     assert.match(systemStateNode.innerHTML, /Отсутствующие поставляемые правила/u);
     assert.match(systemStateNode.innerHTML, /duplicated_logic_contracts/u);
@@ -948,10 +948,10 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
         config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
         status: 'present',
         enabled: true,
-        baseline_version: '2026-07-02.t898',
-        shipped_baseline_version: '2026-07-02.t898',
-        baseline_version_label: '2026-07-02',
-        shipped_baseline_version_label: '2026-07-02',
+        baseline_version: '2026-07-08.t934',
+        shipped_baseline_version: '2026-07-08.t934',
+        baseline_version_label: '2026-07-08',
+        shipped_baseline_version_label: '2026-07-08',
         baseline_rule_count: 2,
         custom_rule_count: 1,
         deleted_baseline_rule_count: 0,

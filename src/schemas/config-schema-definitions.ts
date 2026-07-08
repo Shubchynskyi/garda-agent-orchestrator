@@ -57,6 +57,26 @@ const OPTIONAL_QUALITY_CHECK_EXCLUDED_SCOPE_CATEGORIES_SCHEMA: Record<string, un
     description: 'Preflight scope categories where this advisory rule is skipped. Use ["test-only"] to omit a rule from pure test changes without disabling it globally.'
 });
 
+const OPTIONAL_QUALITY_CHECK_INCLUDED_SCOPE_CATEGORIES_SCHEMA: Record<string, unknown> = Object.freeze({
+    type: 'array',
+    items: {
+        type: 'string',
+        minLength: 1
+    },
+    uniqueItems: true,
+    description: 'Preflight scope categories where this advisory rule is active. Leave empty to keep the rule broadly active unless changed-file regexes constrain it.'
+});
+
+const OPTIONAL_QUALITY_CHECK_INCLUDED_CHANGED_FILE_REGEXES_SCHEMA: Record<string, unknown> = Object.freeze({
+    type: 'array',
+    items: {
+        type: 'string',
+        minLength: 1
+    },
+    uniqueItems: true,
+    description: 'Case-insensitive changed-file regexes where this advisory rule is active. Use this for scope-specific rule packs such as shell and ops scripts.'
+});
+
 function buildBaselineOptionalQualityCheckRuleSchema(rule: typeof DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[number]): Record<string, unknown> {
     return {
         type: 'object',
@@ -76,6 +96,14 @@ function buildBaselineOptionalQualityCheckRuleSchema(rule: typeof DEFAULT_OPTION
             enabled: {
                 type: 'boolean',
                 description: 'Enable this shipped baseline rule.'
+            },
+            included_scope_categories: {
+                ...OPTIONAL_QUALITY_CHECK_INCLUDED_SCOPE_CATEGORIES_SCHEMA,
+                description: 'User-editable preflight scope categories where this shipped baseline advisory rule is active.'
+            },
+            included_changed_file_regexes: {
+                ...OPTIONAL_QUALITY_CHECK_INCLUDED_CHANGED_FILE_REGEXES_SCHEMA,
+                description: 'User-editable changed-file regexes where this shipped baseline advisory rule is active.'
             },
             excluded_scope_categories: {
                 ...OPTIONAL_QUALITY_CHECK_EXCLUDED_SCOPE_CATEGORIES_SCHEMA,
@@ -113,6 +141,14 @@ const CUSTOM_OPTIONAL_QUALITY_CHECK_RULE_SCHEMA: Record<string, unknown> = Objec
         enabled: {
             type: 'boolean',
             description: 'Enable this custom advisory rule.'
+        },
+        included_scope_categories: {
+            ...OPTIONAL_QUALITY_CHECK_INCLUDED_SCOPE_CATEGORIES_SCHEMA,
+            description: 'Preflight scope categories where this custom advisory rule is active.'
+        },
+        included_changed_file_regexes: {
+            ...OPTIONAL_QUALITY_CHECK_INCLUDED_CHANGED_FILE_REGEXES_SCHEMA,
+            description: 'Changed-file regexes where this custom advisory rule is active.'
         },
         excluded_scope_categories: {
             ...OPTIONAL_QUALITY_CHECK_EXCLUDED_SCOPE_CATEGORIES_SCHEMA,

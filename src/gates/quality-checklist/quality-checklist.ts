@@ -3,8 +3,9 @@ import * as path from 'node:path';
 
 import {
     formatOptionalQualityChecksRuleSetDiagnostics,
+    getOptionalQualityCheckRuleScopeSkipReason,
     getWorkflowConfigPath,
-    isOptionalQualityCheckRuleExcludedForScope,
+    normalizeOptionalQualityCheckChangedFileRegexes,
     normalizeOptionalQualityCheckScopeCategories,
     normalizeOptionalQualityChecksConfig,
     type OptionalQualityCheckRule
@@ -61,6 +62,8 @@ export interface QualityChecklistRuleArtifact {
     title: string;
     prompt: string;
     enabled: boolean;
+    included_scope_categories: string[];
+    included_changed_file_regexes: string[];
     excluded_scope_categories: string[];
     scope_applicability: 'active' | 'disabled' | 'skipped_by_scope';
     scope_skip_reason: string | null;
@@ -176,13 +179,19 @@ function normalizeScopeCategory(value: unknown): string | null {
     return normalized || null;
 }
 
-function normalizeRuleForArtifact(rule: OptionalQualityCheckRule, scopeCategory: string | null): QualityChecklistRuleArtifact {
+function normalizeRuleForArtifact(
+    rule: OptionalQualityCheckRule,
+    scopeCategory: string | null,
+    changedFiles: readonly string[]
+): QualityChecklistRuleArtifact {
     const enabled = rule.enabled !== false;
+    const includedScopeCategories = normalizeOptionalQualityCheckScopeCategories(rule.included_scope_categories);
+    const includedChangedFileRegexes = normalizeOptionalQualityCheckChangedFileRegexes(rule.included_changed_file_regexes);
     const excludedScopeCategories = normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories);
-    const skippedByScope = enabled && isOptionalQualityCheckRuleExcludedForScope(rule, scopeCategory);
+    const scopeSkipReason = getOptionalQualityCheckRuleScopeSkipReason(rule, scopeCategory, changedFiles);
     const scopeApplicability: QualityChecklistRuleArtifact['scope_applicability'] = !enabled
         ? 'disabled'
-        : skippedByScope
+        : scopeSkipReason
             ? 'skipped_by_scope'
             : 'active';
     return {
@@ -190,11 +199,11 @@ function normalizeRuleForArtifact(rule: OptionalQualityCheckRule, scopeCategory:
         title: String(rule.title || '').trim(),
         prompt: String(rule.prompt || '').trim(),
         enabled,
+        included_scope_categories: includedScopeCategories,
+        included_changed_file_regexes: includedChangedFileRegexes,
         excluded_scope_categories: excludedScopeCategories,
         scope_applicability: scopeApplicability,
-        scope_skip_reason: skippedByScope
-            ? `Rule excluded for preflight scope_category '${scopeCategory}'.`
-            : null
+        scope_skip_reason: scopeSkipReason
     };
 }
 
@@ -222,6 +231,8 @@ function findConfiguredDuplicateRuleIds(optionalQualityChecksInput: unknown): st
             title: '',
             prompt: '',
             enabled: true,
+            included_scope_categories: [],
+            included_changed_file_regexes: [],
             excluded_scope_categories: [],
             scope_applicability: 'active' as const,
             scope_skip_reason: null
@@ -358,6 +369,8 @@ function readChecklistRules(repoRoot: string): {
         title: String(rule.title || '').trim(),
         prompt: String(rule.prompt || '').trim(),
         enabled: rule.enabled !== false,
+        included_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.included_scope_categories),
+        included_changed_file_regexes: normalizeOptionalQualityCheckChangedFileRegexes(rule.included_changed_file_regexes),
         excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories),
         scope_applicability: rule.enabled === false ? 'disabled' as const : 'active' as const,
         scope_skip_reason: null
@@ -441,7 +454,11 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
     const preflight = readPreflightEvidence(preflightPath, taskId);
     const violations = [config.violation, preflight.violation].filter((entry): entry is string => !!entry);
     const scopeCategory = preflight.evidence.scope_category;
-    const rules = config.rules.map((rule) => normalizeRuleForArtifact(rule, scopeCategory));
+    const rules = config.rules.map((rule) => normalizeRuleForArtifact(
+        rule,
+        scopeCategory,
+        preflight.evidence.changed_files
+    ));
     const enabledRules = rules.filter((rule) => rule.enabled);
     const activeRules = enabledRules.filter((rule) => rule.scope_applicability === 'active');
     const skippedByScopeRules = enabledRules.filter((rule) => rule.scope_applicability === 'skipped_by_scope');
@@ -483,7 +500,11 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
         outcome: outcomeForStatus(status),
         workflow_config_path: normalizePath(config.workflowConfigPath),
         workflow_config_sha256: config.workflowConfigSha256,
-        effective_policy_sha256: computeQualityChecklistEffectivePolicySha256(config.rules, scopeCategory),
+        effective_policy_sha256: computeQualityChecklistEffectivePolicySha256(
+            config.rules,
+            scopeCategory,
+            preflight.evidence.changed_files
+        ),
         preflight_path: normalizePath(preflightPath),
         preflight_sha256: preflight.sha256,
         changed_file_evidence: preflight.evidence,

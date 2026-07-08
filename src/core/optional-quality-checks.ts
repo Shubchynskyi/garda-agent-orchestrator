@@ -5,6 +5,8 @@ export interface OptionalQualityCheckRule {
     title: string;
     prompt: string;
     enabled: boolean;
+    included_scope_categories?: string[];
+    included_changed_file_regexes?: string[];
     excluded_scope_categories?: string[];
     [key: string]: unknown;
 }
@@ -33,8 +35,16 @@ export interface OptionalQualityChecksRuleSetDiagnostics {
 }
 
 export const OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE = 'режим опциональных проверок включен, проверь в garda ui перед стартом';
-export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-07-02.t898';
+export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-07-08.t934';
 export const OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY = 'test-only';
+export const OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_CONFIG_ONLY = 'config-only';
+
+const OPS_SHELL_CHANGED_FILE_REGEXES = Object.freeze([
+    '(^|/)[^/]+\\.(?:sh|bash|zsh|ps1|cmd|bat)$',
+    '(^|/)(?:scripts|ops|operations|bin|tools|ci|deploy|deployment|backup|restore)(?:/|$).+\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$',
+    '(^|/)(?:[^/]*[._-])?(?:deploy|deployment|backup|restore|ops)(?:[._-][^/]*)?\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$',
+    '(^|/)\\.github/workflows/.*(?:deploy|deployment|backup|restore|release|ops).*\\.ya?ml$'
+] as const);
 
 export const LEGACY_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
     Object.freeze({
@@ -84,8 +94,33 @@ export const LEGACY_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckR
     })
 ]);
 
+export const OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
+    Object.freeze({
+        id: 'ops_shell_strict_error_handling',
+        title: 'Ops shell strict error handling',
+        prompt: 'For shell or ops-script changes, check strict shell behavior, error propagation, exit-code handling, traps or cleanup paths, and cross-shell or platform portability.',
+        enabled: true,
+        included_changed_file_regexes: [...OPS_SHELL_CHANGED_FILE_REGEXES]
+    }),
+    Object.freeze({
+        id: 'ops_deploy_backup_idempotency',
+        title: 'Ops deploy and backup idempotency',
+        prompt: 'For deploy, backup, restore, or operations scripts, check idempotency, safe retries, dry-run or confirmation semantics, rollback or cleanup behavior, and restore verification where backup data is involved.',
+        enabled: true,
+        included_changed_file_regexes: [...OPS_SHELL_CHANGED_FILE_REGEXES]
+    }),
+    Object.freeze({
+        id: 'ops_secret_env_loading',
+        title: 'Ops secrets and environment loading',
+        prompt: 'For shell or ops changes, check secret handling, log redaction, env-file loading safety, and whether duplicated environment-loading snippets should reuse or extract a shared helper.',
+        enabled: true,
+        included_changed_file_regexes: [...OPS_SHELL_CHANGED_FILE_REGEXES]
+    })
+]);
+
 export const DEFAULT_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
-    ...LEGACY_OPTIONAL_QUALITY_CHECK_RULES
+    ...LEGACY_OPTIONAL_QUALITY_CHECK_RULES,
+    ...OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES
 ]);
 
 const DEFAULT_OPTIONAL_QUALITY_CHECK_RULE_BY_ID = new Map(
@@ -180,6 +215,21 @@ export function normalizeOptionalQualityCheckScopeCategories(value: unknown): st
         .filter(Boolean))].sort();
 }
 
+function normalizeOptionalQualityCheckChangedFileRegex(value: unknown): string {
+    return String(value || '').trim();
+}
+
+export function normalizeOptionalQualityCheckChangedFileRegexes(value: unknown): string[] {
+    const rawValues = Array.isArray(value)
+        ? value
+        : typeof value === 'string'
+            ? value.split(',')
+            : [];
+    return [...new Set(rawValues
+        .map(normalizeOptionalQualityCheckChangedFileRegex)
+        .filter(Boolean))].sort();
+}
+
 export function isOptionalQualityCheckRuleExcludedForScope(
     rule: Pick<OptionalQualityCheckRule, 'excluded_scope_categories'>,
     scopeCategory: unknown
@@ -192,17 +242,110 @@ export function isOptionalQualityCheckRuleExcludedForScope(
         .includes(normalizedScopeCategory);
 }
 
-function applyRuleScopeExclusions(
+export function hasOptionalQualityCheckRuleScopeInclusion(rule: Pick<OptionalQualityCheckRule, 'included_scope_categories' | 'included_changed_file_regexes'>): boolean {
+    return normalizeOptionalQualityCheckScopeCategories(rule.included_scope_categories).length > 0
+        || normalizeOptionalQualityCheckChangedFileRegexes(rule.included_changed_file_regexes).length > 0;
+}
+
+function normalizeChangedFilePath(value: unknown): string {
+    return String(value || '').replace(/\\/g, '/').trim();
+}
+
+function matchesRegex(value: string, pattern: string): boolean {
+    try {
+        return new RegExp(pattern, 'i').test(value);
+    } catch {
+        return false;
+    }
+}
+
+function isOptionalQualityCheckRuleIncludedByScopeCategory(
+    rule: Pick<OptionalQualityCheckRule, 'included_scope_categories'>,
+    scopeCategory: unknown
+): boolean {
+    const normalizedScopeCategory = normalizeScopeCategory(scopeCategory);
+    const includedScopeCategories = normalizeOptionalQualityCheckScopeCategories(rule.included_scope_categories);
+    return includedScopeCategories.length > 0
+        && Boolean(normalizedScopeCategory)
+        && includedScopeCategories.includes(normalizedScopeCategory);
+}
+
+function isOptionalQualityCheckRuleIncludedByChangedFiles(
+    rule: Pick<OptionalQualityCheckRule, 'included_changed_file_regexes'>,
+    changedFiles: readonly unknown[]
+): boolean {
+    const includedChangedFileRegexes = normalizeOptionalQualityCheckChangedFileRegexes(rule.included_changed_file_regexes);
+    if (includedChangedFileRegexes.length === 0) {
+        return false;
+    }
+    const normalizedChangedFiles = changedFiles
+        .map(normalizeChangedFilePath)
+        .filter(Boolean);
+    return normalizedChangedFiles.some((changedFile) => (
+        includedChangedFileRegexes.some((pattern) => matchesRegex(changedFile, pattern))
+    ));
+}
+
+export function getOptionalQualityCheckRuleScopeSkipReason(
+    rule: Pick<OptionalQualityCheckRule, 'enabled' | 'included_scope_categories' | 'included_changed_file_regexes' | 'excluded_scope_categories'>,
+    scopeCategory: unknown,
+    changedFiles: readonly unknown[] = []
+): string | null {
+    if (rule.enabled === false) {
+        return null;
+    }
+    if (hasOptionalQualityCheckRuleScopeInclusion(rule)) {
+        const includedByScopeCategory = isOptionalQualityCheckRuleIncludedByScopeCategory(rule, scopeCategory);
+        const includedByChangedFiles = isOptionalQualityCheckRuleIncludedByChangedFiles(rule, changedFiles);
+        if (!includedByScopeCategory && !includedByChangedFiles) {
+            const includedScopeCategories = normalizeOptionalQualityCheckScopeCategories(rule.included_scope_categories);
+            const includedChangedFileRegexes = normalizeOptionalQualityCheckChangedFileRegexes(rule.included_changed_file_regexes);
+            const inclusionParts = [
+                includedScopeCategories.length > 0 ? `scope categories: ${includedScopeCategories.join(', ')}` : '',
+                includedChangedFileRegexes.length > 0 ? 'changed-file patterns' : ''
+            ].filter(Boolean);
+            return `Rule included only for ${inclusionParts.join(' or ')}; current preflight scope_category '${normalizeScopeCategory(scopeCategory) || 'unknown'}' did not match.`;
+        }
+    }
+    if (isOptionalQualityCheckRuleExcludedForScope(rule, scopeCategory)) {
+        return `Rule excluded for preflight scope_category '${normalizeScopeCategory(scopeCategory) || 'unknown'}'.`;
+    }
+    return null;
+}
+
+export function isOptionalQualityCheckRuleActiveForScope(
+    rule: Pick<OptionalQualityCheckRule, 'enabled' | 'included_scope_categories' | 'included_changed_file_regexes' | 'excluded_scope_categories'>,
+    scopeCategory: unknown,
+    changedFiles: readonly unknown[] = []
+): boolean {
+    return rule.enabled !== false
+        && getOptionalQualityCheckRuleScopeSkipReason(rule, scopeCategory, changedFiles) === null;
+}
+
+function applyRuleScopeFilters(
     rule: OptionalQualityCheckRule,
     source: Record<string, unknown>
 ): OptionalQualityCheckRule {
-    if (!hasOwn(source, 'excluded_scope_categories')) {
-        return rule;
+    let normalizedRule = rule;
+    if (hasOwn(source, 'included_scope_categories')) {
+        normalizedRule = {
+            ...normalizedRule,
+            included_scope_categories: normalizeOptionalQualityCheckScopeCategories(source.included_scope_categories)
+        };
     }
-    return {
-        ...rule,
-        excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(source.excluded_scope_categories)
-    };
+    if (hasOwn(source, 'included_changed_file_regexes')) {
+        normalizedRule = {
+            ...normalizedRule,
+            included_changed_file_regexes: normalizeOptionalQualityCheckChangedFileRegexes(source.included_changed_file_regexes)
+        };
+    }
+    if (hasOwn(source, 'excluded_scope_categories')) {
+        normalizedRule = {
+            ...normalizedRule,
+            excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(source.excluded_scope_categories)
+        };
+    }
+    return normalizedRule;
 }
 
 function appendMissingMovedProjectCustomRules(
@@ -259,7 +402,7 @@ function normalizeOptionalQualityCheckRule(input: unknown): OptionalQualityCheck
             prompt,
             enabled: input.enabled === undefined ? baselineRule.enabled : input.enabled === true
         } as OptionalQualityCheckRule;
-        return applyRuleScopeExclusions(normalizedRule, input);
+        return applyRuleScopeFilters(normalizedRule, input);
     }
     const customRule = {
         ...cloneJsonValue(input),
@@ -268,7 +411,7 @@ function normalizeOptionalQualityCheckRule(input: unknown): OptionalQualityCheck
         prompt,
         enabled: input.enabled === undefined ? true : input.enabled === true
     };
-    return applyRuleScopeExclusions(customRule, input);
+    return applyRuleScopeFilters(customRule, input);
 }
 
 function normalizeOptionalQualityCheckRules(input: unknown): OptionalQualityCheckRule[] {
@@ -350,7 +493,7 @@ function mergeOptionalQualityCheckRulesWithBaseline(
                         prompt: existingRule.prompt,
                         enabled: existingRule.enabled !== false
                     };
-                mergedRules.push(applyRuleScopeExclusions(preservedRule, existingRule));
+                mergedRules.push(applyRuleScopeFilters(preservedRule, existingRule));
                 mergedRuleIds.add(existingRule.id);
             }
             continue;

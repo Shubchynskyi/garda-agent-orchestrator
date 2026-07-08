@@ -5,6 +5,7 @@ import * as path from 'node:path';
 
 import {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES,
     buildDefaultWorkflowConfig,
     isOptionalQualityCheckRuleExcludedForScope
 } from '../../../../src/core/workflow-config';
@@ -57,6 +58,33 @@ const UNIVERSAL_QUALITY_RULE_EXPECTATIONS = Object.freeze([
     })
 ]);
 
+const UNIVERSAL_QUALITY_RULE_IDS = Object.freeze(
+    UNIVERSAL_QUALITY_RULE_EXPECTATIONS.map((rule) => rule.id)
+);
+
+const OPS_SHELL_QUALITY_RULE_EXPECTATIONS = Object.freeze([
+    Object.freeze({
+        id: 'ops_shell_strict_error_handling',
+        promptPatterns: [/strict shell behavior/i, /error propagation/i, /portability/i],
+        action: 'Tighten strict shell behavior, error propagation, cleanup paths, and portability.'
+    }),
+    Object.freeze({
+        id: 'ops_deploy_backup_idempotency',
+        promptPatterns: [/idempotency/i, /dry-run or confirmation/i, /restore verification/i],
+        action: 'Add idempotency, dry-run or confirmation semantics, and restore verification where needed.'
+    }),
+    Object.freeze({
+        id: 'ops_secret_env_loading',
+        promptPatterns: [/secret handling/i, /env-file loading safety/i, /shared helper/i],
+        action: 'Reuse or extract shared environment-loading helpers and keep secrets out of logs.'
+    })
+]);
+
+const OPS_SHELL_QUALITY_RULE_IDS = Object.freeze(
+    OPS_SHELL_QUALITY_RULE_EXPECTATIONS.map((rule) => rule.id)
+);
+const OPS_SHELL_QUALITY_RULE_ID_SET = new Set<string>(OPS_SHELL_QUALITY_RULE_IDS);
+
 const MOVED_PROJECT_LOCAL_RULE_IDS = Object.freeze([
     'classifier_intent_edge_cases',
     'config_materialization_parity',
@@ -95,18 +123,17 @@ function writeStaleMovedRuleWorkflowConfig(fixture: ReturnType<typeof createGate
 }
 
 function buildPassAnswers(): Array<Record<string, unknown>> {
-    return DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({
-        rule_id: rule.id,
-        status: 'PASS',
-        answer: `Checked ${rule.id} against the changed files.`,
-        evidence_files: ['src/app.ts'],
-        actions_taken: [`No action required for ${rule.id}.`]
-    }));
+    return buildPassAnswersForRuleIds(UNIVERSAL_QUALITY_RULE_IDS);
 }
 
 function buildPassAnswersForRuleIds(ruleIds: readonly string[]): Array<Record<string, unknown>> {
-    const allowedRuleIds = new Set(ruleIds);
-    return buildPassAnswers().filter((answer) => allowedRuleIds.has(String(answer.rule_id)));
+    return ruleIds.map((ruleId) => ({
+        rule_id: ruleId,
+        status: 'PASS',
+        answer: `Checked ${ruleId} against the changed files.`,
+        evidence_files: ['src/app.ts'],
+        actions_taken: [`No action required for ${ruleId}.`]
+    }));
 }
 
 function buildGenericActionRequiredAnswers(): Array<Record<string, unknown>> {
@@ -160,6 +187,29 @@ describe('quality-checklist gate', () => {
         }
     });
 
+    it('ships ops/shell baseline prompts as changed-file scoped rules', () => {
+        const rulesById = new Map(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => [rule.id, rule]));
+
+        assert.deepEqual(
+            OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id),
+            OPS_SHELL_QUALITY_RULE_IDS
+        );
+        for (const expectation of OPS_SHELL_QUALITY_RULE_EXPECTATIONS) {
+            const rule = rulesById.get(expectation.id);
+            assert.ok(rule, `Expected shipped optional quality rule '${expectation.id}'.`);
+            assert.equal(rule.enabled, true);
+            assert.ok(
+                Array.isArray(rule.included_changed_file_regexes) && rule.included_changed_file_regexes.length > 0,
+                `Rule '${expectation.id}' should be active only for matching ops/shell changed files.`
+            );
+            assert.equal(rule.excluded_scope_categories, undefined);
+            const searchableText = `${rule.title}\n${rule.prompt}`;
+            for (const pattern of expectation.promptPatterns) {
+                assert.match(searchableText, pattern, `Rule '${expectation.id}' should mention ${pattern}.`);
+            }
+        }
+    });
+
     it('builds PASS artifact with configured rules and changed-file evidence', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-pass' });
         try {
@@ -183,12 +233,150 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.outcome, 'PASS');
             assert.equal(artifact.checklist_id, 'optional_quality_checks');
             assert.equal(artifact.rules.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
-            assert.equal(artifact.answers.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
+            assert.equal(artifact.answers.length, UNIVERSAL_QUALITY_RULE_IDS.length);
             assert.deepEqual(artifact.changed_file_evidence.changed_files, ['src/app.ts', 'src/feature.ts']);
             assert.equal(artifact.changed_file_evidence.scope_sha256, 'a'.repeat(64));
             assert.equal(artifact.changed_file_evidence.scope_content_sha256, 'b'.repeat(64));
+            assert.equal(artifact.enabled_rule_count, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
+            assert.equal(artifact.active_rule_count, UNIVERSAL_QUALITY_RULE_IDS.length);
+            assert.equal(artifact.skipped_by_scope_rule_count, OPS_SHELL_QUALITY_RULE_IDS.length);
             assert.ok(artifact.workflow_config_sha256);
             assert.ok(artifact.preflight_sha256);
+            assert.deepEqual(artifact.violations, []);
+            assert.deepEqual(
+                artifact.rules
+                    .filter((rule) => rule.scope_applicability === 'skipped_by_scope')
+                    .map((rule) => rule.id)
+                    .sort(),
+                [...OPS_SHELL_QUALITY_RULE_IDS].sort()
+            );
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('activates ops/shell rules for shell, deploy, backup, and restore changed files', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-ops-shell-active-rules' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture, {
+                scope_category: 'config-only',
+                metrics: {
+                    changed_lines_total: 12,
+                    scope_sha256: 'e'.repeat(64),
+                    scope_content_sha256: 'f'.repeat(64)
+                },
+                changed_files: [
+                    'scripts/deploy.sh',
+                    'ops/backup.ps1',
+                    '.github/workflows/restore-release.yml'
+                ]
+            });
+            const expectedActiveRuleIds = [
+                ...UNIVERSAL_QUALITY_RULE_IDS,
+                ...OPS_SHELL_QUALITY_RULE_IDS
+            ];
+
+            const artifact = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: buildPassAnswersForRuleIds(expectedActiveRuleIds)
+            });
+
+            assert.equal(artifact.status, 'PASS');
+            assert.equal(artifact.scope_category, 'config-only');
+            assert.equal(artifact.enabled_rule_count, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
+            assert.equal(artifact.active_rule_count, expectedActiveRuleIds.length);
+            assert.equal(artifact.skipped_by_scope_rule_count, 0);
+            assert.deepEqual(
+                artifact.rules
+                    .filter((rule) => OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
+                    .map((rule) => [rule.id, rule.scope_applicability]),
+                OPS_SHELL_QUALITY_RULE_IDS.map((ruleId) => [ruleId, 'active'])
+            );
+            assert.deepEqual(artifact.violations, []);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('activates ops/shell rules for non-shell ops script extensions', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-ops-script-extension-rules' });
+        try {
+            const expectedActiveRuleIds = [
+                ...UNIVERSAL_QUALITY_RULE_IDS,
+                ...OPS_SHELL_QUALITY_RULE_IDS
+            ];
+            const changedFiles = [
+                'scripts/deploy-release.mjs',
+                'tools/backup-runner.ts',
+                'ops/restore_snapshot.py'
+            ];
+
+            for (const changedFile of changedFiles) {
+                const preflightPath = writeGateFixturePreflight(fixture, {
+                    scope_category: 'mixed',
+                    metrics: {
+                        changed_lines_total: 8,
+                        scope_sha256: '1'.repeat(64),
+                        scope_content_sha256: '2'.repeat(64)
+                    },
+                    changed_files: [changedFile]
+                });
+
+                const artifact = buildQualityChecklistArtifact({
+                    repoRoot: fixture.repoRoot,
+                    taskId: fixture.taskId,
+                    preflightPath,
+                    answers: buildPassAnswersForRuleIds(expectedActiveRuleIds)
+                });
+
+                assert.equal(artifact.status, 'PASS', changedFile);
+                assert.equal(artifact.active_rule_count, expectedActiveRuleIds.length, changedFile);
+                assert.equal(artifact.skipped_by_scope_rule_count, 0, changedFile);
+                assert.deepEqual(
+                    artifact.rules
+                        .filter((rule) => OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
+                        .map((rule) => [rule.id, rule.scope_applicability]),
+                    OPS_SHELL_QUALITY_RULE_IDS.map((ruleId) => [ruleId, 'active']),
+                    changedFile
+                );
+                assert.deepEqual(artifact.violations, [], changedFile);
+            }
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('does not activate ops/shell rules for ordinary filenames containing ops as a substring', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-ops-substring-not-active' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture, {
+                scope_category: 'mixed',
+                metrics: {
+                    changed_lines_total: 6,
+                    scope_sha256: '3'.repeat(64),
+                    scope_content_sha256: '4'.repeat(64)
+                },
+                changed_files: ['src/components/props.ts']
+            });
+
+            const artifact = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: buildPassAnswersForRuleIds(UNIVERSAL_QUALITY_RULE_IDS)
+            });
+
+            assert.equal(artifact.status, 'PASS');
+            assert.equal(artifact.active_rule_count, UNIVERSAL_QUALITY_RULE_IDS.length);
+            assert.equal(artifact.skipped_by_scope_rule_count, OPS_SHELL_QUALITY_RULE_IDS.length);
+            assert.deepEqual(
+                artifact.rules
+                    .filter((rule) => OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
+                    .map((rule) => [rule.id, rule.scope_applicability]),
+                OPS_SHELL_QUALITY_RULE_IDS.map((ruleId) => [ruleId, 'skipped_by_scope'])
+            );
             assert.deepEqual(artifact.violations, []);
         } finally {
             fixture.cleanup();
@@ -209,6 +397,7 @@ describe('quality-checklist gate', () => {
             });
             const activeRuleIds = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
                 .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
+                .filter((rule) => !OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
                 .map((rule) => rule.id);
 
             const artifact = buildQualityChecklistArtifact({
@@ -222,14 +411,19 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.scope_category, 'test-only');
             assert.equal(artifact.enabled_rule_count, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
             assert.equal(artifact.active_rule_count, activeRuleIds.length);
-            assert.equal(artifact.skipped_by_scope_rule_count, 3);
+            assert.equal(artifact.skipped_by_scope_rule_count, 3 + OPS_SHELL_QUALITY_RULE_IDS.length);
             assert.equal(artifact.answers.length, activeRuleIds.length);
             assert.deepEqual(
                 artifact.rules
                     .filter((rule) => rule.scope_applicability === 'skipped_by_scope')
                     .map((rule) => rule.id)
                     .sort(),
-                ['code_simplification', 'size_growth', 'unnecessary_abstraction']
+                [
+                    'code_simplification',
+                    ...OPS_SHELL_QUALITY_RULE_IDS,
+                    'size_growth',
+                    'unnecessary_abstraction'
+                ].sort()
             );
             assert.deepEqual(artifact.violations, []);
         } finally {
@@ -246,6 +440,7 @@ describe('quality-checklist gate', () => {
             });
             const activeRuleIds = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
                 .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
+                .filter((rule) => !OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
                 .map((rule) => rule.id);
             const artifact = buildQualityChecklistArtifact({
                 repoRoot: fixture.repoRoot,
@@ -293,6 +488,7 @@ describe('quality-checklist gate', () => {
             });
             const activeRuleIds = config.optional_quality_checks.rules
                 .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
+                .filter((rule) => !OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
                 .map((rule) => rule.id);
 
             const artifact = buildQualityChecklistArtifact({
@@ -307,7 +503,7 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.scope_category, 'test-only');
             assert.equal(artifact.enabled_rule_count, config.optional_quality_checks.rules.length);
             assert.equal(artifact.active_rule_count, activeRuleIds.length);
-            assert.equal(artifact.skipped_by_scope_rule_count, 4);
+            assert.equal(artifact.skipped_by_scope_rule_count, 4 + OPS_SHELL_QUALITY_RULE_IDS.length);
             assert.equal(skippedCustomRule?.scope_applicability, 'skipped_by_scope');
             assert.deepEqual(skippedCustomRule?.excluded_scope_categories, ['test-only']);
             assert.match(skippedCustomRule?.scope_skip_reason || '', /test-only/u);
@@ -506,7 +702,7 @@ describe('quality-checklist gate', () => {
             assert.ok(artifactPathLine);
             const artifact = JSON.parse(fs.readFileSync(artifactPathLine.replace('QualityChecklistArtifactPath: ', ''), 'utf8'));
             assert.equal(artifact.status, 'PASS');
-            assert.equal(artifact.answers.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
+            assert.equal(artifact.answers.length, UNIVERSAL_QUALITY_RULE_IDS.length);
         } finally {
             fixture.cleanup();
         }
@@ -781,7 +977,7 @@ describe('quality-checklist gate', () => {
             const diagnostic = String(artifact.violations[0] || '');
 
             assert.equal(artifact.status, 'CONFIG_ERROR');
-            assert.match(diagnostic, /baseline_version '2026-06-26\.t843' differs from shipped '2026-07-02\.t898'/u);
+            assert.match(diagnostic, /baseline_version '2026-06-26\.t843' differs from shipped '2026-07-08\.t934'/u);
             assert.match(diagnostic, /classifier_intent_edge_cases/u);
             assert.match(diagnostic, /custom_garda_classifier_intent_edge_cases/u);
             assert.match(diagnostic, /Canonical enabled quality-check rule ids/u);

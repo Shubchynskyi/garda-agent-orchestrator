@@ -293,6 +293,22 @@ function customizeOptionalQualityCheckRule(repoRoot: string): void {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
 }
 
+function customizeOptionalQualityCheckRuleIncludeFilter(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        optional_quality_checks: {
+            rules: Array<{
+                id?: string;
+                included_changed_file_regexes?: string[];
+            }>;
+        };
+    };
+    const rule = config.optional_quality_checks.rules.find((candidate) => candidate.id === 'ops_shell_strict_error_handling');
+    assert.ok(rule);
+    rule.included_changed_file_regexes = ['(^|/).*\\.ts$'];
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
 function corruptProtectedControlPlaneManifest(repoRoot: string): void {
     const manifestPath = path.join(
         repoRoot,
@@ -1017,6 +1033,28 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             seedInitAnswers(repoRoot);
             initializeGitRepo(repoRoot);
             customizeOptionalQualityCheckRule(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when optional quality include filters are customized', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-custom-optional-check-filter';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            customizeOptionalQualityCheckRuleIncludeFilter(repoRoot);
 
             const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
             assert.deepEqual(baselineState.compatibility_baseline_files, []);

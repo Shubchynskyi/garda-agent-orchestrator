@@ -183,11 +183,13 @@ function addWorkflowConfigFreshnessReasons(
     const ruleSetDiagnostic = formatOptionalQualityChecksRuleSetDiagnostics(workflowConfig?.optional_quality_checks);
     const evidence = isRecord(payload.changed_file_evidence) ? payload.changed_file_evidence : {};
     const scopeCategory = String(payload.scope_category || evidence.scope_category || '').trim() || null;
+    const changedFiles = Array.isArray(evidence.changed_files) ? evidence.changed_files : [];
     const compatibility = assessQualityChecklistPolicyCompatibility({
         currentRules: optionalQualityChecks.rules,
         artifactRules: payload.rules,
         artifactAnswers: payload.answers,
         scopeCategory,
+        changedFiles,
         currentRuleSetDiagnostic: ruleSetDiagnostic
     });
     if (!compatibility.compatible) {

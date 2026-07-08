@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { DEFAULT_BUNDLE_NAME } from '../../../src/core/constants';
 import {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
-    isOptionalQualityCheckRuleExcludedForScope
+    isOptionalQualityCheckRuleActiveForScope
 } from '../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 import { handleSetup } from '../../../src/cli/commands/setup';
@@ -253,6 +253,8 @@ function assertGatePassed(result: { exitCode: number; outputLines?: string[]; ou
 }
 
 function buildQualityChecklistAnswersJson(): string {
+    const scopeCategory = 'test-only';
+    const changedFiles = ['tests/app.test.ts'];
     const answersByRuleId: Record<string, {
         answer: string;
         evidence_files: string[];
@@ -287,7 +289,7 @@ function buildQualityChecklistAnswersJson(): string {
         }
     };
     return JSON.stringify(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
-        .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
+        .filter((rule) => isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles))
         .map((rule) => ({
             rule_id: rule.id,
             status: 'PASS',

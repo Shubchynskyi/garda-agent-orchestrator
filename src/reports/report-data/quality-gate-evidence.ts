@@ -629,6 +629,9 @@ function resolveEvidenceFreshness(options: {
                 scopeCategory: toText(validPayload.scope_category)
                     || (isRecord(validPayload.changed_file_evidence) ? toText(validPayload.changed_file_evidence.scope_category) : '')
                     || null,
+                changedFiles: isRecord(validPayload.changed_file_evidence)
+                    ? toTextArray(validPayload.changed_file_evidence.changed_files)
+                    : [],
                 currentRuleSetDiagnostic: formatOptionalQualityChecksRuleSetDiagnostics(
                     rawWorkflowConfig?.optional_quality_checks
                 )
@@ -838,7 +841,10 @@ function buildLatestCheckFromArtifact(options: {
                 currentRules: options.workflowConfigTab.optional_quality_checks.rules,
                 artifactRules: payload?.rules,
                 artifactAnswers: payload?.answers,
-                scopeCategory: scopeCategory || null
+                scopeCategory: scopeCategory || null,
+                changedFiles: isRecord(payload?.changed_file_evidence)
+                    ? toTextArray(payload.changed_file_evidence.changed_files)
+                    : []
             }).effective_policy_sha256,
         scope_category: scopeCategory || null,
         changed_files_count: changedFiles.changedFilesCount,

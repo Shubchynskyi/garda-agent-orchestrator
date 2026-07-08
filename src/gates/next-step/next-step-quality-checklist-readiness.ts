@@ -3,8 +3,8 @@ import * as path from 'node:path';
 
 import {
     formatOptionalQualityChecksRuleSetDiagnostics,
-    isOptionalQualityCheckRuleExcludedForScope,
-    normalizeOptionalQualityChecksConfig
+    isOptionalQualityCheckRuleActiveForScope,
+    normalizeOptionalQualityChecksConfig,
 } from '../../core/workflow-config';
 import {
     assessQualityChecklistPolicyCompatibility,
@@ -109,6 +109,15 @@ function preflightChangedFilesCount(preflight: Record<string, unknown> | null): 
     return parseOptionalNumberField(metrics.changed_files_count);
 }
 
+function preflightChangedFiles(preflight: Record<string, unknown> | null): string[] {
+    if (!preflight || !Array.isArray(preflight.changed_files)) {
+        return [];
+    }
+    return preflight.changed_files
+        .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+        .filter(Boolean);
+}
+
 function preflightScopeCategory(preflight: Record<string, unknown> | null): string | null {
     const normalized = String(preflight?.scope_category || '').trim().toLowerCase();
     return normalized || null;
@@ -198,11 +207,12 @@ export function readQualityChecklistReadiness(options: {
     const optionalQualityChecks = normalizeOptionalQualityChecksConfig(options.workflowConfig?.optional_quality_checks);
     const required = preflightHasChangedFiles(options.preflight);
     const changedFilesCount = preflightChangedFilesCount(options.preflight);
+    const changedFiles = preflightChangedFiles(options.preflight);
     const scopeCategory = preflightScopeCategory(options.preflight);
     const enabledRuleCount = optionalQualityChecks.rules.filter((rule) => rule.enabled).length;
     const activeRuleCount = optionalQualityChecks.rules
         .filter((rule) => rule.enabled)
-        .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, scopeCategory))
+        .filter((rule) => isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles))
         .length;
     const skippedByScopeRuleCount = enabledRuleCount - activeRuleCount;
     const sourceCheckoutDefaultEnabled = !hasOptionalQualityChecksConfig && isOrchestratorSourceCheckout(options.repoRoot);
@@ -371,6 +381,7 @@ export function readQualityChecklistReadiness(options: {
                 artifactRules: artifact.rules,
                 artifactAnswers: artifact.answers,
                 scopeCategory,
+                changedFiles,
                 currentRuleSetDiagnostic: ruleSetDiagnostic
             })
             : null;

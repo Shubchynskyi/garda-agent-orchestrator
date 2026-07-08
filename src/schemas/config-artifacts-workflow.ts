@@ -22,6 +22,7 @@ import {
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     buildDefaultWorkflowConfig,
     normalizeFullSuiteValidationPlacement,
+    normalizeOptionalQualityCheckChangedFileRegexes,
     normalizeOptionalQualityCheckScopeCategories,
     normalizeOptionalQualityChecksConfig,
     type OrchestratorWorkPolicyMode
@@ -307,6 +308,23 @@ function validateAutoBackupSection(input: unknown): Record<string, unknown> {
     return normalizedInput;
 }
 
+function validateOptionalQualityCheckChangedFileRegexes(value: unknown, fieldName: string): string[] {
+    const patterns = normalizeOptionalQualityCheckChangedFileRegexes(
+        normalizeStringArray(value, fieldName, { unique: true })
+    );
+    patterns.forEach((pattern, index) => {
+        try {
+            new RegExp(pattern, 'i');
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            throw new Error(
+                `${fieldName}[${index}] must be a valid JavaScript regular expression: ${reason}.`
+            );
+        }
+    });
+    return patterns;
+}
+
 function validateOptionalQualityChecksSection(input: unknown): Record<string, unknown> {
     const section = ensurePlainObject(input, 'workflow-config.optional_quality_checks');
     const sectionKnownKeys = ['enabled', 'baseline_version', 'rules'];
@@ -339,7 +357,15 @@ function validateOptionalQualityChecksSection(input: unknown): Record<string, un
     normalizedInput.rules = normalizedInput.rules.map((rawRule, index) => {
         const rulePath = `workflow-config.optional_quality_checks.rules[${index}]`;
         const rule = ensurePlainObject(rawRule, rulePath);
-        const ruleKnownKeys = ['id', 'title', 'prompt', 'enabled', 'excluded_scope_categories'];
+        const ruleKnownKeys = [
+            'id',
+            'title',
+            'prompt',
+            'enabled',
+            'included_scope_categories',
+            'included_changed_file_regexes',
+            'excluded_scope_categories'
+        ];
         assertNoCaseMismatchedKnownKeys(rule, ruleKnownKeys, rulePath);
         const id = normalizeNonEmptyString(rule.id, `${rulePath}.id`).trim().toLowerCase();
         if (seenRuleIds.has(id)) {
@@ -362,6 +388,21 @@ function validateOptionalQualityChecksSection(input: unknown): Record<string, un
                     `${rulePath}.excluded_scope_categories`,
                     { unique: true }
                 )
+            );
+        }
+        if (rule.included_scope_categories !== undefined) {
+            normalizedRule.included_scope_categories = normalizeOptionalQualityCheckScopeCategories(
+                normalizeStringArray(
+                    rule.included_scope_categories,
+                    `${rulePath}.included_scope_categories`,
+                    { unique: true }
+                )
+            );
+        }
+        if (rule.included_changed_file_regexes !== undefined) {
+            normalizedRule.included_changed_file_regexes = validateOptionalQualityCheckChangedFileRegexes(
+                rule.included_changed_file_regexes,
+                `${rulePath}.included_changed_file_regexes`
             );
         }
         return {

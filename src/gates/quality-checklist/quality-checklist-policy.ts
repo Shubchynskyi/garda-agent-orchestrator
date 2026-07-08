@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 
 import {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    isOptionalQualityCheckRuleActiveForScope,
     isBaselineOptionalQualityCheckRuleId,
-    isOptionalQualityCheckRuleExcludedForScope,
+    normalizeOptionalQualityCheckChangedFileRegexes,
     normalizeOptionalQualityCheckScopeCategories,
     type OptionalQualityCheckRule
 } from '../../core/workflow-config';
@@ -12,6 +13,8 @@ export interface QualityChecklistEffectivePolicyEntry {
     id: string;
     source: 'baseline' | 'custom';
     enabled: boolean;
+    included_scope_categories: string[];
+    included_changed_file_regexes: string[];
     excluded_scope_categories: string[];
     scope_applicability: 'active' | 'disabled' | 'skipped_by_scope';
     title: string;
@@ -46,19 +49,21 @@ function sha256Json(value: unknown): string {
 
 function scopeApplicabilityForRule(
     rule: OptionalQualityCheckRule,
-    scopeCategory: string | null
+    scopeCategory: string | null,
+    changedFiles: readonly unknown[] = []
 ): QualityChecklistEffectivePolicyEntry['scope_applicability'] {
     if (rule.enabled === false) {
         return 'disabled';
     }
-    return isOptionalQualityCheckRuleExcludedForScope(rule, scopeCategory)
-        ? 'skipped_by_scope'
-        : 'active';
+    return isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles)
+        ? 'active'
+        : 'skipped_by_scope';
 }
 
 export function buildQualityChecklistEffectivePolicyEntries(
     rules: readonly OptionalQualityCheckRule[],
-    scopeCategory: string | null
+    scopeCategory: string | null,
+    changedFiles: readonly unknown[] = []
 ): QualityChecklistEffectivePolicyEntry[] {
     return rules
         .map((rule) => {
@@ -67,8 +72,10 @@ export function buildQualityChecklistEffectivePolicyEntries(
                 id,
                 source: isBaselineOptionalQualityCheckRuleId(id) ? 'baseline' as const : 'custom' as const,
                 enabled: rule.enabled !== false,
+                included_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.included_scope_categories),
+                included_changed_file_regexes: normalizeOptionalQualityCheckChangedFileRegexes(rule.included_changed_file_regexes),
                 excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories),
-                scope_applicability: scopeApplicabilityForRule(rule, scopeCategory),
+                scope_applicability: scopeApplicabilityForRule(rule, scopeCategory, changedFiles),
                 title: normalizeText(rule.title),
                 prompt: normalizeText(rule.prompt)
             };
@@ -97,6 +104,8 @@ export function buildQualityChecklistEffectivePolicyEntriesFromArtifact(
                 id,
                 source: isBaselineOptionalQualityCheckRuleId(id) ? 'baseline' as const : 'custom' as const,
                 enabled,
+                included_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.included_scope_categories),
+                included_changed_file_regexes: normalizeOptionalQualityCheckChangedFileRegexes(rule.included_changed_file_regexes),
                 excluded_scope_categories: normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories),
                 scope_applicability: scopeApplicability,
                 title: normalizeText(rule.title),
@@ -112,6 +121,8 @@ function fingerprintEntry(entry: QualityChecklistEffectivePolicyEntry): Record<s
         id: entry.id,
         source: entry.source,
         enabled: entry.enabled,
+        included_scope_categories: entry.included_scope_categories,
+        included_changed_file_regexes: entry.included_changed_file_regexes,
         excluded_scope_categories: entry.excluded_scope_categories,
         scope_applicability: entry.scope_applicability
     };
@@ -127,9 +138,10 @@ function fingerprintEntry(entry: QualityChecklistEffectivePolicyEntry): Record<s
 
 export function computeQualityChecklistEffectivePolicySha256(
     rules: readonly OptionalQualityCheckRule[],
-    scopeCategory: string | null
+    scopeCategory: string | null,
+    changedFiles: readonly unknown[] = []
 ): string {
-    const entries = buildQualityChecklistEffectivePolicyEntries(rules, scopeCategory).map(fingerprintEntry);
+    const entries = buildQualityChecklistEffectivePolicyEntries(rules, scopeCategory, changedFiles).map(fingerprintEntry);
     return sha256Json({
         schema_version: 1,
         baseline_rule_ids: DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id).sort(),
@@ -176,6 +188,10 @@ function customRuleCompatible(
         && current.scope_applicability === artifact.scope_applicability
         && current.title === artifact.title
         && current.prompt === artifact.prompt
+        && current.included_scope_categories.length === artifact.included_scope_categories.length
+        && current.included_scope_categories.every((scope, index) => scope === artifact.included_scope_categories[index])
+        && current.included_changed_file_regexes.length === artifact.included_changed_file_regexes.length
+        && current.included_changed_file_regexes.every((pattern, index) => pattern === artifact.included_changed_file_regexes[index])
         && current.excluded_scope_categories.length === artifact.excluded_scope_categories.length
         && current.excluded_scope_categories.every((scope, index) => scope === artifact.excluded_scope_categories[index]);
 }
@@ -185,14 +201,23 @@ export function assessQualityChecklistPolicyCompatibility(options: {
     artifactRules: unknown;
     artifactAnswers: unknown;
     scopeCategory: string | null;
+    changedFiles?: readonly unknown[];
     currentRuleSetDiagnostic?: string | null;
 }): QualityChecklistPolicyCompatibility {
-    const currentEntries = buildQualityChecklistEffectivePolicyEntries(options.currentRules, options.scopeCategory);
+    const currentEntries = buildQualityChecklistEffectivePolicyEntries(
+        options.currentRules,
+        options.scopeCategory,
+        options.changedFiles || []
+    );
     const artifactEntries = buildQualityChecklistEffectivePolicyEntriesFromArtifact(options.artifactRules);
     const currentById = entriesById(currentEntries);
     const artifactById = entriesById(artifactEntries);
     const reasons: string[] = [];
-    const currentPolicySha256 = computeQualityChecklistEffectivePolicySha256(options.currentRules, options.scopeCategory);
+    const currentPolicySha256 = computeQualityChecklistEffectivePolicySha256(
+        options.currentRules,
+        options.scopeCategory,
+        options.changedFiles || []
+    );
 
     if (options.currentRuleSetDiagnostic) {
         reasons.push(options.currentRuleSetDiagnostic);

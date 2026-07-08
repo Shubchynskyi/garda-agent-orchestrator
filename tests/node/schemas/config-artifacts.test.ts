@@ -46,6 +46,12 @@ function expectedOptionalQualityRule(
     if (rule.excluded_scope_categories) {
         expected.excluded_scope_categories = rule.excluded_scope_categories;
     }
+    if (rule.included_scope_categories) {
+        expected.included_scope_categories = rule.included_scope_categories;
+    }
+    if (rule.included_changed_file_regexes) {
+        expected.included_changed_file_regexes = rule.included_changed_file_regexes;
+    }
     return expected;
 }
 
@@ -53,6 +59,20 @@ function readTemplateConfig(configName: string): Record<string, unknown> {
     return JSON.parse(
         fs.readFileSync(path.join(process.cwd(), 'template', 'config', `${configName}.json`), 'utf8')
     );
+}
+
+function readMaterializedTemplateConfigIfPresent(configName: string): Record<string, unknown> | null {
+    const materializedPath = path.join(
+        process.cwd(),
+        'garda-agent-orchestrator',
+        'template',
+        'config',
+        `${configName}.json`
+    );
+    if (!fs.existsSync(materializedPath)) {
+        return null;
+    }
+    return JSON.parse(fs.readFileSync(materializedPath, 'utf8')) as Record<string, unknown>;
 }
 
 function makeRetentionPreviewWorkspace(): {
@@ -127,6 +147,19 @@ test('tracked template managed configs validate successfully', () => {
 
 test('tracked workflow template ships current optional quality baseline', () => {
     const workflowConfig = readTemplateConfig('workflow-config');
+    const optionalQualityChecks = workflowConfig.optional_quality_checks as Record<string, unknown>;
+    assert.equal(optionalQualityChecks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+    assert.deepEqual(
+        optionalQualityChecks.rules,
+        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map(expectedOptionalQualityRule)
+    );
+});
+
+test('materialized workflow template keeps optional quality baseline parity when present', () => {
+    const workflowConfig = readMaterializedTemplateConfigIfPresent('workflow-config');
+    if (!workflowConfig) {
+        return;
+    }
     const optionalQualityChecks = workflowConfig.optional_quality_checks as Record<string, unknown>;
     assert.equal(optionalQualityChecks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
     assert.deepEqual(
@@ -477,6 +510,36 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
             }
         }),
         /optional_quality_checks\.rules has duplicate id 'duplicate'/
+    );
+});
+
+test('validateWorkflowConfig rejects malformed optional quality changed-file regexes', () => {
+    assert.throws(
+        () => validateWorkflowConfig({
+            full_suite_validation: {
+                enabled: false,
+                command: 'npm test',
+                timeout_ms: 600000,
+                green_summary_max_lines: 5,
+                red_failure_chunk_lines: 50,
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            },
+            optional_quality_checks: {
+                enabled: true,
+                rules: [
+                    {
+                        id: 'custom_ops',
+                        title: 'Custom ops',
+                        prompt: 'Check custom ops paths.',
+                        included_changed_file_regexes: ['[']
+                    }
+                ]
+            }
+        }),
+        /workflow-config\.optional_quality_checks\.rules\[0\]\.included_changed_file_regexes\[0\] must be a valid JavaScript regular expression/u
     );
 });
 
