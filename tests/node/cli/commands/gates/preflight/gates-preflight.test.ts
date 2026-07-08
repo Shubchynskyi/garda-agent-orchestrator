@@ -1322,7 +1322,7 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('classify-change strict profile keeps DB review when project DB evidence exists', { concurrency: false }, () => {
+    it('classify-change strict profile downgrades DB review when only project DB evidence exists', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({
             dependencies: {
@@ -1339,7 +1339,7 @@ describe('cli/commands/gates — preflight', () => {
             taskId,
             requestedDepth: 2,
             effectiveDepth: 2,
-            taskSummary: 'Keep strict DB review when project database capability exists'
+            taskSummary: 'Downgrade strict DB review when only project database capability exists'
         });
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
         runHandshakeForTask(repoRoot, taskId);
@@ -1357,12 +1357,13 @@ describe('cli/commands/gates — preflight', () => {
         const payload = JSON.parse(result.outputText);
         assert.equal(payload.triggers.db, false);
         assert.ok(payload.triggers.db_project_evidence.includes('package:pg'));
-        assert.equal(payload.required_reviews.db, true);
+        assert.equal(payload.triggers.db_downgrade_reason, 'project_db_evidence_without_db_changed_scope');
+        assert.equal(payload.required_reviews.db, false);
         assert.equal(
             payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'db')?.decision,
-            'domain_triggered'
+            'not_applicable_no_domain_surface'
         );
-        assert.equal(payload.budget_forecast.required_reviews.includes('db'), true);
+        assert.equal(payload.budget_forecast.required_reviews.includes('db'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

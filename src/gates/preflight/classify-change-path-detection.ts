@@ -14,6 +14,7 @@ export interface PathDetectionCallbacks {
     isProtectedControlPlaneDocumentationSurfacePath(pathValue: string, config: ResolvedClassificationConfig): boolean;
     isStrongDatabaseChangedScope(pathValue: string, sqlOrMigrationRegexes: string[], dbTriggerRegexes: string[]): boolean;
     isConfiguredWeakDatabaseSignal(pathValue: string, dbTriggerRegexes: string[]): boolean;
+    isAmbientDatabaseSignal(pathValue: string, dbTriggerRegexes: string[]): boolean;
     collectDatabaseProjectEvidence(repoRoot: string | undefined, normalizedFiles: string[]): string[];
     getSafeOrdinaryDocPathMatches(normalizedFiles: string[], config: ResolvedClassificationConfig): OrdinaryDocPathMatch[];
     isOrdinaryOrchestratorCacheMaintenancePath(pathValue: string): boolean;
@@ -35,7 +36,9 @@ export interface PathDetectionResult {
     protectedControlPlaneDocsOnly: boolean;
     dbStrongChangedFiles: string[];
     dbWeakSignalFiles: string[];
+    dbAmbientSignalFiles: string[];
     dbProjectEvidence: string[];
+    dbDowngradeReason: string | null;
     dbTriggered: boolean;
     securityTriggered: boolean;
     apiTriggeredFiles: string[];
@@ -90,9 +93,21 @@ export function detectPathTriggers(input: PathDetectionInput): PathDetectionResu
         dbStrongChangedFiles.indexOf(p) === -1
         && callbacks.isConfiguredWeakDatabaseSignal(p, classificationConfig.db_trigger_regexes)
     ));
+    const dbAmbientSignalFiles = normalizedFiles.filter((p: string) => (
+        dbStrongChangedFiles.indexOf(p) === -1
+        && dbWeakSignalFiles.indexOf(p) === -1
+        && callbacks.isAmbientDatabaseSignal(p, classificationConfig.db_trigger_regexes)
+    ));
     const dbProjectEvidence = callbacks.collectDatabaseProjectEvidence(input.repoRoot, normalizedFiles);
     const dbTriggered = dbStrongChangedFiles.length > 0
         || (dbWeakSignalFiles.length > 0 && dbProjectEvidence.length > 0);
+    const dbDowngradeReason = !dbTriggered && dbProjectEvidence.length > 0
+        ? (
+            dbAmbientSignalFiles.length > 0
+                ? 'ambient_project_db_evidence_with_non_db_changed_scope'
+                : 'project_db_evidence_without_db_changed_scope'
+        )
+        : null;
     const securityTriggered = normalizedFiles.some((p: string) => callbacks.testMatch(p, classificationConfig.security_trigger_regexes));
     const apiTriggeredFiles = normalizedFiles.filter((p: string) => callbacks.testMatch(p, classificationConfig.api_trigger_regexes));
     const apiTriggered = apiTriggeredFiles.length > 0;
@@ -142,7 +157,9 @@ export function detectPathTriggers(input: PathDetectionInput): PathDetectionResu
         protectedControlPlaneDocsOnly,
         dbStrongChangedFiles,
         dbWeakSignalFiles,
+        dbAmbientSignalFiles,
         dbProjectEvidence,
+        dbDowngradeReason,
         dbTriggered,
         securityTriggered,
         apiTriggeredFiles,

@@ -17,6 +17,7 @@ import {
 } from './classify-change-config';
 import {
     collectDatabaseProjectEvidence,
+    isAmbientDatabaseSignal,
     isConfiguredWeakDatabaseSignal,
     isStrongDatabaseChangedScope
 } from './classify-change-db-evidence';
@@ -101,7 +102,9 @@ export interface ClassifyChangeTriggers {
     db: boolean;
     db_strong_changed_files: string[];
     db_weak_signal_files: string[];
+    db_ambient_signal_files: string[];
     db_project_evidence: string[];
+    db_downgrade_reason: string | null;
     security: boolean;
     api: boolean;
     api_intent: boolean;
@@ -244,6 +247,7 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
             isProtectedControlPlaneDocumentationSurfacePath,
             isStrongDatabaseChangedScope,
             isConfiguredWeakDatabaseSignal,
+            isAmbientDatabaseSignal,
             collectDatabaseProjectEvidence,
             getSafeOrdinaryDocPathMatches,
             isOrdinaryOrchestratorCacheMaintenancePath
@@ -380,7 +384,9 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
             db: pathTriggers.dbTriggered,
             db_strong_changed_files: pathTriggers.dbStrongChangedFiles,
             db_weak_signal_files: pathTriggers.dbWeakSignalFiles,
+            db_ambient_signal_files: pathTriggers.dbAmbientSignalFiles,
             db_project_evidence: pathTriggers.dbProjectEvidence,
+            db_downgrade_reason: pathTriggers.dbDowngradeReason,
             security: securityTriggered,
             api: apiTriggered,
             api_intent: apiIntentTriggered,

@@ -8,6 +8,22 @@ const WEAK_DB_SIGNAL_REGEXES = Object.freeze([
     '(Repository|Dao|Specification|Query|Migration)[^/]*\\.(java|kt|ts|js|py|go|cs|rb|php)$'
 ]);
 
+const AMBIENT_DB_SIGNAL_REGEXES = Object.freeze([
+    '(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)'
+]);
+
+const DB_CONFIG_CHANGED_SCOPE_REGEXES = Object.freeze([
+    '(^|/)prisma/schema\\.prisma$',
+    '(^|/)knexfile\\.(js|ts|cjs|mjs)$',
+    '(^|/)ormconfig\\.(js|ts|json)$',
+    '(^|/)sequelize\\.config\\.(js|ts|cjs|mjs)$',
+    '(^|/)liquibase\\.properties$',
+    '(^|/)flyway\\.conf$',
+    '(^|/)alembic\\.ini$',
+    '(^|/)(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)[^/]*\\.(json|ya?ml|toml|ini|conf|properties|ts|js|cjs|mjs)$',
+    '(^|/)(configs?|settings?)/[^/]*(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)[^/]*\\.(json|ya?ml|toml|ini|conf|properties|ts|js|cjs|mjs)$'
+]);
+
 const DB_PROJECT_EVIDENCE_PATHS = Object.freeze([
     'db',
     'database',
@@ -193,11 +209,31 @@ export function isConfiguredWeakDatabaseSignal(pathValue: string, dbTriggerRegex
     });
 }
 
+export function isAmbientDatabaseSignal(pathValue: string, dbTriggerRegexes: string[]): boolean {
+    const configuredAmbientRegexes = dbTriggerRegexes.filter((regex) => AMBIENT_DB_SIGNAL_REGEXES.includes(regex));
+    return configuredAmbientRegexes.length > 0 && matchAnyRegex(normalizePath(pathValue), configuredAmbientRegexes, {
+        skipInvalidRegex: true,
+        caseInsensitive: true
+    });
+}
+
 export function isStrongDatabaseChangedScope(pathValue: string, sqlOrMigrationRegexes: string[], dbTriggerRegexes: string[]): boolean {
     const normalizedPath = normalizePath(pathValue);
     const configuredStrongRegexes = dbTriggerRegexes.filter((regex) => !WEAK_DB_SIGNAL_REGEXES.includes(regex));
-    const strongRegexes = configuredStrongRegexes.filter((regex) => sqlOrMigrationRegexes.includes(regex) || dbTriggerRegexes.includes(regex));
-    return matchAnyRegex(normalizedPath, strongRegexes, {
+    const matchingStrongRegexes = configuredStrongRegexes.filter((regex) => matchAnyRegex(normalizedPath, [regex], {
+        skipInvalidRegex: true,
+        caseInsensitive: true
+    }));
+    if (matchingStrongRegexes.length === 0) {
+        return false;
+    }
+    if (matchingStrongRegexes.some((regex) => !AMBIENT_DB_SIGNAL_REGEXES.includes(regex))) {
+        return true;
+    }
+    return matchAnyRegex(normalizedPath, [...DB_CONFIG_CHANGED_SCOPE_REGEXES], {
+        skipInvalidRegex: true,
+        caseInsensitive: true
+    }) || matchAnyRegex(normalizedPath, sqlOrMigrationRegexes, {
         skipInvalidRegex: true,
         caseInsensitive: true
     });

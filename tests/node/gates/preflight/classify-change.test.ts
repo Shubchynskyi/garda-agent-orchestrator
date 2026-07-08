@@ -759,6 +759,90 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.db, true);
         });
 
+        it('triggers db review for database config files matched by ambient framework words', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-db-config-scope-'));
+            fs.mkdirSync(path.join(repoRoot, 'prisma'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'prisma', 'schema.prisma'), 'datasource db { provider = "postgresql" }\n', 'utf8');
+
+            try {
+                const result = classifyChange({
+                    normalizedFiles: ['prisma/schema.prisma'],
+                    repoRoot,
+                    taskIntent: 'Update Prisma datasource config',
+                    changedLinesTotal: 8,
+                    additionsTotal: 5,
+                    deletionsTotal: 3,
+                    renameCount: 0,
+                    detectionSource: 'git_auto',
+                    classificationConfig: getClassificationConfig(repoRoot),
+                    reviewCapabilities: defaultCapabilities
+                });
+
+                assert.equal(result.triggers.db, true);
+                assert.equal(result.required_reviews.db, true);
+                assert.deepEqual(result.triggers.db_strong_changed_files, ['prisma/schema.prisma']);
+                assert.deepEqual(result.triggers.db_ambient_signal_files, []);
+                assert.equal(result.triggers.db_downgrade_reason, null);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('downgrades ambient project database evidence for docs and ops shell changes', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-ambient-db-scope-'));
+            fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'ops'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({
+                dependencies: {
+                    pg: '^8.0.0'
+                }
+            }), 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'flyway.conf'), 'url=jdbc:postgresql://localhost/app\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'docs', 'flyway-runbook.md'), '# Flyway runbook\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'ops', 'flyway-backup.sh'), 'echo backup\n', 'utf8');
+
+            try {
+                const docsResult = classifyChange({
+                    normalizedFiles: ['docs/flyway-runbook.md'],
+                    repoRoot,
+                    taskIntent: 'Document database operations',
+                    changedLinesTotal: 6,
+                    additionsTotal: 4,
+                    deletionsTotal: 2,
+                    renameCount: 0,
+                    detectionSource: 'git_auto',
+                    classificationConfig: getClassificationConfig(repoRoot),
+                    reviewCapabilities: defaultCapabilities
+                });
+                const shellResult = classifyChange({
+                    normalizedFiles: ['ops/flyway-backup.sh'],
+                    repoRoot,
+                    taskIntent: 'Update shell-only backup wrapper',
+                    changedLinesTotal: 6,
+                    additionsTotal: 4,
+                    deletionsTotal: 2,
+                    renameCount: 0,
+                    detectionSource: 'git_auto',
+                    classificationConfig: getClassificationConfig(repoRoot),
+                    reviewCapabilities: defaultCapabilities
+                });
+
+                for (const result of [docsResult, shellResult]) {
+                    assert.equal(result.triggers.db, false);
+                    assert.equal(result.required_reviews.db, false);
+                    assert.deepEqual(result.triggers.db_strong_changed_files, []);
+                    assert.deepEqual(result.triggers.db_weak_signal_files, []);
+                    assert.ok((result.triggers.db_project_evidence as string[]).includes('package:pg'));
+                    assert.ok((result.triggers.db_project_evidence as string[]).includes('flyway.conf'));
+                    assert.equal(result.triggers.db_downgrade_reason, 'ambient_project_db_evidence_with_non_db_changed_scope');
+                }
+                assert.deepEqual(docsResult.triggers.db_ambient_signal_files, ['docs/flyway-runbook.md']);
+                assert.deepEqual(shellResult.triggers.db_ambient_signal_files, ['ops/flyway-backup.sh']);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        });
+
         it('does not trigger db review from misleading migration wording without database evidence', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-no-db-scope-'));
             fs.mkdirSync(path.join(repoRoot, 'src', 'lifecycle'), { recursive: true });
