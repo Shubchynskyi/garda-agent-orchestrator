@@ -10,14 +10,17 @@ import {
 } from '../../../core/review-execution-policy';
 import {
     buildDefaultWorkflowConfig,
+    GARDA_NO_DELEGATE_ENV,
     normalizeAutoBackupConfig,
     normalizeCompileGateConfig,
     normalizeOptionalQualityChecksConfig,
     normalizeOrchestratorWorkPolicyConfig,
+    normalizeReviewDelegationConfig,
     type AutoBackupConfig,
     type CompileGateConfig,
     type OrchestratorWorkPolicyConfig,
     type OptionalQualityChecksConfig,
+    type ReviewDelegationConfig,
     type TaskResetConfig,
     type WorkflowConfigData
 } from '../../../core/workflow-config';
@@ -52,6 +55,7 @@ import {
     cloneAutoBackupConfig,
     cloneOptionalQualityChecksConfig,
     cloneProjectMemoryMaintenanceConfig,
+    cloneReviewDelegationConfig,
     cloneTaskResetConfig
 } from './workflow-command-state';
 import type {
@@ -115,6 +119,10 @@ export function buildReviewExecutionPolicyView(state: WorkflowConfigState): Work
         description: describeReviewExecutionPolicy(mode),
         visible_summary_line: buildReviewExecutionPolicySummaryLine(mode)
     };
+}
+
+export function buildReviewDelegationLine(config: ReviewDelegationConfig): string {
+    return `Review delegation: ${config.no_delegate ? 'no-delegate active' : 'delegated reviewers allowed'} env=${GARDA_NO_DELEGATE_ENV}`;
 }
 
 export function buildScopeBudgetGuardLine(config: ScopeBudgetGuardConfig): string {
@@ -202,6 +210,9 @@ export function buildWorkflowShowResult(
         state.config.compile_gate ?? buildDefaultWorkflowConfig().compile_gate
     );
     const reviewExecutionPolicy = buildReviewExecutionPolicyView(state);
+    const reviewDelegation = cloneReviewDelegationConfig(
+        normalizeReviewDelegationConfig(state.config.review_delegation ?? buildDefaultWorkflowConfig().review_delegation)
+    );
     const scopeBudgetGuard = normalizeScopeBudgetGuardConfig(state.config.scope_budget_guard);
     const reviewCycleGuard = normalizeReviewCycleGuardConfig(state.config.review_cycle_guard);
     const projectMemoryMaintenance = cloneProjectMemoryMaintenanceConfig(
@@ -234,6 +245,7 @@ export function buildWorkflowShowResult(
         compile_gate: compileGate,
         full_suite_validation: state.config.full_suite_validation,
         review_execution_policy: reviewExecutionPolicy,
+        review_delegation: reviewDelegation,
         scope_budget_guard: scopeBudgetGuard,
         review_cycle_guard: reviewCycleGuard,
         project_memory_maintenance: projectMemoryMaintenance,
@@ -245,6 +257,7 @@ export function buildWorkflowShowResult(
         visible_summary_line: buildMandatoryFullSuiteLine(state.config),
         compile_gate_summary_line: buildCompileGateLine({ compile_gate: compileGate }),
         review_execution_policy_summary_line: reviewExecutionPolicy.visible_summary_line,
+        review_delegation_summary_line: buildReviewDelegationLine(reviewDelegation),
         scope_budget_guard_summary_line: buildScopeBudgetGuardLine(scopeBudgetGuard),
         review_cycle_guard_summary_line: buildReviewCycleGuardLine(reviewCycleGuard),
         project_memory_maintenance_summary_line: buildProjectMemoryMaintenanceSummaryLine(projectMemoryMaintenance),
@@ -296,6 +309,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     const compileGate = result.compile_gate;
     const fullSuiteValidation = result.full_suite_validation;
     const reviewExecutionPolicy = result.review_execution_policy;
+    const reviewDelegation = result.review_delegation;
     const scopeBudgetGuard = result.scope_budget_guard;
     const reviewCycleGuard = result.review_cycle_guard;
     const projectMemoryMaintenance = result.project_memory_maintenance;
@@ -319,6 +333,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push(result.compile_gate_summary_line);
     lines.push(result.visible_summary_line);
     lines.push(result.review_execution_policy_summary_line);
+    lines.push(result.review_delegation_summary_line);
     lines.push(result.scope_budget_guard_summary_line);
     lines.push(result.review_cycle_guard_summary_line);
     lines.push(result.project_memory_maintenance_summary_line);
@@ -351,6 +366,11 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push(`ReviewExecutionPolicyConfigured: ${reviewExecutionPolicy.configured}`);
     lines.push(`ReviewExecutionPolicyDescription: ${reviewExecutionPolicy.description}`);
     lines.push(`ReviewExecutionPolicyAllowedModes: ${reviewExecutionPolicy.allowed_modes.join(', ')}`);
+    lines.push('');
+    lines.push('Review delegation');
+    lines.push(`NoDelegateMode: ${reviewDelegation.no_delegate}`);
+    lines.push(`NoDelegateEnv: ${GARDA_NO_DELEGATE_ENV}`);
+    lines.push('NoDelegateConfigKey: review_delegation.no_delegate');
     lines.push('');
     lines.push('Scope budget guard');
     lines.push(`ScopeBudgetGuardEnabled: ${scopeBudgetGuard.enabled}`);
@@ -419,6 +439,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Tip: run "workflow set --full-suite on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the repo-local mode after operator approval.');
     lines.push('Tip: run "workflow set --full-suite-timeout-blocker true|false --full-suite-timeout-retry-count 1 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change timeout blocker behavior after operator approval.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change review launch ordering after operator approval.`);
+    lines.push('Tip: run "workflow set --no-delegate true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to toggle fail-closed delegated reviewer launch availability after operator approval.');
     lines.push('Tip: run "workflow set --scope-budget on|off --scope-budget-warn-changed-lines 2000 --scope-budget-block-changed-lines 5000 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the tiered scope budget guard after operator approval.');
     lines.push('Tip: run "workflow set --review-cycle on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the review cycle guard after operator approval.');
     lines.push('Tip: run "workflow set --project-memory on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change project memory maintenance checks after operator approval.');

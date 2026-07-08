@@ -473,6 +473,18 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
             required: ['mode'],
             additionalProperties: false
         },
+        review_delegation: {
+            type: 'object',
+            description: 'Fail-closed controls for delegated reviewer subagent launch availability.',
+            properties: {
+                no_delegate: {
+                    type: 'boolean',
+                    description: 'When true, mandatory reviewer delegation is disabled and task/review gates fail closed.'
+                }
+            },
+            required: ['no_delegate'],
+            additionalProperties: false
+        },
         scope_budget_guard: {
             type: 'object',
             description: 'Configurable guard that blocks oversized task scopes before compile/review loops.',

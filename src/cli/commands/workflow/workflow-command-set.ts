@@ -15,6 +15,7 @@ import {
     normalizeOptionalQualityCheckScopeCategories,
     normalizeOptionalQualityChecksConfig,
     normalizeOrchestratorWorkPolicyConfig,
+    normalizeReviewDelegationConfig,
     type OptionalQualityCheckRule,
     type WorkflowConfigData
 } from '../../../core/workflow-config';
@@ -31,6 +32,7 @@ import {
     cloneAutoBackupConfig,
     cloneOptionalQualityChecksConfig,
     cloneProjectMemoryMaintenanceConfig,
+    cloneReviewDelegationConfig,
     cloneTaskResetConfig,
     normalizeWorkflowFileConfig,
     readWorkflowConfigState,
@@ -340,6 +342,13 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         canonicalFlag: '--scope-budget-enabled',
         aliasFlag: '--scope-budget'
     });
+    const noDelegateSetting = resolveBooleanSettingOption({
+        parsedOptions: options,
+        canonicalKey: 'reviewDelegationNoDelegate',
+        aliasKey: 'noDelegateAlias',
+        canonicalFlag: '--review-delegation-no-delegate',
+        aliasFlag: '--no-delegate'
+    });
     const reviewCycleEnabledSetting = resolveBooleanSettingOption({
         parsedOptions: options,
         canonicalKey: 'reviewCycleEnabled',
@@ -471,6 +480,17 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         };
         changedFields.push('review_execution_policy.mode');
     }
+    const nextReviewDelegation = cloneReviewDelegationConfig(
+        normalizeReviewDelegationConfig(nextConfig.review_delegation ?? buildDefaultWorkflowConfig().review_delegation)
+    );
+    if (noDelegateSetting) {
+        nextReviewDelegation.no_delegate = parseBooleanText(
+            noDelegateSetting.value,
+            noDelegateSetting.flagName
+        );
+        changedFields.push('review_delegation.no_delegate');
+    }
+    nextConfig.review_delegation = nextReviewDelegation;
     const nextScopeBudgetGuard = normalizeScopeBudgetGuardConfig(nextConfig.scope_budget_guard);
     if (scopeBudgetEnabledSetting) {
         nextScopeBudgetGuard.enabled = parseBooleanText(
@@ -750,6 +770,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             + '--full-suite-timeout-blocker, --full-suite-timeout-retry-count, '
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --full-suite-placement, --review-execution-policy, '
+            + '--no-delegate or --review-delegation-no-delegate, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
             + '--task-reset-enabled, --auto-backup-* flags, --optional-checks-enabled, '
             + '--optional-check-rule-* flags, --optional-skill-selection-mode, '
@@ -760,6 +781,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const currentValidated = normalizeWorkflowFileConfig(validateWorkflowConfig(state.rawConfig ?? {
             compile_gate: state.config.compile_gate,
             full_suite_validation: state.config.full_suite_validation,
+            review_delegation: state.config.review_delegation,
             scope_budget_guard: state.config.scope_budget_guard,
             review_cycle_guard: state.config.review_cycle_guard,
             project_memory_maintenance: state.config.project_memory_maintenance,

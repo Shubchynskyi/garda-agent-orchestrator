@@ -9,10 +9,12 @@ import {
     normalizeCompileGateConfig,
     normalizeOptionalQualityChecksConfig,
     normalizeOrchestratorWorkPolicyConfig,
+    normalizeReviewDelegationConfig,
     type AutoBackupConfig,
     type OrchestratorWorkPolicyConfig,
     type OptionalQualityChecksConfig,
     type ProjectMemoryMaintenanceConfig,
+    type ReviewDelegationConfig,
     type TaskResetConfig,
     type WorkflowConfigData
 } from '../../../core/workflow-config';
@@ -55,6 +57,10 @@ export function cloneTaskResetConfig(config: TaskResetConfig): TaskResetConfig {
     return JSON.parse(JSON.stringify(config)) as TaskResetConfig;
 }
 
+export function cloneReviewDelegationConfig(config: ReviewDelegationConfig): ReviewDelegationConfig {
+    return JSON.parse(JSON.stringify(config)) as ReviewDelegationConfig;
+}
+
 export function cloneAutoBackupConfig(config: AutoBackupConfig): AutoBackupConfig {
     return JSON.parse(JSON.stringify(config)) as AutoBackupConfig;
 }
@@ -77,6 +83,9 @@ export function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): Wor
         ...config,
         compile_gate: normalizeCompileGateConfig(config.compile_gate ?? defaultConfig.compile_gate),
         full_suite_validation: config.full_suite_validation,
+        review_delegation: cloneReviewDelegationConfig(
+            normalizeReviewDelegationConfig(config.review_delegation ?? defaultConfig.review_delegation)
+        ),
         scope_budget_guard: normalizeScopeBudgetGuardConfig(config.scope_budget_guard ?? defaultConfig.scope_budget_guard),
         review_cycle_guard: normalizeReviewCycleGuardConfig(config.review_cycle_guard ?? defaultConfig.review_cycle_guard),
         project_memory_maintenance: cloneProjectMemoryMaintenanceConfig(
@@ -103,6 +112,7 @@ export function readWorkflowConfigState(configPath: string, bundleRoot: string):
             config: normalizeWorkflowFileConfig({
                 compile_gate: defaultConfig.compile_gate,
                 full_suite_validation: defaultConfig.full_suite_validation,
+                review_delegation: defaultConfig.review_delegation,
                 scope_budget_guard: defaultConfig.scope_budget_guard,
                 project_memory_maintenance: defaultConfig.project_memory_maintenance,
                 task_reset: defaultConfig.task_reset,

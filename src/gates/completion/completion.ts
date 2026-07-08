@@ -390,6 +390,22 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         );
     }
     errors.push(...runtimeIdentity.violations);
+    const requiredReviewTypesForRuntime = Object.entries(requiredReviews)
+        .filter(([, required]) => required === true)
+        .map(([reviewType]) => reviewType)
+        .sort();
+    if (requiredReviewTypesForRuntime.length > 0 && runtimeIdentity.reviewer_subagent_launch_status !== 'launchable') {
+        const launchReason = runtimeIdentity.reviewer_subagent_launch_reason
+            || 'Reviewer subagent launch is not currently attested.';
+        const launchRemediation = runtimeIdentity.reviewer_subagent_launch_remediation
+            ? ` ${runtimeIdentity.reviewer_subagent_launch_remediation}`
+            : '';
+        errors.push(
+            `Completion cannot accept mandatory review evidence because delegated reviewer launch is ` +
+            `'${runtimeIdentity.reviewer_subagent_launch_status}' for required reviews ` +
+            `${requiredReviewTypesForRuntime.join(', ')}. ${launchReason}${launchRemediation}`
+        );
+    }
     const scopeCategory = typeof preflight.scope_category === 'string' ? preflight.scope_category : null;
 
     const {
@@ -441,6 +457,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         provider_bridge: runtimeIdentity.provider_bridge,
         identity_status: runtimeIdentity.identity_status,
         identity_violations: runtimeIdentity.violations,
+        no_delegate_mode: runtimeIdentity.no_delegate_mode,
+        reviewer_subagent_launch_status: runtimeIdentity.reviewer_subagent_launch_status,
+        reviewer_subagent_launch_reason: runtimeIdentity.reviewer_subagent_launch_reason,
+        reviewer_subagent_launch_remediation: runtimeIdentity.reviewer_subagent_launch_remediation,
         source_of_truth: routingPolicy.source_of_truth,
         capability_level: routingPolicy.capability_level,
         delegation_required: routingPolicy.delegation_required,

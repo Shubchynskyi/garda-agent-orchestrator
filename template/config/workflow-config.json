@@ -16,6 +16,9 @@
   "review_execution_policy": {
     "mode": "strict_sequential"
   },
+  "review_delegation": {
+    "no_delegate": false
+  },
   "orchestrator_work_policy": {
     "mode": "deny_agent_entry"
   },

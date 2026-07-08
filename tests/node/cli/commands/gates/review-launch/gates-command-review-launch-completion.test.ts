@@ -16,6 +16,7 @@ import {
     seedRoutedReviewerLaunchFixture
 } from './gates-command-review-launch-fixtures';
 import { buildRecordReviewResultCommand } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
+import { GARDA_NO_DELEGATE_ENV } from '../../../../../../src/core/review-delegation-policy';
 
 describe('cli/commands/gates review launch completion', () => {
     it('record-review-result handoff command single-quotes shell-substitution metacharacters', () => {
@@ -247,6 +248,55 @@ describe('cli/commands/gates review launch completion', () => {
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-reviewer-delegation-started fails closed when no-delegate mode is active', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-693-delegation-started-no-delegate';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+
+        const previousNoDelegate = process.env[GARDA_NO_DELEGATE_ENV];
+        process.env[GARDA_NO_DELEGATE_ENV] = '1';
+        try {
+            const started = await runCliWithCapturedOutput([
+                'gate',
+                'record-reviewer-delegation-started',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath,
+                '--provider-invocation-id', 'cursor-subagent-T-693-no-delegate-code',
+                '--attestation-source', 'cursor_subagent',
+                ...launchArtifactInputArgsForTest(launchArtifactPath),
+                '--fork-context', 'false'
+            ], { cwd: repoRoot });
+
+            assert.notEqual(started.exitCode, 0);
+            assert.ok(
+                started.errors.some((line) => line.includes("Reviewer delegation start for review 'code' is blocked")),
+                started.errors.join('\n')
+            );
+            assert.ok(
+                started.errors.some((line) => line.includes('GARDA_NO_DELEGATE is active')),
+                started.errors.join('\n')
+            );
+        } finally {
+            if (previousNoDelegate === undefined) {
+                delete process.env[GARDA_NO_DELEGATE_ENV];
+            } else {
+                process.env[GARDA_NO_DELEGATE_ENV] = previousNoDelegate;
+            }
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('complete-reviewer-launch accepts planned routing identity after delegation rebind', async () => {

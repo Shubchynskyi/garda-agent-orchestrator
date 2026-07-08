@@ -9,6 +9,8 @@ import {
 import { computeProtectedSnapshotDigest, fileSha256, normalizePath } from '../../../../src/gates/shared/helpers';
 import { getCurrentWorkflowConfigFileHashes } from '../../../../src/gates/workflow-config/workflow-config-work';
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
+import { GARDA_NO_DELEGATE_ENV } from '../../../../src/core/review-delegation-policy';
+import { initializeGitRepo, writeCleanReviewArtifact } from '../../cli/commands/gate-test-helpers';
 describe('gates/completion — protected control-plane', () => {
     describe('runCompletionGate protected control-plane diff gate', () => {
         function writeJson(filePath: string, value: unknown): void {
@@ -962,6 +964,95 @@ describe('gates/completion — protected control-plane', () => {
                     true
                 );
             } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('completion gate rejects otherwise valid mandatory review evidence when no-delegate mode is active', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+            const previousNoDelegate = process.env[GARDA_NO_DELEGATE_ENV];
+
+            try {
+                const appPath = path.join(workspace.repoRoot, 'src', 'app.ts');
+                fs.mkdirSync(path.dirname(appPath), { recursive: true });
+                fs.writeFileSync(appPath, 'const before = 1;\nconsole.log(before);\n', 'utf8');
+                initializeGitRepo(workspace.repoRoot);
+
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, any>;
+                preflight.scope_category = 'code';
+                preflight.changed_files = ['src/app.ts'];
+                preflight.metrics = {
+                    changed_lines_total: 24,
+                    code_like_changed_count: 1,
+                    runtime_code_like_changed_count: 1
+                };
+                preflight.required_reviews = {
+                    code: true,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                };
+                preflight.triggers = {
+                    ...preflight.triggers,
+                    runtime_code_changed: true
+                };
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, any>;
+                const stages = rulePack.stages as Record<string, any>;
+                const postPreflight = stages?.post_preflight as Record<string, any> | undefined;
+                if (postPreflight) {
+                    postPreflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                    postPreflight.required_reviews = preflight.required_reviews;
+                }
+                writeJson(workspace.rulePackPath, rulePack);
+                fs.writeFileSync(appPath, 'const after = 2;\nconsole.log(after);\n', 'utf8');
+                writeCleanReviewArtifact(workspace.repoRoot, 'T-1010', 'code', 'REVIEW PASSED');
+                fs.appendFileSync(
+                    workspace.timelinePath,
+                    `${JSON.stringify({
+                        event_type: 'REVIEW_GATE_PASSED',
+                        timestamp_utc: '2026-04-02T17:00:10.000Z'
+                    })}\n`,
+                    'utf8'
+                );
+
+                process.env[GARDA_NO_DELEGATE_ENV] = '1';
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.ok(
+                    result.violations.some((entry) => String(entry).includes(
+                        "Completion cannot accept mandatory review evidence because delegated reviewer launch is 'blocked'"
+                    )),
+                    result.violations.join('\n')
+                );
+                assert.ok(
+                    result.violations.some((entry) => String(entry).includes('GARDA_NO_DELEGATE is active')),
+                    result.violations.join('\n')
+                );
+            } finally {
+                if (previousNoDelegate === undefined) {
+                    delete process.env[GARDA_NO_DELEGATE_ENV];
+                } else {
+                    process.env[GARDA_NO_DELEGATE_ENV] = previousNoDelegate;
+                }
                 fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
             }
         });

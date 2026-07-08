@@ -2,6 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { SOURCE_OF_TRUTH_VALUES, resolveBundleName } from '../../core/constants';
 import {
+    resolveReviewDelegationPolicy,
+    type ReviewDelegationPolicyResult
+} from '../../core/review-delegation-policy';
+import {
     getProviderEntriesByEntrypointFile,
     normalizeProviderId,
     getReviewerCapabilityTier
@@ -46,6 +50,7 @@ export interface RuntimeReviewerIdentity {
     fallback_allowed: boolean;
     fallback_reason_required: boolean;
     expected_execution_mode: ReviewerExecutionMode;
+    no_delegate_mode: ReviewDelegationPolicyResult;
     reviewer_subagent_launch_status: ReviewerSubagentLaunchStatus;
     reviewer_subagent_launch_route: string | null;
     reviewer_subagent_launch_reason: string;
@@ -211,6 +216,7 @@ function buildReviewerSubagentLaunchability(options: {
     taskModeReviewerSubagentLaunchRoute: string | null;
     taskModeReviewerSubagentLaunchReason: string | null;
     taskModeReviewerSubagentLaunchRemediation: string | null;
+    noDelegateMode: ReviewDelegationPolicyResult;
 }): {
     status: ReviewerSubagentLaunchStatus;
     route: string | null;
@@ -218,6 +224,16 @@ function buildReviewerSubagentLaunchability(options: {
     remediation: string | null;
 } {
     const routeHint = options.routedTo || options.providerBridge || options.executionEntrypoint || null;
+    if (options.noDelegateMode.active) {
+        return {
+            status: 'blocked',
+            route: routeHint,
+            reason: options.noDelegateMode.reason
+                || `Reviewer subagent launch is blocked because no-delegate mode is active from '${options.noDelegateMode.source}'.`,
+            remediation: options.noDelegateMode.remediation
+                || 'Disable no-delegate mode before starting mandatory review workflows.'
+        };
+    }
     if (!options.executionProvider || options.identityStatus !== 'resolved') {
         return {
             status: 'unknown',
@@ -539,6 +555,7 @@ export function resolveRuntimeReviewerIdentity(options: {
 
     const policy = resolveReviewerRoutingPolicy(executionProvider, executionProviderSource);
     const executionEntrypoint = resolveCanonicalEntrypoint(executionProvider);
+    const noDelegateMode = resolveReviewDelegationPolicy({ repoRoot: normalizedRepoRoot });
     let identityStatus: RuntimeProviderIdentityStatus = 'resolved';
     if (violations.length > 0) {
         identityStatus = 'contradictory';
@@ -561,7 +578,8 @@ export function resolveRuntimeReviewerIdentity(options: {
         taskModeReviewerSubagentLaunchStatus,
         taskModeReviewerSubagentLaunchRoute,
         taskModeReviewerSubagentLaunchReason,
-        taskModeReviewerSubagentLaunchRemediation
+        taskModeReviewerSubagentLaunchRemediation,
+        noDelegateMode
     });
 
     return {
@@ -579,6 +597,7 @@ export function resolveRuntimeReviewerIdentity(options: {
         fallback_allowed: policy.fallback_allowed,
         fallback_reason_required: policy.fallback_reason_required,
         expected_execution_mode: policy.expected_execution_mode,
+        no_delegate_mode: noDelegateMode,
         reviewer_subagent_launch_status: reviewerLaunchability.status,
         reviewer_subagent_launch_route: reviewerLaunchability.route,
         reviewer_subagent_launch_reason: reviewerLaunchability.reason,

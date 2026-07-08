@@ -13,6 +13,7 @@ import {
     resolveDelegationStartDirs,
     resolveDelegatedLauncherTrustEvidence
 } from '../../../src/bin/garda';
+import { GARDA_NO_DELEGATE_ENV } from '../../../src/core/review-delegation-policy';
 
 const DELEGATION_HARNESS_TIMEOUT_MS = 60_000;
 const DELEGATED_PROCESS_EXIT_TIMEOUT_MS = 30_000;
@@ -279,6 +280,35 @@ test('delegation trust model treats self-hosted source checkout as trusted witho
         assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('delegation trust model blocks delegation when GARDA_NO_DELEGATE is active', () => {
+    const previous = process.env[GARDA_NO_DELEGATE_ENV];
+    process.env[GARDA_NO_DELEGATE_ENV] = '1';
+    try {
+        const evidence = buildDelegationTrustEvidence(
+            {
+                package_root: path.resolve('/tmp/garda-source'),
+                runtime_kind: 'source_checkout',
+                package_installed_under_node_modules: false,
+                recognized_package_name: true,
+                package_name: 'garda-agent-orchestrator',
+                package_version: '1.0.0'
+            },
+            null
+        );
+
+        assert.equal(evidence.no_delegate_mode?.active, true);
+        assert.equal(evidence.implementation_delegation.decision, 'blocked');
+        assert.equal(evidence.mandatory_review_delegation.decision, 'blocked');
+        assert.match(evidence.mandatory_review_delegation.reason, /GARDA_NO_DELEGATE is active/);
+    } finally {
+        if (previous === undefined) {
+            delete process.env[GARDA_NO_DELEGATE_ENV];
+        } else {
+            process.env[GARDA_NO_DELEGATE_ENV] = previous;
+        }
     }
 });
 

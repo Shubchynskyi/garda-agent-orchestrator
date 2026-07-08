@@ -20,6 +20,7 @@ import {
     applyReviewerRoutingMetadata
 } from '../../../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
+import { GARDA_NO_DELEGATE_ENV } from '../../../../../../src/core/review-delegation-policy';
 
 import {
     createTempRepo,
@@ -481,6 +482,77 @@ describe('gates command required reviews', () => {
         assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), /\|\s*T-903\s*\|\s*🟧 IN_REVIEW\s*\|/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check rejects otherwise valid review evidence when no-delegate mode is active', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-no-delegate-required-reviews';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-no-delegate-required-reviews.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Block required reviews when no-delegate active'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const previousNoDelegate = process.env[GARDA_NO_DELEGATE_ENV];
+        process.env[GARDA_NO_DELEGATE_ENV] = '1';
+        try {
+            const result = runRequiredReviewsCheckCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                codeReviewVerdict: 'REVIEW PASSED',
+                reviewAuthorshipAttestationJson: '{"code":true}',
+                outputFiltersPath,
+                emitMetrics: false
+            });
+
+            const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`);
+            const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+            const renderedOutput = result.outputLines.join('\n');
+            const renderedViolations = Array.isArray(evidence.violations)
+                ? evidence.violations.join('\n')
+                : '';
+            assert.notEqual(result.exitCode, 0);
+            assert.equal(evidence.status, 'FAILED');
+            assert.match(
+                `${renderedOutput}\n${renderedViolations}`,
+                /Mandatory review evidence cannot pass because delegated reviewer launch is 'blocked'/
+            );
+            assert.match(`${renderedOutput}\n${renderedViolations}`, /GARDA_NO_DELEGATE is active/);
+        } finally {
+            if (previousNoDelegate === undefined) {
+                delete process.env[GARDA_NO_DELEGATE_ENV];
+            } else {
+                process.env[GARDA_NO_DELEGATE_ENV] = previousNoDelegate;
+            }
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('defaults required review verdicts from preflight when CLI verdict flags are omitted', async () => {

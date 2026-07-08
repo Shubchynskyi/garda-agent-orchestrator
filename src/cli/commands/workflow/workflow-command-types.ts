@@ -24,6 +24,7 @@ export type WorkflowFileConfigData = {
     compile_gate?: WorkflowConfigData['compile_gate'];
     full_suite_validation: WorkflowConfigData['full_suite_validation'];
     review_execution_policy?: WorkflowConfigData['review_execution_policy'];
+    review_delegation?: WorkflowConfigData['review_delegation'];
     scope_budget_guard?: WorkflowConfigData['scope_budget_guard'];
     review_cycle_guard?: WorkflowConfigData['review_cycle_guard'];
     project_memory_maintenance?: WorkflowConfigData['project_memory_maintenance'];
@@ -72,6 +73,7 @@ export interface WorkflowCommandResultBase {
     compile_gate: CompileGateConfig;
     full_suite_validation: WorkflowConfigData['full_suite_validation'];
     review_execution_policy: WorkflowReviewExecutionPolicyView;
+    review_delegation: WorkflowConfigData['review_delegation'];
     scope_budget_guard: ScopeBudgetGuardConfig;
     review_cycle_guard: ReviewCycleGuardConfig;
     project_memory_maintenance: ProjectMemoryMaintenanceConfig;
@@ -90,6 +92,7 @@ export interface WorkflowCommandResultBase {
     visible_summary_line: string;
     compile_gate_summary_line: string;
     review_execution_policy_summary_line: string;
+    review_delegation_summary_line: string;
     scope_budget_guard_summary_line: string;
     review_cycle_guard_summary_line: string;
     project_memory_maintenance_summary_line: string;
@@ -146,6 +149,8 @@ export const WORKFLOW_SET_DEFINITIONS = {
     '--full-suite-out-of-scope-failure-policy': { key: 'fullSuiteOutOfScopeFailurePolicy', type: 'string' },
     '--full-suite-placement': { key: 'fullSuitePlacement', type: 'string' },
     '--review-execution-policy': { key: 'reviewExecutionPolicy', type: 'string' },
+    '--no-delegate': { key: 'noDelegateAlias', type: 'string' },
+    '--review-delegation-no-delegate': { key: 'reviewDelegationNoDelegate', type: 'string' },
     '--scope-budget': { key: 'scopeBudgetAlias', type: 'string' },
     '--scope-budget-enabled': { key: 'scopeBudgetEnabled', type: 'string' },
     '--scope-budget-action': { key: 'scopeBudgetAction', type: 'string' },

@@ -56,6 +56,14 @@ function codexRuntimeReviewerIdentityFixture(): RuntimeReviewerIdentity {
         fallback_allowed: false,
         fallback_reason_required: false,
         expected_execution_mode: 'delegated_subagent',
+        no_delegate_mode: {
+            active: false,
+            source: 'none',
+            env_var: 'GARDA_NO_DELEGATE',
+            config_path: null,
+            reason: null,
+            remediation: null
+        },
         reviewer_subagent_launch_status: 'launchable',
         reviewer_subagent_launch_route: 'AGENTS.md',
         reviewer_subagent_launch_reason: 'Codex delegated reviewer launch is available.',

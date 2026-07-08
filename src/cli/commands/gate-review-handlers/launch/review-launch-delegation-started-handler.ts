@@ -17,6 +17,9 @@ import {
 import {
     isPlannedReviewerIdentity
 } from '../../../../gate-runtime/review/reviewer-identity-contract';
+import {
+    resolveRuntimeReviewerIdentity
+} from '../../../../gates/review/reviewer-routing';
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
 import {
     type ParsedOptionsRecord
@@ -99,6 +102,31 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     });
     if (!fs.existsSync(contextPath) || !fs.statSync(contextPath).isFile()) {
         throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
+    }
+    const runtimeIdentity = resolveRuntimeReviewerIdentity({
+        repoRoot,
+        taskId,
+        taskModePath: String(options.taskModePath || '').trim(),
+        allowLegacyFallback: true
+    });
+    if (runtimeIdentity.identity_status !== 'resolved') {
+        throw new Error(
+            `Reviewer delegation start requires resolved runtime reviewer identity, got '${runtimeIdentity.identity_status}'.`
+        );
+    }
+    if (runtimeIdentity.violations.length > 0) {
+        throw new Error(runtimeIdentity.violations.join(' '));
+    }
+    if (runtimeIdentity.reviewer_subagent_launch_status !== 'launchable') {
+        const launchReason = runtimeIdentity.reviewer_subagent_launch_reason
+            || 'Reviewer subagent launch is not currently attested.';
+        const launchRemediation = runtimeIdentity.reviewer_subagent_launch_remediation
+            ? ` ${runtimeIdentity.reviewer_subagent_launch_remediation}`
+            : '';
+        throw new Error(
+            `Reviewer delegation start for review '${reviewType}' is blocked because reviewer subagent launch is ` +
+            `'${runtimeIdentity.reviewer_subagent_launch_status}'. ${launchReason}${launchRemediation}`
+        );
     }
     const { reviewerExecutionMode, reviewerIdentity } = parseReviewerIdentity(
         options,

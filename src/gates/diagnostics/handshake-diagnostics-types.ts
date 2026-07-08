@@ -23,6 +23,10 @@ export interface HandshakeDiagnosticsArtifact {
     reviewer_subagent_launch_route?: string | null;
     reviewer_subagent_launch_reason?: string | null;
     reviewer_subagent_launch_remediation?: string | null;
+    no_delegate_mode_active?: boolean | null;
+    no_delegate_mode_source?: string | null;
+    no_delegate_mode_reason?: string | null;
+    no_delegate_mode_remediation?: string | null;
     runtime_identity_status?: string | null;
     runtime_identity_violations?: string[];
     start_task_router_path: string;
@@ -70,6 +74,10 @@ export interface BuildHandshakeDiagnosticsOptions {
     reviewerSubagentLaunchRoute?: string | null;
     reviewerSubagentLaunchReason?: string | null;
     reviewerSubagentLaunchRemediation?: string | null;
+    noDelegateModeActive?: boolean | null;
+    noDelegateModeSource?: string | null;
+    noDelegateModeReason?: string | null;
+    noDelegateModeRemediation?: string | null;
     runtimeIdentityStatus?: string | null;
     runtimeIdentityViolations?: string[] | null;
     precheckViolations?: string[];

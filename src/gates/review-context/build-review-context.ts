@@ -559,6 +559,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             expected_execution_mode: runtimeIdentity.expected_execution_mode,
             fallback_allowed: runtimeIdentity.fallback_allowed,
             fallback_reason_required: runtimeIdentity.fallback_reason_required,
+            no_delegate_mode: runtimeIdentity.no_delegate_mode,
             reviewer_subagent_launch_status: runtimeIdentity.reviewer_subagent_launch_status,
             reviewer_subagent_launch_route: runtimeIdentity.reviewer_subagent_launch_route,
             reviewer_subagent_launch_reason: runtimeIdentity.reviewer_subagent_launch_reason,

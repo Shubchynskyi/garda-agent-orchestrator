@@ -14,6 +14,9 @@ import {
     resolvePreferredCliPath
 } from './root-discovery';
 
+const GARDA_NO_DELEGATE_ENV = 'GARDA_NO_DELEGATE' as const;
+const TRUE_TOKENS = new Set(['1', 'true', 'yes', 'y', 'on']);
+
 export type DelegationRuntimeKind = 'source_checkout' | 'deployed_bundle' | 'packaged_npm' | 'unknown';
 export type DelegationTrustLevel = 'trusted_self_hosted' | 'trusted_local_workspace' | 'packaged_runtime' | 'unknown';
 export type DelegationDecision = 'not_required' | 'allowed' | 'blocked';
@@ -51,10 +54,20 @@ export interface DelegationTrustDecision {
 export interface DelegationTrustEvidence {
     current_runtime: CurrentRuntimeEvidence;
     delegated_runtime: DelegatedRuntimeEvidence | null;
+    no_delegate_mode?: {
+        active: boolean;
+        source: 'env';
+        env_var: typeof GARDA_NO_DELEGATE_ENV;
+        reason: string;
+    };
     implementation_delegation: DelegationTrustDecision;
     mandatory_review_delegation: DelegationTrustDecision & {
         requires_provider_launch_attestation: boolean;
     };
+}
+
+function isTruthyNoDelegateEnvValue(value: unknown): boolean {
+    return TRUE_TOKENS.has(String(value ?? '').trim().toLowerCase());
 }
 
 function buildMandatoryReviewDelegation(
@@ -75,6 +88,29 @@ export function buildDelegationTrustEvidence(
     delegatedRuntime: DelegatedRuntimeEvidence | null
 ): DelegationTrustEvidence {
     const installedUnderNodeModules = currentRuntime.package_installed_under_node_modules;
+    if (isTruthyNoDelegateEnvValue(process.env[GARDA_NO_DELEGATE_ENV])) {
+        const noDelegateMode = {
+            active: true,
+            source: 'env' as const,
+            env_var: GARDA_NO_DELEGATE_ENV as typeof GARDA_NO_DELEGATE_ENV,
+            reason: `${GARDA_NO_DELEGATE_ENV} is active; workspace and mandatory-review delegation are disabled for this process.`
+        };
+        return {
+            current_runtime: currentRuntime,
+            delegated_runtime: delegatedRuntime,
+            no_delegate_mode: noDelegateMode,
+            implementation_delegation: {
+                decision: 'blocked',
+                trust_level: 'unknown',
+                reason: noDelegateMode.reason
+            },
+            mandatory_review_delegation: buildMandatoryReviewDelegation(
+                'blocked',
+                'unknown',
+                noDelegateMode.reason
+            )
+        };
+    }
 
     if (!currentRuntime.recognized_package_name) {
         return {
@@ -310,4 +346,3 @@ export function resolveDelegatedLauncherTarget(
         ? evidence.delegated_runtime?.cli_path ?? null
         : null;
 }
-
