@@ -17,6 +17,11 @@ import {
     getCurrentWorkflowConfigFileHashes,
     getWorkflowConfigChangedFiles
 } from '../../../../gates/workflow-config/workflow-config-work';
+import {
+    assessExplicitIgnoredRemediationTargets,
+    readTaskReviewArtifactTexts,
+    type IgnoredRemediationTargetAssessment
+} from '../../../../gates/review-remediation/ignored-remediation-targets';
 import { buildReviewContextPreflightDiffExpectations } from '../../../../gates/review-context/review-context-contract';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../../../../gates/task-mode/task-mode';
 import * as gateHelpers from '../../../../gates/shared/helpers';
@@ -600,24 +605,29 @@ export async function runRestartReviewCycleCommand(
     const previousPreflight = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
     const replayScope = resolveReviewCycleReplayScope(options, previousPreflight, previousTaskMode);
     const previousChangedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
-    const currentRemediationChangedFiles = resolveCurrentRemediationChangedFiles(repoRoot, replayScope);
+    let currentRemediationChangedFiles = resolveCurrentRemediationChangedFiles(repoRoot, replayScope);
     const taskModeArtifactRelativePath = resolvedTaskModePath
         ? gateHelpers.normalizePath(path.relative(repoRoot, path.resolve(resolvedTaskModePath)))
         : '';
     const taskModeIndexRelativePath = taskModeArtifactRelativePath
         ? gateHelpers.normalizePath(path.join(path.dirname(taskModeArtifactRelativePath), 'reviews-index.json'))
         : '';
-    const allowedBoundaryFiles = [
+    const baseAllowedBoundaryFiles = [
         ...(previousTaskMode.dirty_workspace_baseline?.changed_files || []),
         taskModeArtifactRelativePath,
         taskModeIndexRelativePath,
         ...getTaskManualValidationBoundaryFiles(resolvedTaskId, currentRemediationChangedFiles)
     ].filter(Boolean);
     const classificationConfig = getClassificationConfig(repoRoot);
-    const scopeBoundary = assessReviewRemediationScopeBoundary(
+    let ignoredRemediationTargetAssessment: IgnoredRemediationTargetAssessment = {
+        targets: [],
+        allowedBoundaryFiles: [],
+        violations: []
+    };
+    let scopeBoundary = assessReviewRemediationScopeBoundary(
         previousChangedFiles,
         currentRemediationChangedFiles,
-        allowedBoundaryFiles,
+        baseAllowedBoundaryFiles,
         classificationConfig.test_trigger_regexes
     );
     let remediationFixClassification = classifyReviewRemediationFix(
@@ -652,16 +662,6 @@ export async function runRestartReviewCycleCommand(
                 repoRoot,
                 options,
                 scopeBoundary.currentChangedFiles
-            );
-            remediationFixClassification = classifyReviewRemediationFix(
-                scopeBoundary,
-                [],
-                remediationImpactAnalysis,
-                classificationConfig.test_trigger_regexes,
-                undefined,
-                {
-                    testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold
-                }
             );
         } catch (error: unknown) {
             const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
@@ -706,6 +706,89 @@ export async function runRestartReviewCycleCommand(
                 `Artifact: ${gateHelpers.normalizePath(artifactPath)}.`
             );
         }
+
+        ignoredRemediationTargetAssessment = assessExplicitIgnoredRemediationTargets({
+            repoRoot,
+            taskId: resolvedTaskId,
+            currentChangedFiles: scopeBoundary.currentChangedFiles,
+            explicitChangedFiles: replayScope.changedFiles ?? [],
+            guardedTargets: remediationImpactAnalysis.ignored_remediation_targets ?? [],
+            impactAnalysisSummary: remediationImpactAnalysis.summary,
+            reviewEvidenceTexts: readTaskReviewArtifactTexts(repoRoot, resolvedTaskId),
+            taskMode: previousTaskMode as unknown as Record<string, unknown>
+        });
+        if (ignoredRemediationTargetAssessment.violations.length > 0) {
+            const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
+                schema_version: 1,
+                task_id: resolvedTaskId,
+                status: 'BLOCKED',
+                reason: 'ignored_remediation_target_invalid',
+                previous_preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
+                previous_preflight_sha256: fs.existsSync(resolvedPreflightPath)
+                    ? gateHelpers.fileSha256(resolvedPreflightPath)
+                    : null,
+                detection_source: replayScope.detectionSource,
+                impact_analysis: remediationImpactAnalysis,
+                ignored_remediation_targets: {
+                    status: 'BLOCKED',
+                    targets: ignoredRemediationTargetAssessment.targets,
+                    violations: ignoredRemediationTargetAssessment.violations
+                },
+                remediation_fix_classification: remediationFixClassification,
+                remediation_scope: {
+                    status: scopeBoundary.status,
+                    previous_changed_files: scopeBoundary.previousChangedFiles,
+                    current_changed_files: scopeBoundary.currentChangedFiles,
+                    expanded_files: scopeBoundary.expandedFiles,
+                    expanded_non_test_files: scopeBoundary.expandedNonTestFiles,
+                    allowed_test_only_expansion_files: scopeBoundary.allowedTestOnlyExpansionFiles
+                },
+                refresh_points: {
+                    preflight: 'not_run_ignored_remediation_target_blocked',
+                    post_preflight_rule_pack: 'not_run_ignored_remediation_target_blocked',
+                    compile: 'not_run_ignored_remediation_target_blocked',
+                    review_contexts: 'not_run_ignored_remediation_target_blocked'
+                },
+                reuse_boundaries: {
+                    non_test_changes_must_stay_within_previous_preflight_scope: true,
+                    test_only_expansion_allowed: true,
+                    explicit_ignored_remediation_targets_require_hash_and_review_relevance: true,
+                    expanded_non_test_files_block_reuse: true
+                }
+            });
+            throw new Error(
+                `restart-review-cycle blocked ignored remediation target evidence: ` +
+                `${ignoredRemediationTargetAssessment.violations.join('; ')}. ` +
+                `Artifact: ${gateHelpers.normalizePath(artifactPath)}.`
+            );
+        }
+        currentRemediationChangedFiles = normalizeChangedFiles([
+            ...currentRemediationChangedFiles,
+            ...ignoredRemediationTargetAssessment.allowedBoundaryFiles
+        ]);
+        scopeBoundary = assessReviewRemediationScopeBoundary(
+            previousChangedFiles,
+            currentRemediationChangedFiles,
+            [
+                ...baseAllowedBoundaryFiles,
+                ...ignoredRemediationTargetAssessment.allowedBoundaryFiles
+            ],
+            classificationConfig.test_trigger_regexes
+        );
+        remediationImpactAnalysis = {
+            ...remediationImpactAnalysis,
+            affected_files: normalizeChangedFiles(scopeBoundary.currentChangedFiles)
+        };
+        remediationFixClassification = classifyReviewRemediationFix(
+            scopeBoundary,
+            [],
+            remediationImpactAnalysis,
+            classificationConfig.test_trigger_regexes,
+            undefined,
+            {
+                testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold
+            }
+        );
 
         if (scopeBoundary.status === 'BLOCKED') {
             const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
@@ -775,7 +858,11 @@ export async function runRestartReviewCycleCommand(
             taskModePath: resolvedTaskModePath || undefined,
             outputPath: refreshedPreflightPath,
             taskIntent: taskSummary,
-            changedFiles: resolveReviewRemediationClassifyChangedFiles(replayScope, scopeBoundary),
+            changedFiles: resolveReviewRemediationClassifyChangedFiles(
+                replayScope,
+                scopeBoundary,
+                ignoredRemediationTargetAssessment.allowedBoundaryFiles
+            ),
             useStaged: replayScope.useStaged,
             includeUntracked: replayScope.includeUntracked,
             emitMetrics: options.emitMetrics
@@ -813,7 +900,7 @@ export async function runRestartReviewCycleCommand(
         ensureStepPassed('compile-gate', compileResult);
         const remediationWorkspaceSnapshot = getWorkspaceSnapshot(
             repoRoot,
-            replayScope.detectionSource,
+            String(refreshedPreflight.detection_source || replayScope.detectionSource),
             replayScope.includeUntracked ?? !replayScope.useStaged,
             normalizeChangedFiles(refreshedPreflight.changed_files as unknown[])
         ) as Record<string, unknown>;
@@ -966,6 +1053,11 @@ export async function runRestartReviewCycleCommand(
                 : null,
             detection_source: replayScope.detectionSource,
             impact_analysis: remediationImpactAnalysis,
+            ignored_remediation_targets: {
+                status: ignoredRemediationTargetAssessment.violations.length > 0 ? 'BLOCKED' : 'OK',
+                targets: ignoredRemediationTargetAssessment.targets,
+                violations: ignoredRemediationTargetAssessment.violations
+            },
             remediation_fix_classification: remediationFixClassification,
             remediation_scope: {
                 status: scopeBoundary.status,
@@ -992,6 +1084,7 @@ export async function runRestartReviewCycleCommand(
             reuse_boundaries: {
                 non_test_changes_must_stay_within_previous_preflight_scope: true,
                 test_only_expansion_allowed: true,
+                explicit_ignored_remediation_targets_require_hash_and_review_relevance: true,
                 expanded_non_test_files_block_reuse: true
             }
         });

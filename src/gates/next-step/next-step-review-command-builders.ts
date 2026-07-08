@@ -221,16 +221,20 @@ export function buildRestartReviewCycleCommand(
     taskId: string,
     taskIntent: string,
     preflightCommandPath: string,
-    taskModePath: string | null
+    taskModePath: string | null,
+    additionalChangedFiles: readonly string[] = []
 ): string {
+    const changedFiles = [...new Set([
+        ...resolveRestartCommandChangedFiles(repoRoot, preflightCommandPath),
+        ...additionalChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean)
+    ])].sort();
     return [
         `${cliPrefix} gate restart-review-cycle`,
         `--task-id "${taskId}"`,
         `--task-intent ${quoteCommandValue(taskIntent)}`,
         `--preflight-path ${quoteCommandValue(preflightCommandPath)}`,
         `--impact-analysis ${quoteCommandValue('<replace with main-agent remediation impact analysis>')}`,
-        ...resolveRestartCommandChangedFiles(repoRoot, preflightCommandPath)
-            .map((changedFile) => `--changed-file ${quoteCommandValue(changedFile)}`),
+        ...changedFiles.map((changedFile) => `--changed-file ${quoteCommandValue(changedFile)}`),
         ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
         '--repo-root "."'
     ].join(' ');

@@ -120,6 +120,9 @@ import {
     getTaskManualValidationBoundaryFiles
 } from '../review-remediation/review-remediation-scope-boundary';
 import {
+    resolveIgnoredRemediationCommandChangedFiles
+} from '../review-remediation/ignored-remediation-targets';
+import {
     resolveProviderFromEnvironment as resolveProviderFromRegistryEnvironment
 } from '../../core/provider-registry';
 import {
@@ -2668,6 +2671,14 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskMode
         })
         : [];
+    const failedReviewIgnoredRemediationChangedFiles = failedCurrentReviewStateForPreflight
+        ? resolveIgnoredRemediationCommandChangedFiles({
+            repoRoot,
+            taskId,
+            reviewArtifactPaths: [failedCurrentReviewStateForPreflight.artifactPath],
+            taskMode
+        })
+        : [];
     const currentProtectedScopeRoute = buildCurrentProtectedScopeTaskModeRestartRoute();
     if (currentProtectedScopeRoute) {
         return currentProtectedScopeRoute;
@@ -2728,7 +2739,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     taskId,
                     getStringField(taskMode, 'task_summary', taskEntry?.title || taskId),
                     preflightCommandPath,
-                    taskModePath
+                    taskModePath,
+                    failedReviewIgnoredRemediationChangedFiles
                 )
             }
             : null,
@@ -3448,7 +3460,20 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         state.failureKind === 'missing-validation-evidence'
                             ? 'Restart review cycle after manual-validation evidence refresh'
                             : 'Restart review cycle for reviewer launch retry',
-                        buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, taskIntent, preflightCommandPath, taskModePath)
+                        buildRestartReviewCycleCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            taskIntent,
+                            preflightCommandPath,
+                            taskModePath,
+                            resolveIgnoredRemediationCommandChangedFiles({
+                                repoRoot,
+                                taskId,
+                                reviewArtifactPaths: [state.artifactPath],
+                                taskMode
+                            })
+                        )
                     ),
                     rerunNavigator: buildCommand(
                         'Rerun navigator after fixing implementation',
@@ -3732,11 +3757,37 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 ),
                 recoverOrphanedLaunch: buildCommand(
                     'Restart/supersede orphaned delegated reviewer launch',
-                    buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, reviewCycleTaskIntent, preflightCommandPath, taskModePath)
+                    buildRestartReviewCycleCommand(
+                        repoRoot,
+                        cliPrefix,
+                        taskId,
+                        reviewCycleTaskIntent,
+                        preflightCommandPath,
+                        taskModePath,
+                        resolveIgnoredRemediationCommandChangedFiles({
+                            repoRoot,
+                            taskId,
+                            reviewArtifactPaths: [state.artifactPath],
+                            taskMode
+                        })
+                    )
                 ),
                 recoverFailedLaunch: buildCommand(
                     'Restart/supersede failed delegated reviewer launch',
-                    buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, reviewCycleTaskIntent, preflightCommandPath, taskModePath)
+                    buildRestartReviewCycleCommand(
+                        repoRoot,
+                        cliPrefix,
+                        taskId,
+                        reviewCycleTaskIntent,
+                        preflightCommandPath,
+                        taskModePath,
+                        resolveIgnoredRemediationCommandChangedFiles({
+                            repoRoot,
+                            taskId,
+                            reviewArtifactPaths: [state.artifactPath],
+                            taskMode
+                        })
+                    )
                 ),
                 recordInvocation: buildCommand(
                     'Record delegated reviewer launch attestation',
