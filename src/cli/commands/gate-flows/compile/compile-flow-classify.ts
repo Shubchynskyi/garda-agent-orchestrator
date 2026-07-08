@@ -14,6 +14,11 @@ import {
     getReviewCapabilities,
     type ClassifyChangeResult
 } from '../../../../gates/preflight/classify-change';
+import {
+    computeTaskPlanDigest,
+    isApprovedPlan,
+    validateTaskPlan
+} from '../../../../schemas/task-plan';
 import { buildGeneratedRuntimeArtifactHygieneWarnings } from '../../../../gates/shared/generated-runtime-artifacts';
 import { loadReviewExecutionPolicyConfig } from '../../../../core/review-execution-policy';
 import { resolveTaskProfileSelection } from '../../../../policy/task-profile-selection';
@@ -23,6 +28,8 @@ import {
     isMandatoryOptionalSkillSelectionPolicyMode,
     isOptionalSkillSelectionPolicyConfigured,
     readOptionalSkillSelectionPolicyConfig,
+    type OptionalSkillPathEvidenceSource,
+    type OptionalSkillSelectionPhase,
     writeOptionalSkillSelectionArtifact
 } from '../../../../runtime/optional-skill-selection';
 import { getWorkspaceSnapshotCached } from '../../../../gates/workspace/workspace-snapshot-cache';
@@ -144,6 +151,89 @@ function getReviewTriggerEffectiveMetric(
         : result.metrics.review_trigger_effective_changed_lines_total;
     return parseFiniteNumber(effectiveValue)
         ?? result.metrics[rawMetric];
+}
+
+function normalizePortablePathList(paths: readonly string[] | null | undefined): string[] {
+    return [...new Set((Array.isArray(paths) ? paths : [])
+        .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+        .filter(Boolean))]
+        .sort();
+}
+
+function pathScopeContainsAll(scopePaths: readonly string[], changedPaths: readonly string[]): boolean {
+    if (changedPaths.length === 0) {
+        return true;
+    }
+    const scope = new Set(normalizePortablePathList(scopePaths));
+    return normalizePortablePathList(changedPaths).every((entry) => scope.has(entry));
+}
+
+function resolveOptionalSkillSelectionPhaseInput(input: {
+    changedFiles: readonly string[];
+    plannedChangedFiles: readonly string[];
+    taskPlanScopeFiles: readonly string[];
+    explicitChangedFilesProvided: boolean;
+}): {
+    selectionPhase: OptionalSkillSelectionPhase;
+    pathEvidenceSource: OptionalSkillPathEvidenceSource;
+} {
+    const changedFiles = normalizePortablePathList(input.changedFiles);
+    if (changedFiles.length === 0) {
+        return {
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'none'
+        };
+    }
+    if (pathScopeContainsAll(input.plannedChangedFiles, changedFiles)) {
+        return {
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'planned_changed_files'
+        };
+    }
+    if (pathScopeContainsAll(input.taskPlanScopeFiles, changedFiles)) {
+        return {
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'task_plan_scope'
+        };
+    }
+    if (input.explicitChangedFilesProvided) {
+        return {
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'explicit_scope'
+        };
+    }
+    return {
+        selectionPhase: 'post_diff',
+        pathEvidenceSource: 'actual_changed_files'
+    };
+}
+
+function readApprovedTaskPlanScopeFiles(
+    repoRoot: string,
+    taskId: string,
+    taskModeEvidence: ReturnType<typeof getTaskModeEvidence>
+): string[] {
+    const planMetadata = taskModeEvidence.plan;
+    if (!planMetadata?.plan_path || !planMetadata.plan_sha256) {
+        return [];
+    }
+    try {
+        const planFilePath = gateHelpers.resolvePathInsideRepo(planMetadata.plan_path, repoRoot, { allowMissing: false });
+        if (!planFilePath || !fs.existsSync(planFilePath) || !fs.statSync(planFilePath).isFile()) {
+            return [];
+        }
+        const validatedPlan = validateTaskPlan(JSON.parse(fs.readFileSync(planFilePath, 'utf8')));
+        if (validatedPlan.task_id !== taskId || !isApprovedPlan(validatedPlan)) {
+            return [];
+        }
+        const currentDigest = computeTaskPlanDigest(validatedPlan);
+        if (currentDigest !== planMetadata.plan_sha256) {
+            return [];
+        }
+        return normalizePortablePathList(validatedPlan.scope_files);
+    } catch {
+        return [];
+    }
 }
 
 export interface ClassifyChangeCommandOptions {
@@ -645,6 +735,20 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     let optionalSkillSelectionArtifactPath: string | null = null;
     if (outputPath) {
         let optionalSkillSelectionPreview: ReturnType<typeof buildOptionalSkillSelectionArtifact> | null = null;
+        const taskModeEvidenceForOptionalSkills = resolvedTaskId
+            ? getTaskModeEvidence(repoRoot, resolvedTaskId, resolvedTaskModePath)
+            : null;
+        const optionalSkillSelectionPhaseInput = resolvedTaskId && taskModeEvidenceForOptionalSkills
+            ? resolveOptionalSkillSelectionPhaseInput({
+                changedFiles: result.changed_files as string[],
+                plannedChangedFiles: taskModeEvidenceForOptionalSkills.planned_changed_files || [],
+                taskPlanScopeFiles: readApprovedTaskPlanScopeFiles(repoRoot, resolvedTaskId, taskModeEvidenceForOptionalSkills),
+                explicitChangedFilesProvided
+            })
+            : {
+                selectionPhase: 'pre_implementation' as OptionalSkillSelectionPhase,
+                pathEvidenceSource: 'none' as OptionalSkillPathEvidenceSource
+            };
         const optionalSkillPolicyEnabled = resolvedTaskId
             ? isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)
             : false;
@@ -673,13 +777,17 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         {
                             taskText: optionalSkillTaskText,
                             changedPaths: result.changed_files as string[],
-                            targetRoot: repoRoot
+                            targetRoot: repoRoot,
+                            selectionPhase: optionalSkillSelectionPhaseInput.selectionPhase,
+                            pathEvidenceSource: optionalSkillSelectionPhaseInput.pathEvidenceSource
                         }
                     );
                     result.optional_skill_selection = {
                         artifact_path: normalizeOptionalPath(optionalSkillSelectionPreview.artifactPath),
                         policy_mode: optionalSkillSelectionPreview.payload.policy_mode,
                         decision: optionalSkillSelectionPreview.payload.decision,
+                        selection_phase: optionalSkillSelectionPreview.payload.selection_phase,
+                        path_evidence_source: optionalSkillSelectionPreview.payload.path_evidence_source,
                         visible_summary_line: optionalSkillSelectionPreview.payload.visible_summary_line
                     };
                 }
@@ -712,6 +820,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                             taskText: optionalSkillTaskText,
                             changedPaths: result.changed_files as string[],
                             targetRoot: repoRoot,
+                            selectionPhase: optionalSkillSelectionPhaseInput.selectionPhase,
+                            pathEvidenceSource: optionalSkillSelectionPhaseInput.pathEvidenceSource,
                             preflightPath: outputPath,
                             preflightSha256,
                             preparedArtifact: optionalSkillSelectionPreview,

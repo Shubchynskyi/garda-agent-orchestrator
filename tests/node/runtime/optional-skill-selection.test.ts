@@ -95,6 +95,27 @@ function writeCustomTelegramSkill(
     fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), `# ${skillId}\n`, 'utf8');
 }
 
+function writeBroadWeakPathSkill(bundleRoot: string): void {
+    const skillId = 'broad-weak-path';
+    const skillRoot = path.join(bundleRoot, 'live', 'skills', skillId);
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(path.join(skillRoot, 'skill.json'), JSON.stringify({
+        id: skillId,
+        pack: skillId,
+        name: 'Broad Weak Path',
+        summary: 'Fixture skill for weak broad path signal selection.',
+        tags: ['runtime'],
+        aliases: [skillId],
+        task_signals: ['broad weak path task'],
+        changed_path_signals: ['src/', '**/index.ts', 'core/', 'shared/'],
+        references: [],
+        cost_hint: 'low',
+        priority: 50,
+        autoload: 'suggest'
+    }, null, 2), 'utf8');
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# Broad Weak Path\n', 'utf8');
+}
+
 function writeSkillsHeadlinesFixture(bundleRoot: string, payload: Record<string, unknown>): void {
     fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
     fs.writeFileSync(
@@ -165,12 +186,61 @@ test('buildOptionalSkillSelectionArtifact selects matching installed optional sk
 
         assert.equal(artifact.payload.policy_mode, 'optional');
         assert.equal(artifact.payload.decision, 'selected_installed_skills');
+        assert.equal(artifact.payload.selection_phase, 'pre_implementation');
+        assert.equal(artifact.payload.path_evidence_source, 'explicit_scope');
         assert.deepEqual(artifact.payload.selected_installed_skills.map((entry) => entry.id), ['node-backend']);
         assert.match(
             artifact.payload.selected_installed_skills[0].allowed_skill_path,
             /live\/skills\/node-backend\/SKILL\.md$/
         );
         assert.match(artifact.payload.visible_summary_line, /Optional skills: node-backend/);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildOptionalSkillSelectionArtifact marks actual changed-path selections as post-diff suggestions', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node backend TypeScript API service.',
+            changedPaths: ['src/api/orders.ts'],
+            selectionPhase: 'post_diff',
+            pathEvidenceSource: 'actual_changed_files'
+        });
+
+        assert.equal(artifact.payload.decision, 'selected_installed_skills');
+        assert.equal(artifact.payload.selection_phase, 'post_diff');
+        assert.equal(artifact.payload.path_evidence_source, 'actual_changed_files');
+        assert.deepEqual(artifact.payload.selected_installed_skills.map((entry) => entry.id), ['node-backend']);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildOptionalSkillSelectionArtifact suppresses broad weak path-only pre-implementation selections', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        writeBroadWeakPathSkill(bundleRoot);
+
+        const pathOnlyArtifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Update app flow',
+            changedPaths: ['src/index.ts'],
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'planned_changed_files'
+        });
+        assert.ok(!pathOnlyArtifact.payload.selected_installed_skills.some((entry) => entry.id === 'broad-weak-path'));
+
+        const taskBackedArtifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Use broad weak path task guidance',
+            changedPaths: ['src/index.ts'],
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'planned_changed_files'
+        });
+        assert.ok(taskBackedArtifact.payload.selected_installed_skills.some((entry) => entry.id === 'broad-weak-path'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -1080,6 +1150,31 @@ test('getOptionalSkillSelectionGateViolations rejects mandatory selected skills 
     }
 });
 
+test('getOptionalSkillSelectionGateViolations does not require activation for mandatory post-diff suggestions', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'mandatory' }, null, 2),
+            'utf8'
+        );
+
+        writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts'],
+            selectionPhase: 'post_diff',
+            pathEvidenceSource: 'actual_changed_files'
+        });
+
+        const violations = getOptionalSkillSelectionGateViolations(bundleRoot, 'T-149');
+
+        assert.deepEqual(violations, []);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('getOptionalSkillSelectionGateViolations rejects mandatory activation backfilled after implementation starts', () => {
     const bundleRoot = makeBundleRoot();
     try {
@@ -1453,6 +1548,74 @@ test('computeOptionalSkillSelectionFingerprint ignores volatile selection inputs
     }
 });
 
+test('computeOptionalSkillSelectionFingerprint binds selection phase and path evidence source', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts'],
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'planned_changed_files'
+        });
+        const postDiffPayload = {
+            ...artifact.payload,
+            selection_phase: 'post_diff' as const,
+            path_evidence_source: 'actual_changed_files' as const
+        };
+
+        assert.notEqual(
+            computeOptionalSkillSelectionFingerprint(postDiffPayload),
+            computeOptionalSkillSelectionFingerprint(artifact.payload)
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildCurrentCycleOptionalSkillActivationIndex does not reuse pre-implementation activation for post-diff selection', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const preImplementationArtifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts'],
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'planned_changed_files'
+        });
+        const postDiffPayload = {
+            ...preImplementationArtifact.payload,
+            selection_phase: 'post_diff' as const,
+            path_evidence_source: 'actual_changed_files' as const,
+            selection_fingerprint_sha256: null
+        };
+        const preImplementationFingerprint = preImplementationArtifact.payload.selection_fingerprint_sha256
+            || computeOptionalSkillSelectionFingerprint(preImplementationArtifact.payload);
+
+        const activationIndex = buildCurrentCycleOptionalSkillActivationIndex(postDiffPayload, {
+            timelinePath: path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl'),
+            exists: true,
+            invalidJson: false,
+            eventTypes: new Set(['TASK_MODE_ENTERED', 'PREFLIGHT_CLASSIFIED', 'SKILL_SELECTED']),
+            latestTaskModeEnteredTimestampUtc: '2026-01-01T00:00:00.000Z',
+            latestCycleBoundaryTimestampUtc: '2026-01-01T00:00:10.000Z',
+            optionalSkillActivations: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:05.000Z',
+                    selectionFingerprintSha256: preImplementationFingerprint
+                }
+            ],
+            optionalSkillReferenceLoads: []
+        });
+
+        assert.equal(activationIndex.has('node-backend'), false);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('buildCurrentCycleOptionalSkillActivationIndex rejects prior selection activation after preflight restart', () => {
     const bundleRoot = makeBundleRoot();
     try {
@@ -1816,6 +1979,46 @@ test('getOptionalSkillSelectionArtifactViolations rejects stale selection finger
         const violations = getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact);
 
         assert.ok(violations.some((entry) => entry.includes('selection_fingerprint_sha256')));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('getOptionalSkillSelectionArtifactViolations rejects post-diff path evidence outside post-diff phase', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        artifact.payload.selection_phase = 'pre_implementation';
+        artifact.payload.path_evidence_source = 'actual_changed_files';
+
+        const violations = getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact);
+
+        assert.ok(violations.some((entry) => entry.includes("path_evidence_source 'actual_changed_files' requires selection_phase 'post_diff'")));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('getOptionalSkillSelectionArtifactViolations rejects selected artifacts missing phase/source evidence', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        const payload = artifact.payload as unknown as Record<string, unknown>;
+        delete payload.selection_phase;
+        delete payload.path_evidence_source;
+
+        const violations = getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact);
+
+        assert.ok(violations.some((entry) => entry.includes('must include selection_phase')));
+        assert.ok(violations.some((entry) => entry.includes('must include path_evidence_source')));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

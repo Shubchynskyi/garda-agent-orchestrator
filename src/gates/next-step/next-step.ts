@@ -94,8 +94,11 @@ import {
 import {
     buildCurrentCycleOptionalSkillActivationIndex,
     buildMandatoryCurrentCycleOptionalSkillActivationIndex,
+    getOptionalSkillSelectionArtifactViolations,
     isMandatoryOptionalSkillSelectionPolicyMode,
+    normalizeOptionalSkillPathEvidenceSource,
     normalizeOptionalSkillSelectionPolicyMode,
+    normalizeOptionalSkillSelectionPhase,
     readOptionalSkillSelectionArtifact,
     readOptionalSkillSelectionTimelineEvidence
 } from '../../runtime/optional-skill-selection';
@@ -408,9 +411,13 @@ export interface NextStepProfileSummary {
 export interface NextStepOptionalSkillSelectionSummary {
     artifact_path: string | null;
     artifact_present: boolean;
+    artifact_violations: string[];
     timeline_invalid_json: boolean;
     policy_mode: string | null;
     decision: string | null;
+    selection_phase: string;
+    path_evidence_source: string;
+    post_diff_self_check: boolean;
     selected_skill_ids: string[];
     selected_skill_sources: string[];
     selected_skill_details: Array<{
@@ -1287,9 +1294,25 @@ function buildOptionalSkillTaskStartInstruction(input: {
     asIsReason: string | null;
     skillCatalogPath: string | null;
     activationCommands: string[];
+    selectionPhase: string;
+    pathEvidenceSource: string;
+    artifactViolations: string[];
 }): string {
+    if (input.artifactViolations.length > 0) {
+        return `Optional skill selection artifact is invalid for current navigator use: ${input.artifactViolations.join(' ')} Rerun classify-change for the current task cycle before activation or review continuation.`;
+    }
     if (input.policyMode === 'off') {
         return 'Optional skill selection is disabled by policy; proceed without specialized optional skill activation.';
+    }
+    if (input.selectionPhase === 'post_diff') {
+        if (input.selectedSkillIds.length > 0) {
+            return `Selected optional skill(s): ${input.selectedSkillIds.join(', ')} surfaced from post-diff changed paths. Treat this as a post-implementation self-check only; do not activate it as pre-implementation skill use.`;
+        }
+        if (input.recommendedMissingPackIds.length > 0) {
+            return `Optional skill recommendation(s): ${input.recommendedMissingPackIds.join(', ')} surfaced from post-diff changed paths. Treat this as a post-implementation self-check only; do not install or activate them as pre-implementation gate work.`;
+        }
+        const reason = input.asIsReason || 'generic_context_sufficient';
+        return `Optional skill selection surfaced post-diff as_is (${reason}). Treat this as a post-implementation self-check only; no pre-implementation activation is required.`;
     }
     if (input.selectedSkillIds.length > 0) {
         const skillList = input.selectedSkillIds.join(', ');
@@ -1329,15 +1352,24 @@ function buildOptionalSkillSelectionSummary(
         return null;
     }
     const preflightOptionalRecord = preflightOptional as Record<string, unknown>;
+    const bundleRoot = path.join(repoRoot, resolveBundleNameForTarget(repoRoot));
     const artifactPath = normalizePath(String(preflightOptionalRecord.artifact_path || '').trim());
     const resolvedArtifactPath = artifactPath
         ? resolvePathInsideRepo(artifactPath, repoRoot, { allowMissing: true })
         : null;
     const artifact = readOptionalSkillSelectionArtifact(
-        path.join(repoRoot, resolveBundleNameForTarget(repoRoot)),
+        bundleRoot,
         taskId
     );
     const artifactPayload = artifact?.payload || null;
+    const artifactViolations = artifact
+        ? getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact, {
+            requireMaterializedArtifact: false,
+            validateAgainstCurrentHeadlines: false,
+            validateAgainstCurrentInventory: false
+        })
+        : [];
+    const artifactValid = artifactViolations.length === 0;
     const selectedSkillIds = readStringArrayFromObjects(artifactPayload?.selected_installed_skills, 'id');
     const selectedSkillSources = readStringArrayFromObjects(artifactPayload?.selected_installed_skills, 'source');
     const selectedSkillDetails = readOptionalSkillSelectionDetails(artifactPayload?.selected_installed_skills);
@@ -1345,6 +1377,15 @@ function buildOptionalSkillSelectionSummary(
     const rawPolicyMode = String(preflightOptionalRecord.policy_mode || artifactPayload?.policy_mode || '').trim();
     const policyMode = rawPolicyMode ? normalizeOptionalSkillSelectionPolicyMode(rawPolicyMode) : null;
     const decision = String(preflightOptionalRecord.decision || artifactPayload?.decision || '').trim() || null;
+    const selectionPhase = normalizeOptionalSkillSelectionPhase(
+        artifactPayload?.selection_phase || preflightOptionalRecord.selection_phase,
+        'pre_implementation'
+    );
+    const pathEvidenceSource = normalizeOptionalSkillPathEvidenceSource(
+        artifactPayload?.path_evidence_source || preflightOptionalRecord.path_evidence_source,
+        selectionPhase === 'post_diff' ? 'actual_changed_files' : 'none'
+    );
+    const isPostDiffSelection = selectionPhase === 'post_diff';
     const asIsReason = String(artifactPayload?.as_is_reason || '').trim() || null;
     const changedPaths = Array.isArray(artifactPayload?.changed_paths)
         ? artifactPayload.changed_paths
@@ -1356,18 +1397,18 @@ function buildOptionalSkillSelectionSummary(
     const skillCatalogPath = String(artifactPayload?.headlines_path || '').trim() || null;
     const timelineEvidence = artifactPayload
         ? readOptionalSkillSelectionTimelineEvidence(
-            path.join(repoRoot, resolveBundleNameForTarget(repoRoot)),
+            bundleRoot,
             taskId
         )
         : null;
     const timelineInvalidJson = timelineEvidence?.invalidJson === true;
-    const activationIndex = artifactPayload && timelineEvidence && !timelineEvidence.invalidJson
+    const activationIndex = artifactPayload && artifactValid && timelineEvidence && !timelineEvidence.invalidJson
         ? isMandatoryOptionalSkillSelectionPolicyMode(policyMode)
             ? buildMandatoryCurrentCycleOptionalSkillActivationIndex(artifactPayload, timelineEvidence)
             : buildCurrentCycleOptionalSkillActivationIndex(artifactPayload, timelineEvidence)
         : new Map<string, number>();
     const activatedSkillIds = selectedSkillIds.filter((skillId) => activationIndex.has(skillId));
-    const pendingActivationSkillIds = decision === 'selected_installed_skills'
+    const pendingActivationSkillIds = artifactValid && decision === 'selected_installed_skills' && !isPostDiffSelection
         ? selectedSkillIds.filter((skillId) => !activationIndex.has(skillId))
         : [];
     const activationCommands = pendingActivationSkillIds.map((skillId) => (
@@ -1376,9 +1417,13 @@ function buildOptionalSkillSelectionSummary(
     return {
         artifact_path: artifactPath || null,
         artifact_present: resolvedArtifactPath ? fs.existsSync(resolvedArtifactPath) : false,
+        artifact_violations: artifactViolations,
         timeline_invalid_json: timelineInvalidJson,
         policy_mode: policyMode,
         decision,
+        selection_phase: selectionPhase,
+        path_evidence_source: pathEvidenceSource,
+        post_diff_self_check: isPostDiffSelection && selectedSkillIds.length > 0,
         selected_skill_ids: selectedSkillIds,
         selected_skill_sources: selectedSkillSources,
         selected_skill_details: selectedSkillDetails,
@@ -1389,7 +1434,7 @@ function buildOptionalSkillSelectionSummary(
         changed_paths: changedPaths,
         changed_paths_count: changedPathsCount,
         visible_summary_line: visibleSummaryLine,
-        activation_commands: decision === 'selected_installed_skills' ? activationCommands : [],
+        activation_commands: decision === 'selected_installed_skills' && !isPostDiffSelection ? activationCommands : [],
         skill_catalog_path: skillCatalogPath,
         task_start_instruction: buildOptionalSkillTaskStartInstruction({
             policyMode,
@@ -1398,7 +1443,10 @@ function buildOptionalSkillSelectionSummary(
             recommendedMissingPackIds,
             asIsReason,
             skillCatalogPath,
-            activationCommands: decision === 'selected_installed_skills' ? activationCommands : []
+            activationCommands: decision === 'selected_installed_skills' && !isPostDiffSelection ? activationCommands : [],
+            selectionPhase,
+            pathEvidenceSource,
+            artifactViolations
         })
     };
 }
@@ -1458,6 +1506,9 @@ function getMandatoryOptionalSkillRemediationCommand(
     }
 ): { label: string; command: string; reason: string } | null {
     if (!optionalSkillSelection || !isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillSelection.policy_mode)) {
+        return null;
+    }
+    if (optionalSkillSelection.selection_phase === 'post_diff') {
         return null;
     }
     if (optionalSkillSelection.decision === 'selected_installed_skills') {
@@ -2537,6 +2588,34 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 buildCommand(
                     'Classify changed files',
                     classifyCommand
+                )
+            ]
+        });
+    }
+
+    if (optionalSkillSelectionSummary?.artifact_violations.length) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'classify-change',
+            title: 'Refresh invalid optional-skill selection artifact.',
+            reason:
+                'The current optional-skill selection artifact is invalid for navigator use. ' +
+                `${optionalSkillSelectionSummary.artifact_violations.join(' ')} ` +
+                'Rerun classify-change so phase/source evidence is regenerated before activation, review, or closeout.',
+            commands: [
+                buildCommand(
+                    'Refresh preflight and optional-skill selection',
+                    buildClassifyChangeCommand({
+                        repoRoot,
+                        cliPrefix,
+                        taskId,
+                        taskMode,
+                        taskModePath,
+                        preflightCommandPath,
+                        includePlannedScope: false,
+                        changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
+                    })
                 )
             ]
         });

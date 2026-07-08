@@ -214,11 +214,19 @@ function seedStrictDecompositionDecision(repoRoot: string, taskId: string): void
 function seedOptionalSkillSelectionPreflight(
     repoRoot: string,
     taskId: string,
-    options: { policyMode?: 'optional' | 'mandatory' | 'advisory' | 'required' | 'strict'; skillId?: string; skillPath?: string } = {}
+    options: {
+        policyMode?: 'optional' | 'mandatory' | 'advisory' | 'required' | 'strict';
+        skillId?: string;
+        skillPath?: string;
+        selectionPhase?: 'pre_implementation' | 'post_diff';
+        pathEvidenceSource?: 'none' | 'planned_changed_files' | 'task_plan_scope' | 'explicit_scope' | 'actual_changed_files';
+    } = {}
 ): void {
     const policyMode = options.policyMode || 'advisory';
     const skillId = options.skillId || 'node-backend';
     const skillPath = options.skillPath || 'garda-agent-orchestrator/live/skills/node-backend/SKILL.md';
+    const selectionPhase = options.selectionPhase || 'pre_implementation';
+    const pathEvidenceSource = options.pathEvidenceSource || 'explicit_scope';
     const reviewsDir = reviewsRoot(repoRoot);
     const optionalSkillArtifactPath = path.join(reviewsDir, `${taskId}-optional-skill-selection.json`);
     const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
@@ -229,6 +237,8 @@ function seedOptionalSkillSelectionPreflight(
         timestamp_utc: '2026-01-01T00:00:04.000Z',
         policy_mode: policyMode,
         decision: 'selected_installed_skills',
+        selection_phase: selectionPhase,
+        path_evidence_source: pathEvidenceSource,
         selected_installed_skills: [
             {
                 id: skillId,
@@ -273,6 +283,8 @@ function seedOptionalSkillSelectionPreflight(
             artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
             policy_mode: policyMode,
             decision: 'selected_installed_skills',
+            selection_phase: selectionPhase,
+            path_evidence_source: pathEvidenceSource,
             visible_summary_line: `Optional skills: ${skillId} (reason: task_text)`
         }
     });
@@ -429,6 +441,8 @@ describe('next-step refactor contract baseline', () => {
             timestamp_utc: '2026-01-01T00:00:00.000Z',
             policy_mode: 'advisory',
             decision: 'selected_installed_skills',
+            selection_phase: 'pre_implementation',
+            path_evidence_source: 'explicit_scope',
             selected_installed_skills: [
                 {
                     id: 'node-backend',
@@ -470,6 +484,8 @@ describe('next-step refactor contract baseline', () => {
                 artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
                 policy_mode: 'advisory',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 visible_summary_line: 'Optional skills: node-backend (reason: task_text)'
             }
         });
@@ -483,6 +499,38 @@ describe('next-step refactor contract baseline', () => {
         assert.match(text, /^OptionalSkillDecision: policy=optional; decision=selected_installed_skills;/mu);
         assert.match(text, /^OptionalSkillSelected: node-backend$/mu);
         assert.match(text, /gate activate-optional-skill --task-id "T-CONTRACT-1" --skill-id "node-backend"/u);
+    });
+
+    it('routes invalid optional-skill phase/source artifacts back to classify-change', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, {
+            policyMode: 'required',
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'actual_changed_files'
+        });
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'classify-change');
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.activation_commands, []);
+        assert.ok(
+            result.optional_skill_selection?.artifact_violations.some((entry) => entry.includes('actual_changed_files'))
+        );
+        assert.match(
+            result.optional_skill_selection?.task_start_instruction || '',
+            /artifact is invalid.*Rerun classify-change/iu
+        );
+        assert.match(result.commands[0]?.command || '', /gate classify-change/u);
+        assert.doesNotMatch(result.commands[0]?.command || '', /activate-optional-skill/u);
+        assert.match(text, /^OptionalSkillArtifactViolations: .*actual_changed_files.*post_diff/mu);
+        assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
     });
 
     it('routes selected optional-skill activation through the single Commands entry before compile', () => {
@@ -505,6 +553,35 @@ describe('next-step refactor contract baseline', () => {
         assert.match(text, /^Commands:$/mu);
         assert.match(text, /^  Activate optional skill node-backend: node bin\/garda\.js gate activate-optional-skill /mu);
         assert.match(text, /^OptionalSkillPendingActivation: node-backend$/mu);
+    });
+
+    it('does not route mandatory post-diff optional-skill suggestions to activation', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, {
+            policyMode: 'required',
+            selectionPhase: 'post_diff',
+            pathEvidenceSource: 'actual_changed_files'
+        });
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.notEqual(result.next_gate, 'activate-optional-skill');
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.activation_commands, []);
+        assert.equal(result.optional_skill_selection?.selection_phase, 'post_diff');
+        assert.equal(result.optional_skill_selection?.path_evidence_source, 'actual_changed_files');
+        assert.equal(result.optional_skill_selection?.post_diff_self_check, true);
+        assert.match(result.optional_skill_selection?.task_start_instruction || '', /self-check only/u);
+        assert.doesNotMatch(result.optional_skill_selection?.task_start_instruction || '', /Run the activation command/u);
+        assert.match(text, /^OptionalSkillPhase: post_diff; path_evidence_source=actual_changed_files$/mu);
+        assert.match(text, /^OptionalSkillPostDiffSelfCheck: true$/mu);
+        assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
+        assert.doesNotMatch(text, /^OptionalSkillActivationCommands:/mu);
     });
 
     it('shell-quotes selected optional-skill ids in the executable activation command', () => {
@@ -759,6 +836,8 @@ describe('next-step refactor contract baseline', () => {
             timestamp_utc: '2026-01-01T00:00:00.000Z',
             policy_mode: 'advisory',
             decision: 'recommended_missing_packs',
+            selection_phase: 'pre_implementation',
+            path_evidence_source: 'explicit_scope',
             selected_installed_skills: [],
             recommended_missing_packs: [
                 {
@@ -798,6 +877,8 @@ describe('next-step refactor contract baseline', () => {
                 artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
                 policy_mode: 'advisory',
                 decision: 'recommended_missing_packs',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 visible_summary_line: 'Optional skills: recommended_missing_packs (packs: telegram-bot, reason: task_text)'
             }
         });
@@ -828,6 +909,8 @@ describe('next-step refactor contract baseline', () => {
             timestamp_utc: '2026-01-01T00:00:00.000Z',
             policy_mode: 'advisory',
             decision: 'selected_installed_skills',
+            selection_phase: 'pre_implementation',
+            path_evidence_source: 'explicit_scope',
             selected_installed_skills: [
                 {
                     id: 'telegram-tdlight',
@@ -869,6 +952,8 @@ describe('next-step refactor contract baseline', () => {
                 artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
                 policy_mode: 'advisory',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 visible_summary_line: 'Optional skills: telegram-tdlight (reason: task_text+paths)'
             }
         });
@@ -902,6 +987,8 @@ describe('next-step refactor contract baseline', () => {
             timestamp_utc: '2026-01-01T00:00:04.000Z',
             policy_mode: 'mandatory',
             decision: 'recommended_missing_packs',
+            selection_phase: 'pre_implementation',
+            path_evidence_source: 'explicit_scope',
             selected_installed_skills: [],
             recommended_missing_packs: [
                 {
@@ -941,6 +1028,8 @@ describe('next-step refactor contract baseline', () => {
                 artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
                 policy_mode: 'mandatory',
                 decision: 'recommended_missing_packs',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 visible_summary_line: 'Optional skills: recommended_missing_packs (packs: telegram-bot, reason: task_text)'
             }
         });

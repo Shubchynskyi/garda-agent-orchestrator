@@ -7,6 +7,8 @@ import {
     getActivatedCurrentCycleOptionalSkillReferenceLoads,
     getOptionalSkillSelectionArtifactViolations,
     isOptionalSkillSelectionPolicyConfigured,
+    normalizeOptionalSkillPathEvidenceSource,
+    normalizeOptionalSkillSelectionPhase,
     readOptionalSkillSelectionPolicyConfig,
     type OptionalSkillSelectionArtifactData,
     type OptionalSkillSelectionTimelineEvidence
@@ -147,6 +149,9 @@ export interface FinalCloseoutAuditedScopeProvenance {
 export interface FinalCloseoutOptionalSkillsSummary {
     policy_mode: string | null;
     decision: string | null;
+    selection_phase?: string | null;
+    path_evidence_source?: string | null;
+    post_diff_self_check?: boolean;
     selected_skill_ids: string[];
     used_skill_ids: string[];
     recommended_missing_pack_ids: string[];
@@ -318,10 +323,22 @@ export function readOptionalSkillsSummary(
             .filter((entry): entry is string => !!entry)
         : [];
     const visibleSummaryLine = String(optionalSkills.visible_summary_line || '').trim() || null;
+    const selectionPhase = normalizeOptionalSkillSelectionPhase(
+        optionalSkills.selection_phase,
+        'pre_implementation'
+    );
+    const pathEvidenceSource = normalizeOptionalSkillPathEvidenceSource(
+        optionalSkills.path_evidence_source,
+        selectionPhase === 'post_diff' ? 'actual_changed_files' : 'none'
+    );
+    const postDiffSelfCheck = selectionPhase === 'post_diff' && selectedSkillIds.length > 0;
     if (timelineEvidence.invalidJson) {
         return {
             policy_mode: artifactPolicyMode,
             decision: 'unavailable',
+            selection_phase: selectionPhase,
+            path_evidence_source: pathEvidenceSource,
+            post_diff_self_check: postDiffSelfCheck,
             selected_skill_ids: selectedSkillIds,
             used_skill_ids: [],
             recommended_missing_pack_ids: recommendedMissingPackIds,
@@ -339,7 +356,11 @@ export function readOptionalSkillsSummary(
     const reasonMatch = visibleSummaryLine?.match(/\(reason:\s*([^)]+)\)\s*$/i);
     const reasonSuffix = reasonMatch?.[1]?.trim();
     if (selectedSkillIds.length > 0 && usedSkillIds.length === 0) {
-        usageSummaryLine = reasonSuffix
+        usageSummaryLine = postDiffSelfCheck
+            ? reasonSuffix
+                ? `Optional skills: post_diff_self_check (suggested: ${selectedSkillIds.join(', ')}, reason: ${reasonSuffix})`
+                : `Optional skills: post_diff_self_check (suggested: ${selectedSkillIds.join(', ')})`
+            : reasonSuffix
             ? `Optional skills: none_used (selected: ${selectedSkillIds.join(', ')}, reason: ${reasonSuffix})`
             : `Optional skills: none_used (selected: ${selectedSkillIds.join(', ')})`;
     } else if (usedSkillIds.length > 0 && usedSkillIds.length !== selectedSkillIds.length) {
@@ -350,6 +371,9 @@ export function readOptionalSkillsSummary(
     return {
         policy_mode: artifactPolicyMode,
         decision: String(optionalSkills.decision || '').trim() || null,
+        selection_phase: selectionPhase,
+        path_evidence_source: pathEvidenceSource,
+        post_diff_self_check: postDiffSelfCheck,
         selected_skill_ids: selectedSkillIds,
         used_skill_ids: usedSkillIds,
         recommended_missing_pack_ids: recommendedMissingPackIds,

@@ -62,6 +62,9 @@ function buildLocalizedOptionalSkillsSummary(
         ? ` (${reportMessages.summaries.reason}: ${reasonValue})`
         : '';
     if (summary.decision === 'selected_installed_skills' && summary.selected_skill_ids.length > 0) {
+        if (summary.post_diff_self_check === true && visibleSummaryLine) {
+            return visibleSummaryLine.replace(/^Optional skills:\s*/i, '');
+        }
         if (summary.used_skill_ids.length === 0) {
             const selectedDetails = `${reportMessages.summaries.selected}: ${summary.selected_skill_ids.join(', ')}`;
             return `${reportMessages.summaries.noneUsed} (${selectedDetails}${reasonValue ? `, ${reportMessages.summaries.reason}: ${reasonValue}` : ''})`;

@@ -12,6 +12,7 @@ import {
     runCompileGateCommand,
     runLoadRulePackCommand,
 } from '../../../../../../src/cli/commands/gates';
+import { serializeTaskPlan } from '../../../../../../src/schemas/task-plan';
 import {
     assertGateChainDecision,
     runCliWithCapturedOutput
@@ -2164,7 +2165,112 @@ describe('cli/commands/gates — preflight', () => {
         const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
         assert.equal(optionalSkillArtifact.task_text_present, true);
         assert.equal(optionalSkillArtifact.task_text_sha256, computeTaskTextSha256(taskTitle));
+        assert.equal(optionalSkillArtifact.selection_phase, 'pre_implementation');
+        assert.equal(optionalSkillArtifact.path_evidence_source, 'explicit_scope');
         assert.equal(optionalSkillArtifact.visible_summary_line, 'Optional skills: node-backend (reason: task_text+paths)');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('marks optional-skill artifacts from actual workspace diffs as post-diff suggestions', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-158-preflight-post-diff-suggestion';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const order = 1;\n', 'utf8');
+        initializeGitRepo(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Implement request validation for a Node.js API endpoint'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const order = 2;\n', 'utf8');
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Implement request validation for a Node.js API endpoint',
+            outputPath: preflightPath,
+            emitMetrics: false
+        });
+
+        const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const optionalSkillSelection = preflightPayload.optional_skill_selection as Record<string, unknown>;
+        assert.equal(optionalSkillSelection.selection_phase, 'post_diff');
+        assert.equal(optionalSkillSelection.path_evidence_source, 'actual_changed_files');
+        const optionalSkillArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-optional-skill-selection.json`);
+        const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(optionalSkillArtifact.selection_phase, 'post_diff');
+        assert.equal(optionalSkillArtifact.path_evidence_source, 'actual_changed_files');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('marks optional-skill artifacts from approved task-plan scope as pre-implementation', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-158-preflight-task-plan-scope';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const order = 1;\n', 'utf8');
+        const planPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-plan.json`);
+        fs.mkdirSync(path.dirname(planPath), { recursive: true });
+        fs.writeFileSync(
+            planPath,
+            serializeTaskPlan({
+                schema_version: 1,
+                task_id: taskId,
+                status: 'approved',
+                goal: 'Implement request validation for a Node.js API endpoint',
+                scope_files: ['src/api/orders.ts'],
+                risk_level: 'medium',
+                steps: [
+                    {
+                        id: 'step-1',
+                        title: 'Update API handler'
+                    }
+                ]
+            }),
+            'utf8'
+        );
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Implement request validation for a Node.js API endpoint',
+            planPath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const order = 2;\n', 'utf8');
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Implement request validation for a Node.js API endpoint',
+            outputPath: preflightPath,
+            emitMetrics: false
+        });
+
+        const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const optionalSkillSelection = preflightPayload.optional_skill_selection as Record<string, unknown>;
+        assert.equal(optionalSkillSelection.selection_phase, 'pre_implementation');
+        assert.equal(optionalSkillSelection.path_evidence_source, 'task_plan_scope');
+        const optionalSkillArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-optional-skill-selection.json`);
+        const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(optionalSkillArtifact.selection_phase, 'pre_implementation');
+        assert.equal(optionalSkillArtifact.path_evidence_source, 'task_plan_scope');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

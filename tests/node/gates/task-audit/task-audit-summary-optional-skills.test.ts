@@ -14,6 +14,7 @@ import {
     writeArtifact,
     writeWorkflowConfig,
     makeTempDir} from './task-audit-summary-fixtures';
+import { computeOptionalSkillSelectionFingerprint } from '../../../../src/runtime/optional-skill-selection';
 
 
 describe('gates/task-audit-summary', () => {
@@ -457,6 +458,8 @@ describe('gates/task-audit-summary', () => {
                 timestamp_utc: '2026-01-01T00:00:00.000Z',
                 policy_mode: 'advisory',
                 decision: 'recommended_missing_packs',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 selected_installed_skills: [],
                 recommended_missing_packs: [
                     {
@@ -605,6 +608,8 @@ describe('gates/task-audit-summary', () => {
                 timestamp_utc: '2026-01-01T00:00:00.000Z',
                 policy_mode: 'advisory',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 selected_installed_skills: [
                     {
                         id: 'node-backend',
@@ -683,6 +688,8 @@ describe('gates/task-audit-summary', () => {
                 timestamp_utc: '2026-01-01T00:00:00.000Z',
                 policy_mode: 'advisory',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 selected_installed_skills: [
                     {
                         id: 'node-backend',
@@ -714,6 +721,90 @@ describe('gates/task-audit-summary', () => {
 
             assert.equal(result.final_closeout.optional_skills?.decision, 'invalidated');
             assert.deepEqual(result.final_closeout.optional_skills?.selected_skill_ids, []);
+            assert.equal(result.final_closeout.optional_skills?.visible_summary_line, 'Optional skills: unavailable (reason: artifact_drift)');
+        });
+
+        it('invalidates optional-skill closeout when phase/source evidence is mismatched', () => {
+            fs.writeFileSync(
+                path.join(eventsDir, `${TASK_ID}.jsonl`),
+                [
+                    JSON.stringify({
+                        timestamp_utc: '2026-01-01T00:00:01.000Z',
+                        event_type: 'SKILL_SELECTED',
+                        details: {
+                            skill_id: 'node-backend',
+                            trigger_reason: 'optional_skill_selection'
+                        }
+                    })
+                ].join('\n'),
+                'utf8'
+            );
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/api/orders.ts'],
+                metrics: { changed_lines_total: 10 },
+                required_reviews: {}
+            });
+
+            const bundleConfigDir = path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config');
+            fs.mkdirSync(bundleConfigDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'optional-skill-selection-policy.json'),
+                JSON.stringify({ version: 1, mode: 'advisory' }, null, 2),
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'skill-packs.json'),
+                JSON.stringify({ version: 1, installed_packs: ['node-backend'] }, null, 2),
+                'utf8'
+            );
+            fs.cpSync(
+                NODE_BACKEND_SKILL_SOURCE,
+                path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                { recursive: true }
+            );
+            const currentHeadlines = ensureSkillsHeadlinesCurrent(path.join(tmpDir, 'garda-agent-orchestrator'));
+
+            writeArtifact(reviewsDir, TASK_ID, '-optional-skill-selection.json', {
+                schema_version: 1,
+                event_source: 'optional-skill-selection',
+                task_id: TASK_ID,
+                timestamp_utc: '2026-01-01T00:00:00.000Z',
+                policy_mode: 'advisory',
+                decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'actual_changed_files',
+                selected_installed_skills: [
+                    {
+                        id: 'node-backend',
+                        pack: 'node-backend',
+                        source: 'installed_optional',
+                        allowed_skill_path: 'garda-agent-orchestrator/live/skills/node-backend/SKILL.md',
+                        reason_codes: ['task_signals', 'changed_path_signals'],
+                        matches: { task_signals: ['node backend'], changed_path_signals: ['src/api/'] }
+                    }
+                ],
+                recommended_missing_packs: [],
+                as_is_reason: null,
+                task_text_present: true,
+                task_text_sha256: computeTaskTextSha256('Implement request validation for a Node.js API endpoint'),
+                changed_paths: ['src/api/orders.ts'],
+                preflight_path: path.join(reviewsDir, `${TASK_ID}-preflight.json`).replace(/\\/g, '/'),
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+                headlines_sha256: currentHeadlines.sha256,
+                visible_summary_line: 'Optional skills: node-backend (reason: task_text+paths)'
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.optional_skills?.decision, 'invalidated');
+            assert.deepEqual(result.final_closeout.optional_skills?.selected_skill_ids, []);
+            assert.deepEqual(result.final_closeout.optional_skills?.used_skill_ids, []);
             assert.equal(result.final_closeout.optional_skills?.visible_summary_line, 'Optional skills: unavailable (reason: artifact_drift)');
         });
 
@@ -773,6 +864,8 @@ describe('gates/task-audit-summary', () => {
                 timestamp_utc: '2026-01-01T00:00:00.000Z',
                 policy_mode: 'advisory',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 selected_installed_skills: [
                     {
                         id: 'node-backend',
@@ -854,6 +947,8 @@ describe('gates/task-audit-summary', () => {
                 timestamp_utc: '2026-01-01T00:00:00.000Z',
                 policy_mode: 'advisory',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 selected_installed_skills: [
                     {
                         id: 'node-backend',
@@ -922,6 +1017,8 @@ describe('gates/task-audit-summary', () => {
                 timestamp_utc: '2026-01-01T00:00:00.000Z',
                 policy_mode: 'advisory',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 selected_installed_skills: [
                     {
                         id: 'node-backend',
@@ -954,6 +1051,180 @@ describe('gates/task-audit-summary', () => {
             assert.deepEqual(result.final_closeout.optional_skills?.selected_skill_ids, ['node-backend']);
             assert.deepEqual(result.final_closeout.optional_skills?.used_skill_ids, []);
             assert.equal(result.final_closeout.optional_skills?.visible_summary_line, 'Optional skills: none_used (selected: node-backend, reason: task_text+paths)');
+        });
+
+        it('summarizes post-diff optional skill suggestions as self-check only when unused', () => {
+            fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/api/orders.ts'],
+                metrics: { changed_lines_total: 10 },
+                required_reviews: {}
+            });
+
+            const bundleConfigDir = path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config');
+            fs.mkdirSync(bundleConfigDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'optional-skill-selection-policy.json'),
+                JSON.stringify({ version: 1, mode: 'advisory' }, null, 2),
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'skill-packs.json'),
+                JSON.stringify({ version: 1, installed_packs: ['node-backend'] }, null, 2),
+                'utf8'
+            );
+            fs.cpSync(
+                NODE_BACKEND_SKILL_SOURCE,
+                path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                { recursive: true }
+            );
+            const currentHeadlines = ensureSkillsHeadlinesCurrent(path.join(tmpDir, 'garda-agent-orchestrator'));
+
+            writeArtifact(reviewsDir, TASK_ID, '-optional-skill-selection.json', {
+                schema_version: 1,
+                event_source: 'optional-skill-selection',
+                task_id: TASK_ID,
+                timestamp_utc: '2026-01-01T00:00:00.000Z',
+                policy_mode: 'advisory',
+                decision: 'selected_installed_skills',
+                selection_phase: 'post_diff',
+                path_evidence_source: 'actual_changed_files',
+                selected_installed_skills: [
+                    {
+                        id: 'node-backend',
+                        pack: 'node-backend',
+                        source: 'installed_optional',
+                        allowed_skill_path: 'garda-agent-orchestrator/live/skills/node-backend/SKILL.md',
+                        reason_codes: ['task_signals', 'changed_path_signals'],
+                        matches: { task_signals: ['node backend'], changed_path_signals: ['src/api/'] }
+                    }
+                ],
+                recommended_missing_packs: [],
+                as_is_reason: null,
+                task_text_present: true,
+                task_text_sha256: computeTaskTextSha256('Implement request validation for a Node.js API endpoint'),
+                changed_paths: ['src/api/orders.ts'],
+                preflight_path: path.join(reviewsDir, `${TASK_ID}-preflight.json`).replace(/\\/g, '/'),
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+                headlines_sha256: currentHeadlines.sha256,
+                visible_summary_line: 'Optional skills: node-backend (reason: task_text+paths)'
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.deepEqual(result.final_closeout.optional_skills?.selected_skill_ids, ['node-backend']);
+            assert.deepEqual(result.final_closeout.optional_skills?.used_skill_ids, []);
+            assert.equal(result.final_closeout.optional_skills?.selection_phase, 'post_diff');
+            assert.equal(result.final_closeout.optional_skills?.post_diff_self_check, true);
+            assert.equal(result.final_closeout.optional_skills?.visible_summary_line, 'Optional skills: post_diff_self_check (suggested: node-backend, reason: task_text+paths)');
+        });
+
+        it('keeps earlier pre-implementation activation from marking a post-diff suggestion as used', () => {
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/api/orders.ts'],
+                metrics: { changed_lines_total: 10 },
+                required_reviews: {}
+            });
+
+            const bundleConfigDir = path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config');
+            fs.mkdirSync(bundleConfigDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'optional-skill-selection-policy.json'),
+                JSON.stringify({ version: 1, mode: 'advisory' }, null, 2),
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'skill-packs.json'),
+                JSON.stringify({ version: 1, installed_packs: ['node-backend'] }, null, 2),
+                'utf8'
+            );
+            fs.cpSync(
+                NODE_BACKEND_SKILL_SOURCE,
+                path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                { recursive: true }
+            );
+            const currentHeadlines = ensureSkillsHeadlinesCurrent(path.join(tmpDir, 'garda-agent-orchestrator'));
+            const selectedNodeBackendSkill = {
+                id: 'node-backend',
+                pack: 'node-backend',
+                source: 'installed_optional' as const,
+                allowed_skill_path: 'garda-agent-orchestrator/live/skills/node-backend/SKILL.md',
+                reason_codes: ['task_signals' as const, 'changed_path_signals' as const],
+                matches: { task_signals: ['node backend'], changed_path_signals: ['src/api/'] }
+            };
+            const preImplementationSelectionFingerprint = computeOptionalSkillSelectionFingerprint({
+                policy_mode: 'advisory',
+                decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'planned_changed_files',
+                selected_installed_skills: [selectedNodeBackendSkill],
+                recommended_missing_packs: [],
+                as_is_reason: null
+            });
+            fs.writeFileSync(
+                path.join(eventsDir, `${TASK_ID}.jsonl`),
+                [
+                    JSON.stringify({
+                        timestamp_utc: '2026-01-01T00:00:00.000Z',
+                        event_type: 'TASK_MODE_ENTERED',
+                        integrity: { task_sequence: 1 }
+                    }),
+                    JSON.stringify({
+                        timestamp_utc: '2026-01-01T00:00:01.000Z',
+                        event_type: 'SKILL_SELECTED',
+                        details: {
+                            skill_id: 'node-backend',
+                            trigger_reason: 'optional_skill_selection',
+                            optional_skill_selection_fingerprint_sha256: preImplementationSelectionFingerprint
+                        },
+                        integrity: { task_sequence: 2 }
+                    }),
+                    JSON.stringify({
+                        timestamp_utc: '2026-01-01T00:00:02.000Z',
+                        event_type: 'PREFLIGHT_CLASSIFIED',
+                        integrity: { task_sequence: 3 }
+                    })
+                ].join('\n') + '\n',
+                'utf8'
+            );
+
+            writeArtifact(reviewsDir, TASK_ID, '-optional-skill-selection.json', {
+                schema_version: 1,
+                event_source: 'optional-skill-selection',
+                task_id: TASK_ID,
+                timestamp_utc: '2026-01-01T00:00:03.000Z',
+                policy_mode: 'advisory',
+                decision: 'selected_installed_skills',
+                selection_phase: 'post_diff',
+                path_evidence_source: 'actual_changed_files',
+                selected_installed_skills: [selectedNodeBackendSkill],
+                recommended_missing_packs: [],
+                as_is_reason: null,
+                task_text_present: true,
+                task_text_sha256: computeTaskTextSha256('Implement request validation for a Node.js API endpoint'),
+                changed_paths: ['src/api/orders.ts'],
+                preflight_path: path.join(reviewsDir, `${TASK_ID}-preflight.json`).replace(/\\/g, '/'),
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+                headlines_sha256: currentHeadlines.sha256,
+                visible_summary_line: 'Optional skills: node-backend (reason: task_text+paths)'
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.deepEqual(result.final_closeout.optional_skills?.used_skill_ids, []);
+            assert.equal(result.final_closeout.optional_skills?.visible_summary_line, 'Optional skills: post_diff_self_check (suggested: node-backend, reason: task_text+paths)');
         });
 
         it('degrades optional-skill usage summary to unavailable when the task timeline is malformed', () => {
@@ -1013,6 +1284,8 @@ describe('gates/task-audit-summary', () => {
                 timestamp_utc: '2026-01-01T00:00:00.000Z',
                 policy_mode: 'advisory',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 selected_installed_skills: [
                     {
                         id: 'node-backend',

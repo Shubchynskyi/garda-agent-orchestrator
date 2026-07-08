@@ -10,6 +10,7 @@ import {
     computeOptionalSkillSelectionFingerprint,
     computeOptionalSkillTaskTextSha256
 } from '../../../../src/runtime/optional-skill-selection';
+import { serializeTaskPlan } from '../../../../src/schemas/task-plan';
 import { runCliWithCapturedOutput } from './gate-test-helpers';
 import {
     createTempRepo,
@@ -170,6 +171,8 @@ function writeSelectedNodeBackendOptionalSkillArtifact(
     options: {
         policyMode: 'optional' | 'mandatory' | 'advisory' | 'required' | 'strict';
         preflightPath: string;
+        selectionPhase?: 'pre_implementation' | 'post_diff';
+        pathEvidenceSource?: 'planned_changed_files' | 'explicit_scope' | 'actual_changed_files';
     }
 ): void {
     const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -184,6 +187,8 @@ function writeSelectedNodeBackendOptionalSkillArtifact(
             timestamp_utc: new Date().toISOString(),
             policy_mode: options.policyMode,
             decision: 'selected_installed_skills',
+            selection_phase: options.selectionPhase || 'pre_implementation',
+            path_evidence_source: options.pathEvidenceSource || 'explicit_scope',
             selected_installed_skills: [
                 {
                     id: 'node-backend',
@@ -389,7 +394,9 @@ test('preprompt task --json keeps current optional-skill activation guidance non
         });
         writeSelectedNodeBackendOptionalSkillArtifact(repoRoot, taskId, {
             policyMode: 'advisory',
-            preflightPath
+            preflightPath,
+            selectionPhase: 'post_diff',
+            pathEvidenceSource: 'actual_changed_files'
         });
 
         const result = await runCliWithCapturedOutput(
@@ -402,23 +409,260 @@ test('preprompt task --json keeps current optional-skill activation guidance non
         const diagnostics = payload.diagnostics as Record<string, unknown>;
         const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
         assert.equal(optionalSkills.policy_mode, 'optional');
-        assert.equal(optionalSkills.selected_installed_skill_activation_ready, true);
+        assert.equal(optionalSkills.selection_phase, 'post_diff');
+        assert.equal(optionalSkills.path_evidence_source, 'actual_changed_files');
+        assert.equal(optionalSkills.selected_installed_skill_activation_ready, false);
+        assert.equal(optionalSkills.selected_installed_skill_post_diff_self_check, true);
+        assert.deepEqual(optionalSkills.selected_installed_skill_activation_commands, []);
         assert.match(
             String(optionalSkills.task_start_instruction || ''),
             /Selected optional skill\(s\): node-backend/
         );
         assert.match(
             String(optionalSkills.task_start_instruction || ''),
-            /If you use the selected skill, run the activation command\(s\)/
+            /post-diff changed paths/
         );
         assert.match(
             String(optionalSkills.task_start_instruction || ''),
-            /otherwise continue with the normal navigator command/
+            /self-check only/
         );
         assert.doesNotMatch(
             String(optionalSkills.task_start_instruction || ''),
-            /Run the activation command\(s\) before implementation so the timeline records the required chosen role\/skill/
+            /run the activation command\(s\)/i
         );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json blocks mandatory optional-skill artifacts with mismatched phase/source evidence', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/api/orders.ts']
+        });
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedNodeBackendOptionalSkillFixture(bundleRoot, {
+            policyMode: 'required',
+            includePersistedHeadlines: true
+        });
+        writeSelectedNodeBackendOptionalSkillArtifact(repoRoot, taskId, {
+            policyMode: 'required',
+            preflightPath,
+            selectionPhase: 'pre_implementation',
+            pathEvidenceSource: 'actual_changed_files'
+        });
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const diagnostics = payload.diagnostics as Record<string, unknown>;
+        const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
+        assert.equal(optionalSkills.policy_mode, 'mandatory');
+        assert.match(String(optionalSkills.blocker || ''), /actual_changed_files.*post_diff/u);
+        assert.match(String(optionalSkills.task_start_instruction || ''), /artifact is invalid.*Rerun classify-change/iu);
+        assert.equal(optionalSkills.selected_installed_skill_activation_ready, false);
+        assert.deepEqual(optionalSkills.selected_installed_skill_activation_commands, []);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json treats mandatory post-diff missing-pack recommendations as self-check only', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/api/orders.ts']
+        });
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedNodeBackendOptionalSkillFixture(bundleRoot, {
+            policyMode: 'required',
+            includePersistedHeadlines: true
+        });
+        fs.mkdirSync(path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.cpSync(
+            path.join(process.cwd(), 'template', 'skill-packs', 'frontend-react'),
+            path.join(bundleRoot, 'template', 'skill-packs', 'frontend-react'),
+            { recursive: true }
+        );
+        const headlinesPath = path.join(bundleRoot, 'live', 'config', 'skills-headlines.json');
+        const headlines = JSON.parse(fs.readFileSync(headlinesPath, 'utf8')) as Record<string, unknown>;
+        headlines.optional_packs = [
+            {
+                id: 'frontend-react',
+                label: 'Frontend React',
+                description: 'Frontend React specialist pack.',
+                installed: false,
+                implemented: true,
+                collides_with_baseline: false,
+                ready_skill_ids: ['frontend-react'],
+                placeholder_skill_ids: [],
+                recommended_for: ['React apps', 'UI tasks'],
+                tags: ['frontend', 'react']
+            }
+        ];
+        fs.writeFileSync(headlinesPath, JSON.stringify(headlines, null, 2), 'utf8');
+        const artifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: taskId,
+            timestamp_utc: new Date().toISOString(),
+            policy_mode: 'required',
+            decision: 'recommended_missing_packs',
+            selection_phase: 'post_diff',
+            path_evidence_source: 'actual_changed_files',
+            selected_installed_skills: [],
+            recommended_missing_packs: [
+                {
+                    id: 'frontend-react',
+                    label: 'Frontend React',
+                    ready_skill_ids: ['frontend-react'],
+                    reason_codes: ['task_signals' as const],
+                    matches: {
+                        task_signals: ['react'],
+                        changed_path_signals: []
+                    }
+                }
+            ],
+            as_is_reason: null,
+            task_text_present: true,
+            task_text_sha256: computeOptionalSkillTaskTextSha256('Implement request validation for a Node.js API endpoint'),
+            changed_paths: ['src/api/orders.ts'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: sha256File(preflightPath),
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: null,
+            visible_summary_line: 'Optional skills: recommended_missing_packs (packs: frontend-react, reason: task_text)'
+        };
+        Object.assign(artifact, {
+            selection_fingerprint_sha256: computeOptionalSkillSelectionFingerprint(artifact)
+        });
+        fs.writeFileSync(
+            path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-optional-skill-selection.json`),
+            JSON.stringify(artifact, null, 2),
+            'utf8'
+        );
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const diagnostics = payload.diagnostics as Record<string, unknown>;
+        const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
+        assert.equal(optionalSkills.selection_phase, 'post_diff');
+        assert.equal(optionalSkills.path_evidence_source, 'actual_changed_files');
+        assert.deepEqual(optionalSkills.recommended_missing_packs, ['frontend-react']);
+        assert.equal(optionalSkills.blocker, null);
+        assert.match(String(optionalSkills.task_start_instruction || ''), /self-check only/u);
+        assert.doesNotMatch(String(optionalSkills.task_start_instruction || ''), /before implementation|rerun classify-change|activation before/iu);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json treats mandatory post-diff as_is outcomes as self-check only', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/api/orders.ts']
+        });
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedNodeBackendOptionalSkillFixture(bundleRoot, {
+            policyMode: 'required',
+            includePersistedHeadlines: true
+        });
+        const headlinesPath = path.join(bundleRoot, 'live', 'config', 'skills-headlines.json');
+        const artifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: taskId,
+            timestamp_utc: new Date().toISOString(),
+            policy_mode: 'required',
+            decision: 'as_is',
+            selection_phase: 'post_diff',
+            path_evidence_source: 'actual_changed_files',
+            selected_installed_skills: [],
+            recommended_missing_packs: [],
+            as_is_reason: 'generic_context_sufficient',
+            task_text_present: true,
+            task_text_sha256: computeOptionalSkillTaskTextSha256('Implement request validation for a Node.js API endpoint'),
+            changed_paths: ['src/api/orders.ts'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: sha256File(preflightPath),
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: null,
+            visible_summary_line: 'Optional skills: as_is (reason: generic_context_sufficient)'
+        };
+        Object.assign(artifact, {
+            selection_fingerprint_sha256: computeOptionalSkillSelectionFingerprint(artifact)
+        });
+        fs.writeFileSync(
+            path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-optional-skill-selection.json`),
+            JSON.stringify(artifact, null, 2),
+            'utf8'
+        );
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const diagnostics = payload.diagnostics as Record<string, unknown>;
+        const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
+        assert.equal(optionalSkills.selection_phase, 'post_diff');
+        assert.equal(optionalSkills.path_evidence_source, 'actual_changed_files');
+        assert.equal(optionalSkills.as_is_reason, 'generic_context_sufficient');
+        assert.equal(optionalSkills.blocker, null);
+        assert.match(String(optionalSkills.task_start_instruction || ''), /self-check only/u);
+        assert.doesNotMatch(String(optionalSkills.task_start_instruction || ''), /before implementation|rerun classify-change|activation before/iu);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -772,6 +1016,8 @@ test('preprompt task --json keeps advisory optional-skill preview available when
         assert.equal(optionalSkills.policy_mode, 'optional');
         assert.equal(optionalSkills.blocker, null);
         assert.equal(optionalSkills.decision, 'selected_installed_skills');
+        assert.equal(optionalSkills.selection_phase, 'pre_implementation');
+        assert.equal(optionalSkills.path_evidence_source, 'explicit_scope');
         assert.deepEqual(optionalSkills.selected_installed_skills, ['node-backend']);
         assert.deepEqual(optionalSkills.selected_installed_skill_paths, [
             'garda-agent-orchestrator/live/skills/node-backend/SKILL.md'
@@ -779,6 +1025,76 @@ test('preprompt task --json keeps advisory optional-skill preview available when
         assert.equal(optionalSkills.selected_installed_skill_activation_ready, false);
         assert.match(String(optionalSkills.selected_installed_skill_activation_blocker || ''), /requires a current materialized selection artifact/i);
         assert.deepEqual(optionalSkills.selected_installed_skill_activation_commands, []);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json derives optional-skill phase from approved task-plan scope', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/api/orders.ts']
+        });
+        const planPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-task-plan.json`);
+        fs.mkdirSync(path.dirname(planPath), { recursive: true });
+        fs.writeFileSync(
+            planPath,
+            serializeTaskPlan({
+                schema_version: 1,
+                task_id: taskId,
+                status: 'approved',
+                goal: 'Implement request validation for a Node.js API endpoint',
+                scope_files: ['src/api/orders.ts'],
+                risk_level: 'medium',
+                steps: [
+                    {
+                        id: 'step-1',
+                        title: 'Update API handler'
+                    }
+                ]
+            }),
+            'utf8'
+        );
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedNodeBackendOptionalSkillFixture(bundleRoot, {
+            policyMode: 'advisory',
+            includePersistedHeadlines: false
+        });
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Implement request validation for a Node.js API endpoint',
+            planPath
+        });
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const diagnostics = payload.diagnostics as Record<string, unknown>;
+        const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
+        assert.equal(optionalSkills.decision, 'selected_installed_skills');
+        assert.equal(optionalSkills.selection_phase, 'pre_implementation');
+        assert.equal(optionalSkills.path_evidence_source, 'task_plan_scope');
+        assert.deepEqual(optionalSkills.selected_installed_skills, ['node-backend']);
+        assert.equal(preflightPath.endsWith(`${taskId}-preflight.json`), true);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -893,6 +1209,8 @@ test('preprompt task --json derives optional-skill preview from task-mode planne
         assert.equal(optionalSkills.policy_mode, 'optional');
         assert.equal(optionalSkills.blocker, null);
         assert.equal(optionalSkills.decision, 'selected_installed_skills');
+        assert.equal(optionalSkills.selection_phase, 'pre_implementation');
+        assert.equal(optionalSkills.path_evidence_source, 'planned_changed_files');
         assert.deepEqual(optionalSkills.selected_installed_skills, ['node-backend']);
         assert.deepEqual(optionalSkills.selected_installed_skill_paths, [
             'garda-agent-orchestrator/live/skills/node-backend/SKILL.md'
@@ -1258,6 +1576,8 @@ test('preprompt task --json reports a blocker when an existing optional-skill ar
                 timestamp_utc: new Date().toISOString(),
                 policy_mode: 'required',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 selected_installed_skills: [
                     {
                         id: 'node-backend',
@@ -1345,6 +1665,8 @@ test('preprompt task --json reports a blocker when an existing optional-skill ar
                 timestamp_utc: new Date().toISOString(),
                 policy_mode: 'advisory',
                 decision: 'selected_installed_skills',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
                 selected_installed_skills: [
                     {
                         id: 'node-backend',

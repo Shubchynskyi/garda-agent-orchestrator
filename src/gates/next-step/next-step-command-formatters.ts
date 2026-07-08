@@ -244,8 +244,18 @@ export function formatNextStepText(result: NextStepResult): string {
             `decision=${optionalSkills.decision || 'unknown'}; artifact=${optionalSkills.artifact_path || 'none'}; ` +
             `present=${optionalSkills.artifact_present}`
         );
+        lines.push(
+            `OptionalSkillPhase: ${optionalSkills.selection_phase}; ` +
+            `path_evidence_source=${optionalSkills.path_evidence_source}`
+        );
+        if (optionalSkills.post_diff_self_check) {
+            lines.push('OptionalSkillPostDiffSelfCheck: true');
+        }
         if (optionalSkills.timeline_invalid_json) {
             lines.push('OptionalSkillTimelineInvalidJson: true');
+        }
+        if (optionalSkills.artifact_violations.length > 0) {
+            lines.push(`OptionalSkillArtifactViolations: ${optionalSkills.artifact_violations.join(' ')}`);
         }
         if (optionalSkills.selected_skill_ids.length > 0) {
             lines.push(`OptionalSkillSelected: ${optionalSkills.selected_skill_ids.join(', ')}`);

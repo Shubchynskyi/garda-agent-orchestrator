@@ -47,6 +47,23 @@ export type OptionalSkillSelectionDecision =
     | 'recommended_missing_packs'
     | 'as_is';
 
+export const OPTIONAL_SKILL_SELECTION_PHASES = Object.freeze([
+    'pre_implementation',
+    'post_diff'
+] as const);
+
+export type OptionalSkillSelectionPhase = typeof OPTIONAL_SKILL_SELECTION_PHASES[number];
+
+export const OPTIONAL_SKILL_PATH_EVIDENCE_SOURCES = Object.freeze([
+    'none',
+    'planned_changed_files',
+    'task_plan_scope',
+    'explicit_scope',
+    'actual_changed_files'
+] as const);
+
+export type OptionalSkillPathEvidenceSource = typeof OPTIONAL_SKILL_PATH_EVIDENCE_SOURCES[number];
+
 export type OptionalSkillSelectionReasonCode =
     | 'stack_signals'
     | 'task_signals'
@@ -86,6 +103,8 @@ export interface OptionalSkillSelectionArtifact {
     timestamp_utc: string;
     policy_mode: OptionalSkillSelectionPolicyMode;
     decision: OptionalSkillSelectionDecision;
+    selection_phase: OptionalSkillSelectionPhase;
+    path_evidence_source: OptionalSkillPathEvidenceSource;
     selected_installed_skills: OptionalSkillSelectionEntry[];
     recommended_missing_packs: OptionalSkillSelectionRecommendedPack[];
     as_is_reason: OptionalSkillSelectionAsIsReason | null;
@@ -119,6 +138,8 @@ export interface BuildOptionalSkillSelectionOptions {
     targetRoot?: string | null;
     preflightPath?: string | null;
     preflightSha256?: string | null;
+    selectionPhase?: OptionalSkillSelectionPhase | string | null;
+    pathEvidenceSource?: OptionalSkillPathEvidenceSource | string | null;
     loadedHeadlinesCache?: {
         headlinesPath: string;
         headlinesSha256: string | null;
@@ -219,6 +240,34 @@ export function normalizeOptionalSkillSelectionPolicyMode(value: unknown): Canon
     return 'optional';
 }
 
+export function normalizeOptionalSkillSelectionPhase(
+    value: unknown,
+    fallback: OptionalSkillSelectionPhase = 'pre_implementation'
+): OptionalSkillSelectionPhase {
+    const phase = normalizeText(value);
+    if ((OPTIONAL_SKILL_SELECTION_PHASES as readonly string[]).includes(phase)) {
+        return phase as OptionalSkillSelectionPhase;
+    }
+    return fallback;
+}
+
+export function normalizeOptionalSkillPathEvidenceSource(
+    value: unknown,
+    fallback: OptionalSkillPathEvidenceSource = 'none'
+): OptionalSkillPathEvidenceSource {
+    const source = normalizeText(value);
+    if ((OPTIONAL_SKILL_PATH_EVIDENCE_SOURCES as readonly string[]).includes(source)) {
+        return source as OptionalSkillPathEvidenceSource;
+    }
+    return fallback;
+}
+
+export function isPostDiffOptionalSkillSelection(payload: {
+    selection_phase?: OptionalSkillSelectionPhase | string | null;
+}): boolean {
+    return normalizeOptionalSkillSelectionPhase(payload.selection_phase, 'pre_implementation') === 'post_diff';
+}
+
 export function isMandatoryOptionalSkillSelectionPolicyMode(value: unknown): boolean {
     return normalizeOptionalSkillSelectionPolicyMode(value) === 'mandatory';
 }
@@ -275,13 +324,18 @@ function normalizeRecommendedPackFingerprintEntries(
 export function computeOptionalSkillSelectionFingerprint(payload: {
     policy_mode?: OptionalSkillSelectionPolicyMode | string | null;
     decision?: OptionalSkillSelectionDecision | string | null;
+    selection_phase?: OptionalSkillSelectionPhase | string | null;
+    path_evidence_source?: OptionalSkillPathEvidenceSource | string | null;
     selected_installed_skills?: OptionalSkillSelectionEntry[] | null;
     recommended_missing_packs?: OptionalSkillSelectionRecommendedPack[] | null;
     as_is_reason?: OptionalSkillSelectionAsIsReason | string | null;
 }): string {
+    const selectionPhase = normalizeOptionalSkillSelectionPhase(payload.selection_phase, 'pre_implementation');
     const normalizedPayload = {
         policy_mode: String(payload.policy_mode || '').trim(),
         decision: String(payload.decision || '').trim(),
+        selection_phase: selectionPhase,
+        path_evidence_source: normalizeOptionalSkillPathEvidenceSource(payload.path_evidence_source, 'none'),
         selected_installed_skills: normalizeSelectedSkillFingerprintEntries(payload.selected_installed_skills),
         recommended_missing_packs: normalizeRecommendedPackFingerprintEntries(payload.recommended_missing_packs),
         as_is_reason: payload.as_is_reason || null

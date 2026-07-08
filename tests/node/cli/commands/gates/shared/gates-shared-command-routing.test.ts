@@ -154,6 +154,50 @@ describe('cli/commands/gates', () => {
         }
     });
 
+    it('activate-optional-skill rejects post-diff optional-skill suggestions', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-activate-post-diff';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    'Update app flow',
+                    'Implement request validation for a Node.js API endpoint'
+                ),
+                'utf8'
+            );
+            seedInitAnswers(repoRoot);
+            seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['src/api/orders.ts'],
+                required_reviews: {}
+            });
+            writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+                taskText: 'Implement request validation for a Node.js API endpoint',
+                changedPaths: ['src/api/orders.ts'],
+                selectionPhase: 'post_diff',
+                pathEvidenceSource: 'actual_changed_files',
+                preflightPath
+            });
+
+            const result = await runCliWithCapturedOutput(
+                ['gate', 'activate-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend'],
+                { cwd: repoRoot }
+            );
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.match(result.errors.join('\n'), /post-diff changed paths for self-check only/i);
+            assert.equal(
+                fs.existsSync(path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`)),
+                false
+            );
+        } finally {
+            removeTempRepoWithRetry(repoRoot);
+        }
+    });
+
     it('activate-optional-skill rejects a stale optional-skill artifact that no longer matches the current preflight', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-optional-skill-activate-stale-preflight';

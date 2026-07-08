@@ -8,6 +8,7 @@ import {
 import {
     computeOptionalSkillTaskTextSha256,
     getOptionalSkillSelectionArtifactViolations,
+    isPostDiffOptionalSkillSelection,
     isMandatoryOptionalSkillSelectionPolicyMode,
     isOptionalSkillSelectionPolicyConfigured,
     readOptionalSkillSelectionArtifact,
@@ -221,13 +222,17 @@ async function runActivateOptionalSkillCommand(options: ParsedOptionsRecord) {
     if (artifactViolations.length > 0) {
         throw new Error(artifactViolations.join(' '));
     }
-
     const selectedSkill = artifact.payload.selected_installed_skills.find(
         (entry) => String(entry.id || '').trim() === skillId
     );
     if (!selectedSkill) {
         throw new Error(
             `Optional skill '${skillId}' is not selected for task '${taskId}'. Use one of the current selected skill ids or proceed as_is.`
+        );
+    }
+    if (isPostDiffOptionalSkillSelection(artifact.payload)) {
+        throw new Error(
+            `Optional skill '${skillId}' was selected from post-diff changed paths for self-check only; it cannot be activated as pre-implementation optional skill evidence.`
         );
     }
 

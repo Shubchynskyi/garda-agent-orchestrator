@@ -29,6 +29,8 @@ import {
     type OptionalSkillSelectionEntry,
     type OptionalSkillSelectionRecommendedPack,
     type OptionalSkillSelectionReasonCode,
+    type OptionalSkillSelectionPhase,
+    type OptionalSkillPathEvidenceSource,
     type MatchGroups,
     type SkillCandidateScore,
     type PackCandidateScore,
@@ -42,6 +44,8 @@ import {
     computeFileSha256,
     computeOptionalSkillTaskTextSha256,
     computeOptionalSkillSelectionFingerprint,
+    normalizeOptionalSkillPathEvidenceSource,
+    normalizeOptionalSkillSelectionPhase,
     toPortableBundlePath
 } from './types';
 import { loadSkillsHeadlines } from './headlines-cache';
@@ -200,6 +204,23 @@ const FRONTEND_WORK_INTENT_SIGNALS = [
     'ui work',
     'view'
 ];
+
+const BROAD_WEAK_CHANGED_PATH_SIGNALS = new Set([
+    'src/',
+    '**/index.ts',
+    'index.ts',
+    'core/',
+    'shared/'
+]);
+
+export function isBroadWeakChangedPathSignal(signal: string): boolean {
+    const normalized = normalizeText(signal).replace(/\\/g, '/');
+    if (BROAD_WEAK_CHANGED_PATH_SIGNALS.has(normalized)) {
+        return true;
+    }
+    const withoutWildcardPrefix = normalized.replace(/^\*\*\//, '');
+    return BROAD_WEAK_CHANGED_PATH_SIGNALS.has(withoutWildcardPrefix);
+}
 
 function textOrPathContainsAny(
     taskTextLower: string,
@@ -405,6 +426,21 @@ function hasProjectDiscoveryEvidence(matches: SignalMatches): boolean {
     return matches.stack_signals.length > 0 || matches.project_path_signals.length > 0;
 }
 
+function shouldSuppressPreImplementationBroadPathOnlySelection(
+    matches: MatchGroups,
+    selectionPhase: OptionalSkillSelectionPhase,
+    pathEvidenceSource: OptionalSkillPathEvidenceSource
+): boolean {
+    if (selectionPhase !== 'pre_implementation' || pathEvidenceSource === 'actual_changed_files') {
+        return false;
+    }
+    if (matches.task_signals.length > 0 || (matches.aliases_or_tags || []).length > 0) {
+        return false;
+    }
+    return matches.changed_path_signals.length > 0
+        && matches.changed_path_signals.every((signal) => isBroadWeakChangedPathSignal(signal));
+}
+
 function readSkillsIndexById(bundleRoot: string): Map<string, SkillsIndexSkillEntry> {
     if (!pathExists(getSkillsIndexConfigPath(bundleRoot))) {
         return new Map();
@@ -448,6 +484,8 @@ export function selectInstalledSkills(
         allowReviewBoundSkills?: boolean;
         allowProjectDiscoverySelection?: boolean;
         suggestionContext?: SuggestionContext | null;
+        selectionPhase?: OptionalSkillSelectionPhase;
+        pathEvidenceSource?: OptionalSkillPathEvidenceSource;
     } = {}
 ): SkillCandidateScore[] {
     const candidates: SkillCandidateScore[] = [];
@@ -489,6 +527,13 @@ export function selectInstalledSkills(
         }
         if (score <= 0) {
             continue;
+        }
+        if (shouldSuppressPreImplementationBroadPathOnlySelection(
+            matches,
+            options.selectionPhase || 'pre_implementation',
+            options.pathEvidenceSource || 'none'
+        )) {
+            strongMatch = false;
         }
         const mixedCodeAndDocsScope = skillLooksDocumentationOrProcess(skill) && hasNonDocumentationChangedPaths(changedPathsLower);
 
@@ -629,6 +674,14 @@ export function buildOptionalSkillSelectionArtifact(
     );
     const taskTextLower = normalizeText(taskText);
     const changedPathsLower = changedPaths.map((entry) => normalizeText(entry));
+    const pathEvidenceSource = normalizeOptionalSkillPathEvidenceSource(
+        options.pathEvidenceSource,
+        changedPaths.length > 0 ? 'explicit_scope' : 'none'
+    );
+    const selectionPhase = normalizeOptionalSkillSelectionPhase(
+        options.selectionPhase,
+        pathEvidenceSource === 'actual_changed_files' ? 'post_diff' : 'pre_implementation'
+    );
     const targetRoot = String(options.targetRoot || '').trim();
     const suggestionContext = targetRoot
         ? buildSuggestionContext(targetRoot, taskText, changedPaths)
@@ -663,7 +716,9 @@ export function buildOptionalSkillSelectionArtifact(
         const scoredSkills = selectInstalledSkills(bundleRoot, taskTextLower, changedPathsLower, availableSkills, {
             allowReviewBoundSkills: policyConfig.mode === 'mandatory',
             allowProjectDiscoverySelection: policyConfig.mode === 'mandatory',
-            suggestionContext
+            suggestionContext,
+            selectionPhase,
+            pathEvidenceSource
         });
         const topSkillScore = scoredSkills[0]?.score || 0;
         selectedInstalledSkills = scoredSkills
@@ -707,6 +762,8 @@ export function buildOptionalSkillSelectionArtifact(
         timestamp_utc: new Date().toISOString(),
         policy_mode: policyConfig.mode,
         decision,
+        selection_phase: selectionPhase,
+        path_evidence_source: pathEvidenceSource,
         selected_installed_skills: selectedInstalledSkills,
         recommended_missing_packs: recommendedMissingPacks,
         as_is_reason: asIsReason,

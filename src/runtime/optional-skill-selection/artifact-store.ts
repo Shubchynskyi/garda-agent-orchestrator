@@ -11,6 +11,8 @@ import {
     computeFileSha256,
     computeOptionalSkillTaskTextSha256,
     computeOptionalSkillSelectionFingerprint,
+    normalizeOptionalSkillPathEvidenceSource,
+    normalizeOptionalSkillSelectionPhase,
     uniqueSorted
 } from './types';
 import { readOptionalSkillSelectionPolicyConfig } from './config';
@@ -81,6 +83,14 @@ export function writeOptionalSkillSelectionArtifact(
         changed_paths: Array.isArray(options.changedPaths)
             ? uniqueSorted(options.changedPaths.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean))
             : builtArtifact.payload.changed_paths,
+        selection_phase: normalizeOptionalSkillSelectionPhase(
+            options.selectionPhase,
+            builtArtifact.payload.selection_phase || 'pre_implementation'
+        ),
+        path_evidence_source: normalizeOptionalSkillPathEvidenceSource(
+            options.pathEvidenceSource,
+            builtArtifact.payload.path_evidence_source || 'none'
+        ),
         preflight_path: resolvedPreflightPath,
         preflight_sha256: resolvedPreflightSha256,
         headlines_path: toPortableBundlePath(bundleRoot, resolvedHeadlinesPath),

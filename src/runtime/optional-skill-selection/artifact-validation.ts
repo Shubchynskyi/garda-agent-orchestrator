@@ -10,10 +10,15 @@ import {
     type OptionalSkillSelectionPolicyMode,
     type OptionalSkillSelectionTimelineEvidence,
     OPTIONAL_SKILL_SELECTION_POLICY_MODES,
+    OPTIONAL_SKILL_PATH_EVIDENCE_SOURCES,
+    OPTIONAL_SKILL_SELECTION_PHASES,
     MAX_SELECTED_SKILLS,
     MAX_RECOMMENDED_PACKS,
     computeOptionalSkillSelectionFingerprint,
+    isPostDiffOptionalSkillSelection,
     isMandatoryOptionalSkillSelectionPolicyMode,
+    normalizeOptionalSkillPathEvidenceSource,
+    normalizeOptionalSkillSelectionPhase,
     normalizeOptionalSkillSelectionPolicyMode,
     resolvePortableRepoPath,
     toPortableBundlePath,
@@ -155,6 +160,10 @@ export function getOptionalSkillSelectionArtifactViolations(
     const rawPolicyMode = String(payload.policy_mode || '').trim() as OptionalSkillSelectionPolicyMode;
     const policyMode = normalizeOptionalSkillSelectionPolicyMode(rawPolicyMode) as OptionalSkillSelectionPolicyMode;
     const decision = String(payload.decision || '').trim() as OptionalSkillSelectionDecision;
+    const rawSelectionPhase = String(payload.selection_phase || '').trim();
+    const rawPathEvidenceSource = String(payload.path_evidence_source || '').trim();
+    const selectionPhase = normalizeOptionalSkillSelectionPhase(payload.selection_phase, 'pre_implementation');
+    const pathEvidenceSource = normalizeOptionalSkillPathEvidenceSource(payload.path_evidence_source, 'none');
     const expectedArtifactPath = getOptionalSkillSelectionArtifactPath(bundleRoot, payload.task_id);
     const validateAgainstCurrentHeadlines = options.validateAgainstCurrentHeadlines !== false;
     const validateAgainstCurrentInventory = options.validateAgainstCurrentInventory !== false;
@@ -191,6 +200,24 @@ export function getOptionalSkillSelectionArtifactViolations(
     }
     if (!allowedDecisions.has(decision)) {
         violations.push(`Optional skill selection decision '${decision}' is invalid.`);
+    }
+    if (rawSelectionPhase && !(OPTIONAL_SKILL_SELECTION_PHASES as readonly string[]).includes(rawSelectionPhase)) {
+        violations.push(`Optional skill selection phase '${rawSelectionPhase}' is invalid.`);
+    }
+    if (rawPathEvidenceSource && !(OPTIONAL_SKILL_PATH_EVIDENCE_SOURCES as readonly string[]).includes(rawPathEvidenceSource)) {
+        violations.push(`Optional skill selection path_evidence_source '${rawPathEvidenceSource}' is invalid.`);
+    }
+    if (decision !== 'as_is' && !rawSelectionPhase) {
+        violations.push('Optional skill selection artifact must include selection_phase for selected or recommended optional-skill decisions.');
+    }
+    if (decision !== 'as_is' && !rawPathEvidenceSource) {
+        violations.push('Optional skill selection artifact must include path_evidence_source for selected or recommended optional-skill decisions.');
+    }
+    if (selectionPhase === 'post_diff' && pathEvidenceSource !== 'actual_changed_files') {
+        violations.push("Optional skill selection phase 'post_diff' requires path_evidence_source 'actual_changed_files'.");
+    }
+    if (pathEvidenceSource === 'actual_changed_files' && selectionPhase !== 'post_diff') {
+        violations.push("Optional skill selection path_evidence_source 'actual_changed_files' requires selection_phase 'post_diff'.");
     }
     if (!String(payload.visible_summary_line || '').trim()) {
         violations.push('Optional skill selection artifact must include a compact visible_summary_line.');
@@ -351,6 +378,7 @@ export function getOptionalSkillSelectionArtifactViolations(
     if (
         options.enforceMandatorySelection === true
         && isMandatoryOptionalSkillSelectionPolicyMode(policyMode)
+        && !isPostDiffOptionalSkillSelection(payload)
         && !baselineOnlyMandatoryAsIs
     ) {
         if (decision !== 'selected_installed_skills') {
@@ -494,7 +522,7 @@ export function getOptionalSkillSelectionGateViolations(
     const timelineEvidence = options.timelineEvidence
         || readOptionalSkillSelectionTimelineEvidence(bundleRoot, taskId, options.taskEventsPath || null);
     const mandatoryActivationViolations: string[] = [];
-    if (isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode)) {
+    if (isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode) && !isPostDiffOptionalSkillSelection(enforcementPayload)) {
         if (timelineEvidence.invalidJson) {
             mandatoryActivationViolations.push(
                 'Mandatory optional skill selection requires readable current task timeline evidence before implementation.'
