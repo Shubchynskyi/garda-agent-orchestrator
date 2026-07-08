@@ -194,6 +194,15 @@ export interface OptionalSkillSelectionActivationEvidence {
     eventSequence?: number | null;
 }
 
+export interface OptionalSkillSelectionDeclineEvidence {
+    skillId: string | null;
+    triggerReason: string | null;
+    timestampUtc: string | null;
+    selectionFingerprintSha256?: string | null;
+    reason?: string | null;
+    eventSequence?: number | null;
+}
+
 export interface OptionalSkillSelectionTimelineEvidence {
     timelinePath: string;
     exists: boolean;
@@ -206,6 +215,7 @@ export interface OptionalSkillSelectionTimelineEvidence {
     latestImplementationStartedTimestampUtc?: string | null;
     latestImplementationStartedTaskSequence?: number | null;
     optionalSkillActivations: OptionalSkillSelectionActivationEvidence[];
+    optionalSkillDeclines?: OptionalSkillSelectionDeclineEvidence[];
     optionalSkillReferenceLoads: OptionalSkillSelectionReferenceLoadEvidence[];
 }
 

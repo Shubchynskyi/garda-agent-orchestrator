@@ -28,6 +28,7 @@ import { readAgentInitStateSafe } from '../../../runtime/agent-init-state';
 import {
     buildOptionalSkillSelectionArtifact,
     buildCurrentCycleOptionalSkillActivationIndex,
+    buildCurrentCycleOptionalSkillDeclineIndex,
     buildMandatoryCurrentCycleOptionalSkillActivationIndex,
     computeOptionalSkillTaskTextSha256,
     getOptionalSkillSelectionArtifactViolations,
@@ -48,6 +49,7 @@ import { formatStatusSnapshotCompact, getStatusSnapshot } from '../../../validat
 import { getWhyBlocked } from '../../../validators/why-blocked';
 import {
     buildOptionalSkillActivationCommand,
+    buildOptionalSkillDeclineCommand,
     buildPostImplementationCommands,
     buildStartupCommands,
     buildStartupScopeBlocker,
@@ -561,6 +563,8 @@ function buildOptionalSkillTaskStartInstruction(input: {
     pathEvidenceSource: OptionalSkillPathEvidenceSource;
     activationReady: boolean;
     activationCommands: string[];
+    declinedSkillIds?: string[];
+    declineCommands?: string[];
 }): string {
     if (input.policyMode === 'off') {
         return 'Optional skill selection is disabled by policy; proceed without specialized optional skill activation.';
@@ -577,11 +581,18 @@ function buildOptionalSkillTaskStartInstruction(input: {
     }
     if (input.selectedSkillIds.length > 0) {
         const skillList = input.selectedSkillIds.join(', ');
+        const declinedSkillIds = input.declinedSkillIds || [];
+        if (declinedSkillIds.length > 0 && input.activationCommands.length === 0) {
+            return `Selected optional skill(s): ${skillList}. Explicit non-use is recorded for ${declinedSkillIds.join(', ')}; continue with the normal navigator command.`;
+        }
         if (input.activationReady && input.activationCommands.length > 0) {
             if (isMandatoryOptionalSkillSelectionPolicyMode(input.policyMode)) {
                 return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the required chosen role/skill.`;
             }
-            return `Selected optional skill(s): ${skillList}. If you use the selected skill, run the activation command(s) before implementation so the timeline records that choice; otherwise continue with the normal navigator command.`;
+            const declineHint = (input.declineCommands || []).length > 0
+                ? ' If you intentionally will not use it, run the decline command instead so next-step records non-use.'
+                : '';
+            return `Selected optional skill(s): ${skillList}. If you use the selected skill, run the activation command(s) before implementation so the timeline records that choice; otherwise continue with the normal navigator command.${declineHint}`;
         }
         return `Selected optional skill(s): ${skillList}. Materialize the current-cycle selection artifact with classify-change before implementation, then activate the selected skill.`;
     }
@@ -633,6 +644,8 @@ export function buildOptionalSkillsDiagnostics(
                 selected_installed_skill_activation_ready: false,
                 selected_installed_skill_activation_blocker: null,
                 selected_installed_skill_activation_commands: [],
+                selected_installed_skill_declined_ids: [],
+                selected_installed_skill_decline_commands: [],
                 skill_catalog_path: toPortableRepoPath(targetRoot, path.join(bundleRoot, 'live', 'config', 'skills-headlines.json')),
                 task_start_instruction: buildOptionalSkillTaskStartInstruction({
                     policyMode: policyConfig.mode,
@@ -645,7 +658,9 @@ export function buildOptionalSkillsDiagnostics(
                     selectionPhase: 'pre_implementation',
                     pathEvidenceSource: 'none',
                     activationReady: false,
-                    activationCommands: []
+                    activationCommands: [],
+                    declinedSkillIds: [],
+                    declineCommands: []
                 }),
                 selection_phase: 'pre_implementation',
                 path_evidence_source: 'none',
@@ -764,6 +779,12 @@ export function buildOptionalSkillsDiagnostics(
                 ? buildMandatoryCurrentCycleOptionalSkillActivationIndex(currentCycleArtifact.payload, timelineEvidence)
                 : buildCurrentCycleOptionalSkillActivationIndex(currentCycleArtifact.payload, timelineEvidence)
             : new Map<string, number>();
+        const declineIndex = currentCycleArtifact && timelineEvidence && !timelineEvidence.invalidJson
+            ? buildCurrentCycleOptionalSkillDeclineIndex(currentCycleArtifact.payload, timelineEvidence)
+            : new Map<string, number>();
+        const declinedSkillIds = isMandatoryPolicy
+            ? []
+            : selectedSkillIds.filter((skillId) => declineIndex.has(skillId));
         const missingActivationSkillIds = selectedSkillIds.filter((skillId) => !activationIndex.has(skillId));
         const mandatorySelectionBlocker = isMandatoryPolicy && !isPostDiffSelection && preview.payload.decision !== 'selected_installed_skills'
             ? preview.payload.decision === 'recommended_missing_packs'
@@ -794,10 +815,20 @@ export function buildOptionalSkillsDiagnostics(
         } else if (previewViolations.length > 0) {
             blocker = previewViolations.join(' ');
         }
+        const actionableActivationSkillIds = isMandatoryPolicy
+            ? selectedSkillIds
+            : missingActivationSkillIds.filter((skillId) => !declineIndex.has(skillId));
         const activationCommands = activationReady
-            ? preview.payload.selected_installed_skills.map((entry) => (
+            ? preview.payload.selected_installed_skills
+                .filter((entry) => actionableActivationSkillIds.includes(entry.id))
+                .map((entry) => (
                 buildOptionalSkillActivationCommand(repoRoot, taskId, entry.id)
             ))
+            : [];
+        const declineCommands = activationReady && !isMandatoryPolicy
+            ? preview.payload.selected_installed_skills
+                .filter((entry) => !activationIndex.has(entry.id) && !declineIndex.has(entry.id))
+                .map((entry) => buildOptionalSkillDeclineCommand(repoRoot, taskId, entry.id))
             : [];
         const skillCatalogPath = preview.payload.headlines_path
             ? preview.payload.headlines_path.replace(/\\/g, '/')
@@ -815,7 +846,9 @@ export function buildOptionalSkillsDiagnostics(
                 selectionPhase,
                 pathEvidenceSource,
                 activationReady,
-                activationCommands
+                activationCommands,
+                declinedSkillIds,
+                declineCommands
             });
         return {
             artifact_path: portableArtifactPath,
@@ -830,6 +863,8 @@ export function buildOptionalSkillsDiagnostics(
             selected_installed_skill_activation_ready: activationReady,
             selected_installed_skill_activation_blocker: activationBlocker,
             selected_installed_skill_activation_commands: activationCommands,
+            selected_installed_skill_declined_ids: declinedSkillIds,
+            selected_installed_skill_decline_commands: declineCommands,
             selected_installed_skill_post_diff_self_check: postDiffSelfCheck,
             skill_catalog_path: skillCatalogPath,
             task_start_instruction: taskStartInstruction,

@@ -4,6 +4,7 @@ import { fileSha256, joinOrchestratorPath, resolvePathInsideRepo, toPosix } from
 import {
     computeOptionalSkillTaskTextSha256,
     buildCurrentCycleOptionalSkillActivationIndex,
+    buildCurrentCycleOptionalSkillDeclineIndex,
     getActivatedCurrentCycleOptionalSkillReferenceLoads,
     getOptionalSkillSelectionArtifactViolations,
     isOptionalSkillSelectionPolicyConfigured,
@@ -154,6 +155,7 @@ export interface FinalCloseoutOptionalSkillsSummary {
     post_diff_self_check?: boolean;
     selected_skill_ids: string[];
     used_skill_ids: string[];
+    declined_skill_ids?: string[];
     recommended_missing_pack_ids: string[];
     as_is_reason: string | null;
     visible_summary_line: string | null;
@@ -254,6 +256,7 @@ export function readOptionalSkillsSummary(
                     decision: 'as_is',
                     selected_skill_ids: [],
                     used_skill_ids: [],
+                    declined_skill_ids: [],
                     recommended_missing_pack_ids: [],
                     as_is_reason: 'policy_off',
                     visible_summary_line: 'Optional skills: as_is (reason: policy_off)'
@@ -269,6 +272,7 @@ export function readOptionalSkillsSummary(
             decision: 'invalidated',
             selected_skill_ids: [],
             used_skill_ids: [],
+            declined_skill_ids: [],
             recommended_missing_pack_ids: [],
             as_is_reason: 'artifact_drift',
             visible_summary_line: 'Optional skills: unavailable (reason: artifact_drift)'
@@ -297,6 +301,7 @@ export function readOptionalSkillsSummary(
             decision: 'invalidated',
             selected_skill_ids: [],
             used_skill_ids: [],
+            declined_skill_ids: [],
             recommended_missing_pack_ids: [],
             as_is_reason: 'artifact_drift',
             visible_summary_line: 'Optional skills: unavailable (reason: artifact_drift)'
@@ -341,6 +346,7 @@ export function readOptionalSkillsSummary(
             post_diff_self_check: postDiffSelfCheck,
             selected_skill_ids: selectedSkillIds,
             used_skill_ids: [],
+            declined_skill_ids: [],
             recommended_missing_pack_ids: recommendedMissingPackIds,
             as_is_reason: 'task_events_integrity',
             visible_summary_line: 'Optional skills: unavailable (reason: task_events_integrity)'
@@ -348,6 +354,8 @@ export function readOptionalSkillsSummary(
     }
     const currentCycleReferenceLoads = getActivatedCurrentCycleOptionalSkillReferenceLoads(artifact.payload, timelineEvidence);
     const currentCycleActivationIndex = buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence);
+    const currentCycleDeclineIndex = buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, timelineEvidence);
+    const declinedSkillIds = selectedSkillIds.filter((entry) => currentCycleDeclineIndex.has(entry));
     const usedSkillIds = selectedSkillIds.filter((entry) => (
         currentCycleActivationIndex.has(entry)
         || currentCycleReferenceLoads.some((load) => load.skillId === entry)
@@ -360,6 +368,11 @@ export function readOptionalSkillsSummary(
             ? reasonSuffix
                 ? `Optional skills: post_diff_self_check (suggested: ${selectedSkillIds.join(', ')}, reason: ${reasonSuffix})`
                 : `Optional skills: post_diff_self_check (suggested: ${selectedSkillIds.join(', ')})`
+            : reasonSuffix
+            && declinedSkillIds.length > 0
+            ? `Optional skills: none_used (declined: ${declinedSkillIds.join(', ')}, reason: ${reasonSuffix})`
+            : declinedSkillIds.length > 0
+            ? `Optional skills: none_used (declined: ${declinedSkillIds.join(', ')})`
             : reasonSuffix
             ? `Optional skills: none_used (selected: ${selectedSkillIds.join(', ')}, reason: ${reasonSuffix})`
             : `Optional skills: none_used (selected: ${selectedSkillIds.join(', ')})`;
@@ -376,6 +389,7 @@ export function readOptionalSkillsSummary(
         post_diff_self_check: postDiffSelfCheck,
         selected_skill_ids: selectedSkillIds,
         used_skill_ids: usedSkillIds,
+        declined_skill_ids: declinedSkillIds,
         recommended_missing_pack_ids: recommendedMissingPackIds,
         as_is_reason: String(optionalSkills.as_is_reason || '').trim() || null,
         visible_summary_line: usageSummaryLine

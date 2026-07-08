@@ -322,6 +322,13 @@ function buildPreflightGateHelpEntries(
                 `${cliPrefix} gate activate-optional-skill --task-id "${TASK_ID_PLACEHOLDER}" --skill-id "<selected-skill-id>" --repo-root "."`,
                 true
             )
+        },
+        'decline-optional-skill': {
+            ...createSingleUsageEntry(
+                'Validate and record deliberate non-use of a selected advisory optional skill for the current task cycle.',
+                `${cliPrefix} gate decline-optional-skill --task-id "${TASK_ID_PLACEHOLDER}" --skill-id "<selected-skill-id>" --reason "<why-not-used>" --repo-root "."`,
+                true
+            )
         }
     };
 }

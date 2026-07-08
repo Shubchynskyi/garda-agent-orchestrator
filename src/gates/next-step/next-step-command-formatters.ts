@@ -268,6 +268,9 @@ export function formatNextStepText(result: NextStepResult): string {
         if (optionalSkills.activated_skill_ids.length > 0) {
             lines.push(`OptionalSkillActivatedCurrentCycle: ${optionalSkills.activated_skill_ids.join(', ')}`);
         }
+        if (optionalSkills.declined_skill_ids.length > 0) {
+            lines.push(`OptionalSkillDeclined: ${optionalSkills.declined_skill_ids.join(', ')}`);
+        }
         if (optionalSkills.pending_activation_skill_ids.length > 0) {
             lines.push(`OptionalSkillPendingActivation: ${optionalSkills.pending_activation_skill_ids.join(', ')}`);
         }
@@ -281,6 +284,12 @@ export function formatNextStepText(result: NextStepResult): string {
         if (optionalSkills.activation_commands.length > 0) {
             lines.push('OptionalSkillActivationCommands:');
             for (const command of optionalSkills.activation_commands) {
+                lines.push(`  - ${command}`);
+            }
+        }
+        if (optionalSkills.decline_commands.length > 0) {
+            lines.push('OptionalSkillDeclineCommands:');
+            for (const command of optionalSkills.decline_commands) {
                 lines.push(`  - ${command}`);
             }
         }

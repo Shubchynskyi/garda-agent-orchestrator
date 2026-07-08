@@ -198,6 +198,225 @@ describe('cli/commands/gates', () => {
         }
     });
 
+    it('decline-optional-skill records deliberate non-use for advisory selected optional skills', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-decline';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    'Update app flow',
+                    'Implement request validation for a Node.js API endpoint'
+                ),
+                'utf8'
+            );
+            seedInitAnswers(repoRoot);
+            seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['src/api/orders.ts'],
+                required_reviews: {}
+            });
+            writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+                taskText: 'Implement request validation for a Node.js API endpoint',
+                changedPaths: ['src/api/orders.ts'],
+                preflightPath
+            });
+
+            const result = await runCliWithCapturedOutput(
+                ['gate', 'decline-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend', '--reason', 'not needed after reading task scope'],
+                { cwd: repoRoot }
+            );
+
+            assert.equal(result.exitCode, 0);
+            assert.equal(result.errors.length, 0);
+            assert.match(result.logs.join('\n'), /Status: DECLINED/u);
+            const taskEvents = readTaskTimelineEvents(repoRoot, taskId);
+            assert.ok(taskEvents.some((event) => (
+                event.event_type === 'SKILL_DECLINED'
+                && (event.details as Record<string, unknown> | null)?.skill_id === 'node-backend'
+                && (event.details as Record<string, unknown> | null)?.trigger_reason === 'optional_skill_selection'
+                && (event.details as Record<string, unknown> | null)?.reason === 'not needed after reading task scope'
+            )));
+        } finally {
+            removeTempRepoWithRetry(repoRoot);
+        }
+    });
+
+    it('activate-optional-skill rejects activation after an explicit advisory decline', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-activate-after-decline';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    'Update app flow',
+                    'Implement request validation for a Node.js API endpoint'
+                ),
+                'utf8'
+            );
+            seedInitAnswers(repoRoot);
+            seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['src/api/orders.ts'],
+                required_reviews: {}
+            });
+            writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+                taskText: 'Implement request validation for a Node.js API endpoint',
+                changedPaths: ['src/api/orders.ts'],
+                preflightPath
+            });
+
+            const declineResult = await runCliWithCapturedOutput(
+                ['gate', 'decline-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend', '--reason', 'not used'],
+                { cwd: repoRoot }
+            );
+            assert.equal(declineResult.exitCode, 0);
+
+            const result = await runCliWithCapturedOutput(
+                ['gate', 'activate-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend'],
+                { cwd: repoRoot }
+            );
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.match(result.errors.join('\n'), /activation after decline is not allowed/i);
+        } finally {
+            removeTempRepoWithRetry(repoRoot);
+        }
+    });
+
+    it('decline-optional-skill rejects decline after current-cycle activation', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-decline-after-activation';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    'Update app flow',
+                    'Implement request validation for a Node.js API endpoint'
+                ),
+                'utf8'
+            );
+            seedInitAnswers(repoRoot);
+            seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['src/api/orders.ts'],
+                required_reviews: {}
+            });
+            writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+                taskText: 'Implement request validation for a Node.js API endpoint',
+                changedPaths: ['src/api/orders.ts'],
+                preflightPath
+            });
+
+            const activateResult = await runCliWithCapturedOutput(
+                ['gate', 'activate-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend'],
+                { cwd: repoRoot }
+            );
+            assert.equal(activateResult.exitCode, 0);
+
+            const result = await runCliWithCapturedOutput(
+                ['gate', 'decline-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend', '--reason', 'not used'],
+                { cwd: repoRoot }
+            );
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.match(result.errors.join('\n'), /decline is not allowed after activation/i);
+        } finally {
+            removeTempRepoWithRetry(repoRoot);
+        }
+    });
+
+    it('decline-optional-skill rejects same-selection activation across a preflight refresh', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-decline-after-refresh-activation';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    'Update app flow',
+                    'Implement request validation for a Node.js API endpoint'
+                ),
+                'utf8'
+            );
+            seedInitAnswers(repoRoot);
+            seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['src/api/orders.ts'],
+                required_reviews: {}
+            });
+            writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+                taskText: 'Implement request validation for a Node.js API endpoint',
+                changedPaths: ['src/api/orders.ts'],
+                preflightPath
+            });
+
+            const activateResult = await runCliWithCapturedOutput(
+                ['gate', 'activate-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend'],
+                { cwd: repoRoot }
+            );
+            assert.equal(activateResult.exitCode, 0);
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'PASS', 'refreshed preflight', {
+                output_path: preflightPath.replace(/\\/g, '/')
+            });
+
+            const result = await runCliWithCapturedOutput(
+                ['gate', 'decline-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend', '--reason', 'not used'],
+                { cwd: repoRoot }
+            );
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.match(result.errors.join('\n'), /decline is not allowed after activation/i);
+        } finally {
+            removeTempRepoWithRetry(repoRoot);
+        }
+    });
+
+    it('decline-optional-skill rejects mandatory selected optional skills', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-decline-mandatory';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    'Update app flow',
+                    'Implement request validation for a Node.js API endpoint'
+                ),
+                'utf8'
+            );
+            seedInitAnswers(repoRoot);
+            seedNodeBackendOptionalSkillFixture(repoRoot, 'required');
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['src/api/orders.ts'],
+                required_reviews: {}
+            });
+            writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+                taskText: 'Implement request validation for a Node.js API endpoint',
+                changedPaths: ['src/api/orders.ts'],
+                preflightPath
+            });
+
+            const result = await runCliWithCapturedOutput(
+                ['gate', 'decline-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend', '--reason', 'not used'],
+                { cwd: repoRoot }
+            );
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.match(result.errors.join('\n'), /policy is mandatory/i);
+        } finally {
+            removeTempRepoWithRetry(repoRoot);
+        }
+    });
+
     it('activate-optional-skill rejects a stale optional-skill artifact that no longer matches the current preflight', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-optional-skill-activate-stale-preflight';

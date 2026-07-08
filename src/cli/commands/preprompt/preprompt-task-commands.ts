@@ -134,6 +134,13 @@ export function buildOptionalSkillActivationCommand(repoRoot: string, taskId: st
         .split('"<selected-skill-id>"').join(quoteCliToken(skillId));
 }
 
+export function buildOptionalSkillDeclineCommand(repoRoot: string, taskId: string, skillId: string): string {
+    return getGateHelpEntry('decline-optional-skill', repoRoot).usage[0]
+        .split('"<task-id>"').join(quoteCliToken(taskId))
+        .split('"<selected-skill-id>"').join(quoteCliToken(skillId))
+        .split('"<why-not-used>"').join('"not_used_for_current_implementation"');
+}
+
 export function buildStartupCommands(
     repoRoot: string,
     targetRoot: string,

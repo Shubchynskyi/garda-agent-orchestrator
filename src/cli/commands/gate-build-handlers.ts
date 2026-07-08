@@ -6,7 +6,13 @@ import {
     emitSkillSelectedEventAsync
 } from '../../runtime/skill-telemetry';
 import {
+    appendMandatoryTaskEventAsync
+} from '../../gate-runtime/task-events';
+import {
+    buildCurrentCycleOptionalSkillActivationIndex,
+    buildCurrentCycleOptionalSkillDeclineIndex,
     computeOptionalSkillTaskTextSha256,
+    readOptionalSkillSelectionTimelineEvidence,
     getOptionalSkillSelectionArtifactViolations,
     isPostDiffOptionalSkillSelection,
     isMandatoryOptionalSkillSelectionPolicyMode,
@@ -173,66 +179,22 @@ export async function handleBuildReviewContext(gateArgv: string[]): Promise<void
 }
 
 async function runActivateOptionalSkillCommand(options: ParsedOptionsRecord) {
-    const taskId = parseRequiredText(options.taskId, 'TaskId');
-    const skillId = parseRequiredText(options.skillId, 'SkillId');
-    const repoRoot = normalizePathValue(options.repoRoot || '.');
-    ensureDirectoryExists(repoRoot, 'RepoRoot');
-    const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-    if (!isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)) {
-        throw new Error('Optional skill activation requires a repo-local optional-skill-selection policy.');
-    }
+    const {
+        orchestratorRoot,
+        taskId,
+        skillId,
+        artifact,
+        selectedSkill
+    } = validateOptionalSkillSelectionCommandInput(options);
 
-    const policyConfig = readOptionalSkillSelectionPolicyConfig(orchestratorRoot);
-    if (policyConfig.mode === 'off') {
-        throw new Error("Optional skill activation is not allowed while policy mode is 'off'.");
+    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, taskId);
+    if (timelineEvidence.invalidJson) {
+        throw new Error(`Optional skill activation requires readable current task timeline evidence for task '${taskId}'.`);
     }
-
-    const artifact = readOptionalSkillSelectionArtifact(orchestratorRoot, taskId);
-    if (!artifact) {
-        throw new Error(`Optional skill selection artifact is missing for task '${taskId}'. Run classify-change for the current cycle first.`);
-    }
-
-    const preflightPath = gateHelpers.joinOrchestratorPath(
-        repoRoot,
-        path.join('runtime', 'reviews', `${taskId}-preflight.json`)
-    );
-    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
-        throw new Error(`Optional skill activation requires the current preflight artifact for task '${taskId}'. Run classify-change for the current cycle first.`);
-    }
-    const preflightSha256 = gateHelpers.fileSha256(preflightPath);
-    const taskPath = path.join(repoRoot, 'TASK.md');
-    let currentTaskText: string | null = null;
-    if (fs.existsSync(taskPath) && fs.statSync(taskPath).isFile()) {
-        for (const line of fs.readFileSync(taskPath, 'utf8').split('\n')) {
-            const cells = parseTaskMdTableRow(line);
-            if (cells.length >= 5 && cells[0]?.trimmed === taskId) {
-                currentTaskText = cells[4]?.trimmed || null;
-                break;
-            }
-        }
-    }
-
-    const artifactViolations = getOptionalSkillSelectionArtifactViolations(orchestratorRoot, artifact, {
-        requireMaterializedArtifact: isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode),
-        expectedPreflightPath: preflightPath,
-        expectedPreflightSha256: preflightSha256,
-        expectedTaskTextSha256: computeOptionalSkillTaskTextSha256(String(currentTaskText || '')),
-        expectedPolicyMode: policyConfig.mode
-    });
-    if (artifactViolations.length > 0) {
-        throw new Error(artifactViolations.join(' '));
-    }
-    const selectedSkill = artifact.payload.selected_installed_skills.find(
-        (entry) => String(entry.id || '').trim() === skillId
-    );
-    if (!selectedSkill) {
+    const declineIndex = buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, timelineEvidence);
+    if (declineIndex.has(selectedSkill.id)) {
         throw new Error(
-            `Optional skill '${skillId}' is not selected for task '${taskId}'. Use one of the current selected skill ids or proceed as_is.`
-        );
-    }
-    if (isPostDiffOptionalSkillSelection(artifact.payload)) {
-        throw new Error(
-            `Optional skill '${skillId}' was selected from post-diff changed paths for self-check only; it cannot be activated as pre-implementation optional skill evidence.`
+            `Optional skill '${selectedSkill.id}' was explicitly declined for the current cycle; activation after decline is not allowed. Rerun classify-change for a new cycle if the decision changed.`
         );
     }
 
@@ -266,6 +228,184 @@ async function runActivateOptionalSkillCommand(options: ParsedOptionsRecord) {
             ['status', 'taskId', 'skillId', 'skillPath']
         )
     };
+}
+
+function readCurrentTaskText(repoRoot: string, taskId: string): string | null {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
+        return null;
+    }
+    for (const line of fs.readFileSync(taskPath, 'utf8').split('\n')) {
+        const cells = parseTaskMdTableRow(line);
+        if (cells.length >= 5 && cells[0]?.trimmed === taskId) {
+            return cells[4]?.trimmed || null;
+        }
+    }
+    return null;
+}
+
+function validateOptionalSkillSelectionCommandInput(options: ParsedOptionsRecord): {
+    repoRoot: string;
+    orchestratorRoot: string;
+    taskId: string;
+    skillId: string;
+    policyMode: string;
+    artifact: NonNullable<ReturnType<typeof readOptionalSkillSelectionArtifact>>;
+    selectedSkill: NonNullable<ReturnType<typeof readOptionalSkillSelectionArtifact>>['payload']['selected_installed_skills'][number];
+} {
+    const repoRoot = path.resolve(String(options.repoRoot || process.cwd()));
+    const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
+    const taskId = parseRequiredText(options.taskId, 'task-id');
+    const skillId = parseRequiredText(options.skillId, 'skill-id');
+
+    if (!isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)) {
+        throw new Error('Optional skill activation requires a repo-local optional-skill-selection policy.');
+    }
+
+    const policyConfig = readOptionalSkillSelectionPolicyConfig(orchestratorRoot);
+    if (policyConfig.mode === 'off') {
+        throw new Error("Optional skill activation is not allowed while policy mode is 'off'.");
+    }
+
+    const artifact = readOptionalSkillSelectionArtifact(orchestratorRoot, taskId);
+    if (!artifact) {
+        throw new Error(`Optional skill selection artifact is missing for task '${taskId}'. Run classify-change for the current cycle first.`);
+    }
+
+    const preflightPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-preflight.json`)
+    );
+    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
+        throw new Error(`Optional skill activation requires the current preflight artifact for task '${taskId}'. Run classify-change for the current cycle first.`);
+    }
+    const preflightSha256 = gateHelpers.fileSha256(preflightPath);
+    const currentTaskText = readCurrentTaskText(repoRoot, taskId);
+
+    const artifactViolations = getOptionalSkillSelectionArtifactViolations(orchestratorRoot, artifact, {
+        requireMaterializedArtifact: isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode),
+        expectedPreflightPath: preflightPath,
+        expectedPreflightSha256: preflightSha256,
+        expectedTaskTextSha256: computeOptionalSkillTaskTextSha256(String(currentTaskText || '')),
+        expectedPolicyMode: policyConfig.mode
+    });
+    if (artifactViolations.length > 0) {
+        throw new Error(artifactViolations.join(' '));
+    }
+    const selectedSkill = artifact.payload.selected_installed_skills.find(
+        (entry) => String(entry.id || '').trim() === skillId
+    );
+    if (!selectedSkill) {
+        throw new Error(
+            `Optional skill '${skillId}' is not selected for task '${taskId}'. Use one of the current selected skill ids or proceed as_is.`
+        );
+    }
+    if (isPostDiffOptionalSkillSelection(artifact.payload)) {
+        throw new Error(
+            `Optional skill '${skillId}' was selected from post-diff changed paths for self-check only; it cannot be activated as pre-implementation optional skill evidence.`
+        );
+    }
+
+    return {
+        repoRoot,
+        orchestratorRoot,
+        taskId,
+        skillId,
+        policyMode: policyConfig.mode,
+        artifact,
+        selectedSkill
+    };
+}
+
+async function runDeclineOptionalSkillCommand(options: ParsedOptionsRecord) {
+    const {
+        orchestratorRoot,
+        taskId,
+        skillId,
+        policyMode,
+        artifact,
+        selectedSkill
+    } = validateOptionalSkillSelectionCommandInput(options);
+    const reason = String(options.reason || 'not_used_for_current_implementation').trim() || 'not_used_for_current_implementation';
+
+    if (isMandatoryOptionalSkillSelectionPolicyMode(policyMode)) {
+        throw new Error(
+            `Optional skill '${skillId}' cannot be declined while optional-skill-selection policy is mandatory; activate the selected skill instead.`
+        );
+    }
+
+    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, taskId);
+    if (timelineEvidence.invalidJson) {
+        throw new Error(`Optional skill decline requires readable current task timeline evidence for task '${taskId}'.`);
+    }
+    const activationIndex = buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence);
+    if (activationIndex.has(selectedSkill.id)) {
+        throw new Error(
+            `Optional skill '${selectedSkill.id}' is already activated for the current cycle; decline is not allowed after activation.`
+        );
+    }
+    const declineIndex = buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, timelineEvidence);
+    if (declineIndex.has(selectedSkill.id)) {
+        return {
+            outputLines: buildKeyValueOutputLines(
+                {
+                    status: 'ALREADY_DECLINED',
+                    taskId,
+                    skillId: selectedSkill.id,
+                    reason
+                },
+                ['status', 'taskId', 'skillId', 'reason']
+            )
+        };
+    }
+
+    await appendMandatoryTaskEventAsync(
+        orchestratorRoot,
+        taskId,
+        'SKILL_DECLINED',
+        'INFO',
+        `Optional skill declined: ${selectedSkill.id}`,
+        {
+            telemetry_type: 'skill_decision',
+            skill_id: selectedSkill.id,
+            pack_id: selectedSkill.pack || null,
+            reference_path: null,
+            trigger_reason: 'optional_skill_selection',
+            optional_skill_selection_fingerprint_sha256: artifact.payload.selection_fingerprint_sha256 || null,
+            reason
+        },
+        { actor: 'optional-skill-selection' }
+    );
+
+    return {
+        outputLines: buildKeyValueOutputLines(
+            {
+                status: 'DECLINED',
+                taskId,
+                skillId: selectedSkill.id,
+                reason
+            },
+            ['status', 'taskId', 'skillId', 'reason']
+        )
+    };
+}
+
+export async function handleDeclineOptionalSkill(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--skill-id': { key: 'skillId', type: 'string' },
+        '--reason': { key: 'reason', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options: rawOptions } = parseOptions(gateArgv, defs);
+    try {
+        const result = await runDeclineOptionalSkillCommand(rawOptions as ParsedOptionsRecord);
+        for (const line of result.outputLines) {
+            console.log(line);
+        }
+    } catch (error: unknown) {
+        throw new GateFailureError(error instanceof Error ? error.message : String(error));
+    }
 }
 
 export async function handleActivateOptionalSkill(gateArgv: string[]): Promise<void> {

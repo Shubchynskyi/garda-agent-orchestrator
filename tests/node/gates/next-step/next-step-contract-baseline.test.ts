@@ -555,6 +555,33 @@ describe('next-step refactor contract baseline', () => {
         assert.match(text, /^OptionalSkillPendingActivation: node-backend$/mu);
     });
 
+    it('does not let declined evidence suppress mandatory optional-skill activation', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'required' });
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+        const optionalSkillArtifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-optional-skill-selection.json`);
+        const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
+        appendEvent(repoRoot, TASK_ID, 'SKILL_DECLINED', {
+            skill_id: 'node-backend',
+            trigger_reason: 'optional_skill_selection',
+            optional_skill_selection_fingerprint_sha256: optionalSkillArtifact.selection_fingerprint_sha256,
+            reason: 'forged mandatory decline'
+        }, '2026-01-01T00:00:06.000Z');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'activate-optional-skill');
+        assert.deepEqual(result.optional_skill_selection?.declined_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, ['node-backend']);
+        assert.match(text, /^OptionalSkillPendingActivation: node-backend$/mu);
+        assert.doesNotMatch(text, /^OptionalSkillDeclined:/mu);
+    });
+
     it('does not route mandatory post-diff optional-skill suggestions to activation', () => {
         const repoRoot = makeContractRepo();
         fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
@@ -659,6 +686,37 @@ describe('next-step refactor contract baseline', () => {
         assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, ['node-backend']);
         assert.match(text, /^OptionalSkillPendingActivation: node-backend$/mu);
         assert.match(text, /Selected optional skill\(s\): node-backend/u);
+        assert.match(result.commands[0]?.command || '', /gate compile-gate/u);
+    });
+
+    it('summarizes explicitly declined advisory optional skills without repeating activation blocks', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'advisory' });
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+        const optionalSkillArtifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-optional-skill-selection.json`);
+        const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
+        appendEvent(repoRoot, TASK_ID, 'SKILL_DECLINED', {
+            skill_id: 'node-backend',
+            trigger_reason: 'optional_skill_selection',
+            optional_skill_selection_fingerprint_sha256: optionalSkillArtifact.selection_fingerprint_sha256,
+            reason: 'not needed for current implementation'
+        }, '2026-01-01T00:00:06.000Z');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.notEqual(result.next_gate, 'activate-optional-skill');
+        assert.deepEqual(result.optional_skill_selection?.declined_skill_ids, ['node-backend']);
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.activation_commands, []);
+        assert.deepEqual(result.optional_skill_selection?.decline_commands, []);
+        assert.match(text, /^OptionalSkillDeclined: node-backend$/mu);
+        assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
+        assert.doesNotMatch(text, /^OptionalSkillActivationCommands:/mu);
+        assert.match(result.optional_skill_selection?.task_start_instruction || '', /Explicit non-use is recorded/u);
         assert.match(result.commands[0]?.command || '', /gate compile-gate/u);
     });
 

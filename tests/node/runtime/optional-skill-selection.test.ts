@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import {
     buildOptionalSkillSelectionArtifact,
     buildCurrentCycleOptionalSkillActivationIndex,
+    buildCurrentCycleOptionalSkillDeclineIndex,
     buildMandatoryCurrentCycleOptionalSkillActivationIndex,
     computeOptionalSkillSelectionFingerprint,
     computeOptionalSkillTaskTextSha256,
@@ -1478,6 +1479,78 @@ test('buildCurrentCycleOptionalSkillActivationIndex keeps same-selection activat
         });
 
         assert.equal(activationIndex.has('node-backend'), true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildCurrentCycleOptionalSkillDeclineIndex keeps same-selection decline across preflight restart', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        const fingerprint = artifact.payload.selection_fingerprint_sha256
+            || computeOptionalSkillSelectionFingerprint(artifact.payload);
+
+        const declineIndex = buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, {
+            timelinePath: path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl'),
+            exists: true,
+            invalidJson: false,
+            eventTypes: new Set(['TASK_MODE_ENTERED', 'PREFLIGHT_CLASSIFIED', 'SKILL_DECLINED']),
+            latestTaskModeEnteredTimestampUtc: '2026-01-01T00:00:00.000Z',
+            latestCycleBoundaryTimestampUtc: '2026-01-01T00:00:10.000Z',
+            optionalSkillActivations: [],
+            optionalSkillDeclines: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:05.000Z',
+                    selectionFingerprintSha256: fingerprint,
+                    reason: 'not needed for current implementation'
+                }
+            ],
+            optionalSkillReferenceLoads: []
+        });
+
+        assert.equal(declineIndex.has('node-backend'), true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildCurrentCycleOptionalSkillDeclineIndex rejects prior selection decline after preflight restart', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+
+        const declineIndex = buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, {
+            timelinePath: path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl'),
+            exists: true,
+            invalidJson: false,
+            eventTypes: new Set(['TASK_MODE_ENTERED', 'PREFLIGHT_CLASSIFIED', 'SKILL_DECLINED']),
+            latestTaskModeEnteredTimestampUtc: '2026-01-01T00:00:00.000Z',
+            latestCycleBoundaryTimestampUtc: '2026-01-01T00:00:10.000Z',
+            optionalSkillActivations: [],
+            optionalSkillDeclines: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:05.000Z',
+                    selectionFingerprintSha256: 'different-selection',
+                    reason: 'not needed for current implementation'
+                }
+            ],
+            optionalSkillReferenceLoads: []
+        });
+
+        assert.equal(declineIndex.has('node-backend'), false);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

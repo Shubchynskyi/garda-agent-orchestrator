@@ -243,6 +243,34 @@ function appendOptionalSkillActivationEvent(repoRoot: string, taskId: string, sk
     );
 }
 
+function appendOptionalSkillDeclineEvent(repoRoot: string, taskId: string, skillId = 'node-backend'): void {
+    const artifactPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'reviews',
+        `${taskId}-optional-skill-selection.json`
+    );
+    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+    const timestampUtc = new Date(Date.parse(String(artifact.timestamp_utc || new Date().toISOString())) + 1000).toISOString();
+    const eventsPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
+    fs.appendFileSync(
+        eventsPath,
+        `${JSON.stringify({
+            timestamp_utc: timestampUtc,
+            event_type: 'SKILL_DECLINED',
+            details: {
+                skill_id: skillId,
+                trigger_reason: 'optional_skill_selection',
+                optional_skill_selection_fingerprint_sha256: artifact.selection_fingerprint_sha256 || null,
+                reason: 'not needed for current implementation'
+            }
+        })}\n`,
+        'utf8'
+    );
+}
+
 test('preprompt task --json shows optional skill selection preview from headlines-based selection', async () => {
     const repoRoot = createTempRepo();
     const taskId = 'T-149';
@@ -717,6 +745,56 @@ test('preprompt task --json treats legacy required policy as mandatory activatio
             String(optionalSkills.task_start_instruction || ''),
             /Run the activation command\(s\) before implementation so the timeline records the required chosen role\/skill/
         );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json summarizes explicitly declined advisory optional skills without activation commands', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/api/orders.ts']
+        });
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedNodeBackendOptionalSkillFixture(bundleRoot, {
+            policyMode: 'advisory',
+            includePersistedHeadlines: true
+        });
+        writeSelectedNodeBackendOptionalSkillArtifact(repoRoot, taskId, {
+            policyMode: 'advisory',
+            preflightPath
+        });
+        appendOptionalSkillDeclineEvent(repoRoot, taskId);
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const diagnostics = payload.diagnostics as Record<string, unknown>;
+        const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
+        assert.equal(optionalSkills.policy_mode, 'optional');
+        assert.deepEqual(optionalSkills.selected_installed_skill_declined_ids, ['node-backend']);
+        assert.deepEqual(optionalSkills.selected_installed_skill_activation_commands, []);
+        assert.deepEqual(optionalSkills.selected_installed_skill_decline_commands, []);
+        assert.match(String(optionalSkills.task_start_instruction || ''), /Explicit non-use is recorded/u);
+        assert.doesNotMatch(String(optionalSkills.task_start_instruction || ''), /Run the activation command/iu);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
