@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fx from './next-step-review-cycle-fixtures';
+import {
+    normalizeReviewCycleGuardConfig
+} from '../../../../src/core/review-cycle-guard';
+import {
+    readReviewCycleGuardAttempts
+} from '../../../../src/gates/next-step/next-step-review-cycle-guard-attempts';
 
 const {
     ALL_REVIEW_FLAGS,
@@ -70,6 +76,44 @@ const {
 void [ALL_REVIEW_FLAGS, appendEvent, buildReviewContextScopeFixture, eventsRoot, resolveNextStep, formatNextStepText, EXPECTED_LOOP_LINE, fileSha256, fs, getLoadedRuleFileBasenames, hasCompletedDecomposedParentAfterSplitRequiredClear, hasSplitRequiredClearedEvidence, launchInputEvidenceFixture, makeTempRepo, markReviewEvidenceAsStrictReuse, materializeFinalCloseout, NEXT_STEP_FULL_SUITE_TEST_CONFIG, normalizeForTimeline, os, path, PROVIDER_ENV_KEYS, readReviewContextTreeStateSha256, readSplitRequiredLatchEvidence, requireFromTest, resolveReviewCycleContinuationArtifactPath, resolveSplitRequiredArtifactPath, reviewsRoot, runRecordReviewCycleSplitDecisionCommand, seedCompilePass, seedCompletedReviewerLaunchAndInvocation, seedCompletedTaskWithIndependentCodeReview, seedCompletionPass, seedCustomStartedTask, seedDocImpactPass, seedFullSuiteValidation, seedGitAutoCompilePass, seedHandshake, seedPostPreflightRulePack, seedProjectMemory, seedProjectMemoryImpact, seedReviewGatePass, seedRulePack, seedShellSmoke, seedSourceCheckoutRuntime, seedSplitRequiredLatchEvidence, seedStartedTask, seedTaskModeOnly, sha256Text, TASK_ID, tempRoots, withProviderEnv, writeFreshReviewContextWithoutRouting, writeGitAutoPreflight, writeJson, writeJsonWithSha, writeNoOpEvidence, writePreflight, writeProjectMemoryWorkflowConfig, writeReviewContextOnly, writeReviewCycleContinuation, writeReviewEvidence, writeStrictDecompositionDecision, writeStrictIndependentCodeReviewEvidence];
 
 describe('gates/next-step review cycle guard attempts', () => {
+    it('deduplicates reviewer/context attempts and preserves latest fresh failure summary', () => {
+        const repoRoot = makeTempRepo();
+        const reviewContextSha256 = sha256Text('deduped-context');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+            review_type: 'security',
+            reviewer_identity: 'agent:deduped-reviewer',
+            review_context_sha256: reviewContextSha256
+        });
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'security',
+            reviewer_identity: 'agent:deduped-reviewer',
+            review_context_sha256: reviewContextSha256,
+            summary: 'security retry failed'
+        });
+
+        const result = readReviewCycleGuardAttempts(
+            repoRoot,
+            path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`),
+            TASK_ID,
+            normalizeReviewCycleGuardConfig({
+                enabled: true,
+                action: 'BLOCK_FOR_OPERATOR_DECISION',
+                max_failed_non_test_reviews: 1,
+                max_total_non_test_reviews: 3,
+                excluded_review_types: ['test'],
+                auto_split_enabled: false
+            }),
+            null
+        );
+
+        assert.equal(result.timelineValid, true);
+        assert.equal(result.attempts.length, 1);
+        assert.equal(result.attempts[0]?.reviewType, 'security');
+        assert.equal(result.attempts[0]?.failed, true);
+        assert.equal(result.latestFailedReview?.review_type, 'security');
+        assert.equal(result.latestFailedReview?.summary, 'security retry failed');
+    });
+
     it('does not block closeout when successful non-test review attempts exceed the total limit', () => {
         const repoRoot = makeTempRepo();
         writeJson(
