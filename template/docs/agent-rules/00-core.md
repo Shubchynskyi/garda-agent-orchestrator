@@ -28,9 +28,10 @@ Default response brevity: {{ASSISTANT_RESPONSE_BREVITY}}.
 1. Mandatory gate/tooling failures (e.g., `Unknown gate`, missing CLI capability, missing local build dependencies, stale bundle mismatch, unreadable gate artifact paths) are critical infrastructure defects.
 2. Any such failure forces an immediate `BLOCKED` condition. You must not continue task execution or implementation when gate infrastructure is broken.
 3. User preferences or environment-specific instructions (e.g., "do not run rebuild", "skip tests") never waive mandatory gate validation. If a gate requires a build, test, type-check, or full-suite command to satisfy its contract, run the gate and let the gate manage that command. The `40-commands.md` restraint applies only to standalone ad-hoc commands outside the lifecycle; it does not apply to `compile-gate`, `full-suite-validation`, or any other required lifecycle gate.
-4. Broken gate infrastructure is not permission to bypass the orchestrator or edit code directly without following the lifecycle.
-5. When blocked by infrastructure failure, report the exact command, `cwd`, chosen CLI path, and the complete `stderr` output to the user.
-6. Mandatory reviewer launch evidence is one-shot: no agent may create, reserve, hold, or complete a reviewer before `prepare-reviewer-launch` prints the exact `CopyPasteReviewerLaunchPrompt` or `ReviewerLaunchInputArtifactPath`; planned `agent:pending:<task-id>-<review-type>` identities are placeholders until `record-reviewer-delegation-started` records the resolved provider `agent:*` identity.
+4. Manual verification outside the lifecycle must start compact and targeted: prefer `gate run-intermediate-command` for eligible focused test, typecheck, or validation probes; otherwise use the bounded Manual Validation Logs pattern from `40-commands.md`. Raw `npm test` or `node --test` reruns are escalation steps, not the default path, and they never replace mandatory `full-suite-validation`.
+5. Broken gate infrastructure is not permission to bypass the orchestrator or edit code directly without following the lifecycle.
+6. When blocked by infrastructure failure, report the exact command, `cwd`, chosen CLI path, and the complete `stderr` output to the user.
+7. Mandatory reviewer launch evidence is one-shot: no agent may create, reserve, hold, or complete a reviewer before `prepare-reviewer-launch` prints the exact `CopyPasteReviewerLaunchPrompt` or `ReviewerLaunchInputArtifactPath`; planned `agent:pending:<task-id>-<review-type>` identities are placeholders until `record-reviewer-delegation-started` records the resolved provider `agent:*` identity.
 
 ## Code Quality
 

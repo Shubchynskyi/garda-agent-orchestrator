@@ -5,6 +5,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 IMPORTANT: Prefer orchestrator-managed validation over ad-hoc validation.
 During orchestrated task execution, run builds, tests, type-checks, and full-suite validation through the mandatory gate flow whenever possible. Use `next-step` to choose the next lifecycle command, `compile-gate` for build/type-check validation, and `full-suite-validation` for the configured full test suite.
 Avoid standalone ad-hoc build, test, or lint commands outside the gate pipeline unless the prompt explicitly asks for them, a focused local debug pass is needed before mandatory gates, or a mandatory gate requires the underlying command.
+For focused manual validation, prefer `gate run-intermediate-command` before direct targeted test invocations; use the bounded Manual Validation Logs pattern below only when the command is not eligible for that gate.
 User preferences such as "do not run rebuild" or "skip tests" never waive mandatory gate validation. If a required gate wraps a build, test, or type-check command, run the gate and let the gate manage the command and output filtering.
 Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name>`.
 Default task loop: run `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` before the first gate, after every suggested command, and after any gate failure. Follow its single recommended command instead of guessing from defaults, stale artifacts, or the static gate list.
@@ -13,6 +14,7 @@ Default task loop: run `node garda-agent-orchestrator/bin/garda.js next-step "<t
 Ad-hoc command restraint and mandatory gate execution are separate concerns:
 - **Ad-hoc commands** (project build, test, or lint commands executed directly) - avoid as routine task validation. Use them only when requested, when doing a focused local debug pass, or when there is an explicit technical reason before returning to the gate flow.
 - **Mandatory gate commands** (`node garda-agent-orchestrator/bin/garda.js gate compile-gate`, `full-suite-validation`, etc.) - always execute when required by the workflow. A gate wrapping a build/test command is not ad-hoc execution; it is lifecycle-required validation with controlled output.
+- **Intermediate validation commands** (`gate run-intermediate-command`) - use for scoped, auditable manual probes while investigating one localized issue. The gate stores full raw output as an artifact and shows only compact status or a bounded failure tail in the transcript.
 - **Known producer-consumer validation chains** (`npm run build:node-foundation` -> direct `node --test .node-build/...`, similar generated-artifact consumers) - do not fan these out through raw shell sidecars. Use the guarded workflow path, `npm test`, or run producer then consumer strictly sequentially.
 
 Example (materialized/deployed workspace):
@@ -25,6 +27,28 @@ Example (materialized/deployed workspace):
 node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "T-042" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-042-preflight.json"
 # compile-gate may run a configured project build/type-check command; that is allowed because it is gate-driven, not ad-hoc.
 ```
+
+### Auditable Intermediate Commands
+Use `gate run-intermediate-command` for focused manual validation that is
+eligible for the auditable compact wrapper. This is the preferred path before
+raw targeted test, typecheck, or validation probes.
+
+```bash
+node garda-agent-orchestrator/bin/garda.js gate run-intermediate-command --task-id "<task-id>" --command-source "targeted-test" --command "<project test command> -- tests/<path>.test" --repo-root "."
+node garda-agent-orchestrator/bin/garda.js gate run-intermediate-command --task-id "<task-id>" --command-source "node-test" --command "node --test tests/<path>.test.js" --repo-root "."
+```
+
+Rules:
+- Use only for one scoped question or suspected concrete finding before
+  returning to `next-step`.
+- Keep the command targeted; do not wrap a redundant full suite in
+  `run-intermediate-command`.
+- The gate writes full raw output to a task-owned artifact and prints compact
+  status or a bounded failure tail.
+- This command never replaces `compile-gate`, `full-suite-validation`, required
+  reviews, or completion evidence.
+- If the command is not eligible for `run-intermediate-command`, use the Manual
+  Validation Logs pattern below so chat output remains bounded and auditable.
 
 ### Manual Validation Logs
 Manual validation outside the gate pipeline must keep the agent transcript bounded.

@@ -620,24 +620,24 @@ export function buildFullSuiteValidationEvidenceMarkdown(evidence: ReviewContext
     ];
     if (
         evidence.required_for_review === true
-        && evidence.status === 'PASSED'
+        && (evidence.status === 'PASSED' || evidence.status === 'WARNED')
         && evidence.cycle_binding_valid === true
     ) {
-        lines.push('- Reviewer instruction: current PASS full-suite evidence already covers this review; do not rerun full tests unless investigating a concrete finding.');
+        lines.push('- Reviewer instruction: current review-ready full-suite evidence already covers this review; do not rerun full tests unless investigating a concrete finding; for that one concrete finding, use scoped compact commands (`gate run-intermediate-command` when eligible or bounded task-owned manual-validation logs) instead of a redundant full-suite rerun.');
     }
     if (
         evidence.enabled === true
         && evidence.required_for_review === false
         && evidence.placement === 'before_test_review'
     ) {
-        lines.push(`- Reviewer note: before_test_review placement reserves full-suite evidence for the test review; this ${evidence.review_type} review must not demand pre-review full-suite evidence.`);
+        lines.push(`- Reviewer note: before_test_review placement reserves full-suite evidence for the test review; this ${evidence.review_type} review must not demand pre-review full-suite evidence or run it manually. If a concrete finding needs a command, use scoped compact commands only.`);
     }
     if (
         evidence.enabled === true
         && evidence.required_for_review === false
         && evidence.placement === 'before_completion'
     ) {
-        lines.push('- Reviewer note: before_completion placement does not require pre-review full-suite evidence; do not demand a suite rerun for this review because completion still enforces full-suite validation later.');
+        lines.push('- Reviewer note: before_completion placement does not require pre-review full-suite evidence; do not demand or run a suite rerun for this review because completion still enforces full-suite validation later. If a concrete finding needs a command, use scoped compact commands only.');
     }
     if (evidence.mismatch_reason) {
         lines.push(`- Mismatch reason: ${evidence.mismatch_reason}`);

@@ -264,6 +264,8 @@ import {
             assert.ok(promptArtifactText.includes('- Matches current compile gate: true'));
             assert.ok(promptArtifactText.includes('- Cycle binding valid: true'));
             assert.ok(promptArtifactText.includes('do not rerun full tests unless investigating a concrete finding'));
+            assert.ok(promptArtifactText.includes('gate run-intermediate-command'));
+            assert.ok(promptArtifactText.includes('bounded task-owned manual-validation logs'));
             assert.ok(promptArtifactText.includes('- # pass 91'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
@@ -1005,6 +1007,95 @@ import {
             assert.ok(promptArtifactText.includes('- Placement: after_compile_before_reviews'));
             assert.ok(promptArtifactText.includes('- Duration: 1m 30s (90000 ms)'));
             assert.ok(promptArtifactText.includes('do not rerun full tests unless investigating a concrete finding'));
+            assert.ok(promptArtifactText.includes('gate run-intermediate-command'));
+            assert.ok(promptArtifactText.includes('redundant full-suite rerun'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('marks after-compile full-suite WARNED evidence as covering non-test reviewers', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-after-compile-code-suite-warned-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'task-events'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm test',
+                    placement: 'after_compile_before_reviews',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-928', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-928-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-928',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+            const preflightSha256 = sha256Text(fs.readFileSync(preflightPath, 'utf8'));
+            const compileGateTimestamp = '2026-05-05T00:40:00.000Z';
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'task-events', 'T-928.jsonl'), JSON.stringify({
+                event_type: 'COMPILE_GATE_PASSED',
+                timestamp_utc: compileGateTimestamp
+            }) + '\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-928-compile-gate.json'), JSON.stringify({
+                timestamp_utc: '2026-05-05T00:40:00.250Z',
+                status: 'PASSED'
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-928-full-suite-validation.json'), JSON.stringify({
+                status: 'WARNED',
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews',
+                exit_code: 0,
+                timed_out: false,
+                duration_ms: 91000,
+                output_artifact_path: path.join(reviewsRoot, 'T-928-full-suite-output.log'),
+                compact_summary: ['# tests 91', '# pass 91'],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: ['warning-only continuation accepted'],
+                cycle_binding: {
+                    task_id: 'T-928',
+                    preflight_path: preflightPath,
+                    preflight_sha256: preflightSha256,
+                    compile_gate_timestamp: compileGateTimestamp
+                }
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-928-code-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-928-code-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.full_suite_validation?.required_for_review, true);
+            assert.equal(result.full_suite_validation?.placement, 'after_compile_before_reviews');
+            assert.equal(result.full_suite_validation?.status, 'WARNED');
+            assert.equal(result.full_suite_validation?.artifact_freshness, 'current');
+
+            const promptArtifactText = fs.readFileSync(outputPath.replace(/\.json$/, '.md'), 'utf8');
+            assert.ok(promptArtifactText.includes('current review-ready full-suite evidence already covers this review'));
+            assert.ok(promptArtifactText.includes('gate run-intermediate-command'));
+            assert.ok(promptArtifactText.includes('redundant full-suite rerun'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
@@ -1522,6 +1613,7 @@ import {
             assert.ok(promptArtifactText.includes('- Required before this review: no'));
             assert.ok(promptArtifactText.includes('- Placement: before_completion'));
             assert.ok(promptArtifactText.includes('completion still enforces full-suite validation later'));
+            assert.ok(promptArtifactText.includes('If a concrete finding needs a command, use scoped compact commands only.'));
             assert.ok(!promptArtifactText.includes('Full-suite validation evidence artifact is missing.'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
@@ -1577,6 +1669,8 @@ import {
             const promptArtifactText = fs.readFileSync(outputPath.replace(/\.json$/, '.md'), 'utf8');
             assert.ok(promptArtifactText.includes('- Required before this review: no'));
             assert.ok(promptArtifactText.includes('before_test_review placement reserves full-suite evidence for the test review'));
+            assert.ok(promptArtifactText.includes('must not demand pre-review full-suite evidence or run it manually'));
+            assert.ok(promptArtifactText.includes('If a concrete finding needs a command, use scoped compact commands only.'));
             assert.ok(!promptArtifactText.includes('Full-suite validation evidence artifact is missing.'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });

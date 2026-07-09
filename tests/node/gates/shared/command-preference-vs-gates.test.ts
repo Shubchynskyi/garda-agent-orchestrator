@@ -189,6 +189,22 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
                 '40-commands.md must keep manual validation separate from gate-owned evidence'
             );
         });
+
+        it('promotes auditable intermediate commands before raw targeted tests', () => {
+            const content = readMaterializedBundleFile('live/docs/agent-rules/40-commands.md');
+            assert.ok(
+                content.includes('### Auditable Intermediate Commands') &&
+                content.includes('gate run-intermediate-command') &&
+                content.includes('bounded failure tail'),
+                '40-commands.md must surface run-intermediate-command as the preferred compact manual validation wrapper'
+            );
+            assert.ok(
+                content.includes('do not wrap a redundant full suite') &&
+                content.includes('never replaces `compile-gate`, `full-suite-validation`') &&
+                content.includes('reviews, or completion evidence'),
+                '40-commands.md must keep intermediate commands scoped and separate from mandatory gates'
+            );
+        });
     });
 
     describe('40-commands.md (template)', () => {
@@ -245,6 +261,21 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
                 'template 40-commands.md must keep manual validation separate from gate-owned evidence'
             );
         });
+
+        it('promotes auditable intermediate commands before raw targeted tests', () => {
+            assert.ok(
+                content.includes('### Auditable Intermediate Commands') &&
+                content.includes('gate run-intermediate-command') &&
+                content.includes('bounded failure tail'),
+                'template 40-commands.md must surface run-intermediate-command as the preferred compact manual validation wrapper'
+            );
+            assert.ok(
+                content.includes('do not wrap a redundant full suite') &&
+                content.includes('never replaces `compile-gate`, `full-suite-validation`') &&
+                content.includes('reviews, or completion evidence'),
+                'template 40-commands.md must keep intermediate commands scoped and separate from mandatory gates'
+            );
+        });
     });
 
     describe('00-core.md (live)', () => {
@@ -263,6 +294,16 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
                 '00-core.md must state the ad-hoc restraint does not apply to required lifecycle gates'
             );
         });
+
+        it('cross-references compact manual verification paths', () => {
+            const content = readMaterializedBundleFile('live/docs/agent-rules/00-core.md');
+            assert.ok(
+                content.includes('gate run-intermediate-command') &&
+                content.includes('Manual Validation Logs') &&
+                content.includes('Raw `npm test` or `node --test` reruns are escalation steps'),
+                '00-core.md must make compact manual verification visible from the high-level rule surface'
+            );
+        });
     });
 
     describe('00-core.md (template)', () => {
@@ -279,6 +320,15 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
             assert.ok(
                 content.includes('compile-gate') && content.includes('full-suite-validation') && content.includes('required lifecycle gate'),
                 'template 00-core.md must state the ad-hoc restraint does not apply to required lifecycle gates'
+            );
+        });
+
+        it('cross-references compact manual verification paths', () => {
+            assert.ok(
+                content.includes('gate run-intermediate-command') &&
+                content.includes('Manual Validation Logs') &&
+                content.includes('Raw `npm test` or `node --test` reruns are escalation steps'),
+                'template 00-core.md must make compact manual verification visible from the high-level rule surface'
             );
         });
     });
