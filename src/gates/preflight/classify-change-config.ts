@@ -78,6 +78,7 @@ interface MatchConfiguredRootOptions {
 export interface ClassifyChangeOptions {
     normalizedFiles?: string[];
     repoRoot?: string;
+    isSourceCheckout?: boolean;
     taskIntent?: string;
     fastPathMaxFiles?: number;
     fastPathMaxChangedLines?: number;

@@ -8,6 +8,12 @@ import {
     toRepoDisplayPath
 } from './next-step-command-formatters';
 import { resolveRestartCommandChangedFiles } from '../recovery/restart-command-scope';
+import {
+    isSourceCheckoutGeneratedRuntimeArtifactPath
+} from '../shared/generated-runtime-artifacts';
+import {
+    isOrchestratorSourceCheckout
+} from '../protected-control-plane/protected-control-plane';
 
 const PROVIDER_INVOCATION_ID_PLACEHOLDER = '<provider-owned invocation id from delegated reviewer launch result>';
 const PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER = '<provider-owned attestation source from delegated reviewer launch result>';
@@ -224,10 +230,13 @@ export function buildRestartReviewCycleCommand(
     taskModePath: string | null,
     additionalChangedFiles: readonly string[] = []
 ): string {
+    const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
     const changedFiles = [...new Set([
         ...resolveRestartCommandChangedFiles(repoRoot, preflightCommandPath),
         ...additionalChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean)
-    ])].sort();
+    ])]
+        .filter((entry) => !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
+        .sort();
     return [
         `${cliPrefix} gate restart-review-cycle`,
         `--task-id "${taskId}"`,

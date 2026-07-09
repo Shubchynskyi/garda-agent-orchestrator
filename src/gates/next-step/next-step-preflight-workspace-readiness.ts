@@ -11,6 +11,12 @@ import {
     getWorkspaceSnapshotCached,
 } from '../workspace/workspace-snapshot-cache';
 import {
+    isSourceCheckoutGeneratedRuntimeArtifactPath
+} from '../shared/generated-runtime-artifacts';
+import {
+    isOrchestratorSourceCheckout
+} from '../protected-control-plane/protected-control-plane';
+import {
     mergeTaskOwnedMetadataRefreshFiles
 } from './next-step-task-owned-metadata';
 import {
@@ -48,8 +54,20 @@ export interface PreflightWorkspaceReadinessOptions {
     dirtyWorkspaceBaselineFileHashes?: Record<string, string>;
 }
 
+function isDistRuntimeOutputRelatedToPlannedSource(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
+    const normalizedChangedFile = normalizePath(changedFile);
+    if (!normalizedChangedFile.startsWith('dist/src/') || !normalizedChangedFile.endsWith('.js')) {
+        return false;
+    }
+    const sourceCandidate = `src/${normalizedChangedFile.slice('dist/src/'.length).replace(/\.js$/u, '.ts')}`;
+    return plannedChangedFiles.some((plannedFile) => normalizePath(plannedFile) === sourceCandidate);
+}
+
 function isRelatedToPlannedScope(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
     if (isDependencyManifestLockfileRelatedToAny(changedFile, plannedChangedFiles)) {
+        return true;
+    }
+    if (isDistRuntimeOutputRelatedToPlannedSource(changedFile, plannedChangedFiles)) {
         return true;
     }
     const normalizedChangedFile = normalizePath(changedFile);
@@ -73,6 +91,15 @@ function isRelatedToPlannedScope(changedFile: string, plannedChangedFiles: reado
             && normalizedPlannedFile !== plannedTopLevel
             && plannedTopLevel === changedTopLevel;
     });
+}
+
+function filterSourceCheckoutGeneratedRuntimeArtifacts(repoRoot: string, changedFiles: readonly string[]): string[] {
+    const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
+    return [...new Set(
+        changedFiles
+            .map((entry) => normalizePath(entry))
+            .filter((entry) => entry && !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
+    )].sort();
 }
 
 export function readPreflightWorkspaceReadiness(
@@ -100,7 +127,7 @@ export function readPreflightWorkspaceReadiness(
         ? [...new Set(preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
         : [];
     const plannedChangedFiles = Array.isArray(options.plannedChangedFiles)
-        ? [...new Set(options.plannedChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        ? filterSourceCheckoutGeneratedRuntimeArtifacts(repoRoot, options.plannedChangedFiles)
         : [];
     const dirtyWorkspaceBaselineChangedFiles = Array.isArray(options.dirtyWorkspaceBaselineChangedFiles)
         ? [...new Set(options.dirtyWorkspaceBaselineChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
@@ -166,7 +193,7 @@ export function readPreflightWorkspaceReadiness(
             const unchangedProtectedFiles = getUnchangedProtectedDirtyWorkspaceFiles(repoRoot, preflight);
             const currentGitSnapshotFiles = currentGitSnapshot.changed_files
                 .map((entry) => normalizePath(entry))
-                .filter(Boolean);
+                .filter((entry) => entry && !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isOrchestratorSourceCheckout(repoRoot)));
             const preflightSet = new Set(changedFiles);
             const changedWorkflowConfigFiles = getTriggerPathList(preflight, 'changed_workflow_config_files');
             const uncoveredDirtyBaselineFiles = currentGitSnapshotFiles.filter((entry) => (
@@ -389,4 +416,3 @@ function dirtyBaselineFileMatchesCurrent(
     const currentHash = fileSha256(path.join(repoRoot, changedFile));
     return !!currentHash && currentHash.trim().toLowerCase() === expectedHash;
 }
-

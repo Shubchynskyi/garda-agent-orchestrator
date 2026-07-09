@@ -69,7 +69,24 @@ export function isGeneratedRuntimeControlPlaneArtifactPath(pathValue: string | n
     return /(^|\/)runtime\/(metrics|task-index|review-index|task-audit-summary)\.(jsonl?|md)$/i.test(normalizedPath);
 }
 
-export function splitGeneratedRuntimeControlPlaneArtifacts(changedFiles: string[]): {
+export function isSourceCheckoutGeneratedRuntimeArtifactPath(
+    pathValue: string | null | undefined,
+    isSourceCheckout: boolean
+): boolean {
+    if (!isSourceCheckout) {
+        return false;
+    }
+    const normalizedPath = normalizePath(String(pathValue || '')).replace(/^\.\//u, '');
+    // dist/src is the first launcher runtime candidate in source checkouts, so drift there must stay reviewable.
+    return normalizedPath === 'dist/publish-runtime-manifest.json';
+}
+
+export function splitGeneratedRuntimeControlPlaneArtifacts(
+    changedFiles: string[],
+    options: {
+        isSourceCheckout?: boolean;
+    } = {}
+): {
     reviewableFiles: string[];
     ignoredGeneratedRuntimeFiles: string[];
 } {
@@ -82,7 +99,10 @@ export function splitGeneratedRuntimeControlPlaneArtifacts(changedFiles: string[
         if (!normalizedPath) {
             continue;
         }
-        if (isGeneratedRuntimeControlPlaneArtifactPath(normalizedPath)) {
+        if (
+            isGeneratedRuntimeControlPlaneArtifactPath(normalizedPath)
+            || isSourceCheckoutGeneratedRuntimeArtifactPath(normalizedPath, options.isSourceCheckout === true)
+        ) {
             if (!seenIgnoredGeneratedRuntimeFiles.has(normalizedPath)) {
                 seenIgnoredGeneratedRuntimeFiles.add(normalizedPath);
                 ignoredGeneratedRuntimeFiles.push(normalizedPath);

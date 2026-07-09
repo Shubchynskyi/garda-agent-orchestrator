@@ -5,6 +5,7 @@ import { stringSha256, normalizePath, joinOrchestratorPath } from '../shared/hel
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { isGeneratedOrchestratorLockPath } from '../locks/generated-lock-paths';
 import { splitGeneratedRuntimeControlPlaneArtifacts } from '../shared/generated-runtime-artifacts';
+import { isOrchestratorSourceCheckout } from '../protected-control-plane/protected-control-plane';
 import { getSafeWorktreePathState } from '../workspace/worktree-path-state';
 
 /**
@@ -481,6 +482,8 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     function isIgnoredWorkspaceSnapshotPath(relativePath: string): boolean {
         return isInternalSnapshotCachePath(relativePath) || isGeneratedOrchestratorLockPath(relativePath);
     }
+    const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
+    const generatedRuntimeSplitOptions = { isSourceCheckout };
 
     function gitLines(args: string[], failMsg: string): string[] {
         const result = spawnSyncWithTimeout('git', ['-C', String(repoRoot), ...args], {
@@ -507,7 +510,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     )]
         .filter((item: string) => !isIgnoredWorkspaceSnapshotPath(item))
         .sort();
-    const explicitSplit = splitGeneratedRuntimeControlPlaneArtifacts(allNormalizedExplicit);
+    const explicitSplit = splitGeneratedRuntimeControlPlaneArtifacts(allNormalizedExplicit, generatedRuntimeSplitOptions);
     const normalizedExplicit = explicitSplit.reviewableFiles;
     const ignoredGeneratedRuntimeFiles = explicitSplit.ignoredGeneratedRuntimeFiles;
     const changedFileStats: Record<string, { additions: number; deletions: number; changed_lines: number }> = {};
@@ -584,7 +587,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         const filePath = extractNewPathFromNumstat(parts.slice(2).join('\t'));
         const normalizedFilePath = normalizePath(filePath);
         if (!normalizedFilePath || isIgnoredWorkspaceSnapshotPath(normalizedFilePath)) continue;
-        if (splitGeneratedRuntimeControlPlaneArtifacts([normalizedFilePath]).ignoredGeneratedRuntimeFiles.length > 0) {
+        if (splitGeneratedRuntimeControlPlaneArtifacts([normalizedFilePath], generatedRuntimeSplitOptions).ignoredGeneratedRuntimeFiles.length > 0) {
             ignoredGeneratedRuntimeFiles.push(normalizedFilePath);
             continue;
         }
@@ -605,7 +608,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         untracked = gitLines(['ls-files', '--others', '--exclude-standard'], 'Failed to collect untracked files snapshot.')
             .map((item: string) => normalizePath(item))
             .filter((item: string) => !!item && !isIgnoredWorkspaceSnapshotPath(item));
-        const untrackedSplit = splitGeneratedRuntimeControlPlaneArtifacts(untracked);
+        const untrackedSplit = splitGeneratedRuntimeControlPlaneArtifacts(untracked, generatedRuntimeSplitOptions);
         untracked = untrackedSplit.reviewableFiles;
         ignoredGeneratedRuntimeFiles.push(...untrackedSplit.ignoredGeneratedRuntimeFiles);
     }

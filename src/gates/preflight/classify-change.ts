@@ -201,7 +201,9 @@ export interface ClassifyChangeResult {
 
 export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeResult {
     const normalizedInputFiles = options.normalizedFiles || [];
-    const generatedRuntimeSplit = splitGeneratedRuntimeControlPlaneArtifacts(normalizedInputFiles);
+    const generatedRuntimeSplit = splitGeneratedRuntimeControlPlaneArtifacts(normalizedInputFiles, {
+        isSourceCheckout: options.isSourceCheckout === true
+    });
     const normalizedFiles = generatedRuntimeSplit.reviewableFiles;
     const ignoredGeneratedRuntimeFiles = generatedRuntimeSplit.ignoredGeneratedRuntimeFiles;
     const taskIntent = options.taskIntent || '';

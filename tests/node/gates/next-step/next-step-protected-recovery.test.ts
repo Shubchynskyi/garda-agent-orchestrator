@@ -13,6 +13,8 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
+import { computeProtectedSnapshotDigest } from '../../../../src/gates/shared/helpers';
+import { readPreflightWorkspaceReadiness } from '../../../../src/gates/next-step/next-step-preflight-workspace-readiness';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -125,6 +127,24 @@ function writeJson(filePath: string, payload: unknown): void {
 
 function sha256Text(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function fileSha256(filePath: string): string {
+    return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function writeProtectedManifestSnapshot(repoRoot: string, protectedSnapshot: Record<string, string>): void {
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'protected-control-plane-manifest.json'), {
+        schema_version: 1,
+        event_source: 'refresh-protected-control-plane-manifest',
+        timestamp_utc: new Date().toISOString(),
+        workspace_root: normalizeForTimeline(repoRoot),
+        orchestrator_root: normalizeForTimeline(path.join(repoRoot, 'garda-agent-orchestrator')),
+        protected_roots: Object.keys(protectedSnapshot).sort(),
+        protected_snapshot: protectedSnapshot,
+        protected_snapshot_sha256: computeProtectedSnapshotDigest(protectedSnapshot),
+        is_source_checkout: fs.existsSync(path.join(repoRoot, 'package.json'))
+    });
 }
 
 
@@ -487,6 +507,461 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
         assert.ok(command.includes('--planned-changed-file "garda-agent-orchestrator/live/config/workflow-config.json"'));
         assert.ok(!command.includes('gate classify-change'));
+    });
+
+    it('routes dirty protected workflow-config drift before printing classify-change', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        writeProtectedManifestSnapshot(repoRoot, {
+            [workflowConfigRelativePath]: fileSha256(workflowConfigPath)
+        });
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 9
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.title, /protected scope before classify/i);
+        assert.match(result.reason, /before classify-change/);
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes('--operator-confirmed yes'));
+        assert.ok(command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
+        assert.ok(command.includes(`--planned-changed-file "${workflowConfigRelativePath}"`));
+        assert.ok(!command.includes('gate classify-change'));
+    });
+
+    it('routes newly added ignored workflow-config protected root before classify', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), `${workflowConfigRelativePath}\n`, 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'protected-control-plane-manifest.json'), {
+            schema_version: 1,
+            event_source: 'refresh-protected-control-plane-manifest',
+            timestamp_utc: new Date().toISOString(),
+            workspace_root: normalizeForTimeline(repoRoot),
+            orchestrator_root: normalizeForTimeline(path.join(repoRoot, 'garda-agent-orchestrator')),
+            protected_roots: [workflowConfigRelativePath],
+            protected_snapshot: {},
+            protected_snapshot_sha256: computeProtectedSnapshotDigest({}),
+            is_source_checkout: true
+        });
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 13
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes(`--planned-changed-file "${workflowConfigRelativePath}"`));
+        assert.ok(!command.includes('gate classify-change'));
+    });
+
+    it('omits source-checkout runtime manifest while retaining executable dist runtime in protected restart scope', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        const testRelativePath = 'tests/node/gates/next-step/next-step-protected-recovery.test.ts';
+        const distManifestRelativePath = 'dist/publish-runtime-manifest.json';
+        const distRuntimeRelativePath = 'dist/src/gates/next-step/next-step.js';
+        for (const relativePath of [
+            sourceRelativePath,
+            testRelativePath,
+            distManifestRelativePath,
+            distRuntimeRelativePath
+        ]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeProtectedManifestSnapshot(repoRoot, {
+            [sourceRelativePath]: fileSha256(path.join(repoRoot, ...sourceRelativePath.split('/'))),
+            [distManifestRelativePath]: fileSha256(path.join(repoRoot, ...distManifestRelativePath.split('/'))),
+            [distRuntimeRelativePath]: fileSha256(path.join(repoRoot, ...distRuntimeRelativePath.split('/')))
+        });
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'source change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...testRelativePath.split('/')), 'test change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distManifestRelativePath.split('/')), '{"changed":true}\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distRuntimeRelativePath.split('/')), 'generated change\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.reason, /src\/gates\/next-step\/next-step\.ts/);
+        assert.match(result.reason, /dist\/src\/gates\/next-step\/next-step\.js/);
+        assert.ok(!result.reason.includes(distManifestRelativePath));
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes(`--planned-changed-file "${sourceRelativePath}"`));
+        assert.ok(command.includes(`--planned-changed-file "${testRelativePath}"`));
+        assert.ok(command.includes(`--planned-changed-file "${distRuntimeRelativePath}"`));
+        assert.ok(!command.includes(`--planned-changed-file "${distManifestRelativePath}"`));
+        assert.ok(!command.includes('--workflow-config-work'));
+        assert.ok(!command.includes('gate classify-change'));
+    });
+
+    it('routes ordinary workspace diff to classify-change when only source-checkout runtime manifest drifts', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const appRelativePath = 'app/index.ts';
+        const distManifestRelativePath = 'dist/publish-runtime-manifest.json';
+        for (const relativePath of [
+            appRelativePath,
+            distManifestRelativePath
+        ]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeProtectedManifestSnapshot(repoRoot, {
+            [distManifestRelativePath]: fileSha256(path.join(repoRoot, ...distManifestRelativePath.split('/')))
+        });
+        fs.writeFileSync(path.join(repoRoot, ...appRelativePath.split('/')), 'app change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distManifestRelativePath.split('/')), '{"changed":true}\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('gate classify-change'));
+        assert.ok(command.includes(`--changed-file "${appRelativePath}"`));
+        assert.ok(!command.includes('--orchestrator-work'));
+        assert.ok(!command.includes('operator-maintenance'));
+        assert.ok(!command.includes(`--changed-file "${distManifestRelativePath}"`));
+    });
+
+    it('keeps workflow-config task-mode scope in no-preflight classify when runtime manifest drifts', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        const distManifestRelativePath = 'dist/publish-runtime-manifest.json';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), `${workflowConfigRelativePath}\n`, 'utf8');
+        for (const relativePath of [
+            sourceRelativePath,
+            distManifestRelativePath
+        ]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Classify workflow-config scope with manifest drift',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            workflowConfigWork: true,
+            plannedChangedFiles: [
+                workflowConfigRelativePath,
+                sourceRelativePath,
+                distManifestRelativePath
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 11
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'source change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distManifestRelativePath.split('/')), '{"changed":true}\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes(`--changed-file "${workflowConfigRelativePath}"`));
+        assert.ok(command.includes(`--changed-file "${sourceRelativePath}"`));
+        assert.ok(!command.includes(`--changed-file "${distManifestRelativePath}"`));
+    });
+
+    it('keeps source-checkout runtime manifest out of git-auto snapshots while retaining executable dist runtime', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const appRelativePath = 'app/index.ts';
+        const distManifestRelativePath = 'dist/publish-runtime-manifest.json';
+        const distRuntimeRelativePath = 'dist/src/gates/next-step/next-step.js';
+        for (const relativePath of [
+            appRelativePath,
+            distManifestRelativePath,
+            distRuntimeRelativePath
+        ]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, ...appRelativePath.split('/')), 'app change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distManifestRelativePath.split('/')), '{"changed":true}\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distRuntimeRelativePath.split('/')), 'generated change\n', 'utf8');
+
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+
+        assert.deepEqual(snapshot.changed_files, [
+            appRelativePath,
+            distRuntimeRelativePath
+        ]);
+        assert.deepEqual(snapshot.ignored_generated_runtime_files, [
+            distManifestRelativePath
+        ]);
+    });
+
+    it('omits source-checkout runtime manifest while retaining executable dist runtime in stale planned refresh scope', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        const testRelativePath = 'tests/node/gates/next-step/next-step-protected-recovery.test.ts';
+        const distManifestRelativePath = 'dist/publish-runtime-manifest.json';
+        const distRuntimeRelativePath = 'dist/src/gates/next-step/next-step.js';
+        for (const relativePath of [
+            sourceRelativePath,
+            testRelativePath,
+            distManifestRelativePath,
+            distRuntimeRelativePath
+        ]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh planned protected next-step scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: [
+                distManifestRelativePath,
+                distRuntimeRelativePath,
+                sourceRelativePath,
+                testRelativePath
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [sourceRelativePath, testRelativePath]
+        });
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'source change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...testRelativePath.split('/')), 'test change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distManifestRelativePath.split('/')), '{"changed":true}\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distRuntimeRelativePath.split('/')), 'generated change\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes(`--changed-file "${distRuntimeRelativePath}"`));
+        assert.ok(command.includes(`--changed-file "${sourceRelativePath}"`));
+        assert.ok(command.includes(`--changed-file "${testRelativePath}"`));
+        assert.ok(!command.includes(`--changed-file "${distManifestRelativePath}"`));
+    });
+
+    it('omits source-checkout runtime manifest while retaining executable dist runtime in workflow-config refresh scope', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        const distManifestRelativePath = 'dist/publish-runtime-manifest.json';
+        const distRuntimeRelativePath = 'dist/src/gates/next-step/next-step.js';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), `${workflowConfigRelativePath}\n`, 'utf8');
+        for (const relativePath of [
+            sourceRelativePath,
+            distManifestRelativePath,
+            distRuntimeRelativePath
+        ]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh workflow-config protected next-step scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            workflowConfigWork: true,
+            plannedChangedFiles: [
+                workflowConfigRelativePath,
+                sourceRelativePath,
+                distManifestRelativePath,
+                distRuntimeRelativePath
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [workflowConfigRelativePath, sourceRelativePath]
+        });
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 11
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'source change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distManifestRelativePath.split('/')), '{"changed":true}\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...distRuntimeRelativePath.split('/')), 'generated change\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes(`--changed-file "${workflowConfigRelativePath}"`));
+        assert.ok(command.includes(`--changed-file "${sourceRelativePath}"`));
+        assert.ok(command.includes(`--changed-file "${distRuntimeRelativePath}"`));
+        assert.ok(!command.includes(`--changed-file "${distManifestRelativePath}"`));
+    });
+
+    it('keeps preflight readiness current when only source-checkout runtime manifest drifts', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        const testRelativePath = 'tests/node/gates/next-step/next-step-protected-recovery.test.ts';
+        const distManifestRelativePath = 'dist/publish-runtime-manifest.json';
+        for (const relativePath of [
+            sourceRelativePath,
+            testRelativePath,
+            distManifestRelativePath
+        ]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'source change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...testRelativePath.split('/')), 'test change\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [sourceRelativePath, testRelativePath]
+        });
+        fs.writeFileSync(path.join(repoRoot, ...distManifestRelativePath.split('/')), '{"changed":true}\n', 'utf8');
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            plannedChangedFiles: [
+                distManifestRelativePath,
+                sourceRelativePath,
+                testRelativePath
+            ]
+        });
+
+        assert.equal(readiness.ready, true, readiness.reason);
+        assert.deepEqual(readiness.currentChangedFiles, [sourceRelativePath, testRelativePath]);
+    });
+
+    it('marks preflight readiness stale when executable source-checkout dist runtime drifts', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        const testRelativePath = 'tests/node/gates/next-step/next-step-protected-recovery.test.ts';
+        const distRuntimeRelativePath = 'dist/src/gates/next-step/next-step.js';
+        for (const relativePath of [
+            sourceRelativePath,
+            testRelativePath,
+            distRuntimeRelativePath
+        ]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'source change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...testRelativePath.split('/')), 'test change\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [sourceRelativePath, testRelativePath]
+        });
+        fs.writeFileSync(path.join(repoRoot, ...distRuntimeRelativePath.split('/')), 'generated executable change\n', 'utf8');
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            plannedChangedFiles: [
+                sourceRelativePath,
+                testRelativePath
+            ]
+        });
+
+        assert.equal(readiness.ready, false);
+        assert.ok((readiness.currentChangedFiles || []).includes(distRuntimeRelativePath));
+    });
+
+    it('routes dirty protected workflow-config drift to operator maintenance before classify when self-guard denies entry', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        writeProtectedManifestSnapshot(repoRoot, {
+            [workflowConfigRelativePath]: fileSha256(workflowConfigPath)
+        });
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 9
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'operator-maintenance');
+        assert.match(result.reason, /before classify-change/);
+        assert.match(result.reason, /Garda self-guard is on/);
+        assert.ok(!result.commands[0].command.includes('--orchestrator-work'));
+        assert.ok(result.commands[0].command.includes('workflow set'));
+        assert.ok(result.commands[0].command.includes('--garda-self-guard off'));
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
     });
 
     it('routes workflow-config preflight recovery to operator maintenance when self-guard denies agent entry', () => {

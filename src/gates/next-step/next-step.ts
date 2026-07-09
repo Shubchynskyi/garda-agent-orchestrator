@@ -61,10 +61,12 @@ import type {
 } from '../review/review-trust-summary';
 import {
     fileSha256,
+    evaluateProtectedControlPlaneManifest,
     getProtectedControlPlaneRoots,
     isWorkflowConfigControlPlanePath,
     joinOrchestratorPath,
     normalizePath,
+    resolveProtectedControlPlaneManifestPath,
     resolvePathInsideRepo,
     testPathPrefix
 } from '../shared/helpers';
@@ -72,6 +74,9 @@ import {
     collectKnownNonBlockingSignals,
     type KnownNonBlockingSignal
 } from '../shared/known-nonblocking-signals';
+import {
+    isSourceCheckoutGeneratedRuntimeArtifactPath
+} from '../shared/generated-runtime-artifacts';
 import {
     resolveBundleRootForTarget,
     resolveBundleNameForTarget
@@ -1210,23 +1215,81 @@ function getExpandedNonTestReviewRemediationFiles(params: {
     return scopeBoundary.expandedNonTestFiles;
 }
 
-function readCurrentProtectedScopeBeforePreflight(repoRoot: string): {
+type CurrentGitWorkspaceSnapshot = NonNullable<ReturnType<typeof readCurrentGitWorkspaceSnapshot>>;
+
+function readChangedWorkflowConfigProtectedManifestFiles(repoRoot: string): string[] {
+    const manifestPath = resolveProtectedControlPlaneManifestPath(repoRoot);
+    if (!fs.existsSync(manifestPath)) {
+        return [];
+    }
+    try {
+        const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+        const protectedSnapshot = isPlainRecord(parsed.protected_snapshot)
+            ? parsed.protected_snapshot
+            : {};
+        const protectedRoots = Array.isArray(parsed.protected_roots)
+            ? parsed.protected_roots.map((entry) => normalizePath(entry)).filter(Boolean)
+            : [];
+        const workflowConfigCandidates = [...new Set([
+            ...Object.keys(protectedSnapshot).map((entry) => normalizePath(entry)).filter(Boolean),
+            ...protectedRoots.filter((entry) => isWorkflowConfigControlPlanePath(entry))
+        ])].sort();
+        return workflowConfigCandidates
+            .map((protectedPath) => ({
+                protectedPath: normalizePath(protectedPath),
+                expectedHash: String(protectedSnapshot[protectedPath] || '').trim().toLowerCase()
+            }))
+            .filter(({ protectedPath }) => protectedPath && isWorkflowConfigControlPlanePath(protectedPath))
+            .filter(({ protectedPath, expectedHash }) => (
+                expectedHash
+                    ? String(fileSha256(path.join(repoRoot, protectedPath)) || '').trim().toLowerCase() !== expectedHash
+                    : fs.existsSync(path.join(repoRoot, protectedPath))
+            ))
+            .map(({ protectedPath }) => protectedPath)
+            .sort();
+    } catch {
+        return [];
+    }
+}
+
+function readCurrentProtectedScopeBeforePreflight(repoRoot: string, currentSnapshot?: CurrentGitWorkspaceSnapshot | null): {
     changedFiles: string[];
     protectedFiles: string[];
     workflowConfigFiles: string[];
 } | null {
-    const currentSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, true);
-    if (!currentSnapshot) {
-        return null;
-    }
-    const changedFiles = [...new Set(
-        currentSnapshot.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
-    )].sort();
+    const workspaceSnapshot = currentSnapshot === undefined
+        ? readCurrentGitWorkspaceSnapshot(repoRoot, true)
+        : currentSnapshot;
+    const protectedRoots = getProtectedControlPlaneRoots(repoRoot);
+    const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
+    const gitChangedFiles = workspaceSnapshot
+        ? workspaceSnapshot.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+    const gitProtectedFiles = gitChangedFiles.filter((entry) => testPathPrefix(entry, protectedRoots));
+    const protectedManifestEvidence = gitProtectedFiles.length > 0
+        ? evaluateProtectedControlPlaneManifest(repoRoot, null, true)
+        : null;
+    const fullManifestChangedProtectedFiles = protectedManifestEvidence?.status === 'DRIFT'
+        ? protectedManifestEvidence.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+    const manifestChangedProtectedFiles = gitProtectedFiles.length > 0
+        ? fullManifestChangedProtectedFiles
+        : readChangedWorkflowConfigProtectedManifestFiles(repoRoot);
+    const changedFiles = [...new Set([
+        ...gitChangedFiles,
+        ...manifestChangedProtectedFiles
+    ])]
+        .filter((entry) => !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
+        .sort();
     if (changedFiles.length === 0) {
         return null;
     }
-    const protectedRoots = getProtectedControlPlaneRoots(repoRoot);
-    const protectedFiles = changedFiles.filter((entry) => testPathPrefix(entry, protectedRoots));
+    const protectedFiles = [...new Set([
+        ...gitProtectedFiles,
+        ...manifestChangedProtectedFiles.filter((entry) => testPathPrefix(entry, protectedRoots))
+    ])]
+        .filter((entry) => !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
+        .sort();
     if (protectedFiles.length === 0) {
         return null;
     }
@@ -1235,6 +1298,41 @@ function readCurrentProtectedScopeBeforePreflight(repoRoot: string): {
         protectedFiles,
         workflowConfigFiles: protectedFiles.filter((entry) => isWorkflowConfigControlPlanePath(entry))
     };
+}
+
+function getFilteredNoPreflightClassifyChangedFiles(
+    repoRoot: string,
+    taskMode?: Record<string, unknown> | null,
+    currentSnapshot?: CurrentGitWorkspaceSnapshot | null
+): string[] | undefined {
+    const workspaceSnapshot = currentSnapshot === undefined
+        ? readCurrentGitWorkspaceSnapshot(repoRoot, true)
+        : currentSnapshot;
+    if (!workspaceSnapshot) {
+        return undefined;
+    }
+    const rawChangedFiles = [...new Set(
+        workspaceSnapshot.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+    )].sort();
+    const filteredChangedFiles = filterSourceCheckoutGeneratedRuntimeArtifacts(repoRoot, rawChangedFiles);
+    const ignoredGeneratedRuntimeFiles = Array.isArray((workspaceSnapshot as Record<string, unknown>).ignored_generated_runtime_files)
+        ? ((workspaceSnapshot as Record<string, unknown>).ignored_generated_runtime_files as unknown[])
+            .map((entry) => normalizePath(entry))
+            .filter(Boolean)
+        : [];
+    const taskModeChangedFiles = taskMode?.workflow_config_work === true
+        ? filterSourceCheckoutGeneratedRuntimeArtifacts(repoRoot, getTaskModePlannedChangedFiles(taskMode))
+        : [];
+    const filteredWithTaskModeScope = [...new Set([
+        ...filteredChangedFiles,
+        ...taskModeChangedFiles
+    ])].sort();
+    if (ignoredGeneratedRuntimeFiles.length > 0 && filteredChangedFiles.length > 0) {
+        return filteredWithTaskModeScope;
+    }
+    return filteredChangedFiles.length !== rawChangedFiles.length
+        ? filteredWithTaskModeScope
+        : undefined;
 }
 
 function getOrdinaryDocReviewSkips(preflight: Record<string, unknown> | null): { path: string; pattern: string }[] {
@@ -1813,22 +1911,25 @@ function getPreflightRefreshCommandChangedFiles(params: {
     preflight: Record<string, unknown> | null;
     fallbackChangedFiles: string[] | undefined;
 }): string[] | undefined {
-    const plannedChangedFiles = getTaskModePlannedChangedFiles(params.taskMode);
+    const plannedChangedFiles = filterSourceCheckoutGeneratedRuntimeArtifacts(
+        params.repoRoot,
+        getTaskModePlannedChangedFiles(params.taskMode)
+    );
     if (plannedChangedFiles.length > 0) {
         const taskScopedChangedFiles = params.taskMode?.workflow_config_work === true
-            ? getPreflightRefreshChangedFiles(params.taskMode, params.preflight)
+            ? filterSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, getPreflightRefreshChangedFiles(params.taskMode, params.preflight))
             : plannedChangedFiles;
-        const currentChangedFiles = getCurrentWorkspaceRefreshChangedFiles(
+        const currentChangedFiles = filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, getCurrentWorkspaceRefreshChangedFiles(
             params.repoRoot,
             params.preflight,
             params.fallbackChangedFiles
-        );
+        ));
         if (!currentChangedFiles) {
             return taskScopedChangedFiles;
         }
         if (params.taskMode?.workflow_config_work === true) {
             return currentChangedFiles.length > 0
-                ? currentChangedFiles
+                ? [...new Set([...taskScopedChangedFiles, ...currentChangedFiles])].sort()
                 : taskScopedChangedFiles;
         }
         const plannedSet = new Set(plannedChangedFiles);
@@ -1855,15 +1956,40 @@ function getPreflightRefreshCommandChangedFiles(params: {
             ? [...new Set([...taskScopedRefreshChangedFiles, ...currentTaskScopeChangedFiles])].sort()
             : taskScopedChangedFiles;
     }
-    return getCurrentWorkspaceRefreshChangedFiles(
+    return filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, getCurrentWorkspaceRefreshChangedFiles(
         params.repoRoot,
         params.preflight,
         params.fallbackChangedFiles
-    );
+    ));
+}
+
+function filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(repoRoot: string, changedFiles: string[] | undefined): string[] | undefined {
+    return changedFiles ? filterSourceCheckoutGeneratedRuntimeArtifacts(repoRoot, changedFiles) : undefined;
+}
+
+function filterSourceCheckoutGeneratedRuntimeArtifacts(repoRoot: string, changedFiles: readonly string[]): string[] {
+    const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
+    return [...new Set(
+        changedFiles
+            .map((entry) => normalizePath(entry))
+            .filter((entry) => entry && !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
+    )].sort();
+}
+
+function isDistRuntimeOutputRelatedToPlannedSource(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
+    const normalizedChangedFile = normalizePath(changedFile);
+    if (!normalizedChangedFile.startsWith('dist/src/') || !normalizedChangedFile.endsWith('.js')) {
+        return false;
+    }
+    const sourceCandidate = `src/${normalizedChangedFile.slice('dist/src/'.length).replace(/\.js$/u, '.ts')}`;
+    return plannedChangedFiles.some((plannedFile) => normalizePath(plannedFile) === sourceCandidate);
 }
 
 function isRelatedToPlannedScope(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
     if (isDependencyManifestLockfileRelatedToAny(changedFile, plannedChangedFiles)) {
+        return true;
+    }
+    if (isDistRuntimeOutputRelatedToPlannedSource(changedFile, plannedChangedFiles)) {
         return true;
     }
     const normalizedChangedFile = normalizePath(changedFile);
@@ -2346,13 +2472,20 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         warnings: [] as string[],
         sourceRuntimeStaleness
     };
-    const currentProtectedScope = readCurrentProtectedScopeBeforePreflight(repoRoot);
-    const currentProtectedScopeNeedsTaskModeRestart = currentProtectedScope
-        && (
-            taskMode?.orchestrator_work !== true
-            || (currentProtectedScope.workflowConfigFiles.length > 0 && taskMode?.workflow_config_work !== true)
-        );
+    let noPreflightCurrentSnapshot: CurrentGitWorkspaceSnapshot | null | undefined;
+    const readNoPreflightCurrentSnapshot = (): CurrentGitWorkspaceSnapshot | null => {
+        if (noPreflightCurrentSnapshot === undefined) {
+            noPreflightCurrentSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, true);
+        }
+        return noPreflightCurrentSnapshot;
+    };
     const buildCurrentProtectedScopeTaskModeRestartRoute = () => {
+        const currentProtectedScope = readCurrentProtectedScopeBeforePreflight(repoRoot, readNoPreflightCurrentSnapshot());
+        const currentProtectedScopeNeedsTaskModeRestart = currentProtectedScope
+            && (
+                taskMode?.orchestrator_work !== true
+                || (currentProtectedScope.workflowConfigFiles.length > 0 && taskMode?.workflow_config_work !== true)
+            );
         if (!currentProtectedScope || !currentProtectedScopeNeedsTaskModeRestart) {
             return null;
         }
@@ -2641,6 +2774,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             return currentProtectedScopeRoute;
         }
 
+        const filteredNoPreflightChangedFiles = getFilteredNoPreflightClassifyChangedFiles(
+            repoRoot,
+            taskMode,
+            readNoPreflightCurrentSnapshot()
+        );
         const classifyCommand = buildClassifyChangeCommand({
             repoRoot,
             cliPrefix,
@@ -2648,7 +2786,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskMode,
             taskModePath,
             preflightCommandPath,
-            includePlannedScope: true
+            includePlannedScope: !filteredNoPreflightChangedFiles,
+            changedFiles: filteredNoPreflightChangedFiles
         });
         return buildResult({
             ...resultBase,

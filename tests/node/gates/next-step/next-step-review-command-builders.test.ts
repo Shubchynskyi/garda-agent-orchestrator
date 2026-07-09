@@ -63,4 +63,58 @@ describe('gates/next-step review command builders', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
     });
+
+    it('omits source-checkout generated runtime manifest while retaining executable dist runtime', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-restart-command-generated-'));
+        try {
+            fs.writeFileSync(
+                path.join(repoRoot, 'package.json'),
+                JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n',
+                'utf8'
+            );
+            const command = buildRestartReviewCycleCommand(
+                repoRoot,
+                'node bin/garda.js',
+                'T-GENERATED',
+                'Repair failed review routing',
+                'garda-agent-orchestrator/runtime/reviews/T-GENERATED-preflight.json',
+                null,
+                [
+                    'dist/publish-runtime-manifest.json',
+                    'dist/src/gates/next-step/next-step.js',
+                    'garda-agent-orchestrator/runtime/manual-validation/T-GENERATED/evidence.txt'
+                ]
+            );
+
+            assert.ok(command.includes('gate restart-review-cycle'), command);
+            assert.ok(command.includes('--changed-file "garda-agent-orchestrator/runtime/manual-validation/T-GENERATED/evidence.txt"'), command);
+            assert.ok(command.includes('--changed-file "dist/src/gates/next-step/next-step.js"'), command);
+            assert.ok(!command.includes('--changed-file "dist/publish-runtime-manifest.json"'), command);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps dist source files in restart-review-cycle commands outside source checkout', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-restart-command-app-dist-'));
+        try {
+            const command = buildRestartReviewCycleCommand(
+                repoRoot,
+                'node bin/garda.js',
+                'T-APP-DIST',
+                'Repair failed review routing',
+                'garda-agent-orchestrator/runtime/reviews/T-APP-DIST-preflight.json',
+                null,
+                [
+                    'dist/src/app.js',
+                    'dist/publish-runtime-manifest.json'
+                ]
+            );
+
+            assert.ok(command.includes('--changed-file "dist/src/app.js"'), command);
+            assert.ok(command.includes('--changed-file "dist/publish-runtime-manifest.json"'), command);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
 });

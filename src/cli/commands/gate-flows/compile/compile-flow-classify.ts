@@ -287,9 +287,11 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     const classificationConfig = getClassificationConfig(repoRoot);
     const reviewCapabilities = getReviewCapabilities(repoRoot);
     const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
+    const isSourceCheckout = gateHelpers.isOrchestratorSourceCheckout(repoRoot);
     const result: ClassifyChangeResult = classifyChange({
         normalizedFiles: workspaceSnapshot.changed_files,
         repoRoot,
+        isSourceCheckout,
         taskIntent: String(options.taskIntent || ''),
         fastPathMaxFiles: parseIntOption(options.fastPathMaxFiles, 2, 1),
         fastPathMaxChangedLines: parseIntOption(options.fastPathMaxChangedLines, 40, 1),
