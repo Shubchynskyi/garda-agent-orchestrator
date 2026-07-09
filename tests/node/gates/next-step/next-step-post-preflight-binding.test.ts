@@ -653,6 +653,7 @@ describe('gates/next-step post preflight binding', () => {
         assert.ok(result.reason.includes('Rule-pack evidence'));
         assert.ok(result.commands[0].command.includes('--stage "POST_PREFLIGHT"'));
         assert.ok(!result.commands[0].command.includes('<task-specific-rule-file>'));
+        assert.ok(!result.commands[0].command.includes('40-command-reference.md'));
         assert.deepEqual(getLoadedRuleFileBasenames(result.commands[0].command), [
             '00-core.md',
             '15-project-memory.md',
@@ -906,6 +907,7 @@ describe('gates/next-step post preflight binding', () => {
         assert.match(result.title, /Read and record POST_PREFLIGHT/);
         assert.ok(result.commands[0].command.includes('gate load-rule-pack'));
         assert.ok(result.commands[0].command.includes('--loaded-rule-file'));
+        assert.ok(!result.commands[0].command.includes('40-command-reference.md'));
         assert.deepEqual(getLoadedRuleFileBasenames(result.commands[0].command), [
             '00-core.md',
             '15-project-memory.md',

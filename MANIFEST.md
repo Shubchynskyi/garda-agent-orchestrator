@@ -34,6 +34,7 @@ Unused entrypoints are not created by default. Extra redirect entrypoints appear
 Versioned bundle templates consumed during materialization:
 - template/AGENTS.md
 - template/entrypoints/canonical-rule-index.md
+- template/docs/agent-rules/** (standard rule templates plus optional support appendices)
 - template/config/garda.config.json
 - template/config/optional-skill-selection-policy.json
 - template/config/update-messages.json

@@ -53,6 +53,10 @@ export const RULE_FILES = Object.freeze([
     '70-security.md', '80-task-workflow.md', '90-skill-catalog.md'
 ]);
 
+export const OPTIONAL_RULE_SUPPORT_FILES = Object.freeze([
+    '40-command-reference.md'
+]);
+
 export const GENERATED_RULE_FILES = Object.freeze(['15-project-memory.md']);
 
 export const CONTEXT_RULE_FILES = Object.freeze([

@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
@@ -12,6 +13,21 @@ import {
 import {
     selectTaskEntryRulePackFileNames
 } from '../../../../src/gates/rule-pack/rule-pack-selection';
+
+function findRepoRoot(): string {
+    let current = __dirname;
+    while (current !== path.dirname(current)) {
+        if (fs.existsSync(path.join(current, 'package.json')) && fs.existsSync(path.join(current, 'template'))) {
+            return current;
+        }
+        current = path.dirname(current);
+    }
+    throw new Error('Cannot resolve repo root.');
+}
+
+function readTemplateRule(repoRoot: string, ruleFile: string): string {
+    return fs.readFileSync(path.join(repoRoot, 'template', 'docs', 'agent-rules', ruleFile), 'utf8');
+}
 
 describe('review-context-token-economy helpers', () => {
     it('selects full rule context when token economy is inactive', () => {
@@ -116,6 +132,25 @@ describe('review-context-token-economy helpers', () => {
             '80-task-workflow.md',
             '90-skill-catalog.md'
         ]);
+        assert.ok(!selectTaskEntryRulePackFileNames({ effectiveDepth: 1 }).includes('40-command-reference.md'));
+        assert.ok(!selectTaskEntryRulePackFileNames({ effectiveDepth: 3 }).includes('40-command-reference.md'));
+    });
+
+    it('keeps command appendix outside measured mandatory TASK_ENTRY cost', () => {
+        const repoRoot = findRepoRoot();
+        const selectedRules = selectTaskEntryRulePackFileNames({ effectiveDepth: 1 });
+        const mandatoryChars = selectedRules
+            .map((ruleFile) => readTemplateRule(repoRoot, ruleFile).length)
+            .reduce((total, value) => total + value, 0);
+        const appendix = readTemplateRule(repoRoot, '40-command-reference.md');
+        const coreCommands = readTemplateRule(repoRoot, '40-commands.md');
+
+        assert.ok(coreCommands.includes('40-command-reference.md'));
+        assert.ok(!coreCommands.includes('### Version Control (git)'));
+        assert.ok(appendix.includes('## Version Control (git)'));
+        assert.ok(appendix.includes('## Search And File Inspection'));
+        assert.ok(mandatoryChars + appendix.length > mandatoryChars);
+        assert.ok(appendix.length > 1000);
     });
 
     it('builds deterministic rule-context section cache keys', () => {

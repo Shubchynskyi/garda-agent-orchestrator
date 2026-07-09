@@ -52,6 +52,7 @@ import {
 import { getProjectDiscovery, buildProjectDiscoveryLines, buildDiscoveryOverlaySection } from './project-discovery';
 import {
     RULE_FILES,
+    OPTIONAL_RULE_SUPPORT_FILES,
     GENERATED_RULE_FILES,
     isBootstrapOnlyLegacyCodeStyleRule,
     selectRuleSource,
@@ -439,6 +440,21 @@ export function runInit(options: RunInitOptions) {
             origin: source.origin,
             destination: path.relative(targetRoot, destPath).replace(/\\/g, '/')
         });
+    }
+
+    for (const supportFile of OPTIONAL_RULE_SUPPORT_FILES) {
+        const templatePath = path.join(templateRuleRoot, supportFile);
+        if (!pathExists(templatePath)) {
+            throw new Error(`No source found for optional rule support file: ${supportFile}`);
+        }
+        const content = readTextFile(templatePath);
+        if (!content || !content.trim()) {
+            throw new Error(`Optional rule support source is empty: ${templatePath}`);
+        }
+        const destPath = path.join(liveRuleRoot, supportFile);
+        if (!dryRun) {
+            fs.writeFileSync(destPath, content, 'utf8');
+        }
     }
 
     const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'optional-skill-selection-policy', 'isolation-mode', 'profiles', 'review-artifact-storage', 'runtime-retention', 'workflow-config', 'garda.config'];

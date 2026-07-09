@@ -243,12 +243,59 @@ test('detectCommandsViolations allows unconfigured compile-gate sentinel in huma
         '__COMPILE_GATE_COMMAND_UNCONFIGURED__',
         '```',
         '',
+        'See `40-command-reference.md` for optional tool-specific command tables.',
+        '',
         ...requiredCommandContractSnippets()
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(rulesDir, '40-command-reference.md'), [
+        '# Command Reference Appendix',
+        '',
+        '## Version Control (git)',
+        '',
+        '## Package Managers',
+        '',
+        '## Build, Lint, And Type-Check',
+        '`--noEmit --pretty false`',
+        '`--format=compact`',
+        '',
+        '## Search And File Inspection',
+        '`rg -l --max-count=5 pattern src/`',
+        '',
+        '## Containers And Infrastructure',
+        '`docker logs --tail 50 c`'
     ].join('\n'), 'utf8');
 
     try {
         const violations = detectCommandsViolations(tmpDir);
         assert.deepEqual(violations, []);
+    } finally {
+        cleanupVerifyTempDir(tmpDir);
+    }
+});
+
+test('detectCommandsViolations requires command reference appendix when core commands defers tables', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    const rulesDir = path.join(
+        tmpDir,
+        'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'
+    );
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, '40-commands.md'), [
+        '# Commands',
+        '',
+        '### Compile Gate (Mandatory)',
+        '```bash',
+        '__COMPILE_GATE_COMMAND_UNCONFIGURED__',
+        '```',
+        '',
+        'See `40-command-reference.md` for optional tool-specific command tables.',
+        '',
+        ...requiredCommandContractSnippets()
+    ].join('\n'), 'utf8');
+
+    try {
+        const violations = detectCommandsViolations(tmpDir);
+        assert.ok(violations.some((violation) => violation.includes('40-command-reference.md must exist')));
     } finally {
         cleanupVerifyTempDir(tmpDir);
     }
@@ -443,7 +490,11 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         '`build-review-context` before every required reviewer invocation, even when token economy is inactive',
         '`build-review-context` writes `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` automatically for the selected review skill.',
         'ordered lifecycle evidence (`PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `REVIEW_PHASE_STARTED`), real review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`)',
-        'Task timeline completeness is surfaced by `status` and `doctor`, not just completion-gate.'
+        'Task timeline completeness is surfaced by `status` and `doctor`, not just completion-gate.',
+        '',
+        '### Optional Command Reference Appendix',
+        'See `40-command-reference.md` for optional tool-specific command tables.',
+        'Do not add the appendix to mandatory `TASK_ENTRY` or `POST_PREFLIGHT` rule-pack loads.'
     ].join('\n'), 'utf8');
     fs.writeFileSync(path.join(rulesDir, '80-task-workflow.md'), [
         '# Task Workflow',

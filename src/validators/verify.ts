@@ -275,7 +275,8 @@ export function detectCommandsViolations(targetRoot: string): string[] {
         `${getBundleCliCommand()} gate task-events-summary`,
         `${getBundleCliCommand()} gate build-scoped-diff`,
         `${getBundleCliCommand()} gate build-review-context`,
-        `${getBundleCliCommand()} gate validate-manifest`
+        `${getBundleCliCommand()} gate validate-manifest`,
+        '40-command-reference.md'
     ];
     for (const requiredSnippet of requiredSnippets) {
         const alternatives = getCommandSnippetAlternatives(requiredSnippet);
@@ -293,6 +294,28 @@ export function detectCommandsViolations(targetRoot: string): string[] {
         getCompileCommands(commandsPath, { allowUnconfiguredSentinel: true });
     } catch (error) {
         violations.push('40-commands.md compile gate command contract violation: ' + (error instanceof Error ? error.message : String(error)));
+    }
+    const commandReferencePath = path.join(targetRoot, resolveBundleName() + '/live/docs/agent-rules/40-command-reference.md');
+    if (!pathExists(commandReferencePath)) {
+        violations.push('40-command-reference.md must exist when 40-commands.md defers tool-specific command tables.');
+    } else {
+        const appendixContent = readTextFile(commandReferencePath);
+        const appendixSnippets = [
+            '## Version Control (git)',
+            '## Package Managers',
+            '## Build, Lint, And Type-Check',
+            '## Search And File Inspection',
+            '## Containers And Infrastructure',
+            '`rg -l --max-count=5',
+            '`docker logs --tail 50',
+            '`--noEmit --pretty false`',
+            '`--format=compact`'
+        ];
+        for (const snippet of appendixSnippets) {
+            if (!appendixContent.includes(snippet)) {
+                violations.push(`40-command-reference.md must include command-reference snippet '${snippet}'.`);
+            }
+        }
     }
     return violations;
 }

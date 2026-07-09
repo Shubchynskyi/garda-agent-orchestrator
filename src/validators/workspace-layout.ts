@@ -110,6 +110,10 @@ export const RULE_FILES = Object.freeze([
     '90-skill-catalog.md'
 ]);
 
+export const OPTIONAL_RULE_SUPPORT_FILES = Object.freeze([
+    '40-command-reference.md'
+]);
+
 export const PROJECT_COMMAND_PLACEHOLDERS = Object.freeze([
     '<install dependencies command>',
     '<local environment bootstrap command>',
@@ -204,6 +208,9 @@ export function buildRequiredPaths(options: BuildRequiredPathsOptions): string[]
 
     for (const ruleFile of RULE_FILES) {
         paths.push(`${effectiveBundleName}/live/docs/agent-rules/${ruleFile}`);
+    }
+    for (const supportFile of OPTIONAL_RULE_SUPPORT_FILES) {
+        paths.push(`${effectiveBundleName}/live/docs/agent-rules/${supportFile}`);
     }
 
     for (const file of activeAgentFiles) {

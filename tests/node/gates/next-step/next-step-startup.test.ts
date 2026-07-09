@@ -699,6 +699,7 @@ describe('gates/next-step startup routing', () => {
         assert.match(command, /00-core\.md/);
         assert.match(command, /40-commands\.md/);
         assert.match(command, /80-task-workflow\.md/);
+        assert.doesNotMatch(command, /40-command-reference\.md/);
         assert.doesNotMatch(command, /15-project-memory\.md/);
         assert.doesNotMatch(command, /90-skill-catalog\.md/);
     });
@@ -716,6 +717,7 @@ describe('gates/next-step startup routing', () => {
         assert.match(command, /40-commands\.md/);
         assert.match(command, /80-task-workflow\.md/);
         assert.match(command, /90-skill-catalog\.md/);
+        assert.doesNotMatch(command, /40-command-reference\.md/);
     });
 
     it('preserves custom task-mode path when routing TASK_ENTRY rule-pack loading', () => {

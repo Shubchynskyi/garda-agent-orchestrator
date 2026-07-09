@@ -1537,6 +1537,7 @@ describe('runUpdate', () => {
 
             assert.ok(commandsContent.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode'));
             assert.ok(commandsContent.includes('node garda-agent-orchestrator/bin/garda.js gate load-rule-pack'));
+            assert.ok(commandsContent.includes('40-command-reference.md'));
             assert.ok(taskWorkflowContent.includes('TASK_MODE_ENTERED'));
             assert.ok(taskWorkflowContent.includes('RULE_PACK_LOADED'));
             assert.equal(

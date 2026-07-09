@@ -168,7 +168,7 @@ function buildPreflightGateHelpEntries(
             )
         },
         'load-rule-pack': {
-            ...createGateHelpEntry('Record the exact downstream rule files that were opened for the current task cycle.', [
+            ...createGateHelpEntry('Record the exact mandatory downstream rule files opened for the current task cycle. Do not include optional support appendices such as live/docs/agent-rules/40-command-reference.md; open that appendix only on demand for tool-specific command tables.', [
                 buildTaskEntryRulePackSnippet(cliPrefix, bundleName),
                 buildPostPreflightRulePackSnippet(cliPrefix, bundleName)
             ], true)

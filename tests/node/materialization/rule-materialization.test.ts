@@ -6,6 +6,7 @@ import * as os from 'node:os';
 
 import {
     RULE_FILES,
+    OPTIONAL_RULE_SUPPORT_FILES,
     CONTEXT_RULE_FILES,
     GENERATED_RULE_FILES,
     selectRuleSource,
@@ -36,8 +37,15 @@ describe('RULE_FILES', () => {
         assert.equal(RULE_FILES.length, 12);
         assert.ok(RULE_FILES.includes('00-core.md'));
         assert.ok(RULE_FILES.includes('15-project-memory.md'));
+        assert.ok(RULE_FILES.includes('40-commands.md'));
         assert.ok(RULE_FILES.includes('80-task-workflow.md'));
         assert.ok(RULE_FILES.includes('90-skill-catalog.md'));
+        assert.ok(!RULE_FILES.includes('40-command-reference.md'));
+    });
+
+    it('keeps command reference appendix outside mandatory rule files', () => {
+        assert.deepEqual(OPTIONAL_RULE_SUPPORT_FILES, ['40-command-reference.md']);
+        assert.ok(!RULE_FILES.includes(OPTIONAL_RULE_SUPPORT_FILES[0]));
     });
 
     it('skill catalogs list all baseline skills used by orchestration', () => {

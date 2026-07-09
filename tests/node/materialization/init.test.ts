@@ -104,6 +104,7 @@ describe('runInit', () => {
             assert.equal(result.ruleFilesMaterialized, 12);
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live/docs/agent-rules/00-core.md')));
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live/docs/agent-rules/15-project-memory.md')));
+            assert.ok(fs.existsSync(path.join(bundleRoot, 'live/docs/agent-rules/40-command-reference.md')));
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live/docs/agent-rules/80-task-workflow.md')));
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live/docs/agent-rules/90-skill-catalog.md')));
         } finally {

@@ -9,6 +9,7 @@ import {
     BUNDLE_RUNTIME_INVENTORY_PATHS,
     CRITICAL_BUNDLE_PATHS,
     RULE_FILES,
+    OPTIONAL_RULE_SUPPORT_FILES,
     PROJECT_COMMAND_PLACEHOLDERS,
     MANAGED_START,
     MANAGED_END,
@@ -449,6 +450,12 @@ test('RULE_FILES contains all 12 standard rule files', () => {
     assert.ok(RULE_FILES.includes('15-project-memory.md'));
     assert.ok(RULE_FILES.includes('40-commands.md'));
     assert.ok(RULE_FILES.includes('90-skill-catalog.md'));
+    assert.ok(!RULE_FILES.includes('40-command-reference.md'));
+});
+
+test('OPTIONAL_RULE_SUPPORT_FILES contains command reference appendix outside standard rule files', () => {
+    assert.deepEqual(OPTIONAL_RULE_SUPPORT_FILES, ['40-command-reference.md']);
+    assert.ok(!RULE_FILES.includes(OPTIONAL_RULE_SUPPORT_FILES[0]));
 });
 
 test('PROJECT_COMMAND_PLACEHOLDERS contains expected placeholders', () => {
@@ -517,6 +524,12 @@ test('buildRequiredPaths includes base paths plus rule files', () => {
         assert.ok(
             paths.some(p => p.includes(rf)),
             `Expected required paths to include rule file ${rf}`
+        );
+    }
+    for (const supportFile of OPTIONAL_RULE_SUPPORT_FILES) {
+        assert.ok(
+            paths.some(p => p.includes(supportFile)),
+            `Expected required paths to include optional support file ${supportFile}`
         );
     }
 });

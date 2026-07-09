@@ -50,6 +50,16 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
         ])
     }),
     Object.freeze({
+        liveRelativePath: `${bn}/live/docs/agent-rules/40-commands.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/40-commands.md`,
+        heading: '### Optional Command Reference Appendix',
+        requiredSnippets: Object.freeze([
+            '### Optional Command Reference Appendix',
+            '40-command-reference.md',
+            'Do not add the appendix to mandatory `TASK_ENTRY` or `POST_PREFLIGHT`'
+        ])
+    }),
+    Object.freeze({
         liveRelativePath: `${bn}/live/docs/agent-rules/80-task-workflow.md`,
         templateRelativePath: `${bn}/template/docs/agent-rules/80-task-workflow.md`,
         heading: '## Agent Start Contract',
