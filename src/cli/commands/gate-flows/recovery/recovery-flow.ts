@@ -34,10 +34,15 @@ import {
     buildNextStepRecoveryCommand
 } from '../compile/compile-flow-shared-evidence';
 import {
+    buildCurrentCycleOptionalSkillActivationIndex,
+    buildCurrentCycleOptionalSkillDeclineIndex,
+    buildFreshCurrentCycleOptionalSkillDeclinePointIndex,
     buildMandatoryCurrentCycleOptionalSkillActivationIndex,
     computeOptionalSkillSelectionFingerprint,
+    getCurrentCycleOptionalSkillDeclines,
     isMandatoryOptionalSkillSelectionPolicyMode,
     isOptionalSkillSelectionPolicyConfigured,
+    isPostDiffOptionalSkillSelection,
     readOptionalSkillSelectionArtifact,
     readOptionalSkillSelectionPolicyConfig,
     readOptionalSkillSelectionTimelineEvidence,
@@ -283,7 +288,17 @@ interface RestartOptionalSkillActivationSnapshot {
     activatedSkills: Array<{ id: string; pack: string | null }>;
 }
 
+interface RestartOptionalSkillDeclineSnapshot {
+    selectionFingerprintSha256: string;
+    declinedSkills: Array<{ id: string; pack: string | null; reason: string | null }>;
+}
+
 interface RestartOptionalSkillActivationRebind {
+    reboundSkillIds: string[];
+    selectionFingerprintSha256: string | null;
+}
+
+interface RestartOptionalSkillDeclineRebind {
     reboundSkillIds: string[];
     selectionFingerprintSha256: string | null;
 }
@@ -337,6 +352,69 @@ function readRestartOptionalSkillActivationSnapshot(
         : null;
 }
 
+function getLatestDeclineReasonsBySkill(
+    payload: OptionalSkillSelectionArtifact,
+    timelineEvidence: ReturnType<typeof readOptionalSkillSelectionTimelineEvidence>
+): Map<string, string | null> {
+    const declineReasons = new Map<string, { timestampMs: number; reason: string | null }>();
+    for (const decline of getCurrentCycleOptionalSkillDeclines(payload, timelineEvidence)) {
+        const skillId = String(decline.skillId || '').trim();
+        const timestampMs = Date.parse(String(decline.timestampUtc || '').trim());
+        if (!skillId || !Number.isFinite(timestampMs)) {
+            continue;
+        }
+        const previous = declineReasons.get(skillId);
+        if (!previous || timestampMs >= previous.timestampMs) {
+            declineReasons.set(skillId, {
+                timestampMs,
+                reason: decline.reason || null
+            });
+        }
+    }
+    return new Map([...declineReasons].map(([skillId, value]) => [skillId, value.reason]));
+}
+
+function readRestartOptionalSkillDeclineSnapshot(
+    orchestratorRoot: string,
+    taskId: string
+): RestartOptionalSkillDeclineSnapshot | null {
+    if (!isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)) {
+        return null;
+    }
+    const policyConfig = readOptionalSkillSelectionPolicyConfig(orchestratorRoot);
+    if (isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode) || policyConfig.mode === 'off') {
+        return null;
+    }
+    const artifact = readOptionalSkillSelectionArtifact(orchestratorRoot, taskId);
+    if (!artifact) {
+        return null;
+    }
+    const selectionFingerprintSha256 = getOptionalSkillSelectionFingerprint(artifact.payload);
+    if (!selectionFingerprintSha256) {
+        return null;
+    }
+    const selectedSkills = getSelectedOptionalSkills(artifact.payload);
+    if (selectedSkills.length === 0) {
+        return null;
+    }
+    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, taskId);
+    if (!timelineEvidence.exists || timelineEvidence.invalidJson) {
+        return null;
+    }
+    const declineIndex = buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, timelineEvidence);
+    const activationIndex = buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence);
+    const declineReasons = getLatestDeclineReasonsBySkill(artifact.payload, timelineEvidence);
+    const declinedSkills = selectedSkills
+        .filter((skill) => declineIndex.has(skill.id) && !activationIndex.has(skill.id))
+        .map((skill) => ({
+            ...skill,
+            reason: declineReasons.get(skill.id) || null
+        }));
+    return declinedSkills.length > 0
+        ? { selectionFingerprintSha256, declinedSkills }
+        : null;
+}
+
 async function rebindRestartOptionalSkillActivationsForCurrentCycle(input: {
     orchestratorRoot: string;
     taskId: string;
@@ -361,7 +439,7 @@ async function rebindRestartOptionalSkillActivationsForCurrentCycle(input: {
         return emptyRebind;
     }
     const currentSelectionFingerprintSha256 = getOptionalSkillSelectionFingerprint(artifact.payload);
-    if (currentSelectionFingerprintSha256 !== input.snapshot.selectionFingerprintSha256) {
+    if (isPostDiffOptionalSkillSelection(artifact.payload)) {
         return {
             reboundSkillIds: [],
             selectionFingerprintSha256: currentSelectionFingerprintSha256 || null
@@ -369,14 +447,19 @@ async function rebindRestartOptionalSkillActivationsForCurrentCycle(input: {
     }
 
     const selectedSkills = getSelectedOptionalSkills(artifact.payload);
-    const rebindableSkillIds = new Set(input.snapshot.activatedSkills.map((skill) => skill.id));
+    const rebindableSkills = new Map(input.snapshot.activatedSkills.map((skill) => [skill.id, skill]));
     const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(input.orchestratorRoot, input.taskId);
     const currentActivationIndex = timelineEvidence.exists && !timelineEvidence.invalidJson
         ? buildMandatoryCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence)
         : new Map<string, number>();
     const reboundSkillIds: string[] = [];
     for (const selectedSkill of selectedSkills) {
-        if (currentActivationIndex.has(selectedSkill.id) || !rebindableSkillIds.has(selectedSkill.id)) {
+        const rebindableSkill = rebindableSkills.get(selectedSkill.id);
+        if (
+            currentActivationIndex.has(selectedSkill.id)
+            || !rebindableSkill
+            || rebindableSkill.pack !== selectedSkill.pack
+        ) {
             continue;
         }
         appendMandatoryTaskEvent(
@@ -402,6 +485,99 @@ async function rebindRestartOptionalSkillActivationsForCurrentCycle(input: {
         reboundSkillIds,
         selectionFingerprintSha256: currentSelectionFingerprintSha256
     };
+}
+
+async function rebindRestartOptionalSkillDeclinesForCurrentCycle(input: {
+    orchestratorRoot: string;
+    taskId: string;
+    snapshot: RestartOptionalSkillDeclineSnapshot | null;
+}): Promise<RestartOptionalSkillDeclineRebind> {
+    const emptyRebind = {
+        reboundSkillIds: [],
+        selectionFingerprintSha256: input.snapshot?.selectionFingerprintSha256 || null
+    };
+    if (!input.snapshot) {
+        return emptyRebind;
+    }
+    if (!isOptionalSkillSelectionPolicyConfigured(input.orchestratorRoot)) {
+        return emptyRebind;
+    }
+    const policyConfig = readOptionalSkillSelectionPolicyConfig(input.orchestratorRoot);
+    if (isMandatoryOptionalSkillSelectionPolicyMode(policyConfig.mode) || policyConfig.mode === 'off') {
+        return emptyRebind;
+    }
+    const artifact = readOptionalSkillSelectionArtifact(input.orchestratorRoot, input.taskId);
+    if (!artifact) {
+        return emptyRebind;
+    }
+    const currentSelectionFingerprintSha256 = getOptionalSkillSelectionFingerprint(artifact.payload);
+    if (isPostDiffOptionalSkillSelection(artifact.payload)) {
+        return {
+            reboundSkillIds: [],
+            selectionFingerprintSha256: currentSelectionFingerprintSha256 || null
+        };
+    }
+
+    const selectedSkills = getSelectedOptionalSkills(artifact.payload);
+    const rebindableDeclines = new Map(input.snapshot.declinedSkills.map((skill) => [skill.id, skill]));
+    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(input.orchestratorRoot, input.taskId);
+    const currentActivationIndex = timelineEvidence.exists && !timelineEvidence.invalidJson
+        ? buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence)
+        : new Map<string, number>();
+    const currentFreshDeclineIndex = timelineEvidence.exists && !timelineEvidence.invalidJson
+        ? buildFreshCurrentCycleOptionalSkillDeclinePointIndex(artifact.payload, timelineEvidence)
+        : new Map();
+    const reboundSkillIds: string[] = [];
+    for (const selectedSkill of selectedSkills) {
+        const rebindableDecline = rebindableDeclines.get(selectedSkill.id);
+        if (
+            !rebindableDecline
+            || rebindableDecline.pack !== selectedSkill.pack
+            || currentActivationIndex.has(selectedSkill.id)
+            || currentFreshDeclineIndex.has(selectedSkill.id)
+        ) {
+            continue;
+        }
+        appendMandatoryTaskEvent(
+            input.orchestratorRoot,
+            input.taskId,
+            'SKILL_DECLINED',
+            'INFO',
+            `Optional skill declined: ${selectedSkill.id}`,
+            {
+                telemetry_type: 'skill_decision',
+                skill_id: selectedSkill.id,
+                pack_id: selectedSkill.pack || null,
+                reference_path: null,
+                trigger_reason: 'optional_skill_selection',
+                optional_skill_selection_fingerprint_sha256: currentSelectionFingerprintSha256,
+                reason: rebindableDecline.reason || 'not_used_for_current_implementation'
+            },
+            { actor: 'optional-skill-selection' }
+        );
+        reboundSkillIds.push(selectedSkill.id);
+    }
+
+    return {
+        reboundSkillIds,
+        selectionFingerprintSha256: currentSelectionFingerprintSha256
+    };
+}
+
+function buildOptionalSkillRebindDetails(
+    activationRebind: RestartOptionalSkillActivationRebind,
+    declineRebind: RestartOptionalSkillDeclineRebind
+): Record<string, unknown> | undefined {
+    const details: Record<string, unknown> = {};
+    if (activationRebind.reboundSkillIds.length > 0) {
+        details.optional_skill_activation_rebound_skill_ids = activationRebind.reboundSkillIds;
+        details.optional_skill_activation_rebind_fingerprint_sha256 = activationRebind.selectionFingerprintSha256;
+    }
+    if (declineRebind.reboundSkillIds.length > 0) {
+        details.optional_skill_decline_rebound_skill_ids = declineRebind.reboundSkillIds;
+        details.optional_skill_decline_rebind_fingerprint_sha256 = declineRebind.selectionFingerprintSha256;
+    }
+    return Object.keys(details).length > 0 ? details : undefined;
 }
 
 export async function runRestartCoherentCycleCommand(
@@ -435,8 +611,13 @@ export async function runRestartCoherentCycleCommand(
         : [];
 
     try {
+        const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
         const optionalSkillActivationSnapshot = readRestartOptionalSkillActivationSnapshot(
-            resolveOrchestratorRoot(repoRoot),
+            orchestratorRoot,
+            resolvedTaskId
+        );
+        const optionalSkillDeclineSnapshot = readRestartOptionalSkillDeclineSnapshot(
+            orchestratorRoot,
             resolvedTaskId
         );
 
@@ -518,9 +699,14 @@ export async function runRestartCoherentCycleCommand(
         }));
 
         const optionalSkillActivationRebind = await rebindRestartOptionalSkillActivationsForCurrentCycle({
-            orchestratorRoot: resolveOrchestratorRoot(repoRoot),
+            orchestratorRoot,
             taskId: resolvedTaskId,
             snapshot: optionalSkillActivationSnapshot
+        });
+        const optionalSkillDeclineRebind = await rebindRestartOptionalSkillDeclinesForCurrentCycle({
+            orchestratorRoot,
+            taskId: resolvedTaskId,
+            snapshot: optionalSkillDeclineSnapshot
         });
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -552,12 +738,7 @@ export async function runRestartCoherentCycleCommand(
             elapsedMs: Date.now() - startedAt,
             restartReason: 'coherent_cycle_restart_after_downstream_boundary_or_invalid_preflight_order',
             nextStepSummary,
-            extraDetails: optionalSkillActivationRebind.reboundSkillIds.length > 0
-                ? {
-                    optional_skill_activation_rebound_skill_ids: optionalSkillActivationRebind.reboundSkillIds,
-                    optional_skill_activation_rebind_fingerprint_sha256: optionalSkillActivationRebind.selectionFingerprintSha256
-                }
-                : undefined
+            extraDetails: buildOptionalSkillRebindDetails(optionalSkillActivationRebind, optionalSkillDeclineRebind)
         });
 
         return {
@@ -652,8 +833,13 @@ export async function runRestartReviewCycleCommand(
         throw new Error('Task intent could not be resolved for review-cycle restart.');
     }
     try {
+        const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
         const optionalSkillActivationSnapshot = readRestartOptionalSkillActivationSnapshot(
-            resolveOrchestratorRoot(repoRoot),
+            orchestratorRoot,
+            resolvedTaskId
+        );
+        const optionalSkillDeclineSnapshot = readRestartOptionalSkillDeclineSnapshot(
+            orchestratorRoot,
             resolvedTaskId
         );
         const refreshedPreflightPath = resolveRecoveryPreflightPath(
@@ -889,9 +1075,14 @@ export async function runRestartReviewCycleCommand(
         }));
 
         const optionalSkillActivationRebind = await rebindRestartOptionalSkillActivationsForCurrentCycle({
-            orchestratorRoot: resolveOrchestratorRoot(repoRoot),
+            orchestratorRoot,
             taskId: resolvedTaskId,
             snapshot: optionalSkillActivationSnapshot
+        });
+        const optionalSkillDeclineRebind = await rebindRestartOptionalSkillDeclinesForCurrentCycle({
+            orchestratorRoot,
+            taskId: resolvedTaskId,
+            snapshot: optionalSkillDeclineSnapshot
         });
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -1127,12 +1318,7 @@ export async function runRestartReviewCycleCommand(
                 reused_review_types: reusedReviewTypes,
                 pending_review_types: pendingReviewTypes,
                 pending_reason: pendingReason,
-                ...(optionalSkillActivationRebind.reboundSkillIds.length > 0
-                    ? {
-                        optional_skill_activation_rebound_skill_ids: optionalSkillActivationRebind.reboundSkillIds,
-                        optional_skill_activation_rebind_fingerprint_sha256: optionalSkillActivationRebind.selectionFingerprintSha256
-                    }
-                    : {})
+                ...(buildOptionalSkillRebindDetails(optionalSkillActivationRebind, optionalSkillDeclineRebind) || {})
             }
         });
 

@@ -1443,7 +1443,7 @@ function buildOptionalSkillSelectionSummary(
     const activatedSkillIds = selectedSkillIds.filter((skillId) => activationIndex.has(skillId));
     const declinedSkillIds = isMandatoryPolicy
         ? []
-        : selectedSkillIds.filter((skillId) => declineIndex.has(skillId));
+        : selectedSkillIds.filter((skillId) => declineIndex.has(skillId) && !activationIndex.has(skillId));
     const pendingActivationSkillIds = artifactValid && decision === 'selected_installed_skills' && !isPostDiffSelection
         ? selectedSkillIds.filter((skillId) => !activationIndex.has(skillId) && (isMandatoryPolicy || !declineIndex.has(skillId)))
         : [];

@@ -355,10 +355,13 @@ export function readOptionalSkillsSummary(
     const currentCycleReferenceLoads = getActivatedCurrentCycleOptionalSkillReferenceLoads(artifact.payload, timelineEvidence);
     const currentCycleActivationIndex = buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence);
     const currentCycleDeclineIndex = buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, timelineEvidence);
-    const declinedSkillIds = selectedSkillIds.filter((entry) => currentCycleDeclineIndex.has(entry));
     const usedSkillIds = selectedSkillIds.filter((entry) => (
         currentCycleActivationIndex.has(entry)
         || currentCycleReferenceLoads.some((load) => load.skillId === entry)
+    ));
+    const declinedSkillIds = selectedSkillIds.filter((entry) => (
+        currentCycleDeclineIndex.has(entry)
+        && !usedSkillIds.includes(entry)
     ));
     let usageSummaryLine = visibleSummaryLine;
     const reasonMatch = visibleSummaryLine?.match(/\(reason:\s*([^)]+)\)\s*$/i);

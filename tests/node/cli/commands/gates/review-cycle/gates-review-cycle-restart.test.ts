@@ -25,6 +25,7 @@ import {
     runCompletionGate,
     runEnterTaskMode,
     runExplicitPreflight,
+    runGit,
     runHandshakeForTask,
     runRequiredReviewsCheckCommand,
     runRestartCoherentCycleCommand,
@@ -48,6 +49,8 @@ import {
 } from './gates-review-cycle-fixtures';
 
 describe('cli/commands/gates – review-cycle restart suite', () => {
+    const OPTIONAL_SKILL_HEADLINES_PATH = 'garda-agent-orchestrator/live/config/skills-headlines.json';
+
     function copyWorkflowConfig(repoRoot: string, sourcePath: string, targetRelativePath: string): void {
         const targetPath = path.join(repoRoot, ...targetRelativePath.split('/'));
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -504,6 +507,11 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         });
         assert.equal(artifact.payload.decision, 'selected_installed_skills');
         assert.equal(artifact.payload.selected_installed_skills[0]?.id, 'node-backend');
+        const skillsHeadlinesStatus = runGit(repoRoot, ['status', '--short', '--', OPTIONAL_SKILL_HEADLINES_PATH]).stdout.trim();
+        if (skillsHeadlinesStatus) {
+            runGit(repoRoot, ['add', OPTIONAL_SKILL_HEADLINES_PATH]);
+            runGit(repoRoot, ['commit', '-m', 'test: baseline optional skill headlines']);
+        }
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', taskModePath);
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
@@ -544,13 +552,21 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
         assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
 
+        const refreshedOptionalSkillArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-optional-skill-selection.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const refreshedSelectionFingerprintSha256 = String(
+            refreshedOptionalSkillArtifact.selection_fingerprint_sha256 || ''
+        );
+        assert.ok(refreshedSelectionFingerprintSha256);
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const lastPreflightIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'PREFLIGHT_CLASSIFIED');
         const reboundSkillIndex = findLastTimelineEventIndex(events, (event) => (
             event.event_type === 'SKILL_SELECTED'
             && (event.details as Record<string, unknown> | null)?.skill_id === 'node-backend'
             && (event.details as Record<string, unknown> | null)?.trigger_reason === 'optional_skill_selection'
-            && (event.details as Record<string, unknown> | null)?.optional_skill_selection_fingerprint_sha256 === artifact.payload.selection_fingerprint_sha256
+            && (event.details as Record<string, unknown> | null)?.optional_skill_selection_fingerprint_sha256 === refreshedSelectionFingerprintSha256
         ));
         const lastCompileIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
         assert.ok(lastPreflightIndex >= 0);
@@ -561,6 +577,295 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.deepEqual(
             (restartEvent.details as Record<string, unknown>).optional_skill_activation_rebound_skill_ids,
             ['node-backend']
+        );
+        assert.equal(
+            (restartEvent.details as Record<string, unknown>).optional_skill_activation_rebind_fingerprint_sha256,
+            refreshedSelectionFingerprintSha256
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-coherent-cycle rebinds advisory optional-skill declines into the refreshed recovery cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-937-restart-coherent-optional-skill-decline-rebind';
+        const taskSummary = 'Implement request validation for a Node.js API endpoint';
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        writeProtectedControlPlaneManifest(repoRoot);
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+        seedTaskQueue(repoRoot, taskId);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace('Update app flow', taskSummary),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const validate = () => true;\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'api', 'orders.ts'),
+            'export const validate = (input: unknown) => Boolean(input);\n',
+            'utf8'
+        );
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'restart-coherent-optional-skill-decline-rebind'
+        );
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary,
+            plannedChangedFiles: ['src/api/orders.ts'],
+            orchestratorWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString()
+        });
+        assert.equal(taskModeResult.exitCode, 0, taskModeResult.outputLines.join('\n'));
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        loadTaskEntryRulePack(repoRoot, taskId, taskModePath);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            taskSummary,
+            ['src/api/orders.ts'],
+            `${taskId}-preflight.json`,
+            taskModePath
+        );
+        const artifact = writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+            taskText: taskSummary,
+            changedPaths: ['src/api/orders.ts'],
+            preflightPath,
+            preflightSha256: fileSha256(preflightPath)
+        });
+        assert.equal(artifact.payload.decision, 'selected_installed_skills');
+        assert.equal(artifact.payload.selected_installed_skills[0]?.id, 'node-backend');
+        const skillsHeadlinesStatus = runGit(repoRoot, ['status', '--short', '--', OPTIONAL_SKILL_HEADLINES_PATH]).stdout.trim();
+        if (skillsHeadlinesStatus) {
+            runGit(repoRoot, ['add', OPTIONAL_SKILL_HEADLINES_PATH]);
+            runGit(repoRoot, ['commit', '-m', 'test: baseline optional skill headlines']);
+        }
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', taskModePath);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_DECLINED',
+            'INFO',
+            'Optional skill declined: node-backend',
+            {
+                skill_id: 'node-backend',
+                pack_id: 'node-backend',
+                trigger_reason: 'optional_skill_selection',
+                optional_skill_selection_fingerprint_sha256: artifact.payload.selection_fingerprint_sha256,
+                reason: 'not needed for current implementation'
+            }
+        );
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0, compileResult.outputLines.join('\n'));
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
+
+        const refreshedOptionalSkillArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-optional-skill-selection.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const refreshedSelectionFingerprintSha256 = String(
+            refreshedOptionalSkillArtifact.selection_fingerprint_sha256 || ''
+        );
+        assert.ok(refreshedSelectionFingerprintSha256);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const lastPreflightIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'PREFLIGHT_CLASSIFIED');
+        const reboundDeclineIndex = findLastTimelineEventIndex(events, (event) => (
+            event.event_type === 'SKILL_DECLINED'
+            && (event.details as Record<string, unknown> | null)?.skill_id === 'node-backend'
+            && (event.details as Record<string, unknown> | null)?.trigger_reason === 'optional_skill_selection'
+            && (event.details as Record<string, unknown> | null)?.optional_skill_selection_fingerprint_sha256 === refreshedSelectionFingerprintSha256
+        ));
+        const lastCompileIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        assert.ok(lastPreflightIndex >= 0);
+        assert.ok(reboundDeclineIndex > lastPreflightIndex);
+        assert.ok(lastCompileIndex > reboundDeclineIndex);
+        const restartEvent = [...events].reverse().find((event) => event.event_type === 'COHERENT_CYCLE_RESTARTED') as Record<string, unknown> | undefined;
+        assert.ok(restartEvent, 'coherent restart must persist a passed restart event');
+        assert.deepEqual(
+            (restartEvent.details as Record<string, unknown>).optional_skill_decline_rebound_skill_ids,
+            ['node-backend']
+        );
+        assert.equal(
+            (restartEvent.details as Record<string, unknown>).optional_skill_decline_rebind_fingerprint_sha256,
+            refreshedSelectionFingerprintSha256
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle rebinds advisory optional-skill declines into the refreshed recovery cycle', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-937-restart-review-optional-skill-decline-rebind';
+        const taskSummary = 'Implement request validation for a Node.js API endpoint';
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        writeProtectedControlPlaneManifest(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+        seedTaskQueue(repoRoot, taskId);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace('Update app flow', taskSummary),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const validate = () => true;\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'api', 'orders.ts'),
+            'export const validate = (input: unknown) => Boolean(input);\n',
+            'utf8'
+        );
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'restart-review-optional-skill-decline-rebind'
+        );
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary,
+            plannedChangedFiles: ['src/api/orders.ts'],
+            orchestratorWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString()
+        });
+        assert.equal(taskModeResult.exitCode, 0, taskModeResult.outputLines.join('\n'));
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        loadTaskEntryRulePack(repoRoot, taskId, taskModePath);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            taskSummary,
+            ['src/api/orders.ts'],
+            `${taskId}-preflight.json`,
+            taskModePath
+        );
+        const artifact = writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+            taskText: taskSummary,
+            changedPaths: ['src/api/orders.ts'],
+            preflightPath,
+            preflightSha256: fileSha256(preflightPath)
+        });
+        assert.equal(artifact.payload.decision, 'selected_installed_skills');
+        assert.equal(artifact.payload.selected_installed_skills[0]?.id, 'node-backend');
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', taskModePath);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_DECLINED',
+            'INFO',
+            'Optional skill declined: node-backend',
+            {
+                skill_id: 'node-backend',
+                pack_id: 'node-backend',
+                trigger_reason: 'optional_skill_selection',
+                optional_skill_selection_fingerprint_sha256: artifact.payload.selection_fingerprint_sha256,
+                reason: 'not needed for current implementation'
+            }
+        );
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0, compileResult.outputLines.join('\n'));
+        const postCompileSkillsHeadlinesStatus = runGit(repoRoot, ['status', '--short', '--', OPTIONAL_SKILL_HEADLINES_PATH]).stdout.trim();
+        if (postCompileSkillsHeadlinesStatus) {
+            runGit(repoRoot, ['add', OPTIONAL_SKILL_HEADLINES_PATH]);
+            runGit(repoRoot, ['commit', '-m', 'test: baseline refreshed optional skill headlines']);
+        }
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            impactAnalysis: [
+                'Reviewer finding: failed review blocker requires a same-task remediation pass for src/api/orders.ts.',
+                'Intended fix: refresh the existing request validation file without changing product behavior.',
+                'Affected files/contracts: src/api/orders.ts is the affected file; existing contracts stay unchanged.',
+                'API/runtime/artifact/test impact: implementation and review evidence must be refreshed for this cycle.',
+                'Possible side effects: optional-skill decline evidence must stay bound to the refreshed selection.',
+                'Required targeted checks: compile gate and review-cycle optional-skill rebind assertions cover the fix.',
+                'Scope or review-type changes: code review must be prepared again for this cycle.',
+                'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+            ].join(' '),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /REVIEW_CYCLE_RESTARTED/);
+
+        const refreshedOptionalSkillArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-optional-skill-selection.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const refreshedSelectionFingerprintSha256 = String(
+            refreshedOptionalSkillArtifact.selection_fingerprint_sha256 || ''
+        );
+        assert.ok(refreshedSelectionFingerprintSha256);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const lastPreflightIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'PREFLIGHT_CLASSIFIED');
+        const reboundDeclineIndex = findLastTimelineEventIndex(events, (event) => (
+            event.event_type === 'SKILL_DECLINED'
+            && (event.details as Record<string, unknown> | null)?.skill_id === 'node-backend'
+            && (event.details as Record<string, unknown> | null)?.trigger_reason === 'optional_skill_selection'
+            && (event.details as Record<string, unknown> | null)?.optional_skill_selection_fingerprint_sha256 === refreshedSelectionFingerprintSha256
+        ));
+        const lastCompileIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        assert.ok(lastPreflightIndex >= 0);
+        assert.ok(reboundDeclineIndex > lastPreflightIndex);
+        assert.ok(lastCompileIndex > reboundDeclineIndex);
+        const restartEvent = [...events].reverse().find((event) => event.event_type === 'REVIEW_CYCLE_RESTARTED') as Record<string, unknown> | undefined;
+        assert.ok(restartEvent, 'review-cycle restart must persist a passed restart event');
+        assert.deepEqual(
+            (restartEvent.details as Record<string, unknown>).optional_skill_decline_rebound_skill_ids,
+            ['node-backend']
+        );
+        assert.equal(
+            (restartEvent.details as Record<string, unknown>).optional_skill_decline_rebind_fingerprint_sha256,
+            refreshedSelectionFingerprintSha256
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
