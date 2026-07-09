@@ -123,7 +123,7 @@ function readCurrentWorkspaceChangedFiles(repoRoot: string): { changedFiles: str
     };
 }
 
-function readCurrentStagedChangedFiles(repoRoot: string): string[] | null {
+export function readCurrentStagedChangedFiles(repoRoot: string): string[] | null {
     return readGitPathLines(repoRoot, ['diff', '--cached', '--name-only', '--diff-filter=ACDMRTUXB', '--']);
 }
 

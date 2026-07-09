@@ -116,9 +116,23 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
             );
         });
 
-        const eventTypes = readTaskTimelineEvents(repoRoot, taskId).map((event) => event.event_type);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const eventTypes = events.map((event) => event.event_type);
         assert.ok(eventTypes.includes('PREFLIGHT_STARTED'));
         assert.ok(eventTypes.includes('PREFLIGHT_FAILED'));
+        const preflightFailedEvent = [...events].reverse().find((event) => event.event_type === 'PREFLIGHT_FAILED');
+        assert.ok(preflightFailedEvent);
+        const preflightFailedDetails = preflightFailedEvent.details as Record<string, unknown>;
+        assert.equal(
+            preflightFailedDetails.preflight_failure_reason_code,
+            'dirty_baseline_requires_explicit_scope'
+        );
+        assert.deepEqual(preflightFailedDetails.pre_task_modified_files, ['src/app.ts']);
+        assert.deepEqual(preflightFailedDetails.dirty_workspace_baseline_changed_files, ['src/app.ts']);
+        assert.deepEqual(preflightFailedDetails.current_workspace_changed_files, ['src/app.ts']);
+        assert.equal(preflightFailedDetails.explicit_changed_files_provided, false);
+        assert.equal(preflightFailedDetails.use_staged, false);
+        assert.equal(preflightFailedDetails.include_untracked, true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

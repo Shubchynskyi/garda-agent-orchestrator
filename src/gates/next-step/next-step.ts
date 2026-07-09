@@ -2750,7 +2750,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     };
 
     if (!preflight || !isGatePassed(summary, 'classify-change')) {
-        const failedGateRecovery = readFailedGateRecovery(repoRoot, eventsRoot, taskId, cliPrefix, taskMode);
+        const failedGateRecovery = readFailedGateRecovery(repoRoot, eventsRoot, taskId, cliPrefix, taskMode, taskModePath, preflightCommandPath);
         if (failedGateRecovery) {
             return buildResult({
                 ...resultBase,
@@ -2758,9 +2758,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 nextGate: failedGateRecovery.nextGate,
                 title: failedGateRecovery.title,
                 reason: failedGateRecovery.reason,
-                commands: [
-                    buildCommand(failedGateRecovery.label, failedGateRecovery.command)
-                ]
+                commands: failedGateRecovery.command
+                    ? [
+                        buildCommand(failedGateRecovery.label || failedGateRecovery.nextGate, failedGateRecovery.command)
+                    ]
+                    : []
             });
         }
 

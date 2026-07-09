@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
 import { computeTaskPlanDigest, validateTaskPlan } from '../../../../src/schemas/task-plan';
 
-import { resolveNextStep } from './next-step-test-support';
+import { formatNextStepText, resolveNextStep } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
 import { buildRulePackArtifact } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
@@ -386,6 +386,41 @@ function writeBaselineOnlyPreflight(
     return preflightPath;
 }
 
+function buildDirtyBaselinePreflightError(preTaskModifiedFiles: string[]): string {
+    return [
+        `Workspace already contained modified files before task-mode entry: ${preTaskModifiedFiles.join(', ')}.`,
+        'This run is invalid as a normal orchestrated task start because task-mode entry must happen before any edits.',
+        'The optional start marker is a one-time orchestrator-mode UX marker, not a file-state claim.',
+        'Clean/stash unrelated changes, or rerun classify-change with --use-staged or explicit --changed-file scope after entering task mode.'
+    ].join(' ');
+}
+
+function seedDirtyBaselinePreflightFailure(
+    repoRoot: string,
+    taskId: string,
+    preTaskModifiedFiles: string[],
+    options: {
+        currentWorkspaceFiles?: string[];
+        structured?: boolean;
+    } = {}
+): void {
+    appendEvent(repoRoot, taskId, 'PREFLIGHT_FAILED', 'FAIL', {
+        error: buildDirtyBaselinePreflightError(preTaskModifiedFiles),
+        task_intent: 'Recover dirty-baseline preflight scope',
+        ...(options.structured === false
+            ? {}
+            : {
+                preflight_failure_reason_code: 'dirty_baseline_requires_explicit_scope',
+                pre_task_modified_files: preTaskModifiedFiles,
+                dirty_workspace_baseline_changed_files: preTaskModifiedFiles,
+                current_workspace_changed_files: options.currentWorkspaceFiles || preTaskModifiedFiles,
+                explicit_changed_files_provided: false,
+                use_staged: false,
+                include_untracked: true
+            })
+    });
+}
+
 
 
 
@@ -474,6 +509,161 @@ describe('gates/next-step preflight routing', () => {
             assert.match(result.reason, /BASELINE_ONLY with no reviewable diff/u);
             assert.match(result.reason, /Do not run compile-gate/u);
         }
+    });
+
+    it('recovers dirty-baseline preflight failure with staged scope', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const stagedRecovery = true;\n', 'utf8');
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+        seedDirtyBaselinePreflightFailure(repoRoot, TASK_ID, ['src/app.ts']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.match(result.title, /staged scope/u);
+        assert.ok(command.includes('gate classify-change'));
+        assert.ok(command.includes('--use-staged'));
+        assert.ok(!command.includes('--changed-file "<path>"'));
+    });
+
+    it('recovers dirty-baseline preflight failure with planned explicit scope', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Recover dirty-baseline preflight with planned scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const plannedRecovery = true;\n', 'utf8');
+        seedDirtyBaselinePreflightFailure(repoRoot, TASK_ID, ['src/app.ts']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.match(result.title, /explicit task scope/u);
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('--use-staged'));
+        assert.ok(!command.includes('--changed-file "<path>"'));
+    });
+
+    it('prioritizes protected orchestrator restart over dirty-baseline staged recovery', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n',
+            'utf8'
+        );
+        const protectedPath = path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts');
+        fs.mkdirSync(path.dirname(protectedPath), { recursive: true });
+        fs.writeFileSync(protectedPath, 'export const protectedBaseline = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const stagedRecovery = true;\n', 'utf8');
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+        fs.appendFileSync(protectedPath, 'export const protectedRecovery = true;\n', 'utf8');
+        seedDirtyBaselinePreflightFailure(repoRoot, TASK_ID, ['src/app.ts'], {
+            currentWorkspaceFiles: ['src/app.ts', 'src/gates/next-step/next-step.ts']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.match(result.reason, /protected control-plane scope must be recovered first/u);
+        assert.ok(command.includes('gate enter-task-mode'));
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--operator-confirmed yes'));
+        assert.ok(command.includes('--planned-changed-file "src/gates/next-step/next-step.ts"'));
+        assert.ok(!command.includes('--use-staged'));
+        assert.equal(text.includes('gate classify-change'), false);
+    });
+
+    it('prioritizes workflow-config restart over dirty-baseline recovery', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n',
+            'utf8'
+        );
+        const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            command: 'npm run test:workflow-config-recovery'
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+        seedDirtyBaselinePreflightFailure(repoRoot, TASK_ID, ['garda-agent-orchestrator/live/config/workflow-config.json']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.match(result.reason, /protected control-plane scope must be recovered first/u);
+        assert.ok(command.includes('gate enter-task-mode'));
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes('--operator-confirmed yes'));
+        assert.ok(command.includes('--planned-changed-file "garda-agent-orchestrator/live/config/workflow-config.json"'));
+        assert.equal(text.includes('gate classify-change'), false);
+    });
+
+    it('blocks dirty-baseline preflight failure when task scope cannot be inferred', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        const dirtyFiles = Array.from({ length: 14 }, (_, index) => `docs/dirty-${index + 1}.md`);
+        for (const dirtyFile of dirtyFiles) {
+            fs.writeFileSync(path.join(repoRoot, dirtyFile), `dirty ${dirtyFile}\n`, 'utf8');
+        }
+        seedDirtyBaselinePreflightFailure(repoRoot, TASK_ID, dirtyFiles);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'manual-scope-selection', result.reason);
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /cannot safely infer/u);
+        assert.match(result.reason, /Candidate dirty paths/u);
+        assert.match(result.reason, /\+2 more/u);
+        assert.equal(text.includes('gate classify-change'), false);
+    });
+
+    it('blocks legacy text-only dirty-baseline preflight failure without repeating unscoped classify', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'legacy-dirty.md'), 'legacy dirty\n', 'utf8');
+        seedDirtyBaselinePreflightFailure(repoRoot, TASK_ID, ['docs/legacy-dirty.md'], { structured: false });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'manual-scope-selection', result.reason);
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('docs/legacy-dirty.md'));
+        assert.equal(text.includes('gate classify-change'), false);
     });
 
     it('surfaces ignored structured planned files before compile', () => {

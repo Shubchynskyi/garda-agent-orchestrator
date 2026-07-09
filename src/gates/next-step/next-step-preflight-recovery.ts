@@ -29,10 +29,18 @@ import {
     safeReadJson
 } from '../task-audit/task-audit-summary-collectors';
 import {
+    evaluateProtectedControlPlaneManifest,
     fileSha256,
+    getProtectedControlPlaneRoots,
+    isWorkflowConfigControlPlanePath,
     normalizePath,
-    resolvePathInsideRepo
+    resolveProtectedControlPlaneManifestPath,
+    resolvePathInsideRepo,
+    testPathPrefix
 } from '../shared/helpers';
+import {
+    isSourceCheckoutGeneratedRuntimeArtifactPath
+} from '../shared/generated-runtime-artifacts';
 import {
     buildCompileEvidenceDocsOnlyExtensionReadiness,
     readCurrentGitWorkspaceSnapshot
@@ -41,7 +49,10 @@ import {
     buildBundleRelativePath
 } from './next-step-command-formatters';
 import {
-    buildOrchestratorWorkRestartCommand
+    buildClassifyChangeCommand,
+    buildOrchestratorWorkRestartCommand,
+    getTaskModePlannedChangedFiles,
+    readCurrentStagedChangedFiles
 } from './next-step-lifecycle-command-builders';
 import {
     findLatestTimelineEvent,
@@ -53,8 +64,8 @@ export interface FailedGateRecovery {
     nextGate: string;
     title: string;
     reason: string;
-    label: string;
-    command: string;
+    label?: string;
+    command?: string;
 }
 
 export interface RulePackReadiness {
@@ -150,6 +161,209 @@ function hasWorkflowConfigWorkRecoverySignal(message: string): boolean {
         && normalized.includes('--workflow-config-work');
 }
 
+function hasDirtyBaselineRecoverySignal(
+    event: NonNullable<ReturnType<typeof findLatestTimelineEvent>>,
+    message: string
+): boolean {
+    const reasonCode = String(event.details?.preflight_failure_reason_code || '').trim();
+    if (reasonCode === 'dirty_baseline_requires_explicit_scope') {
+        return true;
+    }
+    const normalized = String(message || '').toLowerCase();
+    return normalized.includes('workspace already contained modified files before task-mode entry')
+        && normalized.includes('--use-staged')
+        && normalized.includes('--changed-file');
+}
+
+function normalizeEventPathList(value: unknown): string[] {
+    return [...new Set((Array.isArray(value) ? value : [])
+        .map((entry) => normalizePath(entry))
+        .filter(Boolean))]
+        .sort();
+}
+
+function parseDirtyBaselineFilesFromError(errorText: string): string[] {
+    const marker = 'Workspace already contained modified files before task-mode entry:';
+    const start = errorText.indexOf(marker);
+    if (start < 0) {
+        return [];
+    }
+    const afterMarker = errorText.slice(start + marker.length);
+    const end = afterMarker.indexOf('. This run is invalid');
+    const listText = end >= 0 ? afterMarker.slice(0, end) : afterMarker;
+    return [...new Set(listText
+        .split(',')
+        .map((entry) => normalizePath(entry))
+        .filter(Boolean))]
+        .sort();
+}
+
+function formatPathList(paths: string[]): string {
+    if (paths.length === 0) {
+        return '[none]';
+    }
+    const preview = paths.slice(0, 12).join(', ');
+    return paths.length > 12
+        ? `[${preview}, ... +${paths.length - 12} more]`
+        : `[${preview}]`;
+}
+
+function buildDirtyBaselineFailedPreflightRecovery(input: {
+    repoRoot: string;
+    taskId: string;
+    cliPrefix: string;
+    taskMode: Record<string, unknown>;
+    taskModePath: string | null;
+    preflightCommandPath: string;
+    latestPreflightFailure: NonNullable<ReturnType<typeof findLatestTimelineEvent>>;
+    errorText: string;
+}): FailedGateRecovery {
+    const stagedFiles = readCurrentStagedChangedFiles(input.repoRoot) || [];
+    if (stagedFiles.length > 0) {
+        return {
+            nextGate: 'classify-change',
+            title: 'Recover failed classify-change with staged scope.',
+            reason:
+                `Latest PREFLIGHT_FAILED event (seq ${input.latestPreflightFailure.sequence}) reports dirty pre-task files, ` +
+                `and the current staged scope is available ${formatPathList(stagedFiles)}. ` +
+                'Rerun classify-change with --use-staged so the recovery scope is explicit instead of repeating the failed unscoped command.',
+            label: 'Classify staged scope',
+            command: buildClassifyChangeCommand({
+                repoRoot: input.repoRoot,
+                cliPrefix: input.cliPrefix,
+                taskId: input.taskId,
+                taskMode: input.taskMode,
+                taskModePath: input.taskModePath,
+                preflightCommandPath: input.preflightCommandPath,
+                includePlannedScope: false,
+                changedFiles: []
+            })
+        };
+    }
+
+    const plannedChangedFiles = getTaskModePlannedChangedFiles(input.taskMode);
+    if (plannedChangedFiles.length > 0) {
+        return {
+            nextGate: 'classify-change',
+            title: 'Recover failed classify-change with explicit task scope.',
+            reason:
+                `Latest PREFLIGHT_FAILED event (seq ${input.latestPreflightFailure.sequence}) reports dirty pre-task files. ` +
+                `Task-mode planned scope is available ${formatPathList(plannedChangedFiles)}, so recovery can use explicit ` +
+                '--changed-file arguments instead of repeating the failed unscoped command.',
+            label: 'Classify explicit task scope',
+            command: buildClassifyChangeCommand({
+                repoRoot: input.repoRoot,
+                cliPrefix: input.cliPrefix,
+                taskId: input.taskId,
+                taskMode: input.taskMode,
+                taskModePath: input.taskModePath,
+                preflightCommandPath: input.preflightCommandPath,
+                includePlannedScope: false,
+                changedFiles: plannedChangedFiles
+            })
+        };
+    }
+
+    const preTaskModifiedFiles = normalizeEventPathList(input.latestPreflightFailure.details?.pre_task_modified_files);
+    const fallbackPreTaskModifiedFiles = preTaskModifiedFiles.length > 0
+        ? preTaskModifiedFiles
+        : parseDirtyBaselineFilesFromError(input.errorText);
+    const currentWorkspaceFiles = normalizeEventPathList(input.latestPreflightFailure.details?.current_workspace_changed_files);
+    const candidateFiles = fallbackPreTaskModifiedFiles.length > 0
+        ? fallbackPreTaskModifiedFiles
+        : currentWorkspaceFiles;
+    return {
+        nextGate: 'manual-scope-selection',
+        title: 'Choose explicit preflight scope for dirty-baseline recovery.',
+        reason:
+            `Latest PREFLIGHT_FAILED event (seq ${input.latestPreflightFailure.sequence}) reports dirty pre-task files, ` +
+            'but next-step cannot safely infer which paths belong to this task. Stage the task-owned subset and rerun the navigator, ' +
+            'or rerun classify-change with explicit --changed-file entries for the task-owned paths. ' +
+            `Candidate dirty paths needing operator/user scope selection: ${formatPathList(candidateFiles)}.`
+    };
+}
+
+function readChangedWorkflowConfigProtectedManifestFiles(repoRoot: string): string[] {
+    const manifestPath = resolveProtectedControlPlaneManifestPath(repoRoot);
+    if (!fs.existsSync(manifestPath)) {
+        return [];
+    }
+    try {
+        const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+        const protectedSnapshot = isPlainRecord(parsed.protected_snapshot)
+            ? parsed.protected_snapshot
+            : {};
+        const protectedRoots = Array.isArray(parsed.protected_roots)
+            ? parsed.protected_roots.map((entry) => normalizePath(entry)).filter(Boolean)
+            : [];
+        const workflowConfigCandidates = [...new Set([
+            ...Object.keys(protectedSnapshot).map((entry) => normalizePath(entry)).filter(Boolean),
+            ...protectedRoots.filter((entry) => isWorkflowConfigControlPlanePath(entry))
+        ])].sort();
+        return workflowConfigCandidates
+            .map((protectedPath) => ({
+                protectedPath: normalizePath(protectedPath),
+                expectedHash: String(protectedSnapshot[protectedPath] || '').trim().toLowerCase()
+            }))
+            .filter(({ protectedPath }) => protectedPath && isWorkflowConfigControlPlanePath(protectedPath))
+            .filter(({ protectedPath, expectedHash }) => (
+                expectedHash
+                    ? String(fileSha256(path.join(repoRoot, protectedPath)) || '').trim().toLowerCase() !== expectedHash
+                    : fs.existsSync(path.join(repoRoot, protectedPath))
+            ))
+            .map(({ protectedPath }) => protectedPath)
+            .sort();
+    } catch {
+        return [];
+    }
+}
+
+function readCurrentProtectedScopeBeforeFailedPreflight(repoRoot: string): {
+    changedFiles: string[];
+    protectedFiles: string[];
+    workflowConfigFiles: string[];
+} | null {
+    const workspaceSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, true);
+    const protectedRoots = getProtectedControlPlaneRoots(repoRoot);
+    const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
+    const gitChangedFiles = workspaceSnapshot
+        ? workspaceSnapshot.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+    const gitProtectedFiles = gitChangedFiles.filter((entry) => testPathPrefix(entry, protectedRoots));
+    const protectedManifestEvidence = gitProtectedFiles.length > 0
+        ? evaluateProtectedControlPlaneManifest(repoRoot, null, true)
+        : null;
+    const fullManifestChangedProtectedFiles = protectedManifestEvidence?.status === 'DRIFT'
+        ? protectedManifestEvidence.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+    const manifestChangedProtectedFiles = gitProtectedFiles.length > 0
+        ? fullManifestChangedProtectedFiles
+        : readChangedWorkflowConfigProtectedManifestFiles(repoRoot);
+    const changedFiles = [...new Set([
+        ...gitChangedFiles,
+        ...manifestChangedProtectedFiles
+    ])]
+        .filter((entry) => !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
+        .sort();
+    if (changedFiles.length === 0) {
+        return null;
+    }
+    const protectedFiles = [...new Set([
+        ...gitProtectedFiles,
+        ...manifestChangedProtectedFiles.filter((entry) => testPathPrefix(entry, protectedRoots))
+    ])]
+        .filter((entry) => !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
+        .sort();
+    if (protectedFiles.length === 0) {
+        return null;
+    }
+    return {
+        changedFiles,
+        protectedFiles,
+        workflowConfigFiles: protectedFiles.filter((entry) => isWorkflowConfigControlPlanePath(entry))
+    };
+}
+
 function isSha256(value: unknown): value is string {
     return /^[0-9a-f]{64}$/u.test(String(value || '').trim().toLowerCase());
 }
@@ -235,7 +449,9 @@ export function readFailedGateRecovery(
     eventsRoot: string,
     taskId: string,
     cliPrefix: string,
-    taskMode: Record<string, unknown> | null
+    taskMode: Record<string, unknown> | null,
+    taskModePath: string | null,
+    preflightCommandPath: string
 ): FailedGateRecovery | null {
     if (!taskMode) {
         return null;
@@ -275,8 +491,63 @@ export function readFailedGateRecovery(
     const errorText = getTimelineEventDetailString(latestPreflightFailure, 'error');
     const hasProtectedRecoverySignal = hasProtectedOrchestratorWorkRecoverySignal(errorText);
     const hasWorkflowConfigRecoverySignal = hasWorkflowConfigWorkRecoverySignal(errorText);
-    if (!hasProtectedRecoverySignal && !hasWorkflowConfigRecoverySignal) {
+    const hasDirtyBaselineSignal = hasDirtyBaselineRecoverySignal(latestPreflightFailure, errorText);
+    if (!hasProtectedRecoverySignal && !hasWorkflowConfigRecoverySignal && !hasDirtyBaselineSignal) {
         return null;
+    }
+    if (hasDirtyBaselineSignal && !hasProtectedRecoverySignal && !hasWorkflowConfigRecoverySignal) {
+        const currentProtectedScope = readCurrentProtectedScopeBeforeFailedPreflight(repoRoot);
+        const currentProtectedScopeNeedsTaskModeRestart = currentProtectedScope
+            && (
+                taskMode?.orchestrator_work !== true
+                || (currentProtectedScope.workflowConfigFiles.length > 0 && taskMode?.workflow_config_work !== true)
+            );
+        if (currentProtectedScope && currentProtectedScopeNeedsTaskModeRestart) {
+            const workflowConfigRecovery = currentProtectedScope.workflowConfigFiles.length > 0 && taskMode?.workflow_config_work !== true;
+            if (isGardaSelfGuardDenyAgentEntry(repoRoot)) {
+                return {
+                    nextGate: 'operator-maintenance',
+                    title: 'Garda self-guard blocks agent-owned protected control-plane recovery.',
+                    reason:
+                        `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) reports dirty pre-task files, ` +
+                        `but current protected control-plane scope is present: ${formatPathList(currentProtectedScope.protectedFiles)}. ` +
+                        formatGardaSelfGuardProtectedControlPlaneGuidance(),
+                    label: 'Operator policy change',
+                    command: buildGardaSelfGuardPolicyChangeCommand(cliPrefix)
+                };
+            }
+            return {
+                nextGate: 'enter-task-mode',
+                title: workflowConfigRecovery
+                    ? 'Recover failed classify-change as workflow-config work.'
+                    : 'Recover failed classify-change as orchestrator work.',
+                reason:
+                    `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) reports dirty pre-task files, ` +
+                    `but current protected control-plane scope must be recovered first: ${formatPathList(currentProtectedScope.protectedFiles)}. ` +
+                    `Run the protected task-mode restart before any dirty-baseline classify-change recovery.`,
+                label: workflowConfigRecovery
+                    ? 'Restart task mode with workflow-config work'
+                    : 'Restart task mode with orchestrator work',
+                command: buildOrchestratorWorkRestartCommand(
+                    repoRoot,
+                    cliPrefix,
+                    taskId,
+                    taskMode,
+                    currentProtectedScope.changedFiles,
+                    workflowConfigRecovery
+                )
+            };
+        }
+        return buildDirtyBaselineFailedPreflightRecovery({
+            repoRoot,
+            taskId,
+            cliPrefix,
+            taskMode,
+            taskModePath,
+            preflightCommandPath,
+            latestPreflightFailure,
+            errorText
+        });
     }
     if (isGardaSelfGuardDenyAgentEntry(repoRoot)) {
         return {

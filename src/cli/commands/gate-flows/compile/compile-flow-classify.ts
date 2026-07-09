@@ -255,6 +255,16 @@ export interface ClassifyChangeCommandOptions {
     emitMetrics?: unknown;
 }
 
+interface PreflightFailureDiagnostics {
+    reason_code: string;
+    pre_task_modified_files: string[];
+    dirty_workspace_baseline_changed_files: string[];
+    current_workspace_changed_files: string[];
+    explicit_changed_files_provided: boolean;
+    use_staged: boolean;
+    include_untracked: boolean;
+}
+
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
@@ -271,6 +281,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     }
 
     let prePreflightSequenceLockHandle: ReturnType<typeof acquireFilesystemLock>['handle'] | null = null;
+    let preflightFailureDiagnostics: PreflightFailureDiagnostics | null = null;
     try {
     const explicitChangedFilesProvided = options.changedFiles !== undefined;
     const explicitChangedFiles = expandValueList(options.changedFiles, { splitDelimiters: true });
@@ -598,6 +609,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     taskModeEvidence.evidence_path
                 );
             if (preTaskModifiedFiles.length > 0) {
+                preflightFailureDiagnostics = {
+                    reason_code: 'dirty_baseline_requires_explicit_scope',
+                    pre_task_modified_files: normalizePortablePathList(preTaskModifiedFiles),
+                    dirty_workspace_baseline_changed_files: normalizePortablePathList(dirtyWorkspaceBaseline?.changed_files),
+                    current_workspace_changed_files: normalizePortablePathList(workspaceSnapshot.changed_files),
+                    explicit_changed_files_provided: explicitChangedFilesProvided,
+                    use_staged: options.useStaged === true,
+                    include_untracked: includeUntracked
+                };
                 preflightErrors.push(
                     `Workspace already contained modified files before task-mode entry: ${preTaskModifiedFiles.join(', ')}. ` +
                     'This run is invalid as a normal orchestrated task start because task-mode entry must happen before any edits. ' +
@@ -914,7 +934,18 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             try {
                 emitMandatoryPreflightFailedEvent(orchestratorRoot, resolvedTaskId, {
                     error: getErrorMessage(error),
-                    task_intent: String(options.taskIntent || '')
+                    task_intent: String(options.taskIntent || ''),
+                    ...(preflightFailureDiagnostics
+                        ? {
+                            preflight_failure_reason_code: preflightFailureDiagnostics.reason_code,
+                            pre_task_modified_files: preflightFailureDiagnostics.pre_task_modified_files,
+                            dirty_workspace_baseline_changed_files: preflightFailureDiagnostics.dirty_workspace_baseline_changed_files,
+                            current_workspace_changed_files: preflightFailureDiagnostics.current_workspace_changed_files,
+                            explicit_changed_files_provided: preflightFailureDiagnostics.explicit_changed_files_provided,
+                            use_staged: preflightFailureDiagnostics.use_staged,
+                            include_untracked: preflightFailureDiagnostics.include_untracked
+                        }
+                        : {})
                 });
             } catch (eventError: unknown) {
                 throw new Error(
