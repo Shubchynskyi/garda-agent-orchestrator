@@ -325,18 +325,16 @@ export function validateReviewerLaunchArtifact(options: {
                 const normalizedReviewerLaunchInputArtifactPath = resolvedReviewerLaunchInputArtifactPath
                     ? normalizePath(resolvedReviewerLaunchInputArtifactPath).toLowerCase()
                     : '';
-                if (
-                    !resolvedLaunchInputArtifactPath
-                    || (
-                        normalizedResolvedLaunchInputArtifactPath !== normalizePath(artifactPath).toLowerCase()
-                        && normalizedResolvedLaunchInputArtifactPath !== normalizedReviewerLaunchInputArtifactPath
-                    )
-                ) {
-                    violations.push('launch_input_artifact_path must match ReviewerLaunchInputArtifactPath or ReviewerLaunchArtifactPath');
-                } else if (
-                    normalizedReviewerLaunchInputArtifactPath
-                    && normalizedResolvedLaunchInputArtifactPath === normalizedReviewerLaunchInputArtifactPath
-                ) {
+                if (!resolvedLaunchInputArtifactPath) {
+                    violations.push('launch_input_artifact_path could not be resolved inside the repository');
+                } else if (!normalizedReviewerLaunchInputArtifactPath) {
+                    violations.push('reviewer_launch_input_artifact_path is required for launch_artifact_path attestation');
+                } else if (normalizedResolvedLaunchInputArtifactPath !== normalizedReviewerLaunchInputArtifactPath) {
+                    violations.push(
+                        'launch_input_artifact_path must match ReviewerLaunchInputArtifactPath; ' +
+                        'ReviewerLaunchArtifactPath control metadata is not valid reviewer launch input'
+                    );
+                } else {
                     const pinnedInputArtifactSha256 = getStringField(
                         artifact,
                         'reviewer_launch_input_artifact_sha256',
@@ -351,6 +349,8 @@ export function validateReviewerLaunchArtifact(options: {
                         violations.push('ReviewerLaunchInputArtifactPath contents must match the immutable prepare-time handoff hash');
                     } else if (launchInputArtifactSha256 && actualLaunchInputArtifactSha256 !== launchInputArtifactSha256) {
                         violations.push('launch_input_artifact_sha256 must match ReviewerLaunchInputArtifactPath contents');
+                    } else if (launchInputSha256 && actualLaunchInputArtifactSha256 !== launchInputSha256) {
+                        violations.push('launch_input_sha256 must match ReviewerLaunchInputArtifactPath contents');
                     }
                 }
             }

@@ -17,10 +17,20 @@ export function hasReviewerLaunchInputEvidence(launchArtifact: Record<string, un
     const launchInputMode = getArtifactStringField(launchArtifact, 'launch_input_mode', 'launchInputMode').toLowerCase();
     const launchInputSha256 = getArtifactStringField(launchArtifact, 'launch_input_sha256', 'launchInputSha256').toLowerCase();
     const launchInputArtifactPath = getArtifactStringField(launchArtifact, 'launch_input_artifact_path', 'launchInputArtifactPath');
+    const reviewerLaunchInputArtifactPath = getArtifactStringField(
+        launchArtifact,
+        'reviewer_launch_input_artifact_path',
+        'reviewerLaunchInputArtifactPath'
+    );
     const launchInputArtifactSha256 = getArtifactStringField(
         launchArtifact,
         'launch_input_artifact_sha256',
         'launchInputArtifactSha256'
+    ).toLowerCase();
+    const reviewerLaunchInputArtifactSha256 = getArtifactStringField(
+        launchArtifact,
+        'reviewer_launch_input_artifact_sha256',
+        'reviewerLaunchInputArtifactSha256'
     ).toLowerCase();
     const preparedLaunchArtifactSha256 = getArtifactStringField(
         launchArtifact,
@@ -39,12 +49,17 @@ export function hasReviewerLaunchInputEvidence(launchArtifact: Record<string, un
         return launchInputSha256 === copyPastePromptSha256;
     }
     if (launchInputMode === 'launch_artifact_path') {
+        const normalizedLaunchInputArtifactPath = launchInputArtifactPath.replace(/\\/g, '/').toLowerCase();
+        const normalizedReviewerLaunchInputArtifactPath = reviewerLaunchInputArtifactPath.replace(/\\/g, '/').toLowerCase();
         return Boolean(
             launchInputArtifactPath
+            && reviewerLaunchInputArtifactPath
+            && normalizedLaunchInputArtifactPath === normalizedReviewerLaunchInputArtifactPath
             && /^[0-9a-f]{64}$/.test(launchInputArtifactSha256)
+            && /^[0-9a-f]{64}$/.test(reviewerLaunchInputArtifactSha256)
             && /^[0-9a-f]{64}$/.test(preparedLaunchArtifactSha256)
-            && launchInputArtifactSha256 === preparedLaunchArtifactSha256
-            && launchInputSha256 === preparedLaunchArtifactSha256
+            && launchInputArtifactSha256 === reviewerLaunchInputArtifactSha256
+            && launchInputSha256 === reviewerLaunchInputArtifactSha256
         );
     }
     return false;

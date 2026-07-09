@@ -3888,7 +3888,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 `ReviewerOneShotLaunchHint: launch a fresh delegated reviewer once with the exact opaque handoff ` +
                 `ReviewerLaunchInputArtifactPath: ${normalizePath(launchArtifactEvidence.launchInputArtifactPath)} ` +
                 `(launch_input_sha256=${launchArtifactEvidence.launchInputArtifactSha256}) ` +
-                `or CopyPasteReviewerLaunchPrompt from prepare-reviewer-launch, then run record-reviewer-delegation-started immediately after provider launch.`
+                `or CopyPasteReviewerLaunchPrompt from prepare-reviewer-launch. ` +
+                `ReviewerLaunchArtifactPath is main-agent control metadata, not the clean-context reviewer prompt. ` +
+                `Then run record-reviewer-delegation-started immediately after provider launch.`
             )
             : null;
         const reviewerIdentityIsPlanned = isPlannedReviewerIdentity(contextReviewerIdentity);

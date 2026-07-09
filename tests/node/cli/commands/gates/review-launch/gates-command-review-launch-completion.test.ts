@@ -10,6 +10,7 @@ import {
     prepareReviewerLaunchForTest,
     readTaskTimelineEvents,
     recordReviewerDelegationStartedForTest,
+    reviewerLaunchInputArtifactForTest,
     runCliMainWithHandling,
     runCliWithCapturedOutput,
     seedPromptBoundReviewFixture,
@@ -163,13 +164,16 @@ describe('cli/commands/gates review launch completion', () => {
         assert.equal(Number.isNaN(Date.parse(completedArtifact.launch_completed_at_utc)), false);
         assert.equal(completedArtifact.fork_context, false, 'Fork context should be false');
         assert.equal(completedArtifact.launch_input_mode, 'launch_artifact_path');
-        assert.equal(completedArtifact.launch_input_artifact_path, launchArtifactPath.replace(/\\/g, '/'));
+        const launchInputArtifact = reviewerLaunchInputArtifactForTest(launchArtifactPath);
+        assert.equal(completedArtifact.launch_input_artifact_path, launchInputArtifact.normalizedPath);
+        assert.equal(completedArtifact.launch_input_sha256, launchInputArtifact.sha256);
+        assert.equal(completedArtifact.launch_input_artifact_sha256, launchInputArtifact.sha256);
         assert.equal(completedArtifact.launch_input_sha256, completedArtifact.prepared_reviewer_launch_artifact_sha256);
         assert.equal(completedArtifact.launch_input_artifact_sha256, completedArtifact.prepared_reviewer_launch_artifact_sha256);
         assert.equal(typeof completedArtifact.copy_paste_reviewer_launch_prompt_sha256, 'string');
         assert.equal(completedArtifact.launch_input_copy_paste_reviewer_launch_prompt_sha256, completedArtifact.copy_paste_reviewer_launch_prompt_sha256);
         assert.ok(capturedLines.some((line) => line.includes('LaunchInputMode: launch_artifact_path')));
-        assert.ok(capturedLines.some((line) => line.includes(`LaunchInputArtifactPath: ${launchArtifactPath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLines.some((line) => line.includes(`LaunchInputArtifactPath: ${launchInputArtifact.normalizedPath}`)));
 
         const previousInvokeExitCode = process.exitCode;
         const previousInvokeCwd = process.cwd();
@@ -758,6 +762,7 @@ describe('cli/commands/gates review launch completion', () => {
             providerInvocationId: 'test-invocation-677-stale',
             attestationSource: 'codex_spawn_agent'
         });
+        const launchInputArtifact = reviewerLaunchInputArtifactForTest(launchArtifactPath);
 
         const complete = await runCliWithCapturedOutput([
             'gate',
@@ -771,7 +776,7 @@ describe('cli/commands/gates review launch completion', () => {
             '--provider-invocation-id', 'test-invocation-677-stale',
             '--attestation-source', 'codex_spawn_agent',
             '--launch-input-mode', 'launch_artifact_path',
-            '--launch-input-artifact-path', launchArtifactPath,
+            '--launch-input-artifact-path', launchInputArtifact.path,
             '--launch-input-sha256', '0'.repeat(64),
             '--fork-context', 'false'
         ], { cwd: repoRoot });

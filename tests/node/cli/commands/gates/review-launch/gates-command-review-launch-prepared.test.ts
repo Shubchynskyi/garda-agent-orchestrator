@@ -201,6 +201,32 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         const pinnedInputArtifactSha256 = String(launchArtifact.reviewer_launch_input_artifact_sha256);
         assert.equal(fileSha256ForTest(launchInputArtifactPath), pinnedInputArtifactSha256);
         assert.notEqual(fileSha256ForTest(launchArtifactPath), pinnedInputArtifactSha256);
+        const launchInputArtifactText = fs.readFileSync(launchInputArtifactPath, 'utf8');
+        assert.ok(
+            launchInputArtifactText.startsWith('{\n  "reviewer_handoff_contract": "You are the delegated code reviewer for this Garda task."'),
+            launchInputArtifactText
+        );
+        const launchInputArtifact = JSON.parse(launchInputArtifactText);
+        assert.equal(launchInputArtifact.artifact_type, 'delegated_reviewer_handoff');
+        assert.equal(launchInputArtifact.handoff_role, 'delegated_reviewer');
+        assert.equal(launchInputArtifact.task_id, taskId);
+        assert.equal(launchInputArtifact.review_type, 'code');
+        assert.equal(launchInputArtifact.copy_paste_reviewer_launch_prompt, launchArtifact.copy_paste_reviewer_launch_prompt);
+        assert.equal(launchInputArtifact.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
+        assert.equal(launchInputArtifact.review_output_path, reviewOutputPath.replace(/\\/g, '/'));
+        assert.equal(launchInputArtifact.next_action, undefined);
+        assert.equal(launchInputArtifact.after_launch_required_updates, undefined);
+        assert.equal(launchInputArtifact.record_reviewer_delegation_started_command, undefined);
+        assert.equal(launchInputArtifact.complete_reviewer_launch_command, undefined);
+        assert.equal(
+            launchInputArtifactText.includes('Launch a fresh delegated reviewer'),
+            false,
+            'reviewer-facing launch input must not tell a clean-context subagent to launch another reviewer'
+        );
+        assert.ok(
+            Array.isArray(launchInputArtifact.reviewer_only_instructions)
+                && launchInputArtifact.reviewer_only_instructions.includes('Do not launch another reviewer or subagent.')
+        );
         assert.deepEqual(launchArtifact.preserve_prepared_fields, [
             'review_context_sha256',
             'routing_event_sha256',
@@ -251,7 +277,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(String(launchArtifact.next_action).includes('if for some reason that is impossible right now, you must stop and report this to the user'));
         assert.ok(String(launchArtifact.next_action).includes('this is expected behavior in this repository'));
         assert.ok(String(launchArtifact.next_action).includes('Launch a fresh delegated reviewer once'));
-        assert.ok(String(launchArtifact.next_action).includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath'));
+        assert.ok(String(launchArtifact.next_action).includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or reviewer-facing ReviewerLaunchInputArtifactPath'));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const launchPreparedEvent = events.find((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED');
         const launchPreparedIntegrity = launchPreparedEvent?.integrity as { event_sha256?: string } | undefined;
@@ -265,7 +291,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedOutput.includes('  Gate: prepare-reviewer-launch'));
         assert.ok(capturedOutput.includes('  Do: Launch one clean-context delegated reviewer'));
         assert.ok(capturedOutput.includes('  Command: none'));
-        assert.ok(capturedOutput.includes('  CommandReference: launch the reviewer from ReviewerLaunchInputArtifactPath'));
+        assert.ok(capturedOutput.includes('  CommandReference: launch the reviewer with reviewer-facing ReviewerLaunchInputArtifactPath'));
         assert.equal(capturedLogs.some((line) => line.startsWith('NextAction:')), false);
         assert.ok(capturedLogs.some((line) => line.includes('REVIEWER_LAUNCH_PREPARED: code')));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextSha256: ${fixture.reviewContextSha256}`)));
@@ -284,6 +310,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchInputArtifactPath: ${launchInputArtifactPath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchInputArtifactSha256: ${fileSha256ForTest(launchInputArtifactPath)}`)));
         assert.ok(capturedLogs.some((line) => line.includes('OneShotLaunchState: default_handoff_ready_not_review_evidence')));
+        assert.ok(capturedLogs.some((line) => line.includes('ReviewerLaunchInputArtifactRole: reviewer_facing_handoff_not_launcher_control_metadata')));
         assert.ok(capturedLogs.some((line) => line.includes('OneShotLaunchInstruction: After `prepare-reviewer-launch`, launch one clean-context delegated reviewer')));
         assert.ok(capturedLogs.some((line) => line.includes(`CopyPasteReviewerLaunchPromptSha256: ${copyPastePromptSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256')));

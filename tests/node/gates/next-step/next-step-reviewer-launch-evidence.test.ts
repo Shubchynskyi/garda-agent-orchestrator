@@ -457,6 +457,75 @@ describe('next-step reviewer launch evidence helpers', () => {
         assert.equal(timelineHasDelegatedReviewInvocationForCurrentContext(repoRoot, eventsRoot(repoRoot), TASK_ID, state), false);
     });
 
+    it('rejects launched artifact-path evidence that points at launcher control metadata', () => {
+        const repoRoot = makeTempRepo();
+        const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${REVIEW_TYPE}-review-context.json`);
+        writeJson(contextPath, { task_id: TASK_ID, review_type: REVIEW_TYPE });
+        const { launchArtifactPath, preparedLaunchEventSha256, routingEventSha256 } = seedPreparedLaunchArtifact(repoRoot, contextPath);
+        const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        const contextSha256 = fileSha256(contextPath);
+        const reviewerLaunchInputArtifactSha256 = String(preparedArtifact.reviewer_launch_input_artifact_sha256);
+        const copyPastePrompt = `Delegated ${REVIEW_TYPE} reviewer launch prompt for ${TASK_ID}.`;
+        const copyPastePromptSha256 = sha256Text(copyPastePrompt);
+        const delegationStartedAtUtc = '2026-06-01T00:00:01.000Z';
+        const launchCompletedAtUtc = '2026-06-01T00:00:12.000Z';
+        writeJson(launchArtifactPath, {
+            ...preparedArtifact,
+            evidence_type: 'delegated_reviewer_launch',
+            attestation_state: 'launched',
+            launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-provider-invocation',
+            delegation_started_at_utc: delegationStartedAtUtc,
+            launched_at_utc: delegationStartedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc,
+            copy_paste_reviewer_launch_prompt: copyPastePrompt,
+            copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_artifact_path: launchArtifactPath,
+            launch_input_sha256: reviewerLaunchInputArtifactSha256,
+            launch_input_artifact_sha256: reviewerLaunchInputArtifactSha256,
+            prepared_reviewer_launch_artifact_sha256: reviewerLaunchInputArtifactSha256,
+            fork_context: false
+        });
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_STARTED', {
+            task_id: TASK_ID,
+            review_type: REVIEW_TYPE,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: REVIEWER_IDENTITY,
+            reviewer_identity: REVIEWER_IDENTITY,
+            review_context_sha256: contextSha256,
+            routing_event_sha256: routingEventSha256,
+            provider_invocation_id: 'test-provider-invocation',
+            delegation_started_at_utc: delegationStartedAtUtc,
+            launched_at_utc: delegationStartedAtUtc
+        });
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_COMPLETED', {
+            task_id: TASK_ID,
+            review_type: REVIEW_TYPE,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: REVIEWER_IDENTITY,
+            reviewer_identity: REVIEWER_IDENTITY,
+            review_context_sha256: contextSha256,
+            routing_event_sha256: routingEventSha256,
+            reviewer_launch_artifact_sha256: fileSha256(launchArtifactPath),
+            provider_invocation_id: 'test-provider-invocation',
+            delegation_started_at_utc: delegationStartedAtUtc,
+            launched_at_utc: delegationStartedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc
+        });
+
+        const state = makeReviewState(contextPath, {
+            artifactExists: true,
+            receiptExists: true,
+            ready: true
+        });
+
+        assert.equal(
+            getCurrentReviewerLaunchArtifactEvidenceForInvocation(repoRoot, eventsRoot(repoRoot), TASK_ID, state).state,
+            'missing_or_invalid'
+        );
+    });
+
     it('ignores launch artifact paths outside the review scratch trust boundary', () => {
         const repoRoot = makeTempRepo();
         const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${REVIEW_TYPE}-review-context.json`);

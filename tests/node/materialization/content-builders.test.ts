@@ -666,6 +666,9 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result.includes(REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION));
         assert.ok(result.includes(REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION));
         assert.ok(result.includes(REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION));
+        assert.ok(result.includes('Codex (delegation-capable): launch clean-context reviewers via multi_agent_v1.spawn_agent with fork_context=false'));
+        assert.ok(result.includes('reviewer-facing CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath'));
+        assert.ok(result.includes('not ReviewerLaunchArtifactPath control metadata'));
     });
 
     it('keeps legacy same_agent_fallback wording out of compact provider bridges too', () => {

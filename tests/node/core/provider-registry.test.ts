@@ -81,6 +81,15 @@ describe('provider-registry: internal consistency', () => {
         }
     });
 
+    it('Codex reviewer launch guidance names the real subagent handoff contract', () => {
+        const codex = getProviderEntryById('Codex');
+        assert.ok(codex);
+        assert.ok(codex.delegatedReviewerLaunchInstruction?.includes('multi_agent_v1.spawn_agent'));
+        assert.ok(codex.delegatedReviewerLaunchInstruction?.includes('fork_context=false'));
+        assert.ok(codex.delegatedReviewerLaunchInstruction?.includes('reviewer-facing CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath'));
+        assert.ok(codex.delegatedReviewerLaunchInstruction?.includes('not ReviewerLaunchArtifactPath control metadata'));
+    });
+
     it('registry entries are deeply frozen and immutable', () => {
         const entries = getProviderEntries();
         assert.ok(Object.isFrozen(entries), 'entries array must be frozen');

@@ -42,6 +42,7 @@ export interface ReviewRoutingLaunchHandlerDependencies {
     buildCopyPasteReviewerLaunchPrompt: typeof import('../index').buildCopyPasteReviewerLaunchPrompt;
     buildRecordReviewInvocationCommand: typeof import('../index').buildRecordReviewInvocationCommand;
     buildReviewerLaunchBindingSha256: typeof import('../index').buildReviewerLaunchBindingSha256;
+    buildReviewerLaunchInputHandoffArtifact: typeof import('../index').buildReviewerLaunchInputHandoffArtifact;
     COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE: typeof import('../index').COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE;
     findMatchingRoutingEvent: typeof import('../index').findMatchingRoutingEvent;
     getCurrentPreparedReviewerLaunchMismatches: typeof import('../index').getCurrentPreparedReviewerLaunchMismatches;

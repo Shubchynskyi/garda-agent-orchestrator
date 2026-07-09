@@ -1077,7 +1077,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('invocation=blocked until launch artifact'));
         assert.ok(result.reason.includes('ProviderLaunchTarget:'));
         assert.ok(result.reason.includes('launch clean-context reviewers'));
-        assert.ok(result.reason.includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath'));
+        assert.ok(result.reason.includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or reviewer-facing ReviewerLaunchInputArtifactPath'));
         assertNoDefaultReviewerReservationGuidance(`${result.reason}\n${result.commands.map((entry) => entry.command).join('\n')}`);
         assert.equal(result.commands[0].label, 'Prepare delegated reviewer launch metadata');
         assert.equal(result.commands[0].command.includes('--reviewer-identity'), false);
@@ -1146,7 +1146,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'record-reviewer-delegation-started');
         assert.ok(result.reason.includes('launch metadata'));
-        assert.ok(result.reason.includes('Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff'));
+        assert.ok(result.reason.includes('Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or reviewer-facing ReviewerLaunchInputArtifactPath as an opaque handoff'));
         assert.ok(result.reason.includes('pass the ReviewerLaunchInputArtifactSha256 value to the CLI flag --launch-input-sha256'));
         assert.ok(result.reason.includes('do not invent a --launch-input-artifact-sha256 flag'));
         assert.ok(result.reason.includes('Do not reconstruct reviewer prompts from memory'));
@@ -1156,6 +1156,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('ReviewerOneShotLaunchHint: launch a fresh delegated reviewer once with the exact opaque handoff'));
         assert.ok(result.reason.includes(`ReviewerLaunchInputArtifactPath: ${launchInputArtifactPath.replace(/\\/g, '/')}`));
         assert.ok(result.reason.includes(`launch_input_sha256=${fileSha256(launchInputArtifactPath)}`));
+        assert.ok(result.reason.includes('ReviewerLaunchArtifactPath is main-agent control metadata'));
         assert.equal(result.reason.includes('this handshake is not review evidence'), false);
         assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('Launch a real subagent using built-in tools'));

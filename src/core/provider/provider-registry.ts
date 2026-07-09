@@ -190,7 +190,7 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         reviewerLaunchLabel: 'Codex',
         entrypointFile: 'AGENTS.md',
         reviewerCapabilityTier: 'delegation_required',
-        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via sub-agents with isolated context.',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via multi_agent_v1.spawn_agent with fork_context=false, passing the reviewer-facing CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath (not ReviewerLaunchArtifactPath control metadata).',
         bridge: null,
         environmentDetection: {
             markers: ['CODEX_THREAD_ID', 'CODEX_HOME'],

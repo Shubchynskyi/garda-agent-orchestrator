@@ -137,7 +137,7 @@ export function buildReviewerLaunchCompletionHint(): string {
     return [
         'Completion hint:',
         '- Start from the prepared reviewer-launch artifact; do not search for or recompute its hashes.',
-        '- Attest the exact launch input: copy_paste_prompt uses CopyPasteReviewerLaunchPromptSha256; launch_artifact_path uses ReviewerLaunchInputArtifactPath and ReviewerLaunchInputArtifactSha256. The CLI flag is --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields.',
+        '- Attest the exact launch input: copy_paste_prompt uses CopyPasteReviewerLaunchPromptSha256; launch_artifact_path uses the reviewer-facing ReviewerLaunchInputArtifactPath and ReviewerLaunchInputArtifactSha256. ReviewerLaunchArtifactPath remains main-agent control metadata. The CLI flag is --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields.',
         `- Required completed-launch updates: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}.`,
         `- Trust boundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`
     ].join('\n');

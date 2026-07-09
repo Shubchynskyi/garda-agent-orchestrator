@@ -28,6 +28,39 @@ export interface ReviewerHandoffBindings {
     evidenceManifestSha256: string;
 }
 
+export interface ReviewerLaunchPromptOptions {
+    repoRoot: string;
+    reviewType: string;
+    rolePromptPath: string | null;
+    rolePromptSha256: string | null;
+    reviewerPromptPath: string;
+    reviewerPromptSha256: string;
+    promptTemplatePath: string;
+    promptTemplateSha256: string;
+    outputTemplatePath: string;
+    outputTemplateSha256: string;
+    evidenceManifestPath: string;
+    evidenceManifestSha256: string;
+    reviewOutputPath: string;
+}
+
+export interface ReviewerLaunchInputHandoffArtifactOptions extends ReviewerLaunchPromptOptions {
+    taskId: string;
+    reviewerExecutionMode: 'delegated_subagent';
+    reviewerIdentity: string;
+    reviewContextPath: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+    routingEventTaskSequence: number;
+    launchBindingSha256: string;
+    reviewOutputAttemptSha256: string;
+    reviewTreeStateSha256: string | null;
+    copyPasteReviewerLaunchPromptSha256: string;
+    preparedLaunchEventSha256: string;
+    preparedLaunchEventTaskSequence: number | null;
+    localTrustBoundary: string;
+}
+
 function quoteReviewerLaunchCommandValue(value: string): string {
     return `'${value.replace(/\\/g, '/').replace(/'/g, `''`)}'`;
 }
@@ -192,21 +225,7 @@ export function resolveReviewerDraftOutputPath(
     return path.join(path.dirname(reviewerLaunchArtifactPath), `review-output${attemptSuffix}.md`);
 }
 
-export function buildCopyPasteReviewerLaunchPrompt(options: {
-    repoRoot: string;
-    reviewType: string;
-    rolePromptPath: string | null;
-    rolePromptSha256: string | null;
-    reviewerPromptPath: string;
-    reviewerPromptSha256: string;
-    promptTemplatePath: string;
-    promptTemplateSha256: string;
-    outputTemplatePath: string;
-    outputTemplateSha256: string;
-    evidenceManifestPath: string;
-    evidenceManifestSha256: string;
-    reviewOutputPath: string;
-}): string {
+export function buildCopyPasteReviewerLaunchPrompt(options: ReviewerLaunchPromptOptions): string {
     const lines = [
         `You are the delegated ${options.reviewType} reviewer for this Garda task.`,
         `Repository: ${options.repoRoot}`
@@ -233,6 +252,56 @@ export function buildCopyPasteReviewerLaunchPrompt(options: {
         'Do not replace the required verdict token with a summary sentence.'
     );
     return lines.join('\n');
+}
+
+export function buildReviewerLaunchInputHandoffArtifact(
+    options: ReviewerLaunchInputHandoffArtifactOptions
+): Record<string, unknown> {
+    const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt(options);
+    return {
+        reviewer_handoff_contract: `You are the delegated ${options.reviewType} reviewer for this Garda task.`,
+        schema_version: 1,
+        artifact_type: 'delegated_reviewer_handoff',
+        handoff_role: 'delegated_reviewer',
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        reviewer_execution_mode: options.reviewerExecutionMode,
+        reviewer_identity: options.reviewerIdentity,
+        repository: options.repoRoot,
+        review_context_path: options.reviewContextPath,
+        review_context_sha256: options.reviewContextSha256,
+        routing_event_sha256: options.routingEventSha256,
+        routing_event_task_sequence: options.routingEventTaskSequence,
+        launch_binding_sha256: options.launchBindingSha256,
+        prepared_launch_event_sha256: options.preparedLaunchEventSha256,
+        prepared_launch_event_task_sequence: options.preparedLaunchEventTaskSequence,
+        ...(options.rolePromptPath
+            ? {
+                role_prompt_path: options.rolePromptPath,
+                role_prompt_sha256: options.rolePromptSha256
+            }
+            : {}),
+        prompt_template_path: options.promptTemplatePath,
+        prompt_template_sha256: options.promptTemplateSha256,
+        reviewer_prompt_path: options.reviewerPromptPath,
+        reviewer_prompt_sha256: options.reviewerPromptSha256,
+        evidence_manifest_path: options.evidenceManifestPath,
+        evidence_manifest_sha256: options.evidenceManifestSha256,
+        output_template_path: options.outputTemplatePath,
+        output_template_sha256: options.outputTemplateSha256,
+        review_output_path: options.reviewOutputPath,
+        review_output_attempt_sha256: options.reviewOutputAttemptSha256,
+        review_tree_state_sha256: options.reviewTreeStateSha256,
+        copy_paste_reviewer_launch_prompt: copyPasteReviewerLaunchPrompt,
+        copy_paste_reviewer_launch_prompt_sha256: options.copyPasteReviewerLaunchPromptSha256,
+        reviewer_only_instructions: [
+            'Act as the delegated reviewer named by this artifact.',
+            'Do not launch another reviewer or subagent.',
+            'Do not run main-agent launch, attestation, completion, or routing gate commands.',
+            'Write the completed review report to review_output_path when file writing is available, or return it in the final response.'
+        ],
+        local_trust_boundary: options.localTrustBoundary
+    };
 }
 
 export function printCopyPasteReviewerLaunchPrompt(prompt: string): void {

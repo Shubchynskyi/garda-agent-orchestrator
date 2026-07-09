@@ -545,7 +545,7 @@ async function recordReviewerDelegationStartedForTest(options: {
 
 function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void {
     const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
-    const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
+    const launchInputArtifact = reviewerLaunchInputArtifactForTest(launchArtifactPath, preparedArtifact);
     const normalizedLaunchArtifactPath = launchArtifactPath.replace(/\\/g, '/');
     const orchestratorRootMarker = '/garda-agent-orchestrator/';
     const markerIndex = normalizedLaunchArtifactPath.indexOf(orchestratorRootMarker);
@@ -573,10 +573,10 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
         launch_tool: 'test-subagent-spawn',
         provider_invocation_id: 'test-invocation-265',
         launch_input_mode: 'launch_artifact_path',
-        launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
-        launch_input_sha256: preparedLaunchArtifactSha256,
-        launch_input_artifact_sha256: preparedLaunchArtifactSha256,
-        prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+        launch_input_artifact_path: launchInputArtifact.normalizedPath,
+        launch_input_sha256: launchInputArtifact.sha256,
+        launch_input_artifact_sha256: launchInputArtifact.sha256,
+        prepared_reviewer_launch_artifact_sha256: launchInputArtifact.sha256,
         launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedArtifact.copy_paste_reviewer_launch_prompt_sha256,
         delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
         launched_at_utc: '2026-04-28T00:00:00.000Z',
@@ -633,11 +633,31 @@ function fileSha256ForTest(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
+function reviewerLaunchInputArtifactForTest(
+    launchArtifactPath: string,
+    preparedArtifact: Record<string, unknown> = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>
+): { path: string; normalizedPath: string; sha256: string } {
+    const rawPath = String(preparedArtifact.reviewer_launch_input_artifact_path || '').trim();
+    assert.ok(rawPath, 'Prepared artifact should include reviewer_launch_input_artifact_path');
+    const inputArtifactPath = path.isAbsolute(rawPath)
+        ? rawPath
+        : path.join(path.dirname(launchArtifactPath), rawPath);
+    const pinnedSha256 = String(preparedArtifact.reviewer_launch_input_artifact_sha256 || '').trim();
+    const actualSha256 = fileSha256ForTest(inputArtifactPath);
+    assert.equal(pinnedSha256 || actualSha256, actualSha256);
+    return {
+        path: inputArtifactPath,
+        normalizedPath: inputArtifactPath.replace(/\\/g, '/'),
+        sha256: actualSha256
+    };
+}
+
 function launchArtifactInputArgsForTest(launchArtifactPath: string): string[] {
+    const launchInputArtifact = reviewerLaunchInputArtifactForTest(launchArtifactPath);
     return [
         '--launch-input-mode', 'launch_artifact_path',
-        '--launch-input-artifact-path', launchArtifactPath,
-        '--launch-input-sha256', fileSha256ForTest(launchArtifactPath)
+        '--launch-input-artifact-path', launchInputArtifact.path,
+        '--launch-input-sha256', launchInputArtifact.sha256
     ];
 }
 
@@ -683,6 +703,7 @@ export {
     completeReviewerLaunchArtifactForTest,
     fileSha256ForTest,
     launchArtifactInputArgsForTest,
+    reviewerLaunchInputArtifactForTest,
     TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
     TEST_REVIEW_LAUNCHED_AT_UTC,
     TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,

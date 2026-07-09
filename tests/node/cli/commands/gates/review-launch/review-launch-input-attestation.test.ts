@@ -64,8 +64,22 @@ function makePreparedLaunchArtifact(repoRoot: string, options: { copyPastePrompt
         copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
         reviewer_launch_input_artifact_path: inputArtifactPath
     };
+    const reviewerHandoffArtifact = {
+        reviewer_handoff_contract: 'You are the delegated code reviewer for this Garda task.',
+        schema_version: 1,
+        artifact_type: 'delegated_reviewer_handoff',
+        handoff_role: 'delegated_reviewer',
+        task_id: 'T-INPUT',
+        review_type: 'code',
+        copy_paste_reviewer_launch_prompt: copyPastePrompt,
+        copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+        reviewer_only_instructions: [
+            'Act as the delegated reviewer named by this artifact.',
+            'Do not launch another reviewer or subagent.'
+        ]
+    };
     writeJson(launchArtifactPath, preparedArtifact);
-    writeJson(inputArtifactPath, preparedArtifact);
+    writeJson(inputArtifactPath, reviewerHandoffArtifact);
     const pinnedInputArtifactSha256 = fileSha256(inputArtifactPath);
     const preparedArtifactWithPinnedInput = {
         ...preparedArtifact,
@@ -146,6 +160,27 @@ describe('review launch input attestation helpers', () => {
         assert.equal(attestation.sha256, pinnedInputArtifactSha256);
         assert.equal(attestation.artifactPath, prepared.inputArtifactPath);
         assert.equal(attestation.artifactSha256, pinnedInputArtifactSha256);
+        const inputArtifact = JSON.parse(fs.readFileSync(prepared.inputArtifactPath, 'utf8'));
+        assert.equal(inputArtifact.artifact_type, 'delegated_reviewer_handoff');
+        assert.equal(inputArtifact.next_action, undefined);
+    });
+
+    it('rejects launcher control artifact path as reviewer launch input evidence', () => {
+        const repoRoot = makeTempRepo();
+        const prepared = makePreparedLaunchArtifact(repoRoot);
+
+        assert.throws(
+            () => resolveReviewerLaunchInputAttestation({
+                repoRoot,
+                launchArtifactPath: prepared.launchArtifactPath,
+                preparedArtifact: prepared.preparedArtifact,
+                preparedLaunchArtifactSha256: prepared.preparedArtifactSha256,
+                rawMode: 'launch_artifact_path',
+                rawSha256: prepared.preparedArtifactSha256,
+                rawArtifactPath: path.relative(repoRoot, prepared.launchArtifactPath)
+            }),
+            /ReviewerLaunchArtifactPath control metadata is not valid reviewer launch input/
+        );
     });
 
     it('rejects tampered reviewer-launch-input artifact path evidence after prepare', () => {

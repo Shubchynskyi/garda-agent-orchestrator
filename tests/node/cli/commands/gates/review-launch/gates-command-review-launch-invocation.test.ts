@@ -18,6 +18,7 @@ import {
     prepareReviewerLaunchForTest,
     readTaskTimelineEvents,
     recordReviewerDelegationStartedForTest,
+    reviewerLaunchInputArtifactForTest,
     reviewContextScopedDiffFixture,
     runCliMainWithHandling,
     runCliWithCapturedOutput,
@@ -142,7 +143,7 @@ describe('cli/commands/gates review launch invocation', () => {
             attestationSource: 'test_provider_controller'
         });
         const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
-        const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
+        const launchInputArtifact = reviewerLaunchInputArtifactForTest(launchArtifactPath, preparedLaunchArtifact);
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
             ...preparedLaunchArtifact,
             evidence_type: 'delegated_reviewer_launch',
@@ -151,10 +152,10 @@ describe('cli/commands/gates review launch invocation', () => {
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             launch_input_mode: 'launch_artifact_path',
-            launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
-            launch_input_sha256: preparedLaunchArtifactSha256,
-            launch_input_artifact_sha256: preparedLaunchArtifactSha256,
-            prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+            launch_input_artifact_path: launchInputArtifact.normalizedPath,
+            launch_input_sha256: launchInputArtifact.sha256,
+            launch_input_artifact_sha256: launchInputArtifact.sha256,
+            prepared_reviewer_launch_artifact_sha256: launchInputArtifact.sha256,
             launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
             delegation_started_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
             launched_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
@@ -208,7 +209,7 @@ describe('cli/commands/gates review launch invocation', () => {
         assert.equal(invocationDetails?.reviewer_launch_tool, 'test-subagent-spawn');
         assert.equal(invocationDetails?.provider_invocation_id, 'test-invocation-123');
         assert.equal(invocationDetails?.launch_input_mode, 'launch_artifact_path');
-        assert.equal(invocationDetails?.launch_input_sha256, preparedLaunchArtifactSha256);
+        assert.equal(invocationDetails?.launch_input_sha256, launchInputArtifact.sha256);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -247,6 +248,78 @@ describe('cli/commands/gates review launch invocation', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-invocation rejects completed launch artifacts that use launcher control metadata as launch input', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-958-invocation-control-input';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-control-input',
+            attestationSource: 'test_provider_controller'
+        });
+        const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        const reviewerInputSha256 = String(preparedArtifact.reviewer_launch_input_artifact_sha256);
+        fs.writeFileSync(launchArtifactPath, JSON.stringify({
+            ...preparedArtifact,
+            evidence_type: 'delegated_reviewer_launch',
+            attestation_state: 'launched',
+            attestation_source: 'test_provider_controller',
+            launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-invocation-control-input',
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
+            launch_input_sha256: reviewerInputSha256,
+            launch_input_artifact_sha256: reviewerInputSha256,
+            prepared_reviewer_launch_artifact_sha256: reviewerInputSha256,
+            launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedArtifact.copy_paste_reviewer_launch_prompt_sha256,
+            delegation_started_at_utc: preparedArtifact.delegation_started_at_utc,
+            launched_at_utc: preparedArtifact.delegation_started_at_utc,
+            launch_completed_at_utc: TEST_LAUNCH_COMPLETED_AT_UTC,
+            fork_context: false
+        }, null, 2) + '\n', 'utf8');
+        appendReviewerLaunchCompletedForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextSha256: fixture.reviewContextSha256,
+            routingEventSha256: fixture.routingEventSha256,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-control-input',
+            delegationStartedAtUtc: String(preparedArtifact.delegation_started_at_utc)
+        });
+
+        const invocation = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(invocation.exitCode, 0);
+        assert.ok(
+            invocation.errors.some((line) => line.includes('ReviewerLaunchArtifactPath control metadata is not valid reviewer launch input')),
+            invocation.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-invocation rejects launched metadata without delegation-started evidence', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-776-F6-invocation-no-delegation-start';
@@ -258,7 +331,7 @@ describe('cli/commands/gates review launch invocation', () => {
             launchArtifactPath: fixture.launchArtifactPath
         });
         const preparedArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
-        const preparedLaunchArtifactSha256 = fileSha256ForTest(fixture.launchArtifactPath);
+        const launchInputArtifact = reviewerLaunchInputArtifactForTest(fixture.launchArtifactPath, preparedArtifact);
         fs.writeFileSync(fixture.launchArtifactPath, JSON.stringify({
             ...preparedArtifact,
             evidence_type: 'delegated_reviewer_launch',
@@ -267,10 +340,10 @@ describe('cli/commands/gates review launch invocation', () => {
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-no-delegation-start',
             launch_input_mode: 'launch_artifact_path',
-            launch_input_artifact_path: fixture.launchArtifactPath.replace(/\\/g, '/'),
-            launch_input_sha256: preparedLaunchArtifactSha256,
-            launch_input_artifact_sha256: preparedLaunchArtifactSha256,
-            prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+            launch_input_artifact_path: launchInputArtifact.normalizedPath,
+            launch_input_sha256: launchInputArtifact.sha256,
+            launch_input_artifact_sha256: launchInputArtifact.sha256,
+            prepared_reviewer_launch_artifact_sha256: launchInputArtifact.sha256,
             launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedArtifact.copy_paste_reviewer_launch_prompt_sha256,
             launched_at_utc: '2026-04-28T00:00:00.000Z',
             fork_context: false
@@ -494,7 +567,7 @@ describe('cli/commands/gates review launch invocation', () => {
             attestationSource: 'test_provider_controller'
         });
         const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
-        const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
+        const launchInputArtifact = reviewerLaunchInputArtifactForTest(launchArtifactPath, preparedLaunchArtifact);
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
             ...preparedLaunchArtifact,
             evidence_type: 'delegated_reviewer_launch',
@@ -503,10 +576,10 @@ describe('cli/commands/gates review launch invocation', () => {
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             launch_input_mode: 'launch_artifact_path',
-            launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
-            launch_input_sha256: preparedLaunchArtifactSha256,
-            launch_input_artifact_sha256: preparedLaunchArtifactSha256,
-            prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+            launch_input_artifact_path: launchInputArtifact.normalizedPath,
+            launch_input_sha256: launchInputArtifact.sha256,
+            launch_input_artifact_sha256: launchInputArtifact.sha256,
+            prepared_reviewer_launch_artifact_sha256: launchInputArtifact.sha256,
             launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
             delegation_started_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
             launched_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
@@ -575,7 +648,7 @@ describe('cli/commands/gates review launch invocation', () => {
             attestationSource: 'test_provider_controller'
         });
         const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
-        const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
+        const launchInputArtifact = reviewerLaunchInputArtifactForTest(launchArtifactPath, preparedLaunchArtifact);
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
             ...preparedLaunchArtifact,
             evidence_type: 'delegated_reviewer_launch',
@@ -584,10 +657,10 @@ describe('cli/commands/gates review launch invocation', () => {
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             launch_input_mode: 'launch_artifact_path',
-            launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
-            launch_input_sha256: preparedLaunchArtifactSha256,
-            launch_input_artifact_sha256: preparedLaunchArtifactSha256,
-            prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+            launch_input_artifact_path: launchInputArtifact.normalizedPath,
+            launch_input_sha256: launchInputArtifact.sha256,
+            launch_input_artifact_sha256: launchInputArtifact.sha256,
+            prepared_reviewer_launch_artifact_sha256: launchInputArtifact.sha256,
             launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
             delegation_started_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
             launched_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
@@ -667,7 +740,7 @@ describe('cli/commands/gates review launch invocation', () => {
                 }
 
                 const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
-                const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
+                const launchInputArtifact = reviewerLaunchInputArtifactForTest(launchArtifactPath, preparedLaunchArtifact);
                 fs.writeFileSync(launchArtifactPath, JSON.stringify({
                     ...preparedLaunchArtifact,
                     evidence_type: 'delegated_reviewer_launch',
@@ -676,10 +749,10 @@ describe('cli/commands/gates review launch invocation', () => {
                     launch_tool: 'test-subagent-spawn',
                     provider_invocation_id: 'test-invocation-123',
                     launch_input_mode: 'launch_artifact_path',
-                    launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
-                    launch_input_sha256: preparedLaunchArtifactSha256,
-                    launch_input_artifact_sha256: preparedLaunchArtifactSha256,
-                    prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+                    launch_input_artifact_path: launchInputArtifact.normalizedPath,
+                    launch_input_sha256: launchInputArtifact.sha256,
+                    launch_input_artifact_sha256: launchInputArtifact.sha256,
+                    prepared_reviewer_launch_artifact_sha256: launchInputArtifact.sha256,
                     launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
                     launched_at_utc: '2026-04-28T00:00:00.000Z',
                     fork_context: false,

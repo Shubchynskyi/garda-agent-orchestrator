@@ -46,6 +46,7 @@ export interface PrepareReviewerLaunchHandlerDependencies {
     buildCopyPasteReviewerLaunchPrompt: typeof import('../index').buildCopyPasteReviewerLaunchPrompt;
     buildRecordReviewInvocationCommand: typeof import('../index').buildRecordReviewInvocationCommand;
     buildReviewerLaunchBindingSha256: typeof import('../index').buildReviewerLaunchBindingSha256;
+    buildReviewerLaunchInputHandoffArtifact: typeof import('../index').buildReviewerLaunchInputHandoffArtifact;
     COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE: typeof import('../index').COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE;
     findMatchingRoutingEvent: typeof import('../index').findMatchingRoutingEvent;
     getCurrentPreparedReviewerLaunchMismatches: typeof import('../index').getCurrentPreparedReviewerLaunchMismatches;
@@ -81,6 +82,7 @@ export function createPrepareReviewerLaunchHandler(deps: PrepareReviewerLaunchHa
         buildCopyPasteReviewerLaunchPrompt,
         buildRecordReviewInvocationCommand,
         buildReviewerLaunchBindingSha256,
+        buildReviewerLaunchInputHandoffArtifact,
         COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
         findMatchingRoutingEvent,
         getCurrentPreparedReviewerLaunchMismatches,
@@ -300,6 +302,39 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
             reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
         });
+        const copyPasteReviewerLaunchPromptSha256 = stringSha256(copyPasteReviewerLaunchPrompt);
+        const expectedReviewerLaunchInputArtifact = buildReviewerLaunchInputHandoffArtifact({
+            repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+            taskId,
+            reviewType,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            reviewContextPath: toReviewerHandoffAbsolutePath(repoRoot, contextPath),
+            reviewContextSha256: contextSha256,
+            routingEventSha256: routingEventProvenance.event_sha256,
+            routingEventTaskSequence: routingEventProvenance.task_sequence,
+            launchBindingSha256,
+            rolePromptPath: handoffBindings.rolePromptPath
+                ? toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)
+                : null,
+            rolePromptSha256: handoffBindings.rolePromptSha256,
+            reviewerPromptPath: toReviewerHandoffAbsolutePath(repoRoot, promptPath),
+            reviewerPromptSha256,
+            promptTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath),
+            promptTemplateSha256: handoffBindings.promptTemplateSha256,
+            outputTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath),
+            outputTemplateSha256: handoffBindings.outputTemplateSha256,
+            evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
+            evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
+            reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
+            reviewOutputAttemptSha256,
+            reviewTreeStateSha256: reviewTreeStateSha256 || null,
+            copyPasteReviewerLaunchPromptSha256,
+            preparedLaunchEventSha256: getStringField(existingArtifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256').toLowerCase(),
+            preparedLaunchEventTaskSequence: Number(existingArtifact.prepared_launch_event_task_sequence ?? existingArtifact.preparedLaunchEventTaskSequence ?? 0) || null,
+            localTrustBoundary: LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY
+        });
+        const expectedLaunchInputArtifactSha256 = stringSha256(`${JSON.stringify(expectedReviewerLaunchInputArtifact, null, 2)}\n`);
         const existingLaunchInputArtifactSha256 = fileSha256(launchInputArtifactPath) || '';
         const recordReviewerDelegationStartedCommand = buildRecordReviewerDelegationStartedCommandTemplate({
             repoRoot,
@@ -338,6 +373,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             copyPasteReviewerLaunchPromptSha256: stringSha256(copyPasteReviewerLaunchPrompt),
             reviewTreeStateSha256: reviewTreeStateSha256 || null,
             launchBindingSha256,
+            reviewerLaunchInputArtifactSha256: expectedLaunchInputArtifactSha256,
             recordReviewerDelegationStartedCommand,
             completeReviewerLaunchCommand,
             routingEventSequence: routingEvent.sequence,
@@ -354,7 +390,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
                 gate: 'prepare-reviewer-launch',
                 action: 'Launch one clean-context delegated reviewer',
                 reason: `Current reviewer launch metadata is already prepared for '${reviewType}'.`,
-                commandReference: 'launch the reviewer from ReviewerLaunchInputArtifactPath, then run RecordReviewerDelegationStartedCommand below',
+                commandReference: 'launch the reviewer with reviewer-facing ReviewerLaunchInputArtifactPath, then run RecordReviewerDelegationStartedCommand below',
                 detailsPath: launchArtifactPath,
                 detailsHint: 'Current launch artifact paths, hashes, and copy-paste reviewer instructions are listed below.'
             }).join('\n'));
@@ -602,7 +638,38 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         prepared_launch_event_task_sequence: preparedLaunchEventTaskSequence
     };
     writeReviewArtifactJson(launchArtifactPath, preparedArtifactWithEvent);
-    fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
+    const reviewerLaunchInputArtifact = buildReviewerLaunchInputHandoffArtifact({
+        repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+        taskId,
+        reviewType,
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewContextPath: toReviewerHandoffAbsolutePath(repoRoot, contextPath),
+        reviewContextSha256: contextSha256,
+        routingEventSha256: routingEventProvenance.event_sha256,
+        routingEventTaskSequence: routingEventProvenance.task_sequence,
+        launchBindingSha256,
+        rolePromptPath: handoffBindings.rolePromptPath
+            ? toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)
+            : null,
+        rolePromptSha256: handoffBindings.rolePromptSha256,
+        reviewerPromptPath: toReviewerHandoffAbsolutePath(repoRoot, promptPath),
+        reviewerPromptSha256,
+        promptTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath),
+        promptTemplateSha256: handoffBindings.promptTemplateSha256,
+        outputTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath),
+        outputTemplateSha256: handoffBindings.outputTemplateSha256,
+        evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
+        evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
+        reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath),
+        reviewOutputAttemptSha256,
+        reviewTreeStateSha256: reviewTreeStateSha256 || null,
+        copyPasteReviewerLaunchPromptSha256,
+        preparedLaunchEventSha256,
+        preparedLaunchEventTaskSequence,
+        localTrustBoundary: LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY
+    });
+    writeReviewArtifactJson(launchInputArtifactPath, reviewerLaunchInputArtifact);
     const pinnedReviewerLaunchInputArtifactSha256 = fileSha256(launchInputArtifactPath) || '';
     if (!pinnedReviewerLaunchInputArtifactSha256) {
         throw new Error('Reviewer launch input artifact must be hashable immediately after prepare-reviewer-launch.');
@@ -669,7 +736,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         gate: 'prepare-reviewer-launch',
         action: 'Launch one clean-context delegated reviewer',
         reason: `Reviewer launch metadata prepared for '${reviewType}'.`,
-        commandReference: 'launch the reviewer from ReviewerLaunchInputArtifactPath, then run RecordReviewerDelegationStartedCommand below',
+        commandReference: 'launch the reviewer with reviewer-facing ReviewerLaunchInputArtifactPath, then run RecordReviewerDelegationStartedCommand below',
         detailsPath: launchArtifactPath,
         detailsHint: 'Launch artifact paths, hashes, and copy-paste reviewer instructions are listed below.'
     }).join('\n'));

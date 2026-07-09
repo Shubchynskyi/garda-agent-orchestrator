@@ -41,6 +41,7 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
     copyPasteReviewerLaunchPromptSha256?: string | null;
     reviewTreeStateSha256: string | null;
     launchBindingSha256: string;
+    reviewerLaunchInputArtifactSha256?: string | null;
     recordReviewerDelegationStartedCommand?: string | null;
     completeReviewerLaunchCommand?: string | null;
     routingEventSequence: number;
@@ -120,12 +121,20 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
             'reviewerLaunchInputArtifactSha256'
         ).toLowerCase();
         const launchInputArtifactSha256 = fileSha256(expectedLaunchInputArtifactPath) || '';
+        const expectedReviewerLaunchInputArtifactSha256 = String(options.reviewerLaunchInputArtifactSha256 || '')
+            .trim()
+            .toLowerCase();
         if (!launchInputArtifactSha256) {
             mismatches.push('reviewer launch input artifact could not be hashed');
         } else if (!/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)) {
             mismatches.push('reviewer_launch_input_artifact_sha256 missing');
         } else if (launchInputArtifactSha256 !== pinnedInputArtifactSha256) {
             mismatches.push('reviewer launch input artifact sha256 mismatch');
+        } else if (
+            expectedReviewerLaunchInputArtifactSha256
+            && pinnedInputArtifactSha256 !== expectedReviewerLaunchInputArtifactSha256
+        ) {
+            mismatches.push('reviewer_launch_input_artifact_sha256 does not match current reviewer-facing handoff content');
         }
     }
     return mismatches;

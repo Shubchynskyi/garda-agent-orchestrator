@@ -18,6 +18,7 @@ export {
 export {
     buildCopyPasteReviewerLaunchPrompt,
     buildRecordReviewInvocationCommand,
+    buildReviewerLaunchInputHandoffArtifact,
     getReviewerScopedDiffHandoffPaths,
     getReviewTreeStateLaunchSummary,
     getReviewTreeStateSha256,
@@ -25,7 +26,9 @@ export {
     resolveProviderLaunchMetadata,
     resolveReviewerDraftOutputPath,
     resolveReviewerHandoffBindings,
-    type ReviewerHandoffBindings
+    type ReviewerHandoffBindings,
+    type ReviewerLaunchInputHandoffArtifactOptions,
+    type ReviewerLaunchPromptOptions
 } from '../launch/reviewer-handoff-support';
 export {
     buildReviewerLaunchBindingSha256,

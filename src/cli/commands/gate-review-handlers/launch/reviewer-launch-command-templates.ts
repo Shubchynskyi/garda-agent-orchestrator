@@ -52,12 +52,14 @@ function buildLaunchCommandCliPrefix(repoRoot: string): string {
 
 export function printReviewerLaunchHandoffLines(): void {
     console.log('OneShotLaunchState: default_handoff_ready_not_review_evidence');
+    console.log('ReviewerLaunchInputArtifactRole: reviewer_facing_handoff_not_launcher_control_metadata');
     console.log(`OneShotLaunchInstruction: ${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION}`);
 }
 
 export function buildReviewerLaunchNextAction(): string {
     return (
         `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
+        'ReviewerLaunchArtifactPath is main-agent control metadata; ReviewerLaunchInputArtifactPath is the reviewer-facing handoff. ' +
         'Do not reconstruct reviewer prompts from memory. ' +
         `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
         'Immediately run record-reviewer-delegation-started with the resolved provider reviewer identity and launch_input evidence, then run complete-reviewer-launch after reviewer completion.'
@@ -66,7 +68,8 @@ export function buildReviewerLaunchNextAction(): string {
 
 export function buildPreparedReviewerLaunchNextAction(handoffArtifactNames: string): string {
     return (
-        `Launch a fresh delegated reviewer once with ${handoffArtifactNames} as opaque handoff artifacts using the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath. ` +
+        `Launch a fresh delegated reviewer once with ${handoffArtifactNames} as opaque handoff artifacts using the exact CopyPasteReviewerLaunchPrompt or reviewer-facing ReviewerLaunchInputArtifactPath. ` +
+        'Use ReviewerLaunchArtifactPath only as main-agent control metadata, not as the clean-context reviewer prompt. ' +
         `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
         `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
         'Do not open or summarize the generated review context in the main agent. Then update only the ' +

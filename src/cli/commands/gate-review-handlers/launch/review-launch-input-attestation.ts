@@ -184,30 +184,27 @@ export function resolveReviewerLaunchInputAttestation(options: {
                     options.preparedArtifact
                 );
                 const normalizedResolvedArtifactPath = normalizePath(resolvedArtifactPath).toLowerCase();
-                const normalizedLaunchArtifactPath = normalizePath(options.launchArtifactPath).toLowerCase();
                 const normalizedPreparedInputArtifactPath = preparedInputArtifactPath
                     ? normalizePath(preparedInputArtifactPath).toLowerCase()
                     : '';
-                if (
-                    normalizedResolvedArtifactPath !== normalizedLaunchArtifactPath
-                    && normalizedResolvedArtifactPath !== normalizedPreparedInputArtifactPath
-                ) {
-                    violations.push('launch_input_artifact_path must match ReviewerLaunchInputArtifactPath or ReviewerLaunchArtifactPath');
+                if (!normalizedPreparedInputArtifactPath) {
+                    violations.push('reviewer_launch_input_artifact_path is required for launch_artifact_path attestation');
+                } else if (normalizedResolvedArtifactPath !== normalizedPreparedInputArtifactPath) {
+                    violations.push(
+                        'launch_input_artifact_path must match ReviewerLaunchInputArtifactPath; ' +
+                        'ReviewerLaunchArtifactPath control metadata is not valid reviewer launch input'
+                    );
                 } else {
                     launchInputArtifactPath = resolvedArtifactPath;
-                    if (normalizedResolvedArtifactPath === normalizedPreparedInputArtifactPath) {
-                        const pinnedInputArtifactSha256 = getPinnedReviewerLaunchInputArtifactSha256(
-                            options.preparedArtifact
+                    const pinnedInputArtifactSha256 = getPinnedReviewerLaunchInputArtifactSha256(
+                        options.preparedArtifact
+                    );
+                    if (!pinnedInputArtifactSha256 || !/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)) {
+                        violations.push(
+                            'reviewer_launch_input_artifact_sha256 is required for ReviewerLaunchInputArtifactPath attestation'
                         );
-                        if (!pinnedInputArtifactSha256 || !/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)) {
-                            violations.push(
-                                'reviewer_launch_input_artifact_sha256 is required for ReviewerLaunchInputArtifactPath attestation'
-                            );
-                        } else {
-                            expectedLaunchInputArtifactSha256 = pinnedInputArtifactSha256;
-                        }
                     } else {
-                        expectedLaunchInputArtifactSha256 = options.preparedLaunchArtifactSha256;
+                        expectedLaunchInputArtifactSha256 = pinnedInputArtifactSha256;
                     }
                 }
             }
@@ -237,7 +234,7 @@ export function resolveReviewerLaunchInputAttestation(options: {
             'Reviewer launch input attestation failed validation:\n' +
             violations.map((violation) => `- ${violation}`).join('\n') +
             '\n\n' +
-            'Pass the exact CopyPasteReviewerLaunchPrompt or generated ReviewerLaunchInputArtifactPath to the reviewer; ' +
+            'Pass the exact CopyPasteReviewerLaunchPrompt or generated reviewer-facing ReviewerLaunchInputArtifactPath to the reviewer; ' +
             'do not reconstruct reviewer launch prompts from memory.'
         );
     }
