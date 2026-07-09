@@ -14,6 +14,10 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
+import {
+    readCompileReadiness,
+    readPreflightWorkspaceReadiness
+} from '../../../../src/gates/next-step/next-step-compile-full-suite-readiness';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -657,6 +661,68 @@ afterEach(() => {
 });
 
 describe('gates/next-step preflight compile recovery', () => {
+    it('keeps compile readiness current through the split compatibility facade', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const readiness = readCompileReadiness(repoRoot, reviewsRoot(repoRoot), eventsRoot(repoRoot), TASK_ID, preflightPath);
+
+        assert.equal(readiness.ready, true);
+        assert.equal(readiness.reason, 'Compile gate evidence is current.');
+    });
+
+    it('keeps preflight workspace readiness stale when the materialized diff changes', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 3;\n', 'utf8');
+
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            allowDocsOnlyDelta: false
+        });
+
+        assert.equal(readiness.ready, false);
+        assert.match(readiness.reason, /Preflight scope is stale before compile/);
+        assert.match(readiness.reason, /scope_content_sha256/);
+    });
+
+    it('keeps planned-scope readiness waiting until the planned source diff materializes', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        const plannedPath = 'src/new-feature.ts';
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, [plannedPath]);
+        const preflight = {
+            task_id: TASK_ID,
+            detection_source: snapshot.detection_source,
+            mode: 'FULL_PATH',
+            scope_category: 'code',
+            metrics: {
+                changed_lines_total: snapshot.changed_lines_total,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            changed_files: [plannedPath],
+            required_reviews: {
+                code: true
+            }
+        };
+
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            plannedChangedFiles: [plannedPath],
+            allowDocsOnlyDelta: false
+        });
+
+        assert.equal(readiness.ready, false);
+        assert.equal(readiness.awaitingMaterializedPlannedScope, true);
+        assert.match(readiness.reason, /current git workspace has no materialized diff/);
+    });
+
     it('routes refreshed preflight after a closed cycle to restart-coherent-cycle before downstream gates', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
