@@ -27,6 +27,7 @@ import {
     buildCurrentDomainScopeFingerprints,
     onlyNeutralCloseoutDomainChanged
 } from './next-step-readiness-domain-scope';
+import { isPlainRecord } from '../../core/records';
 
 export interface PreflightWorkspaceReadiness {
     ready: boolean;
@@ -389,6 +390,3 @@ function dirtyBaselineFileMatchesCurrent(
     return !!currentHash && currentHash.trim().toLowerCase() === expectedHash;
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}

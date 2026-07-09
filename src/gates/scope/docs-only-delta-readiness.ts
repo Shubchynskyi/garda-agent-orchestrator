@@ -23,6 +23,7 @@ import {
     getWorkspaceSnapshotCached,
     type WorkspaceSnapshot
 } from '../workspace/workspace-snapshot-cache';
+import { isPlainRecord } from '../../core/records';
 
 export interface DocsOnlyDeltaReadiness {
     ready: boolean;
@@ -298,6 +299,3 @@ function isOrdinaryDocumentationDeltaPath(
     return isSafeOrdinaryDocumentationPath(filePath, classificationConfig);
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}

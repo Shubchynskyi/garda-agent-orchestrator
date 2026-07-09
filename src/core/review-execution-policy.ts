@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import { resolveBundleName } from './constants';
 import { pathExists } from './filesystem';
 import { readJsonFile } from './json';
+import { isPlainRecord } from './records';
 
 export const REVIEW_EXECUTION_POLICY_MODES = Object.freeze([
     'parallel_all',
@@ -78,10 +79,6 @@ const REVIEW_EXECUTION_PREPARATION_ORDER = Object.freeze([
 
 function normalizeReviewType(value: string): string {
     return String(value || '').trim().toLowerCase();
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function hasOwnExactKey(record: Record<string, unknown>, expectedKey: string): boolean {

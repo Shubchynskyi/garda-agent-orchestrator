@@ -39,6 +39,7 @@ import {
 import {
     findLatestTimelineEvent
 } from './next-step-timeline-readers';
+import { isPlainRecord } from '../../core/records';
 
 export interface NextStepProjectMemorySummary {
     enabled: boolean;
@@ -67,10 +68,6 @@ export interface PreflightCycleReadiness {
 export interface PreflightCycleReadinessOptions {
     allowStaleCompletionFailureForDocCloseout?: boolean;
     staleCompletionFailureDocCloseoutReason?: string;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function hasPassedDocImpactArtifact(docImpactPath: string | null | undefined): boolean {

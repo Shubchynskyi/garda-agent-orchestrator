@@ -10,10 +10,7 @@ import {
     buildGateCommandPrefix,
     quotePowerShellCliValue
 } from '../../gate-flows/task-mode/task-mode-command-format';
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
+import { isPlainRecord } from '../../../../core/records';
 
 export function sha256ReviewArtifactContent(content: string): string {
     return createHash('sha256')

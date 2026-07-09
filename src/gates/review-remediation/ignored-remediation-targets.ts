@@ -10,6 +10,7 @@ import {
     resolvePathInsideRepo
 } from '../shared/helpers';
 import { getSafeWorktreePathState, type SafeWorktreePathState } from '../workspace/worktree-path-state';
+import { isPlainRecord } from '../../core/records';
 
 export interface GuardedIgnoredRemediationTarget {
     path: string;
@@ -56,10 +57,6 @@ const ACTIONABLE_PATH_BEFORE_PATTERN =
     /\b(?:requires?|needs?|requested|requests?|asks?|add(?:ed|ing)?|updat(?:e|ed|ing)|document(?:ed|ing)?|remediat(?:e|ed|ing)|fix(?:es|ed|ing)?|blocking|blocker)\b/u;
 const ACTIONABLE_PATH_AFTER_PATTERN =
     /\b(?:(?:is|are|was|were|remains?|remain)\s+)?(?:missing|required|needed|requested|blocking|blocker)\b|\b(?:requires?|needs?)\b|\b(?:must|should)\s+(?:be\s+)?(?:add(?:ed)?|updat(?:ed)?|document(?:ed)?|remediat(?:ed)?|fix(?:ed)?|included?)\b/u;
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function normalizeRepoRelativePath(repoRoot: string, rawPath: unknown): string | null {
     const text = String(rawPath || '').trim();

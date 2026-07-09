@@ -32,6 +32,7 @@ import type {
     NextStepProfileSummary,
     NextStepStatus
 } from './next-step';
+import { isPlainRecord } from '../../core/records';
 
 const STRICT_DECOMPOSITION_STRONG_RISK_TERMS = Object.freeze([
     'strict-decomposition',
@@ -94,10 +95,6 @@ export interface NextStepStrictDecompositionRoute {
     missingArtifacts?: NextStepArtifactState[];
     presentArtifacts?: NextStepArtifactState[];
     finalReport?: null;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function parseOptionalNumberField(value: unknown): number | null {

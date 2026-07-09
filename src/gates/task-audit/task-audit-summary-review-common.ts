@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isPlainRecord } from '../../core/records';
+export { isPlainRecord };
 
 export const REVIEW_TRUST_COMPATIBILITY_TYPES = [
     'code',
@@ -36,10 +38,6 @@ export function collectUnsafeRequiredReviewTypeIssues(requiredReviews: Record<st
         .filter(([reviewType, required]) => required === true && !normalizeKnownReviewType(reviewType))
         .map(([reviewType]) => `unsafe or unknown required review type ignored: ${JSON.stringify(reviewType)}`)
         .sort();
-}
-
-export function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function normalizeTrustToken(value: unknown): string {

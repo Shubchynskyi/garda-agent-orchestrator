@@ -8,6 +8,11 @@ import {
     type EffectiveReviewExecutionPolicyMode,
     type ResolvedReviewExecutionPolicyConfig
 } from '../../core/review-execution-policy';
+import { isPlainRecord } from '../../core/records';
+import {
+    readTaskQueueEntries,
+    type TaskQueueEntry
+} from '../../core/task-queue-read';
 import {
     DELEGATED_REVIEWER_IDENTITY_FROM_PROVIDER_PLACEHOLDER,
     isPlannedReviewerIdentity,
@@ -159,10 +164,6 @@ import {
 import {
     isTaskQueueActiveStatus
 } from '../../core/active-task-state';
-import {
-    parseTaskQueueEntriesFromContent,
-    type TaskQueueEntry
-} from './next-step-task-queue';
 import {
     buildNextStepCoreArtifactSpecs,
     fullSuiteArtifactMatchesCurrentCycle,
@@ -485,10 +486,6 @@ export interface NextStepResult {
 interface ArtifactSpec {
     key: string;
     path: string;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function normalizeReviewTypeValue(value: unknown): string | null {
@@ -975,14 +972,6 @@ function resolveReviewPolicy(
         mode: workflowPolicy.mode,
         source: workflowPolicy.configured ? 'workflow_config' : 'workflow_config_fallback'
     };
-}
-
-function readTaskQueueEntries(repoRoot: string): Map<string, TaskQueueEntry> {
-    const taskPath = path.join(repoRoot, 'TASK.md');
-    if (!fileExists(taskPath)) {
-        return new Map<string, TaskQueueEntry>();
-    }
-    return parseTaskQueueEntriesFromContent(fs.readFileSync(taskPath, 'utf8'));
 }
 
 function resolveTaskQueueCaseMismatch(taskEntries: Map<string, TaskQueueEntry>, taskId: string): string | null {

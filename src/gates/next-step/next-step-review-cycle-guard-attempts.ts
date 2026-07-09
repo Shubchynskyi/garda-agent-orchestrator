@@ -30,6 +30,7 @@ import {
     type ReviewCycleArtifactVerdictResult,
     type ReviewCycleGuardReadResult
 } from './next-step-review-cycle-guard-types';
+import { isPlainRecord } from '../../core/records';
 
 type ReviewCycleGuardConfig = ReturnType<typeof normalizeReviewCycleGuardConfig>;
 
@@ -148,10 +149,6 @@ function resolveCanonicalReviewCycleSnapshotPath(
     }
     const expectedPath = path.resolve(resolveReviewCycleReviewsRoot(repoRoot), expectedFileName);
     return path.resolve(resolvedPath) === expectedPath ? resolvedPath : null;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function readReviewCycleJsonRecord(filePath: string): Record<string, unknown> | null {

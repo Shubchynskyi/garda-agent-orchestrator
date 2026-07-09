@@ -7,6 +7,12 @@ import {
     appendMandatoryTaskEvent
 } from '../../gate-runtime/task-events';
 import {
+    runGit,
+    runGitBinary,
+    splitNulList
+} from '../../core/git-helpers';
+import { isPlainRecord } from '../../core/records';
+import {
     fileSha256,
     joinOrchestratorPath,
     normalizePath
@@ -127,10 +133,6 @@ interface PreflightChangedFileScope {
     violations: string[];
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
 function nowIso(): string {
     return new Date().toISOString();
 }
@@ -154,38 +156,12 @@ function fileBytes(filePath: string): number {
         : 0;
 }
 
-function runGit(repoRoot: string, args: string[], options: { allowFailure?: boolean } = {}): string {
-    try {
-        return childProcess.execFileSync('git', ['-C', repoRoot, ...args], {
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe']
-        });
-    } catch (error: unknown) {
-        if (options.allowFailure) {
-            return '';
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`git ${args.join(' ')} failed: ${message}`);
-    }
-}
-
-function runGitBinary(repoRoot: string, args: string[]): Buffer {
-    return childProcess.execFileSync('git', ['-C', repoRoot, ...args], {
-        stdio: ['ignore', 'pipe', 'pipe']
-    });
-}
-
 export function canCaptureSplitRequiredWip(repoRoot: string): boolean {
     const result = childProcess.spawnSync('git', ['-C', path.resolve(repoRoot || '.'), 'rev-parse', '--is-inside-work-tree'], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe']
     });
     return result.status === 0 && String(result.stdout || '').trim() === 'true';
-}
-
-function splitNulList(value: string | Buffer): string[] {
-    const text = Buffer.isBuffer(value) ? value.toString('utf8') : value;
-    return text.split('\0').map((entry) => entry.trim()).filter(Boolean);
 }
 
 function normalizeGitPath(value: string): string {

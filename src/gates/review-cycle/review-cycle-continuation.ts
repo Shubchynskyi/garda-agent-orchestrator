@@ -10,6 +10,7 @@ import {
     normalizePath,
     resolvePathInsideRepo
 } from '../shared/helpers';
+import { isPlainRecord } from '../../core/records';
 
 export const REVIEW_CYCLE_CONTINUATION_DECISIONS = ['allow_one_more_cycle'] as const;
 export const REVIEW_CYCLE_CONTINUATION_EVENT = 'REVIEW_CYCLE_CONTINUATION_APPROVED';
@@ -79,10 +80,6 @@ const EXPIRING_EVENT_TYPES = new Set([
     'PREFLIGHT_CLASSIFIED',
     'COMPLETION_GATE_PASSED'
 ]);
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function asNonNegativeInteger(value: unknown): number | null {
     return typeof value === 'number' && Number.isInteger(value) && value >= 0

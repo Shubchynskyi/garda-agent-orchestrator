@@ -21,6 +21,7 @@ import {
     type FullSuiteValidationConfig,
     type OutOfScopeFailurePolicy
 } from './full-suite-validation-types';
+import { isPlainRecord } from '../../core/records';
 
 export const FULL_SUITE_DURATION_HISTORY_LIMIT = 5;
 export const FULL_SUITE_TIMEOUT_MARGIN_RATIO = 0.2;
@@ -152,10 +153,6 @@ export function buildFullSuiteConfigSignature(config: FullSuiteValidationConfig)
         placement: config.placement
     };
     return createHash('sha256').update(JSON.stringify(relevantConfig)).digest('hex');
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isFullSuiteDurationHistoryEntry(value: unknown): value is FullSuiteDurationHistoryEntry {

@@ -1,6 +1,7 @@
 import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isPlainRecord } from '../../core/records';
 import {
     selectRulePackFiles
 } from '../review-context/review-context-token-economy';
@@ -36,10 +37,6 @@ import {
 import {
     selectTaskEntryRulePackFileNames
 } from '../rule-pack/rule-pack-selection';
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function resolveDefaultDepthFromTaskQueue(repoRoot: string, taskEntry: TaskQueueEntry | null): string {
     try {

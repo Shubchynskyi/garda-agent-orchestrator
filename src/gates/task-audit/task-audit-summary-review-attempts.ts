@@ -20,6 +20,7 @@ import {
     normalizeDomainScopeFingerprints,
     type DomainScopeFingerprints
 } from '../scope/domain-scope-fingerprints';
+import { isPlainRecord } from '../../core/records';
 
 export interface ReviewAttemptTypeSummary {
     review_type: string;
@@ -79,10 +80,6 @@ export function readReviewVerdicts(
             : 'MISSING';
     }
     return reviewVerdicts;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function buildCanonicalReviewVerdictToken(reviewType: string, outcome: 'PASSED' | 'FAILED'): string {

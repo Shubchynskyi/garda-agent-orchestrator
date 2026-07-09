@@ -9,18 +9,15 @@ import {
     isTaskIdReferenceBoundary,
     TASK_ID_ALLOWED_PATTERN
 } from '../../core/task-ids';
-import {
-    parseCanonicalActiveTaskQueue
-} from '../../core/task-md-table';
+import type {
+    TaskQueueEntry
+} from '../../core/task-queue-read';
 
-export interface TaskQueueEntry {
-    taskId: string;
-    status: string | null;
-    area: string | null;
-    title: string | null;
-    profile: string | null;
-    notes: string | null;
-}
+export {
+    parseTaskQueueEntriesFromContent,
+    readTaskQueueEntries,
+    type TaskQueueEntry
+} from '../../core/task-queue-read';
 
 export interface DecomposedChildRoute {
     taskId: string;
@@ -65,28 +62,6 @@ const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
 const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
 const TASK_QUEUE_TASK_ID_REFERENCE_PATTERN = /(^|[^A-Za-z0-9-])([Tt]-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)(?=$|[^A-Za-z0-9-])/gu;
 export const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
-
-export function parseTaskQueueEntriesFromContent(content: string): Map<string, TaskQueueEntry> {
-    const entries = new Map<string, TaskQueueEntry>();
-    for (const row of parseCanonicalActiveTaskQueue(content).rows) {
-        const rawTaskId = row.taskId;
-        if (
-            !TASK_QUEUE_TASK_ID_PATTERN.test(rawTaskId)
-        ) {
-            continue;
-        }
-        const taskId = rawTaskId;
-        entries.set(taskId, {
-            taskId,
-            status: row.status || null,
-            area: row.area || null,
-            title: row.title || null,
-            profile: row.profile || null,
-            notes: row.notes || null
-        });
-    }
-    return entries;
-}
 
 function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
     if (!entry) {

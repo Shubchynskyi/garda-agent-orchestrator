@@ -8,6 +8,7 @@ import {
 } from '../scope/domain-scope-fingerprints';
 import { normalizePath, stringSha256 } from '../shared/helpers';
 import { getSafeWorktreePathState } from '../workspace/worktree-path-state';
+import { isPlainRecord } from '../../core/records';
 
 const STAGED_DETECTION_SOURCES = new Set(['git_staged_only', 'git_staged_plus_untracked']);
 
@@ -284,10 +285,6 @@ export function getReviewTreeStateBlockingViolations(treeState: ReviewTreeState)
         );
     }
     return violations;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function normalizeStringArray(value: unknown): string[] {

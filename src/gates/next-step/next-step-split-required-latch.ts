@@ -33,6 +33,7 @@ import {
 import {
     SPLIT_REQUIRED_STATUS
 } from './next-step-task-queue';
+import { isPlainRecord } from '../../core/records';
 
 export type SplitRequiredGuardKind = 'scope_budget' | 'review_cycle' | 'full_suite_repair';
 
@@ -59,10 +60,6 @@ function getOrchestratorRootFromEventsRoot(eventsRoot: string): string {
 
 export function resolveSplitRequiredArtifactPath(reviewsRoot: string, taskId: string): string {
     return path.join(reviewsRoot, `${taskId}-split-required.json`);
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function fileExists(filePath: string): boolean {

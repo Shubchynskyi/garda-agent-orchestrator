@@ -9,6 +9,9 @@ import {
     allocateParentDerivedTaskIds
 } from '../../core/task-id-allocation';
 import {
+    readTaskQueueEntries
+} from '../../core/task-queue-read';
+import {
     normalizePath
 } from '../shared/helpers';
 import {
@@ -20,9 +23,6 @@ import {
 import {
     sanitizeReviewCycleAutoSplitSummary
 } from './next-step-split-required-latch';
-import {
-    parseTaskQueueEntriesFromContent
-} from './next-step-task-queue';
 import {
     type NextStepReviewCycleAutoSplitPrompt,
     type NextStepReviewCycleBlock,
@@ -47,23 +47,11 @@ const REVIEW_CYCLE_OPERATOR_CHOICE_GUIDANCE = Object.freeze([
 
 const REVIEW_CYCLE_AUTO_SPLIT_TEMPLATE_PATH = 'template/docs/prompts/review-cycle-auto-split.md';
 
-function fileExists(filePath: string): boolean {
-    return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
-}
-
 function resolveBundleRootForReviewCycleGuard(repoRoot: string): string {
     const sourceCheckoutBundleRoot = path.resolve(repoRoot);
     return fs.existsSync(path.join(sourceCheckoutBundleRoot, 'bin', 'garda.js'))
         ? sourceCheckoutBundleRoot
         : path.join(sourceCheckoutBundleRoot, resolveBundleNameForTarget(repoRoot));
-}
-
-function readTaskQueueEntries(repoRoot: string) {
-    const taskPath = path.join(repoRoot, 'TASK.md');
-    if (!fileExists(taskPath)) {
-        return new Map<string, never>();
-    }
-    return parseTaskQueueEntriesFromContent(fs.readFileSync(taskPath, 'utf8'));
 }
 
 export function buildReviewCycleContinuationCommand(

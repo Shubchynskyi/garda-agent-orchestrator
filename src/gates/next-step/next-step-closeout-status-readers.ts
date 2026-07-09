@@ -31,6 +31,7 @@ import {
 import {
     evaluateStagedPostDoneAuditedScope
 } from '../task-audit/task-audit-summary-drift';
+import { isPlainRecord } from '../../core/records';
 
 export interface NextStepFinalReportSummary {
     closeout_json_path: string;
@@ -46,10 +47,6 @@ export interface NextStepFinalReportSummary {
 export interface PostDoneWorkspaceDriftDecision {
     blocked: boolean;
     reason: string;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function fileExists(filePath: string): boolean {

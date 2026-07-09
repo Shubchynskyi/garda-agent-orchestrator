@@ -5,6 +5,7 @@ import {
     computeTaskPlanDigest,
     validateTaskPlan
 } from '../../schemas/task-plan';
+import { isPlainRecord } from '../../core/records';
 import {
     normalizePath,
     isPathRealpathInsideRoot,
@@ -40,10 +41,6 @@ export interface BaselineOnlyPreImplementationRouteOptions {
     taskMode: Record<string, unknown> | null;
     preflight: Record<string, unknown> | null;
     compileGatePassed: boolean;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function preflightRequiresAuditedNoOp(preflight: Record<string, unknown> | null): boolean {

@@ -47,6 +47,7 @@ import {
     findLatestTimelineEvent,
     getTimelineEventDetailString
 } from './next-step-timeline-readers';
+import { isPlainRecord } from '../../core/records';
 
 export interface FailedGateRecovery {
     nextGate: string;
@@ -81,10 +82,6 @@ const RESTART_COMPLETED_EVENT_TYPES = new Set([
     'COHERENT_CYCLE_RESTARTED',
     'REVIEW_CYCLE_RESTARTED'
 ]);
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function resolveBundleRootForNextStep(repoRoot: string): string {
     return path.join(repoRoot, resolveBundleNameForTarget(repoRoot));

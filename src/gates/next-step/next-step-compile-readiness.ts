@@ -33,6 +33,7 @@ import {
     buildCurrentDomainScopeFingerprints,
     onlyNeutralCloseoutDomainChanged
 } from './next-step-readiness-domain-scope';
+import { isPlainRecord } from '../../core/records';
 
 export interface CompileReadiness {
     ready: boolean;
@@ -275,6 +276,3 @@ function fileExists(filePath: string): boolean {
     }
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}

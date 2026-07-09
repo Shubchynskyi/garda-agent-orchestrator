@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { isPlainRecord } from '../../core/records';
+export { isPlainRecord };
 
 export const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
 export const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
@@ -11,10 +13,6 @@ export const REVIEWER_PROVIDER_FAILURE_EVENT_TYPES = new Set([
     'REVIEWER_DELEGATION_FAILED',
     'REVIEWER_PROVIDER_LAUNCH_FAILED'
 ]);
-
-export function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 export function fileExists(filePath: string): boolean {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile();

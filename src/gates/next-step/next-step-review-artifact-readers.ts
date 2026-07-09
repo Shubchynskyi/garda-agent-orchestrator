@@ -39,6 +39,7 @@ import {
     detectReviewLaunchPackageFailureReason,
     detectStaleValidationEvidenceFailureReason
 } from './next-step-review-artifact-failure-detection';
+import { isPlainRecord } from '../../core/records';
 
 const REVIEW_VERDICT_PASS_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(REVIEW_CONTRACTS));
 const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(
@@ -105,10 +106,6 @@ export interface ReviewArtifactState {
     reviewResultRecordedAtUtc: string | null;
     recordedAtUtc: string | null;
     reviewOutputSourceMtimeUtc: string | null;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function fileExists(filePath: string): boolean {

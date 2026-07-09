@@ -8,6 +8,10 @@ import {
     resolveBundleName
 } from '../../../../core/constants';
 import {
+    readTaskQueueEntries,
+    type TaskQueueEntry
+} from '../../../../core/task-queue-read';
+import {
     emitMandatoryCompletionGateEventAsync,
     emitMandatoryStatusChangedEventAsync
 } from '../../../../gate-runtime/lifecycle-events';
@@ -16,9 +20,7 @@ import { collectOrderedTimelineEvents } from '../../../../gates/completion/compl
 import {
     extractExplicitLinkedChildTaskIds,
     isDecomposedParentTask,
-    parseTaskQueueEntriesFromContent,
-    resolveDecomposedParentCompletionState,
-    type TaskQueueEntry
+    resolveDecomposedParentCompletionState
 } from '../../../../gates/next-step/next-step-task-queue';
 import {
     transitionDecomposedParentsToDone,
@@ -257,10 +259,6 @@ function appendUniqueTaskIds(target: string[], taskIds: readonly string[]): void
     }
 }
 
-function readTaskQueueEntries(repoRoot: string): Map<string, TaskQueueEntry> {
-    return parseTaskQueueEntriesFromContent(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'));
-}
-
 function createDecomposedParentAutoCloseRollbackState(eventsRoot: string): DecomposedParentAutoCloseRollbackState {
     return {
         aggregateSnapshot: captureFileSnapshot(path.join(eventsRoot, 'all-tasks.jsonl')),
@@ -360,7 +358,7 @@ function closeEligibleDecomposedParentsLinkedToCompletedTask(params: {
 
     try {
         while (remainingPasses > 0) {
-            const taskEntries = readTaskQueueEntries(params.repoRoot);
+            const taskEntries = readTaskQueueEntries(params.repoRoot, { missingFile: 'throw' });
             if (remainingPasses === Number.POSITIVE_INFINITY) {
                 remainingPasses = Math.max(taskEntries.size + 1, 1);
             }

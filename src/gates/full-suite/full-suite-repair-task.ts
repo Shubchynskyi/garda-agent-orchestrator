@@ -9,6 +9,12 @@ import {
     resolveBundleNameForTarget
 } from '../../core/constants';
 import {
+    runGit,
+    runGitBinary,
+    splitNulList
+} from '../../core/git-helpers';
+import { isPlainRecord } from '../../core/records';
+import {
     withTaskQueueStatusSyncLock
 } from '../../cli/commands/gate-flows/task/task-queue-sync';
 import {
@@ -225,10 +231,6 @@ interface PreflightChangedFileScope {
     violations: string[];
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
 function nowIso(): string {
     return new Date().toISOString();
 }
@@ -290,32 +292,6 @@ function fileBytes(filePath: string): number {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile()
         ? fs.statSync(filePath).size
         : 0;
-}
-
-function runGit(repoRoot: string, args: string[], options: { allowFailure?: boolean } = {}): string {
-    try {
-        return childProcess.execFileSync('git', ['-C', repoRoot, ...args], {
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe']
-        });
-    } catch (error: unknown) {
-        if (options.allowFailure) {
-            return '';
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`git ${args.join(' ')} failed: ${message}`);
-    }
-}
-
-function runGitBinary(repoRoot: string, args: string[]): Buffer {
-    return childProcess.execFileSync('git', ['-C', repoRoot, ...args], {
-        stdio: ['ignore', 'pipe', 'pipe']
-    });
-}
-
-function splitNulList(value: string | Buffer): string[] {
-    const text = Buffer.isBuffer(value) ? value.toString('utf8') : value;
-    return text.split('\0').map((entry) => entry.trim()).filter(Boolean);
 }
 
 function normalizeGitPath(value: string): string {

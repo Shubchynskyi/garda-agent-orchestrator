@@ -30,10 +30,7 @@ import {
 import {
     type ReviewCycleGuardReadEvaluationResult
 } from './next-step-review-cycle-guard-types';
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
+import { isPlainRecord } from '../../core/records';
 
 function fileExists(filePath: string): boolean {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile();

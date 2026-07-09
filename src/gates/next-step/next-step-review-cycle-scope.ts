@@ -6,12 +6,9 @@ import {
     normalizeDomainScopeFingerprints,
     type DomainScopeFingerprints
 } from '../scope/domain-scope-fingerprints';
+import { isPlainRecord } from '../../core/records';
 
 export type { DomainScopeFingerprints };
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function normalizeReviewCycleScopeHash(value: unknown): string | null {
     const normalized = String(value || '').trim().toLowerCase();

@@ -4,10 +4,8 @@ import * as path from 'node:path';
 import type {
     ReviewReuseTelemetryEventLike
 } from '../review-reuse/review-reuse-telemetry';
-
-export function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
+import { isPlainRecord } from '../../core/records';
+export { isPlainRecord };
 
 export function fileExists(filePath: string): boolean {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile();

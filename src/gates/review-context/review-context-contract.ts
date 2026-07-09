@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import { extractFilePathFromDiffLine, parseUnifiedDiff } from '../../gate-runtime/scoped-diff';
 import { fileSha256, normalizePath, parseBool } from '../shared/helpers';
+import { isPlainRecord } from '../../core/records';
 
 const NON_CODE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only', 'empty']);
 const CODE_SCOPE_CATEGORIES = new Set(['code', 'mixed']);
@@ -33,10 +34,6 @@ function normalizeOptionalBoolean(value: unknown): boolean | null {
         return false;
     }
     return null;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function normalizePathList(value: unknown): string[] {

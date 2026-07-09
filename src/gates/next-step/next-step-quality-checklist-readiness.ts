@@ -24,6 +24,7 @@ import {
     formatNextStepInlineValue,
     toRepoDisplayPath
 } from './next-step-command-formatters';
+import { isPlainRecord } from '../../core/records';
 
 export type NextStepQualityChecklistEvidenceStatus = 'disabled' | 'not_required' | 'missing' | 'invalid' | 'stale' | 'current';
 export type NextStepQualityChecklistEffect = 'disabled' | 'not_required' | 'missing' | 'invalid' | 'stale' | 'passed' | 'helped' | 'warned' | 'required_rework';
@@ -68,10 +69,6 @@ export interface NextStepQualityChecklistSummary {
     active_rule_count: number;
     skipped_by_scope_rule_count: number;
     visible_summary_line: string;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function fileExists(filePath: string): boolean {

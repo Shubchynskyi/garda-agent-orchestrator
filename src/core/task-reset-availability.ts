@@ -9,6 +9,7 @@ import {
     resolveProtectedControlPlaneManifestPath
 } from '../gates/protected-control-plane/protected-control-plane';
 import { validateWorkflowConfig } from '../schemas/config-artifacts';
+import { isPlainRecord } from './records';
 
 export interface TaskResetAvailability {
     enabled: boolean;
@@ -52,10 +53,6 @@ function fileExists(filePath: string): boolean {
     } catch {
         return false;
     }
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function sha256Text(text: string): string {

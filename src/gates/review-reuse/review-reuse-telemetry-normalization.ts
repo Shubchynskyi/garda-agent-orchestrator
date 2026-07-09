@@ -2,10 +2,8 @@
 import * as path from 'node:path';
 import { normalizePath } from '../shared/helpers';
 import { type ReviewReuseTelemetryDetails } from './review-reuse-telemetry-types';
-
-export function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}
+import { isPlainRecord } from '../../core/records';
+export { isPlainRecord };
 
 export function getReviewReuseTelemetryDetails(details: unknown): ReviewReuseTelemetryDetails {
     const record = isPlainRecord(details) ? details : {};

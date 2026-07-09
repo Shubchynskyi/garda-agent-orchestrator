@@ -5,10 +5,7 @@ import {
     type FullSuiteTimeoutRepairTaskProposal,
     type FullSuiteValidationResult
 } from './full-suite-validation-types';
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}
+import { isPlainRecord } from '../../core/records';
 
 function hasTrueFlag(record: Record<string, unknown>, key: string): boolean {
     return record[key] === true;
