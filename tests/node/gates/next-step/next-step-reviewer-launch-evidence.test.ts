@@ -412,6 +412,102 @@ describe('next-step reviewer launch evidence helpers', () => {
         assert.equal(artifactEvidence.reviewContextSha256, null);
     });
 
+    it('rejects launched artifacts with mismatched copy-paste launch input digest', () => {
+        const repoRoot = makeTempRepo();
+        const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${REVIEW_TYPE}-review-context.json`);
+        writeJson(contextPath, { task_id: TASK_ID, review_type: REVIEW_TYPE });
+        const { launchArtifactPath, preparedLaunchEventSha256, routingEventSha256 } = seedPreparedLaunchArtifact(repoRoot, contextPath);
+        overwriteLaunchedArtifact(
+            repoRoot,
+            contextPath,
+            launchArtifactPath,
+            preparedLaunchEventSha256,
+            routingEventSha256
+        );
+        const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        launchArtifact.copy_paste_reviewer_launch_prompt_sha256 = '0'.repeat(64);
+        writeJson(launchArtifactPath, launchArtifact);
+        const delegationStartedAtUtc = '2026-06-01T00:00:01.000Z';
+        const launchCompletedAtUtc = '2026-06-01T00:00:12.000Z';
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_COMPLETED', {
+            task_id: TASK_ID,
+            review_type: REVIEW_TYPE,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: REVIEWER_IDENTITY,
+            reviewer_identity: REVIEWER_IDENTITY,
+            review_context_sha256: fileSha256(contextPath),
+            routing_event_sha256: routingEventSha256,
+            reviewer_launch_artifact_sha256: fileSha256(launchArtifactPath),
+            provider_invocation_id: 'test-provider-invocation',
+            delegation_started_at_utc: delegationStartedAtUtc,
+            launched_at_utc: delegationStartedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc
+        });
+
+        const state = makeReviewState(contextPath, {
+            artifactExists: true,
+            receiptExists: true,
+            ready: true
+        });
+
+        assert.equal(
+            getCurrentReviewerLaunchArtifactEvidenceForInvocation(repoRoot, eventsRoot(repoRoot), TASK_ID, state).state,
+            'missing_or_invalid'
+        );
+        assert.equal(timelineHasDelegatedReviewInvocationForCurrentContext(repoRoot, eventsRoot(repoRoot), TASK_ID, state), false);
+    });
+
+    it('ignores launch artifact paths outside the review scratch trust boundary', () => {
+        const repoRoot = makeTempRepo();
+        const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${REVIEW_TYPE}-review-context.json`);
+        writeJson(contextPath, { task_id: TASK_ID, review_type: REVIEW_TYPE });
+        const contextSha256 = fileSha256(contextPath);
+        const { routingEventSha256 } = seedCompileAndRouting(repoRoot, contextSha256);
+        const launchBindingSha256 = 'b'.repeat(64);
+        const untrustedLaunchArtifactPath = path.join(repoRoot, 'untrusted', 'reviewer-launch.json');
+        const launchInputArtifactPath = reviewScratchPath(repoRoot, TASK_ID, REVIEW_TYPE, 'reviewer-launch-input.json');
+        const preparedEvent = appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_PREPARED', {
+            task_id: TASK_ID,
+            review_type: REVIEW_TYPE,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: REVIEWER_IDENTITY,
+            reviewer_identity: REVIEWER_IDENTITY,
+            review_context_sha256: contextSha256,
+            routing_event_sha256: routingEventSha256,
+            launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_artifact_path: untrustedLaunchArtifactPath
+        });
+        const launchArtifactBase = {
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch_preparation',
+            attestation_state: 'prepared',
+            task_id: TASK_ID,
+            review_type: REVIEW_TYPE,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: REVIEWER_IDENTITY,
+            review_context_sha256: contextSha256,
+            routing_event_sha256: routingEventSha256,
+            launch_binding_sha256: launchBindingSha256,
+            prepared_launch_event_sha256: preparedEvent.event_sha256,
+            reviewer_launch_input_artifact_path: launchInputArtifactPath
+        };
+        writeJson(launchInputArtifactPath, launchArtifactBase);
+        writeJson(untrustedLaunchArtifactPath, {
+            ...launchArtifactBase,
+            reviewer_launch_input_artifact_sha256: fileSha256(launchInputArtifactPath)
+        });
+
+        const artifactEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
+            repoRoot,
+            eventsRoot(repoRoot),
+            TASK_ID,
+            makeReviewState(contextPath)
+        );
+
+        assert.equal(artifactEvidence.state, 'missing_or_invalid');
+        assert.equal(artifactEvidence.path, null);
+    });
+
     it('summarizes provider-native delegated reviewer launch target from provider registry', () => {
         assert.match(
             buildProviderNativeReviewerLaunchTargetSummary({ provider: 'Codex' }),

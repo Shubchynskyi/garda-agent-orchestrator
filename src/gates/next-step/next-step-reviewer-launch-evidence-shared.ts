@@ -1,0 +1,73 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { createHash } from 'node:crypto';
+
+export const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
+export const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
+export const PROVIDER_FAILED_ATTESTATION_STATES = new Set(['provider_failed', 'launch_failed', 'delegation_failed']);
+export const REVIEWER_PROVIDER_FAILURE_EVENT_TYPES = new Set([
+    'REVIEWER_PROVIDER_FAILED',
+    'REVIEWER_LAUNCH_FAILED',
+    'REVIEWER_DELEGATION_FAILED',
+    'REVIEWER_PROVIDER_LAUNCH_FAILED'
+]);
+
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function fileExists(filePath: string): boolean {
+    return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+}
+
+export function stringSha256(value: string): string {
+    return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+export function getLatestTaskSequenceForEventTypes(eventsRoot: string, taskId: string, eventTypes: string[]): number | null {
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fileExists(timelinePath)) {
+        return null;
+    }
+    const wanted = new Set(eventTypes);
+    let latestSequence: number | null = null;
+    for (const line of fs.readFileSync(timelinePath, 'utf8').split('\n')) {
+        if (!line.trim()) {
+            continue;
+        }
+        try {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            if (!wanted.has(String(event.event_type || '').trim())) {
+                continue;
+            }
+            const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+            const sequence = typeof integrity?.task_sequence === 'number'
+                ? integrity.task_sequence
+                : Number(integrity?.task_sequence);
+            if (Number.isInteger(sequence) && sequence > 0) {
+                latestSequence = latestSequence == null ? sequence : Math.max(latestSequence, sequence);
+            }
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return latestSequence;
+}
+
+export function getArtifactStringField(artifact: Record<string, unknown>, ...fieldNames: string[]): string {
+    for (const fieldName of fieldNames) {
+        const rawValue = artifact[fieldName];
+        if (typeof rawValue === 'string' && rawValue.trim()) {
+            return rawValue.trim();
+        }
+    }
+    return '';
+}
+
+export function getEventTaskSequence(event: Record<string, unknown>): number | null {
+    const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+    const sequence = typeof integrity?.task_sequence === 'number'
+        ? integrity.task_sequence
+        : Number(integrity?.task_sequence);
+    return Number.isInteger(sequence) && sequence > 0 ? sequence : null;
+}
