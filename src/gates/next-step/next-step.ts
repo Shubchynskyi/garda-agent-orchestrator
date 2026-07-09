@@ -110,6 +110,9 @@ import {
     readStartupCycleReadiness
 } from './next-step-startup-readiness';
 import {
+    selectTaskEntryRulePackFileNames
+} from '../rule-pack/rule-pack-selection';
+import {
     resolveNextStepStartupRoute
 } from './next-step-startup-routing';
 import {
@@ -1984,18 +1987,21 @@ function buildTaskEntryRulePackCommand(
     repoRoot: string,
     cliPrefix: string,
     taskId: string,
+    taskMode: Record<string, unknown> | null,
     taskModePath: string | null
 ): string {
+    const effectiveDepth = typeof taskMode?.effective_depth === 'number'
+        ? taskMode.effective_depth
+        : null;
+    const ruleFileNames = selectTaskEntryRulePackFileNames({ effectiveDepth });
     return [
         `${cliPrefix} gate load-rule-pack`,
         `--task-id "${taskId}"`,
         '--stage "TASK_ENTRY"',
         ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
-        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/00-core.md')}"`,
-        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/15-project-memory.md')}"`,
-        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/40-commands.md')}"`,
-        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/80-task-workflow.md')}"`,
-        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/90-skill-catalog.md')}"`,
+        ...ruleFileNames.map((fileName) => (
+            `--loaded-rule-file "${buildBundleRelativePath(repoRoot, `live/docs/agent-rules/${fileName}`)}"`
+        )),
         '--repo-root "."'
     ].join(' ');
 }
@@ -2568,7 +2574,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         loadRulePackPassed: isGatePassed(summary, 'load-rule-pack'),
         rulePackStage: resolveRulePackStage(rulePack),
         preflightExists: Boolean(preflight),
-        taskEntryRulePackCommand: buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId, taskModePath),
+        taskEntryRulePackCommand: buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId, taskMode, taskModePath),
         handshakeDiagnosticsPassed: isGatePassed(summary, 'handshake-diagnostics'),
         handshakeDiagnosticsCommand: `${cliPrefix} gate handshake-diagnostics --task-id "${taskId}" --repo-root "."`,
         shellSmokePreflightPassed: isGatePassed(summary, 'shell-smoke-preflight'),

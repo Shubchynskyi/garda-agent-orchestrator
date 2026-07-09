@@ -9,6 +9,9 @@ import {
     selectRulePackFiles,
     toNonNegativeInt
 } from '../../../../src/gates/review-context/review-context-token-economy';
+import {
+    selectTaskEntryRulePackFileNames
+} from '../../../../src/gates/rule-pack/rule-pack-selection';
 
 describe('review-context-token-economy helpers', () => {
     it('selects full rule context when token economy is inactive', () => {
@@ -91,6 +94,28 @@ describe('review-context-token-economy helpers', () => {
             decision.omittedSections.map((section) => section.section),
             ['examples', 'code_blocks']
         );
+    });
+
+    it('selects compact TASK_ENTRY files only for shallow low-risk depth', () => {
+        assert.deepEqual(selectTaskEntryRulePackFileNames({ effectiveDepth: 1 }), [
+            '00-core.md',
+            '40-commands.md',
+            '80-task-workflow.md'
+        ]);
+        assert.deepEqual(selectTaskEntryRulePackFileNames({ effectiveDepth: 2 }), [
+            '00-core.md',
+            '15-project-memory.md',
+            '40-commands.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
+        ]);
+        assert.deepEqual(selectTaskEntryRulePackFileNames({ effectiveDepth: 3 }), [
+            '00-core.md',
+            '15-project-memory.md',
+            '40-commands.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
+        ]);
     });
 
     it('builds deterministic rule-context section cache keys', () => {

@@ -10,14 +10,6 @@ export const RULE_PACK_STAGE_KEYS = Object.freeze({
     POST_PREFLIGHT: 'post_preflight'
 } satisfies Record<RulePackStageLabel, 'task_entry' | 'post_preflight'>);
 
-export const RULE_PACK_ENTRY_FILE_NAMES = Object.freeze([
-    '00-core.md',
-    '15-project-memory.md',
-    '40-commands.md',
-    '80-task-workflow.md',
-    '90-skill-catalog.md'
-]);
-
 export interface RulePackStageArtifact {
     timestamp_utc: string;
     stage: RulePackStageLabel;

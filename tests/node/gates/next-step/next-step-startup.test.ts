@@ -237,12 +237,18 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
 }
 
 
-function seedTaskModeOnly(repoRoot: string, taskId: string): void {
+function seedTaskModeOnly(
+    repoRoot: string,
+    taskId: string,
+    options: { requestedDepth?: number; effectiveDepth?: number } = {}
+): void {
+    const requestedDepth = options.requestedDepth ?? 2;
+    const effectiveDepth = options.effectiveDepth ?? requestedDepth;
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
-        requestedDepth: 2,
-        effectiveDepth: 2,
+        requestedDepth,
+        effectiveDepth,
         taskSummary: 'Seeded next-step task',
         startBanner: 'Garda captures my mind',
         provider: 'Codex',
@@ -680,6 +686,36 @@ describe('gates/next-step startup routing', () => {
 
         assert.equal(result.next_gate, 'load-rule-pack');
         assert.ok(result.commands[0].command.includes('--stage "TASK_ENTRY"'));
+    });
+
+    it('uses compact TASK_ENTRY rules for depth 1 task-mode cycles', () => {
+        const repoRoot = makeTempRepo();
+        seedTaskModeOnly(repoRoot, TASK_ID, { requestedDepth: 1, effectiveDepth: 1 });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.match(command, /00-core\.md/);
+        assert.match(command, /40-commands\.md/);
+        assert.match(command, /80-task-workflow\.md/);
+        assert.doesNotMatch(command, /15-project-memory\.md/);
+        assert.doesNotMatch(command, /90-skill-catalog\.md/);
+    });
+
+    it('keeps full TASK_ENTRY rules for strict depth 3 task-mode cycles', () => {
+        const repoRoot = makeTempRepo();
+        seedTaskModeOnly(repoRoot, TASK_ID, { requestedDepth: 3, effectiveDepth: 3 });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.match(command, /00-core\.md/);
+        assert.match(command, /15-project-memory\.md/);
+        assert.match(command, /40-commands\.md/);
+        assert.match(command, /80-task-workflow\.md/);
+        assert.match(command, /90-skill-catalog\.md/);
     });
 
     it('preserves custom task-mode path when routing TASK_ENTRY rule-pack loading', () => {

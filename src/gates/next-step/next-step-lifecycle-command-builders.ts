@@ -33,6 +33,9 @@ import {
 import {
     REVIEW_CONTRACTS
 } from '../required-reviews/required-reviews-check';
+import {
+    selectTaskEntryRulePackFileNames
+} from '../rule-pack/rule-pack-selection';
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -401,15 +404,9 @@ export function getPostPreflightRuleFileNames(
     preflight: Record<string, unknown> | null,
     taskMode: Record<string, unknown> | null
 ): string[] {
-    const fileNames = new Set<string>([
-        '00-core.md',
-        '15-project-memory.md',
-        '40-commands.md',
-        '80-task-workflow.md',
-        '90-skill-catalog.md'
-    ]);
     const requiredReviews = isPlainRecord(preflight?.required_reviews) ? preflight.required_reviews : {};
     const effectiveDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
+    const fileNames = new Set<string>(selectTaskEntryRulePackFileNames({ effectiveDepth }));
     for (const [reviewType, required] of Object.entries(requiredReviews)) {
         if (required !== true) {
             continue;

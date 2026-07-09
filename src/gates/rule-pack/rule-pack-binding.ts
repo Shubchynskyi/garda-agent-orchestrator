@@ -7,9 +7,10 @@ import { readExistingRulePackArtifact, resolveRulePackArtifactPath } from './rul
 import { isRecord, normalizeRequiredReviewRecord, stringifyNormalizedRequiredReviews } from './rule-pack-records';
 import {
     findStaleLoadedRuleFile,
+    getLegacyPostPreflightRulePackFiles,
     getRulePackRequiredFilesFromPreflight,
-    normalizeRuleFileList,
-    sameStringSet
+    isCompatiblePostPreflightRuleFileSet,
+    normalizeRuleFileList
 } from './rule-pack-selection';
 import {
     collectOrderedTimelineEvents,
@@ -95,6 +96,7 @@ function resolveCurrentPostPreflightRulePackBinding(
     taskModePath = ''
 ): {
     bindingSha256: string | null;
+    compatibleBindingSha256s: string[];
     violations: string[];
 } {
     const validatedPreflight = validatePreflightForReview(preflightPath, taskId);
@@ -115,16 +117,35 @@ function resolveCurrentPostPreflightRulePackBinding(
         validatedPreflight.required_reviews,
         effectiveDepth || 2
     );
+    const legacyRequiredRuleFiles = getLegacyPostPreflightRulePackFiles(
+        repoRoot,
+        validatedPreflight.required_reviews,
+        effectiveDepth || 2
+    );
+    const bindingSha256 = buildRulePackBindingSha256({
+        repoRoot,
+        preflightPath: normalizePath(validatedPreflight.preflight_path),
+        preflightPayload: validatedPreflight.preflight,
+        effectiveDepth,
+        requiredRuleFiles,
+        requiredReviews: validatedPreflight.required_reviews
+    });
+    const legacyBindingSha256 = buildRulePackBindingSha256({
+        repoRoot,
+        preflightPath: normalizePath(validatedPreflight.preflight_path),
+        preflightPayload: validatedPreflight.preflight,
+        effectiveDepth,
+        requiredRuleFiles: legacyRequiredRuleFiles,
+        requiredReviews: validatedPreflight.required_reviews
+    });
+    const compatibleBindingSha256s = [...new Set([
+        bindingSha256,
+        legacyBindingSha256
+    ].filter((value): value is string => typeof value === 'string' && value.length > 0))];
 
     return {
-        bindingSha256: buildRulePackBindingSha256({
-            repoRoot,
-            preflightPath: normalizePath(validatedPreflight.preflight_path),
-            preflightPayload: validatedPreflight.preflight,
-            effectiveDepth,
-            requiredRuleFiles,
-            requiredReviews: validatedPreflight.required_reviews
-        }),
+        bindingSha256,
+        compatibleBindingSha256s,
         violations
     };
 }
@@ -282,9 +303,8 @@ export function getPostPreflightSequenceEvidence(
         ? getStageRulePackBindingSha256(storedStage)
         : null;
     result.binding_equivalent_to_current_preflight = !!(
-        result.current_preflight_rule_pack_binding_sha256
-        && result.latest_post_preflight_rule_pack_binding_sha256
-        && result.current_preflight_rule_pack_binding_sha256 === result.latest_post_preflight_rule_pack_binding_sha256
+        result.latest_post_preflight_rule_pack_binding_sha256
+        && currentBinding.compatibleBindingSha256s.includes(result.latest_post_preflight_rule_pack_binding_sha256)
     );
 
     if (
@@ -397,7 +417,12 @@ export function getPostPreflightRulePackRebindDecision(
         effectiveDepth || 2
     );
     const previousRequiredRuleFiles = normalizeRuleFileList(repoRoot, stageArtifact.required_rule_files);
-    if (!sameStringSet(previousRequiredRuleFiles, requiredRuleFiles)) {
+    if (!isCompatiblePostPreflightRuleFileSet(
+        repoRoot,
+        previousRequiredRuleFiles,
+        validatedPreflight.required_reviews,
+        effectiveDepth || 2
+    )) {
         return {
             can_bind: false,
             reason: 'Current preflight requires a different downstream rule set; rule files must be read and recorded.',

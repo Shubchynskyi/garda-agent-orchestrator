@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 
 import { resolveBundleRootForTarget } from '../../../core/constants';
+import { selectTaskEntryRulePackFileNames } from '../../../gates/rule-pack/rule-pack-selection';
 import { getGateHelpEntry } from '../gate-command-help';
 
 function toPortableRepoPath(targetRoot: string, filePath: string): string {
@@ -154,6 +155,12 @@ export function buildStartupCommands(
     taskEntryRuleFiles: string[],
     postPreflightRuleFiles: string[]
 ): string[] {
+    const bundleRoot = resolveBundleRootForTarget(targetRoot);
+    const effectiveTaskEntryRuleFiles = taskEntryRuleFiles.length > 0
+        ? taskEntryRuleFiles
+        : selectTaskEntryRulePackFileNames({ effectiveDepth: depth }).map((fileName) => (
+            path.join(bundleRoot, 'live', 'docs', 'agent-rules', fileName)
+        ));
     const enterTaskModeBase = hydrateGateUsage('enter-task-mode', repoRoot, {
         '<task-id>': taskId,
         '<1|2|3>': String(depth),
@@ -167,7 +174,7 @@ export function buildStartupCommands(
 
     return [
         enterTaskModeCommand,
-        buildLoadRulePackCommand(repoRoot, taskId, targetRoot, 'TASK_ENTRY', taskEntryRuleFiles),
+        buildLoadRulePackCommand(repoRoot, taskId, targetRoot, 'TASK_ENTRY', effectiveTaskEntryRuleFiles),
         hydrateGateUsage('handshake-diagnostics', repoRoot, {
             '<task-id>': taskId,
             '<runtime-provider>': provider

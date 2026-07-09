@@ -158,7 +158,8 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let workspaceSnapshot: WorkspaceSnapshot | null = null;
     let taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
     let rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'TASK_ENTRY', {
-        artifactPath: String(options.rulePackPath || '')
+        artifactPath: String(options.rulePackPath || ''),
+        taskModePath: String(options.taskModePath || '')
     });
     let warningCount = 0;
     let errorCount = 0;

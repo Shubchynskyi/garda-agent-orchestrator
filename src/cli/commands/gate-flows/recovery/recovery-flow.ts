@@ -82,10 +82,10 @@ import {
 import {
     getEffectiveDepthFromPreflight,
     getReviewCyclePrePreflightRefreshPlan,
+    getTaskEntryRuleFilesForDepth,
     normalizeRuleFileList,
     resolveReplayScope,
-    resolveReviewCycleReplayScope,
-    TASK_ENTRY_RULE_FILES
+    resolveReviewCycleReplayScope
 } from './recovery-flow-replay-scope';
 import {
     buildCoherentCycleRestartedOutput,
@@ -649,7 +649,9 @@ export async function runRestartCoherentCycleCommand(
             taskId: resolvedTaskId,
             taskModePath: resolvedTaskModePath,
             stage: 'TASK_ENTRY',
-            loadedRuleFiles: TASK_ENTRY_RULE_FILES,
+            loadedRuleFiles: getTaskEntryRuleFilesForDepth(
+                previousTaskMode.effective_depth || previousTaskMode.requested_depth || 2
+            ),
             emitMetrics: options.emitMetrics
         }));
 

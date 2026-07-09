@@ -559,7 +559,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         });
 
         const rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'TASK_ENTRY', {
-            artifactPath: String(options.rulePackPath || '')
+            artifactPath: String(options.rulePackPath || ''),
+            taskModePath: String(options.taskModePath || '')
         });
         preflightErrors.push(...getRulePackEvidenceViolations(rulePackEvidence));
 

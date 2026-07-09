@@ -7,6 +7,9 @@ import * as path from 'node:path';
 import {
     resolveRestartCommandChangedFiles
 } from '../../../../src/gates/recovery/restart-command-scope';
+import {
+    normalizeRuleFileList
+} from '../../../../src/cli/commands/gate-flows/recovery/recovery-flow-replay-scope';
 
 function writePreflight(repoRoot: string, fileName: string, payload: Record<string, unknown>): string {
     const preflightPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', fileName);
@@ -16,6 +19,24 @@ function writePreflight(repoRoot: string, fileName: string, payload: Record<stri
 }
 
 describe('gates/recovery restart-command-scope', () => {
+    it('uses compact TASK_ENTRY base rules for depth 1 recovery replay scopes', () => {
+        assert.deepEqual(normalizeRuleFileList({}, 1), [
+            '00-core.md',
+            '40-commands.md',
+            '80-task-workflow.md'
+        ]);
+    });
+
+    it('keeps full TASK_ENTRY base rules for depth 3 recovery replay scopes', () => {
+        assert.deepEqual(normalizeRuleFileList({}, 3), [
+            '00-core.md',
+            '15-project-memory.md',
+            '40-commands.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
+        ]);
+    });
+
     it('preserves mixed source and materialized workflow-config scope', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-restart-command-scope-'));
         try {

@@ -48,7 +48,7 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
         } else {
             effectiveDepth = taskModeEvidence.effective_depth;
         }
-        requiredRuleFiles = getRulePackRequiredEntryFiles(repoRoot);
+        requiredRuleFiles = getRulePackRequiredEntryFiles(repoRoot, effectiveDepth);
     } else {
         const resolvedPreflightPath = resolvePathInsideRepo(String(options.preflightPath || '').trim(), repoRoot);
         if (!resolvedPreflightPath) {

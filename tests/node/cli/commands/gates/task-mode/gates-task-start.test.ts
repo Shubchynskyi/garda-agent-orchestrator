@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { syncTaskQueueStatus, syncTaskQueueStatusDetailed } from '../../../../../../src/cli/commands/gate-flows/task/task-queue-sync';
 import {
@@ -11,15 +12,33 @@ import {
 import {
     runClassifyChangeCommand,
     runEnterTaskModeCommand,
-    runLoadRulePackCommand
+    runHandshakeDiagnosticsCommand,
+    runLoadRulePackCommand,
+    runShellSmokePreflightCommand
 } from '../../../../../../src/cli/commands/gates';
 import {
     EXIT_GATE_FAILURE
 } from '../../../../../../src/cli/exit-codes';
 import {
+    appendTaskEvent
+} from '../../../../../../src/gate-runtime/task-events';
+import {
+    buildRulePackBindingSha256,
+    getPostPreflightSequenceEvidence
+} from '../../../../../../src/gates/rule-pack/rule-pack-binding';
+import {
     appendPreflightClassifiedEvent,
     initializeGitRepo
 } from '../../gate-test-seed-helpers';
+import {
+    buildRuleFileHashes,
+    getLegacyPostPreflightRulePackFiles,
+    getLegacyTaskEntryRulePackFiles,
+    getRulePackRequiredEntryFiles
+} from '../../../../../../src/gates/rule-pack/rule-pack-selection';
+import {
+    getRulePackEvidence
+} from '../../../../../../src/gates/rule-pack/rule-pack-evidence';
 import {
     runCliMain
 } from '../../../../../../src/cli/main';
@@ -244,6 +263,10 @@ function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<
         .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+function fileSha256ForTest(filePath: string): string {
+    return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
 function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = '') {
     return runLoadRulePackCommand({
         repoRoot,
@@ -259,6 +282,140 @@ function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = 
         ],
         emitMetrics: false
     });
+}
+
+function writeTaskEntryRulePackArtifact(
+    repoRoot: string,
+    taskId: string,
+    options: { ruleFiles: string[]; effectiveDepth: number; staleHash?: boolean }
+): void {
+    const loadedRuleHashes = buildRuleFileHashes(options.ruleFiles);
+    if (options.staleHash) {
+        loadedRuleHashes[options.ruleFiles[0]] = 'deadbeef';
+    }
+    const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
+    fs.writeFileSync(artifactPath, JSON.stringify({
+        timestamp_utc: '2026-01-01T00:00:00.000Z',
+        event_source: 'load-rule-pack',
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        latest_stage: 'TASK_ENTRY',
+        stages: {
+            task_entry: {
+                timestamp_utc: '2026-01-01T00:00:00.000Z',
+                stage: 'TASK_ENTRY',
+                status: 'PASSED',
+                outcome: 'PASS',
+                actor: 'orchestrator',
+                required_rule_files: options.ruleFiles,
+                loaded_rule_files: options.ruleFiles,
+                missing_rule_files: [],
+                extra_rule_files: [],
+                required_rule_hashes: buildRuleFileHashes(options.ruleFiles),
+                loaded_rule_hashes: loadedRuleHashes,
+                required_rule_count: options.ruleFiles.length,
+                loaded_rule_count: options.ruleFiles.length,
+                effective_depth: options.effectiveDepth,
+                preflight_path: null,
+                preflight_hash_sha256: null,
+                preflight_rule_pack_binding_sha256: null,
+                preflight_event_sequence: null,
+                required_reviews: null,
+                violations: []
+            }
+        }
+    }, null, 2), 'utf8');
+}
+
+function writeLegacyTaskEntryRulePackArtifact(
+    repoRoot: string,
+    taskId: string,
+    options: { staleHash?: boolean } = {}
+): void {
+    writeTaskEntryRulePackArtifact(repoRoot, taskId, {
+        ruleFiles: getLegacyTaskEntryRulePackFiles(repoRoot),
+        effectiveDepth: 1,
+        staleHash: options.staleHash
+    });
+}
+
+function writeLegacyPostPreflightRulePackArtifact(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    options: { effectiveDepth?: number } = {}
+): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const riskAwareDepth = preflight.risk_aware_depth && typeof preflight.risk_aware_depth === 'object' && !Array.isArray(preflight.risk_aware_depth)
+        ? preflight.risk_aware_depth as Record<string, unknown>
+        : {};
+    const effectiveDepth = options.effectiveDepth
+        || (typeof riskAwareDepth.effective_depth === 'number' ? riskAwareDepth.effective_depth : 1);
+    const requiredReviews = preflight.required_reviews as Record<string, boolean>;
+    const legacyRuleFiles = getLegacyPostPreflightRulePackFiles(repoRoot, requiredReviews, effectiveDepth);
+    const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
+    const existingArtifact = fs.existsSync(artifactPath)
+        ? JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>
+        : {};
+    const existingStages = existingArtifact.stages && typeof existingArtifact.stages === 'object' && !Array.isArray(existingArtifact.stages)
+        ? existingArtifact.stages as Record<string, unknown>
+        : {};
+    const normalizedPreflightPath = preflightPath.replace(/\\/g, '/');
+    const stages = {
+        ...existingStages,
+        post_preflight: {
+            timestamp_utc: '2026-01-01T00:00:00.000Z',
+            stage: 'POST_PREFLIGHT',
+            status: 'PASSED',
+            outcome: 'PASS',
+            actor: 'orchestrator',
+            required_rule_files: legacyRuleFiles,
+            loaded_rule_files: legacyRuleFiles,
+            missing_rule_files: [],
+            extra_rule_files: [],
+            required_rule_hashes: buildRuleFileHashes(legacyRuleFiles),
+            loaded_rule_hashes: buildRuleFileHashes(legacyRuleFiles),
+            required_rule_count: legacyRuleFiles.length,
+            loaded_rule_count: legacyRuleFiles.length,
+            effective_depth: effectiveDepth,
+            preflight_path: normalizedPreflightPath,
+            preflight_hash_sha256: fileSha256ForTest(preflightPath),
+            preflight_rule_pack_binding_sha256: buildRulePackBindingSha256({
+                repoRoot,
+                preflightPath: normalizedPreflightPath,
+                preflightPayload: preflight,
+                effectiveDepth,
+                requiredRuleFiles: legacyRuleFiles,
+                requiredReviews
+            }),
+            preflight_event_sequence: null,
+            required_reviews: requiredReviews,
+            violations: []
+        }
+    };
+    fs.writeFileSync(artifactPath, JSON.stringify({
+        ...existingArtifact,
+        timestamp_utc: '2026-01-01T00:00:00.000Z',
+        event_source: 'load-rule-pack',
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        latest_stage: 'POST_PREFLIGHT',
+        stages
+    }, null, 2), 'utf8');
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'RULE_PACK_LOADED',
+        'PASS',
+        'Legacy POST_PREFLIGHT rule-pack loaded.',
+        {
+            stage: 'POST_PREFLIGHT',
+            preflight_path: normalizedPreflightPath,
+            artifact_path: artifactPath.replace(/\\/g, '/')
+        }
+    );
 }
 
 describe('cli/commands/gates — task-start', () => {
@@ -695,6 +852,208 @@ describe('cli/commands/gates — task-start', () => {
         assert.equal(result.outputLines[0], 'RULE_PACK_LOADED');
         assert.equal(artifact.event_source, 'load-rule-pack');
         assert.equal(artifact.stages.task_entry.status, 'PASSED');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('loads compact TASK_ENTRY rule-pack evidence for depth 1 task mode', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900a-depth1';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 1,
+            taskSummary: 'Update app flow'
+        });
+
+        const result = runLoadRulePackCommand({
+            repoRoot,
+            taskId,
+            stage: 'TASK_ENTRY',
+            loadedRuleFiles: [
+                '00-core.md',
+                '40-commands.md',
+                '80-task-workflow.md'
+            ],
+            emitMetrics: false
+        });
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.outputLines[0], 'RULE_PACK_LOADED');
+        assert.deepEqual(
+            artifact.stages.task_entry.required_rule_files,
+            getRulePackRequiredEntryFiles(repoRoot, 1)
+        );
+        assert.equal(artifact.stages.task_entry.required_rule_count, 3);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects compact TASK_ENTRY rule-pack evidence for strict depth 3 task mode', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900a-depth3';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 3,
+            taskSummary: 'Update app flow'
+        });
+
+        const result = runLoadRulePackCommand({
+            repoRoot,
+            taskId,
+            stage: 'TASK_ENTRY',
+            loadedRuleFiles: [
+                '00-core.md',
+                '40-commands.md',
+                '80-task-workflow.md'
+            ],
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
+        assert.ok(result.outputLines.join('\n').includes('15-project-memory.md'));
+        assert.ok(result.outputLines.join('\n').includes('90-skill-catalog.md'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects compact TASK_ENTRY artifact depth overrides for strict depth 3 task mode', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900a-depth3-forged-artifact';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 3,
+            taskSummary: 'Update app flow'
+        });
+        writeTaskEntryRulePackArtifact(repoRoot, taskId, {
+            ruleFiles: getRulePackRequiredEntryFiles(repoRoot, 1),
+            effectiveDepth: 1
+        });
+
+        const evidence = getRulePackEvidence(repoRoot, taskId, 'TASK_ENTRY');
+
+        assert.equal(evidence.evidence_status, 'EVIDENCE_RULE_SET_INVALID');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('accepts legacy full TASK_ENTRY rule-pack evidence for depth 1 as a verified superset', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900a-legacy-depth1';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 1,
+            taskSummary: 'Update app flow'
+        });
+        writeLegacyTaskEntryRulePackArtifact(repoRoot, taskId);
+
+        const evidence = getRulePackEvidence(repoRoot, taskId, 'TASK_ENTRY');
+
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.loaded_rule_files.length, 5);
+        assert.equal(evidence.required_rule_files.length, 5);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('accepts legacy full POST_PREFLIGHT rule-pack evidence for depth 1 as a verified superset', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900a-legacy-post-depth1';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, '.agents', 'workflows', 'start-task.md'),
+            '# Start Task\n',
+            'utf8'
+        );
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'fixture' }, null, 2), 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'),
+            '#!/usr/bin/env node\n',
+            'utf8'
+        );
+        initializeGitRepo(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 1,
+            taskSummary: 'Update app flow'
+        });
+        runLoadRulePackCommand({
+            repoRoot,
+            taskId,
+            stage: 'TASK_ENTRY',
+            loadedRuleFiles: [
+                '00-core.md',
+                '40-commands.md',
+                '80-task-workflow.md'
+            ],
+            emitMetrics: false
+        });
+        runHandshakeDiagnosticsCommand({
+            repoRoot,
+            taskId,
+            emitMetrics: false
+        });
+        runShellSmokePreflightCommand({
+            repoRoot,
+            taskId,
+            emitMetrics: false
+        });
+        runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Update app flow',
+            changedFiles: ['src/app.ts'],
+            emitMetrics: false
+        });
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        writeLegacyPostPreflightRulePackArtifact(repoRoot, taskId, preflightPath);
+
+        const evidence = getRulePackEvidence(repoRoot, taskId, 'POST_PREFLIGHT', { preflightPath });
+        const sequenceEvidence = getPostPreflightSequenceEvidence(repoRoot, taskId, preflightPath);
+
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.binding_equivalent_to_current_preflight, true);
+        assert.deepEqual(sequenceEvidence.violations, []);
+        assert.equal(sequenceEvidence.binding_equivalent_to_current_preflight, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps stale hash validation for legacy full TASK_ENTRY compatibility', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900a-legacy-stale';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 1,
+            taskSummary: 'Update app flow'
+        });
+        writeLegacyTaskEntryRulePackArtifact(repoRoot, taskId, { staleHash: true });
+
+        const evidence = getRulePackEvidence(repoRoot, taskId, 'TASK_ENTRY');
+
+        assert.equal(evidence.evidence_status, 'EVIDENCE_LOADED_RULE_STALE');
+        assert.ok(evidence.stale_loaded_rule_file);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

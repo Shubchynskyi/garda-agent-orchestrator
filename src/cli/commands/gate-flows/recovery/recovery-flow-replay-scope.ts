@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { selectRulePackFiles } from '../../../../gates/review-context/review-context-token-economy';
+import { selectTaskEntryRulePackFileNames } from '../../../../gates/rule-pack/rule-pack-selection';
 import { getPreflightContext } from '../../../../gates/compile/compile-gate';
 import { collectOrderedTimelineEvents, findLatestTimelineEvent } from '../../../../gates/completion/completion-evidence';
 import { getLatestPrePreflightCycleAnchor, isTaskEntryRulePackLoadedEvent } from '../../../../gates/preflight/pre-preflight-cycle-anchor';
@@ -13,13 +14,9 @@ import type {
     RestartReviewCycleCommandOptions
 } from './recovery-flow-types';
 
-export const TASK_ENTRY_RULE_FILES = Object.freeze([
-    '00-core.md',
-    '15-project-memory.md',
-    '40-commands.md',
-    '80-task-workflow.md',
-    '90-skill-catalog.md'
-]);
+export function getTaskEntryRuleFilesForDepth(effectiveDepth: number | null | undefined): string[] {
+    return selectTaskEntryRulePackFileNames({ effectiveDepth });
+}
 
 const REVIEW_CYCLE_BOUNDARY_EVENTS = new Set([
     'REVIEW_GATE_PASSED',
@@ -33,7 +30,7 @@ const REVIEW_CYCLE_PREFLIGHT_REFRESH_BOUNDARY_EVENTS = new Set([
 ]);
 
 export function normalizeRuleFileList(requiredReviews: Record<string, boolean>, effectiveDepth: number): string[] {
-    const fileNames = new Set<string>(TASK_ENTRY_RULE_FILES);
+    const fileNames = new Set<string>(getTaskEntryRuleFilesForDepth(effectiveDepth));
     for (const [reviewType, required] of Object.entries(requiredReviews)) {
         if (!required) {
             continue;

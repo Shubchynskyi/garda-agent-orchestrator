@@ -8,9 +8,12 @@ import { resolveRulePackArtifactPath } from './rule-pack-artifact-store';
 import { isRecord } from './rule-pack-records';
 import {
     findStaleLoadedRuleFile,
+    getLegacyPostPreflightRulePackFiles,
     getRulePackRequiredEntryFiles,
     getRulePackRequiredFilesFromPreflight,
-    getRulePackStageKey
+    getRulePackStageKey,
+    isCompatiblePostPreflightRuleFileSet,
+    isCompatibleTaskEntryRuleFileSet
 } from './rule-pack-selection';
 import {
     collectOrderedTimelineEvents,
@@ -139,8 +142,22 @@ export function getRulePackEvidence(
     }
 
     let expectedRuleFiles: string[] = [];
+    let artifactRuleSetCompatible = false;
+    let postPreflightRequiredReviews: Record<string, boolean> | null = null;
+    let postPreflightEffectiveDepth: number | null = null;
     if (stage === 'TASK_ENTRY') {
-        expectedRuleFiles = getRulePackRequiredEntryFiles(repoRoot);
+        const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
+        if (getTaskModeEvidenceViolations(taskModeEvidence).length > 0) {
+            result.evidence_status = 'EVIDENCE_TASK_MODE_INVALID';
+            return result;
+        }
+        const expectedEffectiveDepth = taskModeEvidence.effective_depth || 2;
+        expectedRuleFiles = getRulePackRequiredEntryFiles(repoRoot, expectedEffectiveDepth);
+        artifactRuleSetCompatible = isCompatibleTaskEntryRuleFileSet(
+            repoRoot,
+            result.required_rule_files,
+            expectedEffectiveDepth
+        );
     } else {
         const resolvedPreflightPath = resolvePathInsideRepo(String(options.preflightPath || '').trim(), repoRoot);
         if (!resolvedPreflightPath) {
@@ -159,7 +176,14 @@ export function getRulePackEvidence(
         if (evidenceRiskAwareDepth && typeof evidenceRiskAwareDepth.effective_depth === 'number') {
             evidenceEffectiveDepth = evidenceRiskAwareDepth.effective_depth;
         }
+        postPreflightRequiredReviews = validatedPreflight.required_reviews;
+        postPreflightEffectiveDepth = evidenceEffectiveDepth;
         expectedRuleFiles = getRulePackRequiredFilesFromPreflight(
+            repoRoot,
+            validatedPreflight.required_reviews,
+            evidenceEffectiveDepth
+        );
+        const legacyRuleFiles = getLegacyPostPreflightRulePackFiles(
             repoRoot,
             validatedPreflight.required_reviews,
             evidenceEffectiveDepth
@@ -172,10 +196,20 @@ export function getRulePackEvidence(
             requiredRuleFiles: expectedRuleFiles,
             requiredReviews: validatedPreflight.required_reviews
         });
+        const legacyBindingSha256 = buildRulePackBindingSha256({
+            repoRoot,
+            preflightPath: validatedPreflight.preflight_path,
+            preflightPayload: validatedPreflight.preflight,
+            effectiveDepth: evidenceEffectiveDepth,
+            requiredRuleFiles: legacyRuleFiles,
+            requiredReviews: validatedPreflight.required_reviews
+        });
         result.binding_equivalent_to_current_preflight = !!(
-            expectedBindingSha256
-            && result.evidence_preflight_rule_pack_binding_sha256
-            && expectedBindingSha256 === result.evidence_preflight_rule_pack_binding_sha256
+            result.evidence_preflight_rule_pack_binding_sha256
+            && (
+                expectedBindingSha256 === result.evidence_preflight_rule_pack_binding_sha256
+                || legacyBindingSha256 === result.evidence_preflight_rule_pack_binding_sha256
+            )
         );
 
         const normalizedPreflightPath = normalizePath(validatedPreflight.preflight_path);
@@ -192,21 +226,15 @@ export function getRulePackEvidence(
         }
     }
 
-    const expectedSet = new Set(expectedRuleFiles.map(function (ruleFile) {
-        return ruleFile.toLowerCase();
-    }));
-    const actualSet = new Set(result.required_rule_files.map(function (ruleFile) {
-        return ruleFile.toLowerCase();
-    }));
-    if (
-        expectedRuleFiles.length !== result.required_rule_files.length
-        || expectedRuleFiles.some(function (ruleFile) { return !actualSet.has(ruleFile.toLowerCase()); })
-    ) {
-        result.evidence_status = 'EVIDENCE_RULE_SET_INVALID';
-        return result;
+    if (stage !== 'TASK_ENTRY') {
+        artifactRuleSetCompatible = isCompatiblePostPreflightRuleFileSet(
+            repoRoot,
+            result.required_rule_files,
+            postPreflightRequiredReviews || {},
+            postPreflightEffectiveDepth
+        );
     }
-
-    if (result.required_rule_files.some(function (ruleFile) { return !expectedSet.has(ruleFile.toLowerCase()); })) {
+    if (!artifactRuleSetCompatible) {
         result.evidence_status = 'EVIDENCE_RULE_SET_INVALID';
         return result;
     }
@@ -214,9 +242,14 @@ export function getRulePackEvidence(
     const loadedSet = new Set(result.loaded_rule_files.map(function (ruleFile) {
         return ruleFile.toLowerCase();
     }));
+    const requiredRecordedSet = new Set(result.required_rule_files.map(function (ruleFile) {
+        return ruleFile.toLowerCase();
+    }));
     if (
         result.missing_rule_files.length > 0
         || expectedRuleFiles.some(function (ruleFile) { return !loadedSet.has(ruleFile.toLowerCase()); })
+        || result.required_rule_files.some(function (ruleFile) { return !loadedSet.has(ruleFile.toLowerCase()); })
+        || expectedRuleFiles.some(function (ruleFile) { return !requiredRecordedSet.has(ruleFile.toLowerCase()); })
     ) {
         result.evidence_status = 'EVIDENCE_REQUIRED_RULES_MISSING';
         return result;
