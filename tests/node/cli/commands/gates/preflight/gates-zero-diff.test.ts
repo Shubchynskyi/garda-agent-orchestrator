@@ -839,4 +839,56 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('accepts substantive audited zero-diff rationales without keyword classification', { concurrency: false }, async () => {
+        const taskId = 'T-312-external-input';
+        const { repoRoot, preflightPath, outputFiltersPath } = await setupZeroDiffReviewGateFixture(taskId);
+
+        for (const reason of [
+            'Waiting for external operator input before this task can continue.',
+            'An audit confirmed that the intended change is already complete.',
+            'Investigation established that no implementation change is required.'
+        ]) {
+            const noOpResult = runRecordNoOpCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                classification: 'AUDIT_ONLY',
+                reason,
+                emitMetrics: false
+            });
+            assert.equal(noOpResult.exitCode, 0);
+            assert.ok(noOpResult.outputLines.includes('NO_OP_RECORDED'));
+        }
+
+        const noOpPath = path.join(getReviewsRoot(repoRoot), `${taskId}-no-op.json`);
+        const noOpArtifact = JSON.parse(fs.readFileSync(noOpPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(noOpArtifact.status, 'PASSED');
+        assert.equal(noOpArtifact.outcome, 'PASS');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const reviewGate = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const zeroDiffGuard = reviewGate.zero_diff_guard as Record<string, unknown>;
+        assert.equal(zeroDiffGuard.status, 'SATISFIED_BY_AUDITED_NO_OP');
+        assert.equal(zeroDiffGuard.no_op_evidence_status, 'PASS');
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.zero_diff_evidence.status, 'SATISFIED_BY_AUDITED_NO_OP');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
 });

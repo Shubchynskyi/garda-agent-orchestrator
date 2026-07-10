@@ -211,6 +211,45 @@ describe('gates/task-audit-summary final user report rendering', () => {
         assert.ok(!renderedReport.includes('0m 08s'));
     });
 
+    it('warns only for genuine timing distrust in mixed fresh and reused closeout entries', () => {
+        const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
+            review_timing_audit: {
+                entries: [
+                    makeFinalUserReportTimingEntry('code', 65_000),
+                    makeFinalUserReportTimingEntry('security', 40_000, {
+                        reused_existing_review: true,
+                        hidden_timing_status: 'TRUSTED',
+                        hidden_timing_distrust_code: null
+                    }),
+                    makeFinalUserReportTimingEntry('performance', 5_000, {
+                        hidden_timing_status: 'DISTRUSTED',
+                        hidden_timing_distrust_code: 'too_short_without_strong_provider_evidence'
+                    })
+                ],
+                visible_summary_line: 'Review timing audit: code(TRUSTED); security(TRUSTED); performance(DISTRUSTED).'
+            }
+        }));
+
+        assert.ok(renderedReport.includes('WARNING: review accepted, but timing looked unusual'));
+    });
+
+    it('does not warn when only reused evidence has timing distrust', () => {
+        const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
+            review_timing_audit: {
+                entries: [
+                    makeFinalUserReportTimingEntry('security', 40_000, {
+                        reused_existing_review: true,
+                        hidden_timing_status: 'DISTRUSTED',
+                        hidden_timing_distrust_code: 'missing_timing'
+                    })
+                ],
+                visible_summary_line: 'Review timing audit: security(DISTRUSTED:missing_timing).'
+            }
+        }));
+
+        assert.ok(!renderedReport.includes('WARNING: review accepted, but timing looked unusual'));
+    });
+
     it('renders delegated reviewer wall-clock duration instead of gate finalization seconds', () => {
         const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
             implementation_summary: {

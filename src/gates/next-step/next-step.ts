@@ -94,9 +94,7 @@ import {
 import {
     getProjectMemoryImpactLifecycleEvidence
 } from '../project-memory-impact/project-memory-impact';
-import {
-    getNoOpEvidence
-} from '../task-mode/no-op';
+import { getNoOpEvidence } from '../task-mode/no-op';
 import {
     readOptionalMarkdownWorkingPlan,
     type TaskModeMarkdownWorkingPlanMetadata
@@ -3333,9 +3331,29 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         });
     }
 
-    const baselineOnlyNoOpEvidence = preflightRequiresAuditedNoOp(preflight)
+    const requiresAuditedNoOp = preflightRequiresAuditedNoOp(preflight);
+    const baselineOnlyNoOpEvidence = requiresAuditedNoOp
         ? getNoOpEvidence(repoRoot, taskId, '', preflightCommandPath)
         : null;
+    if (requiresAuditedNoOp) {
+        if (baselineOnlyNoOpEvidence?.evidence_status !== 'PASS') {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'record-no-op',
+                title: 'Record audited zero-diff no-op evidence.',
+                reason:
+                    'The current preflight is BASELINE_ONLY with no reviewable diff and requires audited no-op evidence before review or completion gates can pass. ' +
+                    `Record no-op evidence or implement changes and refresh preflight; current no-op evidence status: ${baselineOnlyNoOpEvidence?.evidence_status || 'EVIDENCE_FILE_MISSING'}.`,
+                commands: [
+                    buildCommand(
+                        'Record audited no-op evidence',
+                        `${cliPrefix} gate record-no-op --task-id "${taskId}" --classification "AUDIT_ONLY" --reason "<operator-approved no-op rationale>" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                    )
+                ]
+            });
+        }
+    }
     const baselineOnlyPreImplementationRoute = buildBaselineOnlyPreImplementationRoute({
         repoRoot,
         taskEntry,
@@ -3395,28 +3413,6 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             reason: compileGateRoute.reason,
             commands: compileGateRoute.commands
         });
-    }
-
-    if (preflightRequiresAuditedNoOp(preflight)) {
-        const noOpEvidence = baselineOnlyNoOpEvidence
-            || getNoOpEvidence(repoRoot, taskId, '', preflightCommandPath);
-        if (noOpEvidence.evidence_status !== 'PASS') {
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'record-no-op',
-                title: 'Record audited zero-diff no-op evidence.',
-                reason:
-                    'The current preflight is BASELINE_ONLY with no reviewable diff and requires audited no-op evidence before review or completion gates can pass. ' +
-                    `Record no-op evidence or implement changes and refresh preflight; current no-op evidence status: ${noOpEvidence.evidence_status}.`,
-                commands: [
-                    buildCommand(
-                        'Record audited no-op evidence',
-                        `${cliPrefix} gate record-no-op --task-id "${taskId}" --classification "AUDIT_ONLY" --reason "<why no code changed>" --preflight-path "${preflightCommandPath}" --repo-root "."`
-                    )
-                ]
-            });
-        }
     }
 
     const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;

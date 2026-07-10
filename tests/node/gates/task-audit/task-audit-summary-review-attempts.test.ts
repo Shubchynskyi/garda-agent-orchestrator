@@ -139,7 +139,7 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.equal(result.review_attempt_summary?.total_attempts, 3);
+            assert.equal(result.review_attempt_summary?.total_attempts, 2);
             assert.deepEqual(result.review_attempt_summary?.review_types, [
                 {
                     review_type: 'code',
@@ -148,20 +148,13 @@ describe('gates/task-audit-summary', () => {
                     fail_count: 1,
                     reused_count: 0,
                     missing_or_invalid_count: 0
-                },
-                {
-                    review_type: 'test',
-                    total_attempts: 1,
-                    pass_count: 1,
-                    fail_count: 0,
-                    reused_count: 1,
-                    missing_or_invalid_count: 0
                 }
             ]);
-            assert.match(result.review_attempt_summary?.visible_summary_line || '', /Review attempts: total=3/);
-            assert.equal(result.final_closeout.review_attempt_summary?.total_attempts, 3);
-            assert.ok(formatTaskAuditSummaryText(result).includes('Review attempts: total=3; code(pass=1, fail=1, reused=0, missing/invalid=0); test(pass=1, fail=0, reused=1, missing/invalid=0)'));
-            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review attempts: total=3; code(pass=1, fail=1, reused=0, missing/invalid=0); test(pass=1, fail=0, reused=1, missing/invalid=0)'));
+            const expectedLine = 'Review attempts: total=2; code(pass=1, fail=1, reused=0, missing/invalid=0)';
+            assert.equal(result.review_attempt_summary?.visible_summary_line, expectedLine);
+            assert.equal(result.final_closeout.review_attempt_summary?.total_attempts, 2);
+            assert.ok(formatTaskAuditSummaryText(result).includes(expectedLine));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(expectedLine));
         });
 
         it('reports cumulative and current-scope review-cycle diagnostics in audit and closeout summaries', () => {
@@ -227,11 +220,11 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.equal(result.review_attempt_summary?.total_attempts, 5);
+            assert.equal(result.review_attempt_summary?.total_attempts, 3);
             assert.equal(result.review_attempt_summary?.total_non_test_attempts, 3);
             assert.equal(result.review_attempt_summary?.current_scope_non_test_attempts, 1);
             assert.equal(result.review_attempt_summary?.fresh_non_test_attempts, 3);
-            assert.equal(result.review_attempt_summary?.reused_non_test_attempts, 1);
+            assert.equal(result.review_attempt_summary?.reused_non_test_attempts, 0);
             assert.equal(result.review_attempt_summary?.scope_hash_count_by_review_type?.code, 3);
             assert.deepEqual(result.review_attempt_summary?.current_scope_counts_by_review_type?.code, {
                 total: 1,
@@ -240,8 +233,8 @@ describe('gates/task-audit-summary', () => {
                 missing_or_invalid: 1
             });
             assert.equal(result.final_closeout.review_attempt_summary?.current_scope_non_test_attempts, 1);
-            assert.ok(formatTaskAuditSummaryText(result).includes('Review cycle attempts: total=5; non_test=3; current_scope_non_test=1; fresh_non_test=3; reused_non_test=1; scope_hashes_by_type=code=3, test=1'));
-            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review cycle attempts: total=5; non_test=3; current_scope_non_test=1; fresh_non_test=3; reused_non_test=1; scope_hashes_by_type=code=3, test=1'));
+            assert.ok(formatTaskAuditSummaryText(result).includes('Review cycle attempts: total=3; non_test=3; current_scope_non_test=1; fresh_non_test=3; reused_non_test=0; scope_hashes_by_type=code=3'));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review cycle attempts: total=3; non_test=3; current_scope_non_test=1; fresh_non_test=3; reused_non_test=0; scope_hashes_by_type=code=3'));
         });
 
         it('uses workflow review-cycle exclusions for audit and closeout non-test attempt totals', () => {
@@ -388,7 +381,7 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.equal(result.review_attempt_summary?.total_attempts, 5);
+            assert.equal(result.review_attempt_summary?.total_attempts, 4);
             assert.deepEqual(result.review_attempt_summary?.review_types, [
                 {
                     review_type: 'code',
@@ -413,17 +406,9 @@ describe('gates/task-audit-summary', () => {
                     fail_count: 1,
                     reused_count: 0,
                     missing_or_invalid_count: 0
-                },
-                {
-                    review_type: 'test',
-                    total_attempts: 1,
-                    pass_count: 1,
-                    fail_count: 0,
-                    reused_count: 1,
-                    missing_or_invalid_count: 0
                 }
             ]);
-            const expectedLine = 'Review attempts: total=5; code(pass=1, fail=1, reused=0, missing/invalid=0); refactor(pass=1, fail=0, reused=0, missing/invalid=0); security(pass=0, fail=1, reused=0, missing/invalid=0); test(pass=1, fail=0, reused=1, missing/invalid=0)';
+            const expectedLine = 'Review attempts: total=4; code(pass=1, fail=1, reused=0, missing/invalid=0); refactor(pass=1, fail=0, reused=0, missing/invalid=0); security(pass=0, fail=1, reused=0, missing/invalid=0)';
             assert.equal(result.review_attempt_summary?.visible_summary_line, expectedLine);
             assert.ok(formatTaskAuditSummaryText(result).includes(expectedLine));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(expectedLine));
@@ -576,7 +561,7 @@ describe('gates/task-audit-summary', () => {
             });
 
             assert.equal(result.review_attempt_summary?.source_mode, 'current_artifacts_fallback');
-            assert.equal(result.review_attempt_summary?.total_attempts, 2);
+            assert.equal(result.review_attempt_summary?.total_attempts, 1);
             assert.deepEqual(result.review_attempt_summary?.review_types, [
                 {
                     review_type: 'code',
@@ -584,14 +569,6 @@ describe('gates/task-audit-summary', () => {
                     pass_count: 1,
                     fail_count: 0,
                     reused_count: 0,
-                    missing_or_invalid_count: 0
-                },
-                {
-                    review_type: 'test',
-                    total_attempts: 1,
-                    pass_count: 1,
-                    fail_count: 0,
-                    reused_count: 1,
                     missing_or_invalid_count: 0
                 }
             ]);
@@ -720,8 +697,8 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.equal(result.review_attempt_summary?.source_mode, 'mixed');
-            assert.equal(result.review_attempt_summary?.total_attempts, 2);
+            assert.equal(result.review_attempt_summary?.source_mode, 'task_events');
+            assert.equal(result.review_attempt_summary?.total_attempts, 1);
             assert.deepEqual(result.review_attempt_summary?.review_types, [
                 {
                     review_type: 'code',
@@ -729,14 +706,6 @@ describe('gates/task-audit-summary', () => {
                     pass_count: 1,
                     fail_count: 0,
                     reused_count: 0,
-                    missing_or_invalid_count: 0
-                },
-                {
-                    review_type: 'test',
-                    total_attempts: 1,
-                    pass_count: 1,
-                    fail_count: 0,
-                    reused_count: 1,
                     missing_or_invalid_count: 0
                 }
             ]);
@@ -1000,16 +969,55 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.deepEqual(result.review_attempt_summary?.review_types, [
-                {
-                    review_type: 'code',
-                    total_attempts: 1,
-                    pass_count: 0,
-                    fail_count: 0,
-                    reused_count: 1,
-                    missing_or_invalid_count: 1
-                }
+            assert.equal(result.review_attempt_summary, null);
+        });
+
+        it('excludes corrupt reused snapshot fallback when telemetry identifies the same evidence as reused', () => {
+            writeWorkflowConfig(tmpDir, false);
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED' },
+                { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' },
+                { event_type: 'COMPILE_GATE_PASSED' },
+                { event_type: 'REVIEW_PHASE_STARTED' }
             ]);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: { code: false }
+            });
+            const reviewContent = '# Code Review\n\n## Verdict\nREVIEW PASSED\n';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: makeDelegatedRouting('agent:code-reviewer')
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: null,
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:code-reviewer',
+                reviewer_fallback_reason: null,
+                trust_level: 'INDEPENDENT_AUDITED',
+                reused_existing_review: true
+            });
+            const details = buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code');
+            fs.writeFileSync(String(details.receipt_snapshot_path), '{corrupt', 'utf8');
+            appendIntegrityEvent(eventsDir, TASK_ID, {
+                event_type: 'REVIEW_RECORDED',
+                details: { ...details, reused_existing_review: true }
+            });
+
+            const result = buildTaskAuditSummary({ taskId: TASK_ID, repoRoot: tmpDir, eventsRoot: eventsDir, reviewsRoot: reviewsDir });
+
+            assert.equal(result.review_attempt_summary, null);
         });
 
         it('downgrades REVIEW_RECORDED evidence with live paths and hashes but no snapshot paths', () => {
@@ -1492,7 +1500,7 @@ describe('gates/task-audit-summary', () => {
             ]);
         });
 
-        it('preserves reused review telemetry for snapshot-less historical REVIEW_RECORDED events', () => {
+        it('excludes reused review telemetry for snapshot-less historical REVIEW_RECORDED events', () => {
             writeWorkflowConfig(tmpDir, false);
             writeIntegrityEventSequence(eventsDir, TASK_ID, [
                 { event_type: 'TASK_MODE_ENTERED' },
@@ -1527,16 +1535,7 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.deepEqual(result.review_attempt_summary?.review_types, [
-                {
-                    review_type: 'code',
-                    total_attempts: 1,
-                    pass_count: 0,
-                    fail_count: 0,
-                    reused_count: 1,
-                    missing_or_invalid_count: 1
-                }
-            ]);
+            assert.equal(result.review_attempt_summary, null);
         });
     });
 });

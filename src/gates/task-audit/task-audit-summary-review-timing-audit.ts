@@ -2,10 +2,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileSha256, toPosix } from '../shared/helpers';
 import {
-    validateStrictReusedReviewEvidence,
-    type ReviewReuseTelemetryEventLike
-} from '../review-reuse/review-reuse-telemetry';
-import {
     LEGACY_REVIEW_EXECUTION_POLICY_MODE,
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode
@@ -78,6 +74,10 @@ function elapsedMs(fromUtc: string | null, toUtc: string | null): number | null 
         return null;
     }
     return to - from;
+}
+
+function isReusedReceiptExcludedFromFinalTimingAudit(receipt: Record<string, unknown>): boolean {
+    return receipt.reused_existing_review === true;
 }
 
 function readEventIntegrity(event: TaskAuditEvent | null): Record<string, unknown> | null {
@@ -159,8 +159,7 @@ function buildReviewTimingAuditEntry(
     reviewType: string,
     receiptPath: string,
     events: readonly TaskAuditEvent[],
-    compileSequence: number | null,
-    repoRoot: string
+    compileSequence: number | null
 ): FinalCloseoutReviewTimingAuditEntry | null {
     if (!fs.existsSync(receiptPath) || !fs.statSync(receiptPath).isFile()) {
         return null;
@@ -169,7 +168,12 @@ function buildReviewTimingAuditEntry(
     if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
         return null;
     }
-    const provenance = asAuditRecord(receipt.reviewer_provenance);
+    const receiptProvenance = asAuditRecord(receipt.reviewer_provenance);
+    if (isReusedReceiptExcludedFromFinalTimingAudit(receipt)) {
+        return null;
+    }
+    const receiptSha256 = fileSha256(receiptPath);
+    const provenance = receiptProvenance;
     const invocationEvent = findReviewerInvocationEvent(events, provenance);
     const invocationDetails = asAuditRecord(invocationEvent?.details);
     const launchPreparedAtUtc = readAuditTimestamp(
@@ -191,27 +195,13 @@ function buildReviewTimingAuditEntry(
         receipt.review_result_recorded_at_utc ?? receipt.recorded_at_utc
     );
     const reviewOutputSourceMtimeUtc = readAuditTimestamp(receipt.review_output_source_mtime_utc);
-    const reusedExistingReview = receipt.reused_existing_review === true;
-    const strictReusedReviewRecordedDetails = reusedExistingReview
-        ? findStrictReusedReviewRecordedDetailsForTimingTrust({
-            repoRoot,
-            taskId,
-            reviewType,
-            receiptPath,
-            receipt,
-            provenance,
-            events,
-            compileSequence
-        })
-        : null;
     const timingTrust = evaluateHiddenReviewTimingTrust({
         reviewType,
-        reusedExistingReview,
+        reusedExistingReview: false,
         reviewerProvenance: stripReviewTimingProvenanceTimestamps(provenance),
         reviewResultRecordedAtUtc,
         recordedAtUtc: readAuditTimestamp(receipt.recorded_at_utc),
         reviewOutputSourceMtimeUtc,
-        strictReusedReviewRecordedDetails,
         timelineEvents: events,
         latestCompileSequence: compileSequence
     });
@@ -219,9 +209,9 @@ function buildReviewTimingAuditEntry(
         review_type: reviewType,
         reviewer_identity: readAuditString(receipt.reviewer_identity),
         reviewer_execution_mode: readAuditString(receipt.reviewer_execution_mode),
-        reused_existing_review: reusedExistingReview,
+        reused_existing_review: false,
         receipt_path: toPosix(receiptPath),
-        receipt_sha256: fileSha256(receiptPath),
+        receipt_sha256: receiptSha256,
         review_output_path: readAuditString(receipt.review_output_path),
         review_output_sha256: readAuditSha256(receipt.review_output_sha256),
         provider: readAuditString(
@@ -249,64 +239,11 @@ function buildReviewTimingAuditEntry(
     };
 }
 
-function findStrictReusedReviewRecordedDetailsForTimingTrust(options: {
-    repoRoot: string;
-    taskId: string;
-    reviewType: string;
-    receiptPath: string;
-    receipt: Record<string, unknown>;
-    provenance: Record<string, unknown> | null;
-    events: readonly TaskAuditEvent[];
-    compileSequence: number | null;
-}): Record<string, unknown> | null {
-    const canonicalReceiptPath = path.join(
-        path.dirname(options.receiptPath),
-        `${options.taskId}-${options.reviewType}-receipt.json`
-    );
-    const receiptSha256 = fileSha256(options.receiptPath);
-    const canonicalReceiptSha256 = fs.existsSync(canonicalReceiptPath) && fs.statSync(canonicalReceiptPath).isFile()
-        ? fileSha256(canonicalReceiptPath)
-        : null;
-    // A snapshot receipt may borrow the canonical receipt identity only when its
-    // content is byte-identical to the canonical receipt. Otherwise validate the
-    // snapshot itself so a diverging snapshot cannot inherit the canonical
-    // receipt's strict-reuse validation result.
-    const validationReceiptPath = receiptSha256 != null && receiptSha256 === canonicalReceiptSha256
-        ? canonicalReceiptPath
-        : options.receiptPath;
-    const validation = validateStrictReusedReviewEvidence({
-        repoRoot: options.repoRoot,
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        events: options.events as readonly ReviewReuseTelemetryEventLike[],
-        receiptPath: validationReceiptPath,
-        receiptSha256,
-        reviewContextSha256: readAuditSha256(options.receipt.review_context_sha256),
-        reviewContextReuseSha256: readAuditSha256(options.receipt.review_context_reuse_sha256),
-        reviewTreeStateSha256: readAuditSha256(options.receipt.review_tree_state_sha256),
-        reviewScopeSha256: readAuditSha256(options.receipt.review_scope_sha256),
-        codeScopeSha256: readAuditSha256(options.receipt.code_scope_sha256),
-        reviewArtifactSha256: readAuditSha256(options.receipt.review_artifact_sha256),
-        reusedFromReceiptPath: readAuditString(options.receipt.reused_from_receipt_path),
-        reusedFromReceiptSha256: readAuditSha256(options.receipt.reused_from_receipt_sha256),
-        reusedFromReviewContextSha256: readAuditSha256(options.receipt.reused_from_review_context_sha256),
-        reusedFromReviewContextReuseSha256: readAuditSha256(options.receipt.reused_from_review_context_reuse_sha256),
-        reusedFromReviewTreeStateSha256: readAuditSha256(options.receipt.reused_from_review_tree_state_sha256),
-        reusedFromReviewScopeSha256: readAuditSha256(options.receipt.reused_from_review_scope_sha256),
-        reusedFromCodeScopeSha256: readAuditSha256(options.receipt.reused_from_code_scope_sha256),
-        reviewerExecutionMode: readAuditString(options.receipt.reviewer_execution_mode),
-        reviewerIdentity: readAuditString(options.receipt.reviewer_identity),
-        reviewerProvenance: options.provenance,
-        latestCompileTaskSequence: options.compileSequence
-    });
-    return validation.valid ? validation.historicalReviewRecordedDetails : null;
-}
-
 export function buildReviewTimingAuditSummary(
     reviewsRoot: string,
     taskId: string,
     events: readonly TaskAuditEvent[],
-    repoRoot: string
+    _repoRoot: string
 ): FinalCloseoutReviewTimingAuditSummary | null {
     const compileSequence = latestCompileSequence(events);
     const entries: FinalCloseoutReviewTimingAuditEntry[] = [];
@@ -314,7 +251,7 @@ export function buildReviewTimingAuditSummary(
 
     for (const reviewType of REVIEW_TIMING_AUDIT_TYPES) {
         for (const receiptPath of listReviewReceiptPaths(reviewsRoot, taskId, reviewType)) {
-            const entry = buildReviewTimingAuditEntry(taskId, reviewType, receiptPath, events, compileSequence, repoRoot);
+            const entry = buildReviewTimingAuditEntry(taskId, reviewType, receiptPath, events, compileSequence);
             if (entry) {
                 const receiptIdentity = entry.receipt_sha256
                     ? `${entry.review_type}:${entry.receipt_sha256}`

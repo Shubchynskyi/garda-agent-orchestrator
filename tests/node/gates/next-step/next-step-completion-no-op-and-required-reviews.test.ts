@@ -8,6 +8,7 @@ import { resolveNextStep } from './next-step-test-support';
 import {
     buildForcedSourceCheckoutRuntimeBuildCommand
 } from '../../../../src/validators/workspace-layout';
+import { runRecordNoOpCommand } from '../../../../src/cli/commands/gates';
 import {
     TASK_ID,
     ALL_REVIEW_FLAGS,
@@ -230,6 +231,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('audited no-op evidence'));
         assert.ok(!result.reason.includes('All required review artifacts appear present'));
         assert.ok(result.commands[0].command.includes('gate record-no-op'));
+        assert.ok(result.commands[0].command.includes('<operator-approved no-op rationale>'));
         assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(result.commands[0].command.includes('--classification "AUDIT_ONLY"'));
         assert.ok(result.commands[0].command.includes('--preflight-path'));
@@ -359,6 +361,41 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
         assert.equal(result.missing_artifacts.some((artifact) => artifact.key === 'full-suite-validation'), false);
         assert.equal(result.missing_artifacts.some((artifact) => artifact.key === 'completion-gate'), true);
+    });
+
+    it('accepts an external-input rationale as audited zero-diff evidence', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'empty';
+        preflight.zero_diff_guard = {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true
+        };
+        preflight.profile_guardrails = {
+            zero_diff_no_reviewable_scope: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        const noOpResult = runRecordNoOpCommand({
+            repoRoot,
+            taskId: TASK_ID,
+            classification: 'AUDIT_ONLY',
+            reason: 'Waiting for external operator input before implementation can continue.',
+            preflightPath,
+            emitMetrics: false
+        });
+        assert.equal(noOpResult.exitCode, 0);
+        assert.ok(noOpResult.outputLines.includes('NO_OP_RECORDED'));
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'required-reviews-check');
+        assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
     });
 
     it('omits passed completion and not-required full-suite from zero-diff closeout diagnostics', () => {

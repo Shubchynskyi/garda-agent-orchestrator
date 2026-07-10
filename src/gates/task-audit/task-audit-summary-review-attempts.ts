@@ -194,8 +194,7 @@ function createReviewAttemptTypeSummary(reviewType: string): ReviewAttemptTypeSu
 
 function recordReviewAttempt(
     summary: ReviewAttemptTypeSummary,
-    verdict: 'PASS' | 'FAIL' | 'MISSING_OR_INVALID',
-    reusedExistingReview: boolean
+    verdict: 'PASS' | 'FAIL' | 'MISSING_OR_INVALID'
 ): void {
     summary.total_attempts += 1;
     if (verdict === 'PASS') {
@@ -204,9 +203,6 @@ function recordReviewAttempt(
         summary.fail_count += 1;
     } else {
         summary.missing_or_invalid_count += 1;
-    }
-    if (reusedExistingReview) {
-        summary.reused_count += 1;
     }
 }
 
@@ -616,8 +612,15 @@ export function buildReviewAttemptSummary(options: {
             if (eventEvidenceKey && reviewTypeEvidenceKeys.has(eventEvidenceKey)) {
                 continue;
             }
+            if (eventEvidenceKey) {
+                reviewTypeEvidenceKeys.add(eventEvidenceKey);
+                eventEvidenceKeysByType.set(eventAttempt.reviewType, reviewTypeEvidenceKeys);
+            }
+            if (eventAttempt.reusedExistingReview) {
+                continue;
+            }
             const summary = attemptCounts.get(eventAttempt.reviewType) || createReviewAttemptTypeSummary(eventAttempt.reviewType);
-            recordReviewAttempt(summary, eventAttempt.verdict, eventAttempt.reusedExistingReview);
+            recordReviewAttempt(summary, eventAttempt.verdict);
             attemptCounts.set(eventAttempt.reviewType, summary);
             diagnosticAttempts.push({
                 reviewType: eventAttempt.reviewType,
@@ -626,10 +629,6 @@ export function buildReviewAttemptSummary(options: {
                 scopeHash: eventAttempt.scopeHash,
                 currentScope: eventAttempt.currentScope
             });
-            if (eventEvidenceKey) {
-                reviewTypeEvidenceKeys.add(eventEvidenceKey);
-                eventEvidenceKeysByType.set(eventAttempt.reviewType, reviewTypeEvidenceKeys);
-            }
             taskEventAttemptCount += 1;
         }
 
@@ -647,8 +646,11 @@ export function buildReviewAttemptSummary(options: {
                 if (fallbackEvidenceKey && eventEvidenceKeysByType.get(reviewType)?.has(fallbackEvidenceKey)) {
                     continue;
                 }
+                if (fallbackAttempt.reusedExistingReview) {
+                    continue;
+                }
                 const summary = attemptCounts.get(reviewType) || createReviewAttemptTypeSummary(reviewType);
-                recordReviewAttempt(summary, fallbackAttempt.verdict, fallbackAttempt.reusedExistingReview);
+                recordReviewAttempt(summary, fallbackAttempt.verdict);
                 attemptCounts.set(reviewType, summary);
                 diagnosticAttempts.push({
                     reviewType,

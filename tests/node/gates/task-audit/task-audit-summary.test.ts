@@ -66,6 +66,24 @@ function appendCurrentStrictReuseRecordedForAudit(repoRoot: string, taskId: stri
     });
 }
 
+function clearCurrentReuseTimingForAudit(repoRoot: string, taskId: string, reviewType: string): void {
+    const receiptPath = path.join(reuseReviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt.json`);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    const provenance = receipt.reviewer_provenance as Record<string, unknown>;
+    for (const field of [
+        'launch_prepared_at_utc',
+        'delegation_started_at_utc',
+        'launched_at_utc',
+        'launch_completed_at_utc',
+        'invocation_attested_at_utc'
+    ]) {
+        delete provenance[field];
+    }
+    delete receipt.review_result_recorded_at_utc;
+    delete receipt.review_output_source_mtime_utc;
+    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+}
+
 
 describe('gates/task-audit-summary', () => {
     let tmpDir: string;
@@ -862,20 +880,30 @@ describe('gates/task-audit-summary', () => {
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review timing audit: code(TRUSTED'));
         });
 
-        it('keeps valid strict reused review timing trusted in final closeout output', () => {
+        it('excludes reused code, security, and performance receipts from final timing audit', () => {
             const repoRoot = makeReuseTempRepo();
             const taskId = 'T-AUDIT-REUSE-TIMING';
             const reviewsRoot = reuseReviewsRoot(repoRoot);
             const eventsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events');
             seedReuseStartedTask(repoRoot, taskId);
-            writeReusePreflight(repoRoot, taskId, { ...REUSE_ALL_REVIEW_FLAGS, code: true }, {
+            writeReusePreflight(repoRoot, taskId, {
+                ...REUSE_ALL_REVIEW_FLAGS,
+                code: true,
+                security: true,
+                performance: true
+            }, {
                 includeDomainScopeFingerprints: true
             });
             seedReuseCompilePass(repoRoot, taskId);
-            writeReuseReviewEvidence(repoRoot, taskId, 'code');
-            markReuseReviewEvidenceAsStrictReuse(repoRoot, taskId, 'code');
+            for (const reviewType of ['code', 'security', 'performance']) {
+                writeReuseReviewEvidence(repoRoot, taskId, reviewType);
+                markReuseReviewEvidenceAsStrictReuse(repoRoot, taskId, reviewType);
+                clearCurrentReuseTimingForAudit(repoRoot, taskId, reviewType);
+            }
             seedReuseCompilePass(repoRoot, taskId);
-            appendCurrentStrictReuseRecordedForAudit(repoRoot, taskId, 'code');
+            for (const reviewType of ['code', 'security', 'performance']) {
+                appendCurrentStrictReuseRecordedForAudit(repoRoot, taskId, reviewType);
+            }
             writeArtifact(reviewsRoot, taskId, '-doc-impact.json', {
                 task_id: taskId,
                 status: 'PASSED',
@@ -890,19 +918,20 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot
             });
 
-            const reusedEntry = result.final_closeout.review_timing_audit?.entries.find((entry) => (
-                entry.review_type === 'code' && entry.reused_existing_review
+            const reusedEntries = (result.final_closeout.review_timing_audit?.entries || []).filter((entry) => (
+                entry.reused_existing_review
             ));
-            assert.ok(reusedEntry);
-            assert.equal(reusedEntry.hidden_timing_status, 'TRUSTED');
-            assert.equal(reusedEntry.hidden_timing_distrust_code, null);
-            assert.ok(result.final_closeout.review_timing_audit?.visible_summary_line.includes('code(TRUSTED'));
+            assert.equal(reusedEntries.length, 0);
+            assert.deepEqual(
+                [...new Set((result.final_closeout.review_timing_audit?.entries || []).map((entry) => entry.review_type))].sort(),
+                ['code', 'performance', 'security']
+            );
             const finalUserReport = formatFinalUserReport(result.final_closeout);
             assert.equal(finalUserReport.includes('timing looked unusual'), false);
             assert.equal(finalUserReport.includes('DISTRUSTED'), false);
         });
 
-        it('distrusts diverging reused receipt snapshots instead of borrowing canonical strict-reuse validation', () => {
+        it('excludes diverging reused receipt snapshots from final timing audit checks', () => {
             const repoRoot = makeReuseTempRepo();
             const taskId = 'T-AUDIT-REUSE-TAMPER';
             const reviewsRoot = reuseReviewsRoot(repoRoot);
@@ -945,12 +974,40 @@ describe('gates/task-audit-summary', () => {
             const reusedEntries = (result.final_closeout.review_timing_audit?.entries || []).filter((entry) => (
                 entry.review_type === 'code' && entry.reused_existing_review
             ));
-            const trustedEntry = reusedEntries.find((entry) => entry.hidden_timing_status === 'TRUSTED');
-            const tamperedEntry = reusedEntries.find((entry) => entry.receipt_path.endsWith(tamperedSnapshotName));
-            assert.ok(trustedEntry, JSON.stringify(reusedEntries, null, 2));
-            assert.ok(tamperedEntry, JSON.stringify(reusedEntries, null, 2));
-            assert.equal(tamperedEntry.hidden_timing_status, 'DISTRUSTED');
-            assert.equal(tamperedEntry.hidden_timing_distrust_code, 'missing_timing');
+            assert.equal(reusedEntries.length, 0);
+            assert.equal(formatFinalUserReport(result.final_closeout).includes('timing looked unusual'), false);
+        });
+
+        it('excludes reused receipts with missing source provenance from final timing checks', () => {
+            const repoRoot = makeReuseTempRepo();
+            const taskId = 'T-AUDIT-REUSE-MISSING-SOURCE';
+            const reviewsRoot = reuseReviewsRoot(repoRoot);
+            const eventsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            seedReuseStartedTask(repoRoot, taskId);
+            writeReusePreflight(repoRoot, taskId, { ...REUSE_ALL_REVIEW_FLAGS, code: true }, {
+                includeDomainScopeFingerprints: true
+            });
+            seedReuseCompilePass(repoRoot, taskId);
+            writeReuseReviewEvidence(repoRoot, taskId, 'code');
+            markReuseReviewEvidenceAsStrictReuse(repoRoot, taskId, 'code');
+
+            const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+            const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+            const validCanonicalReceipt = structuredClone(receipt);
+            delete receipt.reused_from_receipt_path;
+            delete receipt.reused_from_receipt_sha256;
+            fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+            clearCurrentReuseTimingForAudit(repoRoot, taskId, 'code');
+            seedReuseCompilePass(repoRoot, taskId);
+            appendCurrentStrictReuseRecordedForAudit(repoRoot, taskId, 'code');
+            fs.writeFileSync(receiptPath, `${JSON.stringify(validCanonicalReceipt, null, 2)}\n`, 'utf8');
+
+            const result = buildTaskAuditSummary({ taskId, repoRoot, eventsRoot, reviewsRoot });
+            const reusedEntries = (result.final_closeout.review_timing_audit?.entries || []).filter((entry) => (
+                entry.review_type === 'code' && entry.reused_existing_review
+            ));
+            assert.equal(reusedEntries.length, 0);
+            assert.equal(formatFinalUserReport(result.final_closeout).includes('timing looked unusual'), false);
         });
     });
 });

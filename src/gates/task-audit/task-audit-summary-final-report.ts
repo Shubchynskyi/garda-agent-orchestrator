@@ -88,7 +88,7 @@ function buildFinalUserReportReviewLine(
 
 function buildReviewTimingWarning(closeout: FinalCloseoutArtifact, attestation: ReviewIntegrityAttestation): string {
     const suspiciousEntries = (closeout.review_timing_audit?.entries || [])
-        .filter((entry) => entry.hidden_timing_status === 'DISTRUSTED');
+        .filter((entry) => !entry.reused_existing_review && entry.hidden_timing_status === 'DISTRUSTED');
     if (suspiciousEntries.length > 0) {
         return 'WARNING: review accepted, but timing looked unusual; operator may double-check.';
     }

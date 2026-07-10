@@ -102,7 +102,6 @@ export function buildNoOpArtifact(options: BuildNoOpArtifactOptions): NoOpArtifa
     if (reason.length < 12) {
         throw new Error('Reason is required and must be at least 12 characters.');
     }
-
     const actor = String(options.actor || 'orchestrator').trim() || 'orchestrator';
     const preflightPath = String(options.preflightPath || '').trim();
     const preflightSha256 = String(options.preflightSha256 || '').trim().toLowerCase();

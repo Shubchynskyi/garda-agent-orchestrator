@@ -1,5 +1,5 @@
 import { normalizePath } from '../shared/helpers';
-import type { NoOpEvidenceResult } from '../task-mode/no-op';
+import { type NoOpEvidenceResult } from '../task-mode/no-op';
 
 export interface ZeroDiffCompletionEvidence {
     zero_diff_detected: boolean;
