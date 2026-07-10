@@ -249,9 +249,7 @@ export function resolveNextStepQualityChecklistRoute(
             ? 'Repair quality checklist evidence.'
             : 'Run optional quality checklist.',
         reason: options.reason,
-        commands: [
-            buildCommand(label, options.command)
-        ]
+        commands: options.command ? [buildCommand(label, options.command)] : []
     };
 }
 

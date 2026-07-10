@@ -4,6 +4,9 @@ import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../../exit-codes';
 import { appendMandatoryTaskEvent } from '../../../../gate-runtime/task-events';
 import {
+    QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE,
+    assertQualityChecklistAnswersPathHasNoSymlinks,
+    assessQualityChecklistAnswersTemplate,
     buildQualityChecklistArtifact,
     formatQualityChecklistResult,
     resolveDefaultQualityChecklistArtifactPath
@@ -94,6 +97,7 @@ function resolveRealAnswersPathInsideRepo(answersPath: string, repoRoot: string)
 
 function readAnswersPath(pathValue: unknown, repoRoot: string): string {
     const answersPath = resolveAnswersPath(pathValue, repoRoot);
+    assertQualityChecklistAnswersPathHasNoSymlinks(answersPath, repoRoot);
     const realAnswersPath = resolveRealAnswersPathInsideRepo(answersPath, repoRoot);
     if (!fs.existsSync(realAnswersPath) || !fs.statSync(realAnswersPath).isFile()) {
         throw new Error(`AnswersPath must be an existing file inside the repo root: ${gateHelpers.normalizePath(answersPath)}`);
@@ -106,6 +110,31 @@ function readAnswersStdin(options: QualityChecklistCommandOptions): string {
         return String(options.answersStdinText);
     }
     return fs.readFileSync(0, 'utf8');
+}
+
+function validateTaggedAnswersTemplate(
+    value: unknown,
+    options: QualityChecklistCommandOptions,
+    repoRoot: string
+): unknown {
+    if (
+        typeof value !== 'object'
+        || value === null
+        || Array.isArray(value)
+        || (value as Record<string, unknown>).event_source !== QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE
+    ) {
+        return value;
+    }
+    const assessment = assessQualityChecklistAnswersTemplate({
+        repoRoot,
+        taskId: String(options.taskId || '').trim(),
+        preflightPath: options.preflightPath,
+        template: value
+    });
+    if (assessment.status !== 'current') {
+        throw new Error(assessment.reason);
+    }
+    return value;
 }
 
 function resolveQualityChecklistAnswers(options: QualityChecklistCommandOptions, repoRoot: string): unknown {
@@ -123,13 +152,12 @@ function resolveQualityChecklistAnswers(options: QualityChecklistCommandOptions,
     if (inputModes.length === 0) {
         return [];
     }
-    if (inputModes[0] === '--answers-path') {
-        return parseAnswersJson(readAnswersPath(options.answersPath, repoRoot), 'AnswersPath');
-    }
-    if (inputModes[0] === '--answers-stdin') {
-        return parseAnswersJson(readAnswersStdin(options), 'AnswersStdin');
-    }
-    return parseAnswersJson(options.answersJson, 'AnswersJson');
+    const parsed = inputModes[0] === '--answers-path'
+        ? parseAnswersJson(readAnswersPath(options.answersPath, repoRoot), 'AnswersPath')
+        : inputModes[0] === '--answers-stdin'
+            ? parseAnswersJson(readAnswersStdin(options), 'AnswersStdin')
+            : parseAnswersJson(options.answersJson, 'AnswersJson');
+    return validateTaggedAnswersTemplate(parsed, options, repoRoot);
 }
 
 export function runQualityChecklistCommand(options: QualityChecklistCommandOptions): { outputLines: string[]; exitCode: number } {

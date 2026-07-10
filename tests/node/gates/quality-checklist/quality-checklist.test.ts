@@ -10,7 +10,8 @@ import {
     isOptionalQualityCheckRuleExcludedForScope
 } from '../../../../src/core/workflow-config';
 import {
-    buildQualityChecklistArtifact
+    buildQualityChecklistArtifact,
+    materializeQualityChecklistAnswersTemplate
 } from '../../../../src/gates/quality-checklist';
 import {
     runQualityChecklistCommand
@@ -708,6 +709,333 @@ describe('quality-checklist gate', () => {
         }
     });
 
+    it('materializes a bound answers template without fabricating checklist answers', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-answers-template' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+
+            const materialized = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+
+            assert.equal(materialized.status, 'created');
+            const template = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+                event_source: string;
+                task_id: string;
+                preflight_sha256: string;
+                effective_policy_sha256: string;
+                answers: Array<Record<string, unknown>>;
+            };
+            assert.equal(template.event_source, 'quality-checklist-answers-template');
+            assert.equal(template.task_id, fixture.taskId);
+            assert.match(template.preflight_sha256, /^[a-f0-9]{64}$/u);
+            assert.match(template.effective_policy_sha256, /^[a-f0-9]{64}$/u);
+            assert.equal(template.answers.length, UNIVERSAL_QUALITY_RULE_IDS.length);
+            assert.ok(template.answers.every((answer) => answer.status === '' && answer.answer === ''));
+            assert.ok(template.answers.every((answer) => typeof answer.title === 'string' && typeof answer.prompt === 'string'));
+
+            template.answers = template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Checked ${String(answer.rule_id)} against the changed files.`
+            }));
+            fs.writeFileSync(answersPath, JSON.stringify(template, null, 2) + '\n', 'utf8');
+
+            const checklistResult = runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath,
+                emitMetrics: false
+            });
+            assert.equal(checklistResult.exitCode, 0);
+            assert.ok(checklistResult.outputLines.includes('QUALITY_CHECKLIST_PASSED'));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('refreshes a materialized answers template after its preflight binding becomes stale', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-stale-answers-template' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const originalTemplate = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+                preflight_sha256: string;
+                answers: Array<Record<string, unknown>>;
+            };
+            const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            preflight.changed_files = ['src/app.ts', 'src/changed-after-template.ts'];
+            fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2) + '\n', 'utf8');
+
+            const refreshed = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            assert.equal(refreshed.status, 'refreshed');
+            assert.notEqual(refreshed.template.preflight_sha256, originalTemplate.preflight_sha256);
+            assert.ok(refreshed.template.answers.every((answer) => answer.status === '' && answer.answer === ''));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('refreshes a current-bound template with tampered prompts or malformed editable fields', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-tampered-answers-template' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const created = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const canonicalPrompt = created.template.answers[0].prompt;
+            const tampered = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+                answers: Array<Record<string, unknown>>;
+            };
+            tampered.answers[0].prompt = 'Tampered prompt.';
+            fs.writeFileSync(answersPath, JSON.stringify(tampered, null, 2) + '\n', 'utf8');
+
+            const promptRefresh = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            assert.equal(promptRefresh.status, 'refreshed');
+            assert.equal(promptRefresh.template.answers[0].prompt, canonicalPrompt);
+
+            const malformed = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+                answers: Array<Record<string, unknown>>;
+            };
+            delete malformed.answers[0].actions_taken;
+            fs.writeFileSync(answersPath, JSON.stringify(malformed, null, 2) + '\n', 'utf8');
+            const fieldRefresh = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            assert.equal(fieldRefresh.status, 'refreshed');
+            assert.deepEqual(fieldRefresh.template.answers[0].actions_taken, []);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects stale preflight template bindings through stdin and inline JSON inputs', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-stale-template-input-modes' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const template = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath
+            }).template;
+            const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            preflight.changed_files = ['src/app.ts', 'src/new-context.ts'];
+            fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2) + '\n', 'utf8');
+            const rawTemplate = JSON.stringify(template);
+
+            assert.throws(() => runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersStdin: true,
+                answersStdinText: rawTemplate,
+                emitMetrics: false
+            }), /answers template is stale for the current preflight/u);
+            assert.throws(() => runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersJson: rawTemplate,
+                emitMetrics: false
+            }), /answers template is stale for the current preflight/u);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects stale policy template bindings through stdin and inline JSON inputs', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-stale-template-policy-input-modes' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const template = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath
+            }).template;
+            const configPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+            config.test_policy_refresh_marker = true;
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+            const rawTemplate = JSON.stringify(template);
+
+            for (const options of [
+                { answersStdin: true, answersStdinText: rawTemplate },
+                { answersJson: rawTemplate }
+            ]) {
+                assert.throws(() => runQualityChecklistCommand({
+                    repoRoot: fixture.repoRoot,
+                    taskId: fixture.taskId,
+                    preflightPath,
+                    ...options,
+                    emitMetrics: false
+                }), /answers template is stale for the current quality policy/u);
+            }
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects answers template materialization outside the repo root', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-template-path-escape' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const outsideAnswersPath = path.join(path.dirname(fixture.repoRoot), 'quality-answers-template.json');
+
+            assert.throws(() => materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath: outsideAnswersPath
+            }), /Path must stay inside repo root/u);
+            assert.equal(fs.existsSync(outsideAnswersPath), false);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects a default answers template symlink that resolves outside the repo', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-default-template-symlink' });
+        const outsideDir = path.join(path.dirname(fixture.repoRoot), `${fixture.taskId}-outside`);
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            fs.mkdirSync(outsideDir, { recursive: true });
+            const outsideFile = path.join(outsideDir, 'answers.json');
+            fs.writeFileSync(outsideFile, 'outside sentinel\n', 'utf8');
+            const defaultAnswersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            fs.mkdirSync(path.dirname(defaultAnswersPath), { recursive: true });
+            try {
+                fs.symlinkSync(outsideFile, defaultAnswersPath, 'file');
+            } catch (error: unknown) {
+                if (process.platform === 'win32') {
+                    return;
+                }
+                throw error;
+            }
+
+            assert.throws(() => materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath
+            }), /must (?:resolve inside repo root|not contain symbolic links)/u);
+            assert.equal(fs.readFileSync(outsideFile, 'utf8'), 'outside sentinel\n');
+        } finally {
+            fs.rmSync(outsideDir, { recursive: true, force: true });
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects a default answers template symlink to an internal repo file', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-default-template-internal-symlink' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const internalTarget = path.join(fixture.repoRoot, 'src', 'template-sentinel.ts');
+            fs.writeFileSync(internalTarget, 'internal sentinel\n', 'utf8');
+            const defaultAnswersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            fs.mkdirSync(path.dirname(defaultAnswersPath), { recursive: true });
+            try {
+                fs.symlinkSync(internalTarget, defaultAnswersPath, 'file');
+            } catch (error: unknown) {
+                if (process.platform === 'win32') return;
+                throw error;
+            }
+
+            assert.throws(() => materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath
+            }), /must not contain symbolic links/u);
+            assert.equal(fs.readFileSync(internalTarget, 'utf8'), 'internal sentinel\n');
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects a symlinked default answers template parent outside the repo', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-default-template-parent-symlink' });
+        const outsideDir = path.join(path.dirname(fixture.repoRoot), `${fixture.taskId}-outside`);
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            fs.mkdirSync(outsideDir, { recursive: true });
+            const runtimeRoot = path.join(fixture.orchestratorRoot, 'runtime');
+            fs.mkdirSync(runtimeRoot, { recursive: true });
+            const tmpPath = path.join(runtimeRoot, 'tmp');
+            try {
+                fs.symlinkSync(outsideDir, tmpPath, process.platform === 'win32' ? 'junction' : 'dir');
+            } catch (error: unknown) {
+                if (process.platform === 'win32') {
+                    return;
+                }
+                throw error;
+            }
+
+            assert.throws(() => materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath
+            }), /must (?:resolve inside repo root|not contain symbolic links)/u);
+            assert.equal(fs.existsSync(path.join(outsideDir, `${fixture.taskId}-quality-checklist-answers.json`)), false);
+        } finally {
+            fs.rmSync(outsideDir, { recursive: true, force: true });
+            fixture.cleanup();
+        }
+    });
+
     it('reads answers from stdin text without logging the raw JSON', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-answers-stdin' });
         try {
@@ -785,6 +1113,33 @@ describe('quality-checklist gate', () => {
             }), /AnswersPath must resolve inside repo root/u);
         } finally {
             fs.rmSync(outsideDir, { recursive: true, force: true });
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects answers-path symlinks to internal repo files', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-answers-path-internal-symlink' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const internalTarget = path.join(fixture.repoRoot, 'src', 'answers-sentinel.json');
+            fs.writeFileSync(internalTarget, JSON.stringify(buildPassAnswers()), 'utf8');
+            const symlinkPath = path.join(fixture.orchestratorRoot, 'runtime', 'tmp', 'internal-quality-answers.json');
+            fs.mkdirSync(path.dirname(symlinkPath), { recursive: true });
+            try {
+                fs.symlinkSync(internalTarget, symlinkPath, 'file');
+            } catch (error: unknown) {
+                if (process.platform === 'win32') return;
+                throw error;
+            }
+
+            assert.throws(() => runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath: symlinkPath,
+                emitMetrics: false
+            }), /must not contain symbolic links/u);
+        } finally {
             fixture.cleanup();
         }
     });

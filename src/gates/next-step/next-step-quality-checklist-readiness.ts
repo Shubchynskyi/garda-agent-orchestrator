@@ -8,6 +8,7 @@ import {
 } from '../../core/workflow-config';
 import {
     assessQualityChecklistPolicyCompatibility,
+    materializeQualityChecklistAnswersTemplate,
     QUALITY_CHECKLIST_ID,
     QUALITY_CHECKLIST_STATUSES
 } from '../quality-checklist';
@@ -150,6 +151,27 @@ function countArray(value: unknown): number {
     return Array.isArray(value) ? value.length : 0;
 }
 
+function materializePendingQualityChecklistAnswers(
+    options: {
+        repoRoot: string;
+        taskId: string;
+        preflightPath: string;
+    },
+    refreshIfOlderThanUtc: string | null = null
+): string | null {
+    try {
+        materializeQualityChecklistAnswersTemplate({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            preflightPath: options.preflightPath,
+            refreshIfOlderThanUtc
+        });
+        return null;
+    } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+    }
+}
+
 function buildQualityChecklistReadiness(options: {
     enabled: boolean;
     required: boolean;
@@ -165,8 +187,10 @@ function buildQualityChecklistReadiness(options: {
     enabledRuleCount?: number;
     activeRuleCount?: number;
     skippedByScopeRuleCount?: number;
+    templateMaterializationError?: string | null;
 }): NextStepQualityChecklistReadiness {
     const artifact = options.artifact || null;
+    const templateMaterializationError = String(options.templateMaterializationError || '').trim();
     return {
         enabled: options.enabled,
         required: options.required,
@@ -174,7 +198,9 @@ function buildQualityChecklistReadiness(options: {
         status: options.status || null,
         evidenceStatus: options.evidenceStatus,
         effect: options.effect,
-        reason: options.reason,
+        reason: templateMaterializationError
+            ? `${options.reason} Answers template was not materialized: ${templateMaterializationError}`
+            : options.reason,
         actionRequiredSummary: formatQualityChecklistActions(artifact?.actions_required),
         actionTakenSummary: formatQualityChecklistActions(artifact?.actions_taken),
         actionsRequiredCount: countArray(artifact?.actions_required),
@@ -247,6 +273,7 @@ export function readQualityChecklistReadiness(options: {
 
     const artifactPath = path.join(options.reviewsRoot, `${options.taskId}-quality-checklist.json`);
     if (!fileExists(artifactPath)) {
+        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
         return buildQualityChecklistReadiness({
             enabled,
             required,
@@ -263,12 +290,14 @@ export function readQualityChecklistReadiness(options: {
             scopeCategory,
             enabledRuleCount,
             activeRuleCount,
-            skippedByScopeRuleCount
+            skippedByScopeRuleCount,
+            templateMaterializationError
         });
     }
 
     const artifact = readJsonRecordOrNull(artifactPath);
     if (!artifact) {
+        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
         return buildQualityChecklistReadiness({
             enabled,
             required,
@@ -281,12 +310,14 @@ export function readQualityChecklistReadiness(options: {
             scopeCategory,
             enabledRuleCount,
             activeRuleCount,
-            skippedByScopeRuleCount
+            skippedByScopeRuleCount,
+            templateMaterializationError
         });
     }
 
     const status = String(artifact.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
     if (!QUALITY_CHECKLIST_STATUSES.includes(status as typeof QUALITY_CHECKLIST_STATUSES[number])) {
+        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
         return buildQualityChecklistReadiness({
             enabled,
             required,
@@ -301,10 +332,12 @@ export function readQualityChecklistReadiness(options: {
             scopeCategory,
             enabledRuleCount,
             activeRuleCount,
-            skippedByScopeRuleCount
+            skippedByScopeRuleCount,
+            templateMaterializationError
         });
     }
     if (artifact.task_id !== options.taskId) {
+        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
         return buildQualityChecklistReadiness({
             enabled,
             required,
@@ -319,10 +352,12 @@ export function readQualityChecklistReadiness(options: {
             scopeCategory,
             enabledRuleCount,
             activeRuleCount,
-            skippedByScopeRuleCount
+            skippedByScopeRuleCount,
+            templateMaterializationError
         });
     }
     if (artifact.checklist_id !== QUALITY_CHECKLIST_ID) {
+        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
         return buildQualityChecklistReadiness({
             enabled,
             required,
@@ -337,7 +372,8 @@ export function readQualityChecklistReadiness(options: {
             scopeCategory,
             enabledRuleCount,
             activeRuleCount,
-            skippedByScopeRuleCount
+            skippedByScopeRuleCount,
+            templateMaterializationError
         });
     }
 
@@ -345,6 +381,7 @@ export function readQualityChecklistReadiness(options: {
         || (fileExists(options.preflightPath) ? fileSha256(options.preflightPath) : '');
     const artifactPreflightSha256 = String(artifact.preflight_sha256 || '').trim().toLowerCase();
     if (expectedPreflightSha256 && artifactPreflightSha256 !== expectedPreflightSha256) {
+        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
         return buildQualityChecklistReadiness({
             enabled,
             required,
@@ -361,7 +398,8 @@ export function readQualityChecklistReadiness(options: {
             scopeCategory,
             enabledRuleCount,
             activeRuleCount,
-            skippedByScopeRuleCount
+            skippedByScopeRuleCount,
+            templateMaterializationError
         });
     }
 
@@ -383,6 +421,10 @@ export function readQualityChecklistReadiness(options: {
             })
             : null;
         if (compatibility?.compatible === true) {
+            let templateMaterializationError: string | null = null;
+            if (status === 'CONFIG_ERROR') {
+                templateMaterializationError = materializePendingQualityChecklistAnswers(options);
+            }
             return buildQualityChecklistReadiness({
                 enabled,
                 required,
@@ -410,9 +452,11 @@ export function readQualityChecklistReadiness(options: {
                 scopeCategory,
                 enabledRuleCount,
                 activeRuleCount,
-                skippedByScopeRuleCount
+                skippedByScopeRuleCount,
+                templateMaterializationError
             });
         }
+        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
         return buildQualityChecklistReadiness({
             enabled,
             required,
@@ -430,7 +474,8 @@ export function readQualityChecklistReadiness(options: {
             scopeCategory,
             enabledRuleCount,
             activeRuleCount,
-            skippedByScopeRuleCount
+            skippedByScopeRuleCount,
+            templateMaterializationError
         });
     }
 
@@ -448,6 +493,29 @@ export function readQualityChecklistReadiness(options: {
     const configErrorDetails = status === 'CONFIG_ERROR'
         ? formatQualityChecklistActions(artifact.violations)
         : null;
+    if (status === 'CONFIG_ERROR') {
+        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
+        return buildQualityChecklistReadiness({
+            enabled,
+            required,
+            ready: true,
+            status,
+            evidenceStatus: 'current',
+            effect,
+            reason:
+                `Quality checklist evidence is current with status ${formatNextStepInlineValue(status)} at ` +
+                `${formatNextStepInlineValue(toRepoDisplayPath(options.repoRoot, artifactPath))}.` +
+                (configErrorDetails ? ` Violations: ${configErrorDetails}.` : ''),
+            artifactPath,
+            artifact,
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount: parseOptionalNumberField(artifact.enabled_rule_count) ?? enabledRuleCount,
+            activeRuleCount: parseOptionalNumberField(artifact.active_rule_count) ?? activeRuleCount,
+            skippedByScopeRuleCount: parseOptionalNumberField(artifact.skipped_by_scope_rule_count) ?? skippedByScopeRuleCount,
+            templateMaterializationError
+        });
+    }
     return buildQualityChecklistReadiness({
         enabled,
         required,

@@ -462,12 +462,38 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             emitMetrics: false
         }), 'load-rule-pack POST_PREFLIGHT');
 
+        const qualityChecklistAnswersPath = path.join(
+            bundleRoot,
+            'runtime',
+            'tmp',
+            `${TASK_ID}-quality-checklist-answers.json`
+        );
+        assertNextGate(workspaceRoot, 'quality-checklist');
+        assert.equal(fs.existsSync(qualityChecklistAnswersPath), true);
+
+        const qualityChecklistAnswersTemplate = JSON.parse(
+            fs.readFileSync(qualityChecklistAnswersPath, 'utf8')
+        ) as { answers: Array<Record<string, unknown>> };
+        const answersByRuleId = new Map(
+            (JSON.parse(buildQualityChecklistAnswersJson()) as Array<Record<string, unknown>>)
+                .map((answer) => [String(answer.rule_id), answer])
+        );
+        qualityChecklistAnswersTemplate.answers = qualityChecklistAnswersTemplate.answers.map((answer) => ({
+            ...answer,
+            ...answersByRuleId.get(String(answer.rule_id))
+        }));
+        fs.writeFileSync(
+            qualityChecklistAnswersPath,
+            JSON.stringify(qualityChecklistAnswersTemplate, null, 2) + '\n',
+            'utf8'
+        );
+
         assertNextGate(workspaceRoot, 'quality-checklist');
         assertGatePassed(runQualityChecklistCommand({
             repoRoot: workspaceRoot,
             taskId: TASK_ID,
             preflightPath,
-            answersJson: buildQualityChecklistAnswersJson(),
+            answersPath: qualityChecklistAnswersPath,
             emitMetrics: false
         }), 'quality-checklist');
 

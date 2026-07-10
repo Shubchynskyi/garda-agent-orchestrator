@@ -13,6 +13,7 @@ import {
 import { assertValidTaskId } from '../../gate-runtime/task-events';
 import {
     fileSha256,
+    isPathInsideRoot,
     joinOrchestratorPath,
     normalizePath,
     resolvePathInsideRepo,
@@ -110,6 +111,45 @@ export interface BuildQualityChecklistOptions {
     answers?: unknown;
     actionsTaken?: unknown;
     actionsRequired?: unknown;
+}
+
+export const QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE = 'quality-checklist-answers-template';
+
+export interface QualityChecklistAnswersTemplateAnswer {
+    rule_id: string;
+    title: string;
+    prompt: string;
+    status: '';
+    answer: '';
+    evidence_files: string[];
+    actions_taken: string[];
+    actions_required: string[];
+}
+
+export interface QualityChecklistAnswersTemplate {
+    schema_version: 1;
+    timestamp_utc: string;
+    event_source: typeof QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE;
+    task_id: string;
+    checklist_id: typeof QUALITY_CHECKLIST_ID;
+    preflight_path: string;
+    preflight_sha256: string;
+    workflow_config_path: string;
+    workflow_config_sha256: string | null;
+    effective_policy_sha256: string;
+    answers: QualityChecklistAnswersTemplateAnswer[];
+}
+
+export interface QualityChecklistAnswersTemplateAssessment {
+    status: 'missing' | 'invalid' | 'stale' | 'current';
+    reason: string;
+    template: QualityChecklistAnswersTemplate | null;
+}
+
+export interface MaterializeQualityChecklistAnswersTemplateResult {
+    status: 'created' | 'refreshed' | 'current';
+    answers_path: string;
+    template: QualityChecklistAnswersTemplate;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -517,6 +557,227 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
         actions_taken: [...new Set(actionsTaken)].sort(),
         actions_required: [...new Set(actionsRequired)].sort(),
         violations
+    };
+}
+
+function nonAnswerTemplateViolations(artifact: QualityChecklistArtifact): string[] {
+    return artifact.violations.filter((violation) => (
+        !violation.startsWith('Missing answer for active quality-check rule ')
+        && !violation.startsWith('Quality-checklist workflow config baseline_version ')
+    ));
+}
+
+export function buildQualityChecklistAnswersTemplate(
+    options: Omit<BuildQualityChecklistOptions, 'answers' | 'actionsTaken' | 'actionsRequired'>
+): QualityChecklistAnswersTemplate {
+    const artifact = buildQualityChecklistArtifact({ ...options, answers: [] });
+    const blockingViolations = nonAnswerTemplateViolations(artifact);
+    if (blockingViolations.length > 0) {
+        throw new Error(`Cannot prepare quality checklist answers template: ${blockingViolations.join(' ')}`);
+    }
+    if (!artifact.preflight_sha256) {
+        throw new Error('Cannot prepare quality checklist answers template without current preflight evidence.');
+    }
+    return {
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        event_source: QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE,
+        task_id: artifact.task_id,
+        checklist_id: QUALITY_CHECKLIST_ID,
+        preflight_path: artifact.preflight_path,
+        preflight_sha256: artifact.preflight_sha256,
+        workflow_config_path: artifact.workflow_config_path,
+        workflow_config_sha256: artifact.workflow_config_sha256,
+        effective_policy_sha256: artifact.effective_policy_sha256,
+        answers: artifact.rules
+            .filter((rule) => rule.scope_applicability === 'active')
+            .map((rule) => ({
+                rule_id: rule.id,
+                title: rule.title,
+                prompt: rule.prompt,
+                status: '',
+                answer: '',
+                evidence_files: [],
+                actions_taken: [],
+                actions_required: []
+            }))
+    };
+}
+
+function invalidAnswersTemplate(reason: string): QualityChecklistAnswersTemplateAssessment {
+    return { status: 'invalid', reason, template: null };
+}
+
+function staleAnswersTemplate(
+    reason: string,
+    template: QualityChecklistAnswersTemplate
+): QualityChecklistAnswersTemplateAssessment {
+    return { status: 'stale', reason, template };
+}
+
+function templateRuleIds(value: unknown): string[] | null {
+    if (!Array.isArray(value)) {
+        return null;
+    }
+    const ruleIds = value.map((entry) => isRecord(entry) ? normalizeRuleId(entry.rule_id) : '');
+    return ruleIds.every(Boolean) ? ruleIds : null;
+}
+
+export function assessQualityChecklistAnswersTemplate(options: {
+    repoRoot: string;
+    taskId: string;
+    preflightPath?: unknown;
+    template: unknown;
+}): QualityChecklistAnswersTemplateAssessment {
+    if (!isRecord(options.template)) {
+        return invalidAnswersTemplate('Quality checklist answers template must be a JSON object.');
+    }
+    const template = options.template as unknown as QualityChecklistAnswersTemplate;
+    if (template.schema_version !== 1 || template.event_source !== QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE) {
+        return invalidAnswersTemplate('Quality checklist answers template has an unsupported schema or event_source.');
+    }
+    const expected = buildQualityChecklistAnswersTemplate(options);
+    if (template.task_id !== expected.task_id || template.checklist_id !== expected.checklist_id) {
+        return invalidAnswersTemplate('Quality checklist answers template belongs to a different task or checklist.');
+    }
+    if (template.preflight_path !== expected.preflight_path || template.preflight_sha256 !== expected.preflight_sha256) {
+        return staleAnswersTemplate('Quality checklist answers template is stale for the current preflight.', template);
+    }
+    if (
+        template.workflow_config_path !== expected.workflow_config_path
+        || template.workflow_config_sha256 !== expected.workflow_config_sha256
+        || template.effective_policy_sha256 !== expected.effective_policy_sha256
+    ) {
+        return staleAnswersTemplate('Quality checklist answers template is stale for the current quality policy.', template);
+    }
+    const actualRuleIds = templateRuleIds(template.answers);
+    const expectedRuleIds = expected.answers.map((answer) => answer.rule_id);
+    if (!actualRuleIds || actualRuleIds.length !== expectedRuleIds.length
+        || actualRuleIds.some((ruleId, index) => ruleId !== expectedRuleIds[index])) {
+        return invalidAnswersTemplate('Quality checklist answers template rule ids do not match the active rules.');
+    }
+    const scaffoldIsValid = template.answers.every((answer, index) => {
+        const expectedAnswer = expected.answers[index];
+        return isRecord(answer)
+            && answer.title === expectedAnswer.title
+            && answer.prompt === expectedAnswer.prompt
+            && typeof answer.status === 'string'
+            && typeof answer.answer === 'string'
+            && Array.isArray(answer.evidence_files)
+            && answer.evidence_files.every((entry) => typeof entry === 'string')
+            && Array.isArray(answer.actions_taken)
+            && answer.actions_taken.every((entry) => typeof entry === 'string')
+            && Array.isArray(answer.actions_required)
+            && answer.actions_required.every((entry) => typeof entry === 'string');
+    });
+    if (!scaffoldIsValid) {
+        return invalidAnswersTemplate(
+            'Quality checklist answers template prompts or editable answer fields do not match the active rule scaffold.'
+        );
+    }
+    return { status: 'current', reason: 'Quality checklist answers template is current.', template };
+}
+
+export function assessQualityChecklistAnswersTemplateFile(options: {
+    repoRoot: string;
+    taskId: string;
+    preflightPath?: unknown;
+    answersPath: string;
+}): QualityChecklistAnswersTemplateAssessment {
+    const repoRoot = path.resolve(options.repoRoot);
+    const resolvedPath = resolvePathInsideRepo(options.answersPath, repoRoot, { allowMissing: true, enforceInside: true });
+    if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+        return { status: 'missing', reason: 'Quality checklist answers template is missing.', template: null };
+    }
+    try {
+        assertQualityChecklistAnswersPathHasNoSymlinks(resolvedPath, repoRoot);
+        const repoRealPath = fs.realpathSync.native(repoRoot);
+        const answersRealPath = fs.realpathSync.native(resolvedPath);
+        if (!isPathInsideRoot(answersRealPath, repoRealPath) || !fs.statSync(answersRealPath).isFile()) {
+            return invalidAnswersTemplate('Quality checklist answers template must resolve to a file inside the repo root.');
+        }
+        const template = JSON.parse(fs.readFileSync(answersRealPath, 'utf8'));
+        return assessQualityChecklistAnswersTemplate({ ...options, repoRoot, template });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return invalidAnswersTemplate(`Quality checklist answers template is unreadable: ${message}`);
+    }
+}
+
+export function resolveDefaultQualityChecklistAnswersTemplatePath(repoRoot: string, taskId: string): string {
+    return joinOrchestratorPath(repoRoot, path.join('runtime', 'tmp', `${assertValidTaskId(taskId)}-quality-checklist-answers.json`));
+}
+
+export function assertQualityChecklistAnswersPathHasNoSymlinks(pathValue: string, repoRoot: string): void {
+    const absoluteRoot = path.resolve(repoRoot);
+    const absolutePath = path.resolve(pathValue);
+    const relativePath = path.relative(absoluteRoot, absolutePath);
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        throw new Error(`Quality checklist answers path must stay inside repo root: ${normalizePath(absolutePath)}`);
+    }
+    let currentPath = absoluteRoot;
+    for (const segment of relativePath.split(path.sep).filter(Boolean)) {
+        currentPath = path.join(currentPath, segment);
+        if (!fs.existsSync(currentPath)) break;
+        if (fs.lstatSync(currentPath).isSymbolicLink()) {
+            throw new Error(`Quality checklist answers path must not contain symbolic links: ${normalizePath(currentPath)}`);
+        }
+    }
+}
+
+function resolveAnswersTemplateWritePath(pathValue: string, repoRoot: string): string {
+    const resolvedPath = resolvePathInsideRepo(pathValue, repoRoot, { allowMissing: true, enforceInside: true });
+    if (!resolvedPath) {
+        throw new Error('QualityChecklistAnswersTemplatePath must not be empty.');
+    }
+    assertQualityChecklistAnswersPathHasNoSymlinks(resolvedPath, repoRoot);
+    let existingAncestor = fs.existsSync(resolvedPath) ? resolvedPath : path.dirname(resolvedPath);
+    while (!fs.existsSync(existingAncestor) && existingAncestor !== path.dirname(existingAncestor)) {
+        existingAncestor = path.dirname(existingAncestor);
+    }
+    const repoRealPath = fs.realpathSync.native(repoRoot);
+    const ancestorRealPath = fs.realpathSync.native(existingAncestor);
+    if (!isPathInsideRoot(ancestorRealPath, repoRealPath)) {
+        throw new Error(`Quality checklist answers template path must resolve inside repo root: ${normalizePath(resolvedPath)}`);
+    }
+    return resolvedPath;
+}
+
+export function materializeQualityChecklistAnswersTemplate(options: {
+    repoRoot: string;
+    taskId: string;
+    preflightPath?: unknown;
+    answersPath?: string;
+    refreshIfOlderThanUtc?: string | null;
+}): MaterializeQualityChecklistAnswersTemplateResult {
+    const repoRoot = path.resolve(options.repoRoot);
+    const taskId = assertValidTaskId(options.taskId);
+    const answersPath = resolveAnswersTemplateWritePath(
+        options.answersPath || resolveDefaultQualityChecklistAnswersTemplatePath(repoRoot, taskId),
+        repoRoot
+    );
+    const assessment = assessQualityChecklistAnswersTemplateFile({
+        repoRoot,
+        taskId,
+        preflightPath: options.preflightPath,
+        answersPath
+    });
+    const refreshThreshold = Date.parse(String(options.refreshIfOlderThanUtc || ''));
+    const currentTimestamp = Date.parse(String(assessment.template?.timestamp_utc || ''));
+    const currentIsNewerThanThreshold = Number.isFinite(refreshThreshold)
+        && Number.isFinite(currentTimestamp)
+        && currentTimestamp > refreshThreshold;
+    if (assessment.status === 'current' && (!Number.isFinite(refreshThreshold) || currentIsNewerThanThreshold)) {
+        return { status: 'current', answers_path: normalizePath(answersPath), template: assessment.template! };
+    }
+
+    const template = buildQualityChecklistAnswersTemplate({ repoRoot, taskId, preflightPath: options.preflightPath });
+    fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+    fs.writeFileSync(answersPath, JSON.stringify(template, null, 2) + '\n', 'utf8');
+    return {
+        status: assessment.status === 'missing' ? 'created' : 'refreshed',
+        answers_path: normalizePath(answersPath),
+        template
     };
 }
 

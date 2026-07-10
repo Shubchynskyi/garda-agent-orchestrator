@@ -23,6 +23,9 @@ import {
     writeJson,
     writePreflight
 } from './next-step-full-suite-fixtures';
+import {
+    runQualityChecklistCommand
+} from '../../../../src/cli/commands/gate-flows/quality-checklist/quality-checklist-flow';
 
 type QualityChecklistStatus = 'PASS' | 'WARN' | 'ACTION_REQUIRED' | 'SKIPPED_DISABLED' | 'CONFIG_ERROR';
 type WorkflowConfig = ReturnType<typeof buildDefaultWorkflowConfig>;
@@ -207,7 +210,7 @@ function writeQualityChecklistArtifact(
 }
 
 describe('gates/next-step quality checklist routing', () => {
-    it('routes enabled optional quality checklist before compile gate', () => {
+    it('materializes current answers while routing to the quality checklist gate', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
@@ -226,6 +229,123 @@ describe('gates/next-step quality checklist routing', () => {
         assert.ok(result.commands[0].command.includes(`${TASK_ID}-quality-checklist-answers.json`));
         assert.equal(result.commands[0].command.includes('--answers-json'), false);
         assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+
+        const answersPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            `${TASK_ID}-quality-checklist-answers.json`
+        );
+        const template = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+            answers: Array<Record<string, unknown>>;
+        };
+        assert.equal(template.answers.length, 7);
+        assert.ok(template.answers.every((answer) => answer.status === '' && answer.answer === ''));
+        template.answers = template.answers.map((answer) => ({
+            ...answer,
+            status: 'PASS',
+            answer: `Rule ${String(answer.rule_id)} passed.`
+        }));
+        fs.writeFileSync(answersPath, JSON.stringify(template, null, 2) + '\n', 'utf8');
+
+        const checklistResult = runQualityChecklistCommand({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            answersPath,
+            emitMetrics: false
+        });
+        assert.equal(checklistResult.exitCode, 0);
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).next_gate, 'compile-gate');
+    });
+
+    it('preserves current partial answers after answer validation records CONFIG_ERROR', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+
+        resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const answersPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            `${TASK_ID}-quality-checklist-answers.json`
+        );
+        const template = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+            answers: Array<Record<string, unknown>>;
+        };
+        template.answers[0] = {
+            ...template.answers[0],
+            status: 'PASS',
+            answer: 'The first completed answer must survive CONFIG_ERROR recovery.'
+        };
+        fs.writeFileSync(answersPath, JSON.stringify(template, null, 2) + '\n', 'utf8');
+        const partialAnswers = fs.readFileSync(answersPath, 'utf8');
+
+        const checklistResult = runQualityChecklistCommand({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            answersPath,
+            emitMetrics: false
+        });
+        assert.equal(checklistResult.exitCode, 3);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.quality_checklist?.status, 'CONFIG_ERROR');
+        assert.deepEqual(fs.readFileSync(answersPath, 'utf8'), partialAnswers);
+        assert.ok(result.commands[0].command.includes('--answers-path'));
+    });
+
+    it('returns a repair route without an answers path when template materialization fails', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot, {
+            configure(config) {
+                config.optional_quality_checks.rules.push({ ...config.optional_quality_checks.rules[0] });
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /Answers template was not materialized/u);
+        assert.match(result.reason, /duplicate quality-check rule id/u);
+        assert.equal(fs.existsSync(path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            `${TASK_ID}-quality-checklist-answers.json`
+        )), false);
+    });
+
+    it('returns no answers command when the default template path is an unusable directory', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const answersPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            `${TASK_ID}-quality-checklist-answers.json`
+        );
+        fs.mkdirSync(answersPath, { recursive: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /Answers template was not materialized/u);
     });
 
     it('prints a shorter active-rule requirement for test-only quality checklist scope', () => {
@@ -245,6 +365,11 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.quality_checklist?.active_rule_count, 4);
         assert.equal(result.quality_checklist?.skipped_by_scope_rule_count, 6);
         assert.match(result.reason, /Active rules for scope "test-only": 4; skipped_by_scope=6/u);
+        const answersTemplate = JSON.parse(fs.readFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', `${TASK_ID}-quality-checklist-answers.json`),
+            'utf8'
+        )) as { answers: unknown[] };
+        assert.equal(answersTemplate.answers.length, 4);
         assert.ok(result.commands[0].command.includes('--answers-path'));
         assert.equal(result.commands[0].command.includes('--answers-json'), false);
     });

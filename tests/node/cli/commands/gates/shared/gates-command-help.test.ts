@@ -457,6 +457,8 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         const combinedOutput = stripAnsi(result.logs.join('\n'));
         assert.ok(combinedOutput.includes('one answer object per active rule for the current preflight scope'));
         assert.ok(combinedOutput.includes('PowerShell-safe JSON input'));
+        assert.ok(combinedOutput.includes('navigator materializes or refreshes'));
+        assert.equal(combinedOutput.includes('--prepare-answers-template'), false);
         assert.ok(combinedOutput.includes('--answers-path "garda-agent-orchestrator/runtime/tmp/<task-id>-quality-checklist-answers.json"'));
         assert.ok(combinedOutput.includes('Get-Content -Raw -LiteralPath "garda-agent-orchestrator/runtime/tmp/<task-id>-quality-checklist-answers.json"'));
         assert.ok(combinedOutput.includes('--answers-stdin'));

@@ -8,6 +8,10 @@ import {
 import {
     normalizePath
 } from '../shared/helpers';
+import {
+    assessQualityChecklistAnswersTemplateFile,
+    resolveDefaultQualityChecklistAnswersTemplatePath
+} from '../quality-checklist';
 import type {
     TaskQueueEntry
 } from './next-step-task-queue';
@@ -473,6 +477,16 @@ export function buildQualityChecklistCommand(
     preflightCommandPath: string,
     taskModePath: string | null
 ): string {
+    const absoluteAnswersPath = resolveDefaultQualityChecklistAnswersTemplatePath(repoRoot, taskId);
+    const answersAssessment = assessQualityChecklistAnswersTemplateFile({
+        repoRoot,
+        taskId,
+        preflightPath: preflightCommandPath,
+        answersPath: absoluteAnswersPath
+    });
+    if (answersAssessment.status !== 'current') {
+        return '';
+    }
     const answersPath = buildBundleRelativePath(repoRoot, `runtime/tmp/${taskId}-quality-checklist-answers.json`);
     return [
         `${cliPrefix} gate quality-checklist`,
