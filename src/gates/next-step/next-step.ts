@@ -3333,12 +3333,15 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         });
     }
 
+    const baselineOnlyNoOpEvidence = preflightRequiresAuditedNoOp(preflight)
+        ? getNoOpEvidence(repoRoot, taskId, '', preflightCommandPath)
+        : null;
     const baselineOnlyPreImplementationRoute = buildBaselineOnlyPreImplementationRoute({
         repoRoot,
         taskEntry,
         taskMode,
         preflight,
-        compileGatePassed: isGatePassed(summary, 'compile-gate')
+        auditedNoOpPassed: baselineOnlyNoOpEvidence?.evidence_status === 'PASS'
     });
     if (baselineOnlyPreImplementationRoute) {
         return buildResult({
@@ -3395,7 +3398,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     }
 
     if (preflightRequiresAuditedNoOp(preflight)) {
-        const noOpEvidence = getNoOpEvidence(repoRoot, taskId, '', preflightCommandPath);
+        const noOpEvidence = baselineOnlyNoOpEvidence
+            || getNoOpEvidence(repoRoot, taskId, '', preflightCommandPath);
         if (noOpEvidence.evidence_status !== 'PASS') {
             return buildResult({
                 ...resultBase,

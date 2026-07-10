@@ -40,7 +40,7 @@ export interface BaselineOnlyPreImplementationRouteOptions {
     taskEntry: TaskQueueEntry | null;
     taskMode: Record<string, unknown> | null;
     preflight: Record<string, unknown> | null;
-    compileGatePassed: boolean;
+    auditedNoOpPassed: boolean;
 }
 
 function preflightRequiresAuditedNoOp(preflight: Record<string, unknown> | null): boolean {
@@ -185,7 +185,30 @@ function getIgnoredPlannedFiles(repoRoot: string, plannedFiles: readonly string[
     }
 }
 
+const EXPLICIT_NO_OP_AREA_PATTERN = /^(?:audit-only|no-op|noop)$/u;
+const EXPLICIT_NO_OP_SUMMARY_OR_TITLE_PATTERN = /^(?:(?:audit[- ]?only|no[- ]?op)(?:\s+task\b|\s*:)|(?:close(?: out)?\s+)?already done\b|closeout only\b|docs only\b|no (?:code )?changes? required\b|no implementation required\b)/u;
+const EXPLICIT_NO_OP_NOTES_PATTERN = /^(?:audit[- ]?only|no[- ]?op)\s+task(?:\s*[.:;]|$)|\breviewed\s+\d{4}-\d{2}-\d{2}\s*:\s*(?:audit[- ]?only|no[- ]?op)\b/u;
+
+function taskMetadataExplicitlyAllowsNoOp(
+    taskEntry: TaskQueueEntry | null,
+    taskMode: Record<string, unknown> | null
+): boolean {
+    const summaryAndTitleParts = [
+        getStringField(taskMode, 'task_summary', ''),
+        taskEntry?.title || ''
+    ].map((value) => value.trim().toLowerCase());
+    const area = String(taskEntry?.area || '').trim().toLowerCase();
+    const areaLeaf = area.split('/').filter(Boolean).at(-1) || '';
+    const notes = String(taskEntry?.notes || '').trim().toLowerCase();
+    return EXPLICIT_NO_OP_AREA_PATTERN.test(areaLeaf)
+        || summaryAndTitleParts.some((value) => EXPLICIT_NO_OP_SUMMARY_OR_TITLE_PATTERN.test(value))
+        || EXPLICIT_NO_OP_NOTES_PATTERN.test(notes);
+}
+
 function taskIntentLooksCodeChanging(taskEntry: TaskQueueEntry | null, taskMode: Record<string, unknown> | null): boolean {
+    if (taskMetadataExplicitlyAllowsNoOp(taskEntry, taskMode)) {
+        return false;
+    }
     const text = [
         getStringField(taskMode, 'task_summary', ''),
         taskEntry?.area || '',
@@ -195,10 +218,7 @@ function taskIntentLooksCodeChanging(taskEntry: TaskQueueEntry | null, taskMode:
     if (!text.trim()) {
         return false;
     }
-    if (/\b(?:no[- ]?op|audit[- ]?only|already done|closeout only|docs only)\b/u.test(text)) {
-        return false;
-    }
-    const hasImplementationAction = /\b(?:add|adjust|change|compare|cover|create|enforce|extract|fix|harden|implement|narrow|prevent|refactor|rename|route|split|support|surface|unify|update|validate|warn)\b/u.test(text);
+    const hasImplementationAction = /\b(?:add|adjust|avoid|change|compare|correct|cover|create|delete|distinguish|enforce|ensure|extract|fix|harden|implement|make|migrate|modify|move|narrow|prevent|refactor|remove|rename|replace|revise|route|split|support|surface|teach|unify|update|validate|warn)\b/u.test(text);
     const hasImplementationSurface = /\b(?:code[- ]?changing|implementation|source|runtime|workflow|navigator|next-step|preflight|compile|gate|scope|diagnostic|test(?:s|ing)?|handler|contract)\b/u.test(text);
     return hasImplementationAction && hasImplementationSurface;
 }
@@ -206,7 +226,7 @@ function taskIntentLooksCodeChanging(taskEntry: TaskQueueEntry | null, taskMode:
 export function buildBaselineOnlyPreImplementationRoute(
     params: BaselineOnlyPreImplementationRouteOptions
 ): NextStepPreImplementationRoute | null {
-    if (params.compileGatePassed || !preflightRequiresAuditedNoOp(params.preflight)) {
+    if (params.auditedNoOpPassed || !preflightRequiresAuditedNoOp(params.preflight)) {
         return null;
     }
     const changedFiles = Array.isArray(params.preflight?.changed_files)

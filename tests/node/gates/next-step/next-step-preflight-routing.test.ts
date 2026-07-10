@@ -14,6 +14,10 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
+import {
+    seedGitAutoCompilePass,
+    writeNoOpEvidence
+} from './next-step-completion-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -345,6 +349,7 @@ function writeBaselineOnlyPreflight(
     taskId: string,
     options: {
         seedPostPreflight?: boolean;
+        requiredReviews?: Partial<Record<keyof typeof ALL_REVIEW_FLAGS, boolean>>;
     } = {}
 ): string {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
@@ -360,7 +365,7 @@ function writeBaselineOnlyPreflight(
             scope_content_sha256: snapshot.scope_content_sha256,
             scope_sha256: snapshot.scope_sha256
         },
-        required_reviews: { ...ALL_REVIEW_FLAGS },
+        required_reviews: { ...ALL_REVIEW_FLAGS, ...options.requiredReviews },
         changed_files: [],
         review_execution_policy: {
             mode: 'code_first_optional',
@@ -480,7 +485,14 @@ describe('gates/next-step preflight routing', () => {
             'Rename next-step implementation state before compile',
             'Harden next-step preflight scope before compile',
             'Validate next-step planned scope before compile',
-            'Prevent next-step compile before implementation'
+            'Prevent next-step compile before implementation',
+            'Avoid false record-no-op routing for tasks that still require implementation',
+            'Remove obsolete next-step gate logic',
+            'Replace next-step compile routing with implementation routing',
+            'Correct navigator no-op intent classification',
+            'Prevent docs only wording from bypassing the implementation gate',
+            'Avoid no changes required wording from bypassing the implementation gate',
+            'Prevent audit-only: update next-step gate docs from bypassing implementation'
         ]) {
             const repoRoot = makeTempRepo();
             initGitRepo(repoRoot);
@@ -509,6 +521,105 @@ describe('gates/next-step preflight routing', () => {
             assert.match(result.reason, /BASELINE_ONLY with no reviewable diff/u);
             assert.match(result.reason, /Do not run compile-gate/u);
         }
+    });
+
+    it('does not treat no-op inside a longer area slug as explicit no-op intent', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8')
+                .replace('ux/test', 'workflow/no-op-blocked-state-distinction'),
+            'utf8'
+        );
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 3,
+            effectiveDepth: 3,
+            taskSummary: 'Distinguish audited zero-diff no-op from implementation tasks blocked in next-step',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'implementation', result.reason);
+        assert.equal(result.commands.length, 0);
+    });
+
+    it('does not let baseline compile evidence satisfy an implementation task', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 3,
+            effectiveDepth: 3,
+            taskSummary: 'Avoid false record-no-op routing for tasks that still require implementation',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writeBaselineOnlyPreflight(repoRoot, TASK_ID, {
+            requiredReviews: { code: true, security: true }
+        });
+
+        const beforeCompile = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(beforeCompile.next_gate, 'implementation', beforeCompile.reason);
+        assert.equal(beforeCompile.commands.length, 0);
+
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        const baselineResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(baselineResult.next_gate, 'implementation', baselineResult.reason);
+        assert.equal(baselineResult.commands.length, 0);
+
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const implemented = true;\n', 'utf8');
+        const implementedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(implementedResult.next_gate, 'classify-change', implementedResult.reason);
+    });
+
+    it('accepts current audited no-op evidence as the explicit implementation escape hatch', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 3,
+            effectiveDepth: 3,
+            taskSummary: 'Avoid false record-no-op routing for tasks that still require implementation',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        const preflightPath = writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeNoOpEvidence(repoRoot, TASK_ID, preflightPath);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.notEqual(result.next_gate, 'implementation', result.reason);
+        assert.notEqual(result.next_gate, 'record-no-op', result.reason);
     });
 
     it('recovers dirty-baseline preflight failure with staged scope', () => {
@@ -864,7 +975,8 @@ describe('gates/next-step preflight routing', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'compile-gate', result.reason);
+        assert.equal(result.next_gate, 'implementation', result.reason);
+        assert.equal(result.commands.length, 0);
         assert.doesNotMatch(result.reason, /Structured planned files/u);
         assert.doesNotMatch(result.reason, /ignored-plan\/generated\.ts/u);
     });
@@ -877,7 +989,7 @@ describe('gates/next-step preflight routing', () => {
             entryMode: 'EXPLICIT_TASK_EXECUTION',
             requestedDepth: 2,
             effectiveDepth: 2,
-            taskSummary: 'Close out already done audit-only task',
+            taskSummary: 'Audit-only: update next-step gate docs',
             startBanner: 'Garda captures my mind',
             provider: 'Codex',
             canonicalSourceOfTruth: 'Codex',
@@ -894,6 +1006,116 @@ describe('gates/next-step preflight routing', () => {
 
         assert.equal(result.next_gate, 'compile-gate');
         assert.match(result.commands[0].command, /gate compile-gate/u);
+
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        const afterCompile = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(afterCompile.next_gate, 'record-no-op', afterCompile.reason);
+    });
+
+    it('honors explicit audit and no-change metadata forms', () => {
+        for (const { taskRowReplacement, taskSummary } of [
+            {
+                taskRowReplacement: '| ux/test | Audit-only: update next-step gate docs | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |',
+                taskSummary: 'Review explicit task metadata'
+            },
+            {
+                taskRowReplacement: '| ux/test | Review next-step metadata | gpt-5.4 | 2026-04-25 | balanced | Audit-only task. Update next-step gate docs. |',
+                taskSummary: 'Review explicit task metadata'
+            },
+            {
+                taskRowReplacement: '| workflow/no-op | Make next-step output executable in tests | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |',
+                taskSummary: 'Review explicit task metadata'
+            },
+            {
+                taskRowReplacement: '| workflow/noop | Make next-step output executable in tests | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |',
+                taskSummary: 'Review explicit task metadata'
+            },
+            ...[
+                'No-op: update next-step gate docs',
+                'Already done: update next-step gate docs',
+                'Closeout only: update next-step gate docs',
+                'Docs only: update next-step gate docs',
+                'No code changes required: update next-step gate docs',
+                'No implementation required: update next-step gate docs'
+            ].map((summary) => ({
+                taskRowReplacement: '| ux/test | Make next-step output executable in tests | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |',
+                taskSummary: summary
+            }))
+        ]) {
+            const repoRoot = makeTempRepo();
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    '| ux/test | Make next-step output executable in tests | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |',
+                    taskRowReplacement
+                ),
+                'utf8'
+            );
+            initGitRepo(repoRoot);
+            writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+                taskId: TASK_ID,
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary,
+                startBanner: 'Garda captures my mind',
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            }));
+            appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+            seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+            seedHandshake(repoRoot, TASK_ID);
+            seedShellSmoke(repoRoot, TASK_ID);
+            writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+            assert.equal(result.next_gate, 'compile-gate', result.reason);
+
+            seedGitAutoCompilePass(repoRoot, TASK_ID);
+            const afterCompile = resolveNextStep({ taskId: TASK_ID, repoRoot });
+            assert.equal(afterCompile.next_gate, 'record-no-op', afterCompile.reason);
+        }
+    });
+
+    it('honors a dated audit-only review marker in task notes despite code-changing note text', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                '| ux/test | Make next-step output executable in tests | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |',
+                '| workflow/workflow-set-downstream-automation-alignment | Check downstream automation and docs for the stricter workflow set contract | gpt-5.4 | 2026-07-02 | balanced | Child task. Reviewed 2026-07-02: audit-only. Check scripts and downstream automation that mutate workflow settings; they must route through audited workflow set. |'
+            ),
+            'utf8'
+        );
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Check downstream automation and docs for the stricter workflow set contract',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writeBaselineOnlyPreflight(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        const afterCompile = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(afterCompile.next_gate, 'record-no-op', afterCompile.reason);
     });
 
     it('continues normal implemented diffs to compile gate', () => {
