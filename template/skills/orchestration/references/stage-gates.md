@@ -64,7 +64,7 @@ Pass criteria:
 - `node garda-agent-orchestrator/bin/garda.js gate completion-gate` result is pass.
 - Timeline contains `TASK_MODE_ENTERED`.
 - Timeline contains `COMPLETION_GATE_PASSED`.
-- Final PASS review artifacts keep active `Findings by Severity` and `Residual Risks` empty (`none`), or record accepted non-blocking follow-up only in `Deferred Findings` with `Justification:`.
+- Final PASS review artifacts keep active `Findings by Severity` and `Residual Risks` empty (`None`), or record accepted non-blocking follow-up only in `Deferred Findings` with `Justification:`.
 - Completion finalization reconciles the task to `DONE`.
 - Artifact contract fields are valid for path mode, required verdicts, and evidence.
 - User report is delivered in mandatory order: review integrity attestation -> implementation summary -> conventional-style `git commit -m "<type>(<scope>): <summary>"` suggestion -> `Do you want me to commit now? (yes/no)`.

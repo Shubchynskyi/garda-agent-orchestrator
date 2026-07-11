@@ -25,7 +25,9 @@ export {
     normalizeReviewListText,
     isMeaningfulReviewEntry,
     getMarkdownMeaningfulEntries,
-    getFindingsBySeverity
+    getFindingsBySeverity,
+    getUnsupportedFindingsBySeverityEntries,
+    getUnsupportedSeverityHeadingLines
 } from './completion-verdict-markdown';
 
 export {

@@ -316,6 +316,27 @@ describe('gates/completion-verdict', () => {
             assert.equal(findings.medium.length, 0);
             assert.equal(findings.low.length, 1);
         });
+
+        it('parses canonical None and multiple parser-supported severity formats', () => {
+            const emptyFindings = getFindingsBySeverity(['None']);
+            assert.deepEqual(emptyFindings, { critical: [], high: [], medium: [], low: [] });
+
+            const findings = getFindingsBySeverity([
+                '- High: `src/parser.ts:42` drops the second finding; impact: incomplete review; remediation: keep every entry.',
+                'Medium:',
+                '- `tests/parser.test.ts:17` covers only the first severity; impact: regression can hide; remediation: assert every severity bucket.',
+                '- `tests/parser.test.ts:33` omits list-format coverage; impact: reviewer output can regress; remediation: add list-format fixture.',
+                'Low:',
+                '- None'
+            ]);
+
+            assert.equal(findings.high.length, 1);
+            assert.equal(findings.medium.length, 2);
+            assert.equal(findings.low.length, 0);
+            assert.match(findings.high[0], /drops the second finding/u);
+            assert.match(findings.medium[0], /covers only the first severity/u);
+            assert.match(findings.medium[1], /omits list-format coverage/u);
+        });
     });
 
     describe('getReviewArtifactFindingsEvidence', () => {
@@ -342,6 +363,25 @@ describe('gates/completion-verdict', () => {
             assert.equal(result.violations.length, 0);
         });
 
+        it('passes canonical None reports', () => {
+            const content = [
+                '# Review',
+                '## Findings by Severity',
+                'None',
+                '## Deferred Findings',
+                'None',
+                '## Residual Risks',
+                'None',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n');
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+            assert.equal(result.status, 'PASS');
+            assert.deepEqual(result.findings_by_severity, { critical: [], high: [], medium: [], low: [] });
+            assert.deepEqual(result.deferred_findings, []);
+            assert.deepEqual(result.residual_risks, []);
+        });
+
         it('rejects ambiguous duplicate section headings after normalization', () => {
             const content = [
                 '# Review',
@@ -355,6 +395,55 @@ describe('gates/completion-verdict', () => {
             const result = getReviewArtifactFindingsEvidence('/review.md', content);
             assert.equal(result.status, 'FAILED');
             assert.ok(result.violations.some((entry) => entry.includes("ambiguous duplicate section heading for '## Findings by Severity'")));
+        });
+
+        it('rejects heading-like severity text under Findings by Severity with permitted-format diagnostic', () => {
+            const content = [
+                '# Review',
+                '## Validation Notes',
+                'Reviewed `src/parser.ts:42` and `tests/parser.test.ts:17` for severity finding parsing.',
+                '## Findings by Severity',
+                '### Medium',
+                '- `src/parser.ts:42` this finding is hidden behind an unsupported nested heading.',
+                '## Deferred Findings',
+                'None',
+                '## Residual Risks',
+                'None',
+                '## Verdict',
+                'REVIEW FAILED'
+            ].join('\n');
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+            assert.equal(result.status, 'FAILED');
+            const diagnostic = result.violations.join('\n');
+            assert.match(diagnostic, /unsupported severity heading '### Medium'/u);
+            assert.match(diagnostic, /- Medium: <file:line>/u);
+            assert.match(diagnostic, /Medium:' followed by '- <finding>'/u);
+            assert.match(diagnostic, /canonical 'None'/u);
+        });
+
+        it('rejects meaningful findings content that is not owned by parser-supported severity syntax', () => {
+            const content = [
+                '# Review',
+                '## Validation Notes',
+                'Reviewed `src/auth.ts:42` and `tests/auth.test.ts:17` for untrusted findings parsing.',
+                '## Findings by Severity',
+                'Medium',
+                '- `src/auth.ts:42` auth bypass is hidden behind a bare severity label.',
+                'Plain prose finding in `src/parser.ts:12` is also not parser-supported.',
+                '## Deferred Findings',
+                'None',
+                '## Residual Risks',
+                'None',
+                '## Verdict',
+                'REVIEW FAILED'
+            ].join('\n');
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+            assert.equal(result.status, 'FAILED');
+            const diagnostic = result.violations.join('\n');
+            assert.match(diagnostic, /unsupported meaningful content 'Medium'/u);
+            assert.match(diagnostic, /unsupported meaningful content '- `src\/auth\.ts:42` auth bypass/u);
+            assert.match(diagnostic, /unsupported meaningful content 'Plain prose finding in `src\/parser\.ts:12`/u);
+            assert.match(diagnostic, /bare severity labels, and bullets without a severity owner are rejected/u);
         });
     });
 

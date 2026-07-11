@@ -85,7 +85,13 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptArtifact.includes('## Reviewer Output Contract'));
             assert.ok(promptArtifact.includes('Return a canonical code review report using exactly this section order and heading text'));
             assert.ok(promptArtifact.includes('```markdown\n## Validation Notes'));
-            assert.ok(promptArtifact.includes('<concrete reviewed files, behavior, boundaries, and verification notes; required for PASS>'));
+            assert.ok(promptArtifact.includes('<REPLACE with 1-3 concrete sentences naming reviewed files, behavior boundaries, tests/checklists, and verification evidence; required for PASS>'));
+            assert.ok(promptArtifact.includes('Treat the output template as an immutable fill-in form'));
+            assert.ok(promptArtifact.includes('Never add, remove, rename, reorder, or nest the required headings'));
+            assert.ok(promptArtifact.includes('Use canonical `None` exactly when a Findings by Severity, Deferred Findings, or Residual Risks slot has no content'));
+            assert.ok(promptArtifact.includes('never use severity headings such as `### Medium`'));
+            assert.ok(promptArtifact.includes('Parser-valid slot examples'));
+            assert.ok(promptArtifact.includes('Findings by Severity example: `- High:'));
             assert.ok(promptArtifact.includes('## Findings by Severity'));
             assert.ok(promptArtifact.includes('## Deferred Findings'));
             assert.ok(promptArtifact.includes('## Residual Risks'));
@@ -94,7 +100,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptArtifact.includes('FAIL verdict line must be exactly: `REVIEW FAILED`'));
             assert.ok(promptArtifact.includes('CODE REVIEW PASSED` and `CODE REVIEW FAILED` remain accepted legacy aliases'));
             assert.ok(promptArtifact.includes('1-3 concise sentences naming the reviewed files and behavior checked'));
-            assert.ok(promptArtifact.includes('Do not return only headings, `none`, and a PASS verdict'));
+            assert.ok(promptArtifact.includes('Do not return only headings, `None`, and a PASS verdict'));
             assert.ok(promptArtifact.includes('record-review-result rejects missing, empty, trivial, or obviously synthetic PASS reports'));
             assert.ok(promptArtifact.includes('Validation-boundary notes, command logs, positive inspection summaries, and speculative performance or environment hypotheticals are not findings'));
             assert.ok(promptArtifact.includes('If you run a command to investigate one concrete suspected finding, use a scoped compact invocation'));
@@ -121,6 +127,8 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(rolePromptText.includes('1. RolePromptPath:'));
             assert.ok(rolePromptText.includes('2. PromptTemplatePath:'));
             assert.ok(rolePromptText.includes('3. ReviewerPromptPath:'));
+            assert.ok(rolePromptText.includes('replace placeholder lines only'));
+            assert.ok(rolePromptText.includes('Never add, remove, rename, reorder, or nest the required headings'));
             assert.equal(result.reviewer_handoff.role_prompt.artifact_sha256, sha256Text(rolePromptText));
             assert.equal(fs.existsSync(result.reviewer_handoff.prompt_template.artifact_path), true);
             assert.equal(fs.existsSync(result.reviewer_handoff.output_template.artifact_path), true);
@@ -138,11 +146,19 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptTemplateText.includes('mandatory compile and full-suite validation are gate-owned'));
             assert.ok(promptTemplateText.includes('prefer `gate run-intermediate-command` when eligible'));
             assert.ok(promptTemplateText.includes('Do not run ad-hoc full-suite/build commands'));
+            assert.ok(promptTemplateText.includes('Use `None` for empty Findings by Severity, Deferred Findings, or Residual Risks sections'));
+            assert.ok(promptTemplateText.includes('Do not use markdown severity subheadings such as `### Medium`'));
             assert.equal(result.reviewer_handoff.prompt_template.artifact_sha256, sha256Text(promptTemplateText));
             assert.equal(fs.readFileSync(result.reviewer_handoff.output_template.artifact_path, 'utf8'), [
                 '# code review Output Template',
                 '',
-                'Fill this template without changing section headings, section order, or verdict tokens.',
+                'Fill this template as an immutable form. Replace placeholder lines only; keep required headings exactly as written.',
+                '- Treat the output template as an immutable fill-in form: replace placeholder lines only.',
+                '- Never add, remove, rename, reorder, or nest the required headings.',
+                '- Use canonical `None` exactly when a Findings by Severity, Deferred Findings, or Residual Risks slot has no content.',
+                '- Findings by Severity accepts only parser-supported inline/list severity formats such as `- High: ...` or `High:` followed by `- ...`; never use severity headings such as `### Medium`.',
+                '- Deferred Findings entries must include a concrete next step and `Justification:` on the same bullet or continuation text.',
+                '- Do not edit launcher, control, receipt, or review-context metadata instead of the designated reviewer output file.',
                 '- Complete the entire assigned review scope before returning a verdict. Finding a Critical, High, Medium, or Low defect does not end the review.',
                 '- Continue through every in-scope file, behavior boundary, test, and applicable checklist or rule category, then report every distinct evidence-supported finding in the same result.',
                 '- Deduplicate findings that share one root cause. For every distinct finding include severity, file and line evidence, impact, and required remediation; never invent or pad findings to reach a count.',
@@ -150,20 +166,26 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 '- Validation Notes must name the files, behavior boundaries, tests, and checklist or rule categories actually reviewed.',
                 '- Do not widen the assigned scope. This is a process-completeness requirement, not a guarantee that every latent defect will be discovered.',
                 '',
+                'Parser-valid slot examples (copy the shape only when applicable; do not copy example facts):',
+                '- Validation Notes example: `Reviewed src/review-parser.ts:42 and tests/review-parser.test.ts:17; checked parser-supported finding formats and rejection diagnostics.`',
+                '- Findings by Severity example: `- High: src/review-parser.ts:42 drops later findings; impact: incomplete review evidence; remediation: preserve every severity entry.`',
+                '- Deferred Findings example: `- [Low] docs/reviews.md:12 clarify reviewer wording. Next step: update docs in T-123. Justification: documentation-only follow-up is accepted after parser coverage.`',
+                '- Residual Risks example: `- Rollout risk: legacy review artifacts may still use old wording until regenerated; mitigation: parser tests cover both canonical None and supported finding formats.`',
+                '',
                 '## Validation Notes',
-                '<concrete reviewed files, behavior, boundaries, and verification notes; required for PASS>',
+                '<REPLACE with 1-3 concrete sentences naming reviewed files, behavior boundaries, tests/checklists, and verification evidence; required for PASS>',
                 '',
                 '## Findings by Severity',
-                '<Critical/High/Medium/Low findings, or none>',
+                '<REPLACE with canonical `None`, or parser-supported active findings using `- High: <file:line> <impact>; remediation: <required action>` / `High:` followed by `- <finding>`; do not use severity headings such as `### Medium`>',
                 '',
                 '## Deferred Findings',
-                '<explicit actionable follow-up with a concrete next step and Justification:, or none>',
+                '<REPLACE with canonical `None`, or parser-supported deferred bullets like `- [Low] <summary with file evidence>. Next step: <action>. Justification: <why deferral is acceptable now>`>',
                 '',
                 '## Residual Risks',
-                '<active open risks, or none>',
+                '<REPLACE with canonical `None`, or parser-supported residual-risk bullets like `- Rollout risk: <active open risk>; mitigation: <current mitigation>`>',
                 '',
                 '## Verdict',
-                '<REVIEW PASSED or REVIEW FAILED>',
+                '<REPLACE with exactly REVIEW PASSED or REVIEW FAILED>',
                 ''
             ].join('\n'));
             const manifest = JSON.parse(fs.readFileSync(result.reviewer_handoff.evidence_manifest.artifact_path, 'utf8'));
@@ -309,7 +331,11 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                     ],
                     `${reviewType} output template must preserve exact canonical headings`
                 );
-                assert.ok(templateArtifact.includes(`## Verdict\n<${passToken} or ${passToken.replace(/\bPASSED\b/g, 'FAILED')}>`));
+                assert.ok(templateArtifact.includes(`## Verdict\n<REPLACE with exactly ${passToken} or ${passToken.replace(/\bPASSED\b/g, 'FAILED')}>`));
+                assert.ok(templateArtifact.includes('Replace placeholder lines only'));
+                assert.ok(templateArtifact.includes('Use canonical `None` exactly'));
+                assert.ok(templateArtifact.includes('never use severity headings such as `### Medium`'));
+                assert.ok(templateArtifact.includes('Parser-valid slot examples'));
                 assert.ok(templateArtifact.includes('Deduplicate findings that share one root cause'));
                 assert.ok(templateArtifact.includes('file and line evidence, impact, and required remediation'));
                 if (reviewType === 'code') {

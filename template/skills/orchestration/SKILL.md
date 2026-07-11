@@ -168,7 +168,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
    - This defaulting is only a contract convenience; the gate still validates current-cycle artifacts, receipts, review-context bindings, and exact pass tokens, and must not auto-scan `runtime/reviews` for a convenient PASS.
 19. Resolve every review finding before `DONE` and repeat required reviews + gate check until the final PASS artifacts are clean.
    - blocking findings must be fixed before rerun.
-   - non-blocking findings may be deferred only in `Deferred Findings` with `Justification:` after the active `Findings by Severity` and `Residual Risks` sections are cleared to `none`.
+   - non-blocking findings may be deferred only in `Deferred Findings` with `Justification:` after the active `Findings by Severity` and `Residual Risks` sections are cleared to `None`.
    - On failed gate and return to coding, log event: `REWORK_STARTED`.
 20. Run doc impact gate before completion when `next-step` requests it:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
@@ -248,7 +248,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
         - verdict token (`... PASSED` or `... FAILED`);
         - findings list with file evidence;
         - `reviewer_execution_mode` used for this review (`delegated_subagent`);
-        - when verdict is pass, keep active `Findings by Severity` and `Residual Risks` empty (`none`); move any accepted non-blocking follow-up to `Deferred Findings` and include `Justification:` in each deferred entry;
+        - when verdict is pass, keep active `Findings by Severity` and `Residual Risks` empty (`None`); move any accepted non-blocking follow-up to `Deferred Findings` and include `Justification:` in each deferred entry;
         - review artifact write path: `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.
    3. Feed reviewer output into `record-review-result` using exactly one source: `--review-output-path` or `--review-output-stdin`.
       - `--review-output-stdin` is only a transport convenience. The gate must still persist raw reviewer input to `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md` before verdict extraction and receipt materialization.

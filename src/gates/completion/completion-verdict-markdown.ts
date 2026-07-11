@@ -14,6 +14,7 @@ const BENIGN_NO_SIGNIFICANT_REVIEW_ISSUE_REMAINDERS = new Set([
 ]);
 
 export const CANONICAL_REVIEW_SECTION_HEADINGS = [
+    'Validation Notes',
     'Findings by Severity',
     'Deferred Findings',
     'Residual Risks',
@@ -175,6 +176,66 @@ export function getMarkdownMeaningfulEntries(sectionLines: string[]): string[] {
 }
 
 type SeverityLevel = 'critical' | 'high' | 'medium' | 'low';
+
+export function getUnsupportedSeverityHeadingLines(sectionLines: string[]): string[] {
+    const unsupportedLines: string[] = [];
+    for (const rawLine of sectionLines) {
+        const trimmed = String(rawLine || '').trim();
+        if (!trimmed) continue;
+        const hashSeverityHeadingMatch = /^(#{2,6})\s+(?:\*\*|__)?\s*(Critical|High|Medium|Low)\b.*$/iu.exec(trimmed);
+        const boldSeverityHeadingMatch = /^(?:[-*+]\s*)?(?:\*\*|__)\s*(Critical|High|Medium|Low)\s*:?\s*(?:\*\*|__)?(?:\s+.*)?$/iu.exec(trimmed);
+        if (hashSeverityHeadingMatch || boldSeverityHeadingMatch) {
+            unsupportedLines.push(trimmed);
+        }
+    }
+    return unsupportedLines;
+}
+
+export function getUnsupportedFindingsBySeverityEntries(sectionLines: string[]): string[] {
+    const unsupportedEntries: string[] = [];
+    let currentSeverity: SeverityLevel | null = null;
+    let currentSeverityHasFinding = false;
+
+    for (const rawLine of sectionLines) {
+        const trimmed = String(rawLine || '').trim();
+        if (!trimmed) continue;
+        if (!isMeaningfulReviewEntry(trimmed)) continue;
+
+        const severityMatch = /^(?:[-*+]\s*)?(Critical|High|Medium|Low)\s*:\s*(.*)$/i.exec(trimmed);
+        if (severityMatch) {
+            currentSeverity = severityMatch[1].trim().toLowerCase() as SeverityLevel;
+            const remainder = normalizeReviewListText(severityMatch[2]);
+            currentSeverityHasFinding = isMeaningfulReviewEntry(remainder);
+            continue;
+        }
+
+        const bareSeverityMatch = /^(?:[-*+]\s*)?(Critical|High|Medium|Low)\s*$/i.exec(trimmed);
+        if (bareSeverityMatch) {
+            unsupportedEntries.push(trimmed);
+            currentSeverity = null;
+            currentSeverityHasFinding = false;
+            continue;
+        }
+
+        const bulletMatch = /^(?:[-*+]\s+|\d+\.\s+)(.*)$/.exec(trimmed);
+        if (bulletMatch) {
+            if (currentSeverity) {
+                currentSeverityHasFinding = currentSeverityHasFinding || isMeaningfulReviewEntry(bulletMatch[1]);
+                continue;
+            }
+            unsupportedEntries.push(trimmed);
+            continue;
+        }
+
+        if (currentSeverity && currentSeverityHasFinding) {
+            continue;
+        }
+
+        unsupportedEntries.push(trimmed);
+    }
+
+    return unsupportedEntries;
+}
 
 export function getFindingsBySeverity(sectionLines: string[]): Record<SeverityLevel, string[]> {
     const findings: Record<SeverityLevel, string[]> = { critical: [], high: [], medium: [], low: [] };

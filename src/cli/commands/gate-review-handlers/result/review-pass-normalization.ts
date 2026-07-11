@@ -48,17 +48,17 @@ export function buildMinimalPassReviewTemplateHint(reviewType: string, expectedP
         'Validated the relevant files with concrete scope notes, file references, behavior boundaries, and verification evidence.',
         '',
         '## Findings by Severity',
-        'none',
+        'None',
         '',
         '## Deferred Findings',
-        'none',
+        'None',
         '',
         '## Residual Risks',
-        'none',
+        'None',
         '',
         '## Verdict',
         expectedPassVerdict,
-        "Use '## Deferred Findings' only for real accepted actionable follow-ups with 'Justification:'. Validation-boundary notes and command logs are prose only; keep the findings, deferred, and residual sections set to 'none'."
+        "Use '## Deferred Findings' only for real accepted actionable follow-ups with 'Justification:'. Validation-boundary notes and command logs are prose only; keep the findings, deferred, and residual sections set to 'None'."
     ].join('\n');
 }
 
@@ -128,7 +128,7 @@ export function analyzeEarlyReviewMaterialization(options: {
     if (findingsEvidence.residual_risks.length > 0) {
         passOnlyActiveViolations.add(
             `Review artifact '${normalizedArtifactPath}' still contains active residual risks. ` +
-            "For validation-boundary or command/log notes, set 'Residual Risks' and 'Deferred Findings' to 'none' and keep the note in prose. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:' and will require follow-up tracking."
+            "For validation-boundary or command/log notes, set 'Residual Risks' and 'Deferred Findings' to 'None' and keep the note in prose. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:' and will require follow-up tracking."
         );
     }
     for (const violation of findingsEvidence.violations) {
@@ -201,25 +201,25 @@ function buildNoFindingsPassReviewRecoveryHint(options: {
 
     if (findingsEvidence.missing_sections.includes('Findings by Severity')) {
         hintLines.push(findingsSectionPresent
-            ? "Set '## Findings by Severity' explicitly to 'none' when no findings remain open."
-            : "Add mandatory section '## Findings by Severity' and set it to 'none' when no findings remain open.");
+            ? "Set '## Findings by Severity' explicitly to 'None' when no findings remain open."
+            : "Add mandatory section '## Findings by Severity' and set it to 'None' when no findings remain open.");
     }
     if (findingsEvidence.residual_risks.length > 0) {
         hintLines.push(
-            "'## Residual Risks' is only for active open risks. For validation-boundary or command/log notes in a no-findings PASS review, keep those notes in prose and set '## Residual Risks' and '## Deferred Findings' to 'none'. Only real accepted actionable follow-ups belong in '## Deferred Findings' with 'Justification:' and become follow-up obligations."
+            "'## Residual Risks' is only for active open risks. For validation-boundary or command/log notes in a no-findings PASS review, keep those notes in prose and set '## Residual Risks' and '## Deferred Findings' to 'None'. Only real accepted actionable follow-ups belong in '## Deferred Findings' with 'Justification:' and become follow-up obligations."
         );
     } else if (findingsEvidence.missing_sections.includes('Residual Risks')) {
         hintLines.push(residualSectionPresent
-            ? "Set '## Residual Risks' explicitly to 'none' when no active risks remain."
-            : "Add mandatory section '## Residual Risks' and set it to 'none' when no active risks remain.");
+            ? "Set '## Residual Risks' explicitly to 'None' when no active risks remain."
+            : "Add mandatory section '## Residual Risks' and set it to 'None' when no active risks remain.");
     }
     if (findingsEvidence.invalid_deferred_findings.length > 0) {
         hintLines.push(
-            "Every real '## Deferred Findings' entry must include 'Justification:' and becomes a follow-up obligation. If nothing actionable is deferred, remove that section or set it to 'none'; do not put validation-boundary or command/log notes there."
+            "Every real '## Deferred Findings' entry must include 'Justification:' and becomes a follow-up obligation. If nothing actionable is deferred, remove that section or set it to 'None'; do not put validation-boundary or command/log notes there."
         );
     } else if (deferredSectionLooksEmpty) {
         hintLines.push(
-            "'## Deferred Findings' may be omitted, but if you keep it for a no-findings PASS review, set it explicitly to 'none'."
+            "'## Deferred Findings' may be omitted, but if you keep it for a no-findings PASS review, set it explicitly to 'None'."
         );
     }
 
@@ -490,12 +490,12 @@ export function buildLosslessPassReviewNormalization(options: {
         }
     }
     normalizedLines.push('## Findings by Severity');
-    normalizedLines.push('none');
+    normalizedLines.push('None');
     normalizedLines.push('');
     normalizedLines.push('## Deferred Findings');
     normalizedLines.push('');
     if (pendingDeferredEntries.length === 0) {
-        normalizedLines.push('none');
+        normalizedLines.push('None');
     } else {
         for (const entry of pendingDeferredEntries) {
             appendDeferredFinding(normalizedLines, entry);
@@ -506,7 +506,7 @@ export function buildLosslessPassReviewNormalization(options: {
     }
     normalizedLines.push('');
     normalizedLines.push('## Residual Risks');
-    normalizedLines.push('none');
+    normalizedLines.push('None');
     normalizedLines.push('');
     normalizedLines.push('## Verdict');
     normalizedLines.push(expectedPassVerdict);

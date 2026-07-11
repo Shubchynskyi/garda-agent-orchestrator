@@ -46,12 +46,20 @@ metadata:
 
 ## Mandatory Output Format
 
-When this skill is selected for a mandatory `infra` review, return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+When this skill is selected for a mandatory `infra` review, return the generated output template, not a free-form summary. Treat it as an immutable fill-in form: replace placeholder lines only. Preserve these headings exactly and in this order; never add, remove, rename, reorder, or nest headings:
 1. `## Validation Notes` - concrete reviewed infrastructure files, behavior, boundaries, and verification evidence; required for PASS.
-2. `## Findings by Severity` - active blocking infra findings with file references, or `none`.
-3. `## Deferred Findings` - accepted actionable infra follow-ups with a concrete next step and `Justification:`, or `none`.
-4. `## Residual Risks` - active open rollout or operations risks that remain after review, or `none`.
+2. `## Findings by Severity` - canonical `None`, or active blocking infra findings with file references using parser-supported inline/list formats.
+3. `## Deferred Findings` - canonical `None`, or accepted actionable infra follow-ups with a concrete next step and `Justification:`.
+4. `## Residual Risks` - canonical `None`, or active open rollout or operations risks that remain after review.
 5. `## Verdict` - exact verdict token: `INFRA REVIEW PASSED` or `INFRA REVIEW FAILED`.
+
+Use only parser-supported finding formats under `## Findings by Severity`: `- High: <file:line> <impact>; remediation: <required action>` or `High:` followed by `- <finding>`. Do not use severity headings such as `### Medium`.
+
+Parser-valid examples:
+- Validation Notes: `Reviewed src/review-parser.ts:42 and tests/review-parser.test.ts:17; checked parser-supported finding formats and rejection diagnostics.`
+- Findings by Severity: `- High: src/review-parser.ts:42 drops later findings; impact: incomplete review evidence; remediation: preserve every severity entry.`
+- Deferred Findings: `- [Low] docs/reviews.md:12 clarify reviewer wording. Next step: update docs in T-123. Justification: documentation-only follow-up is accepted after parser coverage.`
+- Residual Risks: `- Rollout risk: legacy review artifacts may still use old wording until regenerated; mitigation: parser tests cover both canonical None and supported finding formats.`
 
 ## Scope Map
 

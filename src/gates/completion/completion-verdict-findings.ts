@@ -3,8 +3,11 @@ import {
     countCanonicalReviewSectionHeadings,
     extractMarkdownSectionLines,
     formatAcceptedReviewSectionHeadingShapes,
+    getCanonicalReviewSectionHeading,
     getMarkdownMeaningfulEntries,
-    getFindingsBySeverity
+    getFindingsBySeverity,
+    getUnsupportedFindingsBySeverityEntries,
+    getUnsupportedSeverityHeadingLines
 } from './completion-verdict-markdown';
 
 export function isTrivialReview(content: string): boolean {
@@ -26,6 +29,28 @@ export function isTrivialReview(content: string): boolean {
     }
 
     return false;
+}
+
+function extractFindingsBySeverityStructuralLines(lines: string[]): string[] {
+    const sectionLines: string[] = [];
+    let capture = false;
+    for (const rawLine of lines) {
+        const canonicalHeading = getCanonicalReviewSectionHeading(rawLine);
+        if (canonicalHeading) {
+            if (canonicalHeading.toLowerCase() === 'findings by severity') {
+                capture = true;
+                continue;
+            }
+            if (capture) {
+                break;
+            }
+            continue;
+        }
+        if (capture) {
+            sectionLines.push(rawLine);
+        }
+    }
+    return sectionLines;
 }
 
 export function getReviewArtifactFindingsEvidence(artifactPath: string, content: string) {
@@ -58,13 +83,23 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
     const lines = (content || '').split('\n');
 
     const headingCounts = countCanonicalReviewSectionHeadings(lines);
-    for (const heading of ['Findings by Severity', 'Deferred Findings', 'Residual Risks', 'Verdict']) {
+    for (const heading of ['Validation Notes', 'Findings by Severity', 'Deferred Findings', 'Residual Risks', 'Verdict']) {
         if ((headingCounts[heading] || 0) > 1) {
             result.violations.push(
                 `Review artifact '${artifactPathNormalized}' has ambiguous duplicate section heading for '## ${heading}'. ` +
                 formatAcceptedReviewSectionHeadingShapes(heading)
             );
         }
+    }
+
+    const findingsStructuralLines = extractFindingsBySeverityStructuralLines(lines);
+    for (const unsupportedLine of getUnsupportedSeverityHeadingLines(findingsStructuralLines)) {
+        result.violations.push(
+            `Review artifact '${artifactPathNormalized}' uses unsupported severity heading '${unsupportedLine}' under '## Findings by Severity'. ` +
+            "Use parser-supported findings format such as '- Medium: <file:line> <impact>; remediation: <required action>' " +
+            "or 'Medium:' followed by '- <finding>'; use canonical 'None' when there are no findings. " +
+            "Do not add, remove, rename, reorder, or nest required headings."
+        );
     }
 
     const findingsLines = extractMarkdownSectionLines(lines, 'Findings by Severity');
@@ -78,6 +113,14 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
         result.findings_section_present = true;
         const findingsBySeverity = getFindingsBySeverity(findingsLines);
         result.findings_by_severity = findingsBySeverity;
+        for (const unsupportedEntry of getUnsupportedFindingsBySeverityEntries(findingsLines)) {
+            result.violations.push(
+                `Review artifact '${artifactPathNormalized}' contains unsupported meaningful content '${unsupportedEntry}' under '## Findings by Severity'. ` +
+                "Use parser-supported findings format such as '- Medium: <file:line> <impact>; remediation: <required action>' " +
+                "or 'Medium:' followed by '- <finding>'; use canonical 'None' when there are no findings. " +
+                "Unscoped prose, bare severity labels, and bullets without a severity owner are rejected so active findings cannot be hidden."
+            );
+        }
         for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
             if (findingsBySeverity[severity].length > 0) {
                 const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
@@ -103,7 +146,7 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
         if (residualRisks.length > 0) {
             result.violations.push(
                 `Review artifact '${artifactPathNormalized}' still contains active residual risks. ` +
-                "For validation-boundary or command/log notes, set 'Residual Risks' and 'Deferred Findings' to 'none' and keep the note in prose. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:' and will require follow-up tracking."
+                "For validation-boundary or command/log notes, set 'Residual Risks' and 'Deferred Findings' to 'None' and keep the note in prose. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:' and will require follow-up tracking."
             );
         }
     }

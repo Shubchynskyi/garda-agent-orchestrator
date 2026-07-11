@@ -220,9 +220,9 @@ describe('gates command review result - normalization', () => {
         const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
         assert.equal(rawReviewContent, reviewOutputContent);
         assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
-        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
-        assert.ok(artifactContent.includes('## Deferred Findings\n\nnone'));
-        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        assert.ok(artifactContent.includes('## Findings by Severity\nNone'));
+        assert.ok(artifactContent.includes('## Deferred Findings\n\nNone'));
+        assert.ok(artifactContent.includes('## Residual Risks\nNone'));
         assert.ok(artifactContent.includes('## Verdict\nREVIEW PASSED'));
         assert.ok(!artifactContent.includes('- [follow-up] Full repository test suite was not run by this reviewer'));
         assert.ok(!artifactContent.includes('- [follow-up] Read-only review; full-suite validation was already covered'));
@@ -321,9 +321,9 @@ describe('gates command review result - normalization', () => {
         assert.equal(rawReviewContent, reviewOutputContent);
         assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
         assert.ok(artifactContent.includes('Review artifact did not include inline diff'));
-        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
-        assert.ok(artifactContent.includes('## Deferred Findings\n\nnone'));
-        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        assert.ok(artifactContent.includes('## Findings by Severity\nNone'));
+        assert.ok(artifactContent.includes('## Deferred Findings\n\nNone'));
+        assert.ok(artifactContent.includes('## Residual Risks\nNone'));
         const normalizedDeferredStart = artifactContent.lastIndexOf('## Deferred Findings');
         const normalizedDeferredBlock = normalizedDeferredStart >= 0
             ? artifactContent.slice(normalizedDeferredStart).split('## Residual Risks')[0] || ''
@@ -436,9 +436,9 @@ describe('gates command review result - normalization', () => {
         const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
         assert.equal(rawReviewContent, reviewOutputContent);
         assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
-        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
-        assert.ok(artifactContent.includes('## Deferred Findings\n\nnone'));
-        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        assert.ok(artifactContent.includes('## Findings by Severity\nNone'));
+        assert.ok(artifactContent.includes('## Deferred Findings\n\nNone'));
+        assert.ok(artifactContent.includes('## Residual Risks\nNone'));
         assert.ok(artifactContent.includes('## Verdict\nREVIEW PASSED'));
         const normalizedDeferredStart = artifactContent.lastIndexOf('## Deferred Findings');
         const normalizedDeferredBlock = normalizedDeferredStart >= 0
@@ -802,9 +802,9 @@ describe('gates command review result - normalization', () => {
         const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
         assert.equal(rawReviewContent, reviewOutputContent);
         assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
-        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
-        assert.ok(artifactContent.includes('## Deferred Findings\n\nnone'));
-        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        assert.ok(artifactContent.includes('## Findings by Severity\nNone'));
+        assert.ok(artifactContent.includes('## Deferred Findings\n\nNone'));
+        assert.ok(artifactContent.includes('## Residual Risks\nNone'));
         assert.ok(artifactContent.includes('## Verdict\nREVIEW PASSED'));
         assert.ok(!artifactContent.includes('- [follow-up] I could not execute the touched tests directly'));
         assert.ok(!artifactContent.includes('- [follow-up] Based on code inspection'));
@@ -899,7 +899,7 @@ describe('gates command review result - normalization', () => {
         assert.ok(artifactContent.includes('## Deferred Findings'));
         assert.ok(artifactContent.includes('- Add explicit future-skew regression coverage for workflow set operator timestamps. Justification: The main task covered missing and stale timestamp paths; future-skew workflow-specific coverage can be tracked as separate hardening.'));
         assert.ok(!artifactContent.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
-        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        assert.ok(artifactContent.includes('## Residual Risks\nNone'));
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
 
