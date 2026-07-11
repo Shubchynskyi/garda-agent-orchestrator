@@ -58,6 +58,14 @@ Primary goal is behavior preservation with lower maintenance risk.
 7. Use artifact structure from `garda-agent-orchestrator/live/docs/reviews/TEMPLATE.md`.
 8. Produce final refactor verdict.
 
+## Exhaustive Review Contract
+- Complete the entire assigned review scope before returning a verdict. A finding at any severity does not end the review.
+- Continue through every in-scope file, behavior boundary, test, and applicable checklist or rule category, then report every distinct evidence-supported finding in the same result.
+- Deduplicate findings that share one root cause. For every distinct finding include severity, file and line evidence, impact, and required remediation; never invent or pad findings to reach a count.
+- On remediation reviews, re-sweep the complete current assigned scope instead of checking only previously reported findings.
+- Validation Notes must name the files, behavior boundaries, tests, and checklist or rule categories actually reviewed.
+- Do not widen the assigned scope. This is a process-completeness requirement, not a guarantee that every latent defect will be discovered.
+
 ## Mandatory Output Format
 Return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
 1. `## Validation Notes` - concrete reviewed refactor files, behavior, boundaries, and verification evidence; required for PASS.

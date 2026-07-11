@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { buildExhaustiveReviewContractLines } from '../../../../gates/review-context/review-context-artifacts';
 
 import {
     getBundleCliCommand,
@@ -248,6 +249,7 @@ export function buildCopyPasteReviewerLaunchPrompt(options: ReviewerLaunchPrompt
         `Fill OutputTemplatePath exactly, preserving the required sections: ${options.outputTemplatePath}`,
         `OutputTemplateSha256: ${options.outputTemplateSha256}`,
         'Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.',
+        ...buildExhaustiveReviewContractLines(),
         `Write the final review report to ReviewOutputPath when file writing is available, or return the filled report in your final response: ${options.reviewOutputPath}`,
         'Do not replace the required verdict token with a summary sentence.'
     );

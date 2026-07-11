@@ -213,6 +213,16 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(launchInputArtifact.review_type, 'code');
         assert.equal(launchInputArtifact.copy_paste_reviewer_launch_prompt, launchArtifact.copy_paste_reviewer_launch_prompt);
         assert.equal(launchInputArtifact.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes(`PromptTemplatePath: ${fixture.promptTemplatePath.replace(/\\/g, '/')}`));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Fill OutputTemplatePath exactly'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes(fixture.outputTemplatePath.replace(/\\/g, '/')));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Finding a Critical, High, Medium, or Low defect does not end the review'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('report every distinct evidence-supported finding in the same result'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Deduplicate findings that share one root cause'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('re-sweep the complete current assigned scope'));
+        assert.equal(launchInputArtifact.prompt_template_sha256, launchArtifact.prompt_template_sha256);
+        assert.equal(launchInputArtifact.output_template_sha256, launchArtifact.output_template_sha256);
         assert.equal(launchInputArtifact.review_output_path, reviewOutputPath.replace(/\\/g, '/'));
         assert.equal(launchInputArtifact.next_action, undefined);
         assert.equal(launchInputArtifact.after_launch_required_updates, undefined);

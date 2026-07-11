@@ -622,7 +622,18 @@ describe('gates/next-step', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, refactor: true, test: true });
         seedCompilePass(repoRoot, TASK_ID);
-        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                '- High: `src/first.ts:10` forged evidence is accepted; impact: trust bypass; remediation: bind the receipt hash.',
+                '- Medium: `src/later.ts:42` later category is skipped; impact: incomplete review; remediation: finish the complete sweep.',
+                '',
+                '## Deferred Findings',
+                'none',
+                ''
+            ].join('\n')
+        });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
@@ -631,6 +642,7 @@ describe('gates/next-step', () => {
         assert.equal(result.review.next_review_type, 'code');
         assert.match(result.title, /Fix failed 'code' review findings/);
         assert.match(result.reason, /Do not launch downstream reviewers/);
+        assert.match(result.reason, /CODE REVIEW FAILED/u);
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('record-review-result'));

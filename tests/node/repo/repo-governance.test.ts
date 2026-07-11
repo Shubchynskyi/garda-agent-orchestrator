@@ -565,7 +565,15 @@ test('reviewer skill templates require canonical output-template sections and ty
         '`## Residual Risks`',
         '`## Verdict`',
         'required for PASS',
-        'Justification:'
+        'Justification:',
+        'A finding at any severity does not end the review',
+        'report every distinct evidence-supported finding in the same result',
+        'Deduplicate findings that share one root cause',
+        'file and line evidence, impact, and required remediation',
+        're-sweep the complete current assigned scope',
+        'checklist or rule categories actually reviewed',
+        'never invent or pad findings',
+        'not a guarantee that every latent defect will be discovered'
     ] as const;
 
     for (const contract of reviewerSkillContracts) {

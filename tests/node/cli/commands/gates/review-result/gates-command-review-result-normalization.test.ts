@@ -25,7 +25,7 @@ import {
 
 describe('gates command review result - normalization', () => {
 
-    it('record-review-result normalizes obvious reviewer section heading variants while preserving raw output', async () => {
+    it('record-review-result preserves multiple independent findings through normalization and receipt recording', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-318-heading-normalization';
         seedTaskQueue(repoRoot, taskId);
@@ -55,14 +55,21 @@ describe('gates command review result - normalization', () => {
             '',
             'Validated `src/cli/commands/gate-review-handlers/index.ts` and `src/gates/completion-verdict-markdown.ts` for reviewer receipt heading normalization, confirming that obvious markdown variants remain auditable without changing raw evidence.',
             '',
+            '### Validation Notes',
+            'Reviewed both independent failure boundaries and the complete normalization and receipt path.',
+            '',
             '**Findings by Severity**',
+            '- High: `src/first.ts:10` forged evidence is accepted; impact: trust bypass; remediation: bind the receipt hash.',
+            '- Medium: `src/later.ts:42` later category is skipped; impact: incomplete review; remediation: finish the complete sweep.',
+            '',
+            '## Deferred Findings',
             'none',
             '',
             '### Residual Risks',
             'none',
             '',
             '## **Verdict**',
-            'REVIEW PASSED'
+            'REVIEW FAILED'
         ].join('\n');
         fs.writeFileSync(reviewOutputPath, reviewOutputContent, 'utf8');
 
@@ -110,11 +117,14 @@ describe('gates command review result - normalization', () => {
         const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
         assert.equal(rawReviewContent, reviewOutputContent);
         assert.ok(rawReviewContent.includes('**Findings by Severity**'));
+        assert.ok(rawReviewContent.includes('forged evidence is accepted'));
+        assert.ok(rawReviewContent.includes('later category is skipped'));
         assert.ok(rawReviewContent.includes('### Residual Risks'));
         assert.ok(rawReviewContent.includes('## **Verdict**'));
-        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
+        assert.ok(artifactContent.includes('## Findings by Severity\n- High: `src/first.ts:10` forged evidence is accepted'));
+        assert.ok(artifactContent.includes('- Medium: `src/later.ts:42` later category is skipped'));
         assert.ok(artifactContent.includes('## Residual Risks\nnone'));
-        assert.ok(artifactContent.includes('## Verdict\nREVIEW PASSED'));
+        assert.ok(artifactContent.includes('## Verdict\nREVIEW FAILED'));
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
         assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));

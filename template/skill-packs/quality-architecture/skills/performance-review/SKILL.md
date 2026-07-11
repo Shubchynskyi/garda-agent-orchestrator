@@ -63,6 +63,14 @@ Return the generated output template, not a free-form summary. Preserve these he
 - **Unlimited parallelism**: fan-out that reduces single-request latency in staging but collapses shared pools or downstream dependencies under production concurrency.
 - **Pool tuning without overload semantics**: changing worker, connection, or thread counts without stating what happens when the pool saturates.
 
+## Exhaustive Review Contract
+- Complete the entire assigned review scope before returning a verdict. A finding at any severity does not end the review.
+- Continue through every in-scope file, behavior boundary, test, and applicable checklist or rule category, then report every distinct evidence-supported finding in the same result.
+- Deduplicate findings that share one root cause. For every distinct finding include severity, file and line evidence, impact, and required remediation; never invent or pad findings to reach a count.
+- On remediation reviews, re-sweep the complete current assigned scope instead of checking only previously reported findings.
+- Validation Notes must name the files, behavior boundaries, tests, and checklist or rule categories actually reviewed.
+- Do not widen the assigned scope. This is a process-completeness requirement, not a guarantee that every latent defect will be discovered.
+
 ## Constraints
 
 - Do not approve performance-sensitive changes without measurement evidence (benchmark, profile, or load-test result with before/after comparison).

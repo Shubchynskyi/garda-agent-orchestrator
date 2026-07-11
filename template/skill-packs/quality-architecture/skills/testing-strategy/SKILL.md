@@ -56,6 +56,14 @@ When this skill is selected for a mandatory `test` review, return the generated 
 - **Mock-only confidence**: using pure unit tests to "prove" correctness for integration-heavy code that actually fails at boundaries.
 - **Permanent flaky quarantine**: moving unstable tests out of the main path without a plan to fix or replace the lost signal.
 
+## Exhaustive Review Contract
+- Complete the entire assigned review scope before returning a verdict. A finding at any severity does not end the review.
+- Continue through every in-scope file, behavior boundary, test, and applicable checklist or rule category, then report every distinct evidence-supported finding in the same result.
+- Deduplicate findings that share one root cause. For every distinct finding include severity, file and line evidence, impact, and required remediation; never invent or pad findings to reach a count.
+- On remediation reviews, re-sweep the complete current assigned scope instead of checking only previously reported findings.
+- Validation Notes must name the files, behavior boundaries, tests, and checklist or rule categories actually reviewed.
+- Do not widen the assigned scope. This is a process-completeness requirement, not a guarantee that every latent defect will be discovered.
+
 ## Constraints
 
 - Do not demand 100 % line coverage; optimize for defect-detection value per test.

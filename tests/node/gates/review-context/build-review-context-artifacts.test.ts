@@ -143,6 +143,12 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 '# code review Output Template',
                 '',
                 'Fill this template without changing section headings, section order, or verdict tokens.',
+                '- Complete the entire assigned review scope before returning a verdict. Finding a Critical, High, Medium, or Low defect does not end the review.',
+                '- Continue through every in-scope file, behavior boundary, test, and applicable checklist or rule category, then report every distinct evidence-supported finding in the same result.',
+                '- Deduplicate findings that share one root cause. For every distinct finding include severity, file and line evidence, impact, and required remediation; never invent or pad findings to reach a count.',
+                '- On remediation reviews, re-sweep the complete current assigned scope instead of checking only previously reported findings.',
+                '- Validation Notes must name the files, behavior boundaries, tests, and checklist or rule categories actually reviewed.',
+                '- Do not widen the assigned scope. This is a process-completeness requirement, not a guarantee that every latent defect will be discovered.',
                 '',
                 '## Validation Notes',
                 '<concrete reviewed files, behavior, boundaries, and verification notes; required for PASS>',
@@ -261,6 +267,12 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 assert.ok(promptArtifact.includes('duplicate gate-owned validation'));
                 assert.ok(promptArtifact.includes('will not infer strict follow-up obligations from `Residual Risks`, command logs, validation-boundary notes, or positive summaries'));
                 assert.ok(promptArtifact.includes('never put command headings or command bullets under `Deferred Findings` or `Residual Risks`'));
+                assert.ok(promptArtifact.includes('Finding a Critical, High, Medium, or Low defect does not end the review'));
+                assert.ok(promptArtifact.includes('report every distinct evidence-supported finding in the same result'));
+                assert.ok(promptArtifact.includes('Deduplicate findings that share one root cause'));
+                assert.ok(promptArtifact.includes('re-sweep the complete current assigned scope'));
+                assert.ok(promptArtifact.includes('checklist or rule categories actually reviewed'));
+                assert.ok(promptArtifact.includes('not a guarantee that every latent defect will be discovered'));
                 assert.equal(fs.existsSync(result.reviewer_handoff.role_prompt.artifact_path), true);
                 const rolePromptArtifact = fs.readFileSync(result.reviewer_handoff.role_prompt.artifact_path, 'utf8');
                 assert.ok(rolePromptArtifact.includes(`# ${reviewType} review Role Prompt`));
@@ -269,6 +281,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 assert.ok(rolePromptArtifact.includes(`- FAIL verdict token: ${passToken.replace(/\bPASSED\b/g, 'FAILED')}`));
                 assert.ok(rolePromptArtifact.includes('- Selected skill id:'));
                 assert.ok(rolePromptArtifact.includes('## Required Read Order'));
+                assert.ok(rolePromptArtifact.includes('Finding a Critical, High, Medium, or Low defect does not end the review'));
                 assert.equal(result.reviewer_handoff.role_prompt.artifact_sha256, sha256Text(rolePromptArtifact));
                 if (reviewType === 'test') {
                     assert.ok(rolePromptArtifact.includes('## Strict Test Review Role'));
@@ -280,6 +293,8 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 assert.ok(promptTemplateArtifact.includes(`PASS verdict token: ${passToken}`));
                 assert.ok(promptTemplateArtifact.includes(`FAIL verdict token: ${passToken.replace(/\bPASSED\b/g, 'FAILED')}`));
                 assert.ok(promptTemplateArtifact.includes('A PASS review must fill `## Validation Notes`'));
+                assert.ok(promptTemplateArtifact.includes('report every distinct evidence-supported finding in the same result'));
+                assert.ok(promptTemplateArtifact.includes('re-sweep the complete current assigned scope'));
                 assert.equal(result.reviewer_handoff.prompt_template.artifact_sha256, sha256Text(promptTemplateArtifact));
                 assert.equal(fs.existsSync(result.reviewer_handoff.output_template.artifact_path), true);
                 const templateArtifact = fs.readFileSync(result.reviewer_handoff.output_template.artifact_path, 'utf8');
@@ -295,6 +310,8 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                     `${reviewType} output template must preserve exact canonical headings`
                 );
                 assert.ok(templateArtifact.includes(`## Verdict\n<${passToken} or ${passToken.replace(/\bPASSED\b/g, 'FAILED')}>`));
+                assert.ok(templateArtifact.includes('Deduplicate findings that share one root cause'));
+                assert.ok(templateArtifact.includes('file and line evidence, impact, and required remediation'));
                 if (reviewType === 'code') {
                     assert.ok(promptArtifact.includes('CODE REVIEW PASSED` and `CODE REVIEW FAILED` remain accepted legacy aliases'));
                     assert.ok(rolePromptArtifact.includes('CODE REVIEW PASSED` and `CODE REVIEW FAILED` remain accepted legacy aliases'));
@@ -315,6 +332,22 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 assert.equal(manifestArtifact.artifacts.output_template.artifact_path, result.reviewer_handoff.output_template.artifact_path);
                 assert.equal(manifestArtifact.artifacts.output_template.artifact_sha256, result.reviewer_handoff.output_template.artifact_sha256);
                 assert.equal(manifestArtifact.trust_boundary.evidence_is_untrusted, true);
+            }
+            for (const depth of [1, 3]) {
+                for (const [reviewType] of REVIEW_CONTRACTS) {
+                    const fullDepthResult = buildReviewContext({
+                    reviewType,
+                    depth,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, `T-901-contracts-${reviewType}-depth-${depth}-scoped.json`),
+                    outputPath: path.join(reviewsRoot, `T-901-contracts-${reviewType}-depth-${depth}-review-context.json`),
+                    repoRoot
+                });
+                const fullDepthPrompt = fs.readFileSync(fullDepthResult.rule_context.artifact_path, 'utf8');
+                assert.ok(fullDepthPrompt.includes('Finding a Critical, High, Medium, or Low defect does not end the review'));
+                assert.ok(fullDepthPrompt.includes('re-sweep the complete current assigned scope'));
+                }
             }
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });

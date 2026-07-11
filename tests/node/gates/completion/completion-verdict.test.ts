@@ -211,6 +211,26 @@ describe('gates/completion-verdict', () => {
             const lines = ['## Summary', 'Content here.'];
             assert.deepEqual(extractMarkdownSectionLines(lines, 'Missing Section'), []);
         });
+
+        it('preserves every independent finding even when a blocker appears first', () => {
+            const lines = [
+                '## Findings by Severity',
+                '- Critical: `src/first.ts:10` trust boundary bypass; impact: forged evidence; remediation: bind the receipt hash.',
+                '- High: `src/later.ts:42` later checklist category is skipped; impact: incomplete review; remediation: finish the category sweep.',
+                '- Medium: `tests/later.test.ts:7` remediation review only retests the prior defect; impact: regressions survive; remediation: re-sweep current scope.',
+                '## Deferred Findings',
+                'none'
+            ];
+
+            const section = extractMarkdownSectionLines(lines, 'Findings by Severity');
+            assert.equal(section.length, 3);
+            const findings = getFindingsBySeverity(section);
+            assert.equal(findings.critical.length, 1);
+            assert.equal(findings.high.length, 1);
+            assert.equal(findings.medium.length, 1);
+            assert.match(findings.high[0], /later checklist category/u);
+            assert.match(findings.medium[0], /re-sweep current scope/u);
+        });
     });
 
     describe('normalizeReviewListText', () => {

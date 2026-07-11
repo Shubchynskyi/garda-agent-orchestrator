@@ -71,6 +71,14 @@ When this skill is selected for a mandatory `infra` review, return the generated
 - **Pipeline-as-root**: CI jobs with broad credentials, no concurrency guard, and no environment boundary effectively bypass change management.
 - **Schema-coupled rollout assumptions**: application and migration changes that only work if every pod flips at once.
 
+## Exhaustive Review Contract
+- Complete the entire assigned review scope before returning a verdict. A finding at any severity does not end the review.
+- Continue through every in-scope file, behavior boundary, test, and applicable checklist or rule category, then report every distinct evidence-supported finding in the same result.
+- Deduplicate findings that share one root cause. For every distinct finding include severity, file and line evidence, impact, and required remediation; never invent or pad findings to reach a count.
+- On remediation reviews, re-sweep the complete current assigned scope instead of checking only previously reported findings.
+- Validation Notes must name the files, behavior boundaries, tests, and checklist or rule categories actually reviewed.
+- Do not widen the assigned scope. This is a process-completeness requirement, not a guarantee that every latent defect will be discovered.
+
 ## Constraints
 
 - Do not commit secrets or environment-specific credentials.
