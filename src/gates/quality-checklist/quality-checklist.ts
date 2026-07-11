@@ -28,7 +28,6 @@ export const QUALITY_CHECKLIST_STATUSES = Object.freeze([
     'WARN',
     'ACTION_REQUIRED',
     'SKIPPED_DISABLED',
-    'SKIPPED_CADENCE',
     'CONFIG_ERROR'
 ] as const);
 
@@ -118,11 +117,13 @@ export const QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE = 'quality-checklis
 
 export interface QualityChecklistAnswersTemplateAnswer {
     rule_id: string;
+    title: string;
+    prompt: string;
     status: '';
     answer: '';
-    evidence_files?: string[];
-    actions_taken?: string[];
-    actions_required?: string[];
+    evidence_files: string[];
+    actions_taken: string[];
+    actions_required: string[];
 }
 
 export interface QualityChecklistAnswersTemplate {
@@ -136,7 +137,6 @@ export interface QualityChecklistAnswersTemplate {
     workflow_config_path: string;
     workflow_config_sha256: string | null;
     effective_policy_sha256: string;
-    active_rule_ids: string[];
     answers: QualityChecklistAnswersTemplateAnswer[];
 }
 
@@ -482,7 +482,7 @@ function decideStatus(
 function outcomeForStatus(status: QualityChecklistStatus): QualityChecklistArtifact['outcome'] {
     if (status === 'PASS') return 'PASS';
     if (status === 'WARN') return 'WARN';
-    if (status === 'SKIPPED_DISABLED' || status === 'SKIPPED_CADENCE') return 'INFO';
+    if (status === 'SKIPPED_DISABLED') return 'INFO';
     return 'FAIL';
 }
 
@@ -560,21 +560,6 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
     };
 }
 
-export function buildQualityChecklistCadenceSkipArtifact(
-    options: Omit<BuildQualityChecklistOptions, 'answers' | 'actionsTaken' | 'actionsRequired'>
-): QualityChecklistArtifact {
-    const artifact = buildQualityChecklistArtifact({ ...options, answers: [] });
-    return {
-        ...artifact,
-        status: 'SKIPPED_CADENCE',
-        outcome: 'INFO',
-        answers: [],
-        actions_taken: [],
-        actions_required: [],
-        violations: []
-    };
-}
-
 function nonAnswerTemplateViolations(artifact: QualityChecklistArtifact): string[] {
     return artifact.violations.filter((violation) => (
         !violation.startsWith('Missing answer for active quality-check rule ')
@@ -604,15 +589,17 @@ export function buildQualityChecklistAnswersTemplate(
         workflow_config_path: artifact.workflow_config_path,
         workflow_config_sha256: artifact.workflow_config_sha256,
         effective_policy_sha256: artifact.effective_policy_sha256,
-        active_rule_ids: artifact.rules
-            .filter((rule) => rule.scope_applicability === 'active')
-            .map((rule) => rule.id),
         answers: artifact.rules
             .filter((rule) => rule.scope_applicability === 'active')
             .map((rule) => ({
                 rule_id: rule.id,
+                title: rule.title,
+                prompt: rule.prompt,
                 status: '',
-                answer: ''
+                answer: '',
+                evidence_files: [],
+                actions_taken: [],
+                actions_required: []
             }))
     };
 }
@@ -665,31 +652,27 @@ export function assessQualityChecklistAnswersTemplate(options: {
     }
     const actualRuleIds = templateRuleIds(template.answers);
     const expectedRuleIds = expected.answers.map((answer) => answer.rule_id);
-    if (!Array.isArray(template.active_rule_ids)
-        || template.active_rule_ids.length !== expectedRuleIds.length
-        || template.active_rule_ids.some((ruleId, index) => ruleId !== expectedRuleIds[index])) {
-        return invalidAnswersTemplate('Quality checklist answers template active rule order does not match the current policy.');
-    }
     if (!actualRuleIds || actualRuleIds.length !== expectedRuleIds.length
         || actualRuleIds.some((ruleId, index) => ruleId !== expectedRuleIds[index])) {
         return invalidAnswersTemplate('Quality checklist answers template rule ids do not match the active rules.');
     }
     const scaffoldIsValid = template.answers.every((answer, index) => {
+        const expectedAnswer = expected.answers[index];
         return isRecord(answer)
-            && !Object.hasOwn(answer, 'title')
-            && !Object.hasOwn(answer, 'prompt')
+            && answer.title === expectedAnswer.title
+            && answer.prompt === expectedAnswer.prompt
             && typeof answer.status === 'string'
             && typeof answer.answer === 'string'
-            && (answer.evidence_files === undefined || (Array.isArray(answer.evidence_files)
-                && answer.evidence_files.every((entry) => typeof entry === 'string')))
-            && (answer.actions_taken === undefined || (Array.isArray(answer.actions_taken)
-                && answer.actions_taken.every((entry) => typeof entry === 'string')))
-            && (answer.actions_required === undefined || (Array.isArray(answer.actions_required)
-                && answer.actions_required.every((entry) => typeof entry === 'string')));
+            && Array.isArray(answer.evidence_files)
+            && answer.evidence_files.every((entry) => typeof entry === 'string')
+            && Array.isArray(answer.actions_taken)
+            && answer.actions_taken.every((entry) => typeof entry === 'string')
+            && Array.isArray(answer.actions_required)
+            && answer.actions_required.every((entry) => typeof entry === 'string');
     });
     if (!scaffoldIsValid) {
         return invalidAnswersTemplate(
-            'Quality checklist answers template editable fields do not match the slim active-rule scaffold.'
+            'Quality checklist answers template prompts or editable answer fields do not match the active rule scaffold.'
         );
     }
     return { status: 'current', reason: 'Quality checklist answers template is current.', template };
@@ -804,7 +787,6 @@ export function formatQualityChecklistResult(artifact: QualityChecklistArtifact)
         WARN: 'QUALITY_CHECKLIST_WARNED',
         ACTION_REQUIRED: 'QUALITY_CHECKLIST_ACTION_REQUIRED',
         SKIPPED_DISABLED: 'QUALITY_CHECKLIST_SKIPPED_DISABLED',
-        SKIPPED_CADENCE: 'QUALITY_CHECKLIST_SKIPPED_CADENCE',
         CONFIG_ERROR: 'QUALITY_CHECKLIST_CONFIG_ERROR'
     }[artifact.status];
     const lines = [

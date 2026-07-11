@@ -734,7 +734,6 @@ describe('quality-checklist gate', () => {
                 task_id: string;
                 preflight_sha256: string;
                 effective_policy_sha256: string;
-                active_rule_ids: string[];
                 answers: Array<Record<string, unknown>>;
             };
             assert.equal(template.event_source, 'quality-checklist-answers-template');
@@ -742,13 +741,8 @@ describe('quality-checklist gate', () => {
             assert.match(template.preflight_sha256, /^[a-f0-9]{64}$/u);
             assert.match(template.effective_policy_sha256, /^[a-f0-9]{64}$/u);
             assert.equal(template.answers.length, UNIVERSAL_QUALITY_RULE_IDS.length);
-            assert.deepEqual(template.active_rule_ids, UNIVERSAL_QUALITY_RULE_IDS);
             assert.ok(template.answers.every((answer) => answer.status === '' && answer.answer === ''));
-            assert.ok(template.answers.every((answer) => (
-                Object.keys(answer).sort().join(',') === 'answer,rule_id,status'
-                && !Object.hasOwn(answer, 'title')
-                && !Object.hasOwn(answer, 'prompt')
-            )));
+            assert.ok(template.answers.every((answer) => typeof answer.title === 'string' && typeof answer.prompt === 'string'));
 
             template.answers = template.answers.map((answer) => ({
                 ...answer,
@@ -810,7 +804,7 @@ describe('quality-checklist gate', () => {
         }
     });
 
-    it('refreshes a current-bound template with duplicated prompt fields or malformed optional fields', () => {
+    it('refreshes a current-bound template with tampered prompts or malformed editable fields', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-tampered-answers-template' });
         try {
             const preflightPath = writeGateFixturePreflight(fixture);
@@ -821,12 +815,13 @@ describe('quality-checklist gate', () => {
                 'tmp',
                 `${fixture.taskId}-quality-checklist-answers.json`
             );
-            materializeQualityChecklistAnswersTemplate({
+            const created = materializeQualityChecklistAnswersTemplate({
                 repoRoot: fixture.repoRoot,
                 taskId: fixture.taskId,
                 preflightPath,
                 answersPath
             });
+            const canonicalPrompt = created.template.answers[0].prompt;
             const tampered = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
                 answers: Array<Record<string, unknown>>;
             };
@@ -840,12 +835,12 @@ describe('quality-checklist gate', () => {
                 answersPath
             });
             assert.equal(promptRefresh.status, 'refreshed');
-            assert.equal(Object.hasOwn(promptRefresh.template.answers[0], 'prompt'), false);
+            assert.equal(promptRefresh.template.answers[0].prompt, canonicalPrompt);
 
             const malformed = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
                 answers: Array<Record<string, unknown>>;
             };
-            malformed.answers[0].actions_taken = [42];
+            delete malformed.answers[0].actions_taken;
             fs.writeFileSync(answersPath, JSON.stringify(malformed, null, 2) + '\n', 'utf8');
             const fieldRefresh = materializeQualityChecklistAnswersTemplate({
                 repoRoot: fixture.repoRoot,
@@ -854,7 +849,7 @@ describe('quality-checklist gate', () => {
                 answersPath
             });
             assert.equal(fieldRefresh.status, 'refreshed');
-            assert.equal(Object.hasOwn(fieldRefresh.template.answers[0], 'actions_taken'), false);
+            assert.deepEqual(fieldRefresh.template.answers[0].actions_taken, []);
         } finally {
             fixture.cleanup();
         }

@@ -422,9 +422,6 @@ function qualityChecklistEffect(
     if (status === 'SKIPPED_DISABLED') {
         return 'disabled';
     }
-    if (status === 'SKIPPED_CADENCE') {
-        return 'skipped_cadence';
-    }
     if (status === 'CONFIG_ERROR') {
         return 'invalid';
     }
@@ -456,9 +453,6 @@ function qualityChecklistSummary(
     if (effect === 'disabled') {
         return 'Optional quality checks were disabled for this task.';
     }
-    if (effect === 'skipped_cadence') {
-        return 'Quality checklist was skipped by the review-failure cadence.';
-    }
     return `Quality checklist is current with status ${status || 'PASS'}.`;
 }
 
@@ -480,9 +474,6 @@ function qualityChecklistSummaryKey(effect: ReportQualityGateEffect): string {
     }
     if (effect === 'disabled') {
         return 'disabled';
-    }
-    if (effect === 'skipped_cadence') {
-        return 'skipped_cadence';
     }
     return 'passed';
 }
