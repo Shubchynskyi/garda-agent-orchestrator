@@ -66,6 +66,27 @@ This keeps the protection boundary fail-closed while avoiding the older
 workflow where a legitimate orchestrator task first had to trip a later
 protected-manifest failure and only then restart in the correct mode.
 
+### Protected-manifest entry recovery
+
+When `enter-task-mode` cannot trust a missing, invalid, stale, or mismatched
+protected manifest, it records an immutable failure attempt and leaves the
+task blocked. The mutable current pointer is trusted only while it remains byte-identical to that attempt
+and to its integrity-checked `TASK_MODE_ENTRY_FAILED` event. Run `garda repair inspect --target-root "."` for read-only
+diagnostics. Do not refresh the manifest directly.
+
+After the operator has inspected the reported manifest path, affected paths,
+and failure reason, run the exact `recover-task-mode-protected-manifest`
+command printed by `next-step`. The command requires `--operator-confirmed
+yes` and a fresh `--operator-confirmed-at-utc` timestamp recorded after that
+specific failure. Recovery writes before/after evidence bound to the failure
+artifact hash and requires the reported inspected protected-snapshot SHA-256.
+If protected content changes after inspection, recovery fails closed and a
+new inspection plus confirmation is required. `next-step` then prints a fresh executable `enter-task-mode`
+command reconstructed from the original structured request. It accepts recovery only when the receipt is
+bound to an integrity-checked mandatory recovery event carrying the same failure hash, inspected snapshot,
+confirmation timestamp, and requested-entry fields. Artifact-supplied command text is never trusted.
+Missing, stale, forged, or earlier recovery receipts remain blocked.
+
 ---
 
 ## Protected Control-Plane Paths

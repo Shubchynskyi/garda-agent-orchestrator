@@ -28,6 +28,7 @@ import {
 import {
     handleBindRulePackToPreflight,
     handleEnterTaskMode,
+    handleRecoverTaskModeProtectedManifest,
     handleLoadRulePack,
     handleRestartCoherentCycle,
     handleRestartReviewCycle,
@@ -95,6 +96,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleClassifyChange(gateArgv);
         case 'enter-task-mode':
             return handleEnterTaskMode(gateArgv);
+        case 'recover-task-mode-protected-manifest':
+            return handleRecoverTaskModeProtectedManifest(gateArgv);
         case 'restart-coherent-cycle':
             return handleRestartCoherentCycle(gateArgv);
         case 'restart-review-cycle':

@@ -2,6 +2,7 @@
 
 ## 1.2.0
 
+- Added operator-confirmed protected-manifest recovery for failed task-mode entry, with read-only inspection guidance, immutable failure attempts, byte-identical current-pointer and integrity-checked failure/recovery event binding, inspected-state SHA-256/TOCTOU checks, and a canonically reconstructed `enter-task-mode` handoff after repair.
 - Added the new optional quality checklist gate: before review, the agent can run a separate checklist-based quality pass and receive concrete follow-up items.
 - Added configurable quality rules: they can be enabled, disabled, and edited through the UI (`garda ui --actions`).
 - Improved `next-step` navigation: reduced the number of cases where the navigator could send the agent through an unnecessary extra review cycle.

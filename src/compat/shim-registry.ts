@@ -1,6 +1,7 @@
 const SHIMMED_GATE_NAME_VALUES = [
     'validate-manifest',
     'enter-task-mode',
+    'recover-task-mode-protected-manifest',
     'restart-coherent-cycle',
     'restart-review-cycle',
     'load-rule-pack',

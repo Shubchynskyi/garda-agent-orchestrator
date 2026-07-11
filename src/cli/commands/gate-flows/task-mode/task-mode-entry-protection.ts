@@ -22,6 +22,13 @@ import {
 
 export const WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE = 'workflow-config policy changes';
 
+export class TaskModeProtectedManifestEntryError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'TaskModeProtectedManifestEntryError';
+    }
+}
+
 interface TaskModeHandoffOptions {
     entryMode?: unknown;
     requestedDepth?: unknown;
@@ -260,8 +267,15 @@ export function assertTaskModeProtectedEntryAllowed(input: AssertTaskModeProtect
             workflowConfigWork
         })
     ) {
+        if (workflowConfigPreTaskBaseline.protected_manifest_status === 'invalid'
+            || workflowConfigPreTaskBaseline.protected_manifest_status === 'missing') {
+            throw new TaskModeProtectedManifestEntryError(
+                `Trusted protected control-plane manifest is ${workflowConfigPreTaskBaseline.protected_manifest_status} before task-mode entry for workflow config files: ${dirtyWorkflowConfigFiles.join(', ')}. ` +
+                'Inspect the protected state and use the guarded task-mode recovery workflow.'
+            );
+        }
         if (isProtectedManifestOnlyBaselineDrift(dirtyWorkflowConfigFiles, workflowConfigPreTaskBaseline)) {
-            throw new Error(
+            throw new TaskModeProtectedManifestEntryError(
                 `Trusted protected control-plane manifest is stale before task-mode entry for workflow config files: ${dirtyWorkflowConfigFiles.join(', ')}. ` +
                 'Git status is clean for these workflow-config paths; this is trusted baseline drift, not a task-owned workflow-config edit. ' +
                 `Run guarded repair after operator verification: ${buildProtectedManifestRepairCommand(repoRoot)}. ` +

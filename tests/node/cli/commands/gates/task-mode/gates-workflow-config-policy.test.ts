@@ -5,11 +5,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { handleWorkflow } from '../../../../../../src/cli/commands/workflow-command';
+import { handleGate } from '../../../../../../src/cli/commands/gate-command';
 import {
     runDocImpactGateCommand,
     runRequiredReviewsCheckCommand
 } from '../../../../../../src/cli/commands/gates';
 import { WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE } from '../../../../../../src/cli/commands/gate-flows/task-mode/task-mode-flow';
+import {
+    recordTaskModeProtectedManifestFailure,
+    runRecoverTaskModeProtectedManifestCommand
+} from '../../../../../../src/cli/commands/gate-flows/task-mode/task-mode-entry-failure';
 import { runCompileGateCommand } from '../../../../../../src/cli/commands/gate-flows/compile/compile-flow';
 import { runFullSuiteValidationCommand } from '../../../../../../src/cli/commands/gate-flows/full-suite/full-suite-validation-flow';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../../../../src/core/constants';
@@ -555,7 +560,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
         }
     });
 
-    it('rejects task-mode entry when workflow-config is already dirty', { concurrency: false }, () => {
+    it('persists invalid-manifest entry failure when the protected manifest is missing', { concurrency: false }, () => {
         const taskId = 'T-900workflow-config-dirty-before-task-mode';
         const repoRoot = createTempRepo();
 
@@ -569,18 +574,19 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             initializeGitRepo(repoRoot);
             weakenOutOfScopePolicy(repoRoot);
 
-            assert.throws(
-                () => runEnterTaskMode({
-                    repoRoot,
-                    taskId,
-                    orchestratorWork: true,
-                    workflowConfigWork: true,
-                    operatorConfirmed: 'yes',
-                    operatorConfirmedAtUtc: new Date().toISOString(),
-                    taskSummary: 'Update orchestrator workflow config'
-                }),
-                /already contains workflow config changes before task-mode entry/
-            );
+            const options = {
+                repoRoot, taskId, orchestratorWork: true, workflowConfigWork: true,
+                operatorConfirmed: 'yes', operatorConfirmedAtUtc: new Date().toISOString(),
+                taskSummary: 'Update orchestrator workflow config'
+            };
+            let entryError: unknown;
+            try {
+                runEnterTaskMode(options);
+            } catch (error: unknown) {
+                entryError = error;
+            }
+            assert.match(String(entryError), /protected control-plane manifest is missing before task-mode entry/);
+            assert.equal(recordTaskModeProtectedManifestFailure(options, entryError), true);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
@@ -800,8 +806,101 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                     taskId,
                     taskSummary: 'Start after invalid protected manifest'
                 }),
-                /already contains workflow config changes before task-mode entry/
+                /protected control-plane manifest is invalid before task-mode entry/
             );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('persists invalid-manifest entry failure and repairs only after fresh operator confirmation', { concurrency: false }, async () => {
+        const taskId = 'T-900task-mode-manifest-confirmed-recovery';
+        const repoRoot = createTempRepo();
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            corruptProtectedControlPlaneManifest(repoRoot);
+            const entryOptions = { repoRoot, taskId, entryMode: 'EXPLICIT_TASK_EXECUTION', requestedDepth: '2', taskSummary: 'Recover invalid manifest', provider: 'Codex' };
+            const options = {
+                ...entryOptions, effectiveDepth: '3', startBanner: 'Fresh recovery banner', routedTo: 'AGENTS.md',
+                actor: 'operator-proxy', artifactPath: 'runtime/custom-task-mode.json',
+                metricsPath: 'runtime/custom-metrics.json', emitMetrics: false
+            };
+            let entryError: unknown;
+            try {
+                runEnterTaskMode(entryOptions);
+            } catch (error: unknown) {
+                entryError = error;
+            }
+            assert.ok(entryError instanceof Error);
+            assert.equal(recordTaskModeProtectedManifestFailure(options, entryError), true);
+            assert.equal(recordTaskModeProtectedManifestFailure(options, new Error('workflow config scope is unauthorized')), false);
+            const failurePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode-entry-failure.json`);
+            const failure = JSON.parse(fs.readFileSync(failurePath, 'utf8')) as Record<string, unknown>;
+            assert.equal(failure.manifest_status, 'INVALID');
+            assert.match(String(failure.manifest_path), /protected-control-plane-manifest\.json$/);
+            assert.equal(recordTaskModeProtectedManifestFailure(options, entryError), true);
+            const immutableAttempts = fs.readdirSync(getReviewsRoot(repoRoot))
+                .filter((name) => name.startsWith(`${taskId}-task-mode-entry-failure-`) && name.endsWith('.json'));
+            assert.equal(immutableAttempts.length, 2);
+            assert.equal(new Set(immutableAttempts).size, 2);
+            const currentFailure = JSON.parse(fs.readFileSync(failurePath, 'utf8')) as Record<string, unknown>;
+            const inspectedSnapshotSha256 = String(currentFailure.observed_protected_snapshot_sha256);
+            assert.match(inspectedSnapshotSha256, /^[0-9a-f]{64}$/);
+            assert.throws(
+                () => runRecoverTaskModeProtectedManifestCommand({ repoRoot, taskId }),
+                /operator-confirmed|operator confirmation/i
+            );
+            assert.throws(
+                () => runRecoverTaskModeProtectedManifestCommand({
+                    repoRoot, taskId, operatorConfirmed: 'yes',
+                    operatorConfirmedAtUtc: new Date(Date.now() - 1_000).toISOString()
+                }),
+                /after the persisted task-mode protected-manifest failure/i
+            );
+            const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+            const workflowConfigBeforeMutation = fs.readFileSync(workflowConfigPath, 'utf8');
+            fs.writeFileSync(workflowConfigPath, `${workflowConfigBeforeMutation}\n`, 'utf8');
+            assert.throws(
+                () => runRecoverTaskModeProtectedManifestCommand({
+                    repoRoot, taskId, operatorConfirmed: 'yes', operatorConfirmedAtUtc: new Date().toISOString(),
+                    inspectedProtectedSnapshotSha256: inspectedSnapshotSha256
+                }),
+                /state changed after inspection/i
+            );
+            fs.writeFileSync(workflowConfigPath, workflowConfigBeforeMutation, 'utf8');
+            const outputLines: string[] = [];
+            const previousLog = console.log;
+            const previousExitCode = process.exitCode;
+            try {
+                console.log = (...args: unknown[]) => outputLines.push(args.map(String).join(' '));
+                process.exitCode = 0;
+                await handleGate([
+                    'recover-task-mode-protected-manifest', '--task-id', taskId,
+                    '--inspected-protected-snapshot-sha256', inspectedSnapshotSha256,
+                    '--operator-confirmed', 'yes', '--operator-confirmed-at-utc', new Date().toISOString(),
+                    '--repo-root', repoRoot
+                ]);
+                assert.equal(process.exitCode ?? 0, 0);
+            } finally {
+                console.log = previousLog;
+                process.exitCode = previousExitCode;
+            }
+            const recovery = JSON.parse(fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode-entry-recovery.json`), 'utf8')) as Record<string, unknown>;
+            const output = String(recovery.fresh_entry_command || '');
+            assert.match(output, /--effective-depth ['"]3['"]/);
+            assert.match(output, /--start-banner ['"]Fresh recovery banner['"]/);
+            assert.match(output, /--routed-to ['"]AGENTS\.md['"]/);
+            assert.match(output, /--actor ['"]operator-proxy['"]/);
+            assert.match(output, /--artifact-path ['"]runtime\/custom-task-mode\.json['"]/);
+            assert.match(output, /--metrics-path ['"]runtime\/custom-metrics\.json['"]/);
+            assert.match(output, /--emit-metrics false/);
+            assert.equal(recovery.status_before, 'INVALID');
+            assert.equal(recovery.status_after, 'MATCH');
+            assert.ok(String(recovery.failure_artifact_sha256).length === 64);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
@@ -833,7 +932,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                     taskId,
                     taskSummary: 'Start after deleted workflow-config with invalid manifest'
                 }),
-                /already contains workflow config changes before task-mode entry/
+                /protected control-plane manifest is invalid before task-mode entry/
             );
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });

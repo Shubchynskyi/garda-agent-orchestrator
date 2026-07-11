@@ -167,6 +167,13 @@ function buildPreflightGateHelpEntries(
                 true
             )
         },
+        'recover-task-mode-protected-manifest': {
+            ...createSingleUsageEntry(
+                'Repair a protected manifest only after a persisted task-mode entry failure and fresh explicit operator confirmation; writes before/after recovery evidence and returns a fresh enter-task-mode command.',
+                `${cliPrefix} gate recover-task-mode-protected-manifest --task-id "${TASK_ID_PLACEHOLDER}" --inspected-protected-snapshot-sha256 "<sha256-from-failure>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --repo-root "."`,
+                true
+            )
+        },
         'load-rule-pack': {
             ...createGateHelpEntry('Record the exact mandatory downstream rule files opened for the current task cycle. Do not include optional support appendices such as live/docs/agent-rules/40-command-reference.md; open that appendix only on demand for tool-specific command tables.', [
                 buildTaskEntryRulePackSnippet(cliPrefix, bundleName),

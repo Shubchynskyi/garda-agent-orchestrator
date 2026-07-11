@@ -123,6 +123,7 @@ import {
 import {
     resolveNextStepStartupRoute
 } from './next-step-startup-routing';
+import { readTaskModeProtectedManifestRecoveryRoute } from './next-step-startup-routing';
 import {
     readCompileReadiness,
     readPreflightWorkspaceReadiness
@@ -2688,6 +2689,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     });
     const startupRoute = resolveNextStepStartupRoute({
         enterTaskModePassed: isGatePassed(summary, 'enter-task-mode'),
+        protectedManifestRecovery: readTaskModeProtectedManifestRecoveryRoute(repoRoot, taskId, cliPrefix),
         defaultExecutionProvider,
         enterTaskModeCommand: buildEnterTaskModeCommand(repoRoot, cliPrefix, taskId, taskEntry, defaultExecutionProvider),
         startupCycleReadiness,

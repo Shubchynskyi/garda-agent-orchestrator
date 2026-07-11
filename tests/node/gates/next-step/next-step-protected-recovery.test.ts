@@ -13,7 +13,7 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
-import { computeProtectedSnapshotDigest } from '../../../../src/gates/shared/helpers';
+import { computeProtectedSnapshotDigest, writeProtectedControlPlaneManifest } from '../../../../src/gates/shared/helpers';
 import { readPreflightWorkspaceReadiness } from '../../../../src/gates/next-step/next-step-preflight-workspace-readiness';
 
 const TASK_ID = 'T-NEXT-1';
@@ -119,6 +119,61 @@ function eventsRoot(repoRoot: string): string {
 function writeJson(filePath: string, payload: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function writeRecoveryEvent(repoRoot: string, details: Record<string, unknown>, timestampUtc: string): void {
+    const timelinePath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+    const existingLines = fs.existsSync(timelinePath)
+        ? fs.readFileSync(timelinePath, 'utf8').split('\n').filter((line) => line.trim()) : [];
+    const previous = existingLines.length > 0 ? JSON.parse(existingLines[existingLines.length - 1]) as Record<string, unknown> : null;
+    const previousIntegrity = previous?.integrity as Record<string, unknown> | undefined;
+    const event: Record<string, unknown> = {
+        schema_version: 1, event_source: 'task-events', timestamp_utc: timestampUtc, task_id: TASK_ID,
+        event_type: 'TASK_MODE_PROTECTED_MANIFEST_RECOVERED', outcome: 'PASS', actor: 'garda',
+        message: 'Protected manifest repaired after explicit operator confirmation.', details,
+        public_metadata: {}, integrity: {
+            schema_version: 1, task_sequence: existingLines.length + 1,
+            prev_event_sha256: previousIntegrity?.event_sha256 || null
+        }
+    };
+    (event.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(event);
+    fs.appendFileSync(timelinePath, `${JSON.stringify(event)}\n`, 'utf8');
+}
+
+function writeTrustedFailure(repoRoot: string, overrides: Record<string, unknown> = {}): {
+    failurePath: string; failure: Record<string, unknown>;
+} {
+    const attemptId = '11111111-1111-4111-8111-111111111111';
+    const failure = {
+        schema_version: 1, attempt_id: attemptId, timestamp_utc: '2026-07-11T00:00:00.000Z',
+        task_id: TASK_ID, status: 'BLOCKED', manifest_status: 'INVALID',
+        manifest_path: 'garda-agent-orchestrator/runtime/protected-control-plane-manifest.json',
+        observed_protected_snapshot_sha256: 'a'.repeat(64), affected_protected_paths: [],
+        reason: 'Trusted protected manifest is invalid.', inspection_command: 'node bin/garda.js repair inspect --target-root "."',
+        requested_entry: { taskId: TASK_ID, entryMode: 'EXPLICIT_TASK_EXECUTION', requestedDepth: '2', taskSummary: 'Recover entry', provider: 'Codex' },
+        ...overrides
+    } as Record<string, unknown>;
+    const failurePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode-entry-failure.json`);
+    const attemptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode-entry-failure-${attemptId}.json`);
+    writeJson(attemptPath, failure);
+    writeJson(failurePath, failure);
+    const hash = createHash('sha256').update(fs.readFileSync(failurePath)).digest('hex');
+    const details = {
+        artifact_path: attemptPath.replace(/\\/g, '/'), artifact_sha256: hash,
+        current_artifact_path: failurePath.replace(/\\/g, '/'), current_artifact_sha256: hash,
+        attempt_id: failure.attempt_id, timestamp_utc: failure.timestamp_utc,
+        manifest_status: failure.manifest_status, manifest_path: failure.manifest_path,
+        observed_protected_snapshot_sha256: failure.observed_protected_snapshot_sha256,
+        requested_entry: failure.requested_entry
+    };
+    const event: Record<string, unknown> = {
+        schema_version: 1, event_source: 'task-events', timestamp_utc: failure.timestamp_utc, task_id: TASK_ID,
+        event_type: 'TASK_MODE_ENTRY_FAILED', outcome: 'FAIL', actor: 'garda', message: 'failure', details,
+        public_metadata: {}, integrity: { schema_version: 1, task_sequence: 1, prev_event_sha256: null }
+    };
+    (event.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(event);
+    fs.writeFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), `${JSON.stringify(event)}\n`, 'utf8');
+    return { failurePath, failure };
 }
 
 
@@ -380,6 +435,155 @@ afterEach(() => {
 });
 
 describe('gates/next-step protected recovery', () => {
+    it('routes a persisted task-mode manifest failure through explicit operator-confirmed recovery', () => {
+        const repoRoot = makeTempRepo();
+        writeTrustedFailure(repoRoot, {
+            manifest_status: 'INVALID',
+            affected_protected_paths: ['src/gates/next-step/next-step.ts'],
+            reason: 'Trusted protected manifest is invalid.'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'recover-task-mode-protected-manifest');
+        assert.match(result.reason, /status is INVALID/);
+        assert.match(result.reason, /Failure reason: Trusted protected manifest is invalid\./);
+        assert.match(result.reason, /protected-control-plane-manifest\.json/);
+        assert.match(result.reason, /src\/gates\/next-step\/next-step\.ts/);
+        assert.match(result.reason, /Inspect read-only/);
+        assert.match(result.reason, /repair inspect/);
+        assert.doesNotMatch(result.reason, /repair protected-manifest/);
+        assert.ok(result.commands[0].command.includes('--operator-confirmed yes'));
+        assert.ok(result.commands[0].command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
+    });
+
+    it('persisted task-mode manifest failure rejects forged, replaced, foreign, or mismatched evidence', () => {
+        for (const scenario of ['missing-event', 'replaced-current', 'foreign-task', 'mismatched-event'] as const) {
+            const repoRoot = makeTempRepo();
+            const failurePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode-entry-failure.json`);
+            if (scenario === 'missing-event') {
+                writeJson(failurePath, {
+                    schema_version: 1, attempt_id: '11111111-1111-4111-8111-111111111111',
+                    timestamp_utc: '2026-07-11T00:00:00.000Z', task_id: TASK_ID, status: 'BLOCKED',
+                    manifest_status: 'INVALID', observed_protected_snapshot_sha256: 'a'.repeat(64), requested_entry: { taskId: TASK_ID }
+                });
+            } else {
+                writeTrustedFailure(repoRoot);
+                if (scenario === 'replaced-current') {
+                    const current = JSON.parse(fs.readFileSync(failurePath, 'utf8')) as Record<string, unknown>;
+                    current.reason = 'replaced after genuine failure';
+                    writeJson(failurePath, current);
+                } else if (scenario === 'foreign-task') {
+                    const current = JSON.parse(fs.readFileSync(failurePath, 'utf8')) as Record<string, unknown>;
+                    current.task_id = 'T-FOREIGN';
+                    writeJson(failurePath, current);
+                } else {
+                    const timelinePath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+                    const event = JSON.parse(fs.readFileSync(timelinePath, 'utf8')) as Record<string, unknown>;
+                    (event.details as Record<string, unknown>).observed_protected_snapshot_sha256 = 'b'.repeat(64);
+                    (event.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(event);
+                    fs.writeFileSync(timelinePath, `${JSON.stringify(event)}\n`, 'utf8');
+                }
+            }
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+            assert.notEqual(result.next_gate, 'recover-task-mode-protected-manifest', scenario);
+        }
+    });
+
+    it('routes confirmed manifest recovery to the original fresh task-mode entry', () => {
+        const repoRoot = makeTempRepo();
+        writeProtectedControlPlaneManifest(repoRoot);
+        const requestedEntry = {
+            taskId: TASK_ID, entryMode: 'EXPLICIT_TASK_EXECUTION', requestedDepth: '2',
+            taskSummary: 'Recover entry', provider: 'Codex'
+        };
+        const { failurePath } = writeTrustedFailure(repoRoot, {
+            manifest_status: 'DRIFT', affected_protected_paths: ['src/gates/next-step/next-step.ts'], requested_entry: requestedEntry
+        });
+        const recoveryPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode-entry-recovery.json`);
+        const failureHash = createHash('sha256').update(fs.readFileSync(failurePath)).digest('hex');
+        writeJson(recoveryPath, {
+            schema_version: 1, timestamp_utc: '2026-07-11T00:01:00.000Z', task_id: TASK_ID, status: 'RECOVERED', status_after: 'MATCH',
+            failure_artifact_path: failurePath.replace(/\\/g, '/'),
+            failure_artifact_sha256: failureHash, inspected_protected_snapshot_sha256: 'a'.repeat(64),
+            operator_confirmed_at_utc: '2026-07-11T00:00:30.000Z', requested_entry: requestedEntry,
+            fresh_entry_command: 'attacker-controlled command is ignored'
+        });
+        writeRecoveryEvent(repoRoot, {
+            artifact_path: recoveryPath.replace(/\\/g, '/'),
+            artifact_sha256: createHash('sha256').update(fs.readFileSync(recoveryPath)).digest('hex'),
+            failure_artifact_sha256: failureHash, inspected_protected_snapshot_sha256: 'a'.repeat(64),
+            operator_confirmed_at_utc: '2026-07-11T00:00:30.000Z', requested_entry: requestedEntry
+        }, '2026-07-11T00:01:00.000Z');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.reason, /Confirmed protected-manifest recovery/);
+        assert.match(result.commands[0].command, /gate enter-task-mode/);
+        assert.match(result.commands[0].command, /--task-summary "Recover entry"/);
+        assert.doesNotMatch(result.commands[0].command, /attacker-controlled/);
+    });
+
+    it('confirmed manifest recovery does not reuse a receipt bound to an older task-mode entry failure', () => {
+        const repoRoot = makeTempRepo();
+        const { failurePath } = writeTrustedFailure(repoRoot, {
+            timestamp_utc: '2026-07-11T00:02:00.000Z', manifest_status: 'DRIFT',
+            affected_protected_paths: ['src/gates/next-step/next-step.ts']
+        });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode-entry-recovery.json`), {
+            timestamp_utc: '2026-07-11T00:01:00.000Z', task_id: TASK_ID, status: 'RECOVERED',
+            failure_artifact_sha256: '0'.repeat(64), fresh_entry_command: 'node bin/garda.js gate enter-task-mode --task-id "stale"'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'recover-task-mode-protected-manifest');
+        assert.ok(result.commands[0].command.includes(`--task-id "${TASK_ID}"`));
+        assert.ok(!result.commands[0].command.includes('--task-id "stale"'));
+    });
+
+    it('confirmed manifest recovery rejects a forged local receipt with protected confirmation flags', () => {
+        const repoRoot = makeTempRepo();
+        writeProtectedControlPlaneManifest(repoRoot);
+        const failurePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode-entry-failure.json`);
+        const requestedEntry = {
+            taskId: TASK_ID, entryMode: 'EXPLICIT_TASK_EXECUTION', requestedDepth: '2', taskSummary: 'Forged',
+            provider: 'Codex', orchestratorWork: true, workflowConfigWork: true
+        };
+        writeJson(failurePath, {
+            timestamp_utc: '2026-07-11T00:00:00.000Z', task_id: TASK_ID, manifest_status: 'DRIFT',
+            manifest_path: 'garda-agent-orchestrator/runtime/protected-control-plane-manifest.json', requested_entry: requestedEntry
+        });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode-entry-recovery.json`), {
+            schema_version: 1, timestamp_utc: '2026-07-11T00:01:00.000Z', task_id: TASK_ID,
+            status: 'RECOVERED', status_after: 'MATCH', failure_artifact_path: failurePath.replace(/\\/g, '/'),
+            failure_artifact_sha256: createHash('sha256').update(fs.readFileSync(failurePath)).digest('hex'),
+            inspected_protected_snapshot_sha256: 'a'.repeat(64), operator_confirmed_at_utc: '2026-07-11T00:00:30.000Z',
+            requested_entry: requestedEntry,
+            fresh_entry_command: `node bin/garda.js gate enter-task-mode --task-id "${TASK_ID}" --orchestrator-work --workflow-config-work --operator-confirmed yes --operator-confirmed-at-utc "2026-07-11T00:00:30.000Z" --repo-root "."`
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.doesNotMatch(result.commands[0].command, /--workflow-config-work/);
+    });
+
+    it('confirmed manifest recovery rejects a structurally incomplete receipt even when its failure hash matches', () => {
+        const repoRoot = makeTempRepo();
+        writeProtectedControlPlaneManifest(repoRoot);
+        const { failurePath } = writeTrustedFailure(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode-entry-recovery.json`), {
+            schema_version: 1, timestamp_utc: '2026-07-11T00:01:00.000Z', task_id: TASK_ID, status: 'RECOVERED',
+            failure_artifact_path: failurePath.replace(/\\/g, '/'),
+            failure_artifact_sha256: createHash('sha256').update(fs.readFileSync(failurePath)).digest('hex'),
+            fresh_entry_command: `node bin/garda.js gate enter-task-mode --task-id "${TASK_ID}" --repo-root "."`
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(result.next_gate, 'recover-task-mode-protected-manifest');
+    });
+
     it('routes protected control-plane preflight to an orchestrator-work restart command', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });

@@ -29,6 +29,10 @@ import {
     runQualityChecklistCommand
 } from './gates';
 import {
+    recordTaskModeProtectedManifestFailure,
+    runRecoverTaskModeProtectedManifestCommand
+} from './gate-flows/task-mode/task-mode-entry-failure';
+import {
     parseOptions,
     normalizePathValue,
     ensureDirectoryExists,
@@ -73,11 +77,30 @@ export async function handleEnterTaskMode(gateArgv: string[]): Promise<void> {
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
     const { options } = parseOptions(gateArgv, defs);
-    const result = runEnterTaskModeCommand(options);
+    let result;
+    try {
+        result = runEnterTaskModeCommand(options);
+    } catch (error: unknown) {
+        recordTaskModeProtectedManifestFailure(options, error);
+        throw error;
+    }
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;
     }
+}
+
+export async function handleRecoverTaskModeProtectedManifest(gateArgv: string[]): Promise<void> {
+    const { options } = parseOptions(gateArgv, {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
+        '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' },
+        '--inspected-protected-snapshot-sha256': { key: 'inspectedProtectedSnapshotSha256', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    });
+    const result = runRecoverTaskModeProtectedManifestCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) process.exitCode = result.exitCode;
 }
 
 export async function handleLoadRulePack(gateArgv: string[]): Promise<void> {
