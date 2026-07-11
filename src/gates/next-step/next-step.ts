@@ -2246,6 +2246,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         );
     const fullSuiteCurrentArtifactMatchesCycleAndConfig = fullSuiteCurrentArtifactMatchesCycle
         && fullSuiteCurrentArtifactMatchesConfig;
+    const fullSuiteCurrentGateStatus = fullSuiteCurrentArtifactMatchesCycleAndConfig
+        ? fullSuiteGateStatus
+        : null;
     const fullSuiteLifecycleWarningPolicyPresent = hasFullSuiteTimeoutWarningLifecyclePolicy(
         repoRoot,
         taskId,
@@ -2409,7 +2412,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         fullSuiteConfig.enabled,
         fullSuiteConfig.placement,
         fullSuiteNotRequiredForCurrentScope,
-        fullSuiteGateStatus
+        fullSuiteCurrentGateStatus
     );
     const reviewTrust = readReviewTrust(reviewsRoot, taskId, requiredReviewTypes, summary.scope_category);
     const reviewSummary: NextStepReviewSummary = {
@@ -3428,7 +3431,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         enabled: fullSuiteConfig.enabled,
         placement: fullSuiteConfig.placement,
         notRequiredForCurrentScope: fullSuiteNotRequiredForCurrentScope,
-        gateStatus: fullSuiteGateStatus,
+        gateStatus: fullSuiteCurrentGateStatus,
         gatePassed: fullSuiteGatePassed,
         timeoutBlockerExhausted: fullSuiteTimeoutBlockerExhausted,
         timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal.summary,

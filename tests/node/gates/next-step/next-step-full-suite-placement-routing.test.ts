@@ -464,6 +464,52 @@ describe('gates/next-step', () => {
 
     });
 
+    it('reruns after-compile full-suite when workflow config command changes after failed evidence was recorded', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeAfterCompileFullSuiteWorkflowConfig(repoRoot, 'npm test');
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            security: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+
+        writeAfterCompileFullSuiteWorkflowConfig(repoRoot, 'npm run test:changed');
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+
+        assert.match(result.title, /after compile before reviews/);
+
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+
+        assert.ok(result.commands[0].command.includes('--preflight-path'));
+
+        assert.ok(!result.commands[0].command.includes('implementation'));
+
+        assert.ok(!result.reason.includes('already failed for the current compiled scope'));
+
+    });
+
     it('reruns after-compile full-suite when workflow config placement changes after evidence was recorded', () => {
 
         const repoRoot = makeTempRepo();
@@ -2115,6 +2161,86 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
 
         assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+    });
+
+
+
+    it('reruns full-suite before test review when workflow config command changes after failed evidence was recorded', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'before_test_review'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'code_first_optional'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm run test:changed',
+
+                placement: 'before_test_review'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'code_first_optional'
+
+            }
+
+        });
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+
+        assert.equal(result.review.next_review_type, 'test', result.reason);
+
+        assert.match(result.title, /before test review/);
+
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+        assert.ok(!result.commands[0].command.includes('implementation'));
+
+        assert.ok(!result.reason.includes('already failed for the current compiled scope'));
 
     });
 
