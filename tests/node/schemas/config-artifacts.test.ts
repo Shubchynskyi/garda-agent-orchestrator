@@ -21,7 +21,9 @@ import {
 } from '../../../src/schemas/config-artifacts';
 import {
     buildDefaultWorkflowConfig,
+    DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION
 } from '../../../src/core/workflow-config';
 
@@ -398,6 +400,10 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
     const optionalQualityCheckRules = optionalQualityChecks.rules as Array<Record<string, unknown>>;
     assert.equal(optionalQualityChecks.enabled, false);
     assert.equal(optionalQualityChecks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+    assert.equal(
+        optionalQualityChecks.review_failure_cadence_interval,
+        DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+    );
     assert.deepEqual(optionalQualityCheckRules[0], {
         id: 'custom_rule',
         title: 'Custom rule',
@@ -430,6 +436,10 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
     const defaultedRules = defaultedOptionalQualityChecks.rules as Array<Record<string, unknown>>;
     assert.equal(defaultedOptionalQualityChecks.enabled, true);
     assert.equal(defaultedOptionalQualityChecks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+    assert.equal(
+        defaultedOptionalQualityChecks.review_failure_cadence_interval,
+        DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+    );
     assert.deepEqual(
         defaultedRules.map((rule) => rule.id),
         DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
@@ -443,6 +453,18 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
             'gate_routing_self_regression'
         ].filter((id) => defaultedRules.some((rule) => rule.id === id)),
         []
+    );
+
+    const customCadence = validateWorkflowConfig({
+        ...baseConfig,
+        optional_quality_checks: {
+            enabled: true,
+            review_failure_cadence_interval: 5
+        }
+    });
+    assert.equal(
+        (customCadence.optional_quality_checks as Record<string, unknown>).review_failure_cadence_interval,
+        5
     );
 
     const baselineRule = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0];
@@ -510,6 +532,39 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
             }
         }),
         /optional_quality_checks\.rules has duplicate id 'duplicate'/
+    );
+
+    assert.throws(
+        () => validateWorkflowConfig({
+            ...baseConfig,
+            optional_quality_checks: {
+                enabled: true,
+                review_failure_cadence_interval: '5'
+            }
+        }),
+        /workflow-config\.optional_quality_checks\.review_failure_cadence_interval must be an integer/u
+    );
+
+    assert.throws(
+        () => validateWorkflowConfig({
+            ...baseConfig,
+            optional_quality_checks: {
+                enabled: true,
+                review_failure_cadence_interval: 0
+            }
+        }),
+        /workflow-config\.optional_quality_checks\.review_failure_cadence_interval must be >= 1/u
+    );
+
+    assert.throws(
+        () => validateWorkflowConfig({
+            ...baseConfig,
+            optional_quality_checks: {
+                enabled: true,
+                review_failure_cadence_interval: MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL + 1
+            }
+        }),
+        /workflow-config\.optional_quality_checks\.review_failure_cadence_interval must be <= 100/u
     );
 });
 

@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "गुणवत्ता-जांच कैडेंस अंतराल",
+    "description": "आवश्यक quality-checklist उत्तर चलाने के बीच दर्ज review failure attempts की संख्या। काउंटर केवल दर्ज review FAIL परिणामों पर बढ़ता है; दोहराए गए next-step या preflight refresh इसे नहीं बढ़ाते।"
+  },
   "optional-skill-selection-mode": {
     "label": "विशेषज्ञ-स्किल चयन मोड",
     "description": "टास्क शुरू होने पर विशेषज्ञ-स्किल मिलान बंद, optional या mandatory होगा, यह नियंत्रित करता है। पुराने advisory/required/strict मान read-compatible रहते हैं और सेव करते समय canonical modes में लिखे जाते हैं।",

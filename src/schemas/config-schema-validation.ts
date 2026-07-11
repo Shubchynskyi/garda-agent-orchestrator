@@ -39,7 +39,7 @@ function validateType(value: unknown, expected: string, jsonPath: string): Schem
  * Validates a JSON value against a JSON Schema subset (draft-07).
  *
  * Supports: type, required, properties, additionalProperties, items,
- * enum, const, not, oneOf, anyOf, allOf, contains, pattern, minimum,
+ * enum, const, not, oneOf, anyOf, allOf, contains, pattern, minimum, maximum,
  * minLength, minItems, minProperties, uniqueItems, and the local
  * x-case-insensitive-unique-item-properties extension.
  */
@@ -122,6 +122,10 @@ export function validateAgainstSchema(value: unknown, schema: Record<string, unk
         const minimum = schema.minimum as number | undefined;
         if (minimum !== undefined && num < minimum) {
             errors.push({ path: jsonPath, message: `Value ${num} < minimum ${minimum}.` });
+        }
+        const maximum = schema.maximum as number | undefined;
+        if (maximum !== undefined && num > maximum) {
+            errors.push({ path: jsonPath, message: `Value ${num} > maximum ${maximum}.` });
         }
     }
 

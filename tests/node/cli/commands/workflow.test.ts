@@ -7,7 +7,9 @@ import * as path from 'node:path';
 import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
 import { buildGuardedCommandHelpText } from '../../../../src/cli/commands/cli-format-output';
 import {
+    DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     buildDefaultWorkflowConfig,
     isGardaSelfGuardDenyAgentEntryForBundle
@@ -123,7 +125,8 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first'));
         assert.ok(output.includes('Task reset: disabled'));
         assert.ok(output.includes('Auto backup: disabled interval_days=1 keep_latest=10'));
-        assert.ok(output.includes(`Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length}`));
+        assert.ok(output.includes(`Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} cadence_interval=${DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL}`));
+        assert.ok(output.includes(`OptionalQualityChecksReviewFailureCadenceInterval: ${DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL}`));
         assert.equal(result.optional_skill_selection_policy.mode, 'optional');
         assert.equal(result.optional_skill_selection_policy.effective_mode, 'optional');
         assert.equal(result.optional_skill_selection_policy.status, 'missing');
@@ -354,11 +357,15 @@ test('workflow set toggles optional quality checks without replacing rules', () 
         assert.equal(result.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
         assert.deepEqual(result.optional_quality_checks.rules.map((rule) => rule.id), expectedRuleIds);
         assert.ok(result.changed_fields.includes('optional_quality_checks.enabled'));
-        assert.ok(output.includes(`Optional quality checks: disabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${expectedRuleCount} enabled_rules=${expectedRuleCount}`));
+        assert.ok(output.includes(`Optional quality checks: disabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${expectedRuleCount} enabled_rules=${expectedRuleCount} cadence_interval=${DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL}`));
 
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.optional_quality_checks.enabled, false);
         assert.equal(parsedConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+        assert.equal(
+            parsedConfig.optional_quality_checks.review_failure_cadence_interval,
+            DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+        );
         assert.deepEqual(parsedConfig.optional_quality_checks.rules[0], {
             id: 'custom_review_focus',
             title: 'Custom review focus',
@@ -369,6 +376,56 @@ test('workflow set toggles optional quality checks without replacing rules', () 
             parsedConfig.optional_quality_checks.rules.slice(1).map((rule: { id: string }) => rule.id),
             DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
         );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set updates optional quality-check review-failure cadence interval', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-checks-review-failure-cadence-interval', '5',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.equal(result.optional_quality_checks.review_failure_cadence_interval, 5);
+        assert.ok(result.changed_fields.includes('optional_quality_checks.review_failure_cadence_interval'));
+        assert.ok(output.includes('OptionalQualityChecksReviewFailureCadenceInterval: 5'));
+        assert.ok(output.includes('cadence_interval=5'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.optional_quality_checks.review_failure_cadence_interval, 5);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set rejects invalid optional quality-check review-failure cadence intervals', () => {
+    const bundleRoot = createBundleRoot();
+
+    try {
+        for (const [value, expectedError] of [
+            ['0', /--optional-checks-review-failure-cadence-interval must be >= 1/u],
+            [String(MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL + 1), /--optional-checks-review-failure-cadence-interval must be <= 100/u],
+            ['1.5', /--optional-checks-review-failure-cadence-interval must be an integer/u]
+        ] as const) {
+            assert.throws(
+                () => captureConsole(() => handleWorkflow([
+                    'set',
+                    '--bundle-root', bundleRoot,
+                    '--optional-checks-review-failure-cadence-interval', value,
+                    ...buildOperatorConfirmationArgs()
+                ], PACKAGE_JSON)),
+                expectedError
+            );
+        }
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -1262,8 +1319,10 @@ test('workflow help describes project-memory update as the default policy', () =
     assert.ok(helpText.includes('--task-reset on|off|--task-reset-enabled true|false'));
     assert.ok(helpText.includes('--auto-backup on|off|--auto-backup-enabled true|false'));
     assert.ok(helpText.includes('--optional-checks on|off|--optional-checks-enabled true|false'));
+    assert.ok(helpText.includes('--optional-checks-review-failure-cadence-interval N'));
     assert.ok(helpText.includes('Short aliases map exactly to existing boolean settings'));
     assert.ok(helpText.includes('workflow set --optional-checks on --operator-confirmed yes --operator-confirmed-at-utc'));
+    assert.ok(helpText.includes('workflow set --optional-checks-review-failure-cadence-interval 3'));
     assert.ok(helpText.includes('workflow set --optional-skill-selection-mode mandatory'));
     assert.ok(helpText.includes('workflow set --garda-self-guard on'));
     assert.ok(helpText.includes('workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc'));
@@ -1285,7 +1344,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         assert.ok(validateOutput.includes('Status: PASS'));
         assert.ok(validateOutput.includes('Project memory maintenance: update'));
         assert.ok(validateOutput.includes('Task reset: disabled'));
-        assert.ok(validateOutput.includes(`Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length}`));
+        assert.ok(validateOutput.includes(`Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} cadence_interval=${DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL}`));
 
         const explainOutput = captureConsole(() => handleWorkflow([
             'explain',
@@ -1342,6 +1401,10 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.task_reset.enabled, false);
         assert.equal(parsed.optional_quality_checks.enabled, true);
         assert.equal(parsed.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+        assert.equal(
+            parsed.optional_quality_checks.review_failure_cadence_interval,
+            DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+        );
         assert.equal(parsed.optional_quality_checks.rules.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
         assert.equal(parsed.optional_quality_checks.rules[0].id, 'code_simplification');
         assert.ok(parsed.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'test_verification_scope'));
@@ -1354,7 +1417,7 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=true');
         assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
         assert.equal(parsed.task_reset_summary_line, 'Task reset: disabled');
-        assert.equal(parsed.optional_quality_checks_summary_line, `Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length}`);
+        assert.equal(parsed.optional_quality_checks_summary_line, `Optional quality checks: enabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} enabled_rules=${DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length} cadence_interval=${DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL}`);
         assert.equal(parsed.optional_skill_selection_policy_summary_line, 'Specialist-skill selection: optional status=missing');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
@@ -1393,6 +1456,10 @@ test('workflow set --json returns valid JSON for machine-readable automation', (
         assert.equal(parsedConfig.task_reset.enabled, false);
         assert.equal(parsedConfig.optional_quality_checks.enabled, true);
         assert.equal(parsedConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+        assert.equal(
+            parsedConfig.optional_quality_checks.review_failure_cadence_interval,
+            DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+        );
         assert.equal(parsedConfig.optional_quality_checks.rules.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });

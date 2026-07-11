@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Intervallo di cadenza del controllo qualità",
+    "description": "Numero di tentativi di review falliti registrati tra le esecuzioni obbligatorie delle risposte quality-checklist. Il contatore avanza solo con risultati review FAIL registrati; next-step o refresh preflight ripetuti non lo avanzano."
+  },
   "optional-skill-selection-mode": {
     "label": "Modalita di selezione skill specialistiche",
     "description": "Controlla se il matching delle skill specialistiche all avvio del task e disattivato, optional o mandatory. I valori legacy advisory/required/strict restano compatibili in lettura e vengono salvati come modalita canoniche.",

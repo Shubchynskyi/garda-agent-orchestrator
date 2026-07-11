@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Intervall för kvalitetskontrollens kadens",
+    "description": "Antal registrerade misslyckade review-försök mellan obligatoriska quality-checklist-svar. Räknaren ökar bara vid registrerade review FAIL-resultat; upprepade next-step eller preflight refresh ökar den inte."
+  },
   "optional-skill-selection-mode": {
     "label": "Lage for specialist-skill-val",
     "description": "Styr om specialist-skill-matchning vid uppgiftsstart ar avstangd, optional eller mandatory. Legacy-vardena advisory/required/strict forblir laskompatibla och sparas som kanoniska lagen.",

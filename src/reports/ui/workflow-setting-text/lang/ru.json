@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Интервал периодичности проверки качества",
+    "description": "Количество зафиксированных неуспешных review попыток между обязательными запусками ответов quality-checklist. Счётчик увеличивается только по записанным результатам review FAIL; повторные next-step или обновления preflight его не двигают."
+  },
   "optional-skill-selection-mode": {
     "label": "Режим выбора specialist-skill",
     "description": "Определяет, будет ли подбор specialist-skill на старте задачи выключен, optional или mandatory. Устаревшие advisory/required/strict значения остаются совместимыми для чтения и при сохранении записываются как канонические режимы.",

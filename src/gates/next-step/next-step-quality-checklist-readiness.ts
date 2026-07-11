@@ -2,9 +2,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+    DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     formatOptionalQualityChecksRuleSetDiagnostics,
     isOptionalQualityCheckRuleActiveForScope,
     normalizeOptionalQualityChecksConfig,
+    resolveOptionalQualityChecksReviewFailureCadenceInterval,
 } from '../../core/workflow-config';
 import {
     assessQualityChecklistPolicyCompatibility,
@@ -57,6 +59,7 @@ export interface NextStepQualityChecklistReadiness {
     enabledRuleCount: number;
     activeRuleCount: number;
     skippedByScopeRuleCount: number;
+    reviewFailureCadenceInterval: number;
     artifactPath: string | null;
 }
 
@@ -78,6 +81,7 @@ export interface NextStepQualityChecklistSummary {
     enabled_rule_count: number;
     active_rule_count: number;
     skipped_by_scope_rule_count: number;
+    review_failure_cadence_interval: number;
     visible_summary_line: string;
 }
 
@@ -250,7 +254,7 @@ function combineMaterializationErrors(
     return [first, second].filter((value): value is string => !!value).join(' ') || null;
 }
 
-function reviewFailureCadence(repoRoot: string, taskId: string): {
+function reviewFailureCadence(repoRoot: string, taskId: string, reviewFailureCadenceInterval: number): {
     due: boolean;
     skip: boolean;
     failureCount: number;
@@ -281,8 +285,8 @@ function reviewFailureCadence(repoRoot: string, taskId: string): {
     const failureCount = reviewFailures.filter((failure) => failure.index > latestChecklistPass).length;
     const hasBaseline = latestChecklistPass >= 0;
     return {
-        due: !hasBaseline || testResetPending || failureCount >= 3,
-        skip: hasBaseline && !testResetPending && failureCount > 0 && failureCount < 3,
+        due: !hasBaseline || testResetPending || failureCount >= reviewFailureCadenceInterval,
+        skip: hasBaseline && !testResetPending && failureCount > 0 && failureCount < reviewFailureCadenceInterval,
         failureCount,
         testResetPending
     };
@@ -354,6 +358,7 @@ function buildQualityChecklistReadiness(options: {
     enabledRuleCount?: number;
     activeRuleCount?: number;
     skippedByScopeRuleCount?: number;
+    reviewFailureCadenceInterval?: number;
     templateMaterializationError?: string | null;
 }): NextStepQualityChecklistReadiness {
     const artifact = options.artifact || null;
@@ -383,6 +388,8 @@ function buildQualityChecklistReadiness(options: {
         enabledRuleCount: options.enabledRuleCount ?? 0,
         activeRuleCount: options.activeRuleCount ?? 0,
         skippedByScopeRuleCount: options.skippedByScopeRuleCount ?? 0,
+        reviewFailureCadenceInterval: options.reviewFailureCadenceInterval
+            ?? DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
         artifactPath: options.artifactPath || null
     };
 }
@@ -400,6 +407,13 @@ export function readQualityChecklistReadiness(options: {
     const ruleSetDiagnostic = formatOptionalQualityChecksRuleSetDiagnostics(options.workflowConfig?.optional_quality_checks);
     const ruleSetDiagnosticSuffix = ruleSetDiagnostic ? ` ${ruleSetDiagnostic}` : '';
     const optionalQualityChecks = normalizeOptionalQualityChecksConfig(options.workflowConfig?.optional_quality_checks);
+    const cadenceInterval = resolveOptionalQualityChecksReviewFailureCadenceInterval(options.workflowConfig?.optional_quality_checks);
+    const buildReadiness = (
+        readinessOptions: Parameters<typeof buildQualityChecklistReadiness>[0]
+    ): NextStepQualityChecklistReadiness => buildQualityChecklistReadiness({
+        ...readinessOptions,
+        reviewFailureCadenceInterval: cadenceInterval.value
+    });
     const required = preflightHasChangedFiles(options.preflight);
     const changedFilesCount = preflightChangedFilesCount(options.preflight);
     const changedFiles = preflightChangedFiles(options.preflight);
@@ -412,8 +426,24 @@ export function readQualityChecklistReadiness(options: {
     const skippedByScopeRuleCount = enabledRuleCount - activeRuleCount;
     const sourceCheckoutDefaultEnabled = !hasOptionalQualityChecksConfig && isOrchestratorSourceCheckout(options.repoRoot);
     const enabled = (hasOptionalQualityChecksConfig || sourceCheckoutDefaultEnabled) && optionalQualityChecks.enabled && enabledRuleCount > 0;
+    if (cadenceInterval.violation && required) {
+        return buildReadiness({
+            enabled,
+            required: true,
+            ready: true,
+            status: 'CONFIG_ERROR',
+            evidenceStatus: 'invalid',
+            effect: 'invalid',
+            reason: `Quality checklist workflow configuration is invalid. ${cadenceInterval.violation}`,
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount
+        });
+    }
     if (!enabled) {
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled: false,
             required,
             ready: true,
@@ -428,7 +458,7 @@ export function readQualityChecklistReadiness(options: {
         });
     }
     if (!required) {
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required: false,
             ready: true,
@@ -455,8 +485,9 @@ export function readQualityChecklistReadiness(options: {
         || previousStatus === 'ACTION_REQUIRED'
         || previousStatus === 'CONFIG_ERROR'
         || countArray(existingArtifact?.actions_required) > 0
-        || !!ruleSetDiagnostic;
-    const cadence = reviewFailureCadence(options.repoRoot, options.taskId);
+        || !!ruleSetDiagnostic
+        || !!cadenceInterval.violation;
+    const cadence = reviewFailureCadence(options.repoRoot, options.taskId, cadenceInterval.value);
     if (cadence.skip && !forceChecklistRun) {
         const answersTemplatePath = resolveDefaultQualityChecklistAnswersTemplatePath(options.repoRoot, options.taskId);
         const templateMaterializationError = fileExists(answersTemplatePath)
@@ -488,7 +519,7 @@ export function readQualityChecklistReadiness(options: {
             });
         const artifactStatus = String(artifact.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
         if (artifactStatus !== 'SKIPPED_CADENCE') {
-            return buildQualityChecklistReadiness({
+            return buildReadiness({
                 enabled,
                 required: true,
                 ready: true,
@@ -508,14 +539,16 @@ export function readQualityChecklistReadiness(options: {
                 templateMaterializationError
             });
         }
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required: false,
             ready: true,
             status: 'SKIPPED_CADENCE',
             evidenceStatus: 'current',
             effect: 'skipped_cadence',
-            reason: `Quality checklist skipped after review failure ${cadence.failureCount}; failures one and two skip, failure three requires answers.`,
+            reason:
+                `Quality checklist skipped after review failure ${cadence.failureCount}; ` +
+                `review_failure_cadence_interval=${cadenceInterval.value} requires fresh answers on failure ${cadenceInterval.value}.`,
             artifactPath,
             artifact,
             changedFilesCount,
@@ -548,7 +581,7 @@ export function readQualityChecklistReadiness(options: {
     };
     if (cadence.due && artifactExists && !forceChecklistRun) {
         const templateMaterializationError = materializeRequiredChecklistInputs();
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required: true,
             ready: false,
@@ -557,7 +590,7 @@ export function readQualityChecklistReadiness(options: {
             effect: 'stale',
             reason: cadence.testResetPending
                 ? 'The first failed test review requires a one-time fresh quality checklist.'
-                : `Quality checklist cadence requires fresh answers after review failure ${cadence.failureCount}.`,
+                : `Quality checklist cadence requires fresh answers after review failure ${cadence.failureCount} because review_failure_cadence_interval=${cadenceInterval.value} was reached.`,
             artifactPath,
             artifact: existingArtifact,
             changedFilesCount,
@@ -575,7 +608,7 @@ export function readQualityChecklistReadiness(options: {
             options.repoRoot,
             path.join('runtime', 'tmp', `${options.taskId}-quality-checklist-questions.md`)
         );
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required,
             ready: false,
@@ -604,7 +637,7 @@ export function readQualityChecklistReadiness(options: {
     const artifact = readJsonRecordOrNull(artifactPath);
     if (!artifact) {
         const templateMaterializationError = materializeRequiredChecklistInputs();
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required,
             ready: false,
@@ -624,7 +657,7 @@ export function readQualityChecklistReadiness(options: {
     const status = String(artifact.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
     if (!QUALITY_CHECKLIST_STATUSES.includes(status as typeof QUALITY_CHECKLIST_STATUSES[number])) {
         const templateMaterializationError = materializeRequiredChecklistInputs();
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required,
             ready: false,
@@ -644,7 +677,7 @@ export function readQualityChecklistReadiness(options: {
     }
     if (artifact.task_id !== options.taskId) {
         const templateMaterializationError = materializeRequiredChecklistInputs();
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required,
             ready: false,
@@ -664,7 +697,7 @@ export function readQualityChecklistReadiness(options: {
     }
     if (artifact.checklist_id !== QUALITY_CHECKLIST_ID) {
         const templateMaterializationError = materializeRequiredChecklistInputs();
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required,
             ready: false,
@@ -688,7 +721,7 @@ export function readQualityChecklistReadiness(options: {
     const artifactPreflightSha256 = String(artifact.preflight_sha256 || '').trim().toLowerCase();
     if (expectedPreflightSha256 && artifactPreflightSha256 !== expectedPreflightSha256) {
         const templateMaterializationError = materializeRequiredChecklistInputs();
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required,
             ready: false,
@@ -731,7 +764,7 @@ export function readQualityChecklistReadiness(options: {
             if (status === 'CONFIG_ERROR') {
                 templateMaterializationError = materializePendingQualityChecklistAnswers(options);
             }
-            return buildQualityChecklistReadiness({
+            return buildReadiness({
                 enabled,
                 required,
                 ready: true,
@@ -765,7 +798,7 @@ export function readQualityChecklistReadiness(options: {
             });
         }
         const templateMaterializationError = materializeRequiredChecklistInputs();
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required,
             ready: false,
@@ -805,7 +838,7 @@ export function readQualityChecklistReadiness(options: {
         : null;
     if (status === 'CONFIG_ERROR') {
         const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
-        return buildQualityChecklistReadiness({
+        return buildReadiness({
             enabled,
             required,
             ready: true,
@@ -826,7 +859,7 @@ export function readQualityChecklistReadiness(options: {
             templateMaterializationError
         });
     }
-    return buildQualityChecklistReadiness({
+    return buildReadiness({
         enabled,
         required,
         ready: true,
@@ -868,11 +901,13 @@ export function buildNextStepQualityChecklistSummary(
         enabled_rule_count: readiness.enabledRuleCount,
         active_rule_count: readiness.activeRuleCount,
         skipped_by_scope_rule_count: readiness.skippedByScopeRuleCount,
+        review_failure_cadence_interval: readiness.reviewFailureCadenceInterval,
         visible_summary_line:
             `QualityChecklist: enabled=${readiness.enabled}; required=${readiness.required}; ready=${readiness.ready}; ` +
             `evidence=${readiness.evidenceStatus}; status=${readiness.status || 'none'}; effect=${readiness.effect}; ` +
             `scope_category=${readiness.scopeCategory || 'unknown'}; enabled_rules=${readiness.enabledRuleCount}; ` +
             `active_rules=${readiness.activeRuleCount}; skipped_by_scope=${readiness.skippedByScopeRuleCount}; ` +
+            `review_failure_cadence_interval=${readiness.reviewFailureCadenceInterval}; ` +
             `answers=${readiness.answerCount}; actions_taken=${readiness.actionsTakenCount}; ` +
             `actions_required=${readiness.actionsRequiredCount}; changed_files=${readiness.changedFilesCount ?? 'unknown'}`
     };

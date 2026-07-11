@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "品質チェックの間隔",
+    "description": "必須の quality-checklist 回答実行の間に許容する、記録済み review failure attempt の数です。カウンターは記録済みの review FAIL 結果だけで進み、next-step や preflight refresh の繰り返しでは進みません。"
+  },
   "optional-skill-selection-mode": {
     "label": "専門スキル選択モード",
     "description": "タスク開始時の専門スキル照合をオフ、optional、mandatory のどれにするかを制御します。従来の advisory/required/strict 値は読み取り互換として残り、保存時に正規モードへ書き換えられます。",

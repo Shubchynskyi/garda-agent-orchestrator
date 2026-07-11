@@ -536,11 +536,46 @@ describe('gates/next-step quality checklist routing', () => {
             if (failureCount < 3) {
                 assert.equal(result.quality_checklist?.status, 'SKIPPED_CADENCE');
                 assert.equal(result.quality_checklist?.effect, 'skipped_cadence');
+                assert.equal(result.quality_checklist?.review_failure_cadence_interval, 3);
+                assert.match(result.quality_checklist?.visible_summary_line || '', /review_failure_cadence_interval=3/u);
                 assert.notEqual(result.next_gate, 'quality-checklist');
             } else {
                 assert.equal(result.next_gate, 'quality-checklist', result.reason);
             }
         }
+    });
+
+    it('uses configured review-failure cadence interval boundaries', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot, {
+            configure(config) {
+                config.optional_quality_checks.review_failure_cadence_interval = 2;
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
+
+        appendReviewFailure(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/review-fix-one.ts']
+        });
+        const first = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(first.quality_checklist?.status, 'SKIPPED_CADENCE');
+        assert.equal(first.quality_checklist?.effect, 'skipped_cadence');
+        assert.equal(first.quality_checklist?.review_failure_cadence_interval, 2);
+        assert.match(first.quality_checklist?.visible_summary_line || '', /review_failure_cadence_interval=2/u);
+
+        appendReviewFailure(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/review-fix-two.ts']
+        });
+        const second = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(second.next_gate, 'quality-checklist', second.reason);
+        assert.equal(second.quality_checklist?.review_failure_cadence_interval, 2);
+        assert.match(second.reason, /review_failure_cadence_interval=2 was reached/u);
     });
 
     it('recognizes a canonical failed review whose lifecycle event records materialization success', () => {

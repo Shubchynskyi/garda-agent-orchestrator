@@ -8,6 +8,7 @@ import {
     normalizeOptionalQualityCheckChangedFileRegexes,
     normalizeOptionalQualityCheckScopeCategories,
     normalizeOptionalQualityChecksConfig,
+    resolveOptionalQualityChecksReviewFailureCadenceInterval,
     type OptionalQualityCheckRule
 } from '../../core/workflow-config';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
@@ -404,6 +405,7 @@ function readChecklistRules(repoRoot: string): {
     }
     const configuredDuplicateRuleIds = findConfiguredDuplicateRuleIds(workflowConfig.optional_quality_checks);
     const optionalQualityChecks = normalizeOptionalQualityChecksConfig(workflowConfig.optional_quality_checks);
+    const cadenceInterval = resolveOptionalQualityChecksReviewFailureCadenceInterval(workflowConfig.optional_quality_checks);
     const normalizedRules = optionalQualityChecks.rules.map((rule) => ({
         id: normalizeRuleId(rule.id),
         title: String(rule.title || '').trim(),
@@ -419,14 +421,18 @@ function readChecklistRules(repoRoot: string): {
         ...configuredDuplicateRuleIds,
         ...findDuplicateRuleIds(normalizedRules)
     ])].sort();
+    const configViolations = [
+        duplicateRuleIds.length > 0
+            ? `Workflow config has duplicate quality-check rule id(s): ${duplicateRuleIds.map((id) => `'${id}'`).join(', ')}.`
+            : null,
+        cadenceInterval.violation
+    ].filter((entry): entry is string => !!entry);
     return {
         workflowConfigPath,
         workflowConfigSha256: fileSha256(workflowConfigPath),
         rules: optionalQualityChecks.rules,
         enabled: optionalQualityChecks.enabled,
-        violation: duplicateRuleIds.length > 0
-            ? `Workflow config has duplicate quality-check rule id(s): ${duplicateRuleIds.map((id) => `'${id}'`).join(', ')}.`
-            : null,
+        violation: configViolations.join(' ') || null,
         ruleSetDiagnostic: formatOptionalQualityChecksRuleSetDiagnostics(workflowConfig.optional_quality_checks)
     };
 }

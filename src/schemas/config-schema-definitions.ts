@@ -13,9 +13,11 @@ import {
 } from '../core/constants';
 import { REVIEW_EXECUTION_POLICY_MODES } from '../core/review-execution-policy';
 import {
+    DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     FULL_SUITE_VALIDATION_PLACEMENTS,
+    MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES
 } from '../core/workflow-config';
@@ -679,6 +681,13 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                     type: 'string',
                     minLength: 1,
                     description: 'Version id for the shipped baseline quality-check rule pack used by this config.'
+                },
+                review_failure_cadence_interval: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
+                    default: DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
+                    description: 'Number of recorded review-failure attempts between required quality-checklist answer runs. Omit to use 3.'
                 },
                 rules: {
                     ...OPTIONAL_QUALITY_CHECK_RULES_SCHEMA

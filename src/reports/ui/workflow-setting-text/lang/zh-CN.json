@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "质量检查节奏间隔",
+    "description": "两次必需的 quality-checklist 答复运行之间允许的已记录 review 失败次数。计数器只会因已记录的 review FAIL 结果增加；重复 next-step 或 preflight refresh 不会增加。"
+  },
   "optional-skill-selection-mode": {
     "label": "专家技能选择模式",
     "description": "控制任务启动时的专家技能匹配是关闭、optional 还是 mandatory。旧的 advisory/required/strict 值保持读取兼容，并在保存时写入为规范模式。",

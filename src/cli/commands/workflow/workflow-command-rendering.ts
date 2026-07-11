@@ -143,7 +143,7 @@ export function buildAutoBackupLine(config: AutoBackupConfig): string {
 
 export function buildOptionalQualityChecksLine(config: OptionalQualityChecksConfig): string {
     const enabledRules = config.rules.filter((rule) => rule.enabled !== false).length;
-    return `Optional quality checks: ${config.enabled ? 'enabled' : 'disabled'} baseline=${config.baseline_version} rules=${config.rules.length} enabled_rules=${enabledRules}`;
+    return `Optional quality checks: ${config.enabled ? 'enabled' : 'disabled'} baseline=${config.baseline_version} rules=${config.rules.length} enabled_rules=${enabledRules} cadence_interval=${config.review_failure_cadence_interval}`;
 }
 
 function readOptionalSkillSelectionPolicyView(
@@ -414,6 +414,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push(`AutoBackupKeepLatest: ${autoBackup.keep_latest}`);
     lines.push(`OptionalQualityChecksEnabled: ${optionalQualityChecks.enabled}`);
     lines.push(`OptionalQualityChecksBaselineVersion: ${optionalQualityChecks.baseline_version}`);
+    lines.push(`OptionalQualityChecksReviewFailureCadenceInterval: ${optionalQualityChecks.review_failure_cadence_interval}`);
     lines.push(`OptionalQualityChecksRuleCount: ${optionalQualityChecks.rules.length}`);
     lines.push(`OptionalQualityChecksEnabledRuleCount: ${optionalQualityChecks.rules.filter((rule) => rule.enabled !== false).length}`);
     lines.push(`OptionalQualityChecksRuleIds: ${optionalQualityChecks.rules.map((rule) => rule.id).join(', ')}`);
@@ -446,6 +447,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Tip: run "workflow set --task-reset on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change confirmed task-reset availability after operator approval.');
     lines.push('Tip: run "workflow set --auto-backup on|off --auto-backup-interval-days 1 --auto-backup-keep-latest 10 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change scheduled backup maintenance after operator approval.');
     lines.push('Tip: run "workflow set --optional-checks on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change optional quality-check availability after operator approval.');
+    lines.push('Tip: run "workflow set --optional-checks-review-failure-cadence-interval 3 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change how many review FAIL attempts occur between required quality-checklist answer runs after operator approval.');
     lines.push('Tip: run "workflow set --optional-check-rule-id <id> --optional-check-rule-title <title> --optional-check-rule-prompt <prompt> --optional-check-rule-enabled true|false --optional-check-rule-exclude-test-only true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to add or update an optional quality-check rule.');
     lines.push('Tip: run "workflow set --optional-skill-selection-mode off|optional|mandatory --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change task-start specialist-skill selection after operator approval.');
     lines.push('Tip: run "workflow set --garda-self-guard on|off" to control agent self-entry into protected orchestrator work; off requires explicit operator approval.');

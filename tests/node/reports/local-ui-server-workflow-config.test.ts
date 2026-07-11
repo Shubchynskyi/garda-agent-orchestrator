@@ -10,6 +10,10 @@ import {
     setLocalUiTaskResetEnabled,
     writeLocalUiRepoFixture
 } from './local-ui-test-helpers';
+import {
+    DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
+    MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+} from '../../../src/core/workflow-config';
 
 function extractActionToken(html: string): string {
     const match = html.match(/const actionToken = "([^"]+)";/u);
@@ -87,6 +91,9 @@ test('local UI settings use guarded workflow commands with preview confirmation 
                 key: string;
                 current_value: unknown;
                 value_type: string;
+                min?: number;
+                max?: number;
+                flag?: string;
                 options: Array<{ value: string }>;
                 readiness?: {
                     ready?: boolean;
@@ -109,6 +116,14 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.ok(list.settings.some((setting) => setting.id === 'project-memory-max-compact-summary-chars'));
         assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
         assert.ok(list.settings.some((setting) => setting.id === 'optional-checks-enabled'));
+        const cadenceSetting = list.settings.find((setting) => setting.id === 'optional-checks-review-failure-cadence-interval');
+        assert.ok(cadenceSetting);
+        assert.equal(cadenceSetting.key, 'optional_quality_checks.review_failure_cadence_interval');
+        assert.equal(cadenceSetting.value_type, 'integer');
+        assert.equal(cadenceSetting.current_value, DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL);
+        assert.equal(cadenceSetting.min, 1);
+        assert.equal(cadenceSetting.max, MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL);
+        assert.equal(cadenceSetting.flag, '--optional-checks-review-failure-cadence-interval');
         const skillSelectionSetting = list.settings.find((setting) => setting.id === 'optional-skill-selection-mode');
         assert.ok(skillSelectionSetting);
         assert.equal(skillSelectionSetting.key, 'optional_skill_selection_policy.mode');
@@ -489,6 +504,37 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.deepEqual(memoryLimitPreview.changed_keys, ['project_memory_maintenance.max_compact_summary_chars']);
         assert.match(memoryLimitPreview.command, /workflow set --project-memory-max-compact-summary-chars 20000/u);
         assert.doesNotMatch(memoryLimitPreview.command, /workflow-config\.json/u);
+
+        const cadencePreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'optional-checks-review-failure-cadence-interval', mode: 'preview', value: 5 })
+        });
+        assert.equal(cadencePreviewResponse.status, 200);
+        const cadencePreview = await cadencePreviewResponse.json() as {
+            status: string;
+            key: string;
+            proposed_value: number;
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(cadencePreview.status, 'previewed');
+        assert.equal(cadencePreview.key, 'optional_quality_checks.review_failure_cadence_interval');
+        assert.equal(cadencePreview.proposed_value, 5);
+        assert.deepEqual(cadencePreview.changed_keys, ['optional_quality_checks.review_failure_cadence_interval']);
+        assert.match(cadencePreview.command, /workflow set --optional-checks-review-failure-cadence-interval 5/u);
+        assert.doesNotMatch(cadencePreview.command, /workflow-config\.json/u);
+
+        const invalidCadencePreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'optional-checks-review-failure-cadence-interval', mode: 'preview', value: 0 })
+        });
+        assert.equal(invalidCadencePreviewResponse.status, 400);
+        assert.match(
+            ((await invalidCadencePreviewResponse.json()) as { error: string }).error,
+            /Quality-check cadence interval must be an integer from 1 to 100/u
+        );
 
         const previewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',

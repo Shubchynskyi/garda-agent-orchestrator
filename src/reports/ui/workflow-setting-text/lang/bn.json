@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "গুণমান-পরীক্ষার cadence interval",
+    "description": "প্রয়োজনীয় quality-checklist উত্তর চালানোর মাঝে কতটি নথিভুক্ত review failure attempt থাকবে। কাউন্টার শুধু নথিভুক্ত review FAIL ফলাফলে বাড়ে; পুনরাবৃত্ত next-step বা preflight refresh এতে বাড়ে না।"
+  },
   "optional-skill-selection-mode": {
     "label": "বিশেষজ্ঞ-স্কিল নির্বাচন মোড",
     "description": "টাস্ক শুরুর সময় বিশেষজ্ঞ-স্কিল মিল বন্ধ, optional, না mandatory হবে তা নিয়ন্ত্রণ করে। পুরনো advisory/required/strict মান read-compatible থাকে এবং সংরক্ষণের সময় canonical mode-এ লেখা হয়।",

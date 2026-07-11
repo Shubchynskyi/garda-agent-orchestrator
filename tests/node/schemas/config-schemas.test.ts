@@ -30,7 +30,10 @@ import {
     gardaConfigSchema,
     OPTIONAL_ROOT_CONFIG_NAMES
 } from '../../../src/schemas/config-schemas';
-import { DEFAULT_OPTIONAL_QUALITY_CHECK_RULES } from '../../../src/core/workflow-config';
+import {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+} from '../../../src/core/workflow-config';
 
 function isWorkspaceRoot(candidate: string): boolean {
     return fs.existsSync(path.join(candidate, 'package.json')) &&
@@ -395,6 +398,33 @@ test('workflow-config schema accepts optional quality checks without explicit ru
     delete (clone.optional_quality_checks as Record<string, unknown>).rules;
     const result = validateAgainstSchema(clone, workflowConfigSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('workflow-config schema validates optional quality-check review-failure cadence interval', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const valid = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    (valid.optional_quality_checks as Record<string, unknown>).review_failure_cadence_interval = 7;
+    const validResult = validateAgainstSchema(valid, workflowConfigSchema);
+    assert.equal(validResult.valid, true, `Errors: ${JSON.stringify(validResult.errors)}`);
+
+    const zero = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    (zero.optional_quality_checks as Record<string, unknown>).review_failure_cadence_interval = 0;
+    const zeroResult = validateAgainstSchema(zero, workflowConfigSchema);
+    assert.equal(zeroResult.valid, false);
+    assert.ok(zeroResult.errors.some((error) => (
+        error.path.includes('optional_quality_checks.review_failure_cadence_interval')
+        && error.message.includes('minimum')
+    )));
+
+    const tooLarge = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    (tooLarge.optional_quality_checks as Record<string, unknown>).review_failure_cadence_interval =
+        MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL + 1;
+    const tooLargeResult = validateAgainstSchema(tooLarge, workflowConfigSchema);
+    assert.equal(tooLargeResult.valid, false);
+    assert.ok(tooLargeResult.errors.some((error) => (
+        error.path.includes('optional_quality_checks.review_failure_cadence_interval')
+        && error.message.includes('maximum')
+    )));
 });
 
 test('workflow-config schema accepts optional quality checks local metadata', () => {

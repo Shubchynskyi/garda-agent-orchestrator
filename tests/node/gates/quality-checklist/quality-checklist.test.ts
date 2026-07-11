@@ -297,6 +297,56 @@ describe('quality-checklist gate', () => {
         }
     });
 
+    it('fails closed when review-failure cadence interval configuration is invalid', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-invalid-cadence-interval' });
+        try {
+            const workflowConfigPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'live',
+                'config',
+                'workflow-config.json'
+            );
+            const workflowConfig = buildDefaultWorkflowConfig();
+            workflowConfig.optional_quality_checks.review_failure_cadence_interval = 0;
+            fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
+            const preflightPath = writeGateFixturePreflight(fixture);
+
+            const artifact = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: buildPassAnswers()
+            });
+
+            assert.equal(artifact.status, 'CONFIG_ERROR');
+            assert.equal(artifact.outcome, 'FAIL');
+            assert.ok(artifact.violations.some((violation) => (
+                violation.includes('workflow-config.optional_quality_checks.review_failure_cadence_interval must be an integer from 1 to 100')
+            )));
+
+            const workflowConfigWithStringCadence = buildDefaultWorkflowConfig();
+            (workflowConfigWithStringCadence.optional_quality_checks as unknown as Record<string, unknown>)
+                .review_failure_cadence_interval = '3';
+            fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfigWithStringCadence, null, 2)}\n`, 'utf8');
+
+            const stringCadenceArtifact = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: buildPassAnswers()
+            });
+
+            assert.equal(stringCadenceArtifact.status, 'CONFIG_ERROR');
+            assert.equal(stringCadenceArtifact.outcome, 'FAIL');
+            assert.ok(stringCadenceArtifact.violations.some((violation) => (
+                violation.includes('workflow-config.optional_quality_checks.review_failure_cadence_interval must be an integer from 1 to 100')
+            )));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
     it('activates ops/shell rules for shell, deploy, backup, and restore changed files', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-ops-shell-active-rules' });
         try {

@@ -191,6 +191,7 @@ export const WORKFLOW_SET_DEFINITIONS = {
     '--auto-backup-keep-latest': { key: 'autoBackupKeepLatest', type: 'string' },
     '--optional-checks': { key: 'optionalChecksAlias', type: 'string' },
     '--optional-checks-enabled': { key: 'optionalChecksEnabled', type: 'string' },
+    '--optional-checks-review-failure-cadence-interval': { key: 'optionalChecksReviewFailureCadenceInterval', type: 'string' },
     '--optional-check-rule-id': { key: 'optionalCheckRuleId', type: 'string' },
     '--optional-check-rule-title': { key: 'optionalCheckRuleTitle', type: 'string' },
     '--optional-check-rule-prompt': { key: 'optionalCheckRulePrompt', type: 'string' },

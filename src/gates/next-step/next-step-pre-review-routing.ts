@@ -216,7 +216,11 @@ export function resolveNextStepPreGuardRoute(
 export function resolveNextStepQualityChecklistRoute(
     options: NextStepQualityChecklistRoutingOptions
 ): NextStepPreReviewRoute | null {
-    if (!options.enabled || !options.required) {
+    if (!options.required) {
+        return null;
+    }
+
+    if (!options.enabled && options.status !== 'CONFIG_ERROR') {
         return null;
     }
 

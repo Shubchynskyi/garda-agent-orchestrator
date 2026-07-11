@@ -1,6 +1,7 @@
 import {
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     FULL_SUITE_VALIDATION_PLACEMENTS,
+    MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES
 } from '../core/workflow-config';
@@ -247,6 +248,17 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
             'Agents run the configured advisory self-check rules before compile, review, or full-suite work when checklist evidence is needed.',
             'The optional quality-checklist gate is skipped without replacing mandatory compile, review, or full-suite gates.'
         )
+    },
+    {
+        id: 'optional-checks-review-failure-cadence-interval',
+        key: 'optional_quality_checks.review_failure_cadence_interval',
+        label: 'Quality-check cadence interval',
+        description: 'Number of recorded review-failure attempts between required quality-checklist answer runs. The counter still advances only on recorded review FAIL results; repeated next-step or preflight refreshes do not advance it.',
+        flag: '--optional-checks-review-failure-cadence-interval',
+        value_type: 'integer',
+        min: 1,
+        max: MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
+        options: []
     },
     {
         id: 'optional-skill-selection-mode',

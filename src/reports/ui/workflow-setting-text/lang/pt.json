@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Intervalo de cadência da verificação de qualidade",
+    "description": "Número de tentativas de review falhadas registadas entre execuções obrigatórias das respostas da quality-checklist. O contador só avança com resultados review FAIL registados; next-step ou refresh de preflight repetidos não o avançam."
+  },
   "optional-skill-selection-mode": {
     "label": "Modo de selecao de habilidades especializadas",
     "description": "Controla se a correspondencia de habilidades especializadas no inicio da tarefa fica desligada, optional ou mandatory. Valores antigos advisory/required/strict continuam compativeis para leitura e sao gravados como modos canonicos.",

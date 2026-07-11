@@ -34,12 +34,15 @@ import {
 
 export {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     LEGACY_OPTIONAL_QUALITY_CHECK_RULES,
+    MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES,
     OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_CONFIG_ONLY,
     OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE,
+    OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL_KEY,
     buildOptionalQualityChecksRuleSetDiagnostics,
     buildDefaultOptionalQualityChecksConfig,
     formatOptionalQualityChecksRuleSetDiagnostics,
@@ -53,7 +56,8 @@ export {
     mergeOptionalQualityChecksWithBaseline,
     normalizeOptionalQualityCheckChangedFileRegexes,
     normalizeOptionalQualityCheckScopeCategories,
-    normalizeOptionalQualityChecksConfig
+    normalizeOptionalQualityChecksConfig,
+    resolveOptionalQualityChecksReviewFailureCadenceInterval
 } from './optional-quality-checks';
 export type {
     OptionalQualityCheckRule,

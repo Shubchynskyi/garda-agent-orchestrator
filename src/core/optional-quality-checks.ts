@@ -14,8 +14,14 @@ export interface OptionalQualityCheckRule {
 export interface OptionalQualityChecksConfig {
     enabled: boolean;
     baseline_version: string;
+    review_failure_cadence_interval: number;
     rules: OptionalQualityCheckRule[];
     [key: string]: unknown;
+}
+
+export interface OptionalQualityChecksReviewFailureCadenceIntervalResolution {
+    value: number;
+    violation: string | null;
 }
 
 export interface OptionalQualityChecksMergeOptions {
@@ -36,6 +42,9 @@ export interface OptionalQualityChecksRuleSetDiagnostics {
 
 export const OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE = 'режим опциональных проверок включен, проверь в garda ui перед стартом';
 export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-07-08.t934';
+export const DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL = 3;
+export const MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL = 100;
+export const OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL_KEY = 'review_failure_cadence_interval';
 export const OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY = 'test-only';
 export const OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_CONFIG_ONLY = 'config-only';
 
@@ -378,6 +387,7 @@ export function buildDefaultOptionalQualityChecksConfig(): OptionalQualityChecks
     return {
         enabled: true,
         baseline_version: OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
+        review_failure_cadence_interval: DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
         rules: cloneJsonValue(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES) as OptionalQualityCheckRule[]
     };
 }
@@ -449,6 +459,43 @@ function formatRuleIdList(ruleIds: readonly string[], maxItems = 20): string {
         ? `, +${ruleIds.length - maxItems} more`
         : '';
     return preview ? `${preview}${remainder}` : '<none>';
+}
+
+function parseReviewFailureCadenceInterval(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isInteger(value)) {
+        return value;
+    }
+    return null;
+}
+
+export function resolveOptionalQualityChecksReviewFailureCadenceInterval(
+    input: unknown
+): OptionalQualityChecksReviewFailureCadenceIntervalResolution {
+    const key = OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL_KEY;
+    if (!isPlainObject(input) || !hasOwn(input, key) || input[key] === undefined) {
+        return {
+            value: DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
+            violation: null
+        };
+    }
+    const parsed = parseReviewFailureCadenceInterval(input[key]);
+    if (
+        parsed === null
+        || parsed < 1
+        || parsed > MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+    ) {
+        return {
+            value: DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
+            violation:
+                `workflow-config.optional_quality_checks.${key} must be an integer from 1 to ` +
+                `${MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL}; omit it to use default ` +
+                `${DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL}.`
+        };
+    }
+    return {
+        value: parsed,
+        violation: null
+    };
 }
 
 function mergeOptionalQualityCheckRulesWithBaseline(
@@ -557,6 +604,7 @@ export function normalizeOptionalQualityChecksConfig(input: unknown): OptionalQu
     if (!isPlainObject(input)) {
         return defaultConfig;
     }
+    const cadenceInterval = resolveOptionalQualityChecksReviewFailureCadenceInterval(input).value;
     const rawBaselineVersion = getOptionalQualityChecksBaselineVersion(input);
     const baselineVersion = rawBaselineVersion || defaultConfig.baseline_version;
     const baselineRules = cloneJsonValue(defaultConfig.rules) as OptionalQualityCheckRule[];
@@ -573,6 +621,7 @@ export function normalizeOptionalQualityChecksConfig(input: unknown): OptionalQu
             ? defaultConfig.enabled
             : input.enabled === true,
         baseline_version: baselineVersion,
+        review_failure_cadence_interval: cadenceInterval,
         rules: normalizedRules.length > 0
             ? normalizedRules
             : cloneJsonValue(defaultConfig.rules)
@@ -670,6 +719,7 @@ export function mergeOptionalQualityChecksWithBaseline(
     const existingRules = normalizeOptionalQualityCheckRules(existingConfig.rules);
     const baselineRules = cloneJsonValue(templateConfig.rules);
     const staleBaselineVersion = getOptionalQualityChecksBaselineVersion(existingConfig) !== templateConfig.baseline_version;
+    const cadenceInterval = resolveOptionalQualityChecksReviewFailureCadenceInterval(existingConfig).value;
     const mergedRules = mergeOptionalQualityCheckRulesWithBaseline(
         existingRules,
         baselineRules,
@@ -684,6 +734,7 @@ export function mergeOptionalQualityChecksWithBaseline(
             ? templateConfig.enabled
             : existingConfig.enabled === true,
         baseline_version: templateConfig.baseline_version,
+        review_failure_cadence_interval: cadenceInterval,
         rules: mergedRules.length > 0
             ? mergedRules
             : baselineRules

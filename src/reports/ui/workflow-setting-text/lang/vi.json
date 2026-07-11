@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Khoảng nhịp kiểm tra chất lượng",
+    "description": "Số lần review thất bại đã ghi nhận giữa các lượt trả lời quality-checklist bắt buộc. Bộ đếm chỉ tăng với kết quả review FAIL đã ghi; gọi next-step hoặc refresh preflight lặp lại không làm tăng."
+  },
   "optional-skill-selection-mode": {
     "label": "Che do chon ky nang chuyen biet",
     "description": "Dieu khien viec khop ky nang chuyen biet khi bat dau tac vu la tat, optional hay mandatory. Gia tri cu advisory/required/strict van tuong thich khi doc va duoc ghi thanh che do chuan khi luu.",

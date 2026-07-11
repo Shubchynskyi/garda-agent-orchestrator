@@ -20,6 +20,8 @@ import {
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES,
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
+    DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
+    MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     buildDefaultWorkflowConfig,
     normalizeFullSuiteValidationPlacement,
     normalizeOptionalQualityCheckChangedFileRegexes,
@@ -357,9 +359,29 @@ function validateOptionalQualityCheckChangedFileRegexes(value: unknown, fieldNam
     return patterns;
 }
 
+function normalizeStrictJsonInteger(
+    value: unknown,
+    fieldName: string,
+    options: {
+        minimum?: number;
+        maximum?: number;
+    } = {}
+): number {
+    if (typeof value !== 'number' || !Number.isInteger(value)) {
+        throw new Error(`${fieldName} must be an integer.`);
+    }
+    if (options.minimum !== undefined && value < options.minimum) {
+        throw new Error(`${fieldName} must be >= ${options.minimum}.`);
+    }
+    if (options.maximum !== undefined && value > options.maximum) {
+        throw new Error(`${fieldName} must be <= ${options.maximum}.`);
+    }
+    return value;
+}
+
 function validateOptionalQualityChecksSection(input: unknown): Record<string, unknown> {
     const section = ensurePlainObject(input, 'workflow-config.optional_quality_checks');
-    const sectionKnownKeys = ['enabled', 'baseline_version', 'rules'];
+    const sectionKnownKeys = ['enabled', 'baseline_version', 'review_failure_cadence_interval', 'rules'];
     assertNoCaseMismatchedKnownKeys(
         section,
         sectionKnownKeys,
@@ -378,6 +400,14 @@ function validateOptionalQualityChecksSection(input: unknown): Record<string, un
     normalizedInput.baseline_version = normalizeNonEmptyString(
         normalizedInput.baseline_version,
         'workflow-config.optional_quality_checks.baseline_version'
+    );
+    normalizedInput.review_failure_cadence_interval = normalizeStrictJsonInteger(
+        normalizedInput.review_failure_cadence_interval ?? DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
+        'workflow-config.optional_quality_checks.review_failure_cadence_interval',
+        {
+            minimum: 1,
+            maximum: MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+        }
     );
     if (!Array.isArray(normalizedInput.rules)) {
         throw new Error('workflow-config.optional_quality_checks.rules must be an array.');

@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Interval cadence pemeriksaan kualitas",
+    "description": "Jumlah upaya review gagal yang tercatat di antara putaran jawaban quality-checklist wajib. Counter hanya bertambah pada hasil review FAIL yang tercatat; next-step atau refresh preflight berulang tidak menambahnya."
+  },
   "optional-skill-selection-mode": {
     "label": "Mode pemilihan skill spesialis",
     "description": "Mengatur apakah pencocokan skill spesialis saat tugas dimulai dimatikan, optional, atau mandatory. Nilai lama advisory/required/strict tetap kompatibel untuk dibaca dan disimpan sebagai mode kanonis.",

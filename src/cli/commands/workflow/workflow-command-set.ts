@@ -5,6 +5,7 @@ import { isRecognizedBundleName } from '../../../core/constants';
 import {
     buildDefaultWorkflowConfig,
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
+    MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     OPTIONAL_QUALITY_CHECK_SCOPE_CATEGORY_TEST_ONLY,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     getBaselineOptionalQualityCheckRule,
@@ -725,6 +726,15 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         );
         changedFields.push('optional_quality_checks.enabled');
     }
+    if (typeof options.optionalChecksReviewFailureCadenceInterval === 'string') {
+        nextOptionalQualityChecks.review_failure_cadence_interval = parseIntegerText(
+            options.optionalChecksReviewFailureCadenceInterval,
+            '--optional-checks-review-failure-cadence-interval',
+            1,
+            MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL
+        );
+        changedFields.push('optional_quality_checks.review_failure_cadence_interval');
+    }
     const optionalRulesBefore = JSON.stringify(nextOptionalQualityChecks.rules);
     nextOptionalQualityChecks.rules = deleteOptionalCheckRule(
         upsertOptionalCheckRule(nextOptionalQualityChecks.rules, options),
@@ -773,6 +783,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             + '--no-delegate or --review-delegation-no-delegate, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
             + '--task-reset-enabled, --auto-backup-* flags, --optional-checks-enabled, '
+            + '--optional-checks-review-failure-cadence-interval, '
             + '--optional-check-rule-* flags, --optional-skill-selection-mode, '
             + 'their short on/off aliases, or --garda-self-guard.'
         );

@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Interval voor kwaliteitscontrolecadans",
+    "description": "Aantal geregistreerde mislukte reviews tussen verplichte quality-checklist antwoordrondes. De teller loopt alleen op bij geregistreerde review FAIL resultaten; herhaalde next-step of preflight refresh verhoogt hem niet."
+  },
   "optional-skill-selection-mode": {
     "label": "Specialistische-skillselectiemodus",
     "description": "Bepaalt of specialistische skillmatching bij taakstart uit, optional of mandatory is. Legacywaarden advisory/required/strict blijven leescompatibel en worden bij opslaan naar canonieke modi geschreven.",

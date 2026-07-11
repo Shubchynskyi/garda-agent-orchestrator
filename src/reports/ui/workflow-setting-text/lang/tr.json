@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Kalite kontrol kadansı aralığı",
+    "description": "Zorunlu quality-checklist yanıt çalıştırmaları arasındaki kaydedilmiş başarısız review denemesi sayısı. Sayaç yalnızca kaydedilmiş review FAIL sonuçlarında artar; tekrarlanan next-step veya preflight yenilemeleri artırmaz."
+  },
   "optional-skill-selection-mode": {
     "label": "Uzman beceri secim modu",
     "description": "Gorev baslangicinda uzman beceri eslestirmesinin kapali, optional veya mandatory olmasini denetler. Eski advisory/required/strict degerleri okuma uyumlulugu icin korunur ve kaydedilirken kanonik modlara yazilir.",

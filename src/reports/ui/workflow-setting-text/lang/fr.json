@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Intervalle de cadence du contrôle qualité",
+    "description": "Nombre d’échecs de review enregistrés entre deux séries obligatoires de réponses quality-checklist. Le compteur n’avance que sur les résultats review FAIL enregistrés ; les relances next-step ou preflight ne l’avancent pas."
+  },
   "optional-skill-selection-mode": {
     "label": "Mode de selection des competences specialistes",
     "description": "Controle si la selection des competences specialistes au demarrage de tache est desactivee, optionnelle ou obligatoire. Les valeurs historiques advisory/required/strict restent compatibles en lecture et sont enregistrees en modes canoniques.",

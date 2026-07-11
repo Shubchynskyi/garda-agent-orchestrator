@@ -385,6 +385,10 @@
       }
     }
   },
+  "optional-checks-review-failure-cadence-interval": {
+    "label": "Intervall der Qualitätsprüfungs-Kadenz",
+    "description": "Anzahl aufgezeichneter Review-Fehlschläge zwischen verpflichtenden Quality-Checklist-Antwortläufen. Der Zähler steigt nur bei aufgezeichneten review FAIL Ergebnissen; wiederholtes next-step oder Preflight-Refresh erhöht ihn nicht."
+  },
   "optional-skill-selection-mode": {
     "label": "Spezialisten-Skill-Auswahlmodus",
     "description": "Steuert, ob Spezialisten-Skill-Matching beim Task-Start aus, optional oder verpflichtend ist. Legacy-Werte advisory/required/strict bleiben lesekompatibel und werden beim Speichern in kanonische Modi geschrieben.",
