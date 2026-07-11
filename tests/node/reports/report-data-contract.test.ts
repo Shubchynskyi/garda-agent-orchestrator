@@ -321,7 +321,13 @@ function writeQualityChecklistArtifact(repoRoot: string, options: {
         task_id: options.taskId,
         checklist_id: options.checklistId ?? 'optional_quality_checks',
         status: options.status,
-        outcome: options.status === 'WARN' ? 'WARN' : 'FAIL',
+        outcome: options.status === 'PASS'
+            ? 'PASS'
+            : options.status === 'WARN'
+                ? 'WARN'
+                : options.status === 'SKIPPED_CADENCE' || options.status === 'SKIPPED_DISABLED'
+                    ? 'INFO'
+                    : 'FAIL',
         scope_category: scopeCategory,
         active_rule_count: options.activeRuleCount ?? 1,
         skipped_by_scope_rule_count: options.skippedByScopeRuleCount ?? skippedRules.length,
@@ -1086,6 +1092,48 @@ test('buildReportDataContract exposes quality gate evidence and action-required 
     const actionTaskDetail = buildReportTaskDetail({ taskId: 'T-099', repoRoot });
     assert.equal(actionTaskDetail.quality_checklist.latest?.checklist_status, 'ACTION_REQUIRED');
     assert.deepEqual(actionTaskDetail.quality_checklist.action_required_history[0].actions_required, ['Extract parser helpers before review.']);
+});
+
+test('buildReportDataContract exposes skipped cadence quality checklist evidence', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'SKIPPED_CADENCE',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath,
+        answers: [],
+        activeRuleCount: 1
+    });
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z'
+    });
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(report.quality_gate_tab.latest_check.task_id, 'T-100');
+    assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'current');
+    assert.equal(report.quality_gate_tab.latest_check.checklist_status, 'SKIPPED_CADENCE');
+    assert.equal(report.quality_gate_tab.latest_check.outcome, 'INFO');
+    assert.equal(report.quality_gate_tab.latest_check.effect, 'skipped_cadence');
+    assert.equal(report.quality_gate_tab.latest_check.summary, 'Quality checklist was skipped by the review-failure cadence.');
+    assert.deepEqual(report.quality_gate_tab.latest_check.stale_reasons, []);
+    assert.deepEqual(report.quality_gate_tab.latest_check.stale_reason_codes, []);
+    assert.equal(report.quality_gate_tab.latest_check.answer_count, 0);
+    assert.equal(report.quality_gate_tab.latest_check.action_taken_count, 0);
+    assert.equal(report.quality_gate_tab.latest_check.action_required_count, 0);
+
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'current');
+    assert.equal(taskDetail.quality_checklist.latest?.checklist_status, 'SKIPPED_CADENCE');
+    assert.equal(taskDetail.quality_checklist.latest?.outcome, 'INFO');
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'skipped_cadence');
+    assert.equal(taskDetail.quality_checklist.latest?.summary_key, 'skipped_cadence');
+    assert.equal(taskDetail.quality_checklist.latest?.summary, 'Quality checklist was skipped by the review-failure cadence.');
+    assert.deepEqual(taskDetail.quality_checklist.latest?.stale_reasons, []);
+    assert.deepEqual(taskDetail.quality_checklist.latest?.stale_reason_codes, []);
 });
 
 test('buildReportTaskDetail bounds task quality checklist action-required history', () => {

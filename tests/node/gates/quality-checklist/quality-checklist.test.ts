@@ -11,6 +11,7 @@ import {
 } from '../../../../src/core/workflow-config';
 import {
     buildQualityChecklistArtifact,
+    buildQualityChecklistCadenceSkipArtifact,
     materializeQualityChecklistAnswersTemplate
 } from '../../../../src/gates/quality-checklist';
 import {
@@ -250,6 +251,46 @@ describe('quality-checklist gate', () => {
                     .map((rule) => rule.id)
                     .sort(),
                 [...OPS_SHELL_QUALITY_RULE_IDS].sort()
+            );
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('blocks cadence skip evidence when current configuration has non-answer violations', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-cadence-skip-config-error' });
+        try {
+            const workflowConfigPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'live',
+                'config',
+                'workflow-config.json'
+            );
+            const workflowConfig = buildDefaultWorkflowConfig();
+            workflowConfig.optional_quality_checks.rules = [
+                ...workflowConfig.optional_quality_checks.rules,
+                {
+                    ...workflowConfig.optional_quality_checks.rules[0],
+                    title: 'Duplicate rule for regression'
+                }
+            ];
+            fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
+            const preflightPath = writeGateFixturePreflight(fixture);
+
+            const artifact = buildQualityChecklistCadenceSkipArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath
+            });
+
+            assert.equal(artifact.status, 'CONFIG_ERROR');
+            assert.equal(artifact.outcome, 'FAIL');
+            assert.deepEqual(artifact.answers, []);
+            assert.ok(artifact.violations.some((violation) => violation.includes('duplicate quality-check rule id')));
+            assert.equal(
+                artifact.violations.some((violation) => violation.startsWith('Missing answer for active quality-check rule')),
+                false
             );
         } finally {
             fixture.cleanup();
@@ -734,6 +775,7 @@ describe('quality-checklist gate', () => {
                 task_id: string;
                 preflight_sha256: string;
                 effective_policy_sha256: string;
+                active_rule_ids: string[];
                 answers: Array<Record<string, unknown>>;
             };
             assert.equal(template.event_source, 'quality-checklist-answers-template');
@@ -741,8 +783,13 @@ describe('quality-checklist gate', () => {
             assert.match(template.preflight_sha256, /^[a-f0-9]{64}$/u);
             assert.match(template.effective_policy_sha256, /^[a-f0-9]{64}$/u);
             assert.equal(template.answers.length, UNIVERSAL_QUALITY_RULE_IDS.length);
+            assert.deepEqual(template.active_rule_ids, UNIVERSAL_QUALITY_RULE_IDS);
             assert.ok(template.answers.every((answer) => answer.status === '' && answer.answer === ''));
-            assert.ok(template.answers.every((answer) => typeof answer.title === 'string' && typeof answer.prompt === 'string'));
+            assert.ok(template.answers.every((answer) => (
+                Object.keys(answer).sort().join(',') === 'answer,rule_id,status'
+                && !Object.hasOwn(answer, 'title')
+                && !Object.hasOwn(answer, 'prompt')
+            )));
 
             template.answers = template.answers.map((answer) => ({
                 ...answer,
@@ -804,7 +851,7 @@ describe('quality-checklist gate', () => {
         }
     });
 
-    it('refreshes a current-bound template with tampered prompts or malformed editable fields', () => {
+    it('refreshes a current-bound template with duplicated prompt fields or malformed optional fields', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-tampered-answers-template' });
         try {
             const preflightPath = writeGateFixturePreflight(fixture);
@@ -815,13 +862,12 @@ describe('quality-checklist gate', () => {
                 'tmp',
                 `${fixture.taskId}-quality-checklist-answers.json`
             );
-            const created = materializeQualityChecklistAnswersTemplate({
+            materializeQualityChecklistAnswersTemplate({
                 repoRoot: fixture.repoRoot,
                 taskId: fixture.taskId,
                 preflightPath,
                 answersPath
             });
-            const canonicalPrompt = created.template.answers[0].prompt;
             const tampered = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
                 answers: Array<Record<string, unknown>>;
             };
@@ -835,12 +881,12 @@ describe('quality-checklist gate', () => {
                 answersPath
             });
             assert.equal(promptRefresh.status, 'refreshed');
-            assert.equal(promptRefresh.template.answers[0].prompt, canonicalPrompt);
+            assert.equal(Object.hasOwn(promptRefresh.template.answers[0], 'prompt'), false);
 
             const malformed = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
                 answers: Array<Record<string, unknown>>;
             };
-            delete malformed.answers[0].actions_taken;
+            malformed.answers[0].actions_taken = [42];
             fs.writeFileSync(answersPath, JSON.stringify(malformed, null, 2) + '\n', 'utf8');
             const fieldRefresh = materializeQualityChecklistAnswersTemplate({
                 repoRoot: fixture.repoRoot,
@@ -849,7 +895,7 @@ describe('quality-checklist gate', () => {
                 answersPath
             });
             assert.equal(fieldRefresh.status, 'refreshed');
-            assert.deepEqual(fieldRefresh.template.answers[0].actions_taken, []);
+            assert.equal(Object.hasOwn(fieldRefresh.template.answers[0], 'actions_taken'), false);
         } finally {
             fixture.cleanup();
         }
