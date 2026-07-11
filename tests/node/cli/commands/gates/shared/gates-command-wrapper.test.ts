@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -15,6 +16,23 @@ import {
     seedInitAnswers,
     seedTaskQueue
 } from '../../gate-test-helpers';
+
+function seedNodeFoundationFocusedWrapperFixture(repoRoot: string): void {
+    const scriptPath = path.join(repoRoot, 'scripts', 'node-foundation', 'build-scripts.cjs');
+    const testPath = path.join(repoRoot, 'tests', 'node', 'gates', 'focused-command.test.ts');
+    fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(testPath, 'export {};\n', 'utf8');
+    fs.writeFileSync(
+        scriptPath,
+        [
+            "if (process.argv[2] !== 'test.js') process.exit(2);",
+            "console.log('node-foundation focused wrapper executed');",
+            ''
+        ].join('\n'),
+        'utf8'
+    );
+}
 
 describe('cli/commands/gates intermediate command wrapper', () => {
     it('runs intermediate commands with compact audited output telemetry', async () => {
@@ -79,6 +97,83 @@ describe('cli/commands/gates intermediate command wrapper', () => {
         }
     });
 
+    it('allows node-foundation focused test wrapper as a targeted intermediate command', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-INTERMEDIATE';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeFoundationFocusedWrapperFixture(repoRoot);
+
+            const result = await runIntermediateCommandCommand({
+                repoRoot,
+                taskId,
+                commandSource: 'targeted-test',
+                command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts',
+                timeoutMs: 60_000
+            });
+
+            assert.equal(result.exitCode, 0);
+            const output = result.outputLines.join('\n');
+            assert.ok(output.includes('INTERMEDIATE_COMMAND_PASSED'));
+            assert.ok(output.includes('CommandSource: targeted-test'));
+
+            const events = readTaskTimelineEvents(repoRoot, taskId);
+            const event = events.find((candidate) => candidate.event_type === 'INTERMEDIATE_COMMAND_RUN');
+            assert.ok(event);
+            assert.equal((event.details as Record<string, unknown>)?.command_source, 'targeted-test');
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('allows node-foundation focused test wrapper through the reviewer-facing CLI entrypoint', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-INTERMEDIATE';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeFoundationFocusedWrapperFixture(repoRoot);
+
+            const cliPath = path.join(process.cwd(), 'bin', 'garda.js');
+            const result = childProcess.spawnSync(
+                process.execPath,
+                [
+                    cliPath,
+                    'gate',
+                    'run-intermediate-command',
+                    '--task-id',
+                    taskId,
+                    '--command-source',
+                    'targeted-test',
+                    '--command',
+                    'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts',
+                    '--timeout-ms',
+                    '60000',
+                    '--repo-root',
+                    repoRoot
+                ],
+                {
+                    cwd: repoRoot,
+                    encoding: 'utf8',
+                    timeout: 60_000
+                }
+            );
+
+            assert.equal(result.status, 0, result.stderr || result.stdout);
+            const output = `${result.stdout}\n${result.stderr}`;
+            assert.ok(output.includes('INTERMEDIATE_COMMAND_PASSED'));
+            assert.ok(output.includes('CommandSource: targeted-test'));
+
+            const events = readTaskTimelineEvents(repoRoot, taskId);
+            const event = events.find((candidate) => candidate.event_type === 'INTERMEDIATE_COMMAND_RUN');
+            assert.ok(event);
+            assert.equal((event.details as Record<string, unknown>)?.command_source, 'targeted-test');
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('rejects arbitrary intermediate commands without recording token telemetry', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-INTERMEDIATE';
@@ -130,6 +225,46 @@ describe('cli/commands/gates intermediate command wrapper', () => {
             assert.equal(absoluteNodeResult.exitCode, EXIT_GATE_FAILURE);
             assert.ok(npmShimResult.outputLines.join('\n').includes('INTERMEDIATE_COMMAND_REJECTED'));
             assert.ok(absoluteNodeResult.outputLines.join('\n').includes('INTERMEDIATE_COMMAND_REJECTED'));
+            const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
+            const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
+            assert.equal(events.some((event) => event.event_type === 'INTERMEDIATE_COMMAND_RUN'), false);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects unsafe node-foundation focused wrapper targets without recording telemetry', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-INTERMEDIATE';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeFoundationFocusedWrapperFixture(repoRoot);
+
+            const rejectedCommands = [
+                'node scripts/node-foundation/build-scripts.cjs test.js src/cli/not-a-focused-test.ts',
+                'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/../secret.test.ts',
+                'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates',
+                'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.ts',
+                'node scripts/node-foundation/build-scripts.cjs test.js --runInBand tests/node/gates/focused-command.test.ts'
+            ];
+
+            for (const command of rejectedCommands) {
+                const result = await runIntermediateCommandCommand({
+                    repoRoot,
+                    taskId,
+                    commandSource: 'targeted-test',
+                    command,
+                    timeoutMs: 60_000
+                });
+
+                assert.equal(result.exitCode, EXIT_GATE_FAILURE, command);
+                const output = result.outputLines.join('\n');
+                assert.ok(output.includes('INTERMEDIATE_COMMAND_REJECTED'), command);
+                assert.ok(output.includes('CommandSource: targeted-test'), command);
+                assert.ok(output.includes('not eligible'), command);
+            }
+
             const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
             const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
             assert.equal(events.some((event) => event.event_type === 'INTERMEDIATE_COMMAND_RUN'), false);

@@ -95,6 +95,25 @@ function isNodeToken(token: string): boolean {
     return isBareCommandToken(token) && ['node', 'node.exe'].includes(basenameLower(token));
 }
 
+function normalizeCommandPathToken(token: string): string {
+    return token.replace(/\\/g, '/').replace(/^\.\//u, '');
+}
+
+function isSafeFocusedTestPath(token: string): boolean {
+    const normalized = normalizeCommandPathToken(token);
+    return normalized.startsWith('tests/')
+        && !normalized.split('/').includes('..')
+        && /\.(?:test|spec)\.(?:c|m)?[jt]sx?$/u.test(normalized);
+}
+
+function isNodeFoundationFocusedTestCommand(binary: string, args: string[]): boolean {
+    return isNodeToken(binary)
+        && normalizeCommandPathToken(args[0] ?? '') === 'scripts/node-foundation/build-scripts.cjs'
+        && args[1] === 'test.js'
+        && args.length >= 3
+        && args.slice(2).every(isSafeFocusedTestPath);
+}
+
 function isAllowedIntermediateCommand(command: string, commandSource: IntermediateCommandSource): boolean {
     const tokens = splitCommandLine(command);
     if (tokens.length === 0) {
@@ -102,10 +121,12 @@ function isAllowedIntermediateCommand(command: string, commandSource: Intermedia
     }
     const [binary, ...args] = tokens;
     if (commandSource === 'node-test') {
-        return isNodeToken(binary) && args[0] === '--test' && args.length >= 2;
+        return (isNodeToken(binary) && args[0] === '--test' && args.length >= 2)
+            || isNodeFoundationFocusedTestCommand(binary, args);
     }
     if (commandSource === 'targeted-test') {
-        return isNpmToken(binary) && args[0] === 'test' && args.includes('--');
+        return (isNpmToken(binary) && args[0] === 'test' && args.includes('--'))
+            || isNodeFoundationFocusedTestCommand(binary, args);
     }
     if (commandSource === 'typecheck') {
         return isNpmToken(binary) && args[0] === 'run' && args[1] === 'typecheck';

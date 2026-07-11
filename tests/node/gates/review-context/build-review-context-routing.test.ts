@@ -266,6 +266,8 @@ import {
             assert.ok(promptArtifactText.includes('do not rerun full tests unless investigating a concrete finding'));
             assert.ok(promptArtifactText.includes('gate run-intermediate-command'));
             assert.ok(promptArtifactText.includes('bounded task-owned manual-validation logs'));
+            assert.ok(promptArtifactText.includes('Missing focused execution evidence for changed tests is not by itself a defect'));
+            assert.ok(promptArtifactText.includes('run the smallest relevant focused test command before returning a verdict'));
             assert.ok(promptArtifactText.includes('- # pass 91'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });

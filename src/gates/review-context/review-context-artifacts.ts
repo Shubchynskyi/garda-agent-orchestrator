@@ -162,6 +162,16 @@ function buildReviewerOutputExampleLines(): string[] {
     ];
 }
 
+function buildTestReviewFocusedExecutionLines(reviewType: string): string[] {
+    if (reviewType !== 'test') {
+        return [];
+    }
+    return [
+        '- Missing focused execution evidence for changed tests is not by itself a defect. If changed test files or focused suites are not covered by current full-suite or selected manual-validation evidence, run the smallest relevant focused test command before returning a verdict, or report inability to execute with actionable diagnostics.',
+        '- Prefer `gate run-intermediate-command` for the focused run when eligible; otherwise use a bounded task-owned manual-validation log. Record the command and result in Validation Notes or a `## Commands Run` section.'
+    ];
+}
+
 function buildReviewerOutputTemplateBodyLines(passVerdictToken: string, failVerdictToken: string): string[] {
     return [
         '## Validation Notes',
@@ -225,6 +235,7 @@ export function buildReviewerOutputContractMarkdown(options: {
         '- `Deferred Findings` is only for explicit actionable accepted follow-ups with a concrete next step and `Justification:`; these entries become strict follow-up obligations.',
         '- `Residual Risks` is only for concrete active risks that remain after the review. Do not use it for optional future work, validation limits, or speculative notes in a PASS review.',
         '- If you run a command to investigate one concrete suspected finding, use a scoped compact invocation: prefer `gate run-intermediate-command` when eligible, or a bounded task-owned manual-validation log tail otherwise. Do not run ad-hoc full-suite/build commands or duplicate gate-owned validation.',
+        ...buildTestReviewFocusedExecutionLines(reviewType),
         '- Validation-boundary notes, command logs, positive inspection summaries, and speculative performance or environment hypotheticals are not findings, deferred findings, or residual risks. Mention read-only scope, tests not run by the reviewer, gate-owned full-suite validation, or commands already covered by gates only in the prose summary, then set the sections above to `None`.',
         '- `record-review-result` preserves raw reviewer output for audit, but it will not infer strict follow-up obligations from `Residual Risks`, command logs, validation-boundary notes, or positive summaries.',
         '- If you include command logs, put them in a separate `## Commands Run` section after `## Verdict`, or mention them in prose; never put command headings or command bullets under `Deferred Findings` or `Residual Risks`.',
@@ -288,6 +299,7 @@ function buildReviewerRolePromptMarkdown(options: {
         '- Do not replace the required verdict token with a summary sentence.',
         ...buildExhaustiveReviewContractLines(),
         ...testReviewStrictNote,
+        ...buildTestReviewFocusedExecutionLines(reviewType),
         ''
     ].join('\n');
 }
@@ -361,6 +373,7 @@ function buildReviewerPromptTemplateMarkdown(options: {
         '- Reviewers normally inspect evidence only; mandatory compile and full-suite validation are gate-owned.',
         '- If one concrete suspected finding needs a command, use a scoped compact invocation: prefer `gate run-intermediate-command` when eligible, or a bounded task-owned manual-validation log tail otherwise.',
         '- Do not run ad-hoc full-suite/build commands, broad `npm test`, or redundant `node --test` suites that duplicate current gate coverage.',
+        ...buildTestReviewFocusedExecutionLines(reviewType),
         '',
         '## Findings Rules',
         '- Findings by Severity is only for active defects that should block or be fixed.',
