@@ -2,7 +2,7 @@ import type {
     NextStepCommand,
     NextStepStatus
 } from './';
-import { buildCommand } from './next-step-command-formatters';
+import { buildCommand, formatNextStepInlineValue } from './next-step-command-formatters';
 
 export interface NextStepPreReviewRoute {
     status: NextStepStatus;
@@ -53,6 +53,11 @@ export interface NextStepQualityChecklistRoutingOptions extends NextStepReadines
     command: string;
 }
 
+export interface NextStepOptionalSkillActivationRoutingOptions {
+    skillId: string;
+    command: string;
+}
+
 export interface NextStepPreGuardRoutingOptions {
     preflightCycleReadiness: NextStepReadinessState;
     preflightCycleRefreshCommand: string;
@@ -68,6 +73,7 @@ export interface NextStepPreGuardRoutingOptions {
     coherentCycleReadiness: NextStepReadinessState & { command?: string | null };
     navigatorCommand: string;
     postPreflightRulePack: NextStepPostPreflightRulePackRoutingOptions;
+    optionalSkillActivation?: NextStepOptionalSkillActivationRoutingOptions | null;
 }
 
 export function resolveNextStepPreGuardRoute(
@@ -163,6 +169,24 @@ export function resolveNextStepPreGuardRoute(
             reason: options.workspaceReadiness.reason,
             commands: [
                 buildCommand('Refresh preflight', options.workspaceRefreshCommand)
+            ]
+        };
+    }
+
+    if (options.optionalSkillActivation) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'activate-optional-skill',
+            title: 'Activate the selected optional skill.',
+            reason:
+                `Current preflight selected optional skill ${formatNextStepInlineValue(options.optionalSkillActivation.skillId)}, ` +
+                'but the current task cycle has no matching activation evidence yet. ' +
+                'Record activation before restart-coherent-cycle, compile, review, implementation, or closeout so selected-skill diagnostics and final audit describe the same current-cycle state.',
+            commands: [
+                buildCommand(
+                    `Activate optional skill ${options.optionalSkillActivation.skillId}`,
+                    options.optionalSkillActivation.command
+                )
             ]
         };
     }

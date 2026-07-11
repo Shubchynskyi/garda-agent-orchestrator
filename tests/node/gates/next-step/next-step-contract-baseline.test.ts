@@ -11,10 +11,12 @@ import {
     buildStrictDecompositionDecisionArtifact,
     buildTaskModeArtifact,
     formatNextStepText,
+    getWorkspaceSnapshot,
     resolveNextStep
 } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { computeOptionalSkillSelectionFingerprint } from '../../../../src/runtime/optional-skill-selection';
+import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-CONTRACT-1';
 const TASK_TITLE = 'Pin next-step contract before refactor';
@@ -220,6 +222,7 @@ function seedOptionalSkillSelectionPreflight(
         skillPath?: string;
         selectionPhase?: 'pre_implementation' | 'post_diff';
         pathEvidenceSource?: 'none' | 'planned_changed_files' | 'task_plan_scope' | 'explicit_scope' | 'actual_changed_files';
+        includeMetrics?: boolean;
     } = {}
 ): void {
     const policyMode = options.policyMode || 'advisory';
@@ -264,10 +267,23 @@ function seedOptionalSkillSelectionPreflight(
         selection_fingerprint_sha256: computeOptionalSkillSelectionFingerprint(optionalSkillArtifact)
     });
     writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+    const snapshot = options.includeMetrics
+        ? getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/api/orders.ts'])
+        : null;
     writeJson(preflightPath, {
         task_id: taskId,
         scope_category: 'code',
         changed_files: ['src/api/orders.ts'],
+        ...(snapshot ? {
+            detection_source: snapshot.detection_source,
+            mode: 'FULL_PATH',
+            metrics: {
+                changed_lines_total: snapshot.changed_lines_total,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            }
+        } : {}),
         required_reviews: {
             code: false,
             db: false,
@@ -292,6 +308,25 @@ function seedOptionalSkillSelectionPreflight(
         output_path: normalizeForTimeline(preflightPath)
     }, '2026-01-01T00:00:04.500Z');
     seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+}
+
+function seedCompileGatePass(repoRoot: string, taskId: string, timestampUtc = '2026-01-01T00:00:05.500Z'): void {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
+        task_id: taskId,
+        event_source: 'compile-gate',
+        status: 'PASSED',
+        outcome: 'PASS',
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_hash_sha256: 'fixture-preflight',
+        commands_path: normalizeForTimeline(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '40-commands.md')),
+        output_filters_path: normalizeForTimeline(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'output-filters.json'))
+    });
+    appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED', {}, timestampUtc);
+}
+
+function seedReviewGatePass(repoRoot: string, taskId: string, timestampUtc = '2026-01-01T00:00:06.000Z'): void {
+    appendEvent(repoRoot, taskId, 'REVIEW_GATE_PASSED', {}, timestampUtc);
 }
 
 function seedDevopsSuggestionSurface(repoRoot: string): void {
@@ -871,6 +906,63 @@ describe('next-step refactor contract baseline', () => {
         assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, ['node-backend']);
         assert.match(text, /^OptionalSkillPendingActivation: node-backend$/mu);
         assert.match(result.optional_skill_selection?.task_start_instruction || '', /Run the activation command/i);
+    });
+
+    it('routes mandatory optional-skill activation before coherent-cycle restart compilation', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'required' });
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+        seedCompileGatePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
+            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`))
+        }, '2026-01-01T00:00:08.000Z');
+
+        const pendingActivation = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(pendingActivation.status, 'BLOCKED');
+        assert.equal(pendingActivation.next_gate, 'activate-optional-skill');
+        assert.match(pendingActivation.reason, /before restart-coherent-cycle/u);
+        assert.match(pendingActivation.commands[0]?.command || '', /gate activate-optional-skill/u);
+        assert.doesNotMatch(pendingActivation.commands[0]?.command || '', /gate restart-coherent-cycle/u);
+
+        const optionalSkillArtifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-optional-skill-selection.json`);
+        const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
+        appendEvent(repoRoot, TASK_ID, 'SKILL_SELECTED', {
+            skill_id: 'node-backend',
+            trigger_reason: 'optional_skill_selection',
+            optional_skill_selection_fingerprint_sha256: optionalSkillArtifact.selection_fingerprint_sha256
+        }, '2026-01-01T00:00:09.000Z');
+
+        const restart = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(restart.next_gate, 'restart-coherent-cycle');
+        assert.match(restart.reason, /Latest PREFLIGHT_CLASSIFIED/u);
+        assert.match(restart.reason, /REVIEW_GATE_PASSED/u);
+        assert.match(restart.commands[0]?.command || '', /gate restart-coherent-cycle/u);
+        assert.doesNotMatch(restart.commands[0]?.command || '', /gate activate-optional-skill/u);
+    });
+
+    it('keeps stale workspace preflight refresh before mandatory optional-skill activation', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'required', includeMetrics: true });
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const drift = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.reason, /Preflight scope is stale before compile/u);
+        assert.match(result.commands[0]?.command || '', /gate classify-change/u);
+        assert.match(result.commands[0]?.command || '', /--changed-file "src\/api\/orders\.ts"/u);
+        assert.doesNotMatch(result.commands[0]?.command || '', /gate activate-optional-skill/u);
     });
 
     it('does not trust optional-skill activation evidence from a malformed task timeline', () => {

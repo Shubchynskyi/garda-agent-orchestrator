@@ -2927,6 +2927,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskMode
         })
         : [];
+    const pendingOptionalSkillActivation = getPendingOptionalSkillActivationCommand(optionalSkillSelectionSummary);
     const currentProtectedScopeRoute = buildCurrentProtectedScopeTaskModeRestartRoute();
     if (currentProtectedScopeRoute) {
         return currentProtectedScopeRoute;
@@ -3013,7 +3014,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 taskId,
                 taskModePath
             )
-        }
+        },
+        optionalSkillActivation: pendingOptionalSkillActivation
     });
     if (preGuardRoute) {
         const qualityChecklist = preGuardRoute.nextGate === 'classify-change' && qualityChecklistReadiness
@@ -3290,7 +3292,6 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         return strictDecompositionBlock;
     }
 
-    const pendingOptionalSkillActivation = getPendingOptionalSkillActivationCommand(optionalSkillSelectionSummary);
     if (pendingOptionalSkillActivation) {
         return buildResult({
             ...resultBase,
@@ -3300,7 +3301,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             reason:
                 `Current preflight selected optional skill ${formatNextStepInlineValue(pendingOptionalSkillActivation.skillId)}, ` +
                 'but the current task cycle has no matching activation evidence yet. ' +
-                'Record activation before compile, review, implementation, or closeout so selected-skill diagnostics and final audit describe the same current-cycle state.',
+                'Record activation before restart-coherent-cycle, compile, review, implementation, or closeout so selected-skill diagnostics and final audit describe the same current-cycle state.',
             commands: [
                 buildCommand(
                     `Activate optional skill ${pendingOptionalSkillActivation.skillId}`,
