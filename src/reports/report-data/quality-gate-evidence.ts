@@ -697,6 +697,9 @@ function effectForArtifact(options: {
     if (status === 'SKIPPED_DISABLED') {
         return 'disabled';
     }
+    if (status === 'SKIPPED_CADENCE') {
+        return 'skipped_cadence';
+    }
     if (status === 'CONFIG_ERROR') {
         return 'invalid';
     }
@@ -731,6 +734,9 @@ function summaryForLatestCheck(options: {
     }
     if (options.effect === 'helped') {
         return `Quality checklist passed after recorded implementation action(s) (${options.actionTakenCount}).`;
+    }
+    if (options.effect === 'skipped_cadence') {
+        return 'Quality checklist was skipped by the review-failure cadence.';
     }
     return `Quality checklist is current with status ${options.checklistStatus || 'PASS'}.`;
 }

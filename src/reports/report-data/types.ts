@@ -197,7 +197,7 @@ export interface ReportQualityGateRule {
 }
 
 export type ReportQualityGateEvidenceStatus = 'current' | 'stale' | 'missing' | 'invalid' | 'disabled';
-export type ReportQualityGateEffect = 'passed' | 'helped' | 'warned' | 'required_rework' | 'disabled' | 'missing' | 'invalid' | 'stale';
+export type ReportQualityGateEffect = 'passed' | 'helped' | 'warned' | 'required_rework' | 'disabled' | 'skipped_cadence' | 'missing' | 'invalid' | 'stale';
 
 export interface ReportQualityGateAnswerSummary {
     rule_id: string;

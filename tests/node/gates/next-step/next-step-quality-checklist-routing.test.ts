@@ -14,6 +14,7 @@ import {
 import {
     ALL_REVIEW_FLAGS,
     TASK_ID,
+    appendEvent,
     fileSha256,
     makeTempRepo,
     normalizeForTimeline,
@@ -207,6 +208,33 @@ function writeQualityChecklistArtifact(
         actions_required: actionsRequired,
         violations: []
     });
+    appendEvent(repoRoot, taskId, 'QUALITY_CHECKLIST_RECORDED', status === 'PASS' ? 'PASS' : 'INFO', {
+        status,
+        artifact_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${taskId}-quality-checklist.json`))
+    });
+}
+
+function appendReviewFailure(repoRoot: string, reviewType = 'code'): void {
+    appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+        review_type: reviewType,
+        verdict_token: `${reviewType.toUpperCase()} REVIEW FAILED`
+    });
+}
+
+function appendCanonicalReviewFailure(repoRoot: string, reviewType = 'code'): void {
+    const reviewArtifactPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'reviews',
+        `${TASK_ID}-${reviewType}.md`
+    );
+    fs.mkdirSync(path.dirname(reviewArtifactPath), { recursive: true });
+    fs.writeFileSync(reviewArtifactPath, '## Verdict\nREVIEW FAILED\n', 'utf8');
+    appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+        review_type: reviewType,
+        review_artifact_snapshot_path: reviewArtifactPath
+    });
 }
 
 describe('gates/next-step quality checklist routing', () => {
@@ -228,6 +256,19 @@ describe('gates/next-step quality checklist routing', () => {
         assert.ok(result.commands[0].command.includes('--answers-path'));
         assert.ok(result.commands[0].command.includes(`${TASK_ID}-quality-checklist-answers.json`));
         assert.equal(result.commands[0].command.includes('--answers-json'), false);
+        const questionReferencePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            `${TASK_ID}-quality-checklist-questions.md`
+        );
+        assert.match(result.reason, /Complete active-question reference:/u);
+        const questionReference = fs.readFileSync(questionReferencePath, 'utf8');
+        const activeRuleIds = buildDefaultWorkflowConfig().optional_quality_checks.rules
+            .filter((rule) => rule.enabled && isOptionalQualityCheckRuleActiveForScope(rule, 'mixed', ['src/app.ts']))
+            .map((rule) => rule.id);
+        assert.ok(activeRuleIds.every((ruleId) => questionReference.includes(`- ${ruleId}:`)));
         assert.ok(!result.commands[0].command.includes('gate compile-gate'));
 
         const answersPath = path.join(
@@ -440,6 +481,133 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.quality_checklist?.status, 'PASS');
         assert.equal(result.quality_checklist?.effect, 'passed');
         assert.ok(result.commands[0].command.includes('gate compile-gate'));
+    });
+
+    it('skips the first two review failures and requires answers on the third', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
+
+        for (const failureCount of [1, 2, 3]) {
+            appendReviewFailure(repoRoot);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+                changedFiles: [`src/review-fix-${failureCount}.ts`]
+            });
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+            if (failureCount < 3) {
+                assert.equal(result.quality_checklist?.status, 'SKIPPED_CADENCE');
+                assert.equal(result.quality_checklist?.effect, 'skipped_cadence');
+                assert.notEqual(result.next_gate, 'quality-checklist');
+            } else {
+                assert.equal(result.next_gate, 'quality-checklist', result.reason);
+            }
+        }
+    });
+
+    it('recognizes a canonical failed review whose lifecycle event records materialization success', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
+        appendCanonicalReviewFailure(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/canonical-review-fix.ts']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.quality_checklist?.status, 'SKIPPED_CADENCE');
+        assert.equal(result.quality_checklist?.effect, 'skipped_cadence');
+    });
+
+    it('records a distinct cadence skip when another review fails without a preflight change', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
+        appendReviewFailure(repoRoot);
+        resolveNextStep({ taskId: TASK_ID, repoRoot });
+        appendReviewFailure(repoRoot);
+
+        const second = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const skipArtifact = JSON.parse(fs.readFileSync(path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'reviews',
+            `${TASK_ID}-quality-checklist.json`
+        ), 'utf8')) as Record<string, unknown>;
+
+        assert.equal(second.quality_checklist?.status, 'SKIPPED_CADENCE');
+        assert.equal(skipArtifact.review_failure_count, 2);
+
+        appendReviewFailure(repoRoot);
+        const third = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(third.next_gate, 'quality-checklist', third.reason);
+    });
+
+    it('does not advance the failure counter for diff changes or repeated next-step calls', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
+        appendReviewFailure(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { changedFiles: ['src/a.ts'] });
+        const first = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { changedFiles: ['src/b.ts'] });
+        const changedDiff = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const repeated = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(first.quality_checklist?.status, 'SKIPPED_CADENCE');
+        assert.equal(changedDiff.quality_checklist?.status, 'SKIPPED_CADENCE');
+        assert.equal(repeated.quality_checklist?.status, 'SKIPPED_CADENCE');
+    });
+
+    it('does not advance the operator-defined review-failure counter for compile or suite failures', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
+        appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_FAILED', 'FAIL', {});
+        appendEvent(repoRoot, TASK_ID, 'FULL_SUITE_VALIDATION_FAILED', 'FAIL', {});
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/non-review-remediation.ts']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.quality_checklist?.status, 'PASS');
+        assert.notEqual(result.quality_checklist?.effect, 'skipped_cadence');
+    });
+
+    it('uses the first test-review failure as a one-time forced reset', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
+        appendReviewFailure(repoRoot, 'test');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['tests/test-review-fix.test.ts'],
+            scopeCategory: 'test-only'
+        });
+        const forced = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(forced.next_gate, 'quality-checklist', forced.reason);
+
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS', { scopeCategory: 'test-only' });
+        appendReviewFailure(repoRoot, 'test');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['tests/second-test-review-fix.test.ts'],
+            scopeCategory: 'test-only'
+        });
+        const ordinary = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(ordinary.quality_checklist?.status, 'SKIPPED_CADENCE');
     });
 
     it('marks current PASS quality checklist evidence as helped when actions were taken', () => {

@@ -8,12 +8,16 @@ import {
 } from '../../core/workflow-config';
 import {
     assessQualityChecklistPolicyCompatibility,
+    buildQualityChecklistCadenceSkipArtifact,
     materializeQualityChecklistAnswersTemplate,
     QUALITY_CHECKLIST_ID,
-    QUALITY_CHECKLIST_STATUSES
+    QUALITY_CHECKLIST_STATUSES,
+    resolveDefaultQualityChecklistAnswersTemplatePath
 } from '../quality-checklist';
+import { appendMandatoryTaskEvent } from '../../gate-runtime/task-events';
 import {
-    fileSha256
+    fileSha256,
+    joinOrchestratorPath
 } from '../shared/helpers';
 import {
     isOrchestratorSourceCheckout
@@ -26,9 +30,10 @@ import {
     toRepoDisplayPath
 } from './next-step-command-formatters';
 import { isPlainRecord } from '../../core/records';
+import { readTaskTimelineEventLikes } from './next-step-review-timeline-evidence';
 
 export type NextStepQualityChecklistEvidenceStatus = 'disabled' | 'not_required' | 'missing' | 'invalid' | 'stale' | 'current';
-export type NextStepQualityChecklistEffect = 'disabled' | 'not_required' | 'missing' | 'invalid' | 'stale' | 'passed' | 'helped' | 'warned' | 'required_rework';
+export type NextStepQualityChecklistEffect = 'disabled' | 'not_required' | 'missing' | 'invalid' | 'stale' | 'passed' | 'helped' | 'warned' | 'required_rework' | 'skipped_cadence';
 
 export interface NextStepQualityChecklistReadiness {
     enabled: boolean;
@@ -151,6 +156,109 @@ function countArray(value: unknown): number {
     return Array.isArray(value) ? value.length : 0;
 }
 
+function reviewRecordedFailed(details: Record<string, unknown>): boolean {
+    const verdict = String(details.verdict_token || details.status || '').trim().toUpperCase();
+    if (/^(?:REVIEW|CODE REVIEW|SECURITY REVIEW|PERFORMANCE REVIEW|TEST REVIEW) FAILED$/u.test(verdict)) {
+        return true;
+    }
+    for (const candidate of [details.review_artifact_snapshot_path]) {
+        const artifactPath = String(candidate || '').trim();
+        if (!artifactPath || !fileExists(artifactPath)) continue;
+        const verdictMatch = fs.readFileSync(artifactPath, 'utf8')
+            .match(/(?:^|\n)## Verdict\s*\r?\n\s*([^\r\n]+)/iu);
+        const snapshotVerdict = String(verdictMatch?.[1] || '').trim().toUpperCase();
+        if (/^(?:REVIEW|CODE REVIEW|SECURITY REVIEW|PERFORMANCE REVIEW|TEST REVIEW) FAILED$/u.test(snapshotVerdict)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function writeActiveQuestionReference(options: {
+    repoRoot: string;
+    taskId: string;
+    rules: readonly { id: string; prompt?: string }[];
+}): string {
+    const referencePath = joinOrchestratorPath(
+        options.repoRoot,
+        path.join('runtime', 'tmp', `${options.taskId}-quality-checklist-questions.md`)
+    );
+    const lines = [
+        `# Active quality-checklist questions for ${options.taskId}`,
+        '',
+        ...options.rules.flatMap((rule) => [
+            `- ${rule.id}: ${String(rule.prompt || '').trim()}`
+        ])
+    ];
+    fs.mkdirSync(path.dirname(referencePath), { recursive: true });
+    fs.writeFileSync(referencePath, `${lines.join('\n')}\n`, 'utf8');
+    return referencePath;
+}
+
+function reviewFailureCadence(repoRoot: string, taskId: string): {
+    due: boolean;
+    skip: boolean;
+    failureCount: number;
+    testResetPending: boolean;
+} {
+    const events = readTaskTimelineEventLikes(
+        joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events')),
+        taskId
+    );
+    const checklistPasses: number[] = [];
+    const reviewFailures: Array<{ index: number; reviewType: string }> = [];
+    events.forEach((event, index) => {
+        const details = isPlainRecord(event.details) ? event.details : {};
+        if (String(event.event_type || '') === 'QUALITY_CHECKLIST_RECORDED') {
+            const status = String(details.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+            if (status === 'PASS' || status === 'WARN') checklistPasses.push(index);
+            return;
+        }
+        if (String(event.event_type || '') !== 'REVIEW_RECORDED') return;
+        if (!reviewRecordedFailed(details)) return;
+        reviewFailures.push({ index, reviewType: String(details.review_type || '').trim().toLowerCase() });
+    });
+    const firstTestFailure = reviewFailures.find((failure) => failure.reviewType === 'test');
+    const testResetConsumed = !!firstTestFailure
+        && checklistPasses.some((index) => index > firstTestFailure.index);
+    const testResetPending = !!firstTestFailure && !testResetConsumed;
+    const latestChecklistPass = checklistPasses.at(-1) ?? -1;
+    const failureCount = reviewFailures.filter((failure) => failure.index > latestChecklistPass).length;
+    const hasBaseline = latestChecklistPass >= 0;
+    return {
+        due: !hasBaseline || testResetPending || failureCount >= 3,
+        skip: hasBaseline && !testResetPending && failureCount > 0 && failureCount < 3,
+        failureCount,
+        testResetPending
+    };
+}
+
+function writeCadenceSkipEvidence(options: {
+    repoRoot: string;
+    taskId: string;
+    preflightPath: string;
+    artifactPath: string;
+    failureCount: number;
+}): Record<string, unknown> {
+    const artifact: Record<string, unknown> = {
+        ...(buildQualityChecklistCadenceSkipArtifact(options) as unknown as Record<string, unknown>),
+        review_failure_count: options.failureCount
+    };
+    fs.mkdirSync(path.dirname(options.artifactPath), { recursive: true });
+    fs.writeFileSync(options.artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+    appendMandatoryTaskEvent(options.repoRoot, options.taskId, 'QUALITY_CHECKLIST_RECORDED', 'INFO',
+        `Quality checklist skipped by review-failure cadence after failure ${options.failureCount}.`, {
+            artifact_path: options.artifactPath.replace(/\\/g, '/'),
+            artifact_hash: fileSha256(options.artifactPath),
+            status: 'SKIPPED_CADENCE',
+            outcome: 'INFO',
+            preflight_path: artifact.preflight_path,
+            preflight_sha256: artifact.preflight_sha256,
+            review_failure_count: options.failureCount
+        });
+    return artifact;
+}
+
 function materializePendingQualityChecklistAnswers(
     options: {
         repoRoot: string;
@@ -191,6 +299,11 @@ function buildQualityChecklistReadiness(options: {
 }): NextStepQualityChecklistReadiness {
     const artifact = options.artifact || null;
     const templateMaterializationError = String(options.templateMaterializationError || '').trim();
+    const artifactPath = String(options.artifactPath || '').trim();
+    const taskId = artifactPath ? path.basename(artifactPath).replace(/-quality-checklist\.json$/u, '') : '';
+    const questionReferenceSuffix = options.required && !options.ready && artifactPath && taskId
+        ? ` Complete active-question reference: ${path.join(path.dirname(path.dirname(artifactPath)), 'tmp', `${taskId}-quality-checklist-questions.md`).replace(/\\/g, '/')}.`
+        : '';
     return {
         enabled: options.enabled,
         required: options.required,
@@ -198,9 +311,9 @@ function buildQualityChecklistReadiness(options: {
         status: options.status || null,
         evidenceStatus: options.evidenceStatus,
         effect: options.effect,
-        reason: templateMaterializationError
-            ? `${options.reason} Answers template was not materialized: ${templateMaterializationError}`
-            : options.reason,
+        reason: `${options.reason}${questionReferenceSuffix}${templateMaterializationError
+            ? ` Answers template was not materialized: ${templateMaterializationError}`
+            : ''}`,
         actionRequiredSummary: formatQualityChecklistActions(artifact?.actions_required),
         actionTakenSummary: formatQualityChecklistActions(artifact?.actions_taken),
         actionsRequiredCount: countArray(artifact?.actions_required),
@@ -272,8 +385,93 @@ export function readQualityChecklistReadiness(options: {
     }
 
     const artifactPath = path.join(options.reviewsRoot, `${options.taskId}-quality-checklist.json`);
+    const artifactExists = fileExists(artifactPath);
+    const existingArtifact = artifactExists ? readJsonRecordOrNull(artifactPath) : null;
+    const previousStatus = String(existingArtifact?.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const invalidExistingArtifact = artifactExists && (!existingArtifact
+        || !QUALITY_CHECKLIST_STATUSES.includes(previousStatus as typeof QUALITY_CHECKLIST_STATUSES[number])
+        || existingArtifact.task_id !== options.taskId
+        || existingArtifact.checklist_id !== QUALITY_CHECKLIST_ID);
+    const forceChecklistRun = invalidExistingArtifact
+        || previousStatus === 'ACTION_REQUIRED'
+        || previousStatus === 'CONFIG_ERROR'
+        || countArray(existingArtifact?.actions_required) > 0
+        || !!ruleSetDiagnostic;
+    const cadence = reviewFailureCadence(options.repoRoot, options.taskId);
+    if (cadence.skip && !forceChecklistRun) {
+        const answersTemplatePath = resolveDefaultQualityChecklistAnswersTemplatePath(options.repoRoot, options.taskId);
+        const templateMaterializationError = fileExists(answersTemplatePath)
+            ? materializePendingQualityChecklistAnswers(options)
+            : null;
+        const expectedPreflightSha256 = String(options.preflightSha256 || '').trim().toLowerCase()
+            || (fileExists(options.preflightPath) ? fileSha256(options.preflightPath) : '');
+        const existingPreflightSha256 = String(existingArtifact?.preflight_sha256 || '').trim().toLowerCase();
+        const existingFailureCount = Number(existingArtifact?.review_failure_count);
+        const artifact = previousStatus === 'SKIPPED_CADENCE'
+            && existingPreflightSha256 === expectedPreflightSha256
+            && existingFailureCount === cadence.failureCount
+            ? existingArtifact!
+            : writeCadenceSkipEvidence({
+                repoRoot: options.repoRoot,
+                taskId: options.taskId,
+                preflightPath: options.preflightPath,
+                artifactPath,
+                failureCount: cadence.failureCount
+            });
+        return buildQualityChecklistReadiness({
+            enabled,
+            required: false,
+            ready: true,
+            status: 'SKIPPED_CADENCE',
+            evidenceStatus: 'current',
+            effect: 'skipped_cadence',
+            reason: `Quality checklist skipped after review failure ${cadence.failureCount}; failures one and two skip, failure three requires answers.`,
+            artifactPath,
+            artifact,
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount,
+            templateMaterializationError
+        });
+    }
+    const activeRules = optionalQualityChecks.rules
+        .filter((rule) => rule.enabled && isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles));
+    writeActiveQuestionReference({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        rules: activeRules
+    });
+    if (cadence.due && artifactExists && !forceChecklistRun) {
+        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
+        return buildQualityChecklistReadiness({
+            enabled,
+            required: true,
+            ready: false,
+            status: previousStatus || null,
+            evidenceStatus: 'stale',
+            effect: 'stale',
+            reason: cadence.testResetPending
+                ? 'The first failed test review requires a one-time fresh quality checklist.'
+                : `Quality checklist cadence requires fresh answers after review failure ${cadence.failureCount}.`,
+            artifactPath,
+            artifact: existingArtifact,
+            changedFilesCount,
+            scopeCategory,
+            enabledRuleCount,
+            activeRuleCount,
+            skippedByScopeRuleCount,
+            templateMaterializationError
+        });
+    }
     if (!fileExists(artifactPath)) {
         const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
+        const activeQuestionReferencePath = writeActiveQuestionReference({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            rules: activeRules
+        });
         return buildQualityChecklistReadiness({
             enabled,
             required,
@@ -283,7 +481,12 @@ export function readQualityChecklistReadiness(options: {
             reason:
                 'Optional quality checks are enabled and the current changed-file preflight has no quality checklist evidence yet. ' +
                 `Active rules for scope ${formatNextStepInlineValue(scopeCategory || 'unknown')}: ${activeRuleCount}; ` +
-                `skipped_by_scope=${skippedByScopeRuleCount}.` +
+                `skipped_by_scope=${skippedByScopeRuleCount}. ` +
+                `Read-only active questions: ${activeRules
+                    .slice(0, 12)
+                    .map((rule) => `${rule.id}: ${String(rule.prompt || '').trim().slice(0, 160)}`)
+                    .join(' | ')}. ` +
+                `Complete active-question reference: ${toRepoDisplayPath(options.repoRoot, activeQuestionReferencePath)}.` +
                 ruleSetDiagnosticSuffix,
             artifactPath,
             changedFilesCount,
@@ -437,6 +640,8 @@ export function readQualityChecklistReadiness(options: {
                         ? 'warned'
                         : status === 'SKIPPED_DISABLED'
                             ? 'disabled'
+                            : status === 'SKIPPED_CADENCE'
+                                ? 'skipped_cadence'
                             : status === 'CONFIG_ERROR'
                                 ? 'invalid'
                                 : countArray(artifact.actions_taken) > 0
@@ -485,6 +690,8 @@ export function readQualityChecklistReadiness(options: {
             ? 'warned'
             : status === 'SKIPPED_DISABLED'
                 ? 'disabled'
+                : status === 'SKIPPED_CADENCE'
+                    ? 'skipped_cadence'
                 : status === 'CONFIG_ERROR'
                     ? 'invalid'
                     : countArray(artifact.actions_taken) > 0
