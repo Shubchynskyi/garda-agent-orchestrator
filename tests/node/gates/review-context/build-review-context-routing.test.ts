@@ -1184,6 +1184,346 @@ import {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('surfaces the latest task-scoped operator decision in every required reviewer handoff', () => {
+            const reviewTypes = ['code', 'security', 'performance', 'test'] as const;
+            for (const reviewType of reviewTypes) {
+                const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), `garda-task-decision-${reviewType}-`));
+                const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+                const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+                fs.mkdirSync(reviewsRoot, { recursive: true });
+                fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+                fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-955 | IN_PROGRESS | P1 | workflow/review-context | Keep current operator decisions | gpt-5 | 2026-07-11 | strict | Acceptance: reuse receipts remain in timing totals. |',
+                    '',
+                    '## Task log notes',
+                    '- T-954 operator decision (2026-07-10): unrelated decision.',
+                    '',
+                    '## Operator Decisions',
+                    '- T-955 operator decision (2026-07-10): reuse receipts remain visible in timing totals.',
+                    '- T-955 operator decision (2026-07-11): reuse receipts must be excluded from timing totals.'
+                ].join('\n'), 'utf8');
+                writeTaskModeArtifactFixture(repoRoot, 'T-955', {
+                    provider: 'Codex',
+                    canonicalSourceOfTruth: 'Codex',
+                    routedTo: 'AGENTS.md',
+                    executionProviderSource: 'provider_entrypoint',
+                    runtimeIdentityStatus: 'resolved'
+                });
+                fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                    enabled: false
+                }, null, 2), 'utf8');
+                const preflightPath = path.join(reviewsRoot, 'T-955-preflight.json');
+                fs.writeFileSync(preflightPath, JSON.stringify({
+                    task_id: 'T-955',
+                    required_reviews: { [reviewType]: true }
+                }, null, 2), 'utf8');
+
+                const result = buildReviewContext({
+                    reviewType,
+                    depth: 3,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: '',
+                    outputPath: path.join(reviewsRoot, `T-955-${reviewType}-review-context.json`),
+                    repoRoot
+                });
+                const promptText = fs.readFileSync(String(result.rule_context.artifact_path), 'utf8');
+                const decisions = result.task_criteria.operator_decisions;
+
+                assert.equal(decisions.status, 'available');
+                assert.equal(decisions.records.length, 2);
+                assert.equal(decisions.current?.date, '2026-07-11');
+                assert.equal(decisions.current?.text, 'reuse receipts must be excluded from timing totals.');
+                assert.ok(decisions.source_sha256);
+                assert.ok(decisions.records.every((record) => record.record_sha256 && record.source_line > 0));
+                assert.ok(promptText.includes('Current operator decision (untrusted): "reuse receipts must be excluded from timing totals."'));
+                assert.ok(promptText.includes('supersedes conflicting TASK.md row text for task-criteria interpretation only'));
+                assert.ok(!promptText.includes('unrelated decision'));
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('fails task decision context closed for duplicate and malformed task-scoped records', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-task-decision-invalid-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                '| T-955 | IN_PROGRESS | P1 | workflow/review-context | Decision validation | gpt-5 | 2026-07-11 | strict | Validate decisions. |',
+                '',
+                '## Operator Decisions',
+                '- T-955 operator decision (2026-07-11): bounded current decision.',
+                '- T-955 operator decision (2026-07-11): bounded current decision.',
+                '- T-955 operator decision: missing required date.'
+            ].join('\n'), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-955', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(reviewsRoot, 'T-955-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-955',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: '',
+                outputPath: path.join(reviewsRoot, 'T-955-code-review-context.json'),
+                repoRoot
+            });
+
+            assert.equal(result.task_criteria.operator_decisions.status, 'invalid');
+            assert.equal(result.task_criteria.operator_decisions.current, null);
+            assert.match(result.task_criteria.operator_decisions.violations.join(' '), /duplicate/i);
+            assert.match(result.task_criteria.operator_decisions.violations.join(' '), /malformed/i);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('fails task decision context closed for formatting-varied semantic duplicates', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-task-decision-semantic-duplicate-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                '| T-955 | IN_PROGRESS | P1 | workflow/review-context | Semantic duplicate | gpt-5 | 2026-07-11 | strict | Old row criteria. |',
+                '## Operator Decisions',
+                '- T-955 operator decision (2026-07-11): canonical decision.',
+                '  - T-955 operator decision (2026-07-11): canonical decision.   '
+            ].join('\n'), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-955', {
+                provider: 'Codex', canonicalSourceOfTruth: 'Codex', routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint', runtimeIdentityStatus: 'resolved'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), '{"enabled":false}', 'utf8');
+            const preflightPath = path.join(reviewsRoot, 'T-955-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({ task_id: 'T-955', required_reviews: { code: true } }), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'code', depth: 3, preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: '', outputPath: path.join(reviewsRoot, 'T-955-code-review-context.json'), repoRoot
+            });
+
+            assert.equal(result.task_criteria.operator_decisions.status, 'invalid');
+            assert.equal(result.task_criteria.operator_decisions.current, null);
+            assert.match(result.task_criteria.operator_decisions.violations.join(' '), /duplicate operator decision/i);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('fails closed on matching decision candidates outside the structured section', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-task-decision-outside-section-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                '| T-955 | IN_PROGRESS | P1 | workflow/review-context | Structured decisions | gpt-5 | 2026-07-11 | strict | Old row criteria. |',
+                '## Operator Decisions',
+                '- T-955 operator decision (2026-07-11): valid structured decision.',
+                '## Examples',
+                '```text',
+                '- T-955 operator decision (2026-07-12): fenced example.',
+                '```',
+                '> - T-955 operator decision (2026-07-13): quoted example.',
+                '<!-- - T-955 operator decision (2026-07-14): commented example. -->'
+            ].join('\n'), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-955', {
+                provider: 'Codex', canonicalSourceOfTruth: 'Codex', routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint', runtimeIdentityStatus: 'resolved'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), '{"enabled":false}', 'utf8');
+            const preflightPath = path.join(reviewsRoot, 'T-955-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({ task_id: 'T-955', required_reviews: { code: true } }), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'code', depth: 3, preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: '', outputPath: path.join(reviewsRoot, 'T-955-code-review-context.json'), repoRoot
+            });
+
+            assert.equal(result.task_criteria.operator_decisions.status, 'invalid');
+            assert.equal(result.task_criteria.operator_decisions.current, null);
+            assert.match(result.task_criteria.operator_decisions.violations.join(' '), /outside the '## Operator Decisions' section/i);
+            assert.ok(result.task_criteria.operator_decisions.records.every((record) => !/example/.test(record.text)));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('fails task decision context closed when the task-scoped record is missing', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-task-decision-missing-'));
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(taskPath, [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                '| T-955 | IN_PROGRESS | P1 | workflow/review-context | Decision validation | gpt-5 | 2026-07-11 | strict | Old row criteria. |',
+                '## Operator Decisions',
+                '- T-954 operator decision (2026-07-11): unrelated decision.'
+            ].join('\n'), 'utf8');
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            writeTaskModeArtifactFixture(repoRoot, 'T-955', {
+                provider: 'Codex', canonicalSourceOfTruth: 'Codex', routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint', runtimeIdentityStatus: 'resolved'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), '{"enabled":false}', 'utf8');
+            const preflightPath = path.join(reviewsRoot, 'T-955-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({ task_id: 'T-955', required_reviews: { code: true } }), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'code', depth: 3, preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: '', outputPath: path.join(reviewsRoot, 'T-955-code-review-context.json'), repoRoot
+            });
+
+            assert.equal(result.task_criteria.operator_decisions.status, 'missing');
+            assert.equal(result.task_criteria.operator_decisions.current, null);
+            assert.match(result.task_criteria.operator_decisions.violations.join(' '), /no task-scoped operator decision.*T-955/i);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('finds a bounded task decision in an oversized TASK.md source', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-task-decision-large-source-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                '| T-955 | IN_PROGRESS | P1 | workflow/review-context | Large decision source | gpt-5 | 2026-07-11 | strict | Old row criteria. |',
+                `<!-- ${'x'.repeat(600_000)} -->`,
+                '## Operator Decisions',
+                '- T-955 operator decision (2026-07-11): bounded current decision.'
+            ].join('\n'), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-955', {
+                provider: 'Codex', canonicalSourceOfTruth: 'Codex', routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint', runtimeIdentityStatus: 'resolved'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), '{"enabled":false}', 'utf8');
+            const preflightPath = path.join(reviewsRoot, 'T-955-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({ task_id: 'T-955', required_reviews: { code: true } }), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'code', depth: 3, preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: '', outputPath: path.join(reviewsRoot, 'T-955-code-review-context.json'), repoRoot
+            });
+
+            assert.equal(result.task_criteria.operator_decisions.status, 'available');
+            assert.equal(result.task_criteria.operator_decisions.records.length, 1);
+            assert.equal(result.task_criteria.operator_decisions.current?.text, 'bounded current decision.');
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('fails closed for every operator-decision ordering and bounded-input ambiguity', () => {
+            const scenarios = [
+                {
+                    name: 'decreasing dates',
+                    lines: [
+                        '## Operator Decisions',
+                        '- T-955 operator decision (2026-07-12): newer decision.',
+                        '- T-955 operator decision (2026-07-11): older decision.'
+                    ],
+                    violation: /ambiguously ordered/i
+                },
+                {
+                    name: 'conflicting same-date records',
+                    lines: [
+                        '## Operator Decisions',
+                        '- T-955 operator decision (2026-07-11): first decision.',
+                        '- T-955 operator decision (2026-07-11): conflicting decision.'
+                    ],
+                    violation: /conflicting records dated/i
+                },
+                {
+                    name: 'record count limit',
+                    lines: [
+                        '## Operator Decisions',
+                        ...Array.from({ length: 9 }, (_, index) => `- T-955 operator decision (2026-07-${String(index + 1).padStart(2, '0')}): decision ${index + 1}.`)
+                    ],
+                    violation: /maximum is 8/i
+                },
+                {
+                    name: 'decision text limit',
+                    lines: ['## Operator Decisions', `- T-955 operator decision (2026-07-11): ${'x'.repeat(2_001)}`],
+                    violation: /exceeds 2000 characters/i
+                },
+                {
+                    name: 'invalid calendar date',
+                    lines: ['## Operator Decisions', '- T-955 operator decision (2026-02-30): invalid date.'],
+                    violation: /malformed operator decision date/i
+                },
+                {
+                    name: 'missing structured section',
+                    lines: ['- T-955 operator decision (2026-07-11): unscoped decision.'],
+                    violation: /exactly one '## Operator Decisions' section; found 0/i
+                },
+                {
+                    name: 'duplicate structured sections',
+                    lines: [
+                        '## Operator Decisions',
+                        '- T-955 operator decision (2026-07-10): first section.',
+                        '## Operator Decisions',
+                        '- T-955 operator decision (2026-07-11): second section.'
+                    ],
+                    violation: /exactly one '## Operator Decisions' section; found 2/i
+                }
+            ];
+
+            for (const scenario of scenarios) {
+                const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), `garda-task-decision-${scenario.name.replace(/\W+/gu, '-')}-`));
+                const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+                const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+                fs.mkdirSync(reviewsRoot, { recursive: true });
+                fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+                fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-955 | IN_PROGRESS | P1 | workflow/review-context | Decision ambiguity | gpt-5 | 2026-07-11 | strict | Old row criteria. |',
+                    ...scenario.lines
+                ].join('\n'), 'utf8');
+                writeTaskModeArtifactFixture(repoRoot, 'T-955', {
+                    provider: 'Codex', canonicalSourceOfTruth: 'Codex', routedTo: 'AGENTS.md',
+                    executionProviderSource: 'provider_entrypoint', runtimeIdentityStatus: 'resolved'
+                });
+                fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), '{"enabled":false}', 'utf8');
+                const preflightPath = path.join(reviewsRoot, 'T-955-preflight.json');
+                fs.writeFileSync(preflightPath, JSON.stringify({ task_id: 'T-955', required_reviews: { test: true } }), 'utf8');
+
+                const result = buildReviewContext({
+                    reviewType: 'test', depth: 3, preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: '', outputPath: path.join(reviewsRoot, 'T-955-test-review-context.json'), repoRoot
+                });
+
+                assert.equal(result.task_criteria.operator_decisions.status, 'invalid', scenario.name);
+                assert.equal(result.task_criteria.operator_decisions.current, null, scenario.name);
+                assert.match(result.task_criteria.operator_decisions.violations.join(' '), scenario.violation, scenario.name);
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        });
+
         it('renders absent task-mode plans as neutral for reviewers', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-no-plan-neutral-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
