@@ -103,6 +103,94 @@ test('runGitDiff disables configured external diff and textconv helpers', () => 
     }
 });
 
+test('buildScopedDiff reads a split-checkpoint range instead of an empty clean worktree diff', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-diff-split-checkpoint-'));
+    const repoRoot = path.join(tempDir, 'repo');
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+    const liveConfigRoot = path.join(orchestratorRoot, 'live', 'config');
+    const changedFilePath = path.join(repoRoot, 'src', 'app.ts');
+
+    try {
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.mkdirSync(liveConfigRoot, { recursive: true });
+        fs.mkdirSync(path.dirname(changedFilePath), { recursive: true });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
+        fs.writeFileSync(changedFilePath, 'export const value = 1;\n', 'utf8');
+        runGit(['-C', repoRoot, 'add', '.']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'baseline']);
+        const baseCommit = String(spawnSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout).trim();
+        fs.writeFileSync(changedFilePath, 'export const value = 2;\n', 'utf8');
+        runGit(['-C', repoRoot, 'add', 'src/app.ts']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'checkpoint(split): preserve T-902 dirty diff before decomposition']);
+        const checkpointCommit = String(spawnSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout).trim();
+        const taskMarker = String.fromCharCode(96);
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-902 | DECOMPOSED | P1 | workflow | Parent | gpt-5 | 2026-07-12 | balanced | Split checkpoint '
+                + taskMarker + checkpointCommit + taskMarker + ' preserves parent work. Child tasks: '
+                + taskMarker + 'T-902-1' + taskMarker + '. |',
+            '| T-902-1 | TODO | P1 | workflow | Child | gpt-5 | 2026-07-12 | balanced | Child of '
+                + taskMarker + 'T-902' + taskMarker + '. Checkpoint: ' + taskMarker + checkpointCommit
+                + taskMarker + '. Checkpoint files: ' + taskMarker + 'src/app.ts' + taskMarker + '. |'
+        ].join('\n'), 'utf8');
+        const preflightPath = path.join(reviewsRoot, 'T-902-preflight.json');
+        const pathsConfigPath = path.join(liveConfigRoot, 'paths.json');
+        const outputPath = path.join(reviewsRoot, 'T-902-security-scoped.diff');
+        const metadataPath = path.join(reviewsRoot, 'T-902-security-scoped.json');
+        fs.writeFileSync(preflightPath, JSON.stringify({
+            task_id: 'T-902-1',
+            detection_source: `git_split_checkpoint:${baseCommit}:${checkpointCommit}`,
+            changed_files: ['src/app.ts']
+        }, null, 2), 'utf8');
+        fs.writeFileSync(pathsConfigPath, JSON.stringify({
+            triggers: {
+                security: ['^src/']
+            }
+        }, null, 2), 'utf8');
+
+        const result = buildScopedDiff({
+            reviewType: 'security',
+            preflightPath,
+            pathsConfigPath,
+            outputPath,
+            metadataPath,
+            repoRoot
+        });
+
+        const output = fs.readFileSync(outputPath, 'utf8');
+        assert.match(output, /-export const value = 1;/);
+        assert.match(output, /\+export const value = 2;/);
+        assert.equal(result.include_untracked, false);
+        assert.equal(result.use_staged, false);
+        assert.deepEqual(result.split_checkpoint, {
+            base_commit: baseCommit,
+            checkpoint_commit: checkpointCommit
+        });
+        fs.writeFileSync(preflightPath, JSON.stringify({
+            task_id: 'T-902-1',
+            detection_source: 'git_split_checkpoint:' + checkpointCommit + ':' + checkpointCommit,
+            changed_files: ['src/app.ts']
+        }, null, 2), 'utf8');
+        assert.throws(
+            () => buildScopedDiff({
+                reviewType: 'security',
+                preflightPath,
+                pathsConfigPath,
+                outputPath,
+                metadataPath,
+                repoRoot
+            }),
+            /does not match the authenticated task checkpoint scope/
+        );
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('buildScopedDiff fails fast when the metadata artifact is locked by a live writer', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-diff-locked-'));
     const repoRoot = path.join(tempDir, 'repo');

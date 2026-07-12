@@ -33,6 +33,10 @@ import {
     buildReviewTreeState,
     getReviewTreeStateBlockingViolations
 } from '../review/review-tree-state';
+import {
+    parseSplitCheckpointDetectionSource,
+    resolveAuthenticatedSplitCheckpointPreflightScope
+} from '../split-required/split-checkpoint-scope';
 import { buildDomainScopeFingerprints } from '../scope/domain-scope-fingerprints';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from '../review/reviewer-routing';
 import { getTaskModeEvidence } from '../task-mode/task-mode';
@@ -288,6 +292,14 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     };
 
     const changedFiles = readReviewContextChangedFiles(preflight.changed_files);
+    if (parseSplitCheckpointDetectionSource(preflight.detection_source)) {
+        resolveAuthenticatedSplitCheckpointPreflightScope(
+            repoRoot,
+            taskId,
+            preflight.detection_source,
+            changedFiles
+        );
+    }
     const diffExpectations = buildReviewContextPreflightDiffExpectations(preflight, reviewType);
     const scopedDiffExpected = diffExpectations.expectedScopedDiff;
 

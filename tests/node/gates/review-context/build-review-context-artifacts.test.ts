@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import { createRequire } from 'node:module';
 import {
     assert,
+    childProcess,
     fs,
     os,
     path,
@@ -17,6 +18,11 @@ import {
     cloneJson,
     writeTaskModeArtifactFixture
 } from './build-review-context-fixtures';
+import {
+    parseSplitCheckpointDetectionSource,
+    resolveSplitCheckpointTaskScope
+} from '../../../../src/gates/split-required/split-checkpoint-scope';
+import { getPreflightContext } from '../../../../src/gates/compile/compile-gate';
 
 type SubprocessModule = typeof import('../../../../src/core/process/subprocess');
 
@@ -600,6 +606,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 scope_category: 'code',
                 changed_files: snapshot.changed_files,
                 metrics: {
+                    changed_lines_total: snapshot.changed_lines_total,
                     changed_files_sha256: snapshot.changed_files_sha256,
                     scope_content_sha256: snapshot.scope_content_sha256,
                     scope_sha256: snapshot.scope_sha256
@@ -628,6 +635,262 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
             assert.ok(promptArtifact.includes('Use staged snapshot: false'));
             assert.ok(promptArtifact.includes('Tree state sha256:'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('builds reviewer context from an authenticated split-checkpoint diff on a clean worktree', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-split-checkpoint-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+            for (const ruleFile of getRulePack('code').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            runGit(repoRoot, ['add', '.']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            const baseCommit = childProcess.execFileSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+                encoding: 'utf8'
+            }).trim();
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            runGit(repoRoot, ['commit', '-m', 'checkpoint(split): preserve T-901-checkpoint dirty diff before decomposition']);
+            const checkpointCommit = childProcess.execFileSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+                encoding: 'utf8'
+            }).trim();
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                `| T-901-checkpoint | DECOMPOSED | P1 | workflow | Parent | gpt-5 | 2026-07-12 | balanced | Split checkpoint \`${checkpointCommit}\` preserves parent work. Child tasks: \`T-901-checkpoint-1\`. |`,
+                `| T-901-checkpoint-1 | TODO | P1 | workflow | Child | gpt-5 | 2026-07-12 | balanced | Child of \`T-901-checkpoint\`. Checkpoint: \`${checkpointCommit}\`. Checkpoint files: \`src/app.ts\`. |`
+            ].join('\n'), 'utf8');
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-checkpoint-1', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const splitCheckpointScope = resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1');
+            assert.equal(splitCheckpointScope.violation, null);
+            assert.equal(splitCheckpointScope.scope?.base_commit, baseCommit);
+            assert.equal(splitCheckpointScope.scope?.checkpoint_commit, checkpointCommit);
+            const detectionSource = String(splitCheckpointScope.scope?.detection_source || '');
+            const snapshot = getWorkspaceSnapshot(repoRoot, detectionSource, false, ['src/app.ts']);
+            const preflightPath = path.join(reviewsRoot, 'T-901-checkpoint-1-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-checkpoint-1',
+                detection_source: snapshot.detection_source,
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: snapshot.changed_files,
+                metrics: {
+                    changed_lines_total: snapshot.changed_lines_total,
+                    changed_files_sha256: snapshot.changed_files_sha256,
+                    scope_content_sha256: snapshot.scope_content_sha256,
+                    scope_sha256: snapshot.scope_sha256
+                },
+                required_reviews: { code: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true }
+            }, null, 2), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-checkpoint-1-code-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-checkpoint-1-code-review-context.json'),
+                repoRoot
+            });
+
+            assert.deepEqual(snapshot.changed_files, ['src/app.ts']);
+            assert.equal(result.task_scope.diff.source, 'git_diff_split_checkpoint');
+            const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
+            assert.ok(promptArtifact.includes('-export const value = 1;'));
+            assert.ok(promptArtifact.includes('+export const value = 2;'));
+            const authenticatedPreflightText = fs.readFileSync(preflightPath, 'utf8');
+            assert.doesNotThrow(() => getPreflightContext(preflightPath, 'T-901-checkpoint-1'));
+            const tamperedPreflight = JSON.parse(authenticatedPreflightText);
+            tamperedPreflight.detection_source = 'git_split_checkpoint:'
+                + checkpointCommit + ':' + checkpointCommit;
+            fs.writeFileSync(preflightPath, JSON.stringify(tamperedPreflight, null, 2), 'utf8');
+            assert.throws(
+                () => getPreflightContext(preflightPath, 'T-901-checkpoint-1'),
+                /does not match the authenticated task checkpoint scope/
+            );
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-checkpoint-1-code-scoped.json'),
+                    outputPath: path.join(reviewsRoot, 'T-901-checkpoint-1-code-review-context.json'),
+                    repoRoot
+                }),
+                /does not match the authenticated task checkpoint scope/
+            );
+            fs.writeFileSync(preflightPath, authenticatedPreflightText, 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 3;\n', 'utf8');
+            const driftedSnapshot = getWorkspaceSnapshot(repoRoot, detectionSource, false, ['src/app.ts']);
+            assert.notEqual(driftedSnapshot.scope_content_sha256, snapshot.scope_content_sha256);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+            const taskQueue = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+            const mergeCheckpointCommit = childProcess.execFileSync('git', [
+                '-C',
+                repoRoot,
+                'commit-tree',
+                `${checkpointCommit}^{tree}`,
+                '-p',
+                checkpointCommit,
+                '-p',
+                baseCommit,
+                '-m',
+                'checkpoint(split): preserve T-901-checkpoint dirty diff before decomposition'
+            ], {
+                encoding: 'utf8'
+            }).trim();
+            fs.writeFileSync(
+                path.join(repoRoot, 'TASK.md'),
+                taskQueue.split(checkpointCommit).join(mergeCheckpointCommit),
+                'utf8'
+            );
+            const mergeCheckpointScope = resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1');
+            assert.equal(mergeCheckpointScope.scope, null);
+            assert.match(String(mergeCheckpointScope.violation || ''), /must have exactly one parent/);
+            assert.throws(
+                () => getPreflightContext(preflightPath, 'T-901-checkpoint-1'),
+                /must have exactly one parent/
+            );
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-checkpoint-1-code-scoped.json'),
+                    outputPath: path.join(reviewsRoot, 'T-901-checkpoint-1-code-review-context.json'),
+                    repoRoot
+                }),
+                /must have exactly one parent/
+            );
+            fs.writeFileSync(
+                path.join(repoRoot, 'TASK.md'),
+                taskQueue.replace(
+                    'Checkpoint files: `src/app.ts`.',
+                    'Checkpoint files: `src/app.ts`, `src/other.ts`.'
+                ),
+                'utf8'
+            );
+            const outsideCheckpointScope = resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1');
+            assert.equal(outsideCheckpointScope.scope, null);
+            assert.match(
+                String(outsideCheckpointScope.violation || ''),
+                /assigns files outside split checkpoint/
+            );
+            assert.throws(
+                () => getPreflightContext(preflightPath, 'T-901-checkpoint-1'),
+                /assigns files outside split checkpoint/
+            );
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-checkpoint-1-code-scoped.json'),
+                    outputPath: path.join(reviewsRoot, 'T-901-checkpoint-1-code-review-context.json'),
+                    repoRoot
+                }),
+                /assigns files outside split checkpoint/
+            );
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), taskQueue, 'utf8');
+            const siblingShapeTaskQueue = taskQueue.replace(
+                /Checkpoint:\s*\x60?[0-9a-f]+\x60?\./iu,
+                'checkpoint slice ' + checkpointCommit + '.'
+            );
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), siblingShapeTaskQueue, 'utf8');
+            const siblingShapeScope = resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1');
+            assert.equal(siblingShapeScope.violation, null);
+            assert.equal(siblingShapeScope.scope?.checkpoint_commit, checkpointCommit);
+            const malformedSelectors = [
+                ...Array.from({ length: 23 }, (_, index) => {
+                    const length = 41 + index;
+                    return checkpointCommit.length >= length
+                        ? checkpointCommit.slice(0, length)
+                        : checkpointCommit.padEnd(length, 'a');
+                }),
+                checkpointCommit.padEnd(65, 'a')
+            ];
+            for (const malformedSelector of malformedSelectors) {
+                fs.writeFileSync(
+                    path.join(repoRoot, 'TASK.md'),
+                    siblingShapeTaskQueue.split(checkpointCommit).join(malformedSelector),
+                    'utf8'
+                );
+                const malformedScope = resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1');
+                assert.equal(malformedScope.scope, null);
+                assert.match(String(malformedScope.violation || ''), /must declare both/);
+                assert.equal(
+                    parseSplitCheckpointDetectionSource(
+                        'git_split_checkpoint:' + baseCommit + ':' + malformedSelector
+                    ),
+                    null
+                );
+            }
+            const wrongFormatSelector = checkpointCommit.length === 40
+                ? checkpointCommit.padEnd(64, 'a')
+                : checkpointCommit.slice(0, 40);
+            fs.writeFileSync(
+                path.join(repoRoot, 'TASK.md'),
+                siblingShapeTaskQueue.split(checkpointCommit).join(wrongFormatSelector),
+                'utf8'
+            );
+            const wrongFormatScope = resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1');
+            assert.equal(wrongFormatScope.scope, null);
+            assert.match(
+                String(wrongFormatScope.violation || ''),
+                /full (?:40-character sha1|64-character sha256) object id/
+            );
+            const checkpointPathMarker = String.fromCharCode(96);
+            for (const aliasPath of [
+                './src/app.ts',
+                'src//app.ts',
+                'src\\app.ts',
+                'src/./app.ts',
+                'src/app.ts/'
+            ]) {
+                fs.writeFileSync(
+                    path.join(repoRoot, 'TASK.md'),
+                    taskQueue.replace(
+                        /Checkpoint files:\s*\x60src\/app\.ts\x60\./u,
+                        'Checkpoint files: ' + checkpointPathMarker + aliasPath + checkpointPathMarker + '.'
+                    ),
+                    'utf8'
+                );
+                const aliasScope = resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1');
+                assert.equal(aliasScope.scope, null);
+                assert.match(String(aliasScope.violation || ''), /unsafe split-checkpoint file metadata/);
+            }
+            fs.writeFileSync(
+                path.join(repoRoot, 'TASK.md'),
+                taskQueue.replace('Checkpoint files: `src/app.ts`.', 'Checkpoint files: `src/../src/app.ts`.'),
+                'utf8'
+            );
+            const unsafeScope = resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1');
+            assert.equal(unsafeScope.scope, null);
+            assert.match(String(unsafeScope.violation || ''), /unsafe split-checkpoint file metadata/);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 

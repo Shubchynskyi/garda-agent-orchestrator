@@ -200,6 +200,14 @@ export interface ClassifyChangeResult {
     depth_escalation?: DepthEscalationRecord;
     risk_aware_depth?: RiskAwareDepthResult;
     optional_skill_selection?: Record<string, unknown>;
+    split_checkpoint_scope?: {
+        task_id: string;
+        parent_task_id: string;
+        base_commit: string;
+        checkpoint_commit: string;
+        changed_files: string[];
+        detection_source: string;
+    };
 }
 
 export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeResult {

@@ -7,6 +7,11 @@ import { isGeneratedOrchestratorLockPath } from '../locks/generated-lock-paths';
 import { splitGeneratedRuntimeControlPlaneArtifacts } from '../shared/generated-runtime-artifacts';
 import { isOrchestratorSourceCheckout } from '../protected-control-plane/protected-control-plane';
 import { getSafeWorktreePathState } from '../workspace/worktree-path-state';
+import {
+    getSplitCheckpointWorkspaceSnapshot,
+    parseSplitCheckpointDetectionSource,
+    resolveAuthenticatedSplitCheckpointPreflightScope
+} from '../split-required/split-checkpoint-scope';
 
 /**
  * Detect the compile command profile (kind/strategy/label/failure/success profiles).
@@ -452,6 +457,12 @@ function getWorktreeContentFingerprint(repoRoot: string, relativePath: string): 
 }
 
 export function buildScopeContentFingerprint(repoRoot: string, source: string, changedFiles: string[]): string | null {
+    if (parseSplitCheckpointDetectionSource(source)) {
+        if (changedFiles.length === 0) {
+            return stringSha256('');
+        }
+        return getSplitCheckpointWorkspaceSnapshot(repoRoot, source, changedFiles).scope_content_sha256;
+    }
     const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(source);
     const fingerprintEntries = [...new Set(changedFiles.map((entry) => normalizePath(entry)).filter(Boolean))]
         .sort()
@@ -470,6 +481,9 @@ export function buildScopeContentFingerprint(repoRoot: string, source: string, c
  */
 export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, includeUntracked: boolean, explicitChangedFiles: string[]) {
     const source = (detectionSource || 'git_auto').trim().toLowerCase();
+    if (parseSplitCheckpointDetectionSource(source)) {
+        return getSplitCheckpointWorkspaceSnapshot(repoRoot, source, explicitChangedFiles);
+    }
     const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(source);
     if (source === 'git_staged_only') includeUntracked = false;
     const snapshotCacheRelativePath = normalizePath(
@@ -668,6 +682,20 @@ function countWorktreeFileLines(repoRoot: string, relativePath: string): number 
     } catch { return 0; }
 }
 
+function resolvePreflightContainingGitRoot(preflightPath: string): string {
+    let candidate = path.dirname(path.resolve(preflightPath));
+    while (true) {
+        if (fs.existsSync(path.join(candidate, '.git'))) {
+            return candidate;
+        }
+        const parent = path.dirname(candidate);
+        if (parent === candidate) {
+            throw new Error('Unable to resolve a git root containing preflight artifact ' + preflightPath + '.');
+        }
+        candidate = parent;
+    }
+}
+
 /**
  * Get preflight context for scope validation.
  */
@@ -705,7 +733,17 @@ export function getPreflightContext(preflightPath: string, taskId: string) {
     }
 
     const detectionSource = String(preflightObject.detection_source || 'git_auto').trim() || 'git_auto';
-    const includeUntracked = detectionSource.toLowerCase() !== 'git_staged_only';
+    if (parseSplitCheckpointDetectionSource(detectionSource)) {
+        resolveAuthenticatedSplitCheckpointPreflightScope(
+            resolvePreflightContainingGitRoot(preflightPath),
+            taskId,
+            detectionSource,
+            preflightChangedFiles
+        );
+    }
+    const includeUntracked = parseSplitCheckpointDetectionSource(detectionSource)
+        ? false
+        : detectionSource.toLowerCase() !== 'git_staged_only';
     const scopeSha256 = typeof metrics.scope_sha256 === 'string'
         ? metrics.scope_sha256.trim().toLowerCase()
         : null;

@@ -4,6 +4,10 @@ import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subproc
 import { stringSha256 } from '../../gate-runtime/hash';
 import { writeArtifactFileAtomically } from '../../gate-runtime/review-artifacts';
 import { fileSha256, normalizePath } from '../shared/helpers';
+import {
+    parseSplitCheckpointDetectionSource,
+    resolveAuthenticatedSplitCheckpointPreflightScope
+} from '../split-required/split-checkpoint-scope';
 
 export const REVIEW_CONTEXT_DIFF_MAX_CHARS = 60000;
 export const REVIEW_CONTEXT_NON_CODE_PROMPT_DIFF_MAX_CHARS = 20000;
@@ -522,15 +526,36 @@ export function buildGitDiffSummary(
     }
 
     const detectionSource = String(preflight.detection_source || '').trim().toLowerCase();
+    const requestedSplitCheckpointRange = parseSplitCheckpointDetectionSource(detectionSource);
+    const splitCheckpointScope = requestedSplitCheckpointRange
+        ? resolveAuthenticatedSplitCheckpointPreflightScope(
+            repoRoot,
+            preflight.task_id,
+            detectionSource,
+            changedFiles
+        )
+        : null;
+    const splitCheckpointRange = splitCheckpointScope
+        ? {
+            base_commit: splitCheckpointScope.base_commit,
+            checkpoint_commit: splitCheckpointScope.checkpoint_commit
+        }
+        : null;
     const usesStagedScope = detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked';
-    const includeUntracked = detectionSource === 'git_staged_plus_untracked'
+    const includeUntracked = !splitCheckpointRange && (
+        detectionSource === 'git_staged_plus_untracked'
         || detectionSource === 'git_auto'
-        || detectionSource === 'explicit_changed_files';
-    const diffTargetArgs = usesStagedScope ? ['--cached'] : ['HEAD'];
+        || detectionSource === 'explicit_changed_files'
+    );
+    const diffTargetArgs = splitCheckpointRange
+        ? [splitCheckpointRange.base_commit, splitCheckpointRange.checkpoint_commit]
+        : usesStagedScope ? ['--cached'] : ['HEAD'];
     const diffBaseArgs = ['diff', ...GIT_DIFF_HARDENING_ARGS, ...diffTargetArgs];
     const literalPathspecs = toLiteralGitPathspecs(changedFiles);
     const statResult = runGitTextCommand(repoRoot, [...diffBaseArgs, '--stat', '--', ...literalPathspecs], 20000);
-    const source = usesStagedScope
+    const source = splitCheckpointRange
+        ? 'git_diff_split_checkpoint'
+        : usesStagedScope
         ? (includeUntracked ? 'git_diff_cached_plus_untracked' : 'git_diff_cached')
         : (includeUntracked ? 'git_diff_head_plus_untracked' : 'git_diff_head');
     const preflightSha256 = fileSha256(preflightPath);

@@ -33,6 +33,7 @@ import {
     writeOptionalSkillSelectionArtifact
 } from '../../../../runtime/optional-skill-selection';
 import { getWorkspaceSnapshotCached } from '../../../../gates/workspace/workspace-snapshot-cache';
+import { resolveSplitCheckpointTaskScope } from '../../../../gates/split-required/split-checkpoint-scope';
 import { buildDomainScopeFingerprints } from '../../../../gates/scope/domain-scope-fingerprints';
 import { loadIsolationModeConfig } from '../../../../gates/isolation/isolation-mode';
 import { resolveIsolatedOrchestratorRoot, resolveGateExecutionPath } from '../../../../gates/isolation/isolation-sandbox';
@@ -290,7 +291,30 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     const detectionSource = explicitChangedFilesProvided
         ? 'explicit_changed_files'
         : (options.useStaged ? (includeUntracked ? 'git_staged_plus_untracked' : 'git_staged_only') : 'git_auto');
-    const workspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, detectionSource, includeUntracked, explicitChangedFiles);
+    const ordinaryWorkspaceSnapshot = getWorkspaceSnapshotCached(
+        repoRoot,
+        detectionSource,
+        includeUntracked,
+        explicitChangedFiles
+    );
+    const splitCheckpointResolution = resolvedTaskId
+        && !explicitChangedFilesProvided
+        && options.useStaged !== true
+        && ordinaryWorkspaceSnapshot.changed_files.length === 0
+        ? resolveSplitCheckpointTaskScope(repoRoot, resolvedTaskId)
+        : { scope: null, violation: null };
+    if (splitCheckpointResolution.violation) {
+        throw new Error(splitCheckpointResolution.violation);
+    }
+    const workspaceSnapshot = splitCheckpointResolution.scope
+        ? getWorkspaceSnapshotCached(
+            repoRoot,
+            splitCheckpointResolution.scope.detection_source,
+            false,
+            splitCheckpointResolution.scope.changed_files,
+            { noCache: true, readOnly: true }
+        )
+        : ordinaryWorkspaceSnapshot;
     const renameCount = getClassificationRenameCount(
         repoRoot,
         workspaceSnapshot.detection_source,
@@ -329,6 +353,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         includeUntracked: !!workspaceSnapshot.include_untracked,
         changedFiles: workspaceSnapshot.changed_files
     });
+    if (splitCheckpointResolution.scope) {
+        result.split_checkpoint_scope = splitCheckpointResolution.scope;
+    }
     const ignoredGeneratedRuntimeFiles = Array.isArray((workspaceSnapshot as Record<string, unknown>).ignored_generated_runtime_files)
         ? ((workspaceSnapshot as Record<string, unknown>).ignored_generated_runtime_files as string[])
         : [];

@@ -6,6 +6,10 @@ import { matchAnyRegex } from '../../gate-runtime/text-utils';
 import { fileSha256, normalizePath, resolveGitRoot, resolvePathInsideRepo, stringSha256, toStringArray, toPosix } from '../shared/helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { readReviewContextChangedFiles } from '../review-context/review-context-diff';
+import {
+    parseSplitCheckpointDetectionSource,
+    resolveAuthenticatedSplitCheckpointPreflightScope
+} from '../split-required/split-checkpoint-scope';
 
 const GIT_DIFF_HARDENING_ARGS = ['--no-ext-diff', '--no-textconv', '--no-color'];
 export const SCOPED_DIFF_UNTRACKED_FILE_MAX_CHARS = 1024 * 1024;
@@ -35,16 +39,15 @@ export function resolveMetadataPath(explicitMetadataPath: string, preflightPath:
     return path.resolve(preflightDir, `${baseName}-${reviewType}-scoped.json`);
 }
 
-/**
- * Run git diff and return stdout text.
- */
-export function runGitDiff(gitRoot: string, useStaged: boolean, pathspecs: string[]): string {
-    const gitArgs = ['-C', String(gitRoot), 'diff', ...GIT_DIFF_HARDENING_ARGS];
-    if (useStaged) gitArgs.push('--staged');
-    else gitArgs.push('HEAD');
-    if (pathspecs && pathspecs.length > 0) {
-        gitArgs.push('--');
-        gitArgs.push(...pathspecs);
+function runGitDiffWithTargetArgs(
+    gitRoot: string,
+    targetArgs: string[],
+    pathspecs: string[],
+    commandLabel: string
+): string {
+    const gitArgs = ['-C', String(gitRoot), 'diff', ...GIT_DIFF_HARDENING_ARGS, ...targetArgs];
+    if (pathspecs.length > 0) {
+        gitArgs.push('--', ...pathspecs);
     }
     const result = spawnSyncWithTimeout('git', gitArgs, {
         encoding: 'utf8',
@@ -53,16 +56,37 @@ export function runGitDiff(gitRoot: string, useStaged: boolean, pathspecs: strin
         timeoutMs: DEFAULT_GIT_TIMEOUT_MS
     });
     if (result.timedOut) {
-        throw new Error(`git diff timed out after ${DEFAULT_GIT_TIMEOUT_MS} ms.`);
+        throw new Error(`${commandLabel} timed out after ${DEFAULT_GIT_TIMEOUT_MS} ms.`);
     }
     if (result.error) {
-        throw new Error(`git diff exited with error: ${result.error.message || result.error}`);
+        throw new Error(`${commandLabel} exited with error: ${result.error.message || result.error}`);
     }
     if (result.status !== 0) {
         const errText = String(result.stderr || '').trim();
-        throw new Error(`git diff exited with code ${result.status}. ${errText}`);
+        throw new Error(`${commandLabel} exited with code ${result.status}. ${errText}`);
     }
     return String(result.stdout || '');
+}
+
+/**
+ * Run git diff and return stdout text.
+ */
+export function runGitDiff(gitRoot: string, useStaged: boolean, pathspecs: string[]): string {
+    return runGitDiffWithTargetArgs(gitRoot, [useStaged ? '--staged' : 'HEAD'], pathspecs, 'git diff');
+}
+
+export function runGitSplitCheckpointDiff(
+    gitRoot: string,
+    baseCommit: string,
+    checkpointCommit: string,
+    pathspecs: string[]
+): string {
+    return runGitDiffWithTargetArgs(
+        gitRoot,
+        [baseCommit, checkpointCommit],
+        pathspecs,
+        'git split-checkpoint diff'
+    );
 }
 
 function runGitText(gitRoot: string, args: string[]): string {
@@ -292,10 +316,28 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
 
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
     const detectionSource = getDetectionSource(preflight);
-    const useStaged = options.useStaged === undefined ? usesStagedScope(preflight) : options.useStaged === true;
-    const useStagedSource = options.useStaged === undefined ? 'preflight_detection_source' : 'explicit_option';
+    const requestedSplitCheckpointRange = parseSplitCheckpointDetectionSource(detectionSource);
     const changedFiles = readReviewContextChangedFiles(preflight.changed_files);
-
+    const splitCheckpointScope = requestedSplitCheckpointRange
+        ? resolveAuthenticatedSplitCheckpointPreflightScope(
+            repoRoot,
+            preflight.task_id,
+            detectionSource,
+            preflight.changed_files
+        )
+        : null;
+    const splitCheckpointRange = splitCheckpointScope
+        ? {
+            base_commit: splitCheckpointScope.base_commit,
+            checkpoint_commit: splitCheckpointScope.checkpoint_commit
+        }
+        : null;
+    const useStaged = splitCheckpointRange
+        ? false
+        : options.useStaged === undefined ? usesStagedScope(preflight) : options.useStaged === true;
+    const useStagedSource = splitCheckpointRange
+        ? 'split_checkpoint'
+        : options.useStaged === undefined ? 'preflight_detection_source' : 'explicit_option';
     const preflightMetrics = asPlainRecord(preflight.metrics);
     const preflightSha256 = fileSha256(preflightPath);
     const pathsConfig = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8'));
@@ -316,7 +358,7 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
     let scopedDiffText = '';
     let fallbackToFullDiff = false;
     let fullDiffSource = 'none';
-    const includeUntracked = shouldIncludeUntracked(preflight);
+    const includeUntracked = !splitCheckpointRange && shouldIncludeUntracked(preflight);
     let untrackedFiles: string[] = [];
     let untrackedDiffTruncated = false;
     const changedFilePathspecs = toLiteralGitPathspecs(
@@ -328,9 +370,16 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
             const gitPathspecs = toLiteralGitPathspecs(
                 convertToGitPathspecs(matchedFiles, toPosix(repoRoot), toPosix(gitRepoRoot))
             );
-            const trackedDiffText = includeUntracked
-                ? runGitDiffBestEffort(gitRepoRoot, useStaged, gitPathspecs)
-                : runGitDiff(gitRepoRoot, useStaged, gitPathspecs);
+            const trackedDiffText = splitCheckpointRange
+                ? runGitSplitCheckpointDiff(
+                    gitRepoRoot,
+                    splitCheckpointRange.base_commit,
+                    splitCheckpointRange.checkpoint_commit,
+                    gitPathspecs
+                )
+                : includeUntracked
+                    ? runGitDiffBestEffort(gitRepoRoot, useStaged, gitPathspecs)
+                    : runGitDiff(gitRepoRoot, useStaged, gitPathspecs);
             const untrackedDiff = includeUntracked
                 ? buildUntrackedDiff(gitRepoRoot, gitPathspecs)
                 : { text: '', files: [], truncated: false };
@@ -355,9 +404,16 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
             outputDiffText = artifactDiffText;
             fullDiffSource = 'artifact_scoped';
         } else {
-            const trackedFullDiffText = includeUntracked
-                ? runGitDiffBestEffort(gitRepoRoot, useStaged, changedFilePathspecs)
-                : runGitDiff(gitRepoRoot, useStaged, changedFilePathspecs);
+            const trackedFullDiffText = splitCheckpointRange
+                ? runGitSplitCheckpointDiff(
+                    gitRepoRoot,
+                    splitCheckpointRange.base_commit,
+                    splitCheckpointRange.checkpoint_commit,
+                    changedFilePathspecs
+                )
+                : includeUntracked
+                    ? runGitDiffBestEffort(gitRepoRoot, useStaged, changedFilePathspecs)
+                    : runGitDiff(gitRepoRoot, useStaged, changedFilePathspecs);
             const untrackedFullDiff = includeUntracked
                 ? buildUntrackedDiff(gitRepoRoot, changedFilePathspecs)
                 : { text: '', files: [], truncated: false };
@@ -401,6 +457,7 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         preflight_path: normalizePath(preflightPath),
         preflight_sha256: preflightSha256,
         detection_source: detectionSource,
+        split_checkpoint: splitCheckpointRange,
         changed_files_sha256: normalizeOptionalHash(preflightMetrics?.changed_files_sha256),
         scope_content_sha256: normalizeOptionalHash(preflightMetrics?.scope_content_sha256),
         scope_sha256: normalizeOptionalHash(preflightMetrics?.scope_sha256),

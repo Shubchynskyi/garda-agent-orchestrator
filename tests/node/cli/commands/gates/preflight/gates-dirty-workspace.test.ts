@@ -471,4 +471,56 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
+
+    it('classifies a linked clean child from its authenticated split checkpoint scope', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const parentTaskId = 'T-901-checkpoint';
+        const taskId = 'T-901-checkpoint-1';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        seedBaselineAgentsFile(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(appPath, 'export const value = 1;\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(appPath, 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        runGit(repoRoot, ['commit', '-m', `checkpoint(split): preserve ${parentTaskId} dirty diff before decomposition`]);
+        const checkpointCommit = require('node:child_process')
+            .execFileSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+            .trim();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+            '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+            `| ${parentTaskId} | DECOMPOSED | P1 | workflow | Parent | unassigned | 2026-07-12 | default | Split checkpoint \`${checkpointCommit}\` preserves parent work. Child tasks: \`${taskId}\`. |`,
+            `| ${taskId} | TODO | P1 | workflow | Child | unassigned | 2026-07-12 | default | Child of \`${parentTaskId}\`. Checkpoint: \`${checkpointCommit}\`. Checkpoint files: \`src/app.ts\`. |`
+        ].join('\n'), 'utf8');
+        seedInitAnswers(repoRoot);
+
+        runWithRepoCwd(repoRoot, () => {
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Review split checkpoint scope'
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            const result = runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Review split checkpoint scope',
+                emitMetrics: false
+            });
+            const preflight = JSON.parse(result.outputText) as Record<string, unknown>;
+            const scope = preflight.split_checkpoint_scope as Record<string, unknown>;
+            assert.deepEqual(preflight.changed_files, ['src/app.ts']);
+            assert.ok(String(preflight.detection_source || '').startsWith('git_split_checkpoint:'));
+            assert.equal(scope.parent_task_id, parentTaskId);
+            assert.equal(scope.checkpoint_commit, checkpointCommit);
+            assert.deepEqual(scope.changed_files, ['src/app.ts']);
+            assert.equal((preflight.zero_diff_guard as Record<string, unknown>).status, 'DIFF_PRESENT');
+        });
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
 });

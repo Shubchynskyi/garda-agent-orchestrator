@@ -12,6 +12,7 @@ import { parseTaskMdTableRow } from '../../../../core/task-md-table';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../../../core/subprocess';
 import { classifyChange } from '../../../../gates/preflight/classify-change';
 import { getTaskModeEvidence } from '../../../../gates/task-mode/task-mode';
+import { parseSplitCheckpointDetectionSource } from '../../../../gates/split-required/split-checkpoint-scope';
 import {
     getWorkflowConfigChangedFiles,
     getWorkflowConfigControlPlanePaths
@@ -134,14 +135,26 @@ export function getClassificationRenameCount(repoRoot: string, detectionSource: 
         return 0;
     }
 
-    const args = ['-C', repoRoot, 'diff', '--name-status', '--diff-filter=ACDMRTUXB'];
-    if (detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked') {
+    const args = [
+        '-C',
+        repoRoot,
+        'diff',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--no-color',
+        '--name-status',
+        '--diff-filter=ACDMRTUXB'
+    ];
+    const splitCheckpointRange = parseSplitCheckpointDetectionSource(detectionSource);
+    if (splitCheckpointRange) {
+        args.push(splitCheckpointRange.base_commit, splitCheckpointRange.checkpoint_commit, '--', ...changedFiles);
+    } else if (detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked') {
         args.push('--cached');
     } else {
         args.push('HEAD');
-    }
-    if (detectionSource === 'explicit_changed_files' && changedFiles.length > 0) {
-        args.push('--', ...changedFiles);
+        if (detectionSource === 'explicit_changed_files' && changedFiles.length > 0) {
+            args.push('--', ...changedFiles);
+        }
     }
 
     const result = spawnSyncWithTimeout('git', args, {
