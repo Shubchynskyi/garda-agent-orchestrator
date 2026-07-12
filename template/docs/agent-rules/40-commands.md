@@ -45,6 +45,16 @@ Rules:
   `run-intermediate-command`.
 - The gate writes full raw output to a task-owned artifact and prints compact
   status or a bounded failure tail.
+- Focused-test evidence binds the command record and raw output by task event,
+  SHA-256, byte size, review chronology, changed-test scope, and in-root paths;
+  default and caller-designated paths under `runtime/reviews` use the same
+  integrity contract.
+- When a failed reviewer report contains the sole canonical finding
+  `[garda:evidence-only:missing-focused-validation] test=<changed-test-path>; action=run-and-record-focused-test`,
+  run that exact changed test through this gate after recording the review,
+  then return to `next-step`. Current passing evidence routes a fresh review
+  cycle without source mutation; foreign, stale, failed, mismatched, or
+  modified evidence remains fail-closed.
 - This command never replaces `compile-gate`, `full-suite-validation`, required
   reviews, or completion evidence.
 - If the command is not eligible for `run-intermediate-command`, use the Manual

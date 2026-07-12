@@ -133,8 +133,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Review gate command validates post-preflight rule-pack evidence (`RULE_PACK_LOADED`) for the same task id and preflight artifact.
 - Review gate command validates no workspace drift after compile evidence; post-compile edits require compile gate rerun.
 - Review gate rejects zero-diff implementation tasks unless an audited no-op artifact exists for the same task id.
+- A reviewer may use the canonical missing-focused-validation marker only as the sole active finding and only for a changed test. After the failed receipt is recorded, run that exact test with `gate run-intermediate-command` and follow `next-step`; verified post-review evidence restarts the same review scope without a fake implementation edit and does not replace compile, full-suite, or review PASS evidence.
 - Documentation impact gate command must pass before `DONE`:
   `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate`.
+- `doc-impact-gate` is a closeout gate after required review PASS. Reviewers assess whether the scoped documentation and changelog changes are sufficient, but must not fail solely because the downstream task-owned doc-impact artifact has not yet been materialized.
 - Full-suite validation gate must run before `completion-gate` when enabled:
   `node garda-agent-orchestrator/bin/garda.js gate full-suite-validation --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --repo-root "."`.
 - Full-suite validation is controlled by `garda-agent-orchestrator/live/config/workflow-config.json` (`full_suite_validation.enabled` and `full_suite_validation.placement`). Operators may edit that file directly or use the repo-local CLI surface (`garda workflow show`, `garda workflow set --full-suite-enabled true|false --full-suite-placement <after_compile_before_reviews|before_test_review|before_completion>`); do not introduce setup/init/reinit questions for this mode.

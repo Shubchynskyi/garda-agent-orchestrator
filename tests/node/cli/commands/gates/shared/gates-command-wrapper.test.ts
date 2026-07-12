@@ -41,8 +41,9 @@ describe('cli/commands/gates intermediate command wrapper', () => {
         try {
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
+            fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
             fs.writeFileSync(
-                path.join(repoRoot, 'intermediate-pass.test.js'),
+                path.join(repoRoot, 'tests', 'intermediate-pass.test.js'),
                 [
                     "const test = require('node:test');",
                     "for (let index = 0; index < 80; index += 1) {",
@@ -62,7 +63,7 @@ describe('cli/commands/gates intermediate command wrapper', () => {
                 repoRoot,
                 taskId,
                 commandSource: 'node-test',
-                command: 'node --test intermediate-pass.test.js',
+                command: 'node --test tests/intermediate-pass.test.js',
                 timeoutMs: 60_000
             });
 
@@ -86,8 +87,12 @@ describe('cli/commands/gates intermediate command wrapper', () => {
             const event = events.find((candidate) => candidate.event_type === 'INTERMEDIATE_COMMAND_RUN');
             assert.ok(event);
             assert.equal(event.outcome, 'PASSED');
-            assert.equal((event.details as Record<string, unknown>)?.command_source, 'node-test');
-            const telemetry = (event.details as Record<string, unknown>)?.output_telemetry as Record<string, unknown> | undefined;
+            const details = event.details as Record<string, unknown>;
+            assert.equal(details?.command_source, 'node-test');
+            assert.match(String(details?.artifact_sha256 || ''), /^[a-f0-9]{64}$/u);
+            assert.match(String(details?.output_artifact_sha256 || ''), /^[a-f0-9]{64}$/u);
+            assert.ok(Number(details?.output_artifact_size_bytes) > 0);
+            const telemetry = details?.output_telemetry as Record<string, unknown> | undefined;
             assert.ok(telemetry);
             assert.ok(Number(telemetry.raw_line_count) > 0);
             assert.ok(Number(telemetry.filtered_line_count) > 0);
@@ -233,7 +238,7 @@ describe('cli/commands/gates intermediate command wrapper', () => {
         }
     });
 
-    it('rejects unsafe node-foundation focused wrapper targets without recording telemetry', async () => {
+    it('rejects unsafe focused test wrapper targets without recording telemetry', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-INTERMEDIATE';
         try {
@@ -246,7 +251,11 @@ describe('cli/commands/gates intermediate command wrapper', () => {
                 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/../secret.test.ts',
                 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates',
                 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.ts',
-                'node scripts/node-foundation/build-scripts.cjs test.js --runInBand tests/node/gates/focused-command.test.ts'
+                'node scripts/node-foundation/build-scripts.cjs test.js --runInBand tests/node/gates/focused-command.test.ts',
+                'node --test tests/node/gates/focused-command.test.ts',
+                'npm test -- --help',
+                'npm test -- tests/node/gates/focused-command.test.ts --runInBand',
+                'npm test -- src/cli/not-a-focused-test.ts'
             ];
 
             for (const command of rejectedCommands) {
@@ -266,6 +275,40 @@ describe('cli/commands/gates intermediate command wrapper', () => {
             }
 
             const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
+            const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
+            assert.equal(events.some((event) => event.event_type === 'INTERMEDIATE_COMMAND_RUN'), false);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects unsafe node-test arguments without recording telemetry', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-INTERMEDIATE';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+
+            for (const command of [
+                'node --test --help',
+                'node --test src/cli/not-a-focused-test.ts',
+                'node --test tests/node/gates/../secret.test.ts',
+                'node --test tests/node/gates/focused-command.test.ts --test-reporter spec',
+                'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts'
+            ]) {
+                const result = await runIntermediateCommandCommand({
+                    repoRoot,
+                    taskId,
+                    commandSource: 'node-test',
+                    command,
+                    timeoutMs: 60_000
+                });
+
+                assert.equal(result.exitCode, EXIT_GATE_FAILURE, command);
+                assert.ok(result.outputLines.join('\n').includes('INTERMEDIATE_COMMAND_REJECTED'), command);
+            }
+
+            const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', taskId + '.jsonl');
             const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
             assert.equal(events.some((event) => event.event_type === 'INTERMEDIATE_COMMAND_RUN'), false);
         } finally {

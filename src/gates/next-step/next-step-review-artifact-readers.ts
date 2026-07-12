@@ -35,6 +35,7 @@ import {
     validateReviewReceiptEvidenceContract
 } from '../review/review-evidence-contract';
 import {
+    detectMissingFocusedValidationEvidenceFailureReason,
     detectMissingValidationEvidenceFailureReason,
     detectReviewLaunchPackageFailureReason,
     detectStaleValidationEvidenceFailureReason
@@ -64,7 +65,7 @@ export interface ReviewArtifactState {
     failToken: string;
     verdictToken: string | null;
     failed: boolean;
-    failureKind: 'launch-package' | 'missing-validation-evidence' | 'stale-validation-evidence' | null;
+    failureKind: 'launch-package' | 'missing-focused-validation-evidence' | 'missing-validation-evidence' | 'stale-validation-evidence' | null;
     failureReason: string | null;
     domainScopeCurrent: boolean;
     ready: boolean;
@@ -253,13 +254,21 @@ export function readReviewArtifactState(
                     `review artifact contains fail token '${failToken}' for reviewer launch package failure (${failureReason}); preserve the failed artifact and restart the review cycle without implementation changes`
                 );
             } else {
-                failureReason = detectMissingValidationEvidenceFailureReason(content);
+                failureReason = detectMissingFocusedValidationEvidenceFailureReason(content);
                 if (failureReason) {
+                    failureKind = 'missing-focused-validation-evidence';
+                    violations.push(
+                        `review artifact contains fail token '${failToken}' for missing focused validation evidence (${failureReason}); preserve the failed artifact and use current task-owned focused validation evidence without fake implementation changes`
+                    );
+                } else {
+                    failureReason = detectMissingValidationEvidenceFailureReason(content);
+                }
+                if (failureReason && !failureKind) {
                     failureKind = 'missing-validation-evidence';
                     violations.push(
                         `review artifact contains fail token '${failToken}' for missing attached validation evidence (${failureReason}); preserve the failed artifact and refresh review evidence without fake implementation changes`
                     );
-                } else {
+                } else if (!failureReason) {
                     failureReason = detectStaleValidationEvidenceFailureReason(content);
                     if (failureReason) {
                         failureKind = 'stale-validation-evidence';

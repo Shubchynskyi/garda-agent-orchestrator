@@ -12,6 +12,7 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
+import { runIntermediateCommandCommand } from '../../../../src/cli/commands/gates';
 import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
@@ -586,6 +587,99 @@ function writeReviewEvidence(
 
 
 
+function writeFocusedIntermediateEvidence(
+    repoRoot: string,
+    taskId: string,
+    options: {
+        artifactHash?: string;
+        commandSource?: 'node-test' | 'targeted-test' | 'typecheck' | 'validation';
+        eventArtifactPath?: string;
+        eventOutcome?: 'PASSED' | 'FAILED';
+        exitCode?: number;
+        recordStatus?: 'PASSED' | 'FAILED';
+        recordTaskId?: string;
+        timestampUtc?: string;
+        command?: string;
+        mutateOutputArtifactAfterRecord?: boolean;
+        eventOutputArtifactHash?: string;
+    } = {}
+): void {
+    const commandSource = options.commandSource ?? 'targeted-test';
+    const command = options.command ?? 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts';
+    const commandHash = sha256Text(command).slice(0, 12);
+    const artifactPath = path.join(
+        reviewsRoot(repoRoot),
+        `${taskId}-intermediate-command-${commandSource}-${commandHash}.json`
+    );
+    const outputPath = path.join(
+        reviewsRoot(repoRoot),
+        `${taskId}-intermediate-command-${commandSource}-${commandHash}.log`
+    );
+    const exitCode = options.exitCode ?? 0;
+    const recordStatus = options.recordStatus ?? 'PASSED';
+    fs.writeFileSync(outputPath, 'focused validation passed\n', 'utf8');
+    const outputArtifactSha256 = fileSha256(outputPath);
+    const outputArtifactSizeBytes = fs.statSync(outputPath).size;
+    writeJson(artifactPath, {
+        schema_version: 1,
+        task_id: options.recordTaskId ?? taskId,
+        command_source: commandSource,
+        command,
+        status: recordStatus,
+        exit_code: exitCode,
+        duration_ms: 1,
+        output_artifact: outputPath,
+        output_artifact_sha256: options.eventOutputArtifactHash ?? outputArtifactSha256,
+        output_artifact_size_bytes: outputArtifactSizeBytes,
+        output_telemetry: {}
+    });
+    appendEvent(repoRoot, taskId, 'INTERMEDIATE_COMMAND_RUN', options.eventOutcome ?? recordStatus, {
+        command_source: commandSource,
+        command,
+        artifact_path: normalizeForTimeline(options.eventArtifactPath ?? artifactPath),
+        artifact_sha256: options.artifactHash ?? fileSha256(artifactPath),
+        output_artifact_sha256: outputArtifactSha256,
+        output_artifact_size_bytes: outputArtifactSizeBytes,
+        exit_code: exitCode
+    }, options.timestampUtc);
+    if (options.mutateOutputArtifactAfterRecord) {
+        fs.writeFileSync(outputPath, 'tampered focused validation output\n', 'utf8');
+    }
+}
+
+function seedRunnableFocusedIntermediateCommand(repoRoot: string): void {
+    const scriptPath = path.join(repoRoot, 'scripts', 'node-foundation', 'build-scripts.cjs');
+    const npmTestScriptPath = path.join(repoRoot, 'scripts', 'node-foundation', 'npm-focused-test.cjs');
+    const testPath = path.join(repoRoot, 'tests', 'node', 'gates', 'focused-evidence.test.ts');
+    fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(testPath, 'export {};\n', 'utf8');
+    fs.writeFileSync(
+        scriptPath,
+        [
+            "if (process.argv[2] !== 'test.js' || process.argv[3] !== 'tests/node/gates/focused-evidence.test.ts') process.exit(2);",
+            "console.log('focused evidence fixture passed');",
+            ''
+        ].join('\n'),
+        'utf8'
+    );
+    fs.writeFileSync(
+        npmTestScriptPath,
+        [
+            "if (process.argv[2] !== 'tests/node/gates/focused-evidence.test.ts') process.exit(2);",
+            "console.log('npm focused evidence fixture passed');",
+            ''
+        ].join('\n'),
+        'utf8'
+    );
+    writeJson(path.join(repoRoot, 'package.json'), {
+        private: true,
+        scripts: {
+            test: 'node scripts/node-foundation/npm-focused-test.cjs'
+        }
+    });
+}
+
 function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<string, unknown> {
     const copyPastePrompt = `Delegated ${reviewType} reviewer launch prompt for ${taskId}.`;
     const copyPastePromptSha256 = sha256Text(copyPastePrompt);
@@ -711,6 +805,378 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('runtime/manual-validation'));
         assert.ok(!result.commands[0].command.includes('--changed-file'));
         assert.ok(!result.commands[0].command.includes('record-review-result'));
+    });
+
+    it('restarts a failed code review after a bound focused intermediate test passes for supported severity forms', async () => {
+        const focusedFinding = '[garda:evidence-only:missing-focused-validation] test=tests/node/gates/focused-evidence.test.ts; action=run-and-record-focused-test';
+        for (const finding of [
+            `- Medium: ${focusedFinding}`,
+            `Medium:\n- ${focusedFinding}`,
+            `### Medium\n- ${focusedFinding}`
+        ]) {
+            const repoRoot = makeTempRepo();
+            seedStartedTask(repoRoot, TASK_ID);
+            seedRunnableFocusedIntermediateCommand(repoRoot);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+                changedFiles: ['tests/node/gates/focused-evidence.test.ts']
+            });
+            seedCompilePass(repoRoot, TASK_ID, undefined, ['tests/node/gates/focused-evidence.test.ts']);
+            writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+                verdict: 'fail',
+                body: [
+                    '## Findings by Severity',
+                    finding,
+                    '',
+                    '## Deferred Findings',
+                    'None',
+                    ''
+                ].join('\n')
+            });
+            const commandResult = await runIntermediateCommandCommand({
+                repoRoot,
+                taskId: TASK_ID,
+                commandSource: 'targeted-test',
+                command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
+                timeoutMs: 60_000
+            });
+            assert.equal(commandResult.exitCode, 0);
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+            assert.match(result.title, /focused validation evidence/);
+            assert.match(result.reason, /intermediate-command-targeted-test-[a-f0-9]{12}\.json/);
+            assert.match(result.reason, /do not make fake implementation changes/);
+            assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+            assert.ok(!result.commands[0].command.includes('--changed-file'));
+        }
+    });
+
+    it('fails closed when a severity heading does not contain a bullet finding', async () => {
+        const focusedFinding = '[garda:evidence-only:missing-focused-validation] test=tests/node/gates/focused-evidence.test.ts; action=run-and-record-focused-test';
+        for (const finding of [
+            `### Medium\n${focusedFinding}`,
+            `### Medium: ${focusedFinding}`,
+            `### Medium\n- ${focusedFinding}\nAuthorization bypass remains in the implementation.`
+        ]) {
+            const repoRoot = makeTempRepo();
+            seedStartedTask(repoRoot, TASK_ID);
+            seedRunnableFocusedIntermediateCommand(repoRoot);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+                changedFiles: ['tests/node/gates/focused-evidence.test.ts']
+            });
+            seedCompilePass(repoRoot, TASK_ID, undefined, ['tests/node/gates/focused-evidence.test.ts']);
+            writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+                verdict: 'fail',
+                body: [
+                    '## Findings by Severity',
+                    finding,
+                    '',
+                    '## Deferred Findings',
+                    'None',
+                    ''
+                ].join('\n')
+            });
+            const commandResult = await runIntermediateCommandCommand({
+                repoRoot,
+                taskId: TASK_ID,
+                commandSource: 'targeted-test',
+                command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
+                timeoutMs: 60_000
+            });
+            assert.equal(commandResult.exitCode, 0);
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'implementation', result.reason);
+        }
+    });
+
+    it('restarts a failed code review after a producer-recorded npm focused test passes', async () => {
+        const repoRoot = makeTempRepo();
+        const focusedFinding = '[garda:evidence-only:missing-focused-validation] test=tests/node/gates/focused-evidence.test.ts; action=run-and-record-focused-test';
+        seedStartedTask(repoRoot, TASK_ID);
+        seedRunnableFocusedIntermediateCommand(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['tests/node/gates/focused-evidence.test.ts']
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['tests/node/gates/focused-evidence.test.ts']);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                `- Medium: ${focusedFinding}`,
+                '',
+                '## Deferred Findings',
+                'None',
+                ''
+            ].join('\n')
+        });
+
+        const commandResult = await runIntermediateCommandCommand({
+            repoRoot,
+            taskId: TASK_ID,
+            commandSource: 'targeted-test',
+            command: 'npm test -- tests/node/gates/focused-evidence.test.ts',
+            timeoutMs: 60_000
+        });
+        assert.equal(commandResult.exitCode, 0);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.match(result.reason, /intermediate-command-targeted-test-[a-f0-9]{12}\.json/);
+    });
+
+    it('restarts after producer-recorded focused evidence uses caller-designated in-root paths', async () => {
+        const repoRoot = makeTempRepo();
+        const focusedFinding = '[garda:evidence-only:missing-focused-validation] test=tests/node/gates/focused-evidence.test.ts; action=run-and-record-focused-test';
+        const customEvidenceRoot = path.join(reviewsRoot(repoRoot), 'custom-focused-evidence');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedRunnableFocusedIntermediateCommand(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['tests/node/gates/focused-evidence.test.ts']
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['tests/node/gates/focused-evidence.test.ts']);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                `- Medium: ${focusedFinding}`,
+                '',
+                '## Deferred Findings',
+                'None',
+                ''
+            ].join('\n')
+        });
+
+        const commandResult = await runIntermediateCommandCommand({
+            repoRoot,
+            taskId: TASK_ID,
+            commandSource: 'targeted-test',
+            command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
+            artifactPath: path.join(customEvidenceRoot, 'focused-command.json'),
+            outputPath: path.join(customEvidenceRoot, 'focused-command.log'),
+            timeoutMs: 60_000
+        });
+        assert.equal(commandResult.exitCode, 0);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.match(result.reason, /custom-focused-evidence\/focused-command\.json/);
+    });
+
+    it('fails closed for stale, forged, foreign, failed, external, and scope-mismatched focused intermediate evidence', () => {
+        const scenarios: Array<{
+            name: string;
+            configureEvidence?: (repoRoot: string) => void;
+            mutateScope?: (repoRoot: string) => void;
+        }> = [
+            {
+                name: 'forged hash',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    artifactHash: '0'.repeat(64)
+                })
+            },
+            {
+                name: 'foreign task record',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    recordTaskId: 'T-FOREIGN'
+                })
+            },
+            {
+                name: 'mutated output artifact',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    mutateOutputArtifactAfterRecord: true
+                })
+            },
+            {
+                name: 'event output hash mismatch',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    eventOutputArtifactHash: '0'.repeat(64)
+                })
+            },
+            {
+                name: 'failed record',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    eventOutcome: 'FAILED',
+                    exitCode: 1,
+                    recordStatus: 'FAILED'
+                })
+            },
+            {
+                name: 'typecheck command that only names the focused test',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    commandSource: 'typecheck',
+                    command: 'npm run typecheck -- tests/node/gates/focused-evidence.test.ts'
+                })
+            },
+            {
+                name: 'validation command that only names the focused test',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    commandSource: 'validation',
+                    command: 'npm run validate -- tests/node/gates/focused-evidence.test.ts'
+                })
+            },
+            {
+                name: 'external artifact path',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    eventArtifactPath: path.join(repoRoot, '..', 'focused-evidence.json')
+                })
+            },
+            {
+                name: 'stale event',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    timestampUtc: '2026-04-28T00:00:20.000Z'
+                })
+            },
+            {
+                name: 'scope mismatch',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID),
+                mutateScope: (repoRoot) => writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+                    changedFiles: ['tests/node/gates/other-scope.test.ts']
+                })
+            },
+            {
+                name: 'test path prefix collision',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.tsx'
+                })
+            },
+            {
+                name: 'targeted-test direct node test command',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    command: 'node --test tests/node/gates/focused-evidence.test.ts'
+                })
+            },
+            {
+                name: 'node-test node-foundation wrapper command',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    commandSource: 'node-test',
+                    command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts'
+                })
+            },
+            {
+                name: 'whitespace-padded npm focused test path',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    command: 'npm test -- " tests/node/gates/focused-evidence.test.ts "'
+                })
+            }
+        ];
+
+        for (const scenario of scenarios) {
+            const repoRoot = makeTempRepo();
+            seedStartedTask(repoRoot, TASK_ID);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+                changedFiles: ['tests/node/gates/focused-evidence.test.ts']
+            });
+            seedCompilePass(repoRoot, TASK_ID);
+            writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+                verdict: 'fail',
+                body: [
+                    '## Findings by Severity',
+                    '- Medium: [garda:evidence-only:missing-focused-validation] test=tests/node/gates/focused-evidence.test.ts; action=run-and-record-focused-test',
+                    '',
+                    '## Deferred Findings',
+                    'None',
+                    ''
+                ].join('\n')
+            });
+            scenario.configureEvidence?.(repoRoot);
+            scenario.mutateScope?.(repoRoot);
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.notEqual(result.next_gate, 'restart-review-cycle', scenario.name + ': ' + result.reason);
+        }
+    });
+
+    it('fails closed when a focused-evidence marker contains an additional implementation defect', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['tests/node/gates/focused-evidence.test.ts']
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                '- Medium: [garda:evidence-only:missing-focused-validation] test=tests/node/gates/focused-evidence.test.ts; action=run-and-record-focused-test; implementation is flaky and times out under load.',
+                '',
+                '## Deferred Findings',
+                'None',
+                ''
+            ].join('\n')
+        });
+        writeFocusedIntermediateEvidence(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'implementation', result.reason);
+    });
+
+    it('does not let a different changed test mentioned outside the failed finding restart review', () => {
+        const repoRoot = makeTempRepo();
+        const requiredTestPath = 'tests/node/gates/focused-evidence.test.ts';
+        const unrelatedTestPath = 'tests/node/gates/other-focused-evidence.test.ts';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: [requiredTestPath, unrelatedTestPath]
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, [requiredTestPath, unrelatedTestPath]);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                `- Medium: [garda:evidence-only:missing-focused-validation] test=${requiredTestPath}; action=run-and-record-focused-test`,
+                '',
+                '## Validation Notes',
+                `${unrelatedTestPath} was mentioned only as unrelated validation context.`,
+                '',
+                '## Deferred Findings',
+                'None',
+                ''
+            ].join('\n')
+        });
+        writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+            command: `node scripts/node-foundation/build-scripts.cjs test.js ${unrelatedTestPath}`
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'restart-review-cycle', result.reason);
+    });
+
+    it('does not substitute an incidental changed-test reference for the test named by the focused marker', () => {
+        const repoRoot = makeTempRepo();
+        const changedTestPath = 'tests/node/gates/focused-evidence.test.ts';
+        const foreignTestPath = 'tests/node/gates/foreign-focused-evidence.test.ts';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: [changedTestPath]
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, [changedTestPath]);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                `- Medium: [garda:evidence-only:missing-focused-validation] test=${foreignTestPath}; action=run-and-record-focused-test`,
+                `<!-- unrelated changed test: ${changedTestPath} -->`,
+                '',
+                '## Deferred Findings',
+                'None',
+                ''
+            ].join('\n')
+        });
+        writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+            command: `node scripts/node-foundation/build-scripts.cjs test.js ${changedTestPath}`
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'restart-review-cycle', result.reason);
     });
 
     it('routes evidence-only stale validation failures to compile refresh instead of implementation self-loop', () => {

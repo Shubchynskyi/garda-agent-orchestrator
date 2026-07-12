@@ -148,6 +148,7 @@ function buildReviewerOutputFormRuleLines(): string[] {
         '- Never add, remove, rename, reorder, or nest the required `##` headings.',
         '- Use canonical `None` exactly when a Findings by Severity, Deferred Findings, or Residual Risks slot has no content.',
         '- Findings by Severity accepts parser-supported severity formats: `- High: ...`, `High:` followed by `- ...`, or `### High` followed by `- ...`; severity subheadings are allowed only inside `## Findings by Severity`.',
+        '- If and only if the sole active finding is missing auditable focused test execution evidence, use exactly `[garda:evidence-only:missing-focused-validation] test=<changed-test-path>; action=run-and-record-focused-test` after its severity. Do not add prose, another defect, or this marker for any implementation concern.',
         '- Deferred Findings entries must include a concrete next step and `Justification:` on the same bullet or continuation text.',
         '- Do not edit launcher, control, receipt, or review-context metadata instead of the designated reviewer output file.'
     ];

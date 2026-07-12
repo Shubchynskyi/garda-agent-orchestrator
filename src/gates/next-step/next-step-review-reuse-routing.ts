@@ -18,6 +18,11 @@ export interface ReviewReuseScopedDiffReadiness {
     reason: string;
 }
 
+export interface FocusedIntermediateReviewEvidence {
+    available: boolean;
+    reason: string | null;
+}
+
 export type ReviewReuseCandidateHint = 'current-context-candidate' | 'validation-required';
 
 export interface StrictSequentialUpstreamReuseRouteOptions {
@@ -84,6 +89,7 @@ export interface FailedReviewRemediationRouteOptions {
     failureKind: string | null;
     failureReason: string | null;
     currentReviewRecordedEvidenceCurrent: boolean;
+    focusedIntermediateEvidence: FocusedIntermediateReviewEvidence;
     currentReviewContextPrepared: boolean;
     scopedDiffReadiness: ReviewReuseScopedDiffReadiness;
     reviewerReadinessChain: string;
@@ -111,6 +117,25 @@ export function resolveFailedReviewRemediationRoute(
                 `but the failure matches reviewer launch package or binding evidence (${options.failureReason || 'launch package mismatch'}). ` +
                 'Preserve the failed review artifact and receipt as audit evidence; do not edit them by hand and do not make fake implementation changes. ' +
                 `Restart the review cycle to rebuild '${options.reviewType}' launch metadata and launch a fresh reviewer before downstream reviews.`,
+            commands: [options.commands.restartReviewCycle]
+        };
+    }
+
+    if (
+        options.failureKind === 'missing-focused-validation-evidence'
+        && options.currentReviewRecordedEvidenceCurrent
+        && options.focusedIntermediateEvidence.available
+    ) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'restart-review-cycle',
+            title: `Restart '${options.reviewType}' review after focused validation evidence.`,
+            reason:
+                `Recorded '${options.reviewType}' review verdict is '${options.verdictToken}', ` +
+                `but the only failure is missing focused validation evidence (${options.failureReason || 'missing focused validation evidence'}). ` +
+                `${options.focusedIntermediateEvidence.reason || 'Current task-owned focused validation evidence is available.'} ` +
+                'Preserve the failed review artifact and receipt as audit evidence; do not edit them by hand and do not make fake implementation changes. ' +
+                `Restart the review cycle to rebuild '${options.reviewType}' context and launch a fresh reviewer for the same scope before downstream reviews.`,
             commands: [options.commands.restartReviewCycle]
         };
     }

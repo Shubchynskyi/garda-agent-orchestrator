@@ -14,6 +14,8 @@ const REVIEW_LAUNCH_PACKAGE_FAILURE_MARKER_PATTERN =
     /\b(?:reviewer\s+failed\s+before\s+\w+\s+review|reviewer\s+launch\s+artifact\s+is\s+not\s+eligible\s+for\s+invocation\s+attestation|reviewer\s+launch\s+package\s+failure|launch\s+package\s+failure|launch\s+metadata\s+failure|invocation\s+attestation\s+failed)\b/i;
 const REVIEW_MISSING_VALIDATION_EVIDENCE_PATTERN =
     /\b(?:missing|omitted|absent|not attached|not provided|could not find)\b[\s\S]{0,200}\b(?:manual[-\s]?validation|validation\s+(?:log|logs|evidence)|runtime\/manual-validation|gradle\s+(?:test|check)\s+(?:log|logs|evidence))\b/i;
+const REVIEW_MISSING_FOCUSED_VALIDATION_EVIDENCE_PATTERN =
+    /^\[garda:evidence-only:missing-focused-validation\]\s+test=(tests\/[^\s;]+\.(?:test|spec)\.(?:c|m)?[jt]sx?);\s*action=run-and-record-focused-test$/iu;
 const REVIEW_STALE_VALIDATION_EVIDENCE_PATTERN =
     /(?:\b(?:stale|outdated|old|not current|no longer current|does not match|mismatch(?:ed)?|wrong)\b[\s\S]{0,220}\b(?:compile(?:-gate)?|full[-\s]?suite|validation\s+(?:log|logs|evidence)|current\s+preflight|preflight)\b|\b(?:compile(?:-gate)?|full[-\s]?suite|validation\s+(?:log|logs|evidence)|current\s+preflight|preflight)\b[\s\S]{0,220}\b(?:stale|outdated|old|not current|no longer current|does not match|mismatch(?:ed)?|wrong)\b)/i;
 const REVIEW_EVIDENCE_ONLY_FAILURE_PATTERN =
@@ -34,18 +36,90 @@ export function detectReviewLaunchPackageFailureReason(content: string): string 
 }
 
 function extractMarkdownSection(content: string, heading: string): string | null {
-    const headingPattern = /^#{2,6}\s+(.+?)\s*#*\s*$/gim;
+    const headingPattern = /^(#{2,6})\s+(.+?)\s*#*\s*$/gim;
     let match: RegExpExecArray | null;
     while ((match = headingPattern.exec(content)) !== null) {
-        const normalizedHeading = match[1].trim().toLowerCase();
+        const normalizedHeading = match[2].trim().toLowerCase();
         if (normalizedHeading !== heading.toLowerCase()) {
             continue;
         }
+        const sectionHeadingLevel = match[1].length;
         const sectionStart = headingPattern.lastIndex;
-        const nextHeading = headingPattern.exec(content);
-        return content.slice(sectionStart, nextHeading?.index ?? content.length);
+        let nextHeading: RegExpExecArray | null;
+        while ((nextHeading = headingPattern.exec(content)) !== null) {
+            if (nextHeading[1].length <= sectionHeadingLevel) {
+                return content.slice(sectionStart, nextHeading.index);
+            }
+        }
+        return content.slice(sectionStart);
     }
     return null;
+}
+
+function findingsBySeverityLines(content: string): string[] {
+    const section = extractMarkdownSection(content, 'Findings by Severity');
+    if (section == null) {
+        return [];
+    }
+    const findingLines: string[] = [];
+    let severityHeading: string | null = null;
+    let severityHeadingParts: string[] = [];
+    const flushSeverityHeading = (): void => {
+        if (severityHeading) {
+            findingLines.push(`${severityHeading}: ${severityHeadingParts.join(' ').trim()}`.trim());
+        }
+        severityHeading = null;
+        severityHeadingParts = [];
+    };
+    for (const rawLine of section.replace(/<!--[\s\S]*?-->/gu, '').split(/\r?\n/u)) {
+        const unquotedLine = rawLine.replace(/^[\s>]+/u, '').trim();
+        const isBullet = /^[-*+]\s+/u.test(unquotedLine);
+        const line = unquotedLine.replace(/^[-*+]\s+/u, '').trim();
+        if (!line) {
+            continue;
+        }
+        const severityHeader = line.match(/^#{3,6}\s+(critical|high|medium|low|p[0-3])\s*#*\s*$/iu);
+        if (severityHeader) {
+            flushSeverityHeading();
+            severityHeading = severityHeader[1];
+            continue;
+        }
+        const bareSeverityHeader = !isBullet && line.match(/^(critical|high|medium|low|p[0-3])\s*:\s*$/iu);
+        if (bareSeverityHeader) {
+            flushSeverityHeading();
+            severityHeading = bareSeverityHeader[1];
+            continue;
+        }
+        if (severityHeading) {
+            if (isBullet) {
+                severityHeadingParts.push(line);
+            } else {
+                findingLines.push(`invalid-unbulleted: ${line}`);
+            }
+            continue;
+        }
+        if (!/^(?:none|no findings|no blocking findings|no issues found|n\/a)[\s.]*$/iu.test(line)) {
+            findingLines.push(line);
+        }
+    }
+    flushSeverityHeading();
+    return findingLines.filter((line) => !/^(?:none|no findings|no blocking findings|no issues found|n\/a)[\s.]*$/iu.test(line));
+}
+
+function normalizeWorkspacePath(value: string): string {
+    return value.replace(/\\/gu, '/').replace(/^\.\//u, '').trim();
+}
+
+export function findReviewFindingTestPaths(content: string, candidateTestPaths: readonly string[]): string[] {
+    const normalizedCandidatePaths = new Set(candidateTestPaths
+        .map((testPath) => normalizeWorkspacePath(testPath))
+        .filter(Boolean)
+    );
+    return [...new Set(findingsBySeverityLines(content)
+        .map((line) => line.replace(/^(?:critical|high|medium|low|p[0-3])\s*:\s*/iu, ''))
+        .map((line) => line.match(REVIEW_MISSING_FOCUSED_VALIDATION_EVIDENCE_PATTERN)?.[1] || '')
+        .map((testPath) => normalizeWorkspacePath(testPath))
+        .filter((testPath) => normalizedCandidatePaths.has(testPath)))];
 }
 
 function hasNonEmptyFindingsBySeveritySection(content: string): boolean {
@@ -75,41 +149,36 @@ function hasEmptyFindingsBySeveritySection(content: string): boolean {
     return !normalized || /^(?:none|no findings|no blocking findings|no issues found|n\/a)[\s.]*$/iu.test(normalized);
 }
 
-function findingsBySeverityContainsOnlyMissingValidationEvidence(content: string): boolean {
-    const section = extractMarkdownSection(content, 'Findings by Severity');
-    if (section == null) {
-        return false;
-    }
-    const findingLines = section
-        .replace(/<!--[\s\S]*?-->/gu, '')
-        .split(/\r?\n/u)
-        .map((line) => line.replace(/^[\s>*-]+/u, '').trim())
-        .filter((line) => line && !/^(?:none|no findings|no blocking findings|no issues found|n\/a)[\s.]*$/iu.test(line));
+function findingsBySeverityContainsOnlyEvidence(
+    content: string,
+    evidencePattern: RegExp
+): boolean {
+    const findingLines = findingsBySeverityLines(content);
     if (findingLines.length === 0) {
         return false;
     }
     return findingLines.every((line) => {
         const withoutSeverity = line.replace(/^(?:critical|high|medium|low|p[0-3])\s*:\s*/iu, '');
-        if (!REVIEW_MISSING_VALIDATION_EVIDENCE_PATTERN.test(withoutSeverity)) {
+        if (!evidencePattern.test(withoutSeverity)) {
             return false;
         }
         const withoutMissingEvidence = withoutSeverity
-            .replace(REVIEW_MISSING_VALIDATION_EVIDENCE_PATTERN, '')
+            .replace(evidencePattern, '')
             .replace(REVIEW_EVIDENCE_ONLY_BENIGN_REASSURANCE_PATTERN, '');
         return !REVIEW_REAL_FINDING_MARKER_PATTERN.test(withoutMissingEvidence);
     });
 }
 
+function findingsBySeverityContainsOnlyMissingValidationEvidence(content: string): boolean {
+    return findingsBySeverityContainsOnlyEvidence(content, REVIEW_MISSING_VALIDATION_EVIDENCE_PATTERN);
+}
+
+function findingsBySeverityContainsOnlyMissingFocusedValidationEvidence(content: string): boolean {
+    return findingsBySeverityContainsOnlyEvidence(content, REVIEW_MISSING_FOCUSED_VALIDATION_EVIDENCE_PATTERN);
+}
+
 function findingsBySeverityContainsOnlyStaleValidationEvidence(content: string): boolean {
-    const section = extractMarkdownSection(content, 'Findings by Severity');
-    if (section == null) {
-        return false;
-    }
-    const findingLines = section
-        .replace(/<!--[\s\S]*?-->/gu, '')
-        .split(/\r?\n/u)
-        .map((line) => line.replace(/^[\s>*-]+/u, '').trim())
-        .filter((line) => line && !/^(?:none|no findings|no blocking findings|no issues found|n\/a)[\s.]*$/iu.test(line));
+    const findingLines = findingsBySeverityLines(content);
     if (findingLines.length === 0) {
         return false;
     }
@@ -148,6 +217,14 @@ export function detectMissingValidationEvidenceFailureReason(content: string): s
         }
     }
     return 'missing attached manual-validation evidence';
+}
+
+export function detectMissingFocusedValidationEvidenceFailureReason(content: string): string | null {
+    const missingOnlyFindingsBySeverity = findingsBySeverityContainsOnlyMissingFocusedValidationEvidence(content);
+    if (!missingOnlyFindingsBySeverity) {
+        return null;
+    }
+    return 'missing auditable focused validation evidence';
 }
 
 export function detectStaleValidationEvidenceFailureReason(content: string): string | null {

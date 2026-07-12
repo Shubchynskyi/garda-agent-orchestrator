@@ -95,6 +95,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptArtifact.includes('Treat the output template as an immutable fill-in form'));
             assert.ok(promptArtifact.includes('Never add, remove, rename, reorder, or nest the required `##` headings'));
             assert.ok(promptArtifact.includes('Use canonical `None` exactly when a Findings by Severity, Deferred Findings, or Residual Risks slot has no content'));
+            assert.ok(promptArtifact.includes('[garda:evidence-only:missing-focused-validation] test=<changed-test-path>; action=run-and-record-focused-test'));
             assert.ok(promptArtifact.includes('`### High` followed by `- ...`'));
             assert.ok(promptArtifact.includes('Parser-valid slot examples'));
             assert.ok(promptArtifact.includes('Findings by Severity example: `- High:'));
@@ -163,6 +164,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 '- Never add, remove, rename, reorder, or nest the required `##` headings.',
                 '- Use canonical `None` exactly when a Findings by Severity, Deferred Findings, or Residual Risks slot has no content.',
                 '- Findings by Severity accepts parser-supported severity formats: `- High: ...`, `High:` followed by `- ...`, or `### High` followed by `- ...`; severity subheadings are allowed only inside `## Findings by Severity`.',
+                '- If and only if the sole active finding is missing auditable focused test execution evidence, use exactly `[garda:evidence-only:missing-focused-validation] test=<changed-test-path>; action=run-and-record-focused-test` after its severity. Do not add prose, another defect, or this marker for any implementation concern.',
                 '- Deferred Findings entries must include a concrete next step and `Justification:` on the same bullet or continuation text.',
                 '- Do not edit launcher, control, receipt, or review-context metadata instead of the designated reviewer output file.',
                 '- Complete the entire assigned review scope before returning a verdict. Finding a Critical, High, Medium, or Low defect does not end the review.',

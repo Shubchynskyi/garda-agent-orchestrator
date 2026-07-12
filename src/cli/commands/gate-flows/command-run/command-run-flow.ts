@@ -8,6 +8,7 @@ import {
 } from '../../../../gate-runtime/token-telemetry';
 import { EXIT_GATE_FAILURE, EXIT_SUCCESS } from '../../../exit-codes';
 import * as gateHelpers from '../../../../gates/shared/helpers';
+import { isFocusedIntermediateCommand } from '../../../../gates/shared/focused-intermediate-command-grammar';
 import { executeCommandAsync, splitCommandLine } from '../../gates/gates-subprocess';
 
 const ALLOWED_COMMAND_SOURCES = ['node-test', 'targeted-test', 'typecheck', 'validation'] as const;
@@ -46,6 +47,8 @@ interface IntermediateCommandRecord {
     exit_code: number;
     duration_ms: number;
     output_artifact: string;
+    output_artifact_sha256: string;
+    output_artifact_size_bytes: number;
     output_telemetry: ReturnType<typeof buildOutputTelemetry>;
 }
 
@@ -91,48 +94,20 @@ function isNpmToken(token: string): boolean {
     return isBareCommandToken(token) && ['npm', 'npm.cmd', 'npm.exe'].includes(basenameLower(token));
 }
 
-function isNodeToken(token: string): boolean {
-    return isBareCommandToken(token) && ['node', 'node.exe'].includes(basenameLower(token));
-}
-
-function normalizeCommandPathToken(token: string): string {
-    return token.replace(/\\/g, '/').replace(/^\.\//u, '');
-}
-
-function isSafeFocusedTestPath(token: string): boolean {
-    const normalized = normalizeCommandPathToken(token);
-    return normalized.startsWith('tests/')
-        && !normalized.split('/').includes('..')
-        && /\.(?:test|spec)\.(?:c|m)?[jt]sx?$/u.test(normalized);
-}
-
-function isNodeFoundationFocusedTestCommand(binary: string, args: string[]): boolean {
-    return isNodeToken(binary)
-        && normalizeCommandPathToken(args[0] ?? '') === 'scripts/node-foundation/build-scripts.cjs'
-        && args[1] === 'test.js'
-        && args.length >= 3
-        && args.slice(2).every(isSafeFocusedTestPath);
-}
-
 function isAllowedIntermediateCommand(command: string, commandSource: IntermediateCommandSource): boolean {
     const tokens = splitCommandLine(command);
     if (tokens.length === 0) {
         return false;
     }
-    const [binary, ...args] = tokens;
-    if (commandSource === 'node-test') {
-        return (isNodeToken(binary) && args[0] === '--test' && args.length >= 2)
-            || isNodeFoundationFocusedTestCommand(binary, args);
+    if (commandSource === 'node-test' || commandSource === 'targeted-test') {
+        return isFocusedIntermediateCommand(commandSource, tokens);
     }
-    if (commandSource === 'targeted-test') {
-        return (isNpmToken(binary) && args[0] === 'test' && args.includes('--'))
-            || isNodeFoundationFocusedTestCommand(binary, args);
-    }
+    const [, ...args] = tokens;
     if (commandSource === 'typecheck') {
-        return isNpmToken(binary) && args[0] === 'run' && args[1] === 'typecheck';
+        return isNpmToken(tokens[0]) && args[0] === 'run' && args[1] === 'typecheck';
     }
     if (commandSource === 'validation') {
-        return isNpmToken(binary) && args[0] === 'run' && /^validate(?::|-|$)/.test(args[1] ?? '');
+        return isNpmToken(tokens[0]) && args[0] === 'run' && /^validate(?::|-|$)/.test(args[1] ?? '');
     }
     return false;
 }
@@ -218,6 +193,7 @@ async function persistCommandEvent(
     status: 'PASSED' | 'FAILED',
     record: IntermediateCommandRecord,
     artifactPath: string,
+    artifactSha256: string,
     eventsRoot?: string,
 ): Promise<void> {
     await appendTaskEventAsync(
@@ -230,7 +206,10 @@ async function persistCommandEvent(
             command_source: commandSource,
             command,
             artifact_path: artifactPath,
+            artifact_sha256: artifactSha256,
             output_artifact_path: record.output_artifact,
+            output_artifact_sha256: record.output_artifact_sha256,
+            output_artifact_size_bytes: record.output_artifact_size_bytes,
             output_telemetry: record.output_telemetry,
             exit_code: record.exit_code,
             duration_ms: record.duration_ms,
@@ -273,6 +252,11 @@ export async function runIntermediateCommandCommand(
     const rawLines = result.outputLines;
     fs.mkdirSync(path.dirname(artifacts.outputPath), { recursive: true });
     fs.writeFileSync(artifacts.outputPath, `${rawLines.join('\n')}\n`, 'utf8');
+    const outputArtifactSha256 = gateHelpers.fileSha256(artifacts.outputPath);
+    if (!outputArtifactSha256) {
+        throw new Error(`Unable to hash intermediate command output artifact '${artifacts.outputPath}'.`);
+    }
+    const outputArtifactSizeBytes = fs.statSync(artifacts.outputPath).size;
 
     const status = result.exitCode === EXIT_SUCCESS ? 'PASSED' : 'FAILED';
     const statusLines = formatStatusLines(
@@ -299,10 +283,16 @@ export async function runIntermediateCommandCommand(
         exit_code: result.exitCode,
         duration_ms: durationMs,
         output_artifact: artifacts.outputPath,
+        output_artifact_sha256: outputArtifactSha256,
+        output_artifact_size_bytes: outputArtifactSizeBytes,
         output_telemetry: telemetry,
     };
     fs.mkdirSync(path.dirname(artifacts.artifactPath), { recursive: true });
     fs.writeFileSync(artifacts.artifactPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+    const artifactSha256 = gateHelpers.fileSha256(artifacts.artifactPath);
+    if (!artifactSha256) {
+        throw new Error(`Unable to hash intermediate command artifact '${artifacts.artifactPath}'.`);
+    }
     await persistCommandEvent(
         repoRoot,
         taskId,
@@ -311,6 +301,7 @@ export async function runIntermediateCommandCommand(
         status,
         record,
         artifacts.artifactPath,
+        artifactSha256,
         normalizeOptionalString(options.eventsRoot),
     );
 

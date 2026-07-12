@@ -205,6 +205,10 @@ import {
     type ReviewReuseCandidateHint
 } from './next-step-review-reuse-routing';
 import {
+    isPassedIntermediateCommandEvent,
+    readPostReviewFocusedIntermediateEvidence
+} from './next-step-focused-intermediate-evidence';
+import {
     buildReviewGateChainStatusSummary,
     findDownstreamReviewNeedingDependencyRebind,
     findReviewGateStaleContextPrecheckRecovery,
@@ -886,20 +890,6 @@ function findLatestCurrentTaskEventIndex(
     return -1;
 }
 
-function isPassedIntermediateCommandEvent(event: TaskAuditEvent): boolean {
-    const details = isPlainRecord(event.details) ? event.details : {};
-    const commandSource = String(details.command_source || '').trim();
-    if (!['node-test', 'targeted-test', 'typecheck', 'validation'].includes(commandSource)) {
-        return false;
-    }
-    const outcome = String(event.outcome || '').trim().toUpperCase();
-    const status = String(details.status || '').trim().toUpperCase();
-    const exitCode = details.exit_code;
-    if (typeof exitCode === 'number' && Number.isInteger(exitCode)) {
-        return exitCode === 0;
-    }
-    return outcome === 'PASS' || outcome === 'PASSED' || status === 'PASS' || status === 'PASSED';
-}
 
 function resolveBundleRootForNextStep(repoRoot: string): string {
     const sourceCheckoutBundleRoot = path.resolve(repoRoot);
@@ -3641,6 +3631,18 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
                 depth: reviewDepth
             });
+            const focusedIntermediateEvidence = state.failureKind === 'missing-focused-validation-evidence'
+                ? readPostReviewFocusedIntermediateEvidence({
+                    repoRoot,
+                    reviewsRoot,
+                    eventsRoot,
+                    taskId,
+                    reviewArtifactPath: state.artifactPath,
+                    reviewResultRecordedAtUtc: state.reviewResultRecordedAtUtc,
+                    reviewerProvenanceTaskSequence: state.reviewerProvenance?.task_sequence ?? null,
+                    changedFiles: getPreflightChangedFilesForReviewRemediation(preflight)
+                })
+                : { available: false, reason: null };
             const failedReviewRoute = resolveFailedReviewRemediationRoute({
                 taskId,
                 reviewType,
@@ -3648,6 +3650,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 failureKind: state.failureKind,
                 failureReason: state.failureReason,
                 currentReviewRecordedEvidenceCurrent,
+                focusedIntermediateEvidence,
                 currentReviewContextPrepared,
                 scopedDiffReadiness,
                 reviewerReadinessChain,
@@ -3655,7 +3658,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 downstreamReviewTypes,
                 commands: {
                     restartReviewCycle: buildCommand(
-                        state.failureKind === 'missing-validation-evidence'
+                        state.failureKind === 'missing-focused-validation-evidence'
+                            ? 'Restart review cycle after focused validation evidence'
+                            : state.failureKind === 'missing-validation-evidence'
                             ? 'Restart review cycle after manual-validation evidence refresh'
                             : 'Restart review cycle for reviewer launch retry',
                         buildRestartReviewCycleCommand(
