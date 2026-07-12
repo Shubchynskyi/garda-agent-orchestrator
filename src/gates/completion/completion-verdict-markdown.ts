@@ -25,6 +25,8 @@ const CANONICAL_REVIEW_SECTION_HEADING_LOOKUP = new Map(
     CANONICAL_REVIEW_SECTION_HEADINGS.map((heading) => [heading.toLowerCase(), heading])
 );
 
+type SeverityLevel = 'critical' | 'high' | 'medium' | 'low';
+
 export function formatAcceptedReviewSectionHeadingShapes(heading: string): string {
     return `Accepted section heading shapes include '## ${heading}', '**${heading}**', and '## **${heading}**'.`;
 }
@@ -34,9 +36,16 @@ function stripOuterBoldMarkdown(value: string): { text: string; stripped: boolea
     return match ? { text: match[1].trim(), stripped: true } : { text: value, stripped: false };
 }
 
-function stripHashMarkdownHeading(value: string): { text: string; stripped: boolean } {
+function parseHashMarkdownHeading(value: string): { level: number; text: string } | null {
     const match = /^(#{2,6})\s+(.+?)\s*$/.exec(value.trim());
-    return match ? { text: match[2].trim(), stripped: true } : { text: value, stripped: false };
+    return match
+        ? { level: match[1].length, text: match[2].trim() }
+        : null;
+}
+
+function stripHashMarkdownHeading(value: string): { text: string; stripped: boolean } {
+    const match = parseHashMarkdownHeading(value);
+    return match ? { text: match.text, stripped: true } : { text: value, stripped: false };
 }
 
 export function getCanonicalReviewSectionHeading(rawLine: unknown): string | null {
@@ -102,20 +111,73 @@ export function normalizeCanonicalReviewSectionHeadings(content: string): { cont
 export function extractMarkdownSectionLines(lines: string[], heading: string): string[] {
     const sectionLines: string[] = [];
     let capture = false;
+    let sectionHeadingLevel: number | null = null;
+    const targetHeading = heading.trim().toLowerCase();
     for (const rawLine of lines) {
         const trimmed = rawLine.trim();
         const canonicalHeading = getCanonicalReviewSectionHeading(trimmed);
-        const headingMatch = /^(#{2,6})\s+(.+?)\s*$/.exec(trimmed);
-        if (canonicalHeading || headingMatch) {
-            if (capture) break;
-            capture = canonicalHeading
-                ? canonicalHeading.toLowerCase() === heading.trim().toLowerCase()
-                : headingMatch?.[2].trim().toLowerCase() === heading.trim().toLowerCase();
-            continue;
+        const hashHeading = parseHashMarkdownHeading(trimmed);
+        const hashHeadingText = hashHeading
+            ? stripOuterBoldMarkdown(hashHeading.text).text
+            : null;
+        if (canonicalHeading || hashHeading) {
+            if (capture) {
+                const isSiblingOrHigherHeading = Boolean(canonicalHeading)
+                    || !sectionHeadingLevel
+                    || !hashHeading
+                    || hashHeading.level <= sectionHeadingLevel;
+                if (isSiblingOrHigherHeading) break;
+            } else {
+                const candidateHeading = canonicalHeading || hashHeadingText || '';
+                capture = candidateHeading.toLowerCase() === targetHeading;
+                sectionHeadingLevel = capture
+                    ? canonicalHeading ? 2 : hashHeading?.level ?? null
+                    : null;
+                continue;
+            }
         }
-        if (capture) sectionLines.push(rawLine);
+        if (capture) {
+            sectionLines.push(rawLine);
+        }
     }
     return sectionLines;
+}
+
+function getSupportedSeverityHeading(rawLine: string): {
+    severity: SeverityLevel;
+} | null {
+    const trimmed = String(rawLine || '').trim();
+    const match = /^#{3}\s+(?:\*\*|__)?\s*(Critical|High|Medium|Low)\s*(?:\*\*|__)?\s*$/iu.exec(trimmed);
+    if (!match) {
+        return null;
+    }
+    return {
+        severity: match[1].trim().toLowerCase() as SeverityLevel
+    };
+}
+
+function isUnsupportedSeverityHeading(rawLine: string): boolean {
+    const trimmed = String(rawLine || '').trim();
+    if (!trimmed || getSupportedSeverityHeading(trimmed)) {
+        return false;
+    }
+    const hashHeading = parseHashMarkdownHeading(trimmed);
+    if (hashHeading) {
+        return /\b(Critical|High|Medium|Low)\b/iu.test(hashHeading.text);
+    }
+    return /^(?:[-*+]\s*)?(?:\*\*|__)\s*(Critical|High|Medium|Low)\s*:?\s*(?:\*\*|__)?(?:\s+.*)?$/iu.test(trimmed);
+}
+
+function applySupportedSeverityHeading(
+    rawLine: string,
+    onSeverity: (severity: SeverityLevel) => void
+): boolean {
+    const severityHeading = getSupportedSeverityHeading(rawLine);
+    if (!severityHeading) {
+        return false;
+    }
+    onSeverity(severityHeading.severity);
+    return true;
 }
 
 export function normalizeReviewListText(value: unknown): string {
@@ -175,16 +237,12 @@ export function getMarkdownMeaningfulEntries(sectionLines: string[]): string[] {
     return entries;
 }
 
-type SeverityLevel = 'critical' | 'high' | 'medium' | 'low';
-
 export function getUnsupportedSeverityHeadingLines(sectionLines: string[]): string[] {
     const unsupportedLines: string[] = [];
     for (const rawLine of sectionLines) {
         const trimmed = String(rawLine || '').trim();
         if (!trimmed) continue;
-        const hashSeverityHeadingMatch = /^(#{2,6})\s+(?:\*\*|__)?\s*(Critical|High|Medium|Low)\b.*$/iu.exec(trimmed);
-        const boldSeverityHeadingMatch = /^(?:[-*+]\s*)?(?:\*\*|__)\s*(Critical|High|Medium|Low)\s*:?\s*(?:\*\*|__)?(?:\s+.*)?$/iu.exec(trimmed);
-        if (hashSeverityHeadingMatch || boldSeverityHeadingMatch) {
+        if (isUnsupportedSeverityHeading(trimmed)) {
             unsupportedLines.push(trimmed);
         }
     }
@@ -195,22 +253,43 @@ export function getUnsupportedFindingsBySeverityEntries(sectionLines: string[]):
     const unsupportedEntries: string[] = [];
     let currentSeverity: SeverityLevel | null = null;
     let currentSeverityHasFinding = false;
+    let pendingSeverityOwnerLine: string | null = null;
+
+    const flushPendingSeverityOwner = () => {
+        if (pendingSeverityOwnerLine) {
+            unsupportedEntries.push(pendingSeverityOwnerLine);
+            pendingSeverityOwnerLine = null;
+        }
+    };
 
     for (const rawLine of sectionLines) {
         const trimmed = String(rawLine || '').trim();
         if (!trimmed) continue;
         if (!isMeaningfulReviewEntry(trimmed)) continue;
 
+        if (applySupportedSeverityHeading(trimmed, (severity) => {
+            flushPendingSeverityOwner();
+            currentSeverity = severity;
+            currentSeverityHasFinding = false;
+            pendingSeverityOwnerLine = trimmed;
+        })) {
+            continue;
+        }
+
         const severityMatch = /^(?:[-*+]\s*)?(Critical|High|Medium|Low)\s*:\s*(.*)$/i.exec(trimmed);
         if (severityMatch) {
+            flushPendingSeverityOwner();
             currentSeverity = severityMatch[1].trim().toLowerCase() as SeverityLevel;
             const remainder = normalizeReviewListText(severityMatch[2]);
             currentSeverityHasFinding = isMeaningfulReviewEntry(remainder);
+            const hasExplicitEmptyMarker = Boolean(remainder) && !currentSeverityHasFinding;
+            pendingSeverityOwnerLine = currentSeverityHasFinding || hasExplicitEmptyMarker ? null : trimmed;
             continue;
         }
 
         const bareSeverityMatch = /^(?:[-*+]\s*)?(Critical|High|Medium|Low)\s*$/i.exec(trimmed);
         if (bareSeverityMatch) {
+            flushPendingSeverityOwner();
             unsupportedEntries.push(trimmed);
             currentSeverity = null;
             currentSeverityHasFinding = false;
@@ -220,7 +299,11 @@ export function getUnsupportedFindingsBySeverityEntries(sectionLines: string[]):
         const bulletMatch = /^(?:[-*+]\s+|\d+\.\s+)(.*)$/.exec(trimmed);
         if (bulletMatch) {
             if (currentSeverity) {
-                currentSeverityHasFinding = currentSeverityHasFinding || isMeaningfulReviewEntry(bulletMatch[1]);
+                const bulletHasFinding = isMeaningfulReviewEntry(bulletMatch[1]);
+                currentSeverityHasFinding = currentSeverityHasFinding || bulletHasFinding;
+                if (bulletHasFinding) {
+                    pendingSeverityOwnerLine = null;
+                }
                 continue;
             }
             unsupportedEntries.push(trimmed);
@@ -234,6 +317,7 @@ export function getUnsupportedFindingsBySeverityEntries(sectionLines: string[]):
         unsupportedEntries.push(trimmed);
     }
 
+    flushPendingSeverityOwner();
     return unsupportedEntries;
 }
 
@@ -244,6 +328,12 @@ export function getFindingsBySeverity(sectionLines: string[]): Record<SeverityLe
     for (const rawLine of sectionLines) {
         const trimmed = rawLine.trim();
         if (!trimmed) continue;
+
+        if (applySupportedSeverityHeading(trimmed, (severity) => {
+            currentSeverity = severity;
+        })) {
+            continue;
+        }
 
         const severityMatch = /^(?:[-*+]\s*)?(Critical|High|Medium|Low)\s*:\s*(.*)$/i.exec(trimmed);
         if (severityMatch) {

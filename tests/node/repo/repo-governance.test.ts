@@ -223,6 +223,37 @@ test('repo governance files use the current owner handle and root-relative paths
     assert.ok(gitleaks.includes("'''tests/node/core/redaction\\.test\\.ts'''"));
 });
 
+test('review artifact templates advertise the parser-supported severity subheading contract', () => {
+    const template = readRepoFile('template/docs/reviews/TEMPLATE.md');
+    const materializedLiveTemplate = readGeneratedRepoFile('garda-agent-orchestrator/live/docs/reviews/TEMPLATE.md');
+
+    for (const [label, content] of [
+        ['template docs review artifact template', template],
+        ['materialized live review artifact template', materializedLiveTemplate]
+    ] as const) {
+        assert.match(
+            content,
+            /Use parser-supported severity formats only: `- High: \.\.\.`, `High:` followed by `- \.\.\.`, or `### High` followed by `- \.\.\.`\./u,
+            `${label} must advertise inline, list, and subheading severity formats`
+        );
+        assert.match(
+            content,
+            /Severity subheadings are allowed only inside `## Findings by Severity`\./u,
+            `${label} must scope severity subheadings to Findings by Severity`
+        );
+        assert.match(
+            content,
+            /Severity subheading example: `### Medium` followed by `- tests\/review-parser\.test\.ts:17/u,
+            `${label} must include a parser-valid severity subheading example`
+        );
+        assert.doesNotMatch(
+            content,
+            /Do not use severity headings such as `### Medium`/u,
+            `${label} must not preserve stale severity-heading rejection wording`
+        );
+    }
+});
+
 test('template TASK scaffold is tracked and not ignored by root gitignore', () => {
     const repoRoot = getRepoRoot();
     const templateTaskPath = path.join(repoRoot, 'template', 'TASK.md');
@@ -560,8 +591,8 @@ test('reviewer skill templates require canonical output-template sections and ty
         'generated output template, not a free-form summary',
         'immutable fill-in form',
         'replace placeholder lines only',
-        'Preserve these headings exactly and in this order',
-        'never add, remove, rename, reorder, or nest headings',
+        'Preserve these required `##` headings exactly and in this order',
+        'never add, remove, rename, reorder, or nest the required `##` headings',
         '`## Validation Notes`',
         '`## Findings by Severity`',
         '`## Deferred Findings`',
@@ -569,8 +600,8 @@ test('reviewer skill templates require canonical output-template sections and ty
         '`## Verdict`',
         'required for PASS',
         'canonical `None`',
-        'parser-supported inline/list formats',
-        'Do not use severity headings such as `### Medium`',
+        'parser-supported inline/list/subheading formats',
+        'Severity subheadings are allowed only inside `## Findings by Severity`',
         'Parser-valid examples',
         'Justification:',
         'A finding at any severity does not end the review',

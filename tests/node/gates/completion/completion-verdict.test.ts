@@ -231,6 +231,71 @@ describe('gates/completion-verdict', () => {
             assert.match(findings.high[0], /later checklist category/u);
             assert.match(findings.medium[0], /re-sweep current scope/u);
         });
+
+        it('keeps supported severity subheadings inside Findings by Severity until the next sibling section', () => {
+            const lines = [
+                '## Findings by Severity',
+                '### Medium',
+                '- `tests/parser.test.ts:17` covers only inline severity items; impact: nested findings can disappear; remediation: cover severity subheadings.',
+                '## Deferred Findings',
+                'None'
+            ];
+
+            const section = extractMarkdownSectionLines(lines, 'Findings by Severity');
+            assert.deepEqual(section, [
+                '### Medium',
+                '- `tests/parser.test.ts:17` covers only inline severity items; impact: nested findings can disappear; remediation: cover severity subheadings.'
+            ]);
+            const findings = getFindingsBySeverity(section);
+            assert.equal(findings.medium.length, 1);
+            assert.match(findings.medium[0], /nested findings can disappear/u);
+        });
+
+        it('keeps supported severity subheadings under non-hash canonical section headings', () => {
+            const lines = [
+                '**Findings by Severity**',
+                '### High',
+                '- `src/parser.ts:42` non-hash section heading loses nested finding; impact: direct readers miss failures; remediation: treat canonical headings as section level two.',
+                '**Deferred Findings**',
+                'None'
+            ];
+
+            const section = extractMarkdownSectionLines(lines, 'Findings by Severity');
+            assert.deepEqual(section, [
+                '### High',
+                '- `src/parser.ts:42` non-hash section heading loses nested finding; impact: direct readers miss failures; remediation: treat canonical headings as section level two.'
+            ]);
+            const findings = getFindingsBySeverity(section);
+            assert.equal(findings.high.length, 1);
+            assert.match(findings.high[0], /non-hash section heading/u);
+        });
+
+        it('keeps every supported severity subheading under Findings by Severity', () => {
+            const lines = [
+                '## Findings by Severity',
+                '### Critical',
+                '- `src/critical.ts:1` critical finding; impact: critical issue; remediation: fix critical issue.',
+                '### High',
+                '- `src/high.ts:2` high finding; impact: high issue; remediation: fix high issue.',
+                '### Medium',
+                '- `src/medium.ts:3` medium finding; impact: medium issue; remediation: fix medium issue.',
+                '### Low',
+                '- `src/low.ts:4` low finding; impact: low issue; remediation: fix low issue.',
+                '## Deferred Findings',
+                'None'
+            ];
+
+            const section = extractMarkdownSectionLines(lines, 'Findings by Severity');
+            const findings = getFindingsBySeverity(section);
+            assert.equal(findings.critical.length, 1);
+            assert.equal(findings.high.length, 1);
+            assert.equal(findings.medium.length, 1);
+            assert.equal(findings.low.length, 1);
+            assert.match(findings.critical[0], /critical finding/u);
+            assert.match(findings.high[0], /high finding/u);
+            assert.match(findings.medium[0], /medium finding/u);
+            assert.match(findings.low[0], /low finding/u);
+        });
     });
 
     describe('normalizeReviewListText', () => {
@@ -323,10 +388,10 @@ describe('gates/completion-verdict', () => {
 
             const findings = getFindingsBySeverity([
                 '- High: `src/parser.ts:42` drops the second finding; impact: incomplete review; remediation: keep every entry.',
-                'Medium:',
+                '### Medium',
                 '- `tests/parser.test.ts:17` covers only the first severity; impact: regression can hide; remediation: assert every severity bucket.',
                 '- `tests/parser.test.ts:33` omits list-format coverage; impact: reviewer output can regress; remediation: add list-format fixture.',
-                'Low:',
+                '### Low',
                 '- None'
             ]);
 
@@ -336,6 +401,21 @@ describe('gates/completion-verdict', () => {
             assert.match(findings.high[0], /drops the second finding/u);
             assert.match(findings.medium[0], /covers only the first severity/u);
             assert.match(findings.medium[1], /omits list-format coverage/u);
+        });
+
+        it('parses every supported severity subheading', () => {
+            const expectedSeverities = ['critical', 'high', 'medium', 'low'] as const;
+            const lines = expectedSeverities.flatMap((severity) => [
+                `### ${severity[0].toUpperCase()}${severity.slice(1)}`,
+                `- \`src/${severity}.ts:1\` ${severity} subheading finding; impact: ${severity} issue; remediation: fix ${severity} issue.`
+            ]);
+
+            const findings = getFindingsBySeverity(lines);
+
+            for (const severity of expectedSeverities) {
+                assert.equal(findings[severity].length, 1, severity);
+                assert.match(findings[severity][0], new RegExp(`${severity} subheading finding`, 'u'));
+            }
         });
     });
 
@@ -397,7 +477,7 @@ describe('gates/completion-verdict', () => {
             assert.ok(result.violations.some((entry) => entry.includes("ambiguous duplicate section heading for '## Findings by Severity'")));
         });
 
-        it('rejects heading-like severity text under Findings by Severity with permitted-format diagnostic', () => {
+        it('keeps parser-supported severity subheading findings active and visible', () => {
             const content = [
                 '# Review',
                 '## Validation Notes',
@@ -414,10 +494,148 @@ describe('gates/completion-verdict', () => {
             ].join('\n');
             const result = getReviewArtifactFindingsEvidence('/review.md', content);
             assert.equal(result.status, 'FAILED');
+            assert.equal(result.findings_by_severity.medium.length, 1);
+            assert.match(result.findings_by_severity.medium[0], /unsupported nested heading/u);
             const diagnostic = result.violations.join('\n');
-            assert.match(diagnostic, /unsupported severity heading '### Medium'/u);
+            assert.doesNotMatch(diagnostic, /unsupported severity heading '### Medium'/u);
+            assert.match(diagnostic, /active Medium findings/u);
+        });
+
+        it('keeps every supported severity subheading active in findings evidence', () => {
+            const content = [
+                '# Review',
+                '**Validation Notes**',
+                'Reviewed all severity subheading parser paths in `src/parser.ts:42` and `tests/parser.test.ts:17`.',
+                '**Findings by Severity**',
+                '### Critical',
+                '- `src/critical.ts:1` critical subheading finding; impact: critical issue; remediation: fix critical issue.',
+                '### High',
+                '- `src/high.ts:2` high subheading finding; impact: high issue; remediation: fix high issue.',
+                '### Medium',
+                '- `src/medium.ts:3` medium subheading finding; impact: medium issue; remediation: fix medium issue.',
+                '### Low',
+                '- `src/low.ts:4` low subheading finding; impact: low issue; remediation: fix low issue.',
+                '**Deferred Findings**',
+                'None',
+                '**Residual Risks**',
+                'None',
+                '**Verdict**',
+                'REVIEW FAILED'
+            ].join('\n');
+
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+
+            assert.equal(result.status, 'FAILED');
+            assert.equal(result.findings_by_severity.critical.length, 1);
+            assert.equal(result.findings_by_severity.high.length, 1);
+            assert.equal(result.findings_by_severity.medium.length, 1);
+            assert.equal(result.findings_by_severity.low.length, 1);
+            const diagnostic = result.violations.join('\n');
+            assert.match(diagnostic, /active Critical findings/u);
+            assert.match(diagnostic, /active High findings/u);
+            assert.match(diagnostic, /active Medium findings/u);
+            assert.match(diagnostic, /active Low findings/u);
+        });
+
+        it('does not scan unsupported severity headings beyond the Findings section boundary', () => {
+            const content = [
+                '# Review',
+                '## Validation Notes',
+                'Reviewed `src/parser.ts:42` and `tests/parser.test.ts:17` for findings section boundaries.',
+                '## Findings by Severity',
+                'None',
+                '## Implementation Notes',
+                '### High outside findings',
+                '- This is not part of Findings by Severity and must not be parsed as review finding evidence.',
+                '## Deferred Findings',
+                'None',
+                '## Residual Risks',
+                'None',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n');
+
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+
+            assert.equal(result.status, 'PASS');
+            assert.deepEqual(result.findings_by_severity, { critical: [], high: [], medium: [], low: [] });
+            assert.doesNotMatch(result.violations.join('\n'), /unsupported severity heading '### High outside findings'/u);
+        });
+
+        it('rejects bare supported severity subheadings without a finding', () => {
+            const content = [
+                '# Review',
+                '## Validation Notes',
+                'Reviewed `src/parser.ts:42` and `tests/parser.test.ts:17` for bare severity subheading parsing.',
+                '## Findings by Severity',
+                '### High',
+                '## Deferred Findings',
+                'None',
+                '## Residual Risks',
+                'None',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n');
+
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+
+            assert.equal(result.status, 'FAILED');
+            assert.deepEqual(result.findings_by_severity, { critical: [], high: [], medium: [], low: [] });
+            const diagnostic = result.violations.join('\n');
+            assert.match(diagnostic, /unsupported meaningful content '### High'/u);
+            assert.match(diagnostic, /'### Medium' followed by '- <finding>'/u);
+        });
+
+        it('rejects unadvertised severity subheading variants', () => {
+            const inlineHeadingContent = [
+                '# Review',
+                '## Validation Notes',
+                'Reviewed `src/parser.ts:42` and `tests/parser.test.ts:17` for strict severity subheading shape.',
+                '## Findings by Severity',
+                '### High: `src/parser.ts:42` inline heading finding should be rejected.',
+                '## Deferred Findings',
+                'None',
+                '## Residual Risks',
+                'None',
+                '## Verdict',
+                'REVIEW FAILED'
+            ].join('\n');
+            const deeperHeadingContent = inlineHeadingContent.replace(
+                '### High: `src/parser.ts:42` inline heading finding should be rejected.',
+                '#### High'
+            );
+
+            const inlineResult = getReviewArtifactFindingsEvidence('/review-inline.md', inlineHeadingContent);
+            const deeperResult = getReviewArtifactFindingsEvidence('/review-deeper.md', deeperHeadingContent);
+
+            assert.equal(inlineResult.status, 'FAILED');
+            assert.match(inlineResult.violations.join('\n'), /unsupported severity heading '### High:/u);
+            assert.equal(deeperResult.status, 'FAILED');
+            assert.match(deeperResult.violations.join('\n'), /unsupported severity heading '#### High'/u);
+        });
+
+        it('rejects malformed severity headings with permitted-format diagnostic', () => {
+            const content = [
+                '# Review',
+                '## Validation Notes',
+                'Reviewed `src/parser.ts:42` and `tests/parser.test.ts:17` for malformed severity heading parsing.',
+                '## Findings by Severity',
+                '### Medium finding without colon',
+                '- `src/parser.ts:42` this finding is hidden behind a malformed nested heading.',
+                '## Deferred Findings',
+                'None',
+                '## Residual Risks',
+                'None',
+                '## Verdict',
+                'REVIEW FAILED'
+            ].join('\n');
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+            assert.equal(result.status, 'FAILED');
+            const diagnostic = result.violations.join('\n');
+            assert.match(diagnostic, /unsupported severity heading '### Medium finding without colon'/u);
             assert.match(diagnostic, /- Medium: <file:line>/u);
-            assert.match(diagnostic, /Medium:' followed by '- <finding>'/u);
+            assert.match(diagnostic, /'Medium:' followed by '- <finding>'/u);
+            assert.match(diagnostic, /'### Medium' followed by '- <finding>'/u);
             assert.match(diagnostic, /canonical 'None'/u);
         });
 

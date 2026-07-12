@@ -145,9 +145,9 @@ export function buildExhaustiveReviewContractLines(): string[] {
 function buildReviewerOutputFormRuleLines(): string[] {
     return [
         '- Treat the output template as an immutable fill-in form: replace placeholder lines only.',
-        '- Never add, remove, rename, reorder, or nest the required headings.',
+        '- Never add, remove, rename, reorder, or nest the required `##` headings.',
         '- Use canonical `None` exactly when a Findings by Severity, Deferred Findings, or Residual Risks slot has no content.',
-        '- Findings by Severity accepts only parser-supported inline/list severity formats such as `- High: ...` or `High:` followed by `- ...`; never use severity headings such as `### Medium`.',
+        '- Findings by Severity accepts parser-supported severity formats: `- High: ...`, `High:` followed by `- ...`, or `### High` followed by `- ...`; severity subheadings are allowed only inside `## Findings by Severity`.',
         '- Deferred Findings entries must include a concrete next step and `Justification:` on the same bullet or continuation text.',
         '- Do not edit launcher, control, receipt, or review-context metadata instead of the designated reviewer output file.'
     ];
@@ -157,6 +157,7 @@ function buildReviewerOutputExampleLines(): string[] {
     return [
         '- Validation Notes example: `Reviewed src/review-parser.ts:42 and tests/review-parser.test.ts:17; checked parser-supported finding formats and rejection diagnostics.`',
         '- Findings by Severity example: `- High: src/review-parser.ts:42 drops later findings; impact: incomplete review evidence; remediation: preserve every severity entry.`',
+        '- Severity subheading example: `### Medium` followed by `- tests/review-parser.test.ts:17 misses hierarchy coverage; impact: nested findings can be lost; remediation: cover severity subheadings.`',
         '- Deferred Findings example: `- [Low] docs/reviews.md:12 clarify reviewer wording. Next step: update docs in T-123. Justification: documentation-only follow-up is accepted after parser coverage.`',
         '- Residual Risks example: `- Rollout risk: legacy review artifacts may still use old wording until regenerated; mitigation: parser tests cover both canonical None and supported finding formats.`'
     ];
@@ -178,7 +179,7 @@ function buildReviewerOutputTemplateBodyLines(passVerdictToken: string, failVerd
         '<REPLACE with 1-3 concrete sentences naming reviewed files, behavior boundaries, tests/checklists, and verification evidence; required for PASS>',
         '',
         '## Findings by Severity',
-        '<REPLACE with canonical `None`, or parser-supported active findings using `- High: <file:line> <impact>; remediation: <required action>` / `High:` followed by `- <finding>`; do not use severity headings such as `### Medium`>',
+        '<REPLACE with canonical `None`, or parser-supported active findings using `- High: <file:line> <impact>; remediation: <required action>` / `High:` followed by `- <finding>` / `### High` followed by `- <finding>`>',
         '',
         '## Deferred Findings',
         '<REPLACE with canonical `None`, or parser-supported deferred bullets like `- [Low] <summary with file evidence>. Next step: <action>. Justification: <why deferral is acceptable now>`>',
@@ -380,7 +381,7 @@ function buildReviewerPromptTemplateMarkdown(options: {
         '- Deferred Findings is only for accepted actionable follow-ups with a concrete next step and Justification:.',
         '- Residual Risks is only for concrete active risks that remain after review.',
         '- Use `None` for empty Findings by Severity, Deferred Findings, or Residual Risks sections.',
-        '- Do not use markdown severity subheadings such as `### Medium`; use `- Medium: ...` or `Medium:` followed by bullets.',
+        '- Markdown severity subheadings are supported only inside `## Findings by Severity`; use `### Medium` followed by bullets, `- Medium: ...`, or `Medium:` followed by bullets.',
         '- Validation-boundary notes, command logs, positive inspection summaries, and speculative environment notes are prose only, not deferred findings or residual risks.',
         ''
     ].join('\n');

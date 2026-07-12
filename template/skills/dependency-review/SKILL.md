@@ -56,18 +56,19 @@ Prioritize supply-chain integrity, runtime compatibility, and operational blast 
 - Do not widen the assigned scope. This is a process-completeness requirement, not a guarantee that every latent defect will be discovered.
 
 ## Mandatory Output Format
-Return the generated output template, not a free-form summary. Treat it as an immutable fill-in form: replace placeholder lines only. Preserve these headings exactly and in this order; never add, remove, rename, reorder, or nest headings:
+Return the generated output template, not a free-form summary. Treat it as an immutable fill-in form: replace placeholder lines only. Preserve these required `##` headings exactly and in this order; never add, remove, rename, reorder, or nest the required `##` headings:
 1. `## Validation Notes` - concrete reviewed dependency files, behavior, boundaries, and verification evidence; required for PASS.
-2. `## Findings by Severity` - canonical `None`, or active blocking dependency findings with file references using parser-supported inline/list formats.
+2. `## Findings by Severity` - canonical `None`, or active blocking dependency findings with file references using parser-supported inline/list/subheading formats.
 3. `## Deferred Findings` - canonical `None`, or accepted actionable dependency follow-ups with a concrete next step and `Justification:`.
 4. `## Residual Risks` - canonical `None`, or active open dependency or rollout risks that remain after review.
 5. `## Verdict` - exact verdict token: `DEPENDENCY REVIEW PASSED` or `DEPENDENCY REVIEW FAILED`.
 
-Use only parser-supported finding formats under `## Findings by Severity`: `- High: <file:line> <impact>; remediation: <required action>` or `High:` followed by `- <finding>`. Do not use severity headings such as `### Medium`.
+Use parser-supported finding formats under `## Findings by Severity`: `- High: <file:line> <impact>; remediation: <required action>`, `High:` followed by `- <finding>`, or `### High` followed by `- <finding>`. Severity subheadings are allowed only inside `## Findings by Severity`.
 
 Parser-valid examples:
 - Validation Notes: `Reviewed src/review-parser.ts:42 and tests/review-parser.test.ts:17; checked parser-supported finding formats and rejection diagnostics.`
 - Findings by Severity: `- High: src/review-parser.ts:42 drops later findings; impact: incomplete review evidence; remediation: preserve every severity entry.`
+- Severity subheading: `### Medium` followed by `- tests/review-parser.test.ts:17 misses hierarchy coverage; impact: nested findings can be lost; remediation: cover severity subheadings.`
 - Deferred Findings: `- [Low] docs/reviews.md:12 clarify reviewer wording. Next step: update docs in T-123. Justification: documentation-only follow-up is accepted after parser coverage.`
 - Residual Risks: `- Rollout risk: legacy review artifacts may still use old wording until regenerated; mitigation: parser tests cover both canonical None and supported finding formats.`
 

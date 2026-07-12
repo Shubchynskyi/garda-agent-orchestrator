@@ -516,6 +516,18 @@ describe('gates/completion — helpers and formatters', () => {
             assert.equal(result.length, 1);
         });
 
+        it('does not stop at supported nested severity headings', () => {
+            const lines = [
+                '## Findings by Severity',
+                '### Low',
+                '- minor issue',
+                '## Residual Risks',
+                'None'
+            ];
+            const result = extractMarkdownSectionLines(lines, 'Findings by Severity');
+            assert.deepEqual(result, ['### Low', '- minor issue']);
+        });
+
         it('normalizes obvious reviewer section heading variants', () => {
             assert.equal(getCanonicalReviewSectionHeading('**Findings by Severity**'), 'Findings by Severity');
             assert.equal(getCanonicalReviewSectionHeading('### Residual Risks'), 'Residual Risks');

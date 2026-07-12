@@ -3,7 +3,6 @@ import {
     countCanonicalReviewSectionHeadings,
     extractMarkdownSectionLines,
     formatAcceptedReviewSectionHeadingShapes,
-    getCanonicalReviewSectionHeading,
     getMarkdownMeaningfulEntries,
     getFindingsBySeverity,
     getUnsupportedFindingsBySeverityEntries,
@@ -29,28 +28,6 @@ export function isTrivialReview(content: string): boolean {
     }
 
     return false;
-}
-
-function extractFindingsBySeverityStructuralLines(lines: string[]): string[] {
-    const sectionLines: string[] = [];
-    let capture = false;
-    for (const rawLine of lines) {
-        const canonicalHeading = getCanonicalReviewSectionHeading(rawLine);
-        if (canonicalHeading) {
-            if (canonicalHeading.toLowerCase() === 'findings by severity') {
-                capture = true;
-                continue;
-            }
-            if (capture) {
-                break;
-            }
-            continue;
-        }
-        if (capture) {
-            sectionLines.push(rawLine);
-        }
-    }
-    return sectionLines;
 }
 
 export function getReviewArtifactFindingsEvidence(artifactPath: string, content: string) {
@@ -92,13 +69,13 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
         }
     }
 
-    const findingsStructuralLines = extractFindingsBySeverityStructuralLines(lines);
+    const findingsStructuralLines = extractMarkdownSectionLines(lines, 'Findings by Severity');
     for (const unsupportedLine of getUnsupportedSeverityHeadingLines(findingsStructuralLines)) {
         result.violations.push(
             `Review artifact '${artifactPathNormalized}' uses unsupported severity heading '${unsupportedLine}' under '## Findings by Severity'. ` +
-            "Use parser-supported findings format such as '- Medium: <file:line> <impact>; remediation: <required action>' " +
-            "or 'Medium:' followed by '- <finding>'; use canonical 'None' when there are no findings. " +
-            "Do not add, remove, rename, reorder, or nest required headings."
+            "Use parser-supported findings format such as '- Medium: <file:line> <impact>; remediation: <required action>', " +
+            "'Medium:' followed by '- <finding>', or '### Medium' followed by '- <finding>'; use canonical 'None' when there are no findings. " +
+            "Do not add, remove, rename, reorder, or nest required '##' headings."
         );
     }
 
@@ -116,8 +93,8 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
         for (const unsupportedEntry of getUnsupportedFindingsBySeverityEntries(findingsLines)) {
             result.violations.push(
                 `Review artifact '${artifactPathNormalized}' contains unsupported meaningful content '${unsupportedEntry}' under '## Findings by Severity'. ` +
-                "Use parser-supported findings format such as '- Medium: <file:line> <impact>; remediation: <required action>' " +
-                "or 'Medium:' followed by '- <finding>'; use canonical 'None' when there are no findings. " +
+                "Use parser-supported findings format such as '- Medium: <file:line> <impact>; remediation: <required action>', " +
+                "'Medium:' followed by '- <finding>', or '### Medium' followed by '- <finding>'; use canonical 'None' when there are no findings. " +
                 "Unscoped prose, bare severity labels, and bullets without a severity owner are rejected so active findings cannot be hidden."
             );
         }

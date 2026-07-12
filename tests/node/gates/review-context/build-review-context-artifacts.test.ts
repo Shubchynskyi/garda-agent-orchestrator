@@ -87,9 +87,9 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptArtifact.includes('```markdown\n## Validation Notes'));
             assert.ok(promptArtifact.includes('<REPLACE with 1-3 concrete sentences naming reviewed files, behavior boundaries, tests/checklists, and verification evidence; required for PASS>'));
             assert.ok(promptArtifact.includes('Treat the output template as an immutable fill-in form'));
-            assert.ok(promptArtifact.includes('Never add, remove, rename, reorder, or nest the required headings'));
+            assert.ok(promptArtifact.includes('Never add, remove, rename, reorder, or nest the required `##` headings'));
             assert.ok(promptArtifact.includes('Use canonical `None` exactly when a Findings by Severity, Deferred Findings, or Residual Risks slot has no content'));
-            assert.ok(promptArtifact.includes('never use severity headings such as `### Medium`'));
+            assert.ok(promptArtifact.includes('`### High` followed by `- ...`'));
             assert.ok(promptArtifact.includes('Parser-valid slot examples'));
             assert.ok(promptArtifact.includes('Findings by Severity example: `- High:'));
             assert.ok(promptArtifact.includes('## Findings by Severity'));
@@ -128,7 +128,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(rolePromptText.includes('2. PromptTemplatePath:'));
             assert.ok(rolePromptText.includes('3. ReviewerPromptPath:'));
             assert.ok(rolePromptText.includes('replace placeholder lines only'));
-            assert.ok(rolePromptText.includes('Never add, remove, rename, reorder, or nest the required headings'));
+            assert.ok(rolePromptText.includes('Never add, remove, rename, reorder, or nest the required `##` headings'));
             assert.equal(result.reviewer_handoff.role_prompt.artifact_sha256, sha256Text(rolePromptText));
             assert.equal(fs.existsSync(result.reviewer_handoff.prompt_template.artifact_path), true);
             assert.equal(fs.existsSync(result.reviewer_handoff.output_template.artifact_path), true);
@@ -147,16 +147,16 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptTemplateText.includes('prefer `gate run-intermediate-command` when eligible'));
             assert.ok(promptTemplateText.includes('Do not run ad-hoc full-suite/build commands'));
             assert.ok(promptTemplateText.includes('Use `None` for empty Findings by Severity, Deferred Findings, or Residual Risks sections'));
-            assert.ok(promptTemplateText.includes('Do not use markdown severity subheadings such as `### Medium`'));
+            assert.ok(promptTemplateText.includes('Markdown severity subheadings are supported only inside `## Findings by Severity`'));
             assert.equal(result.reviewer_handoff.prompt_template.artifact_sha256, sha256Text(promptTemplateText));
             assert.equal(fs.readFileSync(result.reviewer_handoff.output_template.artifact_path, 'utf8'), [
                 '# code review Output Template',
                 '',
                 'Fill this template as an immutable form. Replace placeholder lines only; keep required headings exactly as written.',
                 '- Treat the output template as an immutable fill-in form: replace placeholder lines only.',
-                '- Never add, remove, rename, reorder, or nest the required headings.',
+                '- Never add, remove, rename, reorder, or nest the required `##` headings.',
                 '- Use canonical `None` exactly when a Findings by Severity, Deferred Findings, or Residual Risks slot has no content.',
-                '- Findings by Severity accepts only parser-supported inline/list severity formats such as `- High: ...` or `High:` followed by `- ...`; never use severity headings such as `### Medium`.',
+                '- Findings by Severity accepts parser-supported severity formats: `- High: ...`, `High:` followed by `- ...`, or `### High` followed by `- ...`; severity subheadings are allowed only inside `## Findings by Severity`.',
                 '- Deferred Findings entries must include a concrete next step and `Justification:` on the same bullet or continuation text.',
                 '- Do not edit launcher, control, receipt, or review-context metadata instead of the designated reviewer output file.',
                 '- Complete the entire assigned review scope before returning a verdict. Finding a Critical, High, Medium, or Low defect does not end the review.',
@@ -169,6 +169,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 'Parser-valid slot examples (copy the shape only when applicable; do not copy example facts):',
                 '- Validation Notes example: `Reviewed src/review-parser.ts:42 and tests/review-parser.test.ts:17; checked parser-supported finding formats and rejection diagnostics.`',
                 '- Findings by Severity example: `- High: src/review-parser.ts:42 drops later findings; impact: incomplete review evidence; remediation: preserve every severity entry.`',
+                '- Severity subheading example: `### Medium` followed by `- tests/review-parser.test.ts:17 misses hierarchy coverage; impact: nested findings can be lost; remediation: cover severity subheadings.`',
                 '- Deferred Findings example: `- [Low] docs/reviews.md:12 clarify reviewer wording. Next step: update docs in T-123. Justification: documentation-only follow-up is accepted after parser coverage.`',
                 '- Residual Risks example: `- Rollout risk: legacy review artifacts may still use old wording until regenerated; mitigation: parser tests cover both canonical None and supported finding formats.`',
                 '',
@@ -176,7 +177,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 '<REPLACE with 1-3 concrete sentences naming reviewed files, behavior boundaries, tests/checklists, and verification evidence; required for PASS>',
                 '',
                 '## Findings by Severity',
-                '<REPLACE with canonical `None`, or parser-supported active findings using `- High: <file:line> <impact>; remediation: <required action>` / `High:` followed by `- <finding>`; do not use severity headings such as `### Medium`>',
+                '<REPLACE with canonical `None`, or parser-supported active findings using `- High: <file:line> <impact>; remediation: <required action>` / `High:` followed by `- <finding>` / `### High` followed by `- <finding>`>',
                 '',
                 '## Deferred Findings',
                 '<REPLACE with canonical `None`, or parser-supported deferred bullets like `- [Low] <summary with file evidence>. Next step: <action>. Justification: <why deferral is acceptable now>`>',
@@ -334,7 +335,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 assert.ok(templateArtifact.includes(`## Verdict\n<REPLACE with exactly ${passToken} or ${passToken.replace(/\bPASSED\b/g, 'FAILED')}>`));
                 assert.ok(templateArtifact.includes('Replace placeholder lines only'));
                 assert.ok(templateArtifact.includes('Use canonical `None` exactly'));
-                assert.ok(templateArtifact.includes('never use severity headings such as `### Medium`'));
+                assert.ok(templateArtifact.includes('severity subheadings are allowed only inside `## Findings by Severity`'));
                 assert.ok(templateArtifact.includes('Parser-valid slot examples'));
                 assert.ok(templateArtifact.includes('Deduplicate findings that share one root cause'));
                 assert.ok(templateArtifact.includes('file and line evidence, impact, and required remediation'));
