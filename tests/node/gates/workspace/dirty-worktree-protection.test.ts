@@ -148,6 +148,36 @@ describe('gates/workspace/dirty-worktree-protection', () => {
         }
     });
 
+    it('owns a pre-existing dirty file deleted by the task without taking untouched baseline files', () => {
+        const repoRoot = createBaselineRepo();
+        try {
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "dirty baseline";\n');
+            writeFile(repoRoot, 'src/untouched.ts', 'export const untouched = "dirty baseline";\n');
+            const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+
+            fs.rmSync(path.join(repoRoot, 'src/app.ts'));
+
+            const taskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+                repoRoot,
+                baseline,
+                ['src/app.ts']
+            );
+
+            assert.ok(taskOwnedScope);
+            assert.deepEqual(taskOwnedScope.owned_files, ['src/app.ts']);
+            assert.deepEqual(taskOwnedScope.owned_preexisting_files, ['src/app.ts']);
+            assert.deepEqual(taskOwnedScope.delta_changed_preexisting_files, ['src/app.ts']);
+            assert.deepEqual(taskOwnedScope.explicitly_selected_preexisting_files, []);
+            assert.deepEqual(taskOwnedScope.untouched_preexisting_files, ['src/untouched.ts']);
+            assert.deepEqual(
+                deriveProtectedDirtyWorkspaceScope(repoRoot, baseline, taskOwnedScope.owned_files)?.protected_files,
+                ['src/untouched.ts']
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('batches tracked planned paths while retaining existing ignored planned files', () => {
         const repoRoot = createBaselineRepo();
         try {
