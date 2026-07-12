@@ -158,13 +158,13 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     // A new task-mode entry must never inherit runtime identity from an older task-mode artifact.
     const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo);
     assertTaskModeRuntimeIdentity(repoRoot, taskId, routingDecision, artifactPath);
-    const dirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot);
     const workflowConfigFileHashes = getCurrentWorkflowConfigFileHashes(repoRoot);
     const {
         plannedChangedFiles,
         protectedPlannedFiles,
         workflowConfigPlannedFiles
     } = resolveTaskModeEntryScope(repoRoot, options.plannedChangedFiles);
+    const dirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot, plannedChangedFiles);
     const orchestratorWork = parseBooleanOption(options.orchestratorWork, false);
     const workflowConfigWork = parseBooleanOption(options.workflowConfigWork, false);
     const workflowConfigPreTaskBaseline = getWorkflowConfigPreTaskBaselineState(repoRoot, workflowConfigFileHashes);

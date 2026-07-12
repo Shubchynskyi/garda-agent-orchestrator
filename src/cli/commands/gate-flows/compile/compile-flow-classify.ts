@@ -37,6 +37,7 @@ import { buildDomainScopeFingerprints } from '../../../../gates/scope/domain-sco
 import { loadIsolationModeConfig } from '../../../../gates/isolation/isolation-mode';
 import { resolveIsolatedOrchestratorRoot, resolveGateExecutionPath } from '../../../../gates/isolation/isolation-sandbox';
 import {
+    deriveTaskOwnedDirtyWorkspaceScope,
     deriveProtectedDirtyWorkspaceScope,
     detectProtectedDirtyWorkspaceDrift
 } from '../../../../gates/workspace/dirty-worktree-protection';
@@ -466,14 +467,30 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             );
         }
         const dirtyWorkspaceBaseline = taskModeEvidence.dirty_workspace_baseline;
-        const dirtyWorkspaceProtectedScope = deriveProtectedDirtyWorkspaceScope(
+        const dirtyWorkspaceTaskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+            repoRoot,
             dirtyWorkspaceBaseline,
-            workspaceSnapshot.changed_files
+            workspaceSnapshot.changed_files,
+            {
+                isExplicitTaskScope: explicitChangedFilesProvided || options.useStaged === true,
+                plannedChangedFiles: taskModeEvidence.planned_changed_files || [],
+                useStaged: options.useStaged === true
+            }
+        );
+        const dirtyWorkspaceProtectedScope = deriveProtectedDirtyWorkspaceScope(
+            repoRoot,
+            dirtyWorkspaceBaseline,
+            dirtyWorkspaceTaskOwnedScope?.owned_files || []
         );
         const dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(
             repoRoot,
             dirtyWorkspaceProtectedScope
         );
+        if (dirtyWorkspaceTaskOwnedScope) {
+            result.triggers.dirty_workspace_task_owned_files = dirtyWorkspaceTaskOwnedScope.owned_files;
+            result.triggers.dirty_workspace_task_owned_files_sha256 = dirtyWorkspaceTaskOwnedScope.owned_files_sha256;
+            result.triggers.dirty_workspace_untouched_baseline_files = dirtyWorkspaceTaskOwnedScope.untouched_preexisting_files;
+        }
         preflightErrors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
         const workflowConfigChanges = getCurrentWorkflowConfigChanges(
             repoRoot,

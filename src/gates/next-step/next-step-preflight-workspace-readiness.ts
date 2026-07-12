@@ -11,6 +11,10 @@ import {
     getWorkspaceSnapshotCached,
 } from '../workspace/workspace-snapshot-cache';
 import {
+    normalizeWorkspaceRelativePath,
+    normalizeWorkspaceRelativePaths
+} from '../workspace/dirty-worktree-protection';
+import {
     isSourceCheckoutGeneratedRuntimeArtifactPath
 } from '../shared/generated-runtime-artifacts';
 import {
@@ -129,9 +133,10 @@ export function readPreflightWorkspaceReadiness(
     const plannedChangedFiles = Array.isArray(options.plannedChangedFiles)
         ? filterSourceCheckoutGeneratedRuntimeArtifacts(repoRoot, options.plannedChangedFiles)
         : [];
-    const dirtyWorkspaceBaselineChangedFiles = Array.isArray(options.dirtyWorkspaceBaselineChangedFiles)
-        ? [...new Set(options.dirtyWorkspaceBaselineChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
-        : [];
+    const dirtyWorkspaceBaselineChangedFiles = normalizeWorkspaceRelativePaths(
+        repoRoot,
+        options.dirtyWorkspaceBaselineChangedFiles
+    );
     const dirtyWorkspaceBaselineFileHashes = options.dirtyWorkspaceBaselineFileHashes || {};
     const expectedChangedFilesSha256 = stringSha256(changedFiles.join('\n'));
     const expectedScopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
@@ -195,7 +200,7 @@ export function readPreflightWorkspaceReadiness(
                 .map((entry) => normalizePath(entry))
                 .filter((entry) => entry && !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isOrchestratorSourceCheckout(repoRoot)));
             const preflightSet = new Set(changedFiles);
-            const changedWorkflowConfigFiles = getTriggerPathList(preflight, 'changed_workflow_config_files');
+            const changedWorkflowConfigFiles = getTriggerPathList(repoRoot, preflight, 'changed_workflow_config_files');
             const uncoveredDirtyBaselineFiles = currentGitSnapshotFiles.filter((entry) => (
                 unchangedProtectedFiles.has(entry) && !preflightSet.has(entry)
             ));
@@ -217,7 +222,7 @@ export function readPreflightWorkspaceReadiness(
                 ));
             const dirtyBaselineSet = new Set([
                 ...dirtyWorkspaceBaselineChangedFiles,
-                ...getTriggerPathList(preflight, 'dirty_workspace_baseline_changed_files')
+                ...getTriggerPathList(repoRoot, preflight, 'dirty_workspace_baseline_changed_files')
             ]);
             const unchangedDirtyBaselineSet = new Set(
                 [...dirtyBaselineSet].filter((entry) => (
@@ -373,9 +378,7 @@ function getUnchangedProtectedDirtyWorkspaceFiles(
     preflight: Record<string, unknown>
 ): Set<string> {
     const triggers = getPreflightTriggers(preflight);
-    const protectedFiles = Array.isArray(triggers.dirty_workspace_protected_files)
-        ? [...new Set(triggers.dirty_workspace_protected_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
-        : [];
+    const protectedFiles = normalizeWorkspaceRelativePaths(repoRoot, triggers.dirty_workspace_protected_files);
     const protectedHashes = isPlainRecord(triggers.dirty_workspace_protected_file_hashes)
         ? triggers.dirty_workspace_protected_file_hashes
         : {};
@@ -385,7 +388,7 @@ function getUnchangedProtectedDirtyWorkspaceFiles(
         if (!expectedHash) {
             continue;
         }
-        const currentHash = fileSha256(path.join(repoRoot, protectedFile));
+        const currentHash = fileSha256(path.resolve(repoRoot, protectedFile));
         if (currentHash && currentHash === expectedHash) {
             unchanged.add(protectedFile);
         }
@@ -397,11 +400,9 @@ function getPreflightTriggers(preflight: Record<string, unknown> | null): Record
     return isPlainRecord(preflight?.triggers) ? preflight.triggers : {};
 }
 
-function getTriggerPathList(preflight: Record<string, unknown>, fieldName: string): string[] {
+function getTriggerPathList(repoRoot: string, preflight: Record<string, unknown>, fieldName: string): string[] {
     const triggers = getPreflightTriggers(preflight);
-    return Array.isArray(triggers[fieldName])
-        ? [...new Set(triggers[fieldName].map((entry) => normalizePath(entry)).filter(Boolean))].sort()
-        : [];
+    return normalizeWorkspaceRelativePaths(repoRoot, triggers[fieldName]);
 }
 
 function dirtyBaselineFileMatchesCurrent(
@@ -409,10 +410,14 @@ function dirtyBaselineFileMatchesCurrent(
     changedFile: string,
     dirtyBaselineFileHashes: Record<string, string>
 ): boolean {
-    const expectedHash = dirtyBaselineFileHashes[normalizePath(changedFile)];
+    const normalizedChangedFile = normalizeWorkspaceRelativePath(repoRoot, changedFile);
+    if (!normalizedChangedFile) {
+        return false;
+    }
+    const expectedHash = dirtyBaselineFileHashes[normalizedChangedFile];
     if (!expectedHash) {
         return false;
     }
-    const currentHash = fileSha256(path.join(repoRoot, changedFile));
+    const currentHash = fileSha256(path.resolve(repoRoot, normalizedChangedFile));
     return !!currentHash && currentHash.trim().toLowerCase() === expectedHash;
 }

@@ -159,6 +159,9 @@ export interface ClassifyChangeTriggers {
     workflow_config_workspace_scan_error?: string;
     dirty_workspace_baseline_changed_files?: string[];
     dirty_workspace_baseline_changed_files_sha256?: string | null;
+    dirty_workspace_task_owned_files?: string[];
+    dirty_workspace_task_owned_files_sha256?: string | null;
+    dirty_workspace_untouched_baseline_files?: string[];
     dirty_workspace_protected_files?: string[];
     dirty_workspace_protected_files_sha256?: string | null;
     dirty_workspace_protected_file_hashes?: Record<string, string | null>;

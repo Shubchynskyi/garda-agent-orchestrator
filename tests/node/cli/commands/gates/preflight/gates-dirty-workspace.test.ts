@@ -263,6 +263,8 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
         assert.deepEqual(payload.changed_files, ['src/app.ts']);
         assert.equal(payload.detection_source, 'git_staged_only');
         assert.deepEqual(preflight.triggers.dirty_workspace_protected_files, ['src/scratch-note.ts']);
+        assert.deepEqual(preflight.triggers.dirty_workspace_task_owned_files, ['src/app.ts']);
+        assert.deepEqual(preflight.triggers.dirty_workspace_untouched_baseline_files, ['src/scratch-note.ts']);
         assert.equal(preflight.triggers.dirty_workspace_protection_status, 'PASS');
         assert.equal(
             preflight.triggers.dirty_workspace_protection_assessment,

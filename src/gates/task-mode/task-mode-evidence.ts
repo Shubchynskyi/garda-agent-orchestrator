@@ -246,7 +246,10 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.profile_source = String(artifactObject.profile_source || '').trim() || null;
     result.runtime_active_profile = String(artifactObject.runtime_active_profile || '').trim() || null;
     result.runtime_profile_source = String(artifactObject.runtime_profile_source || '').trim() || null;
-    result.dirty_workspace_baseline = normalizeDirtyWorkspaceBaseline(artifactObject.dirty_workspace_baseline);
+    result.dirty_workspace_baseline = normalizeDirtyWorkspaceBaseline(
+        artifactObject.dirty_workspace_baseline,
+        repoRoot
+    );
     result.workflow_config_file_hashes = normalizeWorkflowConfigFileHashes(artifactObject.workflow_config_file_hashes);
     result.workflow_config_compatibility_baseline_files = normalizeTaskModePathList(
         artifactObject.workflow_config_compatibility_baseline_files

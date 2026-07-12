@@ -66,6 +66,10 @@ import {
     resolvePathInsideRepo
 } from '../shared/helpers';
 import {
+    normalizeWorkspaceRelativePath,
+    normalizeWorkspaceRelativePaths
+} from '../workspace/dirty-worktree-protection';
+import {
     collectKnownNonBlockingSignals,
     type KnownNonBlockingSignal
 } from '../shared/known-nonblocking-signals';
@@ -1204,7 +1208,7 @@ function getExpandedNonTestReviewRemediationFiles(params: {
         getPreflightChangedFilesForReviewRemediation(params.preflight),
         params.currentChangedFiles,
         [
-            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(params.taskMode),
+            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(params.repoRoot, params.taskMode),
             ...getTaskManualValidationBoundaryFiles(params.taskId, params.currentChangedFiles)
         ],
         classificationConfig.test_trigger_regexes
@@ -1831,7 +1835,7 @@ function getPreflightRefreshCommandChangedFiles(params: {
     );
     if (plannedChangedFiles.length > 0) {
         const taskScopedChangedFiles = params.taskMode?.workflow_config_work === true
-            ? filterSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, getPreflightRefreshChangedFiles(params.taskMode, params.preflight))
+            ? filterSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, getPreflightRefreshChangedFiles(params.repoRoot, params.taskMode, params.preflight))
             : plannedChangedFiles;
         const currentChangedFiles = filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, getCurrentWorkspaceRefreshChangedFiles(
             params.repoRoot,
@@ -1848,10 +1852,10 @@ function getPreflightRefreshCommandChangedFiles(params: {
         }
         const plannedSet = new Set(plannedChangedFiles);
         const dirtyBaselineSet = new Set([
-            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(params.taskMode),
-            ...getPreflightTriggerChangedFiles(params.preflight, 'dirty_workspace_baseline_changed_files')
+            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(params.repoRoot, params.taskMode),
+            ...getPreflightTriggerChangedFiles(params.repoRoot, params.preflight, 'dirty_workspace_baseline_changed_files')
         ]);
-        const dirtyBaselineFileHashes = getTaskModeDirtyWorkspaceBaselineFileHashes(params.taskMode);
+        const dirtyBaselineFileHashes = getTaskModeDirtyWorkspaceBaselineFileHashes(params.repoRoot, params.taskMode);
         const unchangedDirtyBaselineSet = new Set(
             [...dirtyBaselineSet].filter((changedFile) => (
                 dirtyBaselineFileMatchesCurrent(params.repoRoot, changedFile, dirtyBaselineFileHashes)
@@ -1934,15 +1938,20 @@ function dirtyBaselineFileMatchesCurrent(
     changedFile: string,
     dirtyBaselineFileHashes: Record<string, string>
 ): boolean {
-    const expectedHash = dirtyBaselineFileHashes[normalizePath(changedFile)];
+    const normalizedChangedFile = normalizeWorkspaceRelativePath(repoRoot, changedFile);
+    if (!normalizedChangedFile) {
+        return false;
+    }
+    const expectedHash = dirtyBaselineFileHashes[normalizedChangedFile];
     if (!expectedHash) {
         return false;
     }
-    const currentHash = fileSha256(path.join(repoRoot, changedFile));
+    const currentHash = fileSha256(path.resolve(repoRoot, normalizedChangedFile));
     return !!currentHash && currentHash.trim().toLowerCase() === expectedHash;
 }
 
 function getPreflightTriggerChangedFiles(
+    repoRoot: string,
     preflight: Record<string, unknown> | null,
     fieldName: string
 ): string[] {
@@ -1951,9 +1960,7 @@ function getPreflightTriggerChangedFiles(
         return [];
     }
     const value = (triggers as Record<string, unknown>)[fieldName];
-    return Array.isArray(value)
-        ? value.map((entry) => normalizePath(entry)).filter(Boolean)
-        : [];
+    return normalizeWorkspaceRelativePaths(repoRoot, value);
 }
 
 function getBuildReviewContextReuseCandidateHint(
@@ -2550,8 +2557,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             failedReviewVerdict: null,
             docImpactPath,
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
-            dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode),
-            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(taskMode)
+            dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode),
+            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode)
         })
         : { ready: false, reason: 'No current preflight exists.' };
     const strictPreGuardWorkspaceReadiness = preflight
@@ -2560,8 +2567,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             failedReviewVerdict: null,
             docImpactPath,
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
-            dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode),
-            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(taskMode),
+            dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode),
+            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode),
             allowDocsOnlyDelta: false
         })
         : { ready: false, reason: 'No current preflight exists.' };
@@ -2589,8 +2596,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null,
             docImpactPath,
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
-            dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode),
-            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(taskMode)
+            dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode),
+            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode)
         })
         : preflightWorkspaceReadiness;
     const effectiveStrictPreGuardWorkspaceReadiness = preflight && failedCurrentReviewStateForPreflight
@@ -2599,8 +2606,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null,
             docImpactPath,
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
-            dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode),
-            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(taskMode),
+            dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode),
+            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode),
             allowDocsOnlyDelta: false
         })
         : strictPreGuardWorkspaceReadiness;
@@ -2749,7 +2756,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         taskModePath,
                         preflightCommandPath,
                         includePlannedScope: false,
-                        changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
+                        changedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
                     })
                 )
             ]
@@ -2770,7 +2777,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 taskModePath,
                 preflightCommandPath,
                 includePlannedScope: false,
-                changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
+                changedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
             })
         }
     );
@@ -2862,7 +2869,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
-            changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
+            changedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
         }),
         protectedControlPlane: {
             touched: preflightTouchesProtectedControlPlane(preflight),
@@ -2890,7 +2897,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 fallbackChangedFiles: (reviewGateAlreadyPassed
                     ? effectivePreflightWorkspaceReadiness.currentChangedFiles
                     : effectiveStrictPreGuardWorkspaceReadiness.currentChangedFiles)
-                    ?? getPreflightRefreshChangedFiles(taskMode, preflight)
+                    ?? getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
             })
         }),
         failedReviewRemediation: failedCurrentReviewStateForPreflight && isTaskQueueActiveStatus(taskEntry?.status ?? null)
@@ -3299,7 +3306,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 preflight,
                 taskMode,
                 fallbackChangedFiles: preflightWorkspaceReadiness.currentChangedFiles
-                    ?? getPreflightRefreshChangedFiles(taskMode, preflight)
+                    ?? getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
             })
         }),
         compileCommand: buildCompileGateCommand(

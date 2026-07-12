@@ -18,6 +18,11 @@ import {
     readCompileReadiness,
     readPreflightWorkspaceReadiness
 } from '../../../../src/gates/next-step/next-step-compile-full-suite-readiness';
+import {
+    getPreflightRefreshChangedFiles,
+    getTaskModeDirtyWorkspaceBaselineChangedFiles,
+    getTaskModeDirtyWorkspaceBaselineFileHashes
+} from '../../../../src/gates/next-step/next-step-lifecycle-command-builders';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -689,6 +694,58 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.equal(readiness.ready, false);
         assert.match(readiness.reason, /Preflight scope is stale before compile/);
         assert.match(readiness.reason, /scope_content_sha256/);
+    });
+
+    it('rejects dirty-baseline aliases and external symlinks before next-step hashes or refreshes them', () => {
+        const repoRoot = makeTempRepo();
+        const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-external-'));
+        tempRoots.push(externalRoot);
+        const externalSecretPath = path.join(externalRoot, 'secret.ts');
+        const externalSecretContent = 'export const secret = true;\n';
+        const externalLinkPath = path.join(repoRoot, 'src', 'external-link.ts');
+        const traversalAlias = 'src/../src/external-link.ts';
+        const absoluteAlias = externalLinkPath;
+        fs.writeFileSync(externalSecretPath, externalSecretContent, 'utf8');
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        try {
+            fs.symlinkSync(externalSecretPath, externalLinkPath, 'file');
+        } catch {
+            return;
+        }
+        const externalHash = sha256Text(externalSecretContent);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.triggers = {
+            dirty_workspace_protected_files: [traversalAlias, absoluteAlias, 'src/external-link.ts'],
+            dirty_workspace_protected_file_hashes: {
+                [traversalAlias]: externalHash,
+                [absoluteAlias]: externalHash,
+                'src/external-link.ts': externalHash
+            },
+            dirty_workspace_baseline_changed_files: [traversalAlias, absoluteAlias, 'src/external-link.ts']
+        };
+        const taskMode = {
+            orchestrator_work: true,
+            dirty_workspace_baseline: {
+                changed_files: [traversalAlias, absoluteAlias, 'src/external-link.ts'],
+                file_hashes: {
+                    [traversalAlias]: externalHash,
+                    [absoluteAlias]: externalHash,
+                    'src/external-link.ts': externalHash
+                }
+            }
+        };
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            dirtyWorkspaceBaselineChangedFiles: taskMode.dirty_workspace_baseline.changed_files,
+            dirtyWorkspaceBaselineFileHashes: taskMode.dirty_workspace_baseline.file_hashes,
+            allowDocsOnlyDelta: false
+        });
+        assert.equal(readiness.ready, false);
+        assert.match(readiness.reason, /missing from preflight: \[src\/external-link\.ts\]/);
+        assert.deepEqual(getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode), []);
+        assert.deepEqual(getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode), {});
+        assert.deepEqual(getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight), ['src/app.ts']);
     });
 
     it('keeps planned-scope readiness waiting until the planned source diff materializes', () => {
