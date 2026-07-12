@@ -688,6 +688,9 @@ describe('gates/next-step decomposed parent routing', () => {
         assert.equal(result.commands.length, 1);
         assert.ok(result.commands[0].command.includes('next-step "T-502"'));
         assert.ok(result.reason.includes('T-500 -> T-502'));
+        assert.ok(result.reason.includes('Before entering the selected child task, inspect workflow-config.full_suite_validation.command against that child scope.'));
+        assert.ok(result.reason.includes('use the existing workflow set --full-suite-command route with required operator confirmation before enter-task-mode'));
+        assert.ok(result.reason.includes('leave an already-suitable command unchanged'));
         assert.ok(text.includes('Status: DECOMPOSED'));
         assert.ok(text.includes('NextGate: child-task'));
     });

@@ -171,6 +171,8 @@ describe('gates/next-step split-required latch finalization', () => {
         assert.equal(result.commands.length, 1);
         assert.ok(result.commands[0].command.includes('next-step "T-648"'));
         assert.ok(result.reason.includes('stayed permanent after later status/config/scope drift'));
+        assert.ok(result.reason.includes('Before entering the selected child task, inspect workflow-config.full_suite_validation.command against that child scope.'));
+        assert.ok(result.reason.includes('keep current-child tests covered, exclude suspended siblings, leave an already-suitable command unchanged'));
         assert.ok(taskMd.includes('| T-646 | DECOMPOSED |'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
@@ -243,9 +245,10 @@ describe('gates/next-step split-required latch finalization', () => {
         assert.equal(result.commands.length, 1);
         assert.ok(result.commands[0].command.includes('next-step "T-642"'));
         assert.ok(result.reason.includes('transitioned the parent from SPLIT_REQUIRED to DECOMPOSED'));
+        assert.ok(result.reason.includes('Before entering the selected child task, inspect workflow-config.full_suite_validation.command against that child scope.'));
+        assert.ok(result.reason.includes('never retarget during an active child cycle'));
         assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-640 | 🟪 DECOMPOSED |'));
         assert.ok(text.includes('Status: DECOMPOSED'));
     });
 
 });
-

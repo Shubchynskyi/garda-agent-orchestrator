@@ -35,6 +35,12 @@ function splitRequiredWipGuidance(taskId: string): string {
     return `Captured WIP, when present, is task-owned ignored evidence; inspect it with ${formatInlineValue(`node bin/garda.js gate list-split-required-wip --task-id "${taskId}" --repo-root "."`)} and restore only by explicit preview/apply commands in child scope.`;
 }
 
+function decomposedChildFullSuiteScopeCheckpoint(): string {
+    return 'Before entering the selected child task, inspect workflow-config.full_suite_validation.command against that child scope. ' +
+        'If it still includes suspended sibling tests, use the existing workflow set --full-suite-command route with required operator confirmation before enter-task-mode; ' +
+        'keep current-child tests covered, exclude suspended siblings, leave an already-suitable command unchanged, and never retarget during an active child cycle.';
+}
+
 function formatChildChain(taskId: string, childRoute: TerminalChildRoute): string {
     return [taskId, ...childRoute.chain].join(' -> ');
 }
@@ -90,6 +96,7 @@ export function resolvePermanentSplitRequiredLatchRoute(options: {
                     'A valid split-required latch stayed permanent after later status/config/scope drift. Linked child tasks were detected, so the gate restored the parent latch and transitioned the parent to DECOMPOSED. ' +
                     `Parent tasks in this state are not executable lifecycle scopes. Continue through child chain ${chain}; ` +
                     `next unfinished child status is ${formatInlineValue(options.childRoute.status || 'unknown')}. ` +
+                    `${decomposedChildFullSuiteScopeCheckpoint()} ` +
                     splitRequiredWipGuidance(options.taskId),
                 commands: [options.continueChildCommand]
             };
@@ -165,6 +172,7 @@ export function resolveSplitRequiredTaskQueueRoute(options: {
                     'Linked child tasks were detected, so the gate transitioned the parent from SPLIT_REQUIRED to DECOMPOSED. ' +
                     `Parent tasks in this state are not executable lifecycle scopes. Continue through child chain ${chain}; ` +
                     `next unfinished child status is ${formatInlineValue(options.childRoute.status || 'unknown')}. ` +
+                    `${decomposedChildFullSuiteScopeCheckpoint()} ` +
                     splitRequiredWipGuidance(options.taskId),
                 commands: [options.continueChildCommand]
             };
@@ -247,7 +255,8 @@ export function resolveDecomposedParentTerminalRoute(options: {
             title: 'Parent task is decomposed; continue with the next child.',
             reason:
                 `${options.decomposedReason} Parent tasks in this state are not executable lifecycle scopes. ` +
-                `Continue through child chain ${chain}; next unfinished child status is ${formatInlineValue(options.childRoute.status || 'unknown')}.`,
+                `Continue through child chain ${chain}; next unfinished child status is ${formatInlineValue(options.childRoute.status || 'unknown')}. ` +
+                decomposedChildFullSuiteScopeCheckpoint(),
             commands: [options.continueChildCommand]
         };
     }
@@ -331,7 +340,8 @@ export function resolveStrictDecompositionSplitTerminalRoute(options: {
             reason:
                 'A current strict decomposition decision says split-required, and linked parent-derived strict child tasks match the decision artifact. ' +
                 'The gate transitioned the parent to DECOMPOSED, so it is no longer an executable lifecycle scope. ' +
-                `Continue through child chain ${chain}; next unfinished child status is ${formatInlineValue(options.childRoute.status || 'unknown')}.`,
+                `Continue through child chain ${chain}; next unfinished child status is ${formatInlineValue(options.childRoute.status || 'unknown')}. ` +
+                decomposedChildFullSuiteScopeCheckpoint(),
             commands: [options.continueChildCommand]
         };
     }

@@ -195,6 +195,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
     - `SPLIT_REQUIRED` when a scope-budget guard, review-cycle auto-split guard, or strict decomposition `split-required` decision latched the parent before child tasks were linked; do not run parent lifecycle gates while latched.
     - `DECOMPOSED` when a scope-budget, review-cycle, or strict-decomposition guard intentionally split the parent into child tasks; do not run parent lifecycle gates after decomposition.
     - Strict decomposition children must stay strict: `next-step` only routes a `split-required` strict parent when the linked child rows match the decision artifact, are parent-derived, exist in `TASK.md`, and use profile `strict`.
+    - Before entering a routed decomposed child task, inspect `workflow-config.full_suite_validation.command` against that child scope. If it still includes suspended sibling tests, update it only through the audited workflow-config route before `enter-task-mode`; keep current-child tests covered, exclude suspended siblings, and leave an already-suitable command unchanged.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 27. Report to user in exact order:
     1. concise implementation summary (include depth, path mode, review verdicts, docs updated)

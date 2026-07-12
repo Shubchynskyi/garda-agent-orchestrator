@@ -488,6 +488,9 @@ describe('gates/next-step review cycle guard split', () => {
         assert.ok(promptText.includes(`SuggestedChildTaskIds: \`${TASK_ID}-1\`, \`${TASK_ID}-2\`, \`${TASK_ID}-3\``));
         assert.ok(promptText.includes(`SuggestedReviewerFollowUpTaskId: \`${TASK_ID}-F1\``));
         assert.ok(promptText.includes('parent-derived suffix task IDs'));
+        assert.ok(promptText.includes('Before entering any ordinary child task, inspect the configured `workflow-config.full_suite_validation.command` against that child scope.'));
+        assert.ok(promptText.includes('keep current-child tests covered, exclude suspended sibling tests, and leave an already-suitable command unchanged'));
+        assert.ok(promptText.includes('Do not auto-edit workflow config, broaden a focused child test command to all project tests, skip operator approval for protected config changes, or retarget full-suite validation during an active child cycle.'));
         assert.equal(promptText.includes('normal numeric task IDs'), false);
         assert.ok(promptText.includes('DECOMPOSED'));
         assert.ok(text.includes('Status: SPLIT_REQUIRED'));

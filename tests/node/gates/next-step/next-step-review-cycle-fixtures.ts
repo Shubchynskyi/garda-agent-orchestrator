@@ -159,10 +159,13 @@ export function makeTempRepo(): string {
             '## Instructions',
             '1. Treat the parent as SPLIT_REQUIRED, create linked parent-derived suffix task IDs, then rerun next-step so the gate moves it to DECOMPOSED.',
             '2. Allocate child ids from {{SUGGESTED_CHILD_TASK_IDS}}.',
+            '3. Before entering any ordinary child task, inspect the configured `workflow-config.full_suite_validation.command` against that child scope.',
+            '4. If retargeting is necessary, keep current-child tests covered, exclude suspended sibling tests, and leave an already-suitable command unchanged.',
             '',
             '## Constraints',
             '- Do not mark the parent DONE merely because child tasks were created.',
             '- Do not hand-edit the parent status to bypass SPLIT_REQUIRED.',
+            '- Do not auto-edit workflow config, broaden a focused child test command to all project tests, skip operator approval for protected config changes, or retarget full-suite validation during an active child cycle.',
             '- Reviewer follow-ups use {{SUGGESTED_FOLLOWUP_TASK_ID}} style ids.',
             ''
         ].join('\n'),
