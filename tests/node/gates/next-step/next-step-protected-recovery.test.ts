@@ -744,6 +744,40 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(!command.includes('gate classify-change'));
     });
 
+    it('keeps ignored workflow-config drift in protected restart scope with tracked protected source changes', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), `${workflowConfigRelativePath}\n`, 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'src', 'gates', 'next-step'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'export const baseline = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        writeProtectedManifestSnapshot(repoRoot, {
+            [sourceRelativePath]: fileSha256(path.join(repoRoot, ...sourceRelativePath.split('/'))),
+            [workflowConfigRelativePath]: fileSha256(workflowConfigPath)
+        });
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 17
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'export const changed = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes(`--planned-changed-file "${sourceRelativePath}"`));
+        assert.ok(command.includes(`--planned-changed-file "${workflowConfigRelativePath}"`));
+        assert.ok(!command.includes('gate classify-change'));
+    });
+
     it('routes newly added ignored workflow-config protected root before classify', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
@@ -787,6 +821,7 @@ describe('gates/next-step protected recovery', () => {
         const testRelativePath = 'tests/node/gates/next-step/next-step-protected-recovery.test.ts';
         const distManifestRelativePath = 'dist/publish-runtime-manifest.json';
         const distRuntimeRelativePath = 'dist/src/gates/next-step/next-step.js';
+        const runtimeReviewRelativePath = 'garda-agent-orchestrator/runtime/reviews/T-971-review-output.md';
         for (const relativePath of [
             sourceRelativePath,
             testRelativePath,
@@ -795,9 +830,9 @@ describe('gates/next-step protected recovery', () => {
         ]) {
             const filePath = path.join(repoRoot, ...relativePath.split('/'));
             fs.mkdirSync(path.dirname(filePath), { recursive: true });
-            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+                fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
         }
-        initGitRepo(repoRoot);
+        initGitRepo(repoRoot, { gitignoreContent: 'node_modules/\n' });
         seedStartedTask(repoRoot, TASK_ID);
         writeProtectedManifestSnapshot(repoRoot, {
             [sourceRelativePath]: fileSha256(path.join(repoRoot, ...sourceRelativePath.split('/'))),
@@ -808,6 +843,7 @@ describe('gates/next-step protected recovery', () => {
         fs.writeFileSync(path.join(repoRoot, ...testRelativePath.split('/')), 'test change\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, ...distManifestRelativePath.split('/')), '{"changed":true}\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, ...distRuntimeRelativePath.split('/')), 'generated change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...runtimeReviewRelativePath.split('/')), 'generated review output\n', 'utf8');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const command = result.commands[0].command;
@@ -816,11 +852,62 @@ describe('gates/next-step protected recovery', () => {
         assert.match(result.reason, /src\/gates\/next-step\/next-step\.ts/);
         assert.match(result.reason, /dist\/src\/gates\/next-step\/next-step\.js/);
         assert.ok(!result.reason.includes(distManifestRelativePath));
+        assert.ok(!result.reason.includes(runtimeReviewRelativePath));
         assert.ok(command.includes('--orchestrator-work'));
         assert.ok(command.includes(`--planned-changed-file "${sourceRelativePath}"`));
         assert.ok(command.includes(`--planned-changed-file "${testRelativePath}"`));
         assert.ok(command.includes(`--planned-changed-file "${distRuntimeRelativePath}"`));
         assert.ok(!command.includes(`--planned-changed-file "${distManifestRelativePath}"`));
+        assert.ok(!command.includes(`--planned-changed-file "${runtimeReviewRelativePath}"`));
+        assert.ok(!command.includes('--workflow-config-work'));
+        assert.ok(!command.includes('gate classify-change'));
+    });
+
+    it('keeps protected restart scope limited to current task files when manifest drift is stale', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const sourceRelativePath = 'src/gates/next-step/next-step.ts';
+        const testRelativePath = 'tests/node/gates/next-step/next-step-protected-recovery.test.ts';
+        const staleWorkflowConfigPath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const staleProtectedRulePath = 'garda-agent-orchestrator/live/docs/agent-rules/00-core.md';
+        const staleRuntimePath = 'garda-agent-orchestrator/runtime/reviews/T-971-review-output.md';
+        const staleDistRuntimePath = 'dist/src/gates/next-step/stale-generated.js';
+        for (const relativePath of [
+            sourceRelativePath,
+            testRelativePath,
+            staleProtectedRulePath,
+            staleRuntimePath,
+            staleDistRuntimePath
+        ]) {
+            const filePath = path.join(repoRoot, ...relativePath.split('/'));
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, `baseline ${relativePath}\n`, 'utf8');
+        }
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeProtectedManifestSnapshot(repoRoot, {
+            [sourceRelativePath]: fileSha256(path.join(repoRoot, ...sourceRelativePath.split('/'))),
+            [staleWorkflowConfigPath]: '3'.repeat(64),
+            [staleProtectedRulePath]: '0'.repeat(64),
+            [staleRuntimePath]: '1'.repeat(64),
+            [staleDistRuntimePath]: '2'.repeat(64)
+        });
+        fs.writeFileSync(path.join(repoRoot, ...sourceRelativePath.split('/')), 'source change\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...testRelativePath.split('/')), 'test change\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.reason, /src\/gates\/next-step\/next-step\.ts/);
+        assert.ok(!result.reason.includes(staleProtectedRulePath));
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes(`--planned-changed-file "${sourceRelativePath}"`));
+        assert.ok(command.includes(`--planned-changed-file "${testRelativePath}"`));
+        assert.ok(!command.includes(`--planned-changed-file "${staleWorkflowConfigPath}"`));
+        assert.ok(!command.includes(`--planned-changed-file "${staleProtectedRulePath}"`));
+        assert.ok(!command.includes(`--planned-changed-file "${staleRuntimePath}"`));
+        assert.ok(!command.includes(`--planned-changed-file "${staleDistRuntimePath}"`));
         assert.ok(!command.includes('--workflow-config-work'));
         assert.ok(!command.includes('gate classify-change'));
     });
@@ -1219,8 +1306,9 @@ describe('gates/next-step protected recovery', () => {
 
     it('prefers current workspace scope over stale planned files in protected recovery command', () => {
         const repoRoot = makeTempRepo();
-        initGitRepo(repoRoot);
+        initGitRepo(repoRoot, { gitignoreContent: 'node_modules/\n' });
         writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const runtimeReviewRelativePath = 'garda-agent-orchestrator/runtime/reviews/T-971-review-output.md';
         const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
         const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
         workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
@@ -1243,6 +1331,7 @@ describe('gates/next-step protected recovery', () => {
         seedHandshake(repoRoot, TASK_ID);
         seedShellSmoke(repoRoot, TASK_ID);
         fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const currentScope = true;\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...runtimeReviewRelativePath.split('/')), 'generated review output\n', 'utf8');
         appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
             error:
                 'Trusted protected control-plane manifest drift detected before preflight classification: src/stale-planned.ts. ' +
@@ -1257,6 +1346,7 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(command.includes('--operator-confirmed yes'));
         assert.ok(command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
         assert.ok(command.includes('--planned-changed-file "src/app.ts"'));
+        assert.ok(!command.includes(`--planned-changed-file "${runtimeReviewRelativePath}"`));
         assert.ok(!command.includes('--planned-changed-file "src/stale-planned.ts"'));
         assert.ok(!command.includes('T-EVIL'));
         assert.ok(!command.includes('gate classify-change'));

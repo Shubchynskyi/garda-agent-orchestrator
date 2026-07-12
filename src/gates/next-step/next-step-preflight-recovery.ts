@@ -29,18 +29,10 @@ import {
     safeReadJson
 } from '../task-audit/task-audit-summary-collectors';
 import {
-    evaluateProtectedControlPlaneManifest,
     fileSha256,
-    getProtectedControlPlaneRoots,
-    isWorkflowConfigControlPlanePath,
     normalizePath,
-    resolveProtectedControlPlaneManifestPath,
-    resolvePathInsideRepo,
-    testPathPrefix
+    resolvePathInsideRepo
 } from '../shared/helpers';
-import {
-    isSourceCheckoutGeneratedRuntimeArtifactPath
-} from '../shared/generated-runtime-artifacts';
 import {
     buildCompileEvidenceDocsOnlyExtensionReadiness,
     readCurrentGitWorkspaceSnapshot
@@ -59,6 +51,10 @@ import {
     getTimelineEventDetailString
 } from './next-step-timeline-readers';
 import { isPlainRecord } from '../../core/records';
+import {
+    filterProtectedRestartScopeGeneratedRuntimeArtifacts,
+    readCurrentProtectedScopeBeforePreflight
+} from './next-step-protected-scope';
 
 export interface FailedGateRecovery {
     nextGate: string;
@@ -283,87 +279,6 @@ function buildDirtyBaselineFailedPreflightRecovery(input: {
     };
 }
 
-function readChangedWorkflowConfigProtectedManifestFiles(repoRoot: string): string[] {
-    const manifestPath = resolveProtectedControlPlaneManifestPath(repoRoot);
-    if (!fs.existsSync(manifestPath)) {
-        return [];
-    }
-    try {
-        const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-        const protectedSnapshot = isPlainRecord(parsed.protected_snapshot)
-            ? parsed.protected_snapshot
-            : {};
-        const protectedRoots = Array.isArray(parsed.protected_roots)
-            ? parsed.protected_roots.map((entry) => normalizePath(entry)).filter(Boolean)
-            : [];
-        const workflowConfigCandidates = [...new Set([
-            ...Object.keys(protectedSnapshot).map((entry) => normalizePath(entry)).filter(Boolean),
-            ...protectedRoots.filter((entry) => isWorkflowConfigControlPlanePath(entry))
-        ])].sort();
-        return workflowConfigCandidates
-            .map((protectedPath) => ({
-                protectedPath: normalizePath(protectedPath),
-                expectedHash: String(protectedSnapshot[protectedPath] || '').trim().toLowerCase()
-            }))
-            .filter(({ protectedPath }) => protectedPath && isWorkflowConfigControlPlanePath(protectedPath))
-            .filter(({ protectedPath, expectedHash }) => (
-                expectedHash
-                    ? String(fileSha256(path.join(repoRoot, protectedPath)) || '').trim().toLowerCase() !== expectedHash
-                    : fs.existsSync(path.join(repoRoot, protectedPath))
-            ))
-            .map(({ protectedPath }) => protectedPath)
-            .sort();
-    } catch {
-        return [];
-    }
-}
-
-function readCurrentProtectedScopeBeforeFailedPreflight(repoRoot: string): {
-    changedFiles: string[];
-    protectedFiles: string[];
-    workflowConfigFiles: string[];
-} | null {
-    const workspaceSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, true);
-    const protectedRoots = getProtectedControlPlaneRoots(repoRoot);
-    const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
-    const gitChangedFiles = workspaceSnapshot
-        ? workspaceSnapshot.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
-        : [];
-    const gitProtectedFiles = gitChangedFiles.filter((entry) => testPathPrefix(entry, protectedRoots));
-    const protectedManifestEvidence = gitProtectedFiles.length > 0
-        ? evaluateProtectedControlPlaneManifest(repoRoot, null, true)
-        : null;
-    const fullManifestChangedProtectedFiles = protectedManifestEvidence?.status === 'DRIFT'
-        ? protectedManifestEvidence.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
-        : [];
-    const manifestChangedProtectedFiles = gitProtectedFiles.length > 0
-        ? fullManifestChangedProtectedFiles
-        : readChangedWorkflowConfigProtectedManifestFiles(repoRoot);
-    const changedFiles = [...new Set([
-        ...gitChangedFiles,
-        ...manifestChangedProtectedFiles
-    ])]
-        .filter((entry) => !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
-        .sort();
-    if (changedFiles.length === 0) {
-        return null;
-    }
-    const protectedFiles = [...new Set([
-        ...gitProtectedFiles,
-        ...manifestChangedProtectedFiles.filter((entry) => testPathPrefix(entry, protectedRoots))
-    ])]
-        .filter((entry) => !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
-        .sort();
-    if (protectedFiles.length === 0) {
-        return null;
-    }
-    return {
-        changedFiles,
-        protectedFiles,
-        workflowConfigFiles: protectedFiles.filter((entry) => isWorkflowConfigControlPlanePath(entry))
-    };
-}
-
 function isSha256(value: unknown): value is string {
     return /^[0-9a-f]{64}$/u.test(String(value || '').trim().toLowerCase());
 }
@@ -496,7 +411,11 @@ export function readFailedGateRecovery(
         return null;
     }
     if (hasDirtyBaselineSignal && !hasProtectedRecoverySignal && !hasWorkflowConfigRecoverySignal) {
-        const currentProtectedScope = readCurrentProtectedScopeBeforeFailedPreflight(repoRoot);
+        const currentProtectedScope = readCurrentProtectedScopeBeforePreflight(
+            repoRoot,
+            null,
+            () => readCurrentGitWorkspaceSnapshot(repoRoot, true)
+        );
         const currentProtectedScopeNeedsTaskModeRestart = currentProtectedScope
             && (
                 taskMode?.orchestrator_work !== true
@@ -562,7 +481,7 @@ export function readFailedGateRecovery(
     }
     const currentWorkspace = readCurrentGitWorkspaceSnapshot(repoRoot, true);
     const currentChangedFiles = Array.isArray(currentWorkspace?.changed_files)
-        ? currentWorkspace.changed_files
+        ? filterProtectedRestartScopeGeneratedRuntimeArtifacts(repoRoot, currentWorkspace.changed_files)
         : [];
 
     return {
