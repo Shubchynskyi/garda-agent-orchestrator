@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -11,6 +12,7 @@ import {
 } from '../../../../src/core/workflow-config';
 import {
     buildQualityChecklistArtifact,
+    buildQualityChecklistAnswersTemplate,
     buildQualityChecklistCadenceSkipArtifact,
     materializeQualityChecklistAnswersTemplate
 } from '../../../../src/gates/quality-checklist';
@@ -63,6 +65,24 @@ const UNIVERSAL_QUALITY_RULE_EXPECTATIONS = Object.freeze([
 const UNIVERSAL_QUALITY_RULE_IDS = Object.freeze(
     UNIVERSAL_QUALITY_RULE_EXPECTATIONS.map((rule) => rule.id)
 );
+
+function stringSha256(value: string): string {
+    return createHash('sha256').update(value).digest('hex');
+}
+
+function answersTemplatePolicySha256(
+    activeRuleIds: readonly string[],
+    activeRuleFingerprints: Record<string, string>
+): string {
+    return stringSha256(JSON.stringify({
+        schema_version: 1,
+        active_rule_ids: activeRuleIds,
+        active_rule_fingerprints: activeRuleIds.map((ruleId) => [
+            ruleId,
+            String(activeRuleFingerprints[ruleId] || '').trim().toLowerCase()
+        ])
+    }));
+}
 
 const OPS_SHELL_QUALITY_RULE_EXPECTATIONS = Object.freeze([
     Object.freeze({
@@ -826,6 +846,7 @@ describe('quality-checklist gate', () => {
                 preflight_sha256: string;
                 effective_policy_sha256: string;
                 active_rule_ids: string[];
+                active_rule_fingerprints: Record<string, string>;
                 answers: Array<Record<string, unknown>>;
             };
             assert.equal(template.event_source, 'quality-checklist-answers-template');
@@ -834,6 +855,8 @@ describe('quality-checklist gate', () => {
             assert.match(template.effective_policy_sha256, /^[a-f0-9]{64}$/u);
             assert.equal(template.answers.length, UNIVERSAL_QUALITY_RULE_IDS.length);
             assert.deepEqual(template.active_rule_ids, UNIVERSAL_QUALITY_RULE_IDS);
+            assert.deepEqual(Object.keys(template.active_rule_fingerprints).sort(), [...UNIVERSAL_QUALITY_RULE_IDS].sort());
+            assert.ok(Object.values(template.active_rule_fingerprints).every((fingerprint) => /^[a-f0-9]{64}$/u.test(fingerprint)));
             assert.ok(template.answers.every((answer) => answer.status === '' && answer.answer === ''));
             assert.ok(template.answers.every((answer) => (
                 Object.keys(answer).sort().join(',') === 'answer,rule_id,status'
@@ -862,7 +885,7 @@ describe('quality-checklist gate', () => {
         }
     });
 
-    it('refreshes a materialized answers template after its preflight binding becomes stale', () => {
+    it('preserves materialized answers when refreshing a stale preflight binding with the same active rules', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-stale-answers-template' });
         try {
             const preflightPath = writeGateFixturePreflight(fixture);
@@ -883,6 +906,14 @@ describe('quality-checklist gate', () => {
                 preflight_sha256: string;
                 answers: Array<Record<string, unknown>>;
             };
+            originalTemplate.answers = originalTemplate.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Preserved answer for ${String(answer.rule_id)}.`,
+                evidence_files: ['tests/node/gates/quality-checklist/quality-checklist.test.ts'],
+                actions_taken: [`Checked ${String(answer.rule_id)} before preflight refresh.`]
+            }));
+            fs.writeFileSync(answersPath, JSON.stringify(originalTemplate, null, 2) + '\n', 'utf8');
             const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
             preflight.changed_files = ['src/app.ts', 'src/changed-after-template.ts'];
             fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2) + '\n', 'utf8');
@@ -895,13 +926,452 @@ describe('quality-checklist gate', () => {
             });
             assert.equal(refreshed.status, 'refreshed');
             assert.notEqual(refreshed.template.preflight_sha256, originalTemplate.preflight_sha256);
-            assert.ok(refreshed.template.answers.every((answer) => answer.status === '' && answer.answer === ''));
+            assert.ok(refreshed.template.answers.every((answer) => answer.status === 'PASS'));
+            assert.ok(refreshed.template.answers.every((answer) => answer.answer.startsWith('Preserved answer for ')));
+            assert.deepEqual(refreshed.template.answers[0].evidence_files, [
+                'tests/node/gates/quality-checklist/quality-checklist.test.ts'
+            ]);
         } finally {
             fixture.cleanup();
         }
     });
 
-    it('refreshes a current-bound template with duplicated prompt fields or malformed optional fields', () => {
+    it('preserves unchanged answers and blanks new rules when refreshing a changed policy template', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-policy-partial-template' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const materialized = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            materialized.template.answers = materialized.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Original answer for ${answer.rule_id}.`
+            }));
+            fs.writeFileSync(answersPath, JSON.stringify(materialized.template, null, 2) + '\n', 'utf8');
+
+            const configPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            config.optional_quality_checks.rules.push(buildTestQualityRule('zz_custom_new_quality_rule'));
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+
+            const refreshed = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            assert.equal(refreshed.status, 'refreshed');
+            const answersByRuleId = new Map(refreshed.template.answers.map((answer) => [answer.rule_id, answer]));
+            for (const ruleId of UNIVERSAL_QUALITY_RULE_IDS) {
+                assert.equal(answersByRuleId.get(ruleId)?.status, 'PASS');
+                assert.equal(answersByRuleId.get(ruleId)?.answer, `Original answer for ${ruleId}.`);
+            }
+            assert.equal(answersByRuleId.get('zz_custom_new_quality_rule')?.status, '');
+            assert.equal(answersByRuleId.get('zz_custom_new_quality_rule')?.answer, '');
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('blanks changed custom rule answers without trusting policy-refresh carryover', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-policy-changed-rule-template' });
+        try {
+            const customRuleId = 'zz_custom_changed_quality_rule';
+            const configPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            config.optional_quality_checks.rules.push(buildTestQualityRule(customRuleId));
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const materialized = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            materialized.template.answers = materialized.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Original answer for ${answer.rule_id}.`
+            }));
+            fs.writeFileSync(answersPath, JSON.stringify(materialized.template, null, 2) + '\n', 'utf8');
+
+            const changedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            const changedRule = changedConfig.optional_quality_checks.rules.find((rule) => rule.id === customRuleId);
+            assert.ok(changedRule);
+            changedRule.prompt = 'Changed prompt that requires a new quality-checklist answer.';
+            fs.writeFileSync(configPath, JSON.stringify(changedConfig, null, 2) + '\n', 'utf8');
+
+            const refreshed = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+
+            assert.equal(refreshed.status, 'refreshed');
+            const answersByRuleId = new Map(refreshed.template.answers.map((answer) => [answer.rule_id, answer]));
+            for (const ruleId of UNIVERSAL_QUALITY_RULE_IDS) {
+                assert.equal(answersByRuleId.get(ruleId)?.status, 'PASS');
+                assert.equal(answersByRuleId.get(ruleId)?.answer, `Original answer for ${ruleId}.`);
+            }
+            assert.equal(answersByRuleId.get(customRuleId)?.status, '');
+            assert.equal(answersByRuleId.get(customRuleId)?.answer, '');
+            assert.notEqual(
+                refreshed.template.active_rule_fingerprints?.[customRuleId],
+                materialized.template.active_rule_fingerprints?.[customRuleId]
+            );
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('does not trust tampered stale rule fingerprint metadata during policy refresh', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-policy-tampered-fingerprint-template' });
+        try {
+            const customRuleId = 'zz_custom_tampered_fingerprint_rule';
+            const configPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            config.optional_quality_checks.rules.push(buildTestQualityRule(customRuleId));
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const materialized = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            materialized.template.answers = materialized.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Original answer for ${answer.rule_id}.`
+            }));
+
+            const changedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            const changedRule = changedConfig.optional_quality_checks.rules.find((rule) => rule.id === customRuleId);
+            assert.ok(changedRule);
+            changedRule.prompt = 'Changed prompt with tampered stale fingerprint metadata.';
+            fs.writeFileSync(configPath, JSON.stringify(changedConfig, null, 2) + '\n', 'utf8');
+            const currentTemplate = buildQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath
+            });
+            materialized.template.active_rule_fingerprints = {
+                ...materialized.template.active_rule_fingerprints,
+                [customRuleId]: currentTemplate.active_rule_fingerprints?.[customRuleId] || 'f'.repeat(64)
+            };
+            const tamperedOriginalBytes = JSON.stringify(materialized.template, null, 2) + '\n';
+            fs.writeFileSync(answersPath, tamperedOriginalBytes, 'utf8');
+
+            const refreshed = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+
+            assert.equal(refreshed.status, 'repair_created');
+            assert.match(refreshed.warning || '', /Unsafe existing answers template preserved/u);
+            assert.equal(fs.readFileSync(answersPath, 'utf8'), tamperedOriginalBytes);
+            assert.equal(refreshed.template.answers.every((answer) => answer.status === '' && answer.answer === ''), true);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('does not trust tampered stale rule fingerprints even when the adjacent binding is edited', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-policy-tampered-binding-fingerprint-template' });
+        try {
+            const customRuleId = 'zz_custom_tampered_binding_fingerprint_rule';
+            const configPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            config.optional_quality_checks.rules.push(buildTestQualityRule(customRuleId));
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const materialized = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            materialized.template.answers = materialized.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Original answer for ${answer.rule_id}.`
+            }));
+
+            const changedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            const changedRule = changedConfig.optional_quality_checks.rules.find((rule) => rule.id === customRuleId);
+            assert.ok(changedRule);
+            changedRule.prompt = 'Changed prompt with tampered stale template and binding metadata.';
+            fs.writeFileSync(configPath, JSON.stringify(changedConfig, null, 2) + '\n', 'utf8');
+            const currentTemplate = buildQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath
+            });
+            const currentFingerprint = currentTemplate.active_rule_fingerprints?.[customRuleId] || 'f'.repeat(64);
+            materialized.template.active_rule_fingerprints = {
+                ...materialized.template.active_rule_fingerprints,
+                [customRuleId]: currentFingerprint
+            };
+            const tamperedOriginalBytes = JSON.stringify(materialized.template, null, 2) + '\n';
+            fs.writeFileSync(answersPath, tamperedOriginalBytes, 'utf8');
+
+            const bindingPath = `${answersPath}.binding.json`;
+            const binding = JSON.parse(fs.readFileSync(bindingPath, 'utf8')) as {
+                active_rule_ids: string[];
+                active_rule_fingerprints: Record<string, string>;
+                answers_template_policy_sha256: string;
+            };
+            binding.active_rule_fingerprints[customRuleId] = currentFingerprint;
+            binding.answers_template_policy_sha256 = answersTemplatePolicySha256(
+                binding.active_rule_ids,
+                binding.active_rule_fingerprints
+            );
+            fs.writeFileSync(bindingPath, JSON.stringify(binding, null, 2) + '\n', 'utf8');
+
+            const refreshed = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+
+            assert.equal(refreshed.status, 'repair_created');
+            assert.match(refreshed.warning || '', /Unsafe existing answers template preserved/u);
+            assert.equal(fs.readFileSync(answersPath, 'utf8'), tamperedOriginalBytes);
+            assert.equal(refreshed.template.answers.every((answer) => answer.status === '' && answer.answer === ''), true);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('does not let tampered current rule fingerprints poison later policy refresh binding', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-policy-tampered-current-fingerprint-template' });
+        try {
+            const customRuleId = 'zz_custom_current_fingerprint_poison_rule';
+            const configPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+            const originalConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            originalConfig.optional_quality_checks.rules.push(buildTestQualityRule(customRuleId));
+            fs.writeFileSync(configPath, JSON.stringify(originalConfig, null, 2) + '\n', 'utf8');
+
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const materialized = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            materialized.template.answers = materialized.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Original answer for ${answer.rule_id}.`
+            }));
+
+            const changedConfig = JSON.parse(JSON.stringify(originalConfig)) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            const changedRule = changedConfig.optional_quality_checks.rules.find((rule) => rule.id === customRuleId);
+            assert.ok(changedRule);
+            changedRule.prompt = 'Changed prompt whose fingerprint is injected before policy refresh.';
+            fs.writeFileSync(configPath, JSON.stringify(changedConfig, null, 2) + '\n', 'utf8');
+            const changedTemplate = buildQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath
+            });
+            fs.writeFileSync(configPath, JSON.stringify(originalConfig, null, 2) + '\n', 'utf8');
+
+            materialized.template.active_rule_fingerprints = {
+                ...materialized.template.active_rule_fingerprints,
+                [customRuleId]: changedTemplate.active_rule_fingerprints?.[customRuleId] || 'f'.repeat(64)
+            };
+            const tamperedOriginalBytes = JSON.stringify(materialized.template, null, 2) + '\n';
+            fs.writeFileSync(answersPath, tamperedOriginalBytes, 'utf8');
+
+            const repair = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            assert.equal(repair.status, 'repair_created');
+            assert.match(repair.warning || '', /Unsafe existing answers template preserved/u);
+            assert.equal(fs.readFileSync(answersPath, 'utf8'), tamperedOriginalBytes);
+            assert.notEqual(repair.answers_path, answersPath.replace(/\\/g, '/'));
+            assert.equal(fs.existsSync(repair.answers_path), true);
+
+            fs.writeFileSync(configPath, JSON.stringify(changedConfig, null, 2) + '\n', 'utf8');
+            const refreshed = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+
+            assert.equal(refreshed.status, 'repair_created');
+            assert.match(refreshed.warning || '', /Unsafe existing answers template preserved/u);
+            assert.equal(fs.readFileSync(answersPath, 'utf8'), tamperedOriginalBytes);
+            assert.equal(refreshed.template.answers.every((answer) => answer.status === '' && answer.answer === ''), true);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('blanks changed baseline rule answers without trusting policy-refresh carryover', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-policy-changed-baseline-template' });
+        try {
+            const changedRuleId = 'code_simplification';
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const materialized = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            materialized.template.answers = materialized.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Original baseline answer for ${answer.rule_id}.`
+            }));
+            fs.writeFileSync(answersPath, JSON.stringify(materialized.template, null, 2) + '\n', 'utf8');
+
+            const configPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+            const changedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            const changedRule = changedConfig.optional_quality_checks.rules.find((rule) => rule.id === changedRuleId);
+            assert.ok(changedRule);
+            changedRule.prompt = 'Changed baseline prompt that requires a new quality-checklist answer.';
+            fs.writeFileSync(configPath, JSON.stringify(changedConfig, null, 2) + '\n', 'utf8');
+
+            const refreshed = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+
+            assert.equal(refreshed.status, 'refreshed');
+            const answersByRuleId = new Map(refreshed.template.answers.map((answer) => [answer.rule_id, answer]));
+            for (const ruleId of UNIVERSAL_QUALITY_RULE_IDS) {
+                if (ruleId === changedRuleId) {
+                    assert.equal(answersByRuleId.get(ruleId)?.status, '');
+                    assert.equal(answersByRuleId.get(ruleId)?.answer, '');
+                    continue;
+                }
+                assert.equal(answersByRuleId.get(ruleId)?.status, 'PASS');
+                assert.equal(answersByRuleId.get(ruleId)?.answer, `Original baseline answer for ${ruleId}.`);
+            }
+            assert.equal(answersByRuleId.get(changedRuleId)?.status, '');
+            assert.equal(answersByRuleId.get(changedRuleId)?.answer, '');
+            assert.notEqual(
+                refreshed.template.active_rule_fingerprints?.[changedRuleId],
+                materialized.template.active_rule_fingerprints?.[changedRuleId]
+            );
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('does not preserve tampered stale answer entries while rebinding valid answers', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-stale-tampered-template' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const materialized = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const staleAnswers = materialized.template.answers as unknown as Array<Record<string, unknown>>;
+            staleAnswers[0] = {
+                ...staleAnswers[0],
+                status: 'PASS',
+                answer: 'This valid stale answer should survive rebinding.'
+            };
+            staleAnswers[1] = {
+                ...staleAnswers[1],
+                status: 'PASS',
+                answer: 'This tampered stale answer must not be preserved.',
+                prompt: 'Injected prompt field'
+            };
+            fs.writeFileSync(answersPath, JSON.stringify(materialized.template, null, 2) + '\n', 'utf8');
+            const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            preflight.changed_files = ['src/app.ts', 'src/rebound-context.ts'];
+            fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2) + '\n', 'utf8');
+
+            const refreshed = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            assert.equal(refreshed.status, 'refreshed');
+            assert.equal(refreshed.template.answers[0].status, 'PASS');
+            assert.equal(refreshed.template.answers[0].answer, 'This valid stale answer should survive rebinding.');
+            assert.equal(refreshed.template.answers[1].status, '');
+            assert.equal(refreshed.template.answers[1].answer, '');
+            assert.equal(Object.hasOwn(refreshed.template.answers[1], 'prompt'), false);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('materializes a repair template without overwriting current-bound invalid answers', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-tampered-answers-template' });
         try {
             const preflightPath = writeGateFixturePreflight(fixture);
@@ -918,11 +1388,13 @@ describe('quality-checklist gate', () => {
                 preflightPath,
                 answersPath
             });
-            const tampered = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+            const original = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
                 answers: Array<Record<string, unknown>>;
             };
+            const tampered = JSON.parse(JSON.stringify(original)) as typeof original;
             tampered.answers[0].prompt = 'Tampered prompt.';
-            fs.writeFileSync(answersPath, JSON.stringify(tampered, null, 2) + '\n', 'utf8');
+            const promptTamperedBytes = JSON.stringify(tampered, null, 2) + '\n';
+            fs.writeFileSync(answersPath, promptTamperedBytes, 'utf8');
 
             const promptRefresh = materializeQualityChecklistAnswersTemplate({
                 repoRoot: fixture.repoRoot,
@@ -930,21 +1402,27 @@ describe('quality-checklist gate', () => {
                 preflightPath,
                 answersPath
             });
-            assert.equal(promptRefresh.status, 'refreshed');
+            assert.equal(promptRefresh.status, 'repair_created');
+            assert.match(promptRefresh.warning || '', /Unsafe existing answers template preserved/u);
+            assert.equal(promptRefresh.original_answers_path, answersPath.replace(/\\/g, '/'));
+            assert.equal(fs.readFileSync(answersPath, 'utf8'), promptTamperedBytes);
             assert.equal(Object.hasOwn(promptRefresh.template.answers[0], 'prompt'), false);
+            assert.equal(fs.existsSync(promptRefresh.answers_path), true);
 
-            const malformed = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+            const malformed = JSON.parse(JSON.stringify(original)) as {
                 answers: Array<Record<string, unknown>>;
             };
             malformed.answers[0].actions_taken = [42];
-            fs.writeFileSync(answersPath, JSON.stringify(malformed, null, 2) + '\n', 'utf8');
+            const malformedBytes = JSON.stringify(malformed, null, 2) + '\n';
+            fs.writeFileSync(answersPath, malformedBytes, 'utf8');
             const fieldRefresh = materializeQualityChecklistAnswersTemplate({
                 repoRoot: fixture.repoRoot,
                 taskId: fixture.taskId,
                 preflightPath,
                 answersPath
             });
-            assert.equal(fieldRefresh.status, 'refreshed');
+            assert.equal(fieldRefresh.status, 'repair_created');
+            assert.equal(fs.readFileSync(answersPath, 'utf8'), malformedBytes);
             assert.equal(Object.hasOwn(fieldRefresh.template.answers[0], 'actions_taken'), false);
         } finally {
             fixture.cleanup();

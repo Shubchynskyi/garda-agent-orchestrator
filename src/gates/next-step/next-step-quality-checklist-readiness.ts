@@ -331,13 +331,13 @@ function materializePendingQualityChecklistAnswers(
     refreshIfOlderThanUtc: string | null = null
 ): string | null {
     try {
-        materializeQualityChecklistAnswersTemplate({
+        const result = materializeQualityChecklistAnswersTemplate({
             repoRoot: options.repoRoot,
             taskId: options.taskId,
             preflightPath: options.preflightPath,
             refreshIfOlderThanUtc
         });
-        return null;
+        return result.warning || null;
     } catch (error) {
         return error instanceof Error ? error.message : String(error);
     }

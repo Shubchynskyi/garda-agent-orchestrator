@@ -11,7 +11,12 @@ import {
     resolveOptionalQualityChecksReviewFailureCadenceInterval,
     type OptionalQualityCheckRule
 } from '../../core/workflow-config';
-import { assertValidTaskId } from '../../gate-runtime/task-events';
+import {
+    appendTaskEvent,
+    assertValidTaskId,
+    forEachJsonlLine,
+    inspectTaskEventFile
+} from '../../gate-runtime/task-events';
 import {
     fileSha256,
     isPathInsideRoot,
@@ -20,7 +25,11 @@ import {
     resolvePathInsideRepo,
     stringSha256
 } from '../shared/helpers';
-import { computeQualityChecklistEffectivePolicySha256 } from './quality-checklist-policy';
+import {
+    buildQualityChecklistEffectivePolicyEntriesFromArtifact,
+    computeQualityChecklistAnswersTemplateRuleSha256,
+    computeQualityChecklistEffectivePolicySha256
+} from './quality-checklist-policy';
 
 export const QUALITY_CHECKLIST_ID = 'optional_quality_checks';
 
@@ -116,11 +125,13 @@ export interface BuildQualityChecklistOptions {
 }
 
 export const QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE = 'quality-checklist-answers-template';
+const QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_EVENT_SOURCE = 'quality-checklist-answers-template-binding';
+const QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_RECORDED_EVENT = 'QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_RECORDED';
 
 export interface QualityChecklistAnswersTemplateAnswer {
     rule_id: string;
-    status: '';
-    answer: '';
+    status: string;
+    answer: string;
     evidence_files?: string[];
     actions_taken?: string[];
     actions_required?: string[];
@@ -138,6 +149,7 @@ export interface QualityChecklistAnswersTemplate {
     workflow_config_sha256: string | null;
     effective_policy_sha256: string;
     active_rule_ids: string[];
+    active_rule_fingerprints?: Record<string, string>;
     answers: QualityChecklistAnswersTemplateAnswer[];
 }
 
@@ -147,10 +159,28 @@ export interface QualityChecklistAnswersTemplateAssessment {
     template: QualityChecklistAnswersTemplate | null;
 }
 
+interface QualityChecklistAnswersTemplateBinding {
+    schema_version: 1;
+    event_source: typeof QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_EVENT_SOURCE;
+    task_id: string;
+    checklist_id: typeof QUALITY_CHECKLIST_ID;
+    answers_path: string;
+    preflight_path: string;
+    preflight_sha256: string;
+    workflow_config_path: string;
+    workflow_config_sha256: string | null;
+    effective_policy_sha256: string;
+    active_rule_ids: string[];
+    active_rule_fingerprints: Record<string, string>;
+    answers_template_policy_sha256: string;
+}
+
 export interface MaterializeQualityChecklistAnswersTemplateResult {
-    status: 'created' | 'refreshed' | 'current';
+    status: 'created' | 'refreshed' | 'current' | 'repair_created';
     answers_path: string;
     template: QualityChecklistAnswersTemplate;
+    original_answers_path?: string;
+    warning?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -600,6 +630,79 @@ function nonAnswerTemplateViolations(artifact: QualityChecklistArtifact): string
     ));
 }
 
+function buildActiveRuleFingerprints(artifact: QualityChecklistArtifact): Record<string, string> {
+    const fingerprints: Record<string, string> = {};
+    for (const entry of buildQualityChecklistEffectivePolicyEntriesFromArtifact(artifact.rules)) {
+        if (entry.scope_applicability !== 'active') {
+            continue;
+        }
+        fingerprints[entry.id] = computeQualityChecklistAnswersTemplateRuleSha256(entry);
+    }
+    return fingerprints;
+}
+
+const RULE_FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
+
+function normalizeRuleFingerprint(value: unknown): string {
+    const fingerprint = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    return RULE_FINGERPRINT_PATTERN.test(fingerprint) ? fingerprint : '';
+}
+
+function normalizeActiveRuleIds(value: unknown): string[] | null {
+    if (!Array.isArray(value)) {
+        return null;
+    }
+    const ruleIds = value.map((entry) => normalizeRuleId(entry));
+    if (!ruleIds.every(Boolean)) {
+        return null;
+    }
+    return ruleIds;
+}
+
+function normalizeActiveRuleFingerprints(
+    value: unknown,
+    activeRuleIds: readonly string[]
+): Record<string, string> | null {
+    if (!isRecord(value)) {
+        return null;
+    }
+    const fingerprints: Record<string, string> = {};
+    for (const ruleId of activeRuleIds) {
+        const fingerprint = normalizeRuleFingerprint(value[ruleId]);
+        if (!fingerprint) {
+            return null;
+        }
+        fingerprints[ruleId] = fingerprint;
+    }
+    return fingerprints;
+}
+
+function qualityChecklistAnswersTemplatePolicySha256FromParts(
+    activeRuleIds: readonly string[],
+    activeRuleFingerprints: Record<string, string>
+): string {
+    return stringSha256(JSON.stringify({
+        schema_version: 1,
+        active_rule_ids: activeRuleIds,
+        active_rule_fingerprints: activeRuleIds.map((ruleId) => [
+            ruleId,
+            normalizeRuleFingerprint(activeRuleFingerprints[ruleId])
+        ])
+    })) || '';
+}
+
+function activeRuleFingerprintsMatch(
+    left: unknown,
+    right: unknown,
+    activeRuleIds: readonly string[]
+): boolean {
+    const normalizedLeft = normalizeActiveRuleFingerprints(left, activeRuleIds);
+    const normalizedRight = normalizeActiveRuleFingerprints(right, activeRuleIds);
+    return !!normalizedLeft
+        && !!normalizedRight
+        && activeRuleIds.every((ruleId) => normalizedLeft[ruleId] === normalizedRight[ruleId]);
+}
+
 export function buildQualityChecklistAnswersTemplate(
     options: Omit<BuildQualityChecklistOptions, 'answers' | 'actionsTaken' | 'actionsRequired'>
 ): QualityChecklistAnswersTemplate {
@@ -625,6 +728,7 @@ export function buildQualityChecklistAnswersTemplate(
         active_rule_ids: artifact.rules
             .filter((rule) => rule.scope_applicability === 'active')
             .map((rule) => rule.id),
+        active_rule_fingerprints: buildActiveRuleFingerprints(artifact),
         answers: artifact.rules
             .filter((rule) => rule.scope_applicability === 'active')
             .map((rule) => ({
@@ -652,6 +756,102 @@ function templateRuleIds(value: unknown): string[] | null {
     }
     const ruleIds = value.map((entry) => isRecord(entry) ? normalizeRuleId(entry.rule_id) : '');
     return ruleIds.every(Boolean) ? ruleIds : null;
+}
+
+function normalizeReusableTemplateAnswer(value: unknown): QualityChecklistAnswersTemplateAnswer | null {
+    if (!isRecord(value)
+        || Object.hasOwn(value, 'title')
+        || Object.hasOwn(value, 'prompt')
+        || typeof value.status !== 'string'
+        || typeof value.answer !== 'string') {
+        return null;
+    }
+    const ruleId = normalizeRuleId(value.rule_id);
+    if (!ruleId) {
+        return null;
+    }
+    const optionalArrayFields = ['evidence_files', 'actions_taken', 'actions_required'] as const;
+    for (const field of optionalArrayFields) {
+        const fieldValue = value[field];
+        if (fieldValue !== undefined && (!Array.isArray(fieldValue) || !fieldValue.every((entry) => typeof entry === 'string'))) {
+            return null;
+        }
+    }
+    return {
+        rule_id: ruleId,
+        status: value.status,
+        answer: value.answer,
+        ...(value.evidence_files !== undefined ? { evidence_files: [...(value.evidence_files as string[])] } : {}),
+        ...(value.actions_taken !== undefined ? { actions_taken: [...(value.actions_taken as string[])] } : {}),
+        ...(value.actions_required !== undefined ? { actions_required: [...(value.actions_required as string[])] } : {})
+    };
+}
+
+function reusableTemplateAnswersByRuleId(
+    template: QualityChecklistAnswersTemplate | null,
+    currentTemplate: QualityChecklistAnswersTemplate,
+    binding: QualityChecklistAnswersTemplateBinding | null
+): Map<string, QualityChecklistAnswersTemplateAnswer> {
+    const reusableAnswers = new Map<string, QualityChecklistAnswersTemplateAnswer>();
+    if (!template || !Array.isArray(template.active_rule_ids) || !Array.isArray(template.answers)) {
+        return reusableAnswers;
+    }
+    if (!bindingMatchesTemplate(binding, template)) {
+        return reusableAnswers;
+    }
+    const staleActiveRuleIds = normalizeActiveRuleIds(template.active_rule_ids);
+    const currentActiveRuleIds = normalizeActiveRuleIds(currentTemplate.active_rule_ids);
+    if (!staleActiveRuleIds || !currentActiveRuleIds) {
+        return reusableAnswers;
+    }
+    const currentRuleFingerprints = normalizeActiveRuleFingerprints(
+        currentTemplate.active_rule_fingerprints,
+        currentActiveRuleIds
+    );
+    if (!currentRuleFingerprints) {
+        return reusableAnswers;
+    }
+    const staleActiveRuleIdsSet = new Set(staleActiveRuleIds);
+    const currentActiveRuleIdsSet = new Set(currentActiveRuleIds);
+    const duplicateRuleIds = new Set<string>();
+    for (const answer of template.answers) {
+        const normalizedAnswer = normalizeReusableTemplateAnswer(answer);
+        if (!normalizedAnswer
+            || !staleActiveRuleIdsSet.has(normalizedAnswer.rule_id)
+            || !currentActiveRuleIdsSet.has(normalizedAnswer.rule_id)) {
+            continue;
+        }
+        const staleFingerprint = normalizeRuleFingerprint(binding.active_rule_fingerprints[normalizedAnswer.rule_id]);
+        const currentFingerprint = normalizeRuleFingerprint(currentRuleFingerprints[normalizedAnswer.rule_id]);
+        if (!staleFingerprint || staleFingerprint !== currentFingerprint) {
+            continue;
+        }
+        if (reusableAnswers.has(normalizedAnswer.rule_id)) {
+            duplicateRuleIds.add(normalizedAnswer.rule_id);
+            reusableAnswers.delete(normalizedAnswer.rule_id);
+            continue;
+        }
+        reusableAnswers.set(normalizedAnswer.rule_id, normalizedAnswer);
+    }
+    for (const duplicateRuleId of duplicateRuleIds) {
+        reusableAnswers.delete(duplicateRuleId);
+    }
+    return reusableAnswers;
+}
+
+function mergeReusableAnswersIntoTemplate(
+    currentTemplate: QualityChecklistAnswersTemplate,
+    staleTemplate: QualityChecklistAnswersTemplate | null,
+    binding: QualityChecklistAnswersTemplateBinding | null
+): QualityChecklistAnswersTemplate {
+    const reusableAnswers = reusableTemplateAnswersByRuleId(staleTemplate, currentTemplate, binding);
+    if (reusableAnswers.size === 0) {
+        return currentTemplate;
+    }
+    return {
+        ...currentTemplate,
+        answers: currentTemplate.answers.map((answer) => reusableAnswers.get(answer.rule_id) ?? answer)
+    };
 }
 
 export function assessQualityChecklistAnswersTemplate(options: {
@@ -687,6 +887,9 @@ export function assessQualityChecklistAnswersTemplate(options: {
         || template.active_rule_ids.length !== expectedRuleIds.length
         || template.active_rule_ids.some((ruleId, index) => ruleId !== expectedRuleIds[index])) {
         return invalidAnswersTemplate('Quality checklist answers template active rule order does not match the current policy.');
+    }
+    if (!activeRuleFingerprintsMatch(template.active_rule_fingerprints, expected.active_rule_fingerprints, expectedRuleIds)) {
+        return invalidAnswersTemplate('Quality checklist answers template active rule fingerprints do not match the current policy.');
     }
     if (!actualRuleIds || actualRuleIds.length !== expectedRuleIds.length
         || actualRuleIds.some((ruleId, index) => ruleId !== expectedRuleIds[index])) {
@@ -778,6 +981,247 @@ function resolveAnswersTemplateWritePath(pathValue: string, repoRoot: string): s
     return resolvedPath;
 }
 
+function resolveAnswersTemplateBindingPath(answersPath: string, repoRoot: string): string {
+    return resolveAnswersTemplateWritePath(`${answersPath}.binding.json`, repoRoot);
+}
+
+function resolveAnswersTemplateRepairPath(answersPath: string, repoRoot: string): string {
+    return resolveAnswersTemplateWritePath(`${answersPath}.repair.json`, repoRoot);
+}
+
+function writeQualityChecklistAnswersTemplateFile(
+    answersPath: string,
+    repoRoot: string,
+    template: QualityChecklistAnswersTemplate
+): void {
+    fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+    fs.writeFileSync(answersPath, JSON.stringify(template, null, 2) + '\n', 'utf8');
+    writeQualityChecklistAnswersTemplateBinding(answersPath, repoRoot, template);
+}
+
+function activeRuleIdsMatch(left: readonly unknown[] | undefined, right: readonly unknown[] | undefined): boolean {
+    const normalizedLeft = normalizeActiveRuleIds(left) || [];
+    const normalizedRight = normalizeActiveRuleIds(right) || [];
+    return normalizedLeft.length === normalizedRight.length
+        && normalizedLeft.every((ruleId, index) => ruleId === normalizedRight[index]);
+}
+
+function buildQualityChecklistAnswersTemplateBinding(
+    answersPath: string,
+    template: QualityChecklistAnswersTemplate
+): QualityChecklistAnswersTemplateBinding {
+    const activeRuleIds = normalizeActiveRuleIds(template.active_rule_ids) || [];
+    const activeRuleFingerprints = normalizeActiveRuleFingerprints(template.active_rule_fingerprints, activeRuleIds) || {};
+    return {
+        schema_version: 1,
+        event_source: QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_EVENT_SOURCE,
+        task_id: template.task_id,
+        checklist_id: template.checklist_id,
+        answers_path: normalizePath(answersPath),
+        preflight_path: template.preflight_path,
+        preflight_sha256: template.preflight_sha256,
+        workflow_config_path: template.workflow_config_path,
+        workflow_config_sha256: template.workflow_config_sha256,
+        effective_policy_sha256: template.effective_policy_sha256,
+        active_rule_ids: [...activeRuleIds],
+        active_rule_fingerprints: activeRuleFingerprints,
+        answers_template_policy_sha256: qualityChecklistAnswersTemplatePolicySha256FromParts(
+            activeRuleIds,
+            activeRuleFingerprints
+        )
+    };
+}
+
+function resolveQualityChecklistTaskEventsPath(repoRoot: string, taskId: string): string {
+    return joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${assertValidTaskId(taskId)}.jsonl`));
+}
+
+function appendQualityChecklistAnswersTemplateBindingEvidence(options: {
+    answersPath: string;
+    bindingPath: string;
+    binding: QualityChecklistAnswersTemplateBinding;
+    repoRoot: string;
+}): void {
+    const bindingSha256 = fileSha256(options.bindingPath);
+    appendTaskEvent(
+        joinOrchestratorPath(options.repoRoot, ''),
+        options.binding.task_id,
+        QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_RECORDED_EVENT,
+        'INFO',
+        'Quality checklist answers template binding recorded.',
+        {
+            answers_path: normalizePath(options.answersPath),
+            binding_path: normalizePath(options.bindingPath),
+            binding_sha256: bindingSha256,
+            answers_template_policy_sha256: options.binding.answers_template_policy_sha256,
+            active_rule_ids: options.binding.active_rule_ids
+        },
+        { actor: 'gate' }
+    );
+}
+
+function bindingHasTaskEventEvidence(options: {
+    answersPath: string;
+    bindingPath: string;
+    binding: QualityChecklistAnswersTemplateBinding;
+    repoRoot: string;
+}): boolean {
+    const taskEventsPath = resolveQualityChecklistTaskEventsPath(options.repoRoot, options.binding.task_id);
+    const inspection = inspectTaskEventFile(taskEventsPath, options.binding.task_id);
+    if (inspection.status !== 'PASS' && inspection.status !== 'PASS_WITH_LEGACY_PREFIX') {
+        return false;
+    }
+    const expectedAnswersPath = normalizePath(options.answersPath);
+    const expectedBindingPath = normalizePath(options.bindingPath);
+    const expectedBindingSha256 = fileSha256(options.bindingPath);
+    let matched = false;
+    try {
+        forEachJsonlLine(taskEventsPath, (rawLine: string) => {
+            if (matched) {
+                return;
+            }
+            const parsed = JSON.parse(rawLine) as Record<string, unknown>;
+            if (parsed.event_type !== QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_RECORDED_EVENT) {
+                return;
+            }
+            const details = isRecord(parsed.details) ? parsed.details : {};
+            if (normalizePath(details.answers_path) === expectedAnswersPath
+                && normalizePath(details.binding_path) === expectedBindingPath
+                && normalizeRuleFingerprint(details.binding_sha256) === expectedBindingSha256
+                && normalizeRuleFingerprint(details.answers_template_policy_sha256) === options.binding.answers_template_policy_sha256) {
+                matched = true;
+            }
+        });
+    } catch {
+        return false;
+    }
+    return matched;
+}
+
+function bindingMatchesTemplate(
+    binding: QualityChecklistAnswersTemplateBinding | null,
+    template: QualityChecklistAnswersTemplate
+): binding is QualityChecklistAnswersTemplateBinding {
+    return !!binding
+        && binding.task_id === template.task_id
+        && binding.checklist_id === template.checklist_id
+        && binding.preflight_path === template.preflight_path
+        && binding.preflight_sha256 === template.preflight_sha256
+        && binding.workflow_config_path === template.workflow_config_path
+        && binding.workflow_config_sha256 === template.workflow_config_sha256
+        && binding.effective_policy_sha256 === template.effective_policy_sha256
+        && activeRuleIdsMatch(binding.active_rule_ids, template.active_rule_ids)
+        && activeRuleFingerprintsMatch(
+            binding.active_rule_fingerprints,
+            template.active_rule_fingerprints,
+            binding.active_rule_ids
+        )
+        && binding.answers_template_policy_sha256 === qualityChecklistAnswersTemplatePolicySha256FromParts(
+            binding.active_rule_ids,
+            binding.active_rule_fingerprints
+        );
+}
+
+function readQualityChecklistAnswersTemplateBinding(
+    answersPath: string,
+    repoRoot: string
+): QualityChecklistAnswersTemplateBinding | null {
+    const bindingPath = resolveAnswersTemplateBindingPath(answersPath, repoRoot);
+    if (!fs.existsSync(bindingPath)) {
+        return null;
+    }
+    try {
+        assertQualityChecklistAnswersPathHasNoSymlinks(bindingPath, repoRoot);
+        const parsed = JSON.parse(fs.readFileSync(bindingPath, 'utf8')) as Partial<QualityChecklistAnswersTemplateBinding>;
+        if (parsed.schema_version !== 1
+            || parsed.event_source !== QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_EVENT_SOURCE
+            || typeof parsed.task_id !== 'string'
+            || parsed.checklist_id !== QUALITY_CHECKLIST_ID
+            || typeof parsed.answers_path !== 'string'
+            || typeof parsed.preflight_path !== 'string'
+            || typeof parsed.preflight_sha256 !== 'string'
+            || typeof parsed.workflow_config_path !== 'string'
+            || !(typeof parsed.workflow_config_sha256 === 'string' || parsed.workflow_config_sha256 === null)
+            || typeof parsed.effective_policy_sha256 !== 'string'
+            || !Array.isArray(parsed.active_rule_ids)
+            || !isRecord(parsed.active_rule_fingerprints)
+            || typeof parsed.answers_template_policy_sha256 !== 'string') {
+            return null;
+        }
+        if (normalizePath(parsed.answers_path) !== normalizePath(answersPath)) {
+            return null;
+        }
+        const activeRuleIds = normalizeActiveRuleIds(parsed.active_rule_ids);
+        if (!activeRuleIds) {
+            return null;
+        }
+        const activeRuleFingerprints = normalizeActiveRuleFingerprints(parsed.active_rule_fingerprints, activeRuleIds);
+        if (!activeRuleFingerprints) {
+            return null;
+        }
+        if (parsed.answers_template_policy_sha256 !== qualityChecklistAnswersTemplatePolicySha256FromParts(
+            activeRuleIds,
+            activeRuleFingerprints
+        )) {
+            return null;
+        }
+        const binding: QualityChecklistAnswersTemplateBinding = {
+            schema_version: 1,
+            event_source: QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_EVENT_SOURCE,
+            task_id: parsed.task_id,
+            checklist_id: QUALITY_CHECKLIST_ID,
+            answers_path: normalizePath(parsed.answers_path),
+            preflight_path: parsed.preflight_path,
+            preflight_sha256: parsed.preflight_sha256,
+            workflow_config_path: parsed.workflow_config_path,
+            workflow_config_sha256: parsed.workflow_config_sha256,
+            effective_policy_sha256: parsed.effective_policy_sha256,
+            active_rule_ids: activeRuleIds,
+            active_rule_fingerprints: activeRuleFingerprints,
+            answers_template_policy_sha256: parsed.answers_template_policy_sha256
+        };
+        if (!bindingHasTaskEventEvidence({ answersPath, bindingPath, binding, repoRoot })) {
+            return null;
+        }
+        return binding;
+    } catch {
+        return null;
+    }
+}
+
+function writeQualityChecklistAnswersTemplateBinding(
+    answersPath: string,
+    repoRoot: string,
+    template: QualityChecklistAnswersTemplate
+): void {
+    const bindingPath = resolveAnswersTemplateBindingPath(answersPath, repoRoot);
+    const binding = buildQualityChecklistAnswersTemplateBinding(answersPath, template);
+    fs.mkdirSync(path.dirname(bindingPath), { recursive: true });
+    fs.writeFileSync(bindingPath, JSON.stringify(binding, null, 2) + '\n', 'utf8');
+    appendQualityChecklistAnswersTemplateBindingEvidence({ answersPath, bindingPath, binding, repoRoot });
+}
+
+function materializeUnsafeRepairTemplate(options: {
+    answersPath: string;
+    repoRoot: string;
+    template: QualityChecklistAnswersTemplate;
+    reason: string;
+}): MaterializeQualityChecklistAnswersTemplateResult {
+    const repairPath = resolveAnswersTemplateRepairPath(options.answersPath, options.repoRoot);
+    writeQualityChecklistAnswersTemplateFile(repairPath, options.repoRoot, options.template);
+    const originalAnswersPath = normalizePath(options.answersPath);
+    const repairAnswersPath = normalizePath(repairPath);
+    return {
+        status: 'repair_created',
+        answers_path: repairAnswersPath,
+        original_answers_path: originalAnswersPath,
+        template: options.template,
+        warning:
+            `Unsafe existing answers template preserved at ${originalAnswersPath}; ` +
+            `repair template materialized at ${repairAnswersPath}. Reason: ${options.reason}`
+    };
+}
+
 export function materializeQualityChecklistAnswersTemplate(options: {
     repoRoot: string;
     taskId: string;
@@ -802,13 +1246,39 @@ export function materializeQualityChecklistAnswersTemplate(options: {
     const currentIsNewerThanThreshold = Number.isFinite(refreshThreshold)
         && Number.isFinite(currentTimestamp)
         && currentTimestamp > refreshThreshold;
+    const expectedTemplate = buildQualityChecklistAnswersTemplate({ repoRoot, taskId, preflightPath: options.preflightPath });
     if (assessment.status === 'current' && (!Number.isFinite(refreshThreshold) || currentIsNewerThanThreshold)) {
+        writeQualityChecklistAnswersTemplateBinding(answersPath, repoRoot, expectedTemplate);
         return { status: 'current', answers_path: normalizePath(answersPath), template: assessment.template! };
     }
 
-    const template = buildQualityChecklistAnswersTemplate({ repoRoot, taskId, preflightPath: options.preflightPath });
-    fs.mkdirSync(path.dirname(answersPath), { recursive: true });
-    fs.writeFileSync(answersPath, JSON.stringify(template, null, 2) + '\n', 'utf8');
+    const binding = readQualityChecklistAnswersTemplateBinding(answersPath, repoRoot);
+    if (assessment.status === 'invalid') {
+        return materializeUnsafeRepairTemplate({
+            answersPath,
+            repoRoot,
+            template: expectedTemplate,
+            reason: assessment.reason
+        });
+    }
+    if (assessment.status === 'stale' && !bindingMatchesTemplate(binding, assessment.template!)) {
+        return materializeUnsafeRepairTemplate({
+            answersPath,
+            repoRoot,
+            template: expectedTemplate,
+            reason: `${assessment.reason} Existing binding is missing or does not match the stale answers template.`
+        });
+    }
+    const template = assessment.status === 'stale'
+        ? mergeReusableAnswersIntoTemplate(expectedTemplate, assessment.template!, binding)
+        : assessment.status === 'current'
+            ? mergeReusableAnswersIntoTemplate(
+                expectedTemplate,
+                assessment.template!,
+                buildQualityChecklistAnswersTemplateBinding(answersPath, expectedTemplate)
+            )
+        : expectedTemplate;
+    writeQualityChecklistAnswersTemplateFile(answersPath, repoRoot, template);
     return {
         status: assessment.status === 'missing' ? 'created' : 'refreshed',
         answers_path: normalizePath(answersPath),

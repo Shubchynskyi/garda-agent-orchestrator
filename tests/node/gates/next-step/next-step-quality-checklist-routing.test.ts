@@ -301,6 +301,58 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).next_gate, 'compile-gate');
     });
 
+    it('preserves filled answers when test-review failure cadence rematerializes after a preflight refresh', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
+        appendReviewFailure(repoRoot, 'test');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true }, {
+            changedFiles: ['tests/first-test-review-fix.test.ts'],
+            scopeCategory: 'test-only'
+        });
+
+        const first = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(first.next_gate, 'quality-checklist', first.reason);
+
+        const answersPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            `${TASK_ID}-quality-checklist-answers.json`
+        );
+        const template = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+            preflight_sha256: string;
+            answers: Array<Record<string, unknown>>;
+        };
+        template.answers = template.answers.map((answer) => ({
+            ...answer,
+            status: 'PASS',
+            answer: `Filled cadence answer for ${String(answer.rule_id)}.`
+        }));
+        fs.writeFileSync(answersPath, JSON.stringify(template, null, 2) + '\n', 'utf8');
+
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true }, {
+            changedFiles: ['tests/first-test-review-fix.test.ts', 'tests/after-review-failure-refresh.test.ts'],
+            scopeCategory: 'test-only'
+        });
+
+        const second = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(second.next_gate, 'quality-checklist', second.reason);
+        const refreshedTemplate = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+            preflight_sha256: string;
+            answers: Array<Record<string, unknown>>;
+        };
+        assert.notEqual(refreshedTemplate.preflight_sha256, template.preflight_sha256);
+        assert.ok(refreshedTemplate.answers.length > 0);
+        assert.ok(refreshedTemplate.answers.every((answer) => answer.status === 'PASS'));
+        assert.ok(refreshedTemplate.answers.every((answer) => (
+            String(answer.answer || '').startsWith('Filled cadence answer for ')
+        )));
+    });
+
     it('does not write the active-question reference through a symlinked runtime tmp path', () => {
         const repoRoot = makeTempRepo();
         const outsideDir = path.join(path.dirname(repoRoot), `${TASK_ID}-outside-runtime-tmp`);

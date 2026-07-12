@@ -136,6 +136,19 @@ function fingerprintEntry(entry: QualityChecklistEffectivePolicyEntry): Record<s
     };
 }
 
+export function computeQualityChecklistAnswersTemplateRuleSha256(
+    entry: QualityChecklistEffectivePolicyEntry
+): string {
+    return sha256Json({
+        schema_version: 1,
+        rule: {
+            ...fingerprintEntry(entry),
+            title: entry.title,
+            prompt: entry.prompt
+        }
+    });
+}
+
 export function computeQualityChecklistEffectivePolicySha256(
     rules: readonly OptionalQualityCheckRule[],
     scopeCategory: string | null,
