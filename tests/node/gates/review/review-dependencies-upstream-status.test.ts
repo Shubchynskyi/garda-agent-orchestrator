@@ -19,7 +19,93 @@ function sha256Buffer(buffer: Buffer): string {
     return createHash('sha256').update(buffer).digest('hex');
 }
 
+function writeReviewArtifactAndRefreshReceipt(fixture: {
+    reviewArtifactPath: string;
+    receiptPath: string;
+}, content: string): void {
+    fs.writeFileSync(fixture.reviewArtifactPath, content, 'utf8');
+    const receipt = JSON.parse(fs.readFileSync(fixture.receiptPath, 'utf8')) as Record<string, unknown>;
+    receipt.review_artifact_sha256 = sha256Buffer(fs.readFileSync(fixture.reviewArtifactPath));
+    writeJson(fixture.receiptPath, receipt);
+}
 
+function buildReviewFindingsJsonArtifact(options: {
+    taskId: string;
+    reviewContextSha256?: string;
+    coverageContractSha256?: string;
+    residualRisks?: string[];
+    malformedLegacyShape?: boolean;
+}): string {
+    if (options.malformedLegacyShape) {
+        return JSON.stringify({
+            schema_version: 1,
+            task_id: options.taskId,
+            review_type: 'code',
+            review_context_sha256: options.reviewContextSha256 || 'a'.repeat(64),
+            tree_state_sha256: 'b'.repeat(64),
+            validation_evidence: {
+                compile_gate: {
+                    command: 'npm run build',
+                    status: 'passed',
+                    recorded_at_utc: '2026-07-13T00:00:00.000Z'
+                }
+            },
+            coverage_ledger: {
+                entries: []
+            },
+            findings: {
+                critical: [],
+                high: [],
+                medium: [],
+                low: []
+            },
+            residual_risks: options.residualRisks || [],
+            notes: []
+        }, null, 2) + '\n';
+    }
+    return JSON.stringify({
+        schema_version: 1,
+        task_id: options.taskId,
+        review_type: 'code',
+        review_context_sha256: options.reviewContextSha256 || 'a'.repeat(64),
+        tree_state_sha256: 'b'.repeat(64),
+        validation_notes: [{
+            id: 'N-001',
+            topic: 'dependency-reader',
+            note: 'Reviewed the dependency reader JSON artifact path.',
+            evidence: [{
+                location: 'src/gates/review/review-dependencies.ts:280',
+                observation: 'The dependency reader derives upstream state from strict findings JSON.'
+            }]
+        }],
+        coverage_ledger: {
+            coverage_contract_sha256: options.coverageContractSha256 || 'c'.repeat(64),
+            entries: [{
+                obligation_id: 'FILE-001',
+                evidence: [{
+                    location: 'src/gates/review/review-dependencies.ts:280',
+                    observation: 'The dependency reader path was inspected.'
+                }],
+                finding_ids: options.residualRisks && options.residualRisks.length > 0 ? [] : []
+            }]
+        },
+        findings: {
+            critical: [],
+            high: [],
+            medium: [],
+            low: []
+        },
+        residual_risks: (options.residualRisks || []).map((description, index) => ({
+            id: `R-${String(index + 1).padStart(3, '0')}`,
+            description,
+            evidence: [{
+                location: 'src/gates/review/review-dependencies.ts:280',
+                observation: 'The dependency reader treats residual risks as active upstream blockers.'
+            }]
+        })),
+        reviewer_notes: ['No reviewer-owned verdict fields are present.']
+    }, null, 2) + '\n';
+}
 
 
 function createReviewDependencyTaxonomyFixture(options: {
@@ -182,6 +268,133 @@ test('assessUpstreamReviewDependencyStatus classifies missing context blockers',
         assert.equal(result.ready, false);
         assert.equal(result.blockerCode, 'missing_context');
         assert.match(result.reason, /missing or invalid review-context artifact/);
+    } finally {
+        fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('assessUpstreamReviewDependencyStatus accepts verdict-free JSON artifacts with no active findings as upstream pass', () => {
+    const fixture = createReviewDependencyTaxonomyFixture({
+        taskId: 'T-979-json-pass'
+    });
+    try {
+        const coverageContract = {
+            schema_version: 1,
+            required: true,
+            review_type: 'code',
+            obligations: [{ id: 'FILE-001', kind: 'file', target: 'src/gates/review/review-dependencies.ts' }],
+            obligation_count: 1,
+            contract_sha256: 'c'.repeat(64)
+        };
+        writeJson(fixture.reviewContextPath, {
+            task_id: 'T-979-json-pass',
+            review_type: 'code',
+            tree_state: {
+                tree_state_sha256: 'b'.repeat(64)
+            },
+            coverage_contract: coverageContract
+        });
+        writeReviewArtifactAndRefreshReceipt(
+            fixture,
+            buildReviewFindingsJsonArtifact({
+                taskId: 'T-979-json-pass',
+                reviewContextSha256: sha256Buffer(fs.readFileSync(fixture.reviewContextPath)),
+                coverageContractSha256: coverageContract.contract_sha256
+            })
+        );
+
+        const result = assessUpstreamReviewDependencyStatus({
+            taskId: 'T-979-json-pass',
+            preflightPath: fixture.preflightPath,
+            preflightPayload: fixture.preflightPayload,
+            preflightHashSha256: fixture.preflightSha256,
+            latestRecordedReviewByType: fixture.latestRecordedReviewByType,
+            upstreamReviewType: 'code',
+            timelineEvents: fixture.timelineEvents
+        });
+
+        assert.equal(result.ready, false);
+        assert.notEqual(result.blockerCode, 'missing_upstream_pass');
+    } finally {
+        fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('assessUpstreamReviewDependencyStatus rejects malformed verdict-free JSON artifacts as missing upstream pass', () => {
+    const fixture = createReviewDependencyTaxonomyFixture({
+        taskId: 'T-979-json-malformed'
+    });
+    try {
+        writeReviewArtifactAndRefreshReceipt(
+            fixture,
+            buildReviewFindingsJsonArtifact({
+                taskId: 'T-979-json-malformed',
+                malformedLegacyShape: true
+            })
+        );
+
+        const result = assessUpstreamReviewDependencyStatus({
+            taskId: 'T-979-json-malformed',
+            preflightPath: fixture.preflightPath,
+            preflightPayload: fixture.preflightPayload,
+            preflightHashSha256: fixture.preflightSha256,
+            latestRecordedReviewByType: fixture.latestRecordedReviewByType,
+            upstreamReviewType: 'code',
+            timelineEvents: fixture.timelineEvents
+        });
+
+        assert.equal(result.ready, false);
+        assert.equal(result.blockerCode, 'missing_upstream_pass');
+        assert.match(result.reason, /review artifact verdict is 'missing'/);
+    } finally {
+        fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('assessUpstreamReviewDependencyStatus treats verdict-free JSON residual risks as active upstream failures', () => {
+    const fixture = createReviewDependencyTaxonomyFixture({
+        taskId: 'T-979-json-residual-risk'
+    });
+    try {
+        const coverageContract = {
+            schema_version: 1,
+            required: true,
+            review_type: 'code',
+            obligations: [{ id: 'FILE-001', kind: 'file', target: 'src/gates/review/review-dependencies.ts' }],
+            obligation_count: 1,
+            contract_sha256: 'c'.repeat(64)
+        };
+        writeJson(fixture.reviewContextPath, {
+            task_id: 'T-979-json-residual-risk',
+            review_type: 'code',
+            tree_state: {
+                tree_state_sha256: 'b'.repeat(64)
+            },
+            coverage_contract: coverageContract
+        });
+        writeReviewArtifactAndRefreshReceipt(
+            fixture,
+            buildReviewFindingsJsonArtifact({
+                taskId: 'T-979-json-residual-risk',
+                reviewContextSha256: sha256Buffer(fs.readFileSync(fixture.reviewContextPath)),
+                coverageContractSha256: coverageContract.contract_sha256,
+                residualRisks: ['Residual risk requires implementation follow-up before dependent reviews.']
+            })
+        );
+
+        const result = assessUpstreamReviewDependencyStatus({
+            taskId: 'T-979-json-residual-risk',
+            preflightPath: fixture.preflightPath,
+            preflightPayload: fixture.preflightPayload,
+            preflightHashSha256: fixture.preflightSha256,
+            latestRecordedReviewByType: fixture.latestRecordedReviewByType,
+            upstreamReviewType: 'code',
+            timelineEvents: fixture.timelineEvents
+        });
+
+        assert.equal(result.ready, false);
+        assert.equal(result.blockerCode, 'missing_upstream_pass');
+        assert.match(result.reason, /upstream review failed with 'REVIEW FAILED'/);
     } finally {
         fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
     }

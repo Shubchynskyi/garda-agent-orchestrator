@@ -1,5 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import {
     detectZeroDiffFromPreflight,
@@ -9,6 +13,13 @@ import {
     testExpectedVerdict,
     validateZeroDiffForReviewGate
 } from '../../../../src/gates/required-reviews/required-reviews-check';
+import {
+    testReviewArtifacts
+} from '../../../../src/cli/commands/gate-flows/review/review-flow-support';
+
+function sha256Text(value: string): string {
+    return createHash('sha256').update(value, 'utf8').digest('hex');
+}
 
 describe('gates/required-reviews-check core helpers', () => {
     describe('parseSkipReviews', () => {
@@ -116,6 +127,101 @@ describe('gates/required-reviews-check core helpers', () => {
             assert.equal(codeContract![1], 'REVIEW PASSED');
             const dbContract = REVIEW_CONTRACTS.find(([k]) => k === 'db');
             assert.equal(dbContract![1], 'DB REVIEW PASSED');
+        });
+    });
+
+    describe('testReviewArtifacts', () => {
+        it('accepts verdict-free findings JSON pass artifacts without a legacy pass token', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-reviews-json-'));
+            const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+
+            const taskId = 'T-979';
+            const reviewType = 'code';
+            const treeStateSha256 = sha256Text('tree-state');
+            const coverageContractSha256 = sha256Text('coverage-contract');
+            const reviewContext = {
+                schema_version: 3,
+                task_id: taskId,
+                review_type: reviewType,
+                tree_state: {
+                    tree_state_sha256: treeStateSha256
+                },
+                coverage_contract: {
+                    schema_version: 1,
+                    required: true,
+                    review_type: reviewType,
+                    obligations: [
+                        {
+                            id: 'FILE-001',
+                            kind: 'file',
+                            target: 'src/example.ts'
+                        }
+                    ],
+                    obligation_count: 1,
+                    contract_sha256: coverageContractSha256
+                }
+            };
+            const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
+            fs.writeFileSync(reviewContextPath, `${JSON.stringify(reviewContext, null, 2)}\n`, 'utf8');
+            const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
+
+            const report = {
+                schema_version: 1,
+                task_id: taskId,
+                review_type: reviewType,
+                review_context_sha256: reviewContextSha256,
+                tree_state_sha256: treeStateSha256,
+                validation_notes: [
+                    {
+                        id: 'N-001',
+                        topic: 'scope',
+                        note: 'Reviewed src/example.ts and the JSON review artifact gate path.',
+                        evidence: [
+                            {
+                                location: 'src/example.ts:1',
+                                observation: 'Scoped changed file was reviewed.'
+                            }
+                        ]
+                    }
+                ],
+                coverage_ledger: {
+                    coverage_contract_sha256: coverageContractSha256,
+                    entries: [
+                        {
+                            obligation_id: 'FILE-001',
+                            evidence: [
+                                {
+                                    location: 'src/example.ts:1',
+                                    observation: 'No defect found for this obligation.'
+                                }
+                            ],
+                            finding_ids: []
+                        }
+                    ]
+                },
+                findings: {
+                    critical: [],
+                    high: [],
+                    medium: [],
+                    low: []
+                },
+                residual_risks: [],
+                reviewer_notes: ['No active findings.']
+            };
+            fs.writeFileSync(path.join(reviewsRoot, `${taskId}-${reviewType}.md`), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+
+            const result = testReviewArtifacts(
+                repoRoot,
+                taskId,
+                { code: true },
+                { code: 'REVIEW PASSED' },
+                [],
+                'runtime/reviews'
+            );
+
+            assert.deepEqual(result.violations, []);
+            assert.equal(result.checked[0]?.token_found, true);
         });
     });
 

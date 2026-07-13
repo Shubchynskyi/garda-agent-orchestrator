@@ -3,7 +3,6 @@ import * as path from 'node:path';
 
 import {
     buildReviewVerdictTokenSet,
-    extractReviewVerdictToken,
     formatReviewVerdictTokenList
 } from '../../gate-runtime/review-context';
 import {
@@ -30,6 +29,12 @@ import {
     buildReviewTrustSummary,
     type ReviewTrustSummary
 } from '../review/review-trust-summary';
+import {
+    jsonReviewFindingsArtifactHasActiveFindings,
+    resolveReviewFindingsArtifactVerdictToken,
+    validateJsonReviewFindingsArtifact
+} from '../review/review-findings-artifact-verdict';
+import type { ReviewCoverageContract } from '../review/review-coverage-ledger';
 import {
     normalizeReviewEvidenceSha256,
     validateReviewReceiptEvidenceContract
@@ -244,9 +249,42 @@ export function readReviewArtifactState(
         violations.push('review artifact is missing');
     } else {
         const content = fs.readFileSync(artifactPath, 'utf8');
-        const parsedVerdictToken = extractReviewVerdictToken(content, passToken || null, failToken || null, reviewType);
+        const contextSha256 = contextExists ? fileSha256(contextPath) : null;
+        const jsonFindingsArtifact = validateJsonReviewFindingsArtifact({
+            content,
+            expectedTaskId: taskId,
+            expectedReviewType: reviewType,
+            expectedReviewContextSha256: contextSha256 || undefined,
+            expectedTreeStateSha256: contextReviewTreeStateSha256 || undefined,
+            coverageContract: context?.coverage_contract as ReviewCoverageContract | null | undefined
+        });
+        const jsonArtifactHasActiveFindings = jsonFindingsArtifact.report
+            ? jsonReviewFindingsArtifactHasActiveFindings(jsonFindingsArtifact.report)
+            : false;
+        const parsedVerdictToken = resolveReviewFindingsArtifactVerdictToken({
+            content,
+            passToken: passToken || null,
+            failToken: failToken || null,
+            reviewType,
+            expectedTaskId: taskId,
+            expectedReviewContextSha256: contextSha256 || undefined,
+            expectedTreeStateSha256: contextReviewTreeStateSha256 || undefined,
+            coverageContract: context?.coverage_contract as ReviewCoverageContract | null | undefined
+        });
         const acceptedTokens = buildReviewVerdictTokenSet(reviewType, passToken || null, failToken || null);
-        if (failToken && parsedVerdictToken === failToken) {
+        if (jsonFindingsArtifact.detected && !jsonFindingsArtifact.report) {
+            violations.push(
+                `review artifact contains invalid findings JSON: ${jsonFindingsArtifact.violations.join(' ')}`
+            );
+        } else if (jsonFindingsArtifact.report && jsonArtifactHasActiveFindings) {
+            verdictToken = failToken || null;
+            failed = true;
+            violations.push(
+                `review artifact contains active findings in findings JSON; fix implementation and rerun compile plus '${reviewType}' review before launching dependent reviews`
+            );
+        } else if (jsonFindingsArtifact.report) {
+            verdictToken = passToken || null;
+        } else if (failToken && parsedVerdictToken === failToken) {
             verdictToken = failToken;
             failed = true;
             failureReason = detectReviewLaunchPackageFailureReason(content);

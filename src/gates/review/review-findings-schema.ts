@@ -36,12 +36,12 @@ const REPORT_KEYS = new Set([
 const VALIDATION_NOTE_KEYS = new Set(['id', 'topic', 'note', 'evidence']);
 const COVERAGE_LEDGER_KEYS = new Set(['coverage_contract_sha256', 'entries']);
 const COVERAGE_ENTRY_KEYS = new Set(['obligation_id', 'evidence', 'finding_ids']);
-const FINDINGS_KEYS = new Set(['high', 'medium', 'low']);
+const FINDINGS_KEYS = new Set(['critical', 'high', 'medium', 'low']);
 const FINDING_KEYS = new Set(['id', 'title', 'description', 'evidence', 'coverage_obligation_ids']);
 const RESIDUAL_RISK_KEYS = new Set(['id', 'description', 'evidence']);
 const EVIDENCE_KEYS = new Set(['location', 'observation']);
 
-export type ReviewFindingsSeverity = 'high' | 'medium' | 'low';
+export type ReviewFindingsSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 export interface ReviewFindingsEvidence {
     location: string;
@@ -75,6 +75,7 @@ export interface ReviewFinding {
 }
 
 export interface ReviewFindingsBySeverity {
+    critical: ReviewFinding[];
     high: ReviewFinding[];
     medium: ReviewFinding[];
     low: ReviewFinding[];
@@ -103,6 +104,7 @@ export interface ReviewFindingsValidationOptions {
     expectedTaskId: string;
     expectedReviewType: string;
     expectedCoverageObligationIds?: readonly string[];
+    expectedChangedFilePaths?: readonly string[];
     expectedReviewContextSha256?: string;
     expectedTreeStateSha256?: string;
 }
@@ -138,6 +140,7 @@ export const reviewFindingsReportJsonSchema = {
         tree_state_sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
         validation_notes: {
             type: 'array',
+            minItems: 1,
             items: { $ref: '#/definitions/validation_note' }
         },
         coverage_ledger: { $ref: '#/definitions/coverage_ledger' },
@@ -205,8 +208,12 @@ export const reviewFindingsReportJsonSchema = {
         findings_by_severity: {
             type: 'object',
             additionalProperties: false,
-            required: ['high', 'medium', 'low'],
+            required: ['critical', 'high', 'medium', 'low'],
             properties: {
+                critical: {
+                    type: 'array',
+                    items: { $ref: '#/definitions/finding' }
+                },
                 high: {
                     type: 'array',
                     items: { $ref: '#/definitions/finding' }
@@ -383,6 +390,9 @@ function parseValidationNotes(value: unknown, violations: string[]): ReviewFindi
         }
     });
     pushDuplicateViolations('validation note', ids, violations);
+    if (notes.length === 0) {
+        violations.push('validation_notes must contain at least one validation note.');
+    }
     return notes;
 }
 
@@ -433,15 +443,100 @@ function parseCoverageLedger(value: unknown, violations: string[]): ReviewFindin
     return coverageContractSha256 ? { coverage_contract_sha256: coverageContractSha256, entries } : null;
 }
 
+function parseEvidenceLocation(location: string): { filePath: string; line: number } | null {
+    const normalized = location.trim().replace(/\\/g, '/');
+    const match = /^(.+):([1-9]\d*)$/u.exec(normalized);
+    if (!match) {
+        return null;
+    }
+    const filePath = match[1].trim();
+    if (!filePath || filePath.startsWith('<') || filePath.includes('..')) {
+        return null;
+    }
+    return {
+        filePath,
+        line: Number(match[2])
+    };
+}
+
+function validateEvidenceLocations(
+    evidenceItems: readonly ReviewFindingsEvidence[],
+    subject: string,
+    changedFiles: ReadonlySet<string>,
+    violations: string[]
+): void {
+    for (const [evidenceIndex, evidence] of evidenceItems.entries()) {
+        const evidenceSubject = `${subject}.evidence[${evidenceIndex}]`;
+        const location = parseEvidenceLocation(evidence.location);
+        if (!location || !changedFiles.has(location.filePath)) {
+            violations.push(
+                `${evidenceSubject}.location '${evidence.location}' must be a current changed-file path:line.`
+            );
+        }
+    }
+}
+
+function validateConcreteReviewEvidenceLocations(
+    reportParts: {
+        validationNotes: readonly ReviewFindingsValidationNote[];
+        coverageLedger: ReviewFindingsCoverageLedger | null;
+        findings: ReviewFindingsBySeverity | null;
+        residualRisks: readonly ReviewResidualRisk[];
+    },
+    expectedChangedFilePaths: readonly string[] | undefined,
+    violations: string[]
+): void {
+    if (!expectedChangedFilePaths) {
+        return;
+    }
+    const changedFiles = new Set(
+        expectedChangedFilePaths
+            .map((entry) => entry.trim().replace(/\\/g, '/'))
+            .filter(Boolean)
+    );
+    if (changedFiles.size === 0) {
+        return;
+    }
+
+    for (const [noteIndex, note] of reportParts.validationNotes.entries()) {
+        validateEvidenceLocations(note.evidence, `validation_notes[${noteIndex}]`, changedFiles, violations);
+    }
+    if (reportParts.coverageLedger) {
+        for (const [entryIndex, entry] of reportParts.coverageLedger.entries.entries()) {
+            validateEvidenceLocations(
+                entry.evidence,
+                `coverage_ledger.entries[${entryIndex}]`,
+                changedFiles,
+                violations
+            );
+        }
+    }
+    if (reportParts.findings) {
+        for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
+            for (const [findingIndex, finding] of reportParts.findings[severity].entries()) {
+                validateEvidenceLocations(
+                    finding.evidence,
+                    `findings.${severity}[${findingIndex}]`,
+                    changedFiles,
+                    violations
+                );
+            }
+        }
+    }
+    for (const [riskIndex, risk] of reportParts.residualRisks.entries()) {
+        validateEvidenceLocations(risk.evidence, `residual_risks[${riskIndex}]`, changedFiles, violations);
+    }
+}
+
 function parseFindings(value: unknown, violations: string[]): ReviewFindingsBySeverity | null {
     if (!isRecord(value)) {
         violations.push('findings must be an object.');
         return null;
     }
     pushUnknownKeyViolations('findings', value, FINDINGS_KEYS, violations);
-    const result: ReviewFindingsBySeverity = { high: [], medium: [], low: [] };
+    const result: ReviewFindingsBySeverity = { critical: [], high: [], medium: [], low: [] };
     const ids: string[] = [];
-    for (const severity of ['high', 'medium', 'low'] as const) {
+    for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
         if (!Array.isArray(value[severity])) {
             violations.push(`findings.${severity} must be an array.`);
             continue;
@@ -533,7 +628,7 @@ function getAllFindings(findings: ReviewFindingsBySeverity | null): ReviewFindin
     if (!findings) {
         return [];
     }
-    return [...findings.high, ...findings.medium, ...findings.low];
+    return [...findings.critical, ...findings.high, ...findings.medium, ...findings.low];
 }
 
 function validateCrossReferences(
@@ -557,13 +652,20 @@ function validateCrossReferences(
     const findingIds = findings.map((finding) => finding.id);
     const findingIdsReferencedByCoverage = new Set(report.coverage_ledger.entries.flatMap((entry) => entry.finding_ids));
     const coverageIdsSet = new Set(coverageIds);
+    const coverageEntriesById = new Map(report.coverage_ledger.entries.map((entry) => [entry.obligation_id, entry]));
+    const findingsById = new Map(findings.map((finding) => [finding.id, finding]));
     if (findings.length === 0 && !expectedCoverageObligationIds) {
         violations.push('Empty findings require expected coverage obligation ids to prove complete coverage.');
     }
     for (const finding of findings) {
         for (const obligationId of finding.coverage_obligation_ids) {
-            if (!coverageIdsSet.has(obligationId)) {
+            const coverageEntry = coverageEntriesById.get(obligationId);
+            if (!coverageIdsSet.has(obligationId) || !coverageEntry) {
                 violations.push(`Finding '${finding.id}' references unknown coverage obligation '${obligationId}'.`);
+                continue;
+            }
+            if (!coverageEntry.finding_ids.includes(finding.id)) {
+                violations.push(`Finding '${finding.id}' references coverage obligation '${obligationId}' but that coverage ledger entry does not reference the finding.`);
             }
         }
         if (!findingIdsReferencedByCoverage.has(finding.id)) {
@@ -573,6 +675,14 @@ function validateCrossReferences(
     for (const findingId of findingIdsReferencedByCoverage) {
         if (!findingIds.includes(findingId)) {
             violations.push(`Coverage ledger references unknown finding '${findingId}'.`);
+        }
+    }
+    for (const entry of report.coverage_ledger.entries) {
+        for (const findingId of entry.finding_ids) {
+            const finding = findingsById.get(findingId);
+            if (finding && !finding.coverage_obligation_ids.includes(entry.obligation_id)) {
+                violations.push(`Coverage ledger entry '${entry.obligation_id}' references finding '${findingId}' but that finding does not reference the coverage obligation.`);
+            }
         }
     }
     if (findings.length === 0 && report.coverage_ledger.entries.length === 0) {
@@ -631,6 +741,11 @@ export function validateReviewFindingsReport(
     const findings = parseFindings(value.findings, violations);
     const residualRisks = parseResidualRisks(value.residual_risks, violations);
     const reviewerNotes = parseReviewerNotes(value.reviewer_notes, violations);
+    validateConcreteReviewEvidenceLocations(
+        { validationNotes, coverageLedger, findings, residualRisks },
+        options.expectedChangedFilePaths,
+        violations
+    );
     if (coverageLedger && findings) {
         validateCrossReferences({
             coverage_ledger: coverageLedger,

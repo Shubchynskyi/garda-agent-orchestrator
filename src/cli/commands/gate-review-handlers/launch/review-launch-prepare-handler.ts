@@ -287,7 +287,10 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath, reviewOutputAttemptSha256);
         const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
             repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+            taskId,
             reviewType,
+            reviewContextSha256: contextSha256,
+            reviewTreeStateSha256: reviewTreeStateSha256 || null,
             rolePromptPath: handoffBindings.rolePromptPath
                 ? toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)
                 : null,
@@ -482,7 +485,10 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath, reviewOutputAttemptSha256);
     const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
         repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+        taskId,
         reviewType,
+        reviewContextSha256: contextSha256,
+        reviewTreeStateSha256: reviewTreeStateSha256 || null,
         rolePromptPath: handoffBindings.rolePromptPath
             ? toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)
             : null,

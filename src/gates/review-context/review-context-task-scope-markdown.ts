@@ -53,7 +53,6 @@ export function buildTaskScopeMarkdown(options: {
     lines.push('');
     lines.push('## Task Scope');
     lines.push(`- Review type: ${options.reviewType}`);
-    lines.push(`- Depth: ${options.depth}`);
     lines.push(`- Path mode: ${String(options.preflight.mode || 'unknown')}`);
     lines.push(`- Scope category: ${String(options.preflight.scope_category || 'unknown')}`);
     lines.push(`- Preflight path: ${normalizePath(options.preflightPath)}`);

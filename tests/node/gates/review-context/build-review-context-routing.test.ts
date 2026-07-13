@@ -267,7 +267,9 @@ import {
             assert.ok(promptArtifactText.includes('gate run-intermediate-command'));
             assert.ok(promptArtifactText.includes('bounded task-owned manual-validation logs'));
             assert.ok(promptArtifactText.includes('Missing focused execution evidence for changed tests is not by itself a defect'));
-            assert.ok(promptArtifactText.includes('run the smallest relevant focused test command before returning a verdict'));
+            assert.ok(promptArtifactText.includes('run the smallest relevant focused test command before returning findings'));
+            assert.ok(promptArtifactText.includes('Record the command and result in the JSON validation_notes array'));
+            assert.ok(!promptArtifactText.includes('## Commands Run'));
             assert.ok(promptArtifactText.includes('- # pass 91'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });

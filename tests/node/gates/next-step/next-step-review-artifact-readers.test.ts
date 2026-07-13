@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -12,8 +13,20 @@ import {
     scopedDiffExpectedForReview
 } from '../../../../src/gates/next-step/next-step-review-artifact-readers';
 
+const TREE_STATE_SHA256 = 'b'.repeat(64);
+const COVERAGE_CONTRACT_SHA256 = 'c'.repeat(64);
+
 function tempRoot(prefix: string): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+function writeJson(filePath: string, value: unknown): void {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + '\n', 'utf8');
+}
+
+function sha256File(filePath: string): string {
+    return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
 test('readReviewArtifactState reports missing review artifacts without route decisions', () => {
@@ -39,6 +52,191 @@ test('readReviewArtifactState reports missing review artifacts without route dec
         'review artifact is missing',
         'review receipt is missing'
     ]);
+});
+
+test('readReviewArtifactState derives pass state from findings JSON artifacts without legacy pass token', () => {
+    const reviewsRoot = tempRoot('garda-next-step-review-json-readers-');
+    const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
+    const contextPath = path.join(reviewsRoot, 'T-100-code-review-context.json');
+    writeJson(contextPath, {
+        task_id: 'T-100',
+        review_type: 'code',
+        tree_state: {
+            tree_state_sha256: TREE_STATE_SHA256
+        },
+        coverage_contract: {
+            schema_version: 1,
+            required: true,
+            review_type: 'code',
+            obligations: [{ id: 'FILE-001', kind: 'file', target: 'src/gates/next-step/next-step-review-artifact-readers.ts' }],
+            obligation_count: 1,
+            contract_sha256: COVERAGE_CONTRACT_SHA256
+        }
+    });
+    fs.writeFileSync(path.join(reviewsRoot, 'T-100-code.md'), JSON.stringify({
+        schema_version: 1,
+        task_id: 'T-100',
+        review_type: 'code',
+        review_context_sha256: sha256File(contextPath),
+        tree_state_sha256: TREE_STATE_SHA256,
+        validation_notes: [{
+            id: 'N-001',
+            topic: 'scope',
+            note: 'Reviewed the JSON artifact reader path.',
+            evidence: [{
+                location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                observation: 'The findings JSON artifact reader branch was inspected.'
+            }]
+        }],
+        coverage_ledger: {
+            coverage_contract_sha256: COVERAGE_CONTRACT_SHA256,
+            entries: [{
+                obligation_id: 'FILE-001',
+                evidence: [{
+                    location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                    observation: 'The reader branch was covered.'
+                }],
+                finding_ids: []
+            }]
+        },
+        findings: { critical: [], high: [], medium: [], low: [] },
+        residual_risks: [],
+        reviewer_notes: []
+    }));
+
+    const state = readReviewArtifactState(
+        reviewsRoot,
+        'T-100',
+        'code',
+        preflightPath,
+        null,
+        null
+    );
+
+    assert.equal(state.verdictToken, 'REVIEW PASSED');
+    assert.equal(state.failed, false);
+    assert.ok(!state.violations.some((violation) => violation.includes('accepted pass token')));
+});
+
+test('readReviewArtifactState treats active findings JSON artifacts as failed even without legacy fail token', () => {
+    const reviewsRoot = tempRoot('garda-next-step-review-json-failed-readers-');
+    const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
+    const contextPath = path.join(reviewsRoot, 'T-100-code-review-context.json');
+    writeJson(contextPath, {
+        task_id: 'T-100',
+        review_type: 'code',
+        tree_state: {
+            tree_state_sha256: TREE_STATE_SHA256
+        },
+        coverage_contract: {
+            schema_version: 1,
+            required: true,
+            review_type: 'code',
+            obligations: [{ id: 'FILE-001', kind: 'file', target: 'src/gates/next-step/next-step-review-artifact-readers.ts' }],
+            obligation_count: 1,
+            contract_sha256: COVERAGE_CONTRACT_SHA256
+        }
+    });
+    fs.writeFileSync(path.join(reviewsRoot, 'T-100-code.md'), JSON.stringify({
+        schema_version: 1,
+        task_id: 'T-100',
+        review_type: 'code',
+        review_context_sha256: sha256File(contextPath),
+        tree_state_sha256: TREE_STATE_SHA256,
+        validation_notes: [{
+            id: 'N-001',
+            topic: 'scope',
+            note: 'Reviewed the JSON artifact reader failed-state path.',
+            evidence: [{
+                location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                observation: 'The findings JSON active finding branch was inspected.'
+            }]
+        }],
+        coverage_ledger: {
+            coverage_contract_sha256: COVERAGE_CONTRACT_SHA256,
+            entries: [{
+                obligation_id: 'FILE-001',
+                evidence: [{
+                    location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                    observation: 'The reader branch was covered.'
+                }],
+                finding_ids: ['F-001']
+            }]
+        },
+        findings: {
+            critical: [],
+            high: [
+                {
+                    id: 'F-001',
+                    title: 'Downstream reader failure',
+                    description: 'The downstream reader must surface this active finding.',
+                    evidence: [
+                        {
+                            location: 'src/gates/next-step/next-step-review-artifact-readers.ts:140',
+                            observation: 'JSON active findings are mapped to failed review state.'
+                        }
+                    ],
+                    coverage_obligation_ids: ['FILE-001']
+                }
+            ],
+            medium: [],
+            low: []
+        },
+        residual_risks: [],
+        reviewer_notes: []
+    }));
+
+    const state = readReviewArtifactState(
+        reviewsRoot,
+        'T-100',
+        'code',
+        preflightPath,
+        null,
+        null
+    );
+
+    assert.equal(state.verdictToken, 'CODE REVIEW FAILED');
+    assert.equal(state.failed, true);
+    assert.ok(state.violations.some((violation) => violation.includes('active findings in findings JSON')));
+});
+
+test('readReviewArtifactState rejects malformed findings JSON instead of deriving a clean pass', () => {
+    const reviewsRoot = tempRoot('garda-next-step-review-json-invalid-readers-');
+    const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
+    fs.writeFileSync(path.join(reviewsRoot, 'T-100-code.md'), JSON.stringify({
+        schema_version: 1,
+        task_id: 'T-100',
+        review_type: 'code',
+        review_context_sha256: 'a'.repeat(64),
+        tree_state_sha256: 'b'.repeat(64),
+        validation_notes: [],
+        coverage_ledger: {
+            coverage_contract_sha256: 'c'.repeat(64),
+            entries: [{
+                obligation_id: 'FILE-001',
+                evidence: [{
+                    location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                    observation: 'The invalid findings JSON branch was inspected.'
+                }],
+                finding_ids: []
+            }]
+        },
+        findings: { critical: [], high: [], medium: [], low: [] },
+        residual_risks: [],
+        reviewer_notes: []
+    }));
+
+    const state = readReviewArtifactState(
+        reviewsRoot,
+        'T-100',
+        'code',
+        preflightPath,
+        null,
+        null
+    );
+
+    assert.equal(state.verdictToken, null);
+    assert.ok(state.violations.some((violation) => violation.includes('invalid findings JSON')));
 });
 
 test('getScopedDiffMetadataReadiness rejects missing and empty scoped diff metadata', () => {

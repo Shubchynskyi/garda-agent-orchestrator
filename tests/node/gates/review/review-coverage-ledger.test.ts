@@ -376,6 +376,113 @@ test('canonical evidence-only finding uses reserved ledger id without changing m
     assert.deepEqual(result.finding_ids, ['F-000']);
 });
 
+test('JSON coverage ledger accepts critical findings and canonical evidence-only reserved id', () => {
+    const contract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/example.ts'],
+        categoryIds: ['correctness-edge-cases']
+    });
+    const output = JSON.stringify({
+        schema_version: 1,
+        task_id: 'T-979-2',
+        review_type: 'code',
+        review_context_sha256: 'a'.repeat(64),
+        tree_state_sha256: 'b'.repeat(64),
+        validation_notes: [],
+        coverage_ledger: {
+            coverage_contract_sha256: contract.contract_sha256,
+            entries: contract.obligations.map((obligation, index) => ({
+                obligation_id: obligation.id,
+                evidence: [{
+                    location: 'src/example.ts:1',
+                    observation: `Concrete JSON coverage obligation ${index + 1} covers ${obligation.target}`
+                }],
+                finding_ids: index === 0 ? ['F-001', 'F-000'] : []
+            }))
+        },
+        findings: {
+            critical: [{
+                id: 'F-001',
+                title: 'Critical JSON finding',
+                description: 'Critical severity must be represented by verdict-free JSON review artifacts.',
+                evidence: [{
+                    location: 'src/example.ts:1',
+                    observation: 'Concrete critical finding evidence was inspected.'
+                }],
+                coverage_obligation_ids: [contract.obligations[0].id]
+            }],
+            high: [{
+                id: 'F-000',
+                title: '[garda:evidence-only:missing-focused-validation] test=tests/node/example.test.ts; action=run-and-record-focused-test',
+                description: 'Canonical evidence-only focused validation marker.',
+                evidence: [{
+                    location: 'src/example.ts:1',
+                    observation: 'Concrete evidence-only marker path was inspected.'
+                }],
+                coverage_obligation_ids: [contract.obligations[0].id]
+            }],
+            medium: [],
+            low: []
+        },
+        residual_risks: [],
+        reviewer_notes: []
+    });
+
+    const result = validateReviewCoverageLedger(output, contract);
+
+    assert.equal(result.status, 'PASS');
+    assert.deepEqual(result.finding_ids, ['F-000', 'F-001']);
+});
+
+test('JSON coverage ledger rejects reserved evidence-only id for ordinary structured findings', () => {
+    const contract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/example.ts'],
+        categoryIds: []
+    });
+    const output = JSON.stringify({
+        schema_version: 1,
+        task_id: 'T-979-2',
+        review_type: 'code',
+        review_context_sha256: 'a'.repeat(64),
+        tree_state_sha256: 'b'.repeat(64),
+        validation_notes: [],
+        coverage_ledger: {
+            coverage_contract_sha256: contract.contract_sha256,
+            entries: contract.obligations.map((obligation, index) => ({
+                obligation_id: obligation.id,
+                evidence: [{
+                    location: 'src/example.ts:1',
+                    observation: `Concrete JSON coverage obligation ${index + 1} covers ${obligation.target}`
+                }],
+                finding_ids: index === 0 ? ['F-000'] : []
+            }))
+        },
+        findings: {
+            critical: [],
+            high: [{
+                id: 'F-000',
+                title: 'Ordinary implementation defect',
+                description: 'This is not the canonical evidence-only marker.',
+                evidence: [{
+                    location: 'src/example.ts:1',
+                    observation: 'Concrete ordinary finding evidence was inspected.'
+                }],
+                coverage_obligation_ids: [contract.obligations[0].id]
+            }],
+            medium: [],
+            low: []
+        },
+        residual_risks: [],
+        reviewer_notes: []
+    });
+
+    const result = validateReviewCoverageLedger(output, contract);
+
+    assert.equal(result.status, 'FAIL');
+    assert.ok(result.violations.some((entry) => entry.includes("'F-000' is reserved")));
+});
+
 test('reserved evidence-only ledger id is rejected for ordinary findings', () => {
     const contract = buildReviewCoverageContract({
         reviewType: 'code',

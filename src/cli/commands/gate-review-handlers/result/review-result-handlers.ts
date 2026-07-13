@@ -94,6 +94,10 @@ import {
     type ReviewCoverageContract,
     type ReviewCoverageValidationSummary
 } from '../../../../gates/review/review-coverage-ledger';
+import {
+    validateReviewFindingsReport,
+    type ReviewFindingsReport
+} from '../../../../gates/review/review-findings-schema';
 
 async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     repoRoot: string;
@@ -217,6 +221,17 @@ async function recordReviewReceiptFromArtifacts(options: {
     });
     const reviewArtifactContent = options.reviewArtifactContent
         ?? fs.readFileSync(options.artifactPath, 'utf8');
+    const reviewContextSha256 = fileSha256(options.contextPath) || '';
+    if (String(reviewArtifactContent || '').trim().startsWith('{')) {
+        parseValidatedFindingsOnlyReviewOutput({
+            reviewContent: reviewArtifactContent,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewContextSha256,
+            reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
+            coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined
+        });
+    }
     const coverageValidation: ReviewCoverageValidationSummary | null = Number(parsedReviewContext.schema_version) >= 3
         ? validateReviewCoverageLedger(
             reviewArtifactContent,
@@ -445,6 +460,71 @@ async function recordReviewReceiptFromArtifacts(options: {
     });
 }
 
+function getCoverageObligationIds(contract: ReviewCoverageContract | null | undefined): string[] {
+    return Array.isArray(contract?.obligations)
+        ? contract.obligations
+            .map((entry) => String(entry?.id || '').trim())
+            .filter(Boolean)
+        : [];
+}
+
+function getCoverageChangedFilePaths(contract: ReviewCoverageContract | null | undefined): string[] {
+    return Array.isArray(contract?.obligations)
+        ? contract.obligations
+            .filter((entry) => entry?.kind === 'file')
+            .map((entry) => String(entry?.target || '').trim())
+            .filter(Boolean)
+        : [];
+}
+
+function parseValidatedFindingsOnlyReviewOutput(options: {
+    reviewContent: string;
+    taskId: string;
+    reviewType: string;
+    reviewContextSha256: string;
+    reviewTreeStateSha256: string | null;
+    coverageContract: ReviewCoverageContract | null | undefined;
+}): ReviewFindingsReport | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(String(options.reviewContent || ''));
+    } catch {
+        return null;
+    }
+    const validation = validateReviewFindingsReport(parsed, {
+        expectedTaskId: options.taskId,
+        expectedReviewType: options.reviewType,
+        expectedCoverageObligationIds: getCoverageObligationIds(options.coverageContract),
+        expectedChangedFilePaths: getCoverageChangedFilePaths(options.coverageContract),
+        expectedReviewContextSha256: options.reviewContextSha256 || undefined,
+        expectedTreeStateSha256: options.reviewTreeStateSha256 || undefined
+    });
+    if (!validation.valid || !validation.report) {
+        throw new Error(
+            `Verdict-free findings JSON report is invalid for '${options.reviewType}': ` +
+            validation.violations.join(' ')
+        );
+    }
+    if (
+        options.coverageContract?.contract_sha256
+        && validation.report.coverage_ledger.coverage_contract_sha256 !== options.coverageContract.contract_sha256
+    ) {
+        throw new Error(
+            `Verdict-free findings JSON report coverage_contract_sha256 does not match current coverage contract. ` +
+            `Expected ${options.coverageContract.contract_sha256}; actual ${validation.report.coverage_ledger.coverage_contract_sha256}.`
+        );
+    }
+    return validation.report;
+}
+
+function hasActiveFindings(report: ReviewFindingsReport): boolean {
+    return report.findings.critical.length > 0
+        || report.findings.high.length > 0
+        || report.findings.medium.length > 0
+        || report.findings.low.length > 0
+        || report.residual_risks.length > 0;
+}
+
 async function handleRecordReviewResultWithDependencies(
     gateArgv: string[],
     dependencies: ReviewResultHandlersDependencies
@@ -480,21 +560,7 @@ async function handleRecordReviewResultWithDependencies(
     }
     const expectedFailVerdict = expectedPassVerdict.replace(/\bPASSED\b/, 'FAILED');
     const verdictTokenSet = buildReviewVerdictTokenSet(reviewType, expectedPassVerdict, expectedFailVerdict);
-    const verdictToken = extractReviewVerdictToken(reviewContent, expectedPassVerdict, expectedFailVerdict, reviewType);
-    if (!verdictToken) {
-        const passExample = verdictTokenSet.canonicalPassToken || expectedPassVerdict;
-        const failExample = verdictTokenSet.canonicalFailToken || expectedFailVerdict;
-        throw new Error(
-            `Review output must contain a recognized verdict token for '${reviewType}'. ` +
-            formatAcceptedReviewVerdictTokens(verdictTokenSet) +
-            ` The token must appear as a standalone line inside the reviewer output file (--review-output-path), not as a CLI flag. ` +
-            `Example PASS line: '${passExample}'. Example FAIL line: '${failExample}'. ` +
-            `Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.\n\n` +
-            dependencies.buildMinimalPassReviewTemplateHint(reviewType, passExample) +
-            `\n\n${buildSafeReviewOutputRetryInstruction(taskId, reviewType)}`
-        );
-    }
-    const failedReviewVerdict = isFailedReviewVerdictToken(verdictToken, expectedFailVerdict);
+    let verdictToken = extractReviewVerdictToken(reviewContent, expectedPassVerdict, expectedFailVerdict, reviewType);
     const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = dependencies.parseReviewerIdentity(
         options,
         "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
@@ -514,6 +580,35 @@ async function handleRecordReviewResultWithDependencies(
         requireStrictBindingMetadata: !!options.reviewContextPath,
         repoRoot
     });
+    const reviewContextSha256 = fileSha256(contextPath) || '';
+    let findingsReport: ReviewFindingsReport | null = null;
+    if (!verdictToken) {
+        findingsReport = parseValidatedFindingsOnlyReviewOutput({
+            reviewContent,
+            taskId,
+            reviewType,
+            reviewContextSha256,
+            reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
+            coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined
+        });
+        if (findingsReport) {
+            verdictToken = hasActiveFindings(findingsReport) ? expectedFailVerdict : expectedPassVerdict;
+        }
+    }
+    if (!verdictToken) {
+        const passExample = verdictTokenSet.canonicalPassToken || expectedPassVerdict;
+        const failExample = verdictTokenSet.canonicalFailToken || expectedFailVerdict;
+        throw new Error(
+            `Review output must contain a recognized verdict token for '${reviewType}' or a valid verdict-free findings JSON report. ` +
+            formatAcceptedReviewVerdictTokens(verdictTokenSet) +
+            ` The token must appear as a standalone line inside the reviewer output file (--review-output-path), not as a CLI flag. ` +
+            `Example PASS line: '${passExample}'. Example FAIL line: '${failExample}'. ` +
+            `Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.\n\n` +
+            dependencies.buildMinimalPassReviewTemplateHint(reviewType, passExample) +
+            `\n\n${buildSafeReviewOutputRetryInstruction(taskId, reviewType)}`
+        );
+    }
+    const failedReviewVerdict = isFailedReviewVerdictToken(verdictToken, expectedFailVerdict);
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'
         && !Array.isArray(parsedReviewContext.reviewer_routing)
@@ -546,26 +641,28 @@ async function handleRecordReviewResultWithDependencies(
         });
     }
 
-    let materializedReview: ReturnType<typeof materializeReviewContent>;
-    try {
-        materializedReview = materializeReviewContent({
-            artifactPath,
-            reviewType,
-            reviewContent,
-            verdictToken,
-            expectedPassVerdict,
-            requirePassValidationNotes: dependencies.reviewContextRequiresPassValidationNotes(contextPath, repoRoot),
-            analyze: dependencies.analyzeEarlyReviewMaterialization,
-            normalizeHeadings: dependencies.normalizeReviewSectionHeadings,
-            buildLosslessPassReviewNormalization: dependencies.buildLosslessPassReviewNormalization,
-            isLosslessPassNormalizationEligibleViolation: dependencies.isLosslessPassNormalizationEligibleViolation,
-            buildPassReviewTemplateHintMessage: dependencies.buildPassReviewTemplateHintMessage
-        });
-    } catch (error: unknown) {
-        throw appendSafeReviewOutputRetryInstruction(error, taskId, reviewType);
+    if (!findingsReport) {
+        let materializedReview: ReturnType<typeof materializeReviewContent>;
+        try {
+            materializedReview = materializeReviewContent({
+                artifactPath,
+                reviewType,
+                reviewContent,
+                verdictToken,
+                expectedPassVerdict,
+                requirePassValidationNotes: dependencies.reviewContextRequiresPassValidationNotes(contextPath, repoRoot),
+                analyze: dependencies.analyzeEarlyReviewMaterialization,
+                normalizeHeadings: dependencies.normalizeReviewSectionHeadings,
+                buildLosslessPassReviewNormalization: dependencies.buildLosslessPassReviewNormalization,
+                isLosslessPassNormalizationEligibleViolation: dependencies.isLosslessPassNormalizationEligibleViolation,
+                buildPassReviewTemplateHintMessage: dependencies.buildPassReviewTemplateHintMessage
+            });
+        } catch (error: unknown) {
+            throw appendSafeReviewOutputRetryInstruction(error, taskId, reviewType);
+        }
+        reviewContent = materializedReview.reviewContent;
+        reviewMaterializationFidelity = materializedReview.reviewMaterializationFidelity;
     }
-    reviewContent = materializedReview.reviewContent;
-    reviewMaterializationFidelity = materializedReview.reviewMaterializationFidelity;
     if (reviewType !== 'test') {
         assertRequiredUpstreamReviewDependencies({
             taskId,

@@ -443,6 +443,139 @@ describe('gates/completion-verdict', () => {
             assert.equal(result.violations.length, 0);
         });
 
+        it('accepts findings JSON artifacts with no active findings or residual risks', () => {
+            const content = JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-979-2',
+                review_type: 'code',
+                review_context_sha256: 'a'.repeat(64),
+                tree_state_sha256: 'b'.repeat(64),
+                validation_notes: [
+                    {
+                        id: 'N-001',
+                        topic: 'scope',
+                        note: 'Reviewed src/gates/review-context/review-context-artifacts.ts:234 for JSON output template generation.',
+                        evidence: [
+                            {
+                                location: 'src/gates/review-context/review-context-artifacts.ts:234',
+                                observation: 'The output template is JSON-only.'
+                            }
+                        ]
+                    }
+                ],
+                coverage_ledger: {
+                    coverage_contract_sha256: 'c'.repeat(64),
+                    entries: [
+                        {
+                            obligation_id: 'FILE-001',
+                            evidence: [
+                                {
+                                    location: 'src/gates/review-context/review-context-artifacts.ts:234',
+                                    observation: 'The changed file was reviewed.'
+                                }
+                            ],
+                            finding_ids: []
+                        }
+                    ]
+                },
+                findings: { critical: [], high: [], medium: [], low: [] },
+                residual_risks: [],
+                reviewer_notes: []
+            });
+
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+
+            assert.equal(result.status, 'PASS');
+            assert.equal(result.findings_section_present, true);
+            assert.equal(result.residual_risks_section_present, true);
+            assert.deepEqual(result.findings_by_severity, { critical: [], high: [], medium: [], low: [] });
+            assert.equal(result.violations.length, 0);
+        });
+
+        it('rejects malformed findings JSON instead of treating it as a clean pass', () => {
+            const content = JSON.stringify({
+                schema_version: 1,
+                findings: {}
+            });
+
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+
+            assert.equal(result.status, 'FAILED');
+            assert.equal(result.findings_section_present, true);
+            assert.equal(result.residual_risks_section_present, true);
+            const diagnostic = result.violations.join('\n');
+            assert.match(diagnostic, /malformed findings JSON/u);
+            assert.match(diagnostic, /task_id is required/u);
+            assert.match(diagnostic, /coverage_ledger must be an object/u);
+            assert.match(diagnostic, /findings\.critical must be an array/u);
+        });
+
+        it('keeps active findings visible in findings JSON artifacts', () => {
+            const content = JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-979-2',
+                review_type: 'code',
+                review_context_sha256: 'a'.repeat(64),
+                tree_state_sha256: 'b'.repeat(64),
+                validation_notes: [
+                    {
+                        id: 'N-001',
+                        topic: 'scope',
+                        note: 'Reviewed src/cli/commands/gate-review-handlers/result/review-result-handlers.ts:621.',
+                        evidence: [
+                            {
+                                location: 'src/cli/commands/gate-review-handlers/result/review-result-handlers.ts:621',
+                                observation: 'The JSON artifact remains canonical.'
+                            }
+                        ]
+                    }
+                ],
+                coverage_ledger: {
+                    coverage_contract_sha256: 'c'.repeat(64),
+                    entries: [
+                        {
+                            obligation_id: 'FILE-001',
+                            evidence: [
+                                {
+                                    location: 'src/cli/commands/gate-review-handlers/result/review-result-handlers.ts:621',
+                                    observation: 'The changed file was reviewed.'
+                                }
+                            ],
+                            finding_ids: ['F-001']
+                        }
+                    ]
+                },
+                findings: {
+                    critical: [],
+                    high: [
+                        {
+                            id: 'F-001',
+                            title: 'JSON artifact lifecycle reader regression',
+                            description: 'Downstream readers must not require Markdown sections for schema v1 JSON review artifacts.',
+                            evidence: [
+                                {
+                                    location: 'src/gates/completion/completion-verdict-findings.ts:33',
+                                    observation: 'The lifecycle evidence reader owns active finding extraction.'
+                                }
+                            ],
+                            coverage_obligation_ids: ['FILE-001']
+                        }
+                    ],
+                    medium: [],
+                    low: []
+                },
+                residual_risks: [],
+                reviewer_notes: []
+            });
+
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+
+            assert.equal(result.status, 'FAILED');
+            assert.equal(result.findings_by_severity.high.length, 1);
+            assert.match(result.findings_by_severity.high[0], /F-001/u);
+            assert.match(result.violations.join('\n'), /active High findings/u);
+        });
+
         it('passes canonical None reports', () => {
             const content = [
                 '# Review',

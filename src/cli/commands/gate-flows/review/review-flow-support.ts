@@ -17,6 +17,12 @@ import {
     REVIEW_CONTRACTS
 } from '../../../../gates/required-reviews/required-reviews-check';
 import {
+    resolveReviewFindingsArtifactVerdictToken
+} from '../../../../gates/review/review-findings-artifact-verdict';
+import {
+    type ReviewCoverageContract
+} from '../../../../gates/review/review-coverage-ledger';
+import {
     getWorkspaceSnapshotCached
 } from '../../../../gates/workspace/workspace-snapshot-cache';
 import {
@@ -39,6 +45,23 @@ type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;
 type ReviewCompactionAudit = ReturnType<typeof auditReviewArtifactCompaction>;
 
 const reviewContracts = REVIEW_CONTRACTS as Array<[string, string]>;
+
+function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown> | undefined): string | null {
+    const treeState = reviewContext?.tree_state;
+    if (!treeState || typeof treeState !== 'object' || Array.isArray(treeState)) {
+        return null;
+    }
+    const sha256 = String((treeState as Record<string, unknown>).tree_state_sha256 || '').trim().toLowerCase();
+    return sha256 || null;
+}
+
+function getReviewContextCoverageContract(reviewContext: Record<string, unknown> | undefined): ReviewCoverageContract | null {
+    const coverageContract = reviewContext?.coverage_contract;
+    if (!coverageContract || typeof coverageContract !== 'object' || Array.isArray(coverageContract)) {
+        return null;
+    }
+    return coverageContract as ReviewCoverageContract;
+}
 
 export interface ReviewArtifactCheckEntry {
     review: string;
@@ -199,12 +222,6 @@ export function testReviewArtifacts(
             const failToken = passToken.replace(/\bPASSED\b/g, 'FAILED');
             const acceptedTokens = buildReviewVerdictTokenSet(reviewKey, passToken, failToken);
             entry.token_found = extractReviewVerdictToken(content, passToken, failToken, reviewKey) === passToken;
-            if (!entry.token_found) {
-                result.violations.push(
-                    `Review artifact '${entry.path}' does not contain an accepted pass token ` +
-                    `(${formatReviewVerdictTokenList(acceptedTokens.passTokens)}).`
-                );
-            }
 
         let reviewContextPath: string | null = null;
         let reviewContextPathSafe = true;
@@ -241,6 +258,28 @@ export function testReviewArtifacts(
         } else if (!entry.review_context_valid) {
             result.violations.push(
                 `Review context artifact '${entry.review_context_path}' is invalid and cannot support a required review receipt.`
+            );
+        }
+
+        if (!entry.token_found) {
+            const findingsVerdict = resolveReviewFindingsArtifactVerdictToken({
+                content,
+                passToken,
+                failToken,
+                reviewType: reviewKey,
+                expectedTaskId: resolvedTaskId || undefined,
+                expectedReviewContextSha256: reviewContextPath && entry.review_context_valid
+                    ? gateHelpers.fileSha256(reviewContextPath)
+                    : null,
+                expectedTreeStateSha256: getReviewContextTreeStateSha256(reviewContext),
+                coverageContract: getReviewContextCoverageContract(reviewContext)
+            });
+            entry.token_found = findingsVerdict === passToken;
+        }
+        if (!entry.token_found) {
+            result.violations.push(
+                `Review artifact '${entry.path}' does not contain an accepted pass token ` +
+                `(${formatReviewVerdictTokenList(acceptedTokens.passTokens)}) or a valid verdict-free findings JSON pass artifact.`
             );
         }
 

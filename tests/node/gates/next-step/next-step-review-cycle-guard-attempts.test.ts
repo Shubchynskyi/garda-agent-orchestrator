@@ -716,6 +716,217 @@ describe('gates/next-step review cycle guard attempts', () => {
         assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
     });
 
+    it('counts verdict-free JSON review artifact snapshots with active findings as failed attempts', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const reviewType = 'code';
+        const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-review-context.json`);
+        const treeStateSha256 = sha256Text('json-review-cycle-tree-state');
+        const coverageContractSha256 = sha256Text('json-review-cycle-coverage-contract');
+        writeJson(contextPath, {
+            task_id: TASK_ID,
+            review_type: reviewType,
+            tree_state: {
+                tree_state_sha256: treeStateSha256
+            },
+            coverage_contract: {
+                schema_version: 1,
+                required: true,
+                review_type: reviewType,
+                obligations: [{
+                    id: 'FILE-001',
+                    kind: 'file',
+                    target: 'src/gates/next-step/next-step-review-cycle-guard-attempts.ts'
+                }],
+                obligation_count: 1,
+                contract_sha256: coverageContractSha256
+            }
+        });
+        const reviewContextSha256 = fileSha256(contextPath);
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}.md`);
+        const artifactContent = JSON.stringify({
+            schema_version: 1,
+            task_id: TASK_ID,
+            review_type: reviewType,
+            review_context_sha256: reviewContextSha256,
+            tree_state_sha256: treeStateSha256,
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'review-cycle-attempt-counting',
+                note: 'Reviewed review-cycle guard attempt counting for verdict-free JSON review artifacts.',
+                evidence: [{
+                    location: 'src/gates/next-step/next-step-review-cycle-guard-attempts.ts:240',
+                    observation: 'The review-cycle guard reads immutable artifact snapshots before counting attempts.'
+                }]
+            }],
+            coverage_ledger: {
+                coverage_contract_sha256: coverageContractSha256,
+                entries: [{
+                    obligation_id: 'FILE-001',
+                    evidence: [{
+                        location: 'src/gates/next-step/next-step-review-cycle-guard-attempts.ts:240',
+                        observation: 'The JSON artifact snapshot branch was covered.'
+                    }],
+                    finding_ids: ['F-001']
+                }]
+            },
+            findings: {
+                critical: [],
+                high: [{
+                    id: 'F-001',
+                    title: 'Verdict-free failed JSON review was previously pending',
+                    description: 'Active findings in a strict JSON review artifact must count as failed attempts.',
+                    evidence: [{
+                        location: 'src/gates/next-step/next-step-review-cycle-guard-attempts.ts:240',
+                        observation: 'The guard maps active JSON findings to failed review-cycle attempts.'
+                    }],
+                    coverage_obligation_ids: ['FILE-001']
+                }],
+                medium: [],
+                low: []
+            },
+            residual_risks: [],
+            reviewer_notes: []
+        });
+        fs.writeFileSync(artifactPath, artifactContent, 'utf8');
+        const artifactSha256 = fileSha256(artifactPath);
+        const artifactSnapshotPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-artifact-${artifactSha256}.md`);
+        fs.writeFileSync(artifactSnapshotPath, artifactContent, 'utf8');
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+                review_type: reviewType,
+                reviewer_identity: `agent:json-code-${index}`,
+                review_context_sha256: reviewContextSha256,
+                review_tree_state_sha256: treeStateSha256,
+                review_artifact_path: artifactPath,
+                review_artifact_sha256: artifactSha256,
+                review_artifact_snapshot_path: artifactSnapshotPath,
+                review_artifact_snapshot_sha256: artifactSha256,
+                review_context_path: contextPath,
+                summary: `verdict-free JSON code finding ${index}`
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+        assert.deepEqual(result.review_cycle_block?.counts_by_review_type.code, {
+            total: 2,
+            passed: 0,
+            failed: 2,
+            pending: 0
+        });
+        assert.equal(
+            result.review_cycle_block?.latest_failed_review?.summary,
+            'verdict-free JSON code finding 1'
+        );
+    });
+
+    it('keeps schema-invalid verdict-free JSON snapshots pending without timeline-integrity failure', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const reviewType = 'code';
+        const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-review-context.json`);
+        const treeStateSha256 = sha256Text('schema-invalid-json-review-cycle-tree-state');
+        writeJson(contextPath, {
+            task_id: TASK_ID,
+            review_type: reviewType,
+            tree_state: {
+                tree_state_sha256: treeStateSha256
+            },
+            coverage_contract: {
+                schema_version: 1,
+                required: true,
+                review_type: reviewType,
+                obligations: [{
+                    id: 'FILE-001',
+                    kind: 'file',
+                    target: 'src/gates/next-step/next-step-review-cycle-guard-attempts.ts'
+                }],
+                obligation_count: 1,
+                contract_sha256: sha256Text('schema-invalid-json-review-cycle-coverage-contract')
+            }
+        });
+        const artifactContent = JSON.stringify({
+            schema_version: 1,
+            task_id: TASK_ID,
+            review_type: reviewType,
+            review_context_sha256: fileSha256(contextPath),
+            tree_state_sha256: treeStateSha256,
+            validation_notes: [],
+            coverage_ledger: {
+                coverage_contract_sha256: sha256Text('schema-invalid-json-review-cycle-coverage-contract'),
+                entries: []
+            },
+            findings: { critical: [], high: [], medium: [], low: [] },
+            residual_risks: [],
+            reviewer_notes: []
+        });
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}.md`);
+        fs.writeFileSync(artifactPath, artifactContent, 'utf8');
+        const artifactSha256 = sha256Text(artifactContent);
+        const artifactSnapshotPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-artifact-${artifactSha256}.md`);
+        fs.writeFileSync(artifactSnapshotPath, artifactContent, 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+            review_type: reviewType,
+            reviewer_identity: 'agent:schema-invalid-json-code',
+            review_context_sha256: fileSha256(contextPath),
+            review_tree_state_sha256: treeStateSha256,
+            review_artifact_path: artifactPath,
+            review_artifact_sha256: artifactSha256,
+            review_artifact_snapshot_path: artifactSnapshotPath,
+            review_artifact_snapshot_sha256: artifactSha256,
+            review_context_path: contextPath
+        });
+
+        const result = readReviewCycleGuardAttempts(
+            repoRoot,
+            path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`),
+            TASK_ID,
+            normalizeReviewCycleGuardConfig({
+                enabled: true,
+                action: 'BLOCK_FOR_OPERATOR_DECISION',
+                max_failed_non_test_reviews: 1,
+                max_total_non_test_reviews: 15,
+                excluded_review_types: ['test'],
+                auto_split_enabled: false
+            }),
+            null
+        );
+
+        assert.equal(result.timelineValid, true);
+        assert.equal(result.attempts.length, 1);
+        assert.equal(result.attempts[0]?.failed, false);
+        assert.equal(result.attempts[0]?.passed, false);
+    });
+
     it('keeps historical PASS verdict from immutable snapshot when mutable review artifact is later overwritten', () => {
         const repoRoot = makeTempRepo();
         writeJson(

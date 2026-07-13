@@ -25,7 +25,6 @@ export interface ReviewContextTaskRow {
     title: string | null;
     owner: string | null;
     updated: string | null;
-    profile: string | null;
     notes: string | null;
     warnings: string[];
     violations: string[];
@@ -93,7 +92,6 @@ function readTaskQueueRowForReviewContext(repoRoot: string, taskId: string | nul
         title: null,
         owner: null,
         updated: null,
-        profile: null,
         notes: null,
         warnings: ['TASK.md row is unavailable.'],
         violations: []
@@ -141,7 +139,6 @@ function readTaskQueueRowForReviewContext(repoRoot: string, taskId: string | nul
         title: first.cells[4].trimmed || null,
         owner: first.cells[5].trimmed || null,
         updated: first.cells[6].trimmed || null,
-        profile: first.cells[7].trimmed || null,
         notes: first.cells[8].trimmed || null,
         warnings: duplicateWarning ? [duplicateWarning] : [],
         violations: duplicateViolation ? [duplicateViolation] : []
@@ -380,7 +377,6 @@ export function buildTaskCriteriaMarkdown(criteria: ReviewContextTaskCriteria): 
         `- TASK.md row available: ${criteria.task_row.available}`,
         `- TASK.md title (untrusted): ${formatUntrustedReviewData(criteria.task_row.title)}`,
         `- TASK.md area (untrusted): ${formatUntrustedReviewData(criteria.task_row.area)}`,
-        `- TASK.md profile: ${criteria.task_row.profile || 'unavailable'}`,
         `- TASK.md notes (untrusted): ${formatUntrustedReviewData(criteria.task_row.notes)}`,
         `- TASK.md row sha256: ${criteria.task_row.row_sha256 || 'unavailable'}`,
         `- TASK.md duplicate row count: ${criteria.task_row.duplicate_row_count}`,

@@ -204,6 +204,10 @@ function parseCoverageLedgerEntries(reviewContent: string): {
     entries: ReviewCoverageLedgerEntry[];
     violations: string[];
 } {
+    const jsonEntries = parseJsonCoverageLedgerEntries(reviewContent);
+    if (jsonEntries) {
+        return jsonEntries;
+    }
     const sectionLines = extractMarkdownSectionLines(String(reviewContent || '').split('\n'), 'Coverage Ledger');
     if (sectionLines.length === 0) {
         return { entries: [], violations: ["Review output is missing required section '## Coverage Ledger'."] };
@@ -282,6 +286,85 @@ function parseCoverageLedgerEntries(reviewContent: string): {
     return { entries, violations };
 }
 
+function parseJsonCoverageLedgerEntries(reviewContent: string): {
+    entries: ReviewCoverageLedgerEntry[];
+    violations: string[];
+} | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(String(reviewContent || ''));
+    } catch {
+        return null;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return null;
+    }
+    const ledger = (parsed as Record<string, unknown>).coverage_ledger;
+    if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger)) {
+        return null;
+    }
+    const rawEntries = (ledger as Record<string, unknown>).entries;
+    if (!Array.isArray(rawEntries)) {
+        return {
+            entries: [],
+            violations: ['JSON coverage_ledger.entries must be an array.']
+        };
+    }
+    const entries: ReviewCoverageLedgerEntry[] = [];
+    const violations: string[] = [];
+    rawEntries.forEach((entry, entryIndex) => {
+        const isRecord = Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry);
+        if (!isRecord) {
+            violations.push(`JSON coverage ledger entry at index ${entryIndex} must be an object.`);
+            return;
+        }
+        const record = entry as Record<string, unknown>;
+        const entryId = String(record.obligation_id || record.id || '').trim().toUpperCase();
+        const evidenceMembers = Array.isArray(record.evidence) ? record.evidence : [];
+        if (!entryId) {
+            violations.push(`JSON coverage ledger entry at index ${entryIndex} is missing obligation_id.`);
+        }
+        if (!Array.isArray(record.evidence)) {
+            violations.push(`JSON coverage ledger entry '${entryId || '<missing>'}' must use an evidence array.`);
+        }
+        evidenceMembers.forEach((evidenceEntry, evidenceIndex) => {
+            const evidenceRecord = Boolean(evidenceEntry) && typeof evidenceEntry === 'object' && !Array.isArray(evidenceEntry)
+                ? evidenceEntry as Record<string, unknown>
+                : null;
+            if (
+                !evidenceRecord
+                || typeof evidenceRecord.location !== 'string'
+                || typeof evidenceRecord.observation !== 'string'
+            ) {
+                violations.push(
+                    `JSON coverage ledger entry '${entryId || '<missing>'}' has malformed evidence member at index ${evidenceIndex}.`
+                );
+            }
+        });
+        const evidence = evidenceMembers
+            .filter((evidenceEntry): evidenceEntry is Record<string, unknown> => (
+                Boolean(evidenceEntry) && typeof evidenceEntry === 'object' && !Array.isArray(evidenceEntry)
+            ))
+            .map((evidenceEntry) => ({
+                location: String(evidenceEntry.location || '').trim(),
+                observation: String(evidenceEntry.observation || '').trim()
+            }));
+        if (!Array.isArray(record.finding_ids)) {
+            violations.push(`JSON coverage ledger entry '${entryId || '<missing>'}' must use a finding_ids array.`);
+        }
+        const findingIds = (Array.isArray(record.finding_ids) ? record.finding_ids : [])
+            .filter((findingId): findingId is string => typeof findingId === 'string' && Boolean(findingId.trim()))
+            .map((findingId) => findingId.trim().toUpperCase());
+        entries.push({
+            id: entryId,
+            evidence,
+            result: findingIds.length > 0 ? 'finding' : 'no-finding',
+            finding_ids: findingIds
+        });
+    });
+    return { entries, violations };
+}
+
 function parseEvidenceLocation(location: string): { filePath: string; line: number } | null {
     const match = /^(.*?)(?::(\d+)|#L(\d+))$/u.exec(String(location || '').trim());
     if (!match) {
@@ -301,6 +384,10 @@ function isGenericObservation(observation: string): boolean {
 }
 
 function collectFindingIds(reviewContent: string): { ids: string[]; violations: string[] } {
+    const jsonFindingIds = collectJsonFindingIds(reviewContent);
+    if (jsonFindingIds) {
+        return jsonFindingIds;
+    }
     const findingsLines = extractMarkdownSectionLines(String(reviewContent || '').split('\n'), 'Findings by Severity');
     const findingsBySeverity = getFindingsBySeverity(findingsLines);
     const ids: string[] = [];
@@ -323,6 +410,59 @@ function collectFindingIds(reviewContent: string): { ids: string[]; violations: 
             continue;
         }
         ids.push(findingIds[0]);
+    }
+    const duplicateIds = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))].sort();
+    for (const duplicateId of duplicateIds) {
+        violations.push(`Finding identifier '${duplicateId}' is used by more than one active finding.`);
+    }
+    return { ids: [...new Set(ids)].sort(), violations };
+}
+
+function collectJsonFindingIds(reviewContent: string): { ids: string[]; violations: string[] } | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(String(reviewContent || ''));
+    } catch {
+        return null;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return null;
+    }
+    const findings = (parsed as Record<string, unknown>).findings;
+    if (!findings || typeof findings !== 'object' || Array.isArray(findings)) {
+        return null;
+    }
+    const ids: string[] = [];
+    const violations: string[] = [];
+    for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
+        const entries = (findings as Record<string, unknown>)[severity];
+        if (!Array.isArray(entries)) {
+            violations.push(`JSON findings.${severity} must be an array.`);
+            continue;
+        }
+        entries.forEach((entry, index) => {
+            const record = Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry)
+                ? entry as Record<string, unknown>
+                : null;
+            const id = String(record?.id || '').trim().toUpperCase();
+            if (!FINDING_ID_PATTERN.test(id)) {
+                violations.push(`JSON findings.${severity}[${index}].id must use an identifier like F-001.`);
+                return;
+            }
+            if (id === EVIDENCE_ONLY_FINDING_ID) {
+                const markerTextCandidates = [
+                    typeof record?.title === 'string' ? record.title.trim() : '',
+                    typeof record?.description === 'string' ? record.description.trim() : ''
+                ].filter(Boolean);
+                if (!markerTextCandidates.some((candidate) => EVIDENCE_ONLY_FINDING_PATTERN.test(candidate))) {
+                    violations.push(
+                        `Finding identifier '${EVIDENCE_ONLY_FINDING_ID}' is reserved for the exact canonical evidence-only marker.`
+                    );
+                    return;
+                }
+            }
+            ids.push(id);
+        });
     }
     const duplicateIds = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))].sort();
     for (const duplicateId of duplicateIds) {

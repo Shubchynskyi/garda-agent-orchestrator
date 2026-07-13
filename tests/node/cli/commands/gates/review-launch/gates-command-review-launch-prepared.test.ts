@@ -160,10 +160,14 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Use EvidenceManifestPath to locate the review context, scoped diff, and supporting evidence:'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.evidenceManifestPath.replace(/\\/g, '/')));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`EvidenceManifestSha256: ${evidenceManifestSha256}`));
-        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Fill OutputTemplatePath exactly, preserving the required sections:'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Fill OutputTemplatePath exactly, preserving the required JSON object shape:'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.outputTemplatePath.replace(/\\/g, '/')));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`OutputTemplateSha256: ${outputTemplateSha256}`));
-        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Coverage Ledger, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Required JSON fields: schema_version, task_id, review_type, review_context_sha256, tree_state_sha256, validation_notes, coverage_ledger, findings, residual_risks, reviewer_notes.'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`Required JSON binding values: task_id=${taskId}; review_type=code; review_context_sha256=${fixture.reviewContextSha256}; tree_state_sha256=${fixture.reviewTreeStateSha256}.`));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Active finding object fields: id, title, description, evidence[{location, observation}], coverage_obligation_ids.'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Return exactly one JSON object'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Do not include review verdict, PASS/FAIL, status'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(reviewOutputPath.replace(/\\/g, '/')));
         assert.equal(launchArtifact.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
         assert.equal(launchArtifact.role_prompt_sha256, rolePromptSha256);
@@ -216,7 +220,9 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes(`PromptTemplatePath: ${fixture.promptTemplatePath.replace(/\\/g, '/')}`));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Fill OutputTemplatePath exactly'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes(fixture.outputTemplatePath.replace(/\\/g, '/')));
-        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Required sections: Validation Notes, Coverage Ledger, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Required JSON fields: schema_version, task_id, review_type, review_context_sha256, tree_state_sha256, validation_notes, coverage_ledger, findings, residual_risks, reviewer_notes.'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes(`Required JSON binding values: task_id=${taskId}; review_type=code; review_context_sha256=${fixture.reviewContextSha256}; tree_state_sha256=${fixture.reviewTreeStateSha256}.`));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Active finding object fields: id, title, description, evidence[{location, observation}], coverage_obligation_ids.'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Finding a Critical, High, Medium, or Low defect does not end the review'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('report every distinct evidence-supported finding in the same result'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Deduplicate findings that share one root cause'));
@@ -351,9 +357,10 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerPromptSha256: ${fixture.reviewerPromptSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('Use EvidenceManifestPath to locate the review context, scoped diff, and supporting evidence:')));
         assert.ok(capturedLogs.some((line) => line.includes(`EvidenceManifestSha256: ${evidenceManifestSha256}`)));
-        assert.ok(capturedLogs.some((line) => line.includes('Fill OutputTemplatePath exactly, preserving the required sections:')));
+        assert.ok(capturedLogs.some((line) => line.includes('Fill OutputTemplatePath exactly, preserving the required JSON object shape:')));
         assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplateSha256: ${outputTemplateSha256}`)));
-        assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Coverage Ledger, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
+        assert.ok(capturedLogs.some((line) => line.includes('Required JSON fields: schema_version, task_id, review_type, review_context_sha256, tree_state_sha256, validation_notes, coverage_ledger, findings, residual_risks, reviewer_notes.')));
+        assert.ok(capturedLogs.some((line) => line.includes('Do not include review verdict, PASS/FAIL, status')));
         assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
         assert.ok(capturedLogs.some((line) => line.includes('NextStep: After `prepare-reviewer-launch`, launch one clean-context delegated reviewer')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
@@ -1013,7 +1020,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.match(refreshedArtifact.review_output_attempt_sha256, /^[0-9a-f]{64}$/);
         assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read RolePromptPath:'));
         assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Then open and read PromptTemplatePath:'));
-        assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Coverage Ledger, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
+        assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Required JSON fields: schema_version, task_id, review_type, review_context_sha256, tree_state_sha256, validation_notes, coverage_ledger, findings, residual_risks, reviewer_notes.'));
         assert.equal(refreshedArtifact.superseded_launch_artifact.mismatches.includes('review_output_path mismatch'), true);
         assert.equal(refreshedArtifact.superseded_launch_artifact.mismatches.includes('copy_paste_reviewer_launch_prompt mismatch'), true);
 

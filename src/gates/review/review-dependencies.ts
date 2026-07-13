@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { TaskEventIntegrity } from '../../gate-runtime/task-events';
-import { extractReviewVerdictToken, type ReviewReceipt } from '../../gate-runtime/review-context';
+import { type ReviewReceipt } from '../../gate-runtime/review-context';
 import {
     DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
     getReviewExecutionDependencies,
@@ -13,6 +13,8 @@ import * as gateHelpers from '../shared/helpers';
 import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-scope-fingerprints';
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from '../required-reviews/required-reviews-check';
 import { resolveCanonicalReviewContextPath } from '../review-context/review-context-paths';
+import { resolveReviewFindingsArtifactVerdictToken } from './review-findings-artifact-verdict';
+import type { ReviewCoverageContract } from './review-coverage-ledger';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
 
 export interface ReviewDependencyTimelineEvent {
@@ -169,6 +171,17 @@ function resolveRepoRootFromPreflightPath(preflightPath: string): string {
     return path.resolve(path.dirname(preflightPath), '..', '..', '..');
 }
 
+function getReviewTreeStateSha256(reviewContext: Record<string, unknown>): string | null {
+    const treeState = reviewContext.tree_state
+        && typeof reviewContext.tree_state === 'object'
+        && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
+        : null;
+    return typeof treeState?.tree_state_sha256 === 'string'
+        ? treeState.tree_state_sha256.trim().toLowerCase() || null
+        : null;
+}
+
 function readyDependencyStatus(reviewType: string, reason = 'pass'): ReviewDependencyStatus {
     return {
         reviewType,
@@ -275,30 +288,6 @@ export function assessUpstreamReviewDependencyStatus(options: {
         );
     }
 
-    const passToken = REVIEW_CONTRACTS.find(([candidate]) => candidate === options.upstreamReviewType)?.[1] || null;
-    const failToken = resolveReviewFailToken(options.upstreamReviewType);
-    const reviewVerdict = extractReviewVerdictToken(
-        artifactContent,
-        passToken,
-        failToken,
-        options.upstreamReviewType
-    );
-    if (failToken && reviewVerdict === failToken) {
-        return blockedDependencyStatus(
-            options.upstreamReviewType,
-            'missing_upstream_pass',
-            `upstream review failed with '${failToken}'; fix implementation and rerun compile plus ` +
-            `'${options.upstreamReviewType}' review before launching dependent reviews`
-        );
-    }
-    if (!passToken || reviewVerdict !== passToken) {
-        return blockedDependencyStatus(
-            options.upstreamReviewType,
-            'missing_upstream_pass',
-            `review artifact verdict is '${reviewVerdict || 'missing'}' instead of '${passToken || 'unknown'}'`
-        );
-    }
-
     const reviewContextPath = resolveReviewContextPath(
         options.preflightPath,
         options.upstreamReviewType,
@@ -312,6 +301,34 @@ export function assessUpstreamReviewDependencyStatus(options: {
             options.upstreamReviewType,
             'missing_context',
             `missing or invalid review-context artifact at ${gateHelpers.normalizePath(reviewContextPath)}`
+        );
+    }
+    const passToken = REVIEW_CONTRACTS.find(([candidate]) => candidate === options.upstreamReviewType)?.[1] || null;
+    const failToken = resolveReviewFailToken(options.upstreamReviewType);
+    const reviewContextSha256 = String(gateHelpers.fileSha256(reviewContextPath) || '').trim().toLowerCase() || null;
+    const reviewVerdict = resolveReviewFindingsArtifactVerdictToken({
+        content: artifactContent,
+        passToken,
+        failToken,
+        reviewType: options.upstreamReviewType,
+        expectedTaskId: options.taskId,
+        expectedReviewContextSha256: reviewContextSha256,
+        expectedTreeStateSha256: getReviewTreeStateSha256(reviewContext),
+        coverageContract: reviewContext.coverage_contract as ReviewCoverageContract | null | undefined
+    });
+    if (failToken && reviewVerdict === failToken) {
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'missing_upstream_pass',
+            `upstream review failed with '${failToken}'; fix implementation and rerun compile plus ` +
+            `'${options.upstreamReviewType}' review before launching dependent reviews`
+        );
+    }
+    if (!passToken || reviewVerdict !== passToken) {
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'missing_upstream_pass',
+            `review artifact verdict is '${reviewVerdict || 'missing'}' instead of '${passToken || 'unknown'}'`
         );
     }
     const domainScopeCurrent = reviewContextLaneScopeMatchesCurrentPreflight(
@@ -361,7 +378,7 @@ export function assessUpstreamReviewDependencyStatus(options: {
             content: artifactContent,
             reviewContext,
             reviewContextPath,
-            reviewContextSha256: String(gateHelpers.fileSha256(reviewContextPath) || '').trim().toLowerCase() || null,
+            reviewContextSha256,
             artifactSha256: artifactHash,
             receipt
         },

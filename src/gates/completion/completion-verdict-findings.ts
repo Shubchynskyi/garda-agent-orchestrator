@@ -1,5 +1,9 @@
 import { normalizePath } from '../shared/helpers';
 import {
+    validateReviewFindingsReport,
+    type ReviewFindingsReport
+} from '../review/review-findings-schema';
+import {
     countCanonicalReviewSectionHeadings,
     extractMarkdownSectionLines,
     formatAcceptedReviewSectionHeadingShapes,
@@ -8,6 +12,70 @@ import {
     getUnsupportedFindingsBySeverityEntries,
     getUnsupportedSeverityHeadingLines
 } from './completion-verdict-markdown';
+
+type SeverityLevel = 'critical' | 'high' | 'medium' | 'low';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function tryParseJsonReviewFindingsReport(content: string): {
+    detected: boolean;
+    report: ReviewFindingsReport | null;
+    violations: string[];
+} {
+    const trimmed = String(content || '').trim();
+    if (!trimmed.startsWith('{')) {
+        return { detected: false, report: null, violations: [] };
+    }
+    try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (!isRecord(parsed) || Number(parsed.schema_version) !== 1 || !isRecord(parsed.findings)) {
+            return { detected: false, report: null, violations: [] };
+        }
+        const coverageLedger = isRecord(parsed.coverage_ledger) ? parsed.coverage_ledger : {};
+        const expectedCoverageObligationIds = Array.isArray(coverageLedger.entries)
+            ? coverageLedger.entries
+                .filter(isRecord)
+                .map((entry) => typeof entry.obligation_id === 'string' ? entry.obligation_id.trim() : '')
+                .filter(Boolean)
+            : [];
+        const validation = validateReviewFindingsReport(parsed, {
+            expectedTaskId: typeof parsed.task_id === 'string' ? parsed.task_id.trim() : '',
+            expectedReviewType: typeof parsed.review_type === 'string' ? parsed.review_type.trim() : '',
+            expectedCoverageObligationIds
+        });
+        return {
+            detected: true,
+            report: validation.report,
+            violations: validation.violations
+        };
+    } catch {
+        return { detected: false, report: null, violations: [] };
+    }
+}
+
+function jsonFindingEntries(report: ReviewFindingsReport, severity: SeverityLevel): string[] {
+    const entries = report.findings[severity];
+    return entries
+        .map((finding) => {
+            const locations = finding.evidence
+                .map((entry) => entry.location.trim())
+                .filter(Boolean);
+            return [finding.id.trim(), finding.title.trim(), ...locations].filter(Boolean).join(' ');
+        })
+        .filter(Boolean);
+}
+
+function jsonResidualRiskEntries(report: ReviewFindingsReport): string[] {
+    return report.residual_risks
+        .map((risk) => {
+            const id = risk.id.trim();
+            const description = risk.description.trim();
+            return [id, description].filter(Boolean).join(' ');
+        })
+        .filter(Boolean);
+}
 
 export function isTrivialReview(content: string): boolean {
     const text = (content || '').trim();
@@ -32,7 +100,6 @@ export function isTrivialReview(content: string): boolean {
 
 export function getReviewArtifactFindingsEvidence(artifactPath: string, content: string) {
     const artifactPathNormalized = normalizePath(artifactPath);
-    type SeverityLevel = 'critical' | 'high' | 'medium' | 'low';
     const result: {
         status: string;
         findings_section_present: boolean;
@@ -56,6 +123,43 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
         invalid_deferred_findings: [],
         violations: []
     };
+
+    const jsonReport = tryParseJsonReviewFindingsReport(content);
+    if (jsonReport.detected) {
+        result.findings_section_present = true;
+        result.residual_risks_section_present = true;
+        if (!jsonReport.report) {
+            result.violations.push(
+                `Review artifact '${artifactPathNormalized}' contains malformed findings JSON: ${jsonReport.violations.join(' ')}`
+            );
+            result.status = 'FAILED';
+            return result;
+        }
+        result.findings_by_severity = {
+            critical: jsonFindingEntries(jsonReport.report, 'critical'),
+            high: jsonFindingEntries(jsonReport.report, 'high'),
+            medium: jsonFindingEntries(jsonReport.report, 'medium'),
+            low: jsonFindingEntries(jsonReport.report, 'low')
+        };
+        result.residual_risks = jsonResidualRiskEntries(jsonReport.report);
+        for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
+            if (result.findings_by_severity[severity].length > 0) {
+                const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
+                result.violations.push(
+                    `Review artifact '${artifactPathNormalized}' still contains active ${severityLabel} findings. ` +
+                    "Resolve active defects. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:'; validation-boundary or command/log notes must stay out of strict follow-up sections."
+                );
+            }
+        }
+        if (result.residual_risks.length > 0) {
+            result.violations.push(
+                `Review artifact '${artifactPathNormalized}' still contains active residual risks. ` +
+                "For validation-boundary or command/log notes, set 'Residual Risks' and 'Deferred Findings' to 'None' and keep the note in prose. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:' and will require follow-up tracking."
+            );
+        }
+        result.status = result.violations.length > 0 ? 'FAILED' : 'PASS';
+        return result;
+    }
 
     const lines = (content || '').split('\n');
 

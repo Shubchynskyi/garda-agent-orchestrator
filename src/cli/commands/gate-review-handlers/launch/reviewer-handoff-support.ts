@@ -31,7 +31,10 @@ export interface ReviewerHandoffBindings {
 
 export interface ReviewerLaunchPromptOptions {
     repoRoot: string;
+    taskId?: string | null;
     reviewType: string;
+    reviewContextSha256?: string | null;
+    reviewTreeStateSha256?: string | null;
     rolePromptPath: string | null;
     rolePromptSha256: string | null;
     reviewerPromptPath: string;
@@ -246,12 +249,16 @@ export function buildCopyPasteReviewerLaunchPrompt(options: ReviewerLaunchPrompt
         `ReviewerPromptSha256: ${options.reviewerPromptSha256}`,
         `Use EvidenceManifestPath to locate the review context, scoped diff, and supporting evidence: ${options.evidenceManifestPath}`,
         `EvidenceManifestSha256: ${options.evidenceManifestSha256}`,
-        `Fill OutputTemplatePath exactly, preserving the required sections: ${options.outputTemplatePath}`,
+        `Fill OutputTemplatePath exactly, preserving the required JSON object shape: ${options.outputTemplatePath}`,
         `OutputTemplateSha256: ${options.outputTemplateSha256}`,
-        'Required sections: Validation Notes, Coverage Ledger, Findings by Severity, Deferred Findings, Residual Risks, Verdict.',
+        'Required JSON fields: schema_version, task_id, review_type, review_context_sha256, tree_state_sha256, validation_notes, coverage_ledger, findings, residual_risks, reviewer_notes.',
+        `Required JSON binding values: task_id=${options.taskId || '<task-id>'}; review_type=${options.reviewType}; review_context_sha256=${options.reviewContextSha256 || '<review-context-sha256>'}; tree_state_sha256=${options.reviewTreeStateSha256 || '<tree-state-sha256>'}.`,
+        'Active finding object fields: id, title, description, evidence[{location, observation}], coverage_obligation_ids. Put each active finding object in exactly one severity array: findings.critical, findings.high, findings.medium, or findings.low.',
+        'Return exactly one JSON object; do not wrap it in Markdown fences and do not append prose outside the JSON object.',
+        'Do not include review verdict, PASS/FAIL, status, downstream disposition, profile strictness, or remediation policy fields.',
         ...buildExhaustiveReviewContractLines(),
         `Write the final review report to ReviewOutputPath when file writing is available, or return the filled report in your final response: ${options.reviewOutputPath}`,
-        'Do not replace the required verdict token with a summary sentence.'
+        'Do not replace the required JSON object with a summary sentence.'
     );
     return lines.join('\n');
 }

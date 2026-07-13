@@ -22,6 +22,7 @@ import {
     attestReviewerInvocationForTest,
     seedPromptBoundReviewFixture
 } from './gates-command-review-result-fixtures';
+import { createHash } from 'node:crypto';
 
 function buildNoFindingCoverageLedger(reviewContextPath: string): string[] {
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
@@ -1030,7 +1031,13 @@ describe('gates command review result - normalization', () => {
         ], { cwd: repoRoot });
 
         assert.notEqual(result.exitCode, 0);
-        assert.ok(result.errors.some((line) => line.includes('empty or non-substantive PASS validation notes')), result.errors.join('\n'));
+        assert.ok(
+            result.errors.some((line) => (
+                line.includes('empty or non-substantive PASS validation notes')
+                    || line.includes('trivial or obviously synthetic')
+            )),
+            result.errors.join('\n')
+        );
         const errorText = result.errors.join('\n');
         assert.ok(errorText.includes("Exact accepted PASS verdict token for 'code': REVIEW PASSED"));
         assert.ok(errorText.includes('# Code Review'));
@@ -1118,6 +1125,173 @@ describe('gates command review result - normalization', () => {
         assert.equal(result.exitCode, 1);
         assert.ok([...result.logs, ...result.errors].join('\n').includes('require review-context schema_version 3 or newer'));
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result records verdict-free findings JSON and derives a failed gate verdict', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-2-result-findings-json';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as {
+            coverage_contract: {
+                contract_sha256: string;
+                obligations: Array<{ id: string; kind: string; target: string }>;
+            };
+            task_scope: { changed_files: string[] };
+            tree_state: { tree_state_sha256: string };
+        };
+        const defaultFile = reviewContext.task_scope.changed_files[0];
+        const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(fixture.reviewContextPath)).digest('hex');
+        const outputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        fs.mkdirSync(outputDir, { recursive: true });
+        const outputPath = path.join(outputDir, 'review-output.md');
+        fs.writeFileSync(outputPath, `${JSON.stringify({
+            schema_version: 1,
+            task_id: taskId,
+            review_type: 'code',
+            review_context_sha256: reviewContextSha256,
+            tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'complete-scope-sweep',
+                note: 'Reviewed the complete assigned code scope and generated coverage obligations.',
+                evidence: [{
+                    location: `${defaultFile}:1`,
+                    observation: 'Validated concrete source behavior and receipt materialization for verdict-free JSON review output.'
+                }]
+            }],
+            coverage_ledger: {
+                coverage_contract_sha256: reviewContext.coverage_contract.contract_sha256,
+                entries: reviewContext.coverage_contract.obligations.map((obligation, index) => ({
+                    obligation_id: obligation.id,
+                    evidence: [{
+                        location: `${obligation.kind === 'file' ? obligation.target : defaultFile}:1`,
+                        observation: `Verified concrete ${obligation.kind} behavior for ${obligation.target} against the assigned review contract.`
+                    }],
+                    finding_ids: index === 0 ? ['F-001'] : []
+                }))
+            },
+            findings: {
+                critical: [],
+                high: [{
+                    id: 'F-001',
+                    title: 'Example verdict-free JSON finding',
+                    description: 'The reviewer reported an active finding without emitting a legacy verdict token.',
+                    evidence: [{
+                        location: `${defaultFile}:1`,
+                        observation: 'The finding is bound to a changed file and line for JSON ingestion coverage.'
+                    }],
+                    coverage_obligation_ids: [reviewContext.coverage_contract.obligations[0].id]
+                }],
+                medium: [],
+                low: []
+            },
+            residual_risks: [],
+            reviewer_notes: ['No legacy verdict token is present in this JSON output.']
+        }, null, 2)}\n`, 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.equal(result.exitCode, 0, result.errors.join('\n'));
+        assert.ok(result.logs.some((line) => line.includes('VerdictToken: REVIEW FAILED')), result.logs.join('\n'));
+        const artifact = fs.readFileSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`), 'utf8');
+        assert.equal(/REVIEW PASSED|REVIEW FAILED|## Verdict/u.test(artifact), false);
+        const receipt = JSON.parse(fs.readFileSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`), 'utf8'));
+        assert.deepEqual(receipt.review_coverage.finding_ids, ['F-001']);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result treats residual-risk-only findings JSON as a failed gate verdict', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-2-result-json-residual-risk';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as {
+            coverage_contract: {
+                contract_sha256: string;
+                obligations: Array<{ id: string; kind: string; target: string }>;
+            };
+            task_scope: { changed_files: string[] };
+            tree_state: { tree_state_sha256: string };
+        };
+        const defaultFile = reviewContext.task_scope.changed_files[0];
+        const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(fixture.reviewContextPath)).digest('hex');
+        const outputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        fs.mkdirSync(outputDir, { recursive: true });
+        const outputPath = path.join(outputDir, 'review-output.md');
+        fs.writeFileSync(outputPath, `${JSON.stringify({
+            schema_version: 1,
+            task_id: taskId,
+            review_type: 'code',
+            review_context_sha256: reviewContextSha256,
+            tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'complete-scope-sweep',
+                note: 'Reviewed the complete assigned code scope and residual-risk-only JSON lifecycle behavior.',
+                evidence: [{
+                    location: `${defaultFile}:1`,
+                    observation: 'Validated concrete residual risk behavior for verdict-free JSON review output.'
+                }]
+            }],
+            coverage_ledger: {
+                coverage_contract_sha256: reviewContext.coverage_contract.contract_sha256,
+                entries: reviewContext.coverage_contract.obligations.map((obligation) => ({
+                    obligation_id: obligation.id,
+                    evidence: [{
+                        location: `${obligation.kind === 'file' ? obligation.target : defaultFile}:1`,
+                        observation: `Verified concrete ${obligation.kind} behavior for ${obligation.target} against residual-risk JSON handling.`
+                    }],
+                    finding_ids: []
+                }))
+            },
+            findings: { critical: [], high: [], medium: [], low: [] },
+            residual_risks: [{
+                id: 'R-001',
+                description: 'Residual-risk-only JSON reports must not receive a pass receipt.',
+                evidence: [{
+                    location: `${defaultFile}:1`,
+                    observation: 'The residual risk is bound to a changed source file and line.'
+                }]
+            }],
+            reviewer_notes: ['No legacy verdict token is present in this JSON output.']
+        }, null, 2)}\n`, 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.equal(result.exitCode, 0, result.errors.join('\n'));
+        assert.ok(result.logs.some((line) => line.includes('VerdictToken: REVIEW FAILED')), result.logs.join('\n'));
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 

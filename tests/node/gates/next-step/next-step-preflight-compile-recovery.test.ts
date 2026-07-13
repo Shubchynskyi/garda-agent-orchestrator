@@ -1199,6 +1199,43 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(!command.includes('--changed-file "src/legacy.ts"'));
     });
 
+    it('keeps planned ignored workflow-config files comparable during preflight freshness checks', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigFile = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        initGitRepo(repoRoot, {
+            gitignoreContent: [
+                'garda-agent-orchestrator/runtime/',
+                `${workflowConfigFile}`,
+                ''
+            ].join('\n')
+        });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        writeJson(path.join(repoRoot, workflowConfigFile), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
+            }
+        });
+        const changedFiles = [workflowConfigFile, 'src/app.ts'];
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            plannedChangedFiles: changedFiles,
+            dirtyWorkspaceBaselineChangedFiles: changedFiles,
+            dirtyWorkspaceBaselineFileHashes: {
+                [workflowConfigFile]: fileSha256(path.join(repoRoot, workflowConfigFile)),
+                'src/app.ts': fileSha256(path.join(repoRoot, 'src', 'app.ts'))
+            }
+        });
+
+        assert.equal(readiness.ready, true, readiness.reason);
+        assert.ok(!readiness.reason.includes('no longer current'), readiness.reason);
+    });
+
     it('keeps dirty-baseline files in stale preflight refresh commands when they changed after task start', () => {
         const repoRoot = makeTempRepo();
         const legacyPath = path.join(repoRoot, 'src', 'legacy.ts');

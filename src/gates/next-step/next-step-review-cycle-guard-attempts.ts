@@ -8,6 +8,13 @@ import {
     extractReviewVerdictToken
 } from '../../gate-runtime/review-context';
 import {
+    jsonReviewFindingsArtifactHasActiveFindings,
+    validateJsonReviewFindingsArtifact
+} from '../review/review-findings-artifact-verdict';
+import {
+    type ReviewCoverageContract
+} from '../review/review-coverage-ledger';
+import {
     type TimelineEventEntry
 } from '../completion/completion-evidence';
 import {
@@ -160,6 +167,31 @@ function readReviewCycleJsonRecord(filePath: string): Record<string, unknown> | 
     }
 }
 
+function readReviewCycleContextCoverageContract(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: Record<string, unknown> | null
+): ReviewCoverageContract | null {
+    const contextPath = resolveCanonicalReviewCycleSnapshotPath(
+        repoRoot,
+        details?.review_context_path ?? details?.reviewContextPath,
+        `${taskId}-${reviewType}-review-context.json`
+    );
+    if (!contextPath) {
+        return null;
+    }
+    const expectedContextSha256 = normalizeReviewCycleSha256(
+        details?.review_context_sha256 ?? details?.reviewContextSha256
+    );
+    if (expectedContextSha256 && fileSha256(contextPath) !== expectedContextSha256) {
+        return null;
+    }
+    const context = readReviewCycleJsonRecord(contextPath);
+    const coverageContract = context?.coverage_contract;
+    return isPlainRecord(coverageContract) ? coverageContract as unknown as ReviewCoverageContract : null;
+}
+
 function validateReviewCycleReceiptSnapshotBinding(
     repoRoot: string,
     taskId: string,
@@ -250,6 +282,13 @@ function readReviewCycleArtifactPrefix(resolvedArtifactPath: string): string {
     }
 }
 
+function readReviewCycleArtifactContentForVerdict(resolvedArtifactPath: string): string {
+    const prefix = readReviewCycleArtifactPrefix(resolvedArtifactPath);
+    return prefix.trimStart().startsWith('{')
+        ? fs.readFileSync(resolvedArtifactPath, 'utf8')
+        : prefix;
+}
+
 function getReviewCycleArtifactVerdict(
     repoRoot: string,
     taskId: string,
@@ -280,7 +319,27 @@ function getReviewCycleArtifactVerdict(
     if (cached !== undefined) {
         return cached;
     }
-    const content = readReviewCycleArtifactPrefix(resolvedArtifactPath);
+    const content = readReviewCycleArtifactContentForVerdict(resolvedArtifactPath);
+    const jsonValidation = validateJsonReviewFindingsArtifact({
+        content,
+        expectedTaskId: taskId,
+        expectedReviewType: reviewType,
+        expectedReviewContextSha256: getTimelineReviewContextSha256(details) || undefined,
+        expectedTreeStateSha256: normalizeReviewCycleSha256(
+            details?.review_tree_state_sha256 ?? details?.reviewTreeStateSha256
+        ) || undefined,
+        coverageContract: readReviewCycleContextCoverageContract(repoRoot, taskId, reviewType, details)
+    });
+    if (jsonValidation.detected) {
+        const result = {
+            failed: jsonValidation.report
+                ? jsonReviewFindingsArtifactHasActiveFindings(jsonValidation.report)
+                : null,
+            invalidSnapshot: false
+        };
+        verdictCache.set(cacheKey, result);
+        return result;
+    }
     if (!content.includes(passToken) && !content.includes(failToken)) {
         const result = { failed: null, invalidSnapshot: false };
         verdictCache.set(cacheKey, result);

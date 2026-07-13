@@ -18,6 +18,7 @@ import {
     isSourceCheckoutGeneratedRuntimeArtifactPath
 } from '../shared/generated-runtime-artifacts';
 import {
+    isWorkflowConfigControlPlanePath,
     isOrchestratorSourceCheckout
 } from '../protected-control-plane/protected-control-plane';
 import {
@@ -256,7 +257,9 @@ export function readPreflightWorkspaceReadiness(
             ));
             const currentGitChangedSet = new Set(currentGitChangedFiles);
             const comparablePlannedChangedFiles = plannedChangedFiles.filter((entry) => (
-                !dirtyBaselineSet.has(entry) || currentGitChangedSet.has(entry)
+                !dirtyBaselineSet.has(entry)
+                    || currentGitChangedSet.has(entry)
+                    || isWorkflowConfigControlPlanePath(entry)
             ));
             currentChangedFiles = [...new Set([
                 ...currentGitChangedFiles,
