@@ -216,3 +216,65 @@ test('review coverage audit rejects a forged context and receipt that omit autho
     assert.ok(summary.omitted_obligation_ids.includes('code:FILE-001'));
     fs.rmSync(reviewsRoot, { recursive: true, force: true });
 });
+
+test('review coverage audit preserves deleted-file obligations in authoritative scope', () => {
+    const reviewsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-coverage-deleted-file-'));
+    const taskId = 'T-976-deleted-file';
+    const deletedPath = 'src/deleted-example.ts';
+    const contract = buildReviewCoverageContract({ reviewType: 'code', changedFiles: [deletedPath] });
+    const contextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+    const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-preflight.json`), JSON.stringify({
+        changed_files: [deletedPath]
+    }), 'utf8');
+    fs.writeFileSync(contextPath, JSON.stringify({
+        schema_version: 3,
+        coverage_contract: contract
+    }), 'utf8');
+    fs.writeFileSync(receiptPath, JSON.stringify({
+        review_coverage: {
+            status: 'PASS',
+            contract_sha256: contract.contract_sha256,
+            obligation_count: contract.obligation_count,
+            completed_obligation_count: contract.obligation_count,
+            omitted_obligation_ids: [],
+            duplicate_obligation_ids: [],
+            unknown_obligation_ids: []
+        }
+    }), 'utf8');
+
+    const complete = buildReviewCoverageAuditSummary({
+        reviewsRoot,
+        taskId,
+        requiredReviews: { code: true }
+    });
+    assert.equal(complete.status, 'COMPLETE');
+    assert.match(complete.visible_summary_line, new RegExp(`obligations=${contract.obligation_count}\\/${contract.obligation_count}`));
+
+    const forgedContract = buildReviewCoverageContract({ reviewType: 'code', changedFiles: [] });
+    fs.writeFileSync(contextPath, JSON.stringify({
+        schema_version: 3,
+        coverage_contract: forgedContract
+    }), 'utf8');
+    fs.writeFileSync(receiptPath, JSON.stringify({
+        review_coverage: {
+            status: 'PASS',
+            contract_sha256: forgedContract.contract_sha256,
+            obligation_count: 0,
+            completed_obligation_count: 0,
+            omitted_obligation_ids: [],
+            duplicate_obligation_ids: [],
+            unknown_obligation_ids: []
+        }
+    }), 'utf8');
+
+    const forged = buildReviewCoverageAuditSummary({
+        reviewsRoot,
+        taskId,
+        requiredReviews: { code: true }
+    });
+    assert.equal(forged.status, 'INCOMPLETE');
+    assert.ok(forged.entries[0]?.violations.some((entry) => entry.includes('does not match')));
+    assert.ok(forged.omitted_obligation_ids.includes('code:FILE-001'));
+    fs.rmSync(reviewsRoot, { recursive: true, force: true });
+});
