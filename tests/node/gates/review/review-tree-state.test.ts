@@ -171,6 +171,35 @@ describe('gates/review-tree-state', () => {
         }
     });
 
+    it('revalidates split-checkpoint freshness with the stored checkpoint files', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-tree-state-checkpoint-'));
+        try {
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            const baseCommit = childProcess.execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            runGit(repoRoot, ['commit', '-m', 'checkpoint']);
+            const checkpointCommit = childProcess.execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+            const detectionSource = `git_split_checkpoint:${baseCommit}:${checkpointCommit}`;
+            const snapshot = getWorkspaceSnapshot(repoRoot, detectionSource, false, ['src/app.ts']);
+            const treeState = buildReviewTreeState({ repoRoot, detectionSource, includeUntracked: false, changedFiles: snapshot.changed_files, metrics: snapshot });
+            assert.doesNotThrow(() => assertReviewTreeStateFresh({
+                repoRoot,
+                reviewContext: { tree_state: treeState },
+                contextPath: path.join(repoRoot, 'runtime', 'reviews', 'T-1-code-review-context.json'),
+                gateName: 'record-review-routing'
+            }));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('accepts git-auto docs-only drift when the reviewed code domain still matches', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-tree-state-doc-drift-'));
         try {

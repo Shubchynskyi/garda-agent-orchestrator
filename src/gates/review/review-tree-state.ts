@@ -1,5 +1,6 @@
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { getWorkspaceSnapshot } from '../compile/compile-gate';
+import { isSplitCheckpointDetectionSource } from '../split-required/split-checkpoint-scope';
 import {
     buildDomainScopeFingerprints,
     normalizeDomainScopeFingerprints,
@@ -373,7 +374,9 @@ function getCurrentScopeSnapshot(options: {
         options.repoRoot,
         options.detectionSource,
         options.includeUntracked,
-        options.detectionSource === 'explicit_changed_files' ? normalizedStoredChangedFiles : []
+        options.detectionSource === 'explicit_changed_files' || isSplitCheckpointDetectionSource(options.detectionSource)
+            ? normalizedStoredChangedFiles
+            : []
     );
     options.freshnessCache?.currentScopeSnapshots.set(key, snapshot);
     return snapshot;
