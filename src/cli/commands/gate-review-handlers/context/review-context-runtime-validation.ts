@@ -12,6 +12,7 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../../../../gates/review-context/review-context-contract';
+import { isGeneratedReviewCoverageContext } from '../../../../gates/review-context/review-coverage-scope';
 import {
     getReviewContextFullSuiteValidationViolations
 } from '../../../../gates/review-context/review-context-validation-evidence';
@@ -94,6 +95,15 @@ export function assertReviewContextContractOrThrow(options: {
     requireStrictBindingMetadata?: boolean;
     repoRoot?: string;
 }): void {
+    const coverageRequired = options.preflightPayload?.review_coverage_contract_required === true
+        || isGeneratedReviewCoverageContext(options.reviewContext);
+    const reviewContextSchemaVersion = Number(options.reviewContext?.schema_version);
+    if (coverageRequired && (!Number.isInteger(reviewContextSchemaVersion) || reviewContextSchemaVersion < 3)) {
+        throw new Error(
+            `Current generated reviewer launch and result operations require review-context schema_version 3 or newer; ` +
+            `legacy contexts are read-only historical evidence and must not be used to record a new review result.`
+        );
+    }
     const diffExpectations = buildReviewContextPreflightDiffExpectations(options.preflightPayload, options.reviewType);
     const requireStrictBindingMetadata = options.requireStrictBindingMetadata === true
         || diffExpectations.expectedRequiredReview;
@@ -108,6 +118,8 @@ export function assertReviewContextContractOrThrow(options: {
         requireTaskId: requireStrictBindingMetadata,
         requirePreflightPath: requireStrictBindingMetadata,
         requirePreflightSha256: requireStrictBindingMetadata,
+        expectedPreflightPayload: options.preflightPayload,
+        repoRoot: options.repoRoot || null,
         ...diffExpectations
     });
     if (options.repoRoot) {

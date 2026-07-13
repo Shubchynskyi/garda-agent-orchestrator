@@ -173,6 +173,7 @@ export interface ClassifyChangeTriggers {
 
 export interface ClassifyChangeResult {
     detection_source: string;
+    review_coverage_contract_required: true;
     mode: string;
     scope_category: ScopeCategory;
     scope_category_reasons: string[];
@@ -358,6 +359,7 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
 
     return {
         detection_source: detectionSource,
+        review_coverage_contract_required: true,
         mode,
         scope_category: scopeClassification.category,
         scope_category_reasons: scopeClassification.reasons,

@@ -12,6 +12,7 @@ import {
     type ReviewSkillBinding
 } from '../../../../src/gates/review-context/review-context-artifacts';
 import type { GitDiffSummary } from '../../../../src/gates/review-context/review-context-diff';
+import { buildReviewCoverageContract } from '../../../../src/gates/review/review-coverage-ledger';
 
 function sha256Text(text: string): string {
     return crypto.createHash('sha256').update(text).digest('hex');
@@ -121,7 +122,11 @@ describe('gates/review-context-artifacts', () => {
             compileGateEvidence: { status: 'PASSED' },
             fullSuiteValidationEvidence: { status: 'PASSED' },
             manualValidationEvidence: { selected_log_count: 1 },
-            taskEvidence
+            taskEvidence,
+            coverageContract: buildReviewCoverageContract({
+                reviewType: 'code',
+                changedFiles: ['src/example.ts']
+            })
         });
 
         assert.equal(result.evidenceManifest.schema_version, 1);

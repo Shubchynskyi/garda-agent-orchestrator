@@ -244,6 +244,17 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     if (reviewAttemptSummaryLine) {
         lines.push(reviewAttemptSummaryLine);
     }
+    if (closeout.review_coverage_summary) {
+        lines.push(closeout.review_coverage_summary.visible_summary_line);
+        for (const entry of closeout.review_coverage_summary.entries) {
+            lines.push(
+                `Review coverage ${entry.review_type}: status=${entry.status}; ` +
+                `obligations=${entry.completed_obligation_count}/${entry.obligation_count}; ` +
+                `omitted=${entry.omitted_obligation_ids.join(',') || 'none'}; ` +
+                `violations=${entry.violations.join(',') || 'none'}.`
+            );
+        }
+    }
 
     if (closeout.review_timing_audit?.visible_summary_line) {
         lines.push(closeout.review_timing_audit.visible_summary_line);
@@ -371,6 +382,19 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         lines.push('');
         lines.push(reviewAttemptSummaryLine);
     }
+    if (summary.review_coverage_summary) {
+        lines.push(summary.review_coverage_summary.visible_summary_line);
+        for (const entry of summary.review_coverage_summary.entries) {
+            lines.push(
+                `  - ${entry.review_type}: status=${entry.status}; ` +
+                `obligations=${entry.completed_obligation_count}/${entry.obligation_count}; ` +
+                `omitted=${entry.omitted_obligation_ids.join(',') || 'none'}; ` +
+                `duplicate=${entry.duplicate_obligation_ids.join(',') || 'none'}; ` +
+                `unknown=${entry.unknown_obligation_ids.join(',') || 'none'}; ` +
+                `violations=${entry.violations.join(',') || 'none'}`
+            );
+        }
+    }
 
     if (summary.profile_review_decisions) {
         const prd = summary.profile_review_decisions;
@@ -482,6 +506,9 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     if (summary.final_closeout.review_attempt_summary?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.review_attempt_summary.visible_summary_line}`);
+    }
+    if (summary.final_closeout.review_coverage_summary) {
+        lines.push(`  ${summary.final_closeout.review_coverage_summary.visible_summary_line}`);
     }
     if (summary.final_closeout.review_timing_audit?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.review_timing_audit.visible_summary_line}`);

@@ -60,7 +60,7 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
     const lines = (content || '').split('\n');
 
     const headingCounts = countCanonicalReviewSectionHeadings(lines);
-    for (const heading of ['Validation Notes', 'Findings by Severity', 'Deferred Findings', 'Residual Risks', 'Verdict']) {
+    for (const heading of ['Validation Notes', 'Coverage Ledger', 'Findings by Severity', 'Deferred Findings', 'Residual Risks', 'Verdict']) {
         if ((headingCounts[heading] || 0) > 1) {
             result.violations.push(
                 `Review artifact '${artifactPathNormalized}' has ambiguous duplicate section heading for '## ${heading}'. ` +

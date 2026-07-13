@@ -209,6 +209,8 @@ export function readReviewArtifactState(
                     requireTaskId: true,
                     requirePreflightPath: true,
                     requirePreflightSha256: true,
+                    expectedPreflightPayload: preflightPayload,
+                    repoRoot: repoRoot || null,
                     ...buildReviewContextPreflightDiffExpectations(preflightPayload, reviewType)
                 });
                 const fullSuiteBindingViolations = repoRoot

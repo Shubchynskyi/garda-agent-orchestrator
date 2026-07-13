@@ -15,6 +15,7 @@ const BENIGN_NO_SIGNIFICANT_REVIEW_ISSUE_REMAINDERS = new Set([
 
 export const CANONICAL_REVIEW_SECTION_HEADINGS = [
     'Validation Notes',
+    'Coverage Ledger',
     'Findings by Severity',
     'Deferred Findings',
     'Residual Risks',

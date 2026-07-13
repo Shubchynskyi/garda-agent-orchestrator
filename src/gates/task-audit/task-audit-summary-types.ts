@@ -20,6 +20,7 @@ import type {
     ProfileReviewDecisionSummary,
     ReviewAttemptSummary
 } from './task-audit-summary-collectors';
+import type { ReviewCoverageAuditSummary } from './task-audit-summary-review-coverage';
 
 export interface TaskAuditSummaryOptions {
     taskId: string;
@@ -45,6 +46,7 @@ export interface FinalCloseoutArtifact {
     review_timing_audit?: FinalCloseoutReviewTimingAuditSummary | null;
     review_integrity_attestation?: FinalCloseoutReviewIntegrityAttestation;
     review_attempt_summary?: ReviewAttemptSummary | null;
+    review_coverage_summary?: ReviewCoverageAuditSummary | null;
     optional_skills?: FinalCloseoutOptionalSkillsSummary | null;
     workflow?: {
         mandatory_full_suite_enabled: boolean;
@@ -144,6 +146,7 @@ export interface TaskAuditSummaryResult {
     point_in_time_snapshot: PointInTimeSnapshot;
     task_cycle_diagnostics?: FinalCloseoutTaskCycleDiagnostics;
     review_attempt_summary?: ReviewAttemptSummary | null;
+    review_coverage_summary?: ReviewCoverageAuditSummary | null;
     final_report_contract: FinalReportContract;
     final_closeout: FinalCloseoutArtifact;
 }

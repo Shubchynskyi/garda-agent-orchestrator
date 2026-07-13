@@ -2,6 +2,11 @@ import * as fs from 'node:fs';
 import { extractFilePathFromDiffLine, parseUnifiedDiff } from '../../gate-runtime/scoped-diff';
 import { fileSha256, normalizePath, parseBool } from '../shared/helpers';
 import { isPlainRecord } from '../../core/records';
+import { getReviewCoverageContractViolations } from '../review/review-coverage-ledger';
+import {
+    isGeneratedReviewCoverageContext,
+    resolveReviewCoverageChangedFiles
+} from './review-coverage-scope';
 
 const NON_CODE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only', 'empty']);
 const CODE_SCOPE_CATEGORIES = new Set(['code', 'mixed']);
@@ -670,6 +675,9 @@ export interface ReviewContextContractValidationOptions {
     requirePreflightSha256?: boolean;
     expectedRequiredReview?: boolean | null;
     expectedChangedFiles?: readonly unknown[] | null;
+    expectedCoverageChangedFiles?: readonly unknown[] | null;
+    expectedPreflightPayload?: Record<string, unknown> | null;
+    repoRoot?: string | null;
     expectedScopeCategory?: string | null;
     expectedChangedFilesSha256?: string | null;
     expectedScopeContentSha256?: string | null;
@@ -787,6 +795,50 @@ export function getReviewContextContractViolations(
         expectedScopedDiffUseStaged: options.expectedScopedDiffUseStaged,
         validateScopedDiffOutputFile: options.validateScopedDiffOutputFile
     }));
+    const currentPreflightRequiresCoverage = options.expectedPreflightPayload?.review_coverage_contract_required === true;
+    const reviewContextSchemaVersion = Number(reviewContext.schema_version);
+    if ((currentPreflightRequiresCoverage || isGeneratedReviewCoverageContext(reviewContext))
+        && (!Number.isInteger(reviewContextSchemaVersion) || reviewContextSchemaVersion < 3)) {
+        violations.push(
+            'Generated review coverage context cannot downgrade below schema_version 3; legacy contexts are read-only historical evidence.'
+        );
+    }
+    if (reviewContextSchemaVersion >= 3) {
+        const coverageScope = reviewContext.coverage_scope
+            && typeof reviewContext.coverage_scope === 'object'
+            && !Array.isArray(reviewContext.coverage_scope)
+            ? reviewContext.coverage_scope as Record<string, unknown>
+            : null;
+        const declaredCoverageChangedFiles = normalizePathList(coverageScope?.changed_files);
+        const independentlyResolvedCoverageChangedFiles = options.repoRoot && options.expectedPreflightPayload
+            ? resolveReviewCoverageChangedFiles({
+                reviewType: expectedReviewType,
+                preflight: options.expectedPreflightPayload,
+                repoRoot: options.repoRoot
+            })
+            : null;
+        const expectedCoverageChangedFiles = independentlyResolvedCoverageChangedFiles
+            || (options.expectedCoverageChangedFiles == null
+                ? declaredCoverageChangedFiles
+                : normalizePathList(options.expectedCoverageChangedFiles));
+        if (independentlyResolvedCoverageChangedFiles
+            && JSON.stringify(declaredCoverageChangedFiles) !== JSON.stringify(independentlyResolvedCoverageChangedFiles)) {
+            violations.push(
+                `Review coverage scope does not match the independently resolved current preflight scope. ` +
+                `Expected ${independentlyResolvedCoverageChangedFiles.join(', ') || 'none'}; ` +
+                `actual ${declaredCoverageChangedFiles.join(', ') || 'none'}.`
+            );
+        }
+        const expectedChangedFiles = normalizePathList(options.expectedChangedFiles);
+        const unexpectedCoverageFiles = expectedCoverageChangedFiles.filter((filePath) => !expectedChangedFiles.includes(filePath));
+        if (unexpectedCoverageFiles.length > 0) {
+            violations.push(`Review coverage scope contains files outside the current preflight: ${unexpectedCoverageFiles.join(', ')}.`);
+        }
+        violations.push(...getReviewCoverageContractViolations(reviewContext.coverage_contract, {
+            reviewType: expectedReviewType,
+            changedFiles: expectedCoverageChangedFiles
+        }));
+    }
 
     return violations;
 }

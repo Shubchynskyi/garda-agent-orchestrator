@@ -106,6 +106,8 @@ export function collectRequiredReviewEvidence(input: {
                             requireTaskId: true,
                             requirePreflightPath: true,
                             requirePreflightSha256: true,
+                            expectedPreflightPayload: input.preflight,
+                            repoRoot: path.resolve(input.reviewsRoot, '..', '..', '..'),
                             ...buildReviewContextPreflightDiffExpectations(input.preflight, reviewKey)
                         }));
                     }

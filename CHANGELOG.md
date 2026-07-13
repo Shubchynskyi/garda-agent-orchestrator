@@ -2,6 +2,7 @@
 
 ## 1.2.0
 
+- Added deterministic reviewer coverage ledgers for every changed file, behavior boundary, and applicable review category; incomplete or generic coverage and unresolved finding links now fail before receipt recording, while final audit exposes omitted obligations without imposing a finding quota.
 - Added evidence-only focused-test remediation: the canonical reviewer marker now binds the exact changed test to current task-owned command, artifact, output hash/size, chronology, scope, and in-root path evidence before restarting review without a fake source edit.
 - Required every delegated reviewer and remediation reviewer to finish the complete assigned scope before verdict, continue after findings at any severity, report all distinct evidence-supported findings, deduplicate shared root causes, and name the files, boundaries, tests, and checklist categories actually reviewed.
 - Added operator-confirmed protected-manifest recovery for failed task-mode entry, with read-only inspection guidance, immutable failure attempts, byte-identical current-pointer and integrity-checked failure/recovery event binding, inspected-state SHA-256/TOCTOU checks, and a canonically reconstructed `enter-task-mode` handoff after repair.

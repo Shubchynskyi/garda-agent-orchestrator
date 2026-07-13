@@ -23,6 +23,7 @@ import {
     resolveSplitCheckpointTaskScope
 } from '../../../../src/gates/split-required/split-checkpoint-scope';
 import { getPreflightContext } from '../../../../src/gates/compile/compile-gate';
+import { getReviewContextContractViolations } from '../../../../src/gates/review-context/review-context-contract';
 
 type SubprocessModule = typeof import('../../../../src/core/process/subprocess');
 
@@ -99,6 +100,8 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptArtifact.includes('`### High` followed by `- ...`'));
             assert.ok(promptArtifact.includes('Parser-valid slot examples'));
             assert.ok(promptArtifact.includes('Findings by Severity example: `- High:'));
+            assert.ok(promptArtifact.includes('## Coverage Ledger'));
+            assert.ok(promptArtifact.includes('"id":"FILE-001"'));
             assert.ok(promptArtifact.includes('## Findings by Severity'));
             assert.ok(promptArtifact.includes('## Deferred Findings'));
             assert.ok(promptArtifact.includes('## Residual Risks'));
@@ -156,50 +159,19 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptTemplateText.includes('Use `None` for empty Findings by Severity, Deferred Findings, or Residual Risks sections'));
             assert.ok(promptTemplateText.includes('Markdown severity subheadings are supported only inside `## Findings by Severity`'));
             assert.equal(result.reviewer_handoff.prompt_template.artifact_sha256, sha256Text(promptTemplateText));
-            assert.equal(fs.readFileSync(result.reviewer_handoff.output_template.artifact_path, 'utf8'), [
-                '# code review Output Template',
-                '',
-                'Fill this template as an immutable form. Replace placeholder lines only; keep required headings exactly as written.',
-                '- Treat the output template as an immutable fill-in form: replace placeholder lines only.',
-                '- Never add, remove, rename, reorder, or nest the required `##` headings.',
-                '- Use canonical `None` exactly when a Findings by Severity, Deferred Findings, or Residual Risks slot has no content.',
-                '- Findings by Severity accepts parser-supported severity formats: `- High: ...`, `High:` followed by `- ...`, or `### High` followed by `- ...`; severity subheadings are allowed only inside `## Findings by Severity`.',
-                '- If and only if the sole active finding is missing auditable focused test execution evidence, use exactly `[garda:evidence-only:missing-focused-validation] test=<changed-test-path>; action=run-and-record-focused-test` after its severity. Do not add prose, another defect, or this marker for any implementation concern.',
-                '- Deferred Findings entries must include a concrete next step and `Justification:` on the same bullet or continuation text.',
-                '- Do not edit launcher, control, receipt, or review-context metadata instead of the designated reviewer output file.',
-                '- Complete the entire assigned review scope before returning a verdict. Finding a Critical, High, Medium, or Low defect does not end the review.',
-                '- Continue through every in-scope file, behavior boundary, test, and applicable checklist or rule category, then report every distinct evidence-supported finding in the same result.',
-                '- Deduplicate findings that share one root cause. For every distinct finding include severity, file and line evidence, impact, and required remediation; never invent or pad findings to reach a count.',
-                '- On remediation reviews, re-sweep the complete current assigned scope instead of checking only previously reported findings.',
-                '- Validation Notes must name the files, behavior boundaries, tests, and checklist or rule categories actually reviewed.',
-                '- Do not widen the assigned scope. This is a process-completeness requirement, not a guarantee that every latent defect will be discovered.',
-                '',
-                'Parser-valid slot examples (copy the shape only when applicable; do not copy example facts):',
-                '- Validation Notes example: `Reviewed src/review-parser.ts:42 and tests/review-parser.test.ts:17; checked parser-supported finding formats and rejection diagnostics.`',
-                '- Findings by Severity example: `- High: src/review-parser.ts:42 drops later findings; impact: incomplete review evidence; remediation: preserve every severity entry.`',
-                '- Severity subheading example: `### Medium` followed by `- tests/review-parser.test.ts:17 misses hierarchy coverage; impact: nested findings can be lost; remediation: cover severity subheadings.`',
-                '- Deferred Findings example: `- [Low] docs/reviews.md:12 clarify reviewer wording. Next step: update docs in T-123. Justification: documentation-only follow-up is accepted after parser coverage.`',
-                '- Residual Risks example: `- Rollout risk: legacy review artifacts may still use old wording until regenerated; mitigation: parser tests cover both canonical None and supported finding formats.`',
-                '',
-                '## Validation Notes',
-                '<REPLACE with 1-3 concrete sentences naming reviewed files, behavior boundaries, tests/checklists, and verification evidence; required for PASS>',
-                '',
-                '## Findings by Severity',
-                '<REPLACE with canonical `None`, or parser-supported active findings using `- High: <file:line> <impact>; remediation: <required action>` / `High:` followed by `- <finding>` / `### High` followed by `- <finding>`>',
-                '',
-                '## Deferred Findings',
-                '<REPLACE with canonical `None`, or parser-supported deferred bullets like `- [Low] <summary with file evidence>. Next step: <action>. Justification: <why deferral is acceptable now>`>',
-                '',
-                '## Residual Risks',
-                '<REPLACE with canonical `None`, or parser-supported residual-risk bullets like `- Rollout risk: <active open risk>; mitigation: <current mitigation>`>',
-                '',
-                '## Verdict',
-                '<REPLACE with exactly REVIEW PASSED or REVIEW FAILED>',
-                ''
-            ].join('\n'));
+            const outputTemplateText = fs.readFileSync(result.reviewer_handoff.output_template.artifact_path, 'utf8');
+            assert.ok(outputTemplateText.startsWith('# code review Output Template\n'));
+            assert.ok(outputTemplateText.includes('## Coverage Ledger\n- {"id":"FILE-001"'));
+            assert.ok(outputTemplateText.includes('## Findings by Severity\n<REPLACE with canonical `None`, or parser-supported active findings using `- High: [F-001]'));
+            assert.ok(outputTemplateText.endsWith('## Verdict\n<REPLACE with exactly REVIEW PASSED or REVIEW FAILED>\n'));
             const manifest = JSON.parse(fs.readFileSync(result.reviewer_handoff.evidence_manifest.artifact_path, 'utf8'));
             assert.equal(manifest.task_id, 'T-901-scope');
             assert.equal(manifest.review_type, 'code');
+            assert.equal(result.schema_version, 3);
+            assert.equal(result.coverage_contract.required, true);
+            assert.equal(result.coverage_contract.obligation_count, 9);
+            assert.equal(result.coverage_contract.obligations[0]?.id, 'FILE-001');
+            assert.equal(manifest.coverage_contract.contract_sha256, result.coverage_contract.contract_sha256);
             assert.equal(manifest.trust_boundary.evidence_is_untrusted, true);
             assert.equal(manifest.artifacts.role_prompt.artifact_path, result.reviewer_handoff.role_prompt.artifact_path);
             assert.equal(manifest.artifacts.role_prompt.artifact_sha256, result.reviewer_handoff.role_prompt.artifact_sha256);
@@ -232,6 +204,35 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.equal(manifest.task_evidence.task_row.source_path.endsWith('/TASK.md'), true);
             assert.deepEqual(result.task_scope.changed_files, ['src/app.ts']);
             assert.deepEqual(result.task_scope.required_reviews, ['code', 'security']);
+            const forgedCoverageScope = cloneJson(result);
+            forgedCoverageScope.coverage_scope.changed_files = [];
+            forgedCoverageScope.coverage_scope.changed_file_count = 0;
+            const forgedCoverageViolations = getReviewContextContractViolations({
+                contextPath: path.join(reviewsRoot, 'T-901-scope-code-review-context.json'),
+                reviewContext: forgedCoverageScope,
+                expectedReviewType: 'code',
+                expectedChangedFiles: ['src/app.ts'],
+                expectedPreflightPayload: JSON.parse(fs.readFileSync(preflightPath, 'utf8')),
+                repoRoot
+            });
+            assert.ok(forgedCoverageViolations.some((entry) =>
+                entry.includes('does not match the independently resolved current preflight scope')
+            ));
+            forgedCoverageScope.schema_version = 2;
+            const downgradedCoverageViolations = getReviewContextContractViolations({
+                contextPath: path.join(reviewsRoot, 'T-901-scope-code-review-context.json'),
+                reviewContext: forgedCoverageScope,
+                expectedReviewType: 'code',
+                expectedChangedFiles: ['src/app.ts'],
+                expectedPreflightPayload: {
+                    ...JSON.parse(fs.readFileSync(preflightPath, 'utf8')),
+                    review_coverage_contract_required: true
+                },
+                repoRoot
+            });
+            assert.ok(downgradedCoverageViolations.some((entry) =>
+                entry.includes('cannot downgrade below schema_version 3')
+            ));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
@@ -333,6 +334,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                     templateArtifact.match(/^## .+$/gm),
                     [
                         '## Validation Notes',
+                        '## Coverage Ledger',
                         '## Findings by Severity',
                         '## Deferred Findings',
                         '## Residual Risks',

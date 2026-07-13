@@ -163,7 +163,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Fill OutputTemplatePath exactly, preserving the required sections:'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.outputTemplatePath.replace(/\\/g, '/')));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`OutputTemplateSha256: ${outputTemplateSha256}`));
-        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Coverage Ledger, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(reviewOutputPath.replace(/\\/g, '/')));
         assert.equal(launchArtifact.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
         assert.equal(launchArtifact.role_prompt_sha256, rolePromptSha256);
@@ -216,7 +216,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes(`PromptTemplatePath: ${fixture.promptTemplatePath.replace(/\\/g, '/')}`));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Fill OutputTemplatePath exactly'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes(fixture.outputTemplatePath.replace(/\\/g, '/')));
-        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Required sections: Validation Notes, Coverage Ledger, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Finding a Critical, High, Medium, or Low defect does not end the review'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('report every distinct evidence-supported finding in the same result'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Deduplicate findings that share one root cause'));
@@ -353,7 +353,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`EvidenceManifestSha256: ${evidenceManifestSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('Fill OutputTemplatePath exactly, preserving the required sections:')));
         assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplateSha256: ${outputTemplateSha256}`)));
-        assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
+        assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Coverage Ledger, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
         assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
         assert.ok(capturedLogs.some((line) => line.includes('NextStep: After `prepare-reviewer-launch`, launch one clean-context delegated reviewer')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
@@ -1013,7 +1013,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.match(refreshedArtifact.review_output_attempt_sha256, /^[0-9a-f]{64}$/);
         assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read RolePromptPath:'));
         assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Then open and read PromptTemplatePath:'));
-        assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
+        assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Coverage Ledger, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
         assert.equal(refreshedArtifact.superseded_launch_artifact.mismatches.includes('review_output_path mismatch'), true);
         assert.equal(refreshedArtifact.superseded_launch_artifact.mismatches.includes('copy_paste_reviewer_launch_prompt mismatch'), true);
 

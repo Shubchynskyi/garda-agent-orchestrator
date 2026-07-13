@@ -88,6 +88,11 @@ import {
     assertReviewReceiptRoutingMatchesContext
 } from './review-receipt-validation';
 import { assertReviewLifecycleGuard } from '../../../../gates/review/review-lifecycle-guard';
+import {
+    validateReviewCoverageLedger,
+    type ReviewCoverageContract,
+    type ReviewCoverageValidationSummary
+} from '../../../../gates/review/review-coverage-ledger';
 
 async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     repoRoot: string;
@@ -209,6 +214,21 @@ async function recordReviewReceiptFromArtifacts(options: {
         requireStrictBindingMetadata: options.requireStrictBindingMetadata,
         repoRoot: options.repoRoot
     });
+    const reviewArtifactContent = options.reviewArtifactContent
+        ?? fs.readFileSync(options.artifactPath, 'utf8');
+    const coverageValidation: ReviewCoverageValidationSummary | null = Number(parsedReviewContext.schema_version) >= 3
+        ? validateReviewCoverageLedger(
+            reviewArtifactContent,
+            parsedReviewContext.coverage_contract as ReviewCoverageContract,
+            { repoRoot: options.repoRoot }
+        )
+        : null;
+    if (coverageValidation && coverageValidation.status !== 'PASS') {
+        throw new Error(
+            `Review coverage ledger validation failed for '${options.reviewType}'. ` +
+            coverageValidation.violations.join(' ')
+        );
+    }
     const historicalStaleReviewResultReason = options.historicalStaleReviewResultReason || null;
     assertReviewTreeStateFreshOrHistoricalFailure({
         repoRoot: options.repoRoot,
@@ -396,6 +416,7 @@ async function recordReviewReceiptFromArtifacts(options: {
     (receipt as unknown as Record<string, unknown>).review_output_source_mtime_utc =
         options.rawReviewOutputSourceMtimeUtc || null;
     (receipt as unknown as Record<string, unknown>).review_materialization_fidelity = options.reviewMaterializationFidelity || 'exact';
+    (receipt as unknown as Record<string, unknown>).review_coverage = coverageValidation;
     if (historicalStaleReviewResultReason) {
         (receipt as unknown as Record<string, unknown>).historical_stale_review_result = true;
         (receipt as unknown as Record<string, unknown>).review_result_scope = 'historical_stale_after_remediation';

@@ -35,6 +35,11 @@ import {
     runGit,
     getReviewTreeStateSha256FromFixtureContext
 } from './gates-review-reuse-fixtures';
+import {
+    materializeReusedReviewEvidence,
+    type MaterializeReusedReviewEvidenceOptions
+} from '../../../../../../src/gates/review-reuse/review-reuse-materialization';
+import { buildReviewCoverageContract } from '../../../../../../src/gates/review/review-coverage-ledger';
 
 function sha256File(filePath: string): string {
     const crypto = require('node:crypto');
@@ -104,6 +109,55 @@ function writeFullSuitePassEvidence(
 }
 
 describe('cli/commands/gates - review reuse upstream reuse', () => {
+    it('rejects a schema-v3 reused artifact with an incomplete coverage ledger before materialization', async () => {
+        const repoRoot = createTempRepo();
+        const reviewContextPath = path.join(getReviewsRoot(repoRoot), 'T-976-code-review-context.json');
+        fs.mkdirSync(path.dirname(reviewContextPath), { recursive: true });
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            schema_version: 3,
+            coverage_contract: buildReviewCoverageContract({
+                reviewType: 'code',
+                changedFiles: ['src/app.ts']
+            })
+        }), 'utf8');
+
+        const result = await materializeReusedReviewEvidence({
+            repoRoot,
+            reviewType: 'code',
+            preflightPayload: { changed_files: ['src/app.ts'] },
+            reviewContextPath,
+            artifactText: '# Review\n\n## Verdict\nREVIEW PASSED'
+        } as unknown as MaterializeReusedReviewEvidenceOptions);
+
+        assert.equal(result.materialized, false);
+        assert.match(result.reason || '', /missing required section '## Coverage Ledger'/);
+
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            schema_version: 3,
+            coverage_contract: buildReviewCoverageContract({ reviewType: 'code', changedFiles: [] })
+        }), 'utf8');
+        const forgedScopeResult = await materializeReusedReviewEvidence({
+            repoRoot,
+            reviewType: 'code',
+            preflightPayload: { changed_files: ['src/app.ts'] },
+            reviewContextPath,
+            artifactText: '# Review\n\n## Coverage Ledger\nNone\n\n## Findings by Severity\nNone\n\n## Verdict\nREVIEW PASSED'
+        } as unknown as MaterializeReusedReviewEvidenceOptions);
+        assert.equal(forgedScopeResult.materialized, false);
+        assert.match(forgedScopeResult.reason || '', /does not match the deterministic current-scope contract/);
+
+        fs.writeFileSync(reviewContextPath, JSON.stringify({ schema_version: 2 }), 'utf8');
+        const downgradedResult = await materializeReusedReviewEvidence({
+            repoRoot,
+            reviewType: 'code',
+            preflightPayload: { changed_files: ['src/app.ts'] },
+            reviewContextPath,
+            artifactText: '# Review\n\n## Verdict\nREVIEW PASSED'
+        } as unknown as MaterializeReusedReviewEvidenceOptions);
+        assert.equal(downgradedResult.materialized, false);
+        assert.match(downgradedResult.reason || '', /legacy contexts cannot be rematerialized/);
+    });
+
     it('reuses current-cycle code review evidence and unblocks downstream test review when runtime code scope is unchanged', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-reuse-code-review';
@@ -239,6 +293,13 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         assert.equal(refreshedReceipt.reviewer_identity, codeExecution.reviewerIdentity);
         assert.equal(refreshedReceipt.reused_existing_review, true);
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+        const reusedCoverage = refreshedReceipt.review_coverage as Record<string, unknown>;
+        assert.equal(reusedCoverage.status, 'PASS');
+        assert.equal(reusedCoverage.contract_sha256, reviewContext.coverage_contract.contract_sha256);
+        assert.equal(
+            reusedCoverage.completed_obligation_count,
+            reviewContext.coverage_contract.obligation_count
+        );
         assert.equal(
             refreshedReceipt.review_tree_state_sha256,
             getReviewTreeStateSha256FromFixtureContext(reviewContext)

@@ -121,6 +121,8 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.events_count, 0);
             assert.ok(result.gates.length > 0);
             assert.ok(result.gates.every(g => g.status === 'MISSING'));
+            assert.equal(result.final_closeout.review_coverage_summary?.status, 'NOT_REQUIRED');
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review coverage: status=NOT_REQUIRED'));
         });
 
         it('detects passed gates from events', () => {

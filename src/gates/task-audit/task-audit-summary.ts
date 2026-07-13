@@ -74,6 +74,7 @@ import {
     buildReviewTimingAuditSummary,
     readReviewExecutionPolicyModeFromCurrentCycleTimeline
 } from './task-audit-summary-review-timing-audit';
+import { buildReviewCoverageAuditSummary } from './task-audit-summary-review-coverage';
 import type {
     FinalCloseoutTaskCycleDiagnostics,
     PointInTimeSnapshot,
@@ -409,12 +410,19 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             excludedReviewTypes: reviewCycleExcludedReviewTypes
         });
         const reviewTimingAudit = buildReviewTimingAuditSummary(reviewsRoot, safeTaskId, events, repoRoot);
+        const reviewCoverageSummary = buildReviewCoverageAuditSummary({
+            reviewsRoot,
+            taskId: safeTaskId,
+            requiredReviews,
+            orderedEvents: events
+        });
         return {
             evidence,
             requiredReviewBlockers,
             reviewAttemptSummary,
             reviewIntegrityAttestation,
             reviewTimingAudit,
+            reviewCoverageSummary,
             reviewTrustSummary,
             reviewVerdicts
         };
@@ -425,6 +433,12 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     })));
     if (!hasCompletionPass) {
         blockers.push(...reviewSnapshot.requiredReviewBlockers);
+    }
+    if (reviewSnapshot.reviewCoverageSummary.status === 'INCOMPLETE') {
+        blockers.push({
+            gate: 'review-coverage',
+            reason: reviewSnapshot.reviewCoverageSummary.visible_summary_line
+        });
     }
     if (projectMemoryImpactRequired && projectMemoryImpactEvidence.evidence_status !== 'CURRENT') {
         blockers.push({
@@ -661,6 +675,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         reviewTimingAudit,
         reviewIntegrityAttestation,
         reviewAttemptSummary,
+        reviewCoverageSummary: reviewSnapshot.reviewCoverageSummary,
         optionalSkillsSummary,
         fullSuiteValidation,
         fullSuiteValidationRequiredForLifecycle,
@@ -693,6 +708,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         point_in_time_snapshot: pointInTimeSnapshot,
         task_cycle_diagnostics: taskCycleDiagnostics,
         review_attempt_summary: reviewAttemptSummary,
+        review_coverage_summary: reviewSnapshot.reviewCoverageSummary,
         final_report_contract: finalReportContract,
         final_closeout: finalCloseout
     };

@@ -31,6 +31,10 @@ import {
     computeReviewReuseCodeScopeFingerprint
 } from '../../../../src/gates/review-reuse';
 import {buildReviewTreeState} from '../../../../src/gates/review/review-tree-state';
+import {
+    validateReviewCoverageLedger,
+    type ReviewCoverageContract
+} from '../../../../src/gates/review/review-coverage-ledger';
 import {resolveDefaultReviewScratchPath} from '../../../../src/gates/review/review-scratch-paths';
 import {
     buildReviewerLaunchBindingSha256
@@ -952,7 +956,7 @@ export function writeReceiptBackedReviewArtifact(
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, {recursive: true});
     const reviewerEvidence = resolveDefaultReviewerEvidence(repoRoot, taskId, reviewKey);
-    const content = (contentLines || [
+    let content = (contentLines || [
         '# Review',
         '',
         `Verified changes in \`src/app.ts\`. This review artifact content has been extended with more words to ensure it strictly passes the newly introduced triviality check, which demands at least thirty words if there are no meaningful findings or risks.`,
@@ -969,13 +973,37 @@ export function writeReceiptBackedReviewArtifact(
         verdict
     ]).join('\n');
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
-    fs.writeFileSync(artifactPath, content, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
     const {
         reviewContext,
         reviewContextText
     } = buildReceiptBackedReviewContextFixture(repoRoot, taskId, reviewKey, reviewerEvidence, options);
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
+    const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    if (Number(reviewContext.schema_version) >= 3 && !/^## Coverage Ledger$/mu.test(content)) {
+        const defaultEvidenceFile = coverageContract.obligations.find((entry) => entry.kind === 'file')?.target;
+        const coverageLines = coverageContract.required
+            ? coverageContract.obligations.map((obligation) => `- ${JSON.stringify({
+                id: obligation.id,
+                evidence: [{
+                    location: `${obligation.kind === 'file' ? obligation.target : defaultEvidenceFile}:1`,
+                    observation: `Concrete fixture evidence covers ${obligation.kind} ${obligation.target} for receipt-backed review behavior`
+                }],
+                result: 'no-finding',
+                finding_ids: []
+            })}`)
+            : ['None'];
+        const coverageSections = [
+            '## Validation Notes',
+            `Validated the complete ${reviewKey} fixture scope and every generated coverage obligation.`,
+            '',
+            '## Coverage Ledger',
+            ...coverageLines,
+            ''
+        ].join('\n');
+        content = content.replace(/^## Findings by Severity$/mu, `${coverageSections}\n## Findings by Severity`);
+    }
+    fs.writeFileSync(artifactPath, content, 'utf8');
 
     const crypto = require('node:crypto');
     const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
@@ -1077,6 +1105,11 @@ export function writeReceiptBackedReviewArtifact(
         trustLevel: 'INDEPENDENT_AUDITED'
     });
     const receiptRecord = receipt as unknown as Record<string, unknown>;
+    if (Number(reviewContext.schema_version) >= 3) {
+        const reviewCoverage = validateReviewCoverageLedger(content, coverageContract, {repoRoot});
+        assert.equal(reviewCoverage.status, 'PASS', reviewCoverage.violations.join('\n'));
+        receiptRecord.review_coverage = reviewCoverage;
+    }
     receiptRecord.review_result_recorded_at_utc = receipt.recorded_at_utc;
     receiptRecord.review_output_source_mtime_utc = fs.statSync(artifactPath).mtime.toISOString();
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
@@ -1135,20 +1168,7 @@ export function seedReusableReviewEvidence(
     const execution = resolveReviewerExecutionFixture(taskId, sourceOfTruth, reviewerIdentity);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`);
-    const artifactText = [
-        '# Review',
-        '',
-        `Validated \`${reviewKey === 'code' ? 'src/app.ts' : 'tests/app.test.ts'}\` and the reuse contract in detail so this artifact remains realistic and non-trivial while reporting no findings for the current scope.`,
-        '',
-        '## Findings by Severity',
-        'none',
-        '',
-        '## Residual Risks',
-        'none',
-        '',
-        '## Verdict',
-        verdict
-    ].join('\n');
+    let artifactText = '';
     prepareReviewDiffFixture(repoRoot, preflightPath);
     prepareScopedDiffFixture(repoRoot, preflightPath, reviewKey);
     buildReviewContext({
@@ -1188,6 +1208,40 @@ export function seedReusableReviewEvidence(
     }
     const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
     const reviewContext = JSON.parse(reviewContextText) as Record<string, unknown>;
+    const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const defaultEvidenceFile = coverageContract.obligations.find((entry) => entry.kind === 'file')?.target;
+    const coverageLines = coverageContract.required
+        ? coverageContract.obligations.map((obligation) => `- ${JSON.stringify({
+            id: obligation.id,
+            evidence: [{
+                location: `${obligation.kind === 'file' ? obligation.target : defaultEvidenceFile}:1`,
+                observation: `Concrete fixture evidence covers ${obligation.kind} ${obligation.target} for reusable review behavior`
+            }],
+            result: 'no-finding',
+            finding_ids: []
+        })}`)
+        : ['None'];
+    artifactText = [
+        '# Review',
+        '',
+        '## Validation Notes',
+        `Validated the complete ${reviewKey} reuse scope and every generated coverage obligation.`,
+        '',
+        '## Coverage Ledger',
+        ...coverageLines,
+        '',
+        '## Findings by Severity',
+        'None',
+        '',
+        '## Deferred Findings',
+        'None',
+        '',
+        '## Residual Risks',
+        'None',
+        '',
+        '## Verdict',
+        verdict
+    ].join('\n');
     const reviewTreeStateSha256 = resolveFixtureReviewTreeStateSha256(reviewContext);
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
     const artifactHash = crypto.createHash('sha256').update(artifactText).digest('hex');
@@ -1277,6 +1331,11 @@ export function seedReusableReviewEvidence(
         trustLevel: execution.trustLevel
     });
     const receiptRecord = receipt as unknown as Record<string, unknown>;
+    if (Number(reviewContext.schema_version) >= 3) {
+        const reviewCoverage = validateReviewCoverageLedger(artifactText, coverageContract, {repoRoot});
+        assert.equal(reviewCoverage.status, 'PASS', reviewCoverage.violations.join('\n'));
+        receiptRecord.review_coverage = reviewCoverage;
+    }
     receiptRecord.review_result_recorded_at_utc = receipt.recorded_at_utc;
     receiptRecord.review_output_source_mtime_utc = fs.statSync(artifactPath).mtime.toISOString();
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');

@@ -251,6 +251,7 @@ export function buildPassReviewTemplateHintMessage(options: {
 }
 
 const CANONICAL_REVIEW_SECTION_HEADINGS = new Set([
+    'coverage ledger',
     'findings by severity',
     'deferred findings',
     'residual risks',
@@ -485,6 +486,14 @@ export function buildLosslessPassReviewNormalization(options: {
     if (validationNotesLines.length > 0) {
         normalizedLines.push('## Validation Notes');
         normalizedLines.push(...validationNotesLines);
+        if (normalizedLines[normalizedLines.length - 1]?.trim().length !== 0) {
+            normalizedLines.push('');
+        }
+    }
+    const coverageLedgerLines = extractMarkdownSectionLines(String(reviewContent || '').split('\n'), 'Coverage Ledger');
+    if (coverageLedgerLines.length > 0) {
+        normalizedLines.push('## Coverage Ledger');
+        normalizedLines.push(...coverageLedgerLines);
         if (normalizedLines[normalizedLines.length - 1]?.trim().length !== 0) {
             normalizedLines.push('');
         }

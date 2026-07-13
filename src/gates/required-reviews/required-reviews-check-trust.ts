@@ -31,6 +31,10 @@ import {
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from '../review/reviewer-routing';
 import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
+    validateReviewCoverageLedger,
+    type ReviewCoverageContract
+} from '../review/review-coverage-ledger';
+import {
     findLatestRoutingEventForReviewType,
     findLatestTimelineSequence,
     findMatchingInvocationAttestationEvent,
@@ -185,12 +189,26 @@ export function validateReviewArtifactGateEligibility(options: {
                 requirePreflightSha256: !laneDomainPreflightBindingAllowed,
                 ...diffExpectations,
                 expectedChangedFiles: laneDomainPreflightBindingAllowed ? [] : diffExpectations.expectedChangedFiles,
+                expectedPreflightPayload: preflightPayload,
+                repoRoot: options.repoRoot || null,
                 expectedChangedFilesSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedChangedFilesSha256,
                 expectedScopeContentSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedScopeContentSha256,
                 expectedScopeSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedScopeSha256,
                 expectedScopedDiff: laneDomainPreflightBindingAllowed ? false : diffExpectations.expectedScopedDiff,
                 requireDiffMaterialForRequiredReview: !laneDomainPreflightBindingAllowed
             }));
+            if (reviewContext && Number(reviewContext.schema_version) >= 3) {
+                const coverageValidation = validateReviewCoverageLedger(
+                    artifactContent,
+                    reviewContext.coverage_contract as ReviewCoverageContract,
+                    { repoRoot: options.repoRoot || undefined }
+                );
+                if (coverageValidation.status !== 'PASS') {
+                    errors.push(...coverageValidation.violations.map((violation) =>
+                        `Review coverage validation for '${reviewKey}' failed: ${violation}`
+                    ));
+                }
+            }
             if (reviewContext && !reviewContextTreeStateSha256) {
                 errors.push(
                     `Required review '${reviewKey}' review-context is missing tree_state.tree_state_sha256.`
@@ -342,6 +360,18 @@ export function validateReviewArtifactGateEligibility(options: {
                         errors.push(`Review receipt for '${reviewKey}' is missing reused_from_review_tree_state_sha256 for reused evidence.`);
                     }
                     receiptReviewContextSha256 = evidenceFields.reviewContextSha256;
+                    if (reviewContext && Number(reviewContext.schema_version) >= 3) {
+                        const reviewCoverage = toPlainRecord((receipt as unknown as Record<string, unknown>).review_coverage);
+                        const coverageContract = toPlainRecord(reviewContext.coverage_contract);
+                        if (reviewCoverage?.status !== 'PASS') {
+                            errors.push(`Review receipt for '${reviewKey}' is missing complete review_coverage evidence.`);
+                        } else if (
+                            String(reviewCoverage.contract_sha256 || '').trim().toLowerCase()
+                            !== String(coverageContract?.contract_sha256 || '').trim().toLowerCase()
+                        ) {
+                            errors.push(`Review receipt coverage contract hash mismatch for '${reviewKey}'.`);
+                        }
+                    }
                 } catch {
                     errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
                 }

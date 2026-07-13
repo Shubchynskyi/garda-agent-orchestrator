@@ -15,6 +15,7 @@ import {
 } from './review-context-manual-validation-evidence';
 import { prioritizePromptDiffForReview } from './review-context-prompt-diff';
 import { type ReviewTreeState } from '../review/review-tree-state';
+import { type ReviewCoverageContract } from '../review/review-coverage-ledger';
 import { normalizePath } from '../shared/helpers';
 
 export function buildTaskScopeMarkdown(options: {
@@ -36,6 +37,7 @@ export function buildTaskScopeMarkdown(options: {
     promptTemplateArtifactPath: string;
     outputTemplateArtifactPath: string;
     evidenceManifestArtifactPath: string;
+    coverageContract: ReviewCoverageContract;
 }): string {
     const lines: string[] = [];
     const fullDiffText = options.gitDiff.diff || '';
@@ -127,7 +129,8 @@ export function buildTaskScopeMarkdown(options: {
         rolePromptArtifactPath: options.rolePromptArtifactPath,
         promptTemplateArtifactPath: options.promptTemplateArtifactPath,
         outputTemplateArtifactPath: options.outputTemplateArtifactPath,
-        evidenceManifestArtifactPath: options.evidenceManifestArtifactPath
+        evidenceManifestArtifactPath: options.evidenceManifestArtifactPath,
+        coverageContract: options.coverageContract
     }));
     lines.push('## Rule Context');
     return lines.join('\n');

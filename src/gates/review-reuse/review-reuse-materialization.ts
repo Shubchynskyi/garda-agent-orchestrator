@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
 import {
     buildReviewReceipt,
     normalizeReviewReceiptReviewerProvenance,
@@ -21,6 +22,12 @@ import {
     normalizeDomainScopeFingerprints
 } from '../scope/domain-scope-fingerprints';
 import type { HistoricalReviewReuseCandidate } from './review-reuse-validation';
+import {
+    getReviewCoverageContractViolations,
+    validateReviewCoverageLedger,
+    type ReviewCoverageContract
+} from '../review/review-coverage-ledger';
+import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
 
 export interface MaterializeReusedReviewEvidenceOptions {
     repoRoot: string;
@@ -56,7 +63,57 @@ export interface MaterializeReusedReviewEvidenceOptions {
 export async function materializeReusedReviewEvidence(
     options: MaterializeReusedReviewEvidenceOptions
 ): Promise<{ materialized: boolean; reason: string | null }> {
-    const refreshedReceipt = buildReusedReviewReceipt(options);
+    const currentReviewContext = JSON.parse(
+        fs.readFileSync(options.reviewContextPath, 'utf8')
+    ) as Record<string, unknown>;
+    const currentReviewContextSchemaVersion = Number(currentReviewContext.schema_version);
+    if (!Number.isInteger(currentReviewContextSchemaVersion) || currentReviewContextSchemaVersion < 3) {
+        return {
+            materialized: false,
+            reason: 'reused review current context must use schema_version 3 or newer; legacy contexts cannot be rematerialized'
+        };
+    }
+    if (currentReviewContextSchemaVersion >= 3) {
+        const authoritativeCoverageChangedFiles = resolveReviewCoverageChangedFiles({
+            reviewType: options.reviewType,
+            preflight: options.preflightPayload,
+            repoRoot: options.repoRoot
+        });
+        const coverageContractViolations = getReviewCoverageContractViolations(
+            currentReviewContext.coverage_contract,
+            {
+                reviewType: options.reviewType,
+                changedFiles: authoritativeCoverageChangedFiles
+            }
+        );
+        if (coverageContractViolations.length > 0) {
+            return {
+                materialized: false,
+                reason: `reused review coverage contract validation failed: ${coverageContractViolations.join(' ')}`
+            };
+        }
+        const reviewCoverage = validateReviewCoverageLedger(
+            options.artifactText,
+            currentReviewContext.coverage_contract as ReviewCoverageContract,
+            { repoRoot: options.repoRoot }
+        );
+        if (reviewCoverage.status !== 'PASS') {
+            return {
+                materialized: false,
+                reason: `reused review coverage validation failed: ${reviewCoverage.violations.join(' ')}`
+            };
+        }
+        const refreshedReceipt = buildReusedReviewReceipt(options);
+        (refreshedReceipt as unknown as Record<string, unknown>).review_coverage = reviewCoverage;
+        return persistReusedReviewEvidence(options, refreshedReceipt);
+    }
+    return persistReusedReviewEvidence(options, buildReusedReviewReceipt(options));
+}
+
+async function persistReusedReviewEvidence(
+    options: MaterializeReusedReviewEvidenceOptions,
+    refreshedReceipt: ReviewReceipt
+): Promise<{ materialized: boolean; reason: string | null }> {
     const receiptPayloadSha256 = createHash('sha256')
         .update(`${JSON.stringify(refreshedReceipt, null, 2)}\n`)
         .digest('hex');

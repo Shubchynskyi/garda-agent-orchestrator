@@ -1,0 +1,475 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
+
+import { stringSha256 } from '../../gate-runtime/hash';
+import {
+    extractMarkdownSectionLines,
+    getFindingsBySeverity
+} from '../completion/completion-verdict-markdown';
+import { normalizePath } from '../shared/helpers';
+
+export type ReviewCoverageObligationKind = 'file' | 'boundary' | 'category';
+
+export interface ReviewCoverageObligation {
+    id: string;
+    kind: ReviewCoverageObligationKind;
+    target: string;
+    expected_finding_ids?: string[];
+}
+
+export interface ReviewCoverageContract {
+    schema_version: 1;
+    required: boolean;
+    review_type: string;
+    obligations: ReviewCoverageObligation[];
+    obligation_count: number;
+    contract_sha256: string;
+}
+
+export interface ReviewCoverageValidationSummary {
+    status: 'PASS' | 'FAIL';
+    required: boolean;
+    contract_sha256: string | null;
+    obligation_count: number;
+    completed_obligation_count: number;
+    omitted_obligation_ids: string[];
+    duplicate_obligation_ids: string[];
+    unknown_obligation_ids: string[];
+    finding_ids: string[];
+    violations: string[];
+}
+
+interface ReviewCoverageEvidenceEntry {
+    location: string;
+    observation: string;
+}
+
+interface ReviewCoverageLedgerEntry {
+    id: string;
+    evidence: ReviewCoverageEvidenceEntry[];
+    result: 'finding' | 'no-finding' | null;
+    finding_ids: string[];
+}
+
+const FINDING_ID_PATTERN = /^F-\d{3}$/u;
+const FINDING_ID_GLOBAL_PATTERN = /\[(F-\d{3})\]/gu;
+const EVIDENCE_ONLY_FINDING_ID = 'F-000';
+const EVIDENCE_ONLY_FINDING_PATTERN =
+    /^\[garda:evidence-only:missing-focused-validation\]\s+test=tests\/[^\s;]+\.(?:test|spec)\.(?:c|m)?[jt]sx?;\s*action=run-and-record-focused-test$/iu;
+
+const REVIEW_CATEGORY_IDS: Record<string, readonly string[]> = {
+    code: [
+        'scope-simplicity',
+        'correctness-edge-cases',
+        'regression-contract-compatibility',
+        'static-hygiene',
+        'security-input-validation',
+        'test-adequacy',
+        'documentation-impact'
+    ],
+    refactor: [
+        'behavior-preservation',
+        'contract-compatibility',
+        'simplicity-complexity',
+        'coupling-cohesion',
+        'static-hygiene',
+        'test-adequacy'
+    ],
+    test: [
+        'strategy-scope',
+        'positive-negative-paths',
+        'regression-recovery',
+        'isolation-flakiness',
+        'execution-evidence'
+    ],
+    security: ['trust-boundaries', 'authorization', 'input-validation', 'secrets-data-exposure', 'adversarial-paths'],
+    db: ['schema-contract', 'migration-safety', 'transactionality', 'query-correctness', 'rollback'],
+    api: ['request-contract', 'response-contract', 'error-contract', 'compatibility', 'validation'],
+    performance: ['hot-paths', 'complexity', 'allocation-io', 'concurrency', 'measurement'],
+    infra: ['deployment-contract', 'configuration', 'failure-recovery', 'observability', 'rollback'],
+    dependency: ['version-compatibility', 'transitive-impact', 'security-advisories', 'runtime-support', 'lockfile-integrity']
+};
+
+function normalizeChangedFiles(changedFiles: readonly string[]): string[] {
+    return [...new Set(changedFiles
+        .map((entry) => normalizePath(String(entry || '').trim()))
+        .filter(Boolean))].sort();
+}
+
+function normalizeIdentifier(value: string): string {
+    return String(value || '')
+        .trim()
+        .replace(/[^A-Za-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .toUpperCase();
+}
+
+function classifyBoundary(filePath: string): string {
+    if (/(?:^|\/)tests?\//u.test(filePath) || /\.(?:test|spec)\.[^.]+$/u.test(filePath)) {
+        return 'test-behavior';
+    }
+    if (/(?:^|\/)(?:docs?|template\/docs)\//u.test(filePath) || /(?:^|\/)(?:README|CHANGELOG)\.md$/iu.test(filePath)) {
+        return 'documentation-contract';
+    }
+    if (/\.(?:json|ya?ml|toml|ini)$/iu.test(filePath) || /(?:^|\/)config(?:\/|$)/u.test(filePath)) {
+        return 'configuration-contract';
+    }
+    if (/\.(?:c|m)?[jt]sx?$/iu.test(filePath)) {
+        return 'runtime-behavior';
+    }
+    return 'integration-surface';
+}
+
+function contractPayload(options: {
+    reviewType: string;
+    required: boolean;
+    obligations: ReviewCoverageObligation[];
+}): Omit<ReviewCoverageContract, 'contract_sha256'> {
+    return {
+        schema_version: 1,
+        required: options.required,
+        review_type: options.reviewType,
+        obligations: options.obligations,
+        obligation_count: options.obligations.length
+    };
+}
+
+export function buildReviewCoverageContract(options: {
+    reviewType: string;
+    changedFiles: readonly string[];
+    categoryIds?: readonly string[];
+}): ReviewCoverageContract {
+    const reviewType = String(options.reviewType || '').trim().toLowerCase();
+    const changedFiles = normalizeChangedFiles(options.changedFiles);
+    const fileObligations = changedFiles.map((filePath, index): ReviewCoverageObligation => ({
+        id: `FILE-${String(index + 1).padStart(3, '0')}`,
+        kind: 'file',
+        target: filePath
+    }));
+    const boundaryObligations = [...new Set(changedFiles.map(classifyBoundary))]
+        .sort()
+        .map((boundary): ReviewCoverageObligation => ({
+            id: `BOUNDARY-${normalizeIdentifier(boundary)}`,
+            kind: 'boundary',
+            target: boundary
+        }));
+    const categoryIds = [...new Set((options.categoryIds || REVIEW_CATEGORY_IDS[reviewType] || ['assigned-review-contract'])
+        .map((entry) => String(entry || '').trim().toLowerCase())
+        .filter(Boolean))].sort();
+    const categoryObligations = categoryIds.map((category): ReviewCoverageObligation => ({
+        id: `CATEGORY-${normalizeIdentifier(category)}`,
+        kind: 'category',
+        target: category
+    }));
+    const obligations = [...fileObligations, ...boundaryObligations, ...categoryObligations];
+    const payload = contractPayload({
+        reviewType,
+        required: changedFiles.length > 0,
+        obligations
+    });
+    return {
+        ...payload,
+        contract_sha256: stringSha256(JSON.stringify(payload)) || ''
+    };
+}
+
+export function getReviewCoverageContractViolations(
+    value: unknown,
+    expected: { reviewType: string; changedFiles: readonly string[] }
+): string[] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return ['Review context is missing the required coverage_contract object.'];
+    }
+    const actual = value as ReviewCoverageContract;
+    const deterministic = buildReviewCoverageContract(expected);
+    if (JSON.stringify(actual) === JSON.stringify(deterministic)) {
+        return [];
+    }
+    return [
+        `Review coverage contract does not match the deterministic current-scope contract for ` +
+        `'${deterministic.review_type}'. Expected sha256=${deterministic.contract_sha256}; ` +
+        `actual sha256=${String(actual.contract_sha256 || 'missing')}.`
+    ];
+}
+
+function parseCoverageLedgerEntries(reviewContent: string): {
+    entries: ReviewCoverageLedgerEntry[];
+    violations: string[];
+} {
+    const sectionLines = extractMarkdownSectionLines(String(reviewContent || '').split('\n'), 'Coverage Ledger');
+    if (sectionLines.length === 0) {
+        return { entries: [], violations: ["Review output is missing required section '## Coverage Ledger'."] };
+    }
+    const entries: ReviewCoverageLedgerEntry[] = [];
+    const violations: string[] = [];
+    for (const rawLine of sectionLines) {
+        const trimmed = rawLine.trim();
+        if (!trimmed) {
+            continue;
+        }
+        if (!trimmed.startsWith('- ')) {
+            violations.push(`Coverage ledger entry must be a JSON bullet: ${trimmed}`);
+            continue;
+        }
+        try {
+            const parsed = JSON.parse(trimmed.slice(2)) as Record<string, unknown>;
+            const evidence = Array.isArray(parsed.evidence)
+                ? parsed.evidence
+                    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+                    .map((entry) => ({
+                        location: String(entry.location || '').trim(),
+                        observation: String(entry.observation || '').trim()
+                    }))
+                : [];
+            const findingIds = Array.isArray(parsed.finding_ids)
+                ? parsed.finding_ids.map((entry) => String(entry || '').trim().toUpperCase()).filter(Boolean)
+                : [];
+            const result = parsed.result === 'finding' || parsed.result === 'no-finding'
+                ? parsed.result
+                : null;
+            if (!result) {
+                violations.push(
+                    `Coverage ledger entry '${String(parsed.id || '').trim() || '<missing>'}' must use result 'finding' or 'no-finding'.`
+                );
+            }
+            entries.push({
+                id: String(parsed.id || '').trim().toUpperCase(),
+                evidence,
+                result,
+                finding_ids: findingIds
+            });
+        } catch {
+            violations.push(`Coverage ledger entry is not valid JSON: ${trimmed}`);
+        }
+    }
+    return { entries, violations };
+}
+
+function parseEvidenceLocation(location: string): { filePath: string; line: number } | null {
+    const match = /^(.*?)(?::(\d+)|#L(\d+))$/u.exec(String(location || '').trim());
+    if (!match) {
+        return null;
+    }
+    const line = Number(match[2] || match[3]);
+    const filePath = normalizePath(match[1]);
+    return filePath && Number.isSafeInteger(line) && line > 0 ? { filePath, line } : null;
+}
+
+function isGenericObservation(observation: string): boolean {
+    const normalized = String(observation || '').trim().toLowerCase();
+    return normalized.length < 24
+        || normalized.split(/\s+/u).length < 4
+        || /\b(?:reviewed|checked|validated|inspected)\s+(?:the\s+)?(?:whole\s+)?(?:file|scope|code)\b/u.test(normalized)
+        || /\b(?:no issues|looks good|full scope|all files|everything)\b/u.test(normalized);
+}
+
+function collectFindingIds(reviewContent: string): { ids: string[]; violations: string[] } {
+    const findingsLines = extractMarkdownSectionLines(String(reviewContent || '').split('\n'), 'Findings by Severity');
+    const findingsBySeverity = getFindingsBySeverity(findingsLines);
+    const ids: string[] = [];
+    const violations: string[] = [];
+    for (const finding of Object.values(findingsBySeverity).flat()) {
+        const findingIds = [...finding.matchAll(FINDING_ID_GLOBAL_PATTERN)].map((match) => match[1]);
+        if (findingIds.length === 0 && EVIDENCE_ONLY_FINDING_PATTERN.test(finding.trim())) {
+            ids.push(EVIDENCE_ONLY_FINDING_ID);
+            continue;
+        }
+        if (findingIds.includes(EVIDENCE_ONLY_FINDING_ID)) {
+            violations.push(
+                `Finding identifier '${EVIDENCE_ONLY_FINDING_ID}' is reserved for the exact canonical evidence-only marker.`
+            );
+        }
+        if (findingIds.length !== 1) {
+            violations.push(
+                `Every active finding must contain exactly one identifier like [F-001]: ${finding}`
+            );
+            continue;
+        }
+        ids.push(findingIds[0]);
+    }
+    const duplicateIds = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))].sort();
+    for (const duplicateId of duplicateIds) {
+        violations.push(`Finding identifier '${duplicateId}' is used by more than one active finding.`);
+    }
+    return { ids: [...new Set(ids)].sort(), violations };
+}
+
+export function validateReviewCoverageLedger(
+    reviewContent: string,
+    contract: ReviewCoverageContract,
+    options: { repoRoot?: string } = {}
+): ReviewCoverageValidationSummary {
+    if (!contract?.required) {
+        return {
+            status: 'PASS',
+            required: false,
+            contract_sha256: contract?.contract_sha256 || null,
+            obligation_count: contract?.obligations?.length || 0,
+            completed_obligation_count: 0,
+            omitted_obligation_ids: [],
+            duplicate_obligation_ids: [],
+            unknown_obligation_ids: [],
+            finding_ids: [],
+            violations: []
+        };
+    }
+    const parsed = parseCoverageLedgerEntries(reviewContent);
+    const findingEvidence = collectFindingIds(reviewContent);
+    const violations = [...parsed.violations, ...findingEvidence.violations];
+    const expectedById = new Map(contract.obligations.map((entry) => [entry.id, entry]));
+    const counts = new Map<string, number>();
+    for (const entry of parsed.entries) {
+        counts.set(entry.id, (counts.get(entry.id) || 0) + 1);
+    }
+    const duplicateObligationIds = [...counts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([id]) => id)
+        .sort();
+    const unknownObligationIds = [...counts.keys()].filter((id) => !expectedById.has(id)).sort();
+    const omittedObligationIds = contract.obligations
+        .map((entry) => entry.id)
+        .filter((id) => !counts.has(id))
+        .sort();
+    duplicateObligationIds.forEach((id) => violations.push(`Coverage obligation '${id}' is duplicated.`));
+    unknownObligationIds.forEach((id) => violations.push(`Coverage obligation '${id}' is not part of the current contract.`));
+    omittedObligationIds.forEach((id) => violations.push(`Coverage obligation '${id}' is omitted.`));
+
+    const changedFiles = contract.obligations.filter((entry) => entry.kind === 'file').map((entry) => entry.target);
+    const lineCountCache = new Map<string, { count: number; source: 'current' | 'head' } | null>();
+    const countLines = (content: string): number => {
+        const lines = content.replace(/\r\n?/gu, '\n').split('\n');
+        if (lines.at(-1) === '') {
+            lines.pop();
+        }
+        return lines.length;
+    };
+    const getChangedFileLineCount = (
+        filePath: string
+    ): { count: number; source: 'current' | 'head' } | null => {
+        if (!options.repoRoot) {
+            return null;
+        }
+        if (lineCountCache.has(filePath)) {
+            return lineCountCache.get(filePath) || null;
+        }
+        const repoRoot = path.resolve(options.repoRoot);
+        const resolvedPath = path.resolve(repoRoot, filePath);
+        const relativePath = path.relative(repoRoot, resolvedPath);
+        if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+            lineCountCache.set(filePath, null);
+            return null;
+        }
+        try {
+            const result = { count: countLines(fs.readFileSync(resolvedPath, 'utf8')), source: 'current' as const };
+            lineCountCache.set(filePath, result);
+            return result;
+        } catch {
+            try {
+                const previousContent = execFileSync('git', ['show', `HEAD:${filePath}`], {
+                    cwd: repoRoot,
+                    encoding: 'utf8',
+                    stdio: ['ignore', 'pipe', 'ignore']
+                });
+                const result = { count: countLines(previousContent), source: 'head' as const };
+                lineCountCache.set(filePath, result);
+                return result;
+            } catch {
+                lineCountCache.set(filePath, null);
+                return null;
+            }
+        }
+    };
+    const ledgerFindingIds = new Set<string>();
+    for (const entry of parsed.entries) {
+        const obligation = expectedById.get(entry.id);
+        if (!obligation) {
+            continue;
+        }
+        if (entry.evidence.length === 0) {
+            violations.push(`Coverage obligation '${entry.id}' has no concrete evidence.`);
+        }
+        let hasTargetFileEvidence = obligation.kind !== 'file';
+        for (const evidence of entry.evidence) {
+            const location = parseEvidenceLocation(evidence.location);
+            if (!location || !changedFiles.includes(location.filePath)) {
+                violations.push(
+                    `Coverage obligation '${entry.id}' evidence location '${evidence.location}' is not a current changed-file path:line.`
+                );
+            } else if (obligation.kind === 'file' && location.filePath === obligation.target) {
+                hasTargetFileEvidence = true;
+            }
+            if (location && changedFiles.includes(location.filePath) && options.repoRoot) {
+                const lineEvidence = getChangedFileLineCount(location.filePath);
+                if (lineEvidence == null) {
+                    violations.push(
+                        `Coverage obligation '${entry.id}' evidence file '${location.filePath}' is unreadable in both the current repository and HEAD snapshot.`
+                    );
+                } else if (location.line > lineEvidence.count) {
+                    violations.push(
+                        `Coverage obligation '${entry.id}' evidence location '${evidence.location}' exceeds ` +
+                        `${lineEvidence.source === 'head' ? 'deleted-file HEAD snapshot' : 'current file'} line count ${lineEvidence.count}.`
+                    );
+                }
+            }
+            if (isGenericObservation(evidence.observation)) {
+                violations.push(`Coverage obligation '${entry.id}' contains generic evidence: '${evidence.observation}'.`);
+            }
+        }
+        if (!hasTargetFileEvidence) {
+            violations.push(`File coverage obligation '${entry.id}' must cite its own target '${obligation.target}:line'.`);
+        }
+        const invalidFindingIds = entry.finding_ids.filter((id) => !FINDING_ID_PATTERN.test(id));
+        invalidFindingIds.forEach((id) => violations.push(`Coverage obligation '${entry.id}' has invalid finding id '${id}'.`));
+        if (entry.result === 'finding' && entry.finding_ids.length === 0) {
+            violations.push(`Coverage obligation '${entry.id}' reports finding without finding_ids.`);
+        }
+        if (entry.result === 'no-finding' && entry.finding_ids.length > 0) {
+            violations.push(`Coverage obligation '${entry.id}' reports no-finding but references finding_ids.`);
+        }
+        entry.finding_ids.forEach((id) => ledgerFindingIds.add(id));
+        for (const expectedFindingId of obligation.expected_finding_ids || []) {
+            if (!entry.finding_ids.includes(expectedFindingId)) {
+                violations.push(`Coverage obligation '${entry.id}' is missing expected finding id '${expectedFindingId}'.`);
+            }
+        }
+    }
+    for (const findingId of findingEvidence.ids) {
+        if (!ledgerFindingIds.has(findingId)) {
+            violations.push(`Active finding '${findingId}' is not referenced by any coverage obligation.`);
+        }
+    }
+    for (const findingId of ledgerFindingIds) {
+        if (!findingEvidence.ids.includes(findingId)) {
+            violations.push(`Coverage ledger references unknown active finding '${findingId}'.`);
+        }
+    }
+    return {
+        status: violations.length === 0 ? 'PASS' : 'FAIL',
+        required: true,
+        contract_sha256: contract.contract_sha256,
+        obligation_count: contract.obligations.length,
+        completed_obligation_count: contract.obligations.length - omittedObligationIds.length,
+        omitted_obligation_ids: omittedObligationIds,
+        duplicate_obligation_ids: duplicateObligationIds,
+        unknown_obligation_ids: unknownObligationIds,
+        finding_ids: findingEvidence.ids,
+        violations
+    };
+}
+
+export function buildReviewCoverageLedgerTemplateLines(contract: ReviewCoverageContract): string[] {
+    if (!contract.required) {
+        return ['None'];
+    }
+    const defaultLocation = contract.obligations.find((entry) => entry.kind === 'file')?.target || '<changed-file>';
+    return contract.obligations.map((obligation) => `- ${JSON.stringify({
+        id: obligation.id,
+        evidence: [{
+            location: `${obligation.kind === 'file' ? obligation.target : defaultLocation}:<line>`,
+            observation: `<concrete observation for ${obligation.kind} ${obligation.target}>`
+        }],
+        result: '<finding|no-finding>',
+        finding_ids: ['<F-001 when result=finding; otherwise empty>']
+    })}`);
+}
