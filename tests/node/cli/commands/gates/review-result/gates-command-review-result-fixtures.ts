@@ -669,6 +669,7 @@ export async function seedPromptBoundReviewFixture(options: {
     const snapshot = getWorkspaceSnapshot(options.repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
     const preflightPath = writePreflight(options.repoRoot, options.taskId, {
         detection_source: 'explicit_changed_files',
+        review_coverage_contract_required: true,
         scope_category: 'code',
         changed_files: ['src/app.ts'],
         metrics: {

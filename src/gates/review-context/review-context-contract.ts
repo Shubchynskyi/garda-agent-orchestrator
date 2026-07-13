@@ -3,10 +3,7 @@ import { extractFilePathFromDiffLine, parseUnifiedDiff } from '../../gate-runtim
 import { fileSha256, normalizePath, parseBool } from '../shared/helpers';
 import { isPlainRecord } from '../../core/records';
 import { getReviewCoverageContractViolations } from '../review/review-coverage-ledger';
-import {
-    isGeneratedReviewCoverageContext,
-    resolveReviewCoverageChangedFiles
-} from './review-coverage-scope';
+import { resolveReviewCoverageChangedFiles } from './review-coverage-scope';
 
 const NON_CODE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only', 'empty']);
 const CODE_SCOPE_CATEGORIES = new Set(['code', 'mixed']);
@@ -797,7 +794,7 @@ export function getReviewContextContractViolations(
     }));
     const currentPreflightRequiresCoverage = options.expectedPreflightPayload?.review_coverage_contract_required === true;
     const reviewContextSchemaVersion = Number(reviewContext.schema_version);
-    if ((currentPreflightRequiresCoverage || isGeneratedReviewCoverageContext(reviewContext))
+    if (currentPreflightRequiresCoverage
         && (!Number.isInteger(reviewContextSchemaVersion) || reviewContextSchemaVersion < 3)) {
         violations.push(
             'Generated review coverage context cannot downgrade below schema_version 3; legacy contexts are read-only historical evidence.'

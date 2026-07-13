@@ -20,9 +20,3 @@ export function resolveReviewCoverageChangedFiles(options: {
             options.repoRoot
         ).non_test_changed_files;
 }
-
-export function isGeneratedReviewCoverageContext(value: Record<string, unknown> | null | undefined): boolean {
-    return value?.coverage_contract != null
-        || value?.coverage_scope != null
-        || value?.reviewer_handoff != null;
-}

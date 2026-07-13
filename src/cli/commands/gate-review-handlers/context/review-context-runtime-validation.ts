@@ -12,7 +12,6 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../../../../gates/review-context/review-context-contract';
-import { isGeneratedReviewCoverageContext } from '../../../../gates/review-context/review-coverage-scope';
 import {
     getReviewContextFullSuiteValidationViolations
 } from '../../../../gates/review-context/review-context-validation-evidence';
@@ -95,8 +94,7 @@ export function assertReviewContextContractOrThrow(options: {
     requireStrictBindingMetadata?: boolean;
     repoRoot?: string;
 }): void {
-    const coverageRequired = options.preflightPayload?.review_coverage_contract_required === true
-        || isGeneratedReviewCoverageContext(options.reviewContext);
+    const coverageRequired = options.preflightPayload?.review_coverage_contract_required === true;
     const reviewContextSchemaVersion = Number(options.reviewContext?.schema_version);
     if (coverageRequired && (!Number.isInteger(reviewContextSchemaVersion) || reviewContextSchemaVersion < 3)) {
         throw new Error(
