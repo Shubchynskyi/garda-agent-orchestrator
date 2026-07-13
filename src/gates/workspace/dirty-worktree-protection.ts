@@ -873,6 +873,38 @@ export function getUntouchedDirtyWorkspaceBaselineFilesFromPreflight(repoRoot: s
     return triggers ? normalizeWorkspaceRelativePaths(repoRoot, triggers.dirty_workspace_untouched_baseline_files) : [];
 }
 
+export interface TaskOwnedPreflightScope {
+    changed_files: string[];
+    task_owned_files: string[];
+    excluded_untouched_baseline_files: string[];
+}
+
+export function getTaskOwnedPreflightScopeFromPreflight(repoRoot: string, preflight: unknown): TaskOwnedPreflightScope {
+    const preflightObject = toPlainRecord(preflight);
+    const changedFiles = preflightObject
+        ? normalizeWorkspaceRelativePaths(repoRoot, preflightObject.changed_files)
+        : [];
+    const taskOwnedFiles = getTaskOwnedDirtyWorkspaceFilesFromPreflight(repoRoot, preflight);
+    const excludedUntouchedBaselineFiles = getUntouchedDirtyWorkspaceBaselineFilesFromPreflight(repoRoot, preflight);
+    if (taskOwnedFiles.length === 0 && excludedUntouchedBaselineFiles.length === 0) {
+        return {
+            changed_files: changedFiles,
+            task_owned_files: [],
+            excluded_untouched_baseline_files: []
+        };
+    }
+
+    const excludedSet = new Set(excludedUntouchedBaselineFiles);
+    return {
+        changed_files: [...new Set([
+            ...changedFiles.filter((relativePath) => !excludedSet.has(relativePath)),
+            ...taskOwnedFiles
+        ])].sort(),
+        task_owned_files: taskOwnedFiles,
+        excluded_untouched_baseline_files: excludedUntouchedBaselineFiles
+    };
+}
+
 export function getProtectedDirtyWorkspaceScopeFromPreflight(preflight: unknown): ProtectedDirtyWorkspaceScope | null {
     const triggers = getPreflightTriggers(preflight);
     if (!triggers) {

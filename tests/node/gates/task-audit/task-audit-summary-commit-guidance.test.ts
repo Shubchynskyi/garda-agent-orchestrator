@@ -185,6 +185,124 @@ describe('gates/task-audit-summary', () => {
             ]);
         });
 
+        it('builds commit guidance from task-owned dirty-baseline scope instead of untouched baseline files', () => {
+            fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-AUDIT-1 | 🟩 DONE | P1 | workflow/dirty-baseline-recovery-commit-scope | Keep restart recovery compile remediation and commit scope bound to current task-owned files | gpt-5.4 | 2026-07-13 | balanced | |'
+            ].join('\n'), 'utf8');
+            const taskOwnedFile = path.join(tmpDir, 'src', 'gates', 'review-context', 'task-owned.ts');
+            const untouchedRuntimeOne = path.join(tmpDir, 'src', 'gate-runtime', 'local-one.ts');
+            const untouchedRuntimeTwo = path.join(tmpDir, 'src', 'gate-runtime', 'local-two.ts');
+            for (const filePath of [taskOwnedFile, untouchedRuntimeOne, untouchedRuntimeTwo]) {
+                fs.mkdirSync(path.dirname(filePath), { recursive: true });
+                fs.writeFileSync(filePath, 'export const value = "before";\n', 'utf8');
+            }
+            initGitRepo(tmpDir);
+            fs.writeFileSync(taskOwnedFile, 'export const value = "task-owned";\n', 'utf8');
+            fs.writeFileSync(untouchedRuntimeOne, 'export const value = "local one";\n', 'utf8');
+            fs.writeFileSync(untouchedRuntimeTwo, 'export const value = "local two";\n', 'utf8');
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: [
+                    'src/gates/review-context/task-owned.ts',
+                    'src/gate-runtime/local-one.ts',
+                    'src/gate-runtime/local-two.ts'
+                ],
+                triggers: {
+                    dirty_workspace_task_owned_files: ['src/gates/review-context/task-owned.ts'],
+                    dirty_workspace_untouched_baseline_files: [
+                        'src/gate-runtime/local-one.ts',
+                        'src/gate-runtime/local-two.ts'
+                    ]
+                },
+                metrics: { changed_lines_total: 9 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(
+                result.final_report_contract.commit_command_suggestion,
+                'git commit -m "fix(orchestration): dirty baseline recovery commit scope"'
+            );
+        });
+
+        it('suppresses commit suggestions when dirty-baseline filtering excludes every committable file', () => {
+            fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-AUDIT-1 | 🟩 DONE | P1 | workflow/dirty-baseline-recovery-commit-scope | Keep restart recovery compile remediation and commit scope bound to current task-owned files | gpt-5.4 | 2026-07-13 | balanced | |'
+            ].join('\n'), 'utf8');
+            const untouchedRuntimeOne = path.join(tmpDir, 'src', 'gate-runtime', 'local-one.ts');
+            const untouchedRuntimeTwo = path.join(tmpDir, 'src', 'gate-runtime', 'local-two.ts');
+            for (const filePath of [untouchedRuntimeOne, untouchedRuntimeTwo]) {
+                fs.mkdirSync(path.dirname(filePath), { recursive: true });
+                fs.writeFileSync(filePath, 'export const value = "before";\n', 'utf8');
+            }
+            initGitRepo(tmpDir);
+            fs.writeFileSync(untouchedRuntimeOne, 'export const value = "local one";\n', 'utf8');
+            fs.writeFileSync(untouchedRuntimeTwo, 'export const value = "local two";\n', 'utf8');
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: [
+                    'src/gate-runtime/local-one.ts',
+                    'src/gate-runtime/local-two.ts'
+                ],
+                triggers: {
+                    dirty_workspace_task_owned_files: [],
+                    dirty_workspace_untouched_baseline_files: [
+                        'src/gate-runtime/local-one.ts',
+                        'src/gate-runtime/local-two.ts'
+                    ]
+                },
+                metrics: { changed_lines_total: 6 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            const renderedMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+
+            assert.equal(result.final_report_contract.commit_command_template, 'No commit command required.');
+            assert.equal(
+                result.final_report_contract.commit_command_suggestion,
+                'No commit required: no committable changes are present.'
+            );
+            assert.equal(result.final_report_contract.commit_question, 'No commit confirmation required.');
+            assert.ok(!renderedMarkdown.includes('git commit -m "'));
+            assert.ok(renderedMarkdown.includes('No commit required: no committable changes are present.'));
+        });
+
         it('suppresses commit suggestions when the tracked worktree is already clean', () => {
             const sourceFile = path.join(tmpDir, 'src', 'gates', 'task-audit-summary.ts');
             fs.mkdirSync(path.dirname(sourceFile), { recursive: true });

@@ -61,6 +61,7 @@ import {
     resolveCommittableChangedFiles
 } from './task-audit-summary-drift';
 import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
+import { getTaskOwnedPreflightScopeFromPreflight } from '../workspace/dirty-worktree-protection';
 import {
     collectEvidenceArtifacts,
     collectRequiredReviewBlockers
@@ -99,6 +100,25 @@ export type {
 
 const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no committable changes are present.';
 const NO_COMMIT_CONFIRMATION_MESSAGE = 'No commit confirmation required.';
+
+function filterCommitCandidatesToTaskOwnedPreflightScope(
+    repoRoot: string,
+    preflight: Record<string, unknown> | null,
+    candidateFiles: readonly string[]
+): string[] {
+    if (!preflight) {
+        return [...candidateFiles];
+    }
+    const taskScope = getTaskOwnedPreflightScopeFromPreflight(repoRoot, preflight);
+    if (
+        taskScope.task_owned_files.length === 0
+        && taskScope.excluded_untouched_baseline_files.length === 0
+    ) {
+        return [...candidateFiles];
+    }
+    const taskScopeSet = new Set(taskScope.changed_files);
+    return candidateFiles.filter((changedFile) => taskScopeSet.has(toPosix(changedFile)));
+}
 
 function readReviewCycleExcludedReviewTypes(repoRoot: string): string[] {
     const configPath = resolveWorkflowConfigPath(repoRoot);
@@ -569,17 +589,22 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
 
     const commitGuardEnabled = workspaceStatusSnapshot.enforceNoAutoCommit === true;
     const committableChangedFiles = resolveCommittableChangedFiles(repoRoot);
-    const commitCandidateChangedFiles = committableChangedFiles == null
+    const rawCommitCandidateChangedFiles = committableChangedFiles == null
         ? changedFiles.filter((changedFile) => !isLocalControlPlaneCommitPath(changedFile))
         : committableChangedFiles;
+    const commitCandidateChangedFiles = filterCommitCandidatesToTaskOwnedPreflightScope(
+        repoRoot,
+        preflight,
+        rawCommitCandidateChangedFiles
+    );
     const commitCommand = buildCommitCommandSuggestion(
-        commitCandidateChangedFiles.length > 0 ? commitCandidateChangedFiles : changedFiles,
+        commitCandidateChangedFiles.length > 0
+            ? commitCandidateChangedFiles
+            : filterCommitCandidatesToTaskOwnedPreflightScope(repoRoot, preflight, changedFiles),
         taskMetadata,
         commitGuardEnabled
     );
-    const commitRequired = committableChangedFiles == null
-        ? changedFiles.some((changedFile) => !isLocalControlPlaneCommitPath(changedFile))
-        : committableChangedFiles.length > 0;
+    const commitRequired = commitCandidateChangedFiles.length > 0;
     const commitCommandTemplate = commitRequired
         ? commitCommand.template
         : 'No commit command required.';

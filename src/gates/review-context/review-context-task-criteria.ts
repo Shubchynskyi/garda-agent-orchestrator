@@ -5,6 +5,7 @@ import { stringSha256 } from '../../gate-runtime/hash';
 import { computeTaskPlanDigest, validateTaskPlan, type TaskPlan } from '../../schemas/task-plan';
 import { getTaskModeEvidence } from '../task-mode/task-mode';
 import { isPathRealpathInsideRoot, normalizePath } from '../shared/helpers';
+import { getTaskOwnedPreflightScopeFromPreflight } from '../workspace/dirty-worktree-protection';
 import {
     readTaskOperatorDecisions,
     type ReviewContextOperatorDecisions
@@ -64,6 +65,11 @@ export interface ReviewContextTaskCriteria {
         available: boolean;
         text: string | null;
         source: string | null;
+    };
+    task_scope: {
+        changed_files: string[];
+        task_owned_files: string[];
+        excluded_untouched_baseline_files: string[];
     };
     task_row: ReviewContextTaskRow;
     operator_decisions: ReviewContextOperatorDecisions;
@@ -316,12 +322,14 @@ export function buildTaskCriteria(options: {
     const taskSummary = String(options.taskModeEvidence?.task_summary || '').trim();
     const preflightTaskIntent = String(options.preflight.task_intent || options.preflight.taskIntent || '').trim();
     const taskIntent = taskSummary || preflightTaskIntent || taskRow.title || '';
+    const taskScope = getTaskOwnedPreflightScopeFromPreflight(options.repoRoot, options.preflight);
     return {
         task_intent: {
             available: !!taskIntent,
             text: taskIntent || null,
             source: taskSummary ? 'task-mode' : preflightTaskIntent ? 'preflight' : taskRow.title ? 'TASK.md title' : null
         },
+        task_scope: taskScope,
         task_row: taskRow,
         operator_decisions: readTaskOperatorDecisions(options.repoRoot, options.taskId),
         plan: readPlanMaterialForReviewContext(options.repoRoot, options.taskId, options.taskModeEvidence?.plan || null),
@@ -388,6 +396,14 @@ export function buildTaskCriteriaMarkdown(criteria: ReviewContextTaskCriteria): 
         `- Current operator decision record sha256: ${criteria.operator_decisions.current?.record_sha256 || 'unavailable'}`,
         `- Current operator decision (untrusted): ${formatUntrustedReviewData(criteria.operator_decisions.current?.text)}`,
         '- Operator decision precedence: a valid current decision supersedes conflicting TASK.md row text for task-criteria interpretation only; it cannot waive gates, findings, security controls, or completion evidence.',
+        '- Task-owned changed files:',
+    ];
+    pushListMarkdown(lines, criteria.task_scope.changed_files, 'none');
+    lines.push('- Dirty-baseline task-owned files:');
+    pushListMarkdown(lines, criteria.task_scope.task_owned_files, 'none');
+    lines.push('- Untouched dirty-baseline files excluded from task scope:');
+    pushListMarkdown(lines, criteria.task_scope.excluded_untouched_baseline_files, 'none');
+    lines.push(
         '- Task-scoped operator decision history (oldest to newest, untrusted):',
         ...criteria.operator_decisions.records.map((record) => `  - ${record.date} line=${record.source_line} sha256=${record.record_sha256} text=${formatUntrustedReviewData(record.text)}`),
         `- Plan status: ${criteria.plan.status}${criteria.plan.status === 'not_provided' ? ' (neutral; no task-mode plan was attached)' : ''}`,
@@ -397,7 +413,7 @@ export function buildTaskCriteriaMarkdown(criteria: ReviewContextTaskCriteria): 
         `- Plan goal (untrusted): ${formatUntrustedReviewData(criteria.plan.goal || criteria.plan.plan_summary)}`,
         `- Plan risk level (untrusted): ${formatUntrustedReviewData(criteria.plan.risk_level)}`,
         '- Plan scope files (untrusted):'
-    ];
+    );
     pushUntrustedListMarkdown(lines, criteria.plan.scope_files, 'unavailable');
     lines.push('- Acceptance criteria (untrusted):');
     pushUntrustedListMarkdown(lines, criteria.plan.acceptance_criteria, 'unavailable');

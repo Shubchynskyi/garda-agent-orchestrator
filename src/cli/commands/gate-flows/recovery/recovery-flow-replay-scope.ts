@@ -29,6 +29,38 @@ const REVIEW_CYCLE_PREFLIGHT_REFRESH_BOUNDARY_EVENTS = new Set([
     'COMPLETION_GATE_FAILED'
 ]);
 
+function toPlainRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function getTaskOwnedReplayChangedFiles(previousPreflight: ReturnType<typeof getPreflightContext>): string[] {
+    const changedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
+    const triggers = toPlainRecord((previousPreflight as unknown as Record<string, unknown>).triggers);
+    if (!triggers) {
+        return changedFiles;
+    }
+    const taskOwnedFiles = normalizeChangedFiles(
+        Array.isArray(triggers.dirty_workspace_task_owned_files)
+            ? triggers.dirty_workspace_task_owned_files
+            : []
+    );
+    const untouchedBaselineFiles = normalizeChangedFiles(
+        Array.isArray(triggers.dirty_workspace_untouched_baseline_files)
+            ? triggers.dirty_workspace_untouched_baseline_files
+            : []
+    );
+    if (taskOwnedFiles.length === 0 && untouchedBaselineFiles.length === 0) {
+        return changedFiles;
+    }
+    const untouchedSet = new Set(untouchedBaselineFiles);
+    return [...new Set([
+        ...changedFiles.filter((relativePath) => !untouchedSet.has(relativePath)),
+        ...taskOwnedFiles
+    ])].sort();
+}
+
 export function normalizeRuleFileList(requiredReviews: Record<string, boolean>, effectiveDepth: number): string[] {
     const fileNames = new Set<string>(getTaskEntryRuleFilesForDepth(effectiveDepth));
     for (const [reviewType, required] of Object.entries(requiredReviews)) {
@@ -48,7 +80,7 @@ export function resolveReplayScope(
 ): ResolvedReplayScope {
     const explicitChangedFilesProvided = options.changedFiles !== undefined;
     const explicitChangedFiles = normalizeChangedFiles(expandValueList(options.changedFiles || [], { splitDelimiters: true }));
-    const previousChangedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
+    const previousChangedFiles = getTaskOwnedReplayChangedFiles(previousPreflight);
 
     if (explicitChangedFilesProvided) {
         return {
@@ -112,7 +144,7 @@ export function resolveReviewCycleReplayScope(
 ): ResolvedReplayScope {
     const explicitChangedFilesProvided = options.changedFiles !== undefined;
     const explicitChangedFiles = normalizeChangedFiles(expandValueList(options.changedFiles || [], { splitDelimiters: true }));
-    const previousChangedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
+    const previousChangedFiles = getTaskOwnedReplayChangedFiles(previousPreflight);
     const taskStartedDirty = !!previousTaskMode.dirty_workspace_baseline?.changed_files.length;
 
     if (explicitChangedFilesProvided) {
