@@ -315,6 +315,7 @@ function buildGitDiffSummaryCacheKey(options: {
     statStatus: number | null;
     statTruncated: boolean;
     contentFingerprint: string;
+    stagedBaselineTrustFingerprint: string | null;
 }): string {
     return stringSha256(JSON.stringify({
         schema_version: 1,
@@ -328,8 +329,32 @@ function buildGitDiffSummaryCacheKey(options: {
         stat_text: options.statText,
         stat_status: options.statStatus,
         stat_truncated: options.statTruncated,
-        content_fingerprint: options.contentFingerprint
+        content_fingerprint: options.contentFingerprint,
+        staged_baseline_trust_fingerprint: options.stagedBaselineTrustFingerprint
     })) || '';
+}
+
+function buildPreflightStagedBaselineTrustFingerprint(preflight: Record<string, unknown>): string | null {
+    const triggers = preflight.triggers && typeof preflight.triggers === 'object' && !Array.isArray(preflight.triggers)
+        ? preflight.triggers as Record<string, unknown>
+        : null;
+    if (!triggers) {
+        return null;
+    }
+    const status = String(triggers.dirty_workspace_staged_baseline_trust_status || '').trim().toUpperCase();
+    const inputSha256 = String(triggers.dirty_workspace_staged_baseline_trust_input_sha256 || '').trim().toLowerCase();
+    const violations = Array.isArray(triggers.dirty_workspace_staged_baseline_trust_violations)
+        ? triggers.dirty_workspace_staged_baseline_trust_violations.map((entry) => String(entry || '')).filter(Boolean)
+        : [];
+    if (!status && !inputSha256 && violations.length === 0) {
+        return null;
+    }
+    return stringSha256(JSON.stringify({
+        schema_version: 1,
+        status,
+        input_sha256: /^[0-9a-f]{64}$/u.test(inputSha256) ? inputSha256 : null,
+        violations
+    })) || null;
 }
 
 function getStagedChangedFileFingerprintEntries(repoRoot: string, changedFiles: string[]): Map<string, Record<string, unknown>> {
@@ -570,7 +595,8 @@ export function buildGitDiffSummary(
         statText: statResult.text,
         statStatus: statResult.status,
         statTruncated: statResult.truncated,
-        contentFingerprint
+        contentFingerprint,
+        stagedBaselineTrustFingerprint: buildPreflightStagedBaselineTrustFingerprint(preflight)
     });
     const cached = readCachedGitDiffSummary(cachePath, cacheKey);
     if (cached) {

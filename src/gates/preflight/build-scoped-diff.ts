@@ -136,6 +136,24 @@ function asPlainRecord(value: unknown): Record<string, unknown> | null {
         : null;
 }
 
+function getStagedBaselineTrustMetadata(preflight: Record<string, unknown>): {
+    status: string | null;
+    violationsSha256: string | null;
+    inputSha256: string | null;
+} {
+    const triggers = asPlainRecord(preflight.triggers);
+    const status = String(triggers?.dirty_workspace_staged_baseline_trust_status || '').trim().toUpperCase() || null;
+    const violations = Array.isArray(triggers?.dirty_workspace_staged_baseline_trust_violations)
+        ? triggers.dirty_workspace_staged_baseline_trust_violations.map((entry) => String(entry || '')).filter(Boolean)
+        : [];
+    const inputSha256 = normalizeOptionalHash(triggers?.dirty_workspace_staged_baseline_trust_input_sha256);
+    return {
+        status,
+        violationsSha256: stringSha256(violations.join('\n')),
+        inputSha256
+    };
+}
+
 function toLiteralGitPathspecs(pathspecs: string[]): string[] {
     return pathspecs.map((pathspec) => `:(literal)${pathspec}`);
 }
@@ -339,6 +357,7 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         ? 'split_checkpoint'
         : options.useStaged === undefined ? 'preflight_detection_source' : 'explicit_option';
     const preflightMetrics = asPlainRecord(preflight.metrics);
+    const stagedBaselineTrustMetadata = getStagedBaselineTrustMetadata(preflight);
     const preflightSha256 = fileSha256(preflightPath);
     const pathsConfig = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8'));
     const triggers = pathsConfig.triggers || {};
@@ -461,6 +480,9 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         changed_files_sha256: normalizeOptionalHash(preflightMetrics?.changed_files_sha256),
         scope_content_sha256: normalizeOptionalHash(preflightMetrics?.scope_content_sha256),
         scope_sha256: normalizeOptionalHash(preflightMetrics?.scope_sha256),
+        staged_baseline_trust_status: stagedBaselineTrustMetadata.status,
+        staged_baseline_trust_violations_sha256: stagedBaselineTrustMetadata.violationsSha256,
+        staged_baseline_trust_input_sha256: stagedBaselineTrustMetadata.inputSha256,
         paths_config_path: normalizePath(pathsConfigPath),
         output_path: normalizePath(outputPath),
         metadata_path: normalizePath(metadataPath),

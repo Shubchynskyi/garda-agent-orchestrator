@@ -172,6 +172,65 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
         assert.equal(payload.task_id, taskId);
         assert.deepEqual(payload.changed_files, ['src/app.ts']);
         assert.equal(payload.detection_source, 'git_staged_only');
+        assert.equal(payload.triggers.dirty_workspace_staged_baseline_trust_status, 'PASS');
+        assert.deepEqual(payload.triggers.dirty_workspace_staged_baseline_trust_violations, []);
+        assert.match(
+            payload.triggers.dirty_workspace_staged_baseline_trust_input_sha256,
+            /^[0-9a-f]{64}$/
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('propagates staged trust failures into classify-change triggers and preflight errors', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900dirty-staged-trust-fail';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        seedBaselineAgentsFile(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(appPath, 'const a = 34;\nconst b = 55;\nconsole.log(a + b);\n', 'utf8');
+        backdateFileMtime(appPath);
+        runGit(repoRoot, ['add', 'src/app.ts']);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject forged staged dirty baseline trust evidence'
+        });
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8'));
+        taskMode.dirty_workspace_baseline.staged_trust = null;
+        fs.writeFileSync(taskModePath, JSON.stringify(taskMode, null, 2), 'utf8');
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const outputPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        assert.throws(
+            () => runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Reject forged staged dirty baseline trust evidence',
+                useStaged: true,
+                outputPath,
+                emitMetrics: false
+            }),
+            /Missing staged dirty-baseline trust evidence for staged baseline files: src\/app\.ts/
+        );
+
+        assert.equal(fs.existsSync(outputPath), false);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const preflightFailedEvent = [...events].reverse().find((event) => event.event_type === 'PREFLIGHT_FAILED');
+        assert.ok(preflightFailedEvent);
+        const preflightFailedDetails = preflightFailedEvent.details as Record<string, unknown>;
+        assert.equal(
+            preflightFailedDetails.error,
+            'Missing staged dirty-baseline trust evidence for staged baseline files: src/app.ts.'
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

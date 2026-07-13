@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { getWorkspaceSnapshot } from '../compile/compile-gate';
@@ -19,6 +20,23 @@ export interface DirtyWorkspaceBaseline {
     scope_sha256: string | null;
     file_hashes: Record<string, string | null>;
     entry_authorized_files?: string[];
+    staged_files?: string[];
+    staged_trust?: StagedBaselineTrustEvidence | null;
+}
+
+export interface StagedBaselineTrustEvidence {
+    schema_version: 1;
+    salt: string;
+    files: Record<string, StagedBaselineTrustFileEvidence>;
+}
+
+export interface StagedBaselineTrustFileEvidence {
+    schema_version: 1;
+    status: 'present' | 'deleted';
+    mode: string;
+    object_id_sha256: string | null;
+    content_sha256: string | null;
+    line_fingerprint_sha256: string | null;
 }
 
 export interface TaskOwnedDirtyWorkspaceScope {
@@ -32,6 +50,8 @@ export interface TaskOwnedDirtyWorkspaceScope {
     explicitly_authorized_preexisting_files: string[];
     baseline_file_hashes: Record<string, string | null>;
     current_file_hashes: Record<string, string | null>;
+    staged_baseline_trust_status: 'NOT_APPLICABLE' | 'PASS' | 'FAIL';
+    staged_baseline_trust_violations: string[];
 }
 
 export interface DeriveTaskOwnedDirtyWorkspaceScopeOptions {
@@ -204,6 +224,352 @@ function getStagedRenameSourcePaths(repoRoot: string, currentScopeChangedFiles: 
     }
 }
 
+function getStagedChangedFiles(repoRoot: string, relativePaths: string[]): string[] {
+    const normalizedPathSet = new Set(normalizeWorkspaceRelativePaths(repoRoot, relativePaths));
+    if (normalizedPathSet.size === 0) {
+        return [];
+    }
+    try {
+        const result = spawnSyncWithTimeout('git', [
+            '-C',
+            repoRoot,
+            'diff',
+            '--cached',
+            '--name-only',
+            '-z',
+            '--diff-filter=ACDMRTUXB',
+            '--',
+            ...[...normalizedPathSet].map((relativePath) => `:(literal)${relativePath}`)
+        ], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024
+        });
+        if (result.status !== 0) {
+            return [];
+        }
+        return normalizeWorkspaceRelativePaths(repoRoot, String(result.stdout || '').split('\0'))
+            .filter((relativePath) => normalizedPathSet.has(relativePath));
+    } catch {
+        return [];
+    }
+}
+
+interface StagedIndexEntry {
+    path: string;
+    status: 'present' | 'deleted';
+    mode: string;
+    objectId: string;
+}
+
+function getStagedDeletedFiles(repoRoot: string, relativePaths: string[]): string[] {
+    const normalizedPathSet = new Set(normalizeWorkspaceRelativePaths(repoRoot, relativePaths));
+    if (normalizedPathSet.size === 0) {
+        return [];
+    }
+    try {
+        const result = spawnSyncWithTimeout('git', [
+            '-C',
+            repoRoot,
+            'diff',
+            '--cached',
+            '--name-status',
+            '-z',
+            '--diff-filter=D',
+            '--',
+            ...[...normalizedPathSet].map((relativePath) => `:(literal)${relativePath}`)
+        ], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024
+        });
+        if (result.status !== 0) {
+            return [];
+        }
+        const entries = String(result.stdout || '').split('\0');
+        const deletedFiles: string[] = [];
+        for (let index = 0; index < entries.length;) {
+            const status = String(entries[index++] || '').trim();
+            const deletedPath = normalizeWorkspaceRelativePath(repoRoot, entries[index++] || '');
+            if (status === 'D' && deletedPath && normalizedPathSet.has(deletedPath)) {
+                deletedFiles.push(deletedPath);
+            }
+        }
+        return normalizeWorkspaceRelativePaths(repoRoot, deletedFiles);
+    } catch {
+        return [];
+    }
+}
+
+function getHeadTreeEntry(repoRoot: string, relativePath: string): StagedIndexEntry | null {
+    const normalizedPath = normalizeWorkspaceRelativePath(repoRoot, relativePath);
+    if (!normalizedPath) {
+        return null;
+    }
+    try {
+        const result = spawnSyncWithTimeout('git', [
+            '-C',
+            repoRoot,
+            'ls-tree',
+            '-z',
+            'HEAD',
+            '--',
+            `:(literal)${normalizedPath}`
+        ], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024
+        });
+        if (result.status !== 0) {
+            return null;
+        }
+        const rawEntry = String(result.stdout || '').split('\0').find((entry) => entry.trim());
+        const match = rawEntry ? /^(\d+)\s+\S+\s+([0-9a-f]{40,64})\t(.+)$/.exec(rawEntry.trim()) : null;
+        const entryPath = normalizeWorkspaceRelativePath(repoRoot, match?.[3] || '');
+        if (!match || entryPath !== normalizedPath) {
+            return null;
+        }
+        return {
+            path: normalizedPath,
+            status: 'deleted',
+            mode: match[1],
+            objectId: String(match[2] || '').toLowerCase()
+        };
+    } catch {
+        return null;
+    }
+}
+
+function getStagedIndexEntries(repoRoot: string, relativePaths: string[]): Map<string, StagedIndexEntry> {
+    const normalizedPaths = normalizeWorkspaceRelativePaths(repoRoot, relativePaths);
+    const stagedChangedPathSet = new Set(getStagedChangedFiles(repoRoot, normalizedPaths));
+    const stagedDeletedFiles = getStagedDeletedFiles(repoRoot, normalizedPaths);
+    const entries = new Map<string, StagedIndexEntry>();
+    if (normalizedPaths.length === 0 || stagedChangedPathSet.size === 0) {
+        return entries;
+    }
+    try {
+        const result = spawnSyncWithTimeout('git', [
+            '-C',
+            repoRoot,
+            'ls-files',
+            '-s',
+            '-z',
+            '--',
+            ...normalizedPaths.map((relativePath) => `:(literal)${relativePath}`)
+        ], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024
+        });
+        if (result.status !== 0) {
+            return entries;
+        }
+        for (const rawEntry of String(result.stdout || '').split('\0')) {
+            const entry = rawEntry.trim();
+            if (!entry) {
+                continue;
+            }
+            const match = /^(\d+)\s+([0-9a-f]{40,64})\s+\d+\t(.+)$/.exec(entry);
+            if (!match) {
+                continue;
+            }
+            const normalizedPath = normalizeWorkspaceRelativePath(repoRoot, match[3] || '');
+            if (!normalizedPath) {
+                continue;
+            }
+            if (!stagedChangedPathSet.has(normalizedPath)) {
+                continue;
+            }
+            entries.set(normalizedPath, {
+                path: normalizedPath,
+                status: 'present',
+                mode: match[1],
+                objectId: String(match[2] || '').toLowerCase()
+            });
+        }
+    } catch {
+        return entries;
+    }
+    for (const deletedFile of stagedDeletedFiles) {
+        if (entries.has(deletedFile)) {
+            continue;
+        }
+        const headEntry = getHeadTreeEntry(repoRoot, deletedFile);
+        if (headEntry) {
+            entries.set(deletedFile, headEntry);
+        }
+    }
+    return entries;
+}
+
+function readStagedBlobText(repoRoot: string, objectId: string): string | null {
+    if (!/^[0-9a-f]{40,64}$/i.test(objectId)) {
+        return null;
+    }
+    try {
+        const result = spawnSyncWithTimeout('git', [
+            '-C',
+            repoRoot,
+            'cat-file',
+            '-p',
+            objectId
+        ], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024
+        });
+        if (result.status !== 0 || result.timedOut || result.error) {
+            return null;
+        }
+        return String(result.stdout || '');
+    } catch {
+        return null;
+    }
+}
+
+function buildStagedTrustFileEvidence(
+    repoRoot: string,
+    salt: string,
+    entry: StagedIndexEntry
+): StagedBaselineTrustFileEvidence {
+    const blobText = readStagedBlobText(repoRoot, entry.objectId);
+    const normalizedLines = blobText == null ? null : blobText.replace(/\r\n/g, '\n');
+    return {
+        schema_version: 1,
+        status: entry.status,
+        mode: entry.mode,
+        object_id_sha256: stringSha256(`${salt}:object:${entry.status}:${entry.mode}:${entry.objectId}`),
+        content_sha256: blobText == null ? null : stringSha256(`${salt}:content:${entry.status}:${blobText}`),
+        line_fingerprint_sha256: normalizedLines == null
+            ? null
+            : stringSha256(`${salt}:lines:${entry.status}:${normalizedLines.split('\n').length}:${normalizedLines}`)
+    };
+}
+
+function buildStagedBaselineTrustEvidence(
+    repoRoot: string,
+    stagedFiles: string[]
+): StagedBaselineTrustEvidence | null {
+    const stagedEntries = getStagedIndexEntries(repoRoot, stagedFiles);
+    if (stagedEntries.size === 0) {
+        return null;
+    }
+    const salt = randomBytes(16).toString('hex');
+    const files: Record<string, StagedBaselineTrustFileEvidence> = {};
+    for (const entry of [...stagedEntries.values()].sort((left, right) => left.path.localeCompare(right.path))) {
+        files[entry.path] = buildStagedTrustFileEvidence(repoRoot, salt, entry);
+    }
+    return {
+        schema_version: 1,
+        salt,
+        files
+    };
+}
+
+function normalizeStagedTrustEvidence(
+    value: unknown,
+    allowedPaths: string[]
+): StagedBaselineTrustEvidence | null {
+    const evidence = toPlainRecord(value);
+    if (!evidence || evidence.schema_version !== 1) {
+        return null;
+    }
+    const salt = String(evidence.salt || '').trim();
+    const rawFiles = toPlainRecord(evidence.files);
+    if (!salt || !rawFiles) {
+        return null;
+    }
+    const allowedPathSet = new Set(allowedPaths);
+    const files: Record<string, StagedBaselineTrustFileEvidence> = {};
+    for (const [filePath, rawEntry] of Object.entries(rawFiles)) {
+        if (!allowedPathSet.has(filePath)) {
+            continue;
+        }
+        const entry = toPlainRecord(rawEntry);
+        if (!entry || entry.schema_version !== 1) {
+            continue;
+        }
+        files[filePath] = {
+            schema_version: 1,
+            status: entry.status === 'deleted' ? 'deleted' : 'present',
+            mode: String(entry.mode || '').trim(),
+            object_id_sha256: String(entry.object_id_sha256 || '').trim().toLowerCase() || null,
+            content_sha256: String(entry.content_sha256 || '').trim().toLowerCase() || null,
+            line_fingerprint_sha256: String(entry.line_fingerprint_sha256 || '').trim().toLowerCase() || null
+        };
+    }
+    return {
+        schema_version: 1,
+        salt,
+        files
+    };
+}
+
+function verifyStagedBaselineTrust(
+    repoRoot: string,
+    baseline: DirtyWorkspaceBaseline,
+    relevantBaselineFiles: string[]
+): { status: 'NOT_APPLICABLE' | 'PASS' | 'FAIL'; violations: string[] } {
+    const relevantFileSet = new Set(normalizeWorkspaceRelativePaths(repoRoot, relevantBaselineFiles));
+    const baselineStagedFiles = normalizeWorkspaceRelativePaths(repoRoot, [
+        ...(baseline.staged_files || []),
+        ...Object.keys(baseline.staged_trust?.files || {})
+    ]);
+    const baselineStagedRelevantFiles = baselineStagedFiles.filter((relativePath) => relevantFileSet.has(relativePath));
+    if (baselineStagedRelevantFiles.length === 0) {
+        return { status: 'NOT_APPLICABLE', violations: [] };
+    }
+    const evidence = baseline.staged_trust || null;
+    if (!evidence) {
+        return {
+            status: 'FAIL',
+            violations: [
+                `Missing staged dirty-baseline trust evidence for staged baseline files: ${baselineStagedRelevantFiles.join(', ')}.`
+            ]
+        };
+    }
+    const stagedEntries = getStagedIndexEntries(repoRoot, baselineStagedRelevantFiles);
+    const violations: string[] = [];
+    for (const relativePath of baselineStagedRelevantFiles) {
+        const entry = stagedEntries.get(relativePath);
+        if (!entry) {
+            violations.push(`Missing current staged index entry for staged baseline file '${relativePath}'.`);
+            continue;
+        }
+        const expected = evidence.files[relativePath];
+        if (!expected) {
+            violations.push(`Missing staged trust fingerprint for '${relativePath}'.`);
+            continue;
+        }
+        const actual = buildStagedTrustFileEvidence(repoRoot, evidence.salt, entry);
+        if (expected.status !== actual.status) {
+            violations.push(`Staged trust status mismatch for '${relativePath}'.`);
+        }
+        if (expected.mode !== actual.mode) {
+            violations.push(`Staged trust mode mismatch for '${relativePath}'.`);
+        }
+        if (!expected.object_id_sha256 || expected.object_id_sha256 !== actual.object_id_sha256) {
+            violations.push(`Staged trust object fingerprint mismatch for '${relativePath}'.`);
+        }
+        if (!expected.content_sha256 || expected.content_sha256 !== actual.content_sha256) {
+            violations.push(`Staged trust content fingerprint mismatch for '${relativePath}'.`);
+        }
+        if (!expected.line_fingerprint_sha256 || expected.line_fingerprint_sha256 !== actual.line_fingerprint_sha256) {
+            violations.push(`Staged trust line fingerprint mismatch for '${relativePath}'.`);
+        }
+    }
+    return {
+        status: violations.length > 0 ? 'FAIL' : 'PASS',
+        violations
+    };
+}
+
 function collectExplicitlyAuthorizedDirtyPaths(
     repoRoot: string,
     changedFiles: string[],
@@ -258,7 +624,9 @@ export function captureDirtyWorkspaceBaseline(
             changed_files_sha256: stringSha256(''),
             scope_sha256: null,
             file_hashes: {},
-            entry_authorized_files: []
+            entry_authorized_files: [],
+            staged_files: [],
+            staged_trust: null
         };
     }
     const snapshotChangedFiles = normalizeWorkspaceRelativePaths(repoRoot, snapshot.changed_files);
@@ -269,6 +637,7 @@ export function captureDirtyWorkspaceBaseline(
     const changedFileSet = new Set(changedFiles);
     const entryAuthorizedFiles = normalizeWorkspaceRelativePaths(repoRoot, plannedChangedFiles)
         .filter((relativePath) => changedFileSet.has(relativePath));
+    const stagedFiles = getStagedChangedFiles(repoRoot, changedFiles);
     return {
         detection_source: snapshot.detection_source,
         include_untracked: !!snapshot.include_untracked,
@@ -278,7 +647,9 @@ export function captureDirtyWorkspaceBaseline(
             ? snapshot.scope_sha256
             : stringSha256(`${snapshot.scope_sha256 || ''}|${changedFiles.join('\n')}`),
         file_hashes: buildFileHashMap(repoRoot, changedFiles),
-        entry_authorized_files: entryAuthorizedFiles
+        entry_authorized_files: entryAuthorizedFiles,
+        staged_files: stagedFiles,
+        staged_trust: buildStagedBaselineTrustEvidence(repoRoot, stagedFiles)
     };
 }
 
@@ -302,8 +673,53 @@ export function normalizeDirtyWorkspaceBaseline(value: unknown, repoRoot?: strin
         entry_authorized_files: (repoRoot
             ? normalizeWorkspaceRelativePaths(repoRoot, baseline.entry_authorized_files)
             : normalizeRelativePaths(baseline.entry_authorized_files))
-            .filter((relativePath) => changedFiles.includes(relativePath))
+            .filter((relativePath) => changedFiles.includes(relativePath)),
+        staged_files: (repoRoot
+            ? normalizeWorkspaceRelativePaths(repoRoot, baseline.staged_files)
+            : normalizeRelativePaths(baseline.staged_files))
+            .filter((relativePath) => changedFiles.includes(relativePath)),
+        staged_trust: normalizeStagedTrustEvidence(baseline.staged_trust, changedFiles)
     };
+}
+
+export function buildStagedBaselineTrustInputFingerprint(
+    baseline: DirtyWorkspaceBaseline | null,
+    repoRoot?: string
+): string | null {
+    const normalizedBaseline = normalizeDirtyWorkspaceBaseline(baseline, repoRoot);
+    if (!normalizedBaseline) {
+        return null;
+    }
+    const stagedFiles = [...new Set([
+        ...(normalizedBaseline.staged_files || []),
+        ...Object.keys(normalizedBaseline.staged_trust?.files || {})
+    ])].sort();
+    if (stagedFiles.length === 0 && !normalizedBaseline.staged_trust) {
+        return null;
+    }
+    const trustFiles = normalizedBaseline.staged_trust?.files || {};
+    return stringSha256(JSON.stringify({
+        schema_version: 1,
+        staged_files: stagedFiles,
+        staged_trust: normalizedBaseline.staged_trust
+            ? {
+                schema_version: normalizedBaseline.staged_trust.schema_version,
+                salt: normalizedBaseline.staged_trust.salt,
+                files: Object.fromEntries(
+                    Object.entries(trustFiles)
+                        .sort(([left], [right]) => left.localeCompare(right))
+                        .map(([relativePath, evidence]) => [relativePath, {
+                            schema_version: evidence.schema_version,
+                            status: evidence.status,
+                            mode: evidence.mode,
+                            object_id_sha256: evidence.object_id_sha256,
+                            content_sha256: evidence.content_sha256,
+                            line_fingerprint_sha256: evidence.line_fingerprint_sha256
+                        }])
+                )
+            }
+            : null
+    })) || null;
 }
 
 export function deriveTaskOwnedDirtyWorkspaceScope(
@@ -336,6 +752,30 @@ export function deriveTaskOwnedDirtyWorkspaceScope(
         ...explicitlyAuthorizedPreexistingFiles
     ])].sort();
     const currentFileHashes = buildFileHashMap(repoRoot, candidateFiles);
+    const relevantStagedBaselineFiles = normalizedBaseline.changed_files.filter((relativePath) => (
+        currentFileSet.has(relativePath)
+            || explicitlyAuthorizedPreexistingSet.has(relativePath)
+            || stagedRenameSourceSet.has(relativePath)
+    ));
+    const stagedTrust = options.useStaged === true
+        ? verifyStagedBaselineTrust(repoRoot, normalizedBaseline, relevantStagedBaselineFiles)
+        : { status: 'NOT_APPLICABLE' as const, violations: [] };
+    if (stagedTrust.status === 'FAIL') {
+        return {
+            owned_files: [],
+            owned_files_sha256: stringSha256(''),
+            owned_preexisting_files: [],
+            owned_new_files: [],
+            explicitly_selected_preexisting_files: [],
+            delta_changed_preexisting_files: [],
+            untouched_preexisting_files: normalizedBaseline.changed_files,
+            explicitly_authorized_preexisting_files: explicitlyAuthorizedPreexistingFiles,
+            baseline_file_hashes: normalizeFileHashRecord(normalizedBaseline.file_hashes, normalizedBaseline.changed_files),
+            current_file_hashes: currentFileHashes,
+            staged_baseline_trust_status: 'FAIL',
+            staged_baseline_trust_violations: stagedTrust.violations
+        };
+    }
     const deltaChangedPreexistingFiles = normalizedBaseline.changed_files.filter((relativePath) => {
         if (
             !currentFileSet.has(relativePath)
@@ -374,7 +814,9 @@ export function deriveTaskOwnedDirtyWorkspaceScope(
             .filter((relativePath) => !ownedPreexistingSet.has(relativePath)),
         explicitly_authorized_preexisting_files: explicitlyAuthorizedPreexistingFiles,
         baseline_file_hashes: normalizeFileHashRecord(normalizedBaseline.file_hashes, normalizedBaseline.changed_files),
-        current_file_hashes: currentFileHashes
+        current_file_hashes: currentFileHashes,
+        staged_baseline_trust_status: stagedTrust.status,
+        staged_baseline_trust_violations: stagedTrust.violations
     };
 }
 

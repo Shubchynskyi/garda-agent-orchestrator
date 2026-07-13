@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
+    buildStagedBaselineTrustInputFingerprint,
     captureDirtyWorkspaceBaseline,
     detectProtectedDirtyWorkspaceDrift,
     deriveProtectedDirtyWorkspaceScope,
@@ -18,6 +19,13 @@ import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate
 
 function runGit(repoRoot: string, args: string[]): void {
     execFileSync('git', ['-C', repoRoot, ...args], {
+        encoding: 'utf8',
+        stdio: 'pipe'
+    });
+}
+
+function readGit(repoRoot: string, args: string[]): string {
+    return execFileSync('git', ['-C', repoRoot, ...args], {
         encoding: 'utf8',
         stdio: 'pipe'
     });
@@ -221,6 +229,268 @@ describe('gates/workspace/dirty-worktree-protection', () => {
             ]);
             assert.deepEqual(taskOwnedScope.delta_changed_preexisting_files, ['src/renamed-source.ts']);
             assert.deepEqual(taskOwnedScope.untouched_preexisting_files, []);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('authenticates a valid staged dirty baseline without exposing raw staged object ids or content', () => {
+        const repoRoot = createBaselineRepo();
+        try {
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "staged baseline";\n');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            const rawStagedIndex = readGit(repoRoot, ['ls-files', '-s', '--', 'src/app.ts']);
+            const rawObjectId = rawStagedIndex.trim().split(/\s+/)[1];
+            const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+
+            assert.deepEqual(baseline.staged_files, ['src/app.ts']);
+            assert.ok(baseline.staged_trust?.files['src/app.ts']);
+            const serializedTrust = JSON.stringify(baseline.staged_trust);
+            assert.ok(rawObjectId);
+            assert.equal(serializedTrust.includes(rawObjectId), false);
+            assert.equal(serializedTrust.includes('staged baseline'), false);
+
+            const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+            const taskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+                repoRoot,
+                baseline,
+                stagedSnapshot.changed_files,
+                { isExplicitTaskScope: true, useStaged: true }
+            );
+
+            assert.ok(taskOwnedScope);
+            assert.equal(taskOwnedScope.staged_baseline_trust_status, 'PASS');
+            assert.deepEqual(taskOwnedScope.staged_baseline_trust_violations, []);
+            assert.deepEqual(taskOwnedScope.owned_files, ['src/app.ts']);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('authenticates a valid staged deletion dirty baseline without requiring a live index blob', () => {
+        const repoRoot = createBaselineRepo();
+        try {
+            runGit(repoRoot, ['rm', 'src/recreated.ts']);
+            const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+
+            assert.deepEqual(baseline.staged_files, ['src/recreated.ts']);
+            assert.equal(baseline.staged_trust?.files['src/recreated.ts']?.status, 'deleted');
+            assert.ok(baseline.staged_trust?.files['src/recreated.ts']?.object_id_sha256);
+            assert.equal(JSON.stringify(baseline.staged_trust).includes('export const recreated'), false);
+
+            const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+            const taskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+                repoRoot,
+                baseline,
+                stagedSnapshot.changed_files,
+                { isExplicitTaskScope: true, useStaged: true }
+            );
+
+            assert.ok(taskOwnedScope);
+            assert.equal(taskOwnedScope.staged_baseline_trust_status, 'PASS');
+            assert.deepEqual(taskOwnedScope.staged_baseline_trust_violations, []);
+            assert.deepEqual(taskOwnedScope.owned_files, ['src/recreated.ts']);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('fingerprints staged trust inputs so scoped caches invalidate when evidence changes', () => {
+        const repoRoot = createBaselineRepo();
+        try {
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "staged baseline";\n');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+
+            const initialFingerprint = buildStagedBaselineTrustInputFingerprint(baseline, repoRoot);
+            assert.match(String(initialFingerprint), /^[0-9a-f]{64}$/);
+
+            const changedSaltBaseline = JSON.parse(JSON.stringify(baseline));
+            changedSaltBaseline.staged_trust.salt = 'changed-salt';
+            assert.notEqual(
+                buildStagedBaselineTrustInputFingerprint(changedSaltBaseline, repoRoot),
+                initialFingerprint
+            );
+
+            const changedEvidenceBaseline = JSON.parse(JSON.stringify(baseline));
+            changedEvidenceBaseline.staged_trust.files['src/app.ts'].object_id_sha256 = '0'.repeat(64);
+            assert.notEqual(
+                buildStagedBaselineTrustInputFingerprint(changedEvidenceBaseline, repoRoot),
+                initialFingerprint
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects staged baseline ownership when staged trust evidence is missing', () => {
+        const repoRoot = createBaselineRepo();
+        try {
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "staged baseline";\n');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+            baseline.staged_trust = null;
+
+            const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+            const taskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+                repoRoot,
+                baseline,
+                stagedSnapshot.changed_files,
+                { isExplicitTaskScope: true, useStaged: true }
+            );
+
+            assert.ok(taskOwnedScope);
+            assert.equal(taskOwnedScope.staged_baseline_trust_status, 'FAIL');
+            assert.deepEqual(taskOwnedScope.owned_files, []);
+            assert.match(taskOwnedScope.staged_baseline_trust_violations.join(' '), /Missing staged dirty-baseline trust evidence/);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects staged baseline ownership when any required staged trust fingerprint is missing', () => {
+        const requiredFingerprintCases = [
+            {
+                field: 'object_id_sha256',
+                violation: /object fingerprint mismatch/
+            },
+            {
+                field: 'content_sha256',
+                violation: /content fingerprint mismatch/
+            },
+            {
+                field: 'line_fingerprint_sha256',
+                violation: /line fingerprint mismatch/
+            }
+        ] as const;
+
+        for (const { field, violation } of requiredFingerprintCases) {
+            const repoRoot = createBaselineRepo();
+            try {
+                writeFile(repoRoot, 'src/app.ts', 'export const app = "staged baseline";\n');
+                runGit(repoRoot, ['add', 'src/app.ts']);
+                const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+                const appTrust = baseline.staged_trust?.files['src/app.ts'];
+                assert.ok(appTrust);
+                delete (appTrust as Partial<Record<typeof field, string>>)[field];
+
+                const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+                const taskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+                    repoRoot,
+                    baseline,
+                    stagedSnapshot.changed_files,
+                    { isExplicitTaskScope: true, useStaged: true }
+                );
+
+                assert.ok(taskOwnedScope);
+                assert.equal(taskOwnedScope.staged_baseline_trust_status, 'FAIL');
+                assert.deepEqual(taskOwnedScope.owned_files, []);
+                assert.match(taskOwnedScope.staged_baseline_trust_violations.join(' '), violation);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        }
+    });
+
+    it('rejects forged staged object fingerprints before authorizing staged baseline ownership', () => {
+        const repoRoot = createBaselineRepo();
+        try {
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "staged baseline";\n');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+            const appTrust = baseline.staged_trust?.files['src/app.ts'];
+            assert.ok(appTrust);
+            appTrust.object_id_sha256 = '0'.repeat(64);
+
+            const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+            const taskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+                repoRoot,
+                baseline,
+                stagedSnapshot.changed_files,
+                { isExplicitTaskScope: true, useStaged: true }
+            );
+
+            assert.ok(taskOwnedScope);
+            assert.equal(taskOwnedScope.staged_baseline_trust_status, 'FAIL');
+            assert.deepEqual(taskOwnedScope.owned_files, []);
+            assert.match(taskOwnedScope.staged_baseline_trust_violations.join(' '), /object fingerprint mismatch/);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects staged trust evidence when its salt changes', () => {
+        const repoRoot = createBaselineRepo();
+        try {
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "staged baseline";\n');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+            assert.ok(baseline.staged_trust);
+            baseline.staged_trust.salt = 'changed-salt';
+
+            const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+            const taskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+                repoRoot,
+                baseline,
+                stagedSnapshot.changed_files,
+                { isExplicitTaskScope: true, useStaged: true }
+            );
+
+            assert.ok(taskOwnedScope);
+            assert.equal(taskOwnedScope.staged_baseline_trust_status, 'FAIL');
+            assert.deepEqual(taskOwnedScope.owned_files, []);
+            assert.match(taskOwnedScope.staged_baseline_trust_violations.join(' '), /fingerprint mismatch/);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps legacy non-staged dirty-baseline fallback behavior when staged trust is absent', () => {
+        const repoRoot = createBaselineRepo();
+        try {
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "dirty baseline";\n');
+            const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+            delete baseline.staged_trust;
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "task update";\n');
+
+            const taskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+                repoRoot,
+                baseline,
+                ['src/app.ts'],
+                { isExplicitTaskScope: true, useStaged: false }
+            );
+
+            assert.ok(taskOwnedScope);
+            assert.equal(taskOwnedScope.staged_baseline_trust_status, 'NOT_APPLICABLE');
+            assert.deepEqual(taskOwnedScope.staged_baseline_trust_violations, []);
+            assert.deepEqual(taskOwnedScope.owned_files, ['src/app.ts']);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('does not require staged trust for an unstaged dirty baseline later staged by task work', () => {
+        const repoRoot = createBaselineRepo();
+        try {
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "dirty baseline";\n');
+            const baseline = captureDirtyWorkspaceBaseline(repoRoot);
+            assert.deepEqual(baseline.staged_files, []);
+            assert.equal(baseline.staged_trust, null);
+
+            writeFile(repoRoot, 'src/app.ts', 'export const app = "task staged update";\n');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+            const taskOwnedScope = deriveTaskOwnedDirtyWorkspaceScope(
+                repoRoot,
+                baseline,
+                stagedSnapshot.changed_files,
+                { isExplicitTaskScope: true, useStaged: true }
+            );
+
+            assert.ok(taskOwnedScope);
+            assert.equal(taskOwnedScope.staged_baseline_trust_status, 'NOT_APPLICABLE');
+            assert.deepEqual(taskOwnedScope.staged_baseline_trust_violations, []);
+            assert.deepEqual(taskOwnedScope.owned_files, ['src/app.ts']);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

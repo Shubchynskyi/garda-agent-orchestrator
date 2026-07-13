@@ -38,6 +38,7 @@ import { buildDomainScopeFingerprints } from '../../../../gates/scope/domain-sco
 import { loadIsolationModeConfig } from '../../../../gates/isolation/isolation-mode';
 import { resolveIsolatedOrchestratorRoot, resolveGateExecutionPath } from '../../../../gates/isolation/isolation-sandbox';
 import {
+    buildStagedBaselineTrustInputFingerprint,
     deriveTaskOwnedDirtyWorkspaceScope,
     deriveProtectedDirtyWorkspaceScope,
     detectProtectedDirtyWorkspaceDrift
@@ -517,6 +518,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             result.triggers.dirty_workspace_task_owned_files = dirtyWorkspaceTaskOwnedScope.owned_files;
             result.triggers.dirty_workspace_task_owned_files_sha256 = dirtyWorkspaceTaskOwnedScope.owned_files_sha256;
             result.triggers.dirty_workspace_untouched_baseline_files = dirtyWorkspaceTaskOwnedScope.untouched_preexisting_files;
+            result.triggers.dirty_workspace_staged_baseline_trust_status =
+                dirtyWorkspaceTaskOwnedScope.staged_baseline_trust_status;
+            result.triggers.dirty_workspace_staged_baseline_trust_violations =
+                dirtyWorkspaceTaskOwnedScope.staged_baseline_trust_violations;
+            result.triggers.dirty_workspace_staged_baseline_trust_input_sha256 =
+                buildStagedBaselineTrustInputFingerprint(dirtyWorkspaceBaseline, repoRoot);
+            if (dirtyWorkspaceTaskOwnedScope.staged_baseline_trust_status === 'FAIL') {
+                preflightErrors.push(...dirtyWorkspaceTaskOwnedScope.staged_baseline_trust_violations);
+            }
         }
         preflightErrors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
         const workflowConfigChanges = getCurrentWorkflowConfigChanges(

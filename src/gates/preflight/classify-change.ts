@@ -162,6 +162,9 @@ export interface ClassifyChangeTriggers {
     dirty_workspace_task_owned_files?: string[];
     dirty_workspace_task_owned_files_sha256?: string | null;
     dirty_workspace_untouched_baseline_files?: string[];
+    dirty_workspace_staged_baseline_trust_status?: string;
+    dirty_workspace_staged_baseline_trust_violations?: string[];
+    dirty_workspace_staged_baseline_trust_input_sha256?: string | null;
     dirty_workspace_protected_files?: string[];
     dirty_workspace_protected_files_sha256?: string | null;
     dirty_workspace_protected_file_hashes?: Record<string, string | null>;

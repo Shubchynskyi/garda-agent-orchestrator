@@ -191,6 +191,66 @@ test('buildScopedDiff reads a split-checkpoint range instead of an empty clean w
     }
 });
 
+test('buildScopedDiff projects staged baseline trust triggers into scoped metadata', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-diff-staged-trust-'));
+    const repoRoot = path.join(tempDir, 'repo');
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+    const liveConfigRoot = path.join(orchestratorRoot, 'live', 'config');
+    const changedFilePath = path.join(repoRoot, 'src', 'app.ts');
+    const trustInputSha256 = sha256Text('staged trust input');
+    const expectedViolationsSha256 = sha256Text('staged trust violation');
+
+    try {
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.mkdirSync(liveConfigRoot, { recursive: true });
+        fs.mkdirSync(path.dirname(changedFilePath), { recursive: true });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
+        fs.writeFileSync(changedFilePath, 'export const value = 1;\n', 'utf8');
+        runGit(['-C', repoRoot, 'add', '.']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'initial']);
+        fs.writeFileSync(changedFilePath, 'export const value = 2;\n', 'utf8');
+
+        const preflightPath = path.join(reviewsRoot, 'T-966-3-preflight.json');
+        const pathsConfigPath = path.join(liveConfigRoot, 'paths.json');
+        const outputPath = path.join(reviewsRoot, 'T-966-3-security-scoped.diff');
+        const metadataPath = path.join(reviewsRoot, 'T-966-3-security-scoped.json');
+        fs.writeFileSync(preflightPath, JSON.stringify({
+            task_id: 'T-966-3',
+            detection_source: 'explicit_changed_files',
+            changed_files: ['src/app.ts'],
+            triggers: {
+                dirty_workspace_staged_baseline_trust_status: 'FAIL',
+                dirty_workspace_staged_baseline_trust_violations: ['staged trust violation'],
+                dirty_workspace_staged_baseline_trust_input_sha256: trustInputSha256
+            }
+        }, null, 2), 'utf8');
+        fs.writeFileSync(pathsConfigPath, JSON.stringify({
+            triggers: {
+                security: ['^src/']
+            }
+        }, null, 2), 'utf8');
+
+        const result = buildScopedDiff({
+            reviewType: 'security',
+            preflightPath,
+            pathsConfigPath,
+            outputPath,
+            metadataPath,
+            repoRoot
+        });
+
+        assert.equal(result.staged_baseline_trust_status, 'FAIL');
+        assert.equal(result.staged_baseline_trust_input_sha256, trustInputSha256);
+        assert.equal(result.staged_baseline_trust_violations_sha256, expectedViolationsSha256);
+        assert.equal(JSON.parse(fs.readFileSync(metadataPath, 'utf8')).staged_baseline_trust_input_sha256, trustInputSha256);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('buildScopedDiff fails fast when the metadata artifact is locked by a live writer', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-diff-locked-'));
     const repoRoot = path.join(tempDir, 'repo');

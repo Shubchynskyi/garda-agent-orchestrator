@@ -191,6 +191,100 @@ describe('gates/build-review-context scope safety and diff bounds', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('invalidates shared diff cache when staged baseline trust triggers change without file diff changes', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-staged-trust-cache-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            for (const ruleFile of getRulePack('code').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(path.join(repoRoot, 'src', 'trusted.ts'), 'export const trusted = "baseline";\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/trusted.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'trusted.ts'), 'export const trusted = "current";\n', 'utf8');
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-staged-trust-cache', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-staged-trust-cache-preflight.json');
+            const preflight = {
+                task_id: 'T-901-staged-trust-cache',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: ['src/trusted.ts'],
+                required_reviews: { code: true, refactor: true },
+                triggers: {
+                    runtime_changed: true,
+                    runtime_code_changed: true,
+                    dirty_workspace_staged_baseline_trust_status: 'PASS',
+                    dirty_workspace_staged_baseline_trust_violations: [],
+                    dirty_workspace_staged_baseline_trust_input_sha256: 'a'.repeat(64)
+                }
+            };
+            fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2), 'utf8');
+
+            const firstResult = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-code-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-code-review-context.json'),
+                repoRoot
+            });
+            assert.equal(firstResult.task_scope.diff.cached, false);
+            const cachedResult = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-code-scoped-2.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-code-review-context-2.json'),
+                repoRoot
+            });
+            assert.equal(cachedResult.task_scope.diff.cached, true);
+
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                ...preflight,
+                triggers: {
+                    ...preflight.triggers,
+                    dirty_workspace_staged_baseline_trust_status: 'FAIL',
+                    dirty_workspace_staged_baseline_trust_violations: ['Staged trust content fingerprint mismatch for \'src/trusted.ts\'.'],
+                    dirty_workspace_staged_baseline_trust_input_sha256: 'b'.repeat(64)
+                }
+            }, null, 2), 'utf8');
+            const refreshedResult = buildReviewContext({
+                reviewType: 'refactor',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-refactor-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-refactor-review-context.json'),
+                repoRoot
+            });
+
+            assert.equal(refreshedResult.task_scope.diff.cached, false);
+            assert.equal(
+                JSON.parse(fs.readFileSync(preflightPath, 'utf8')).triggers.dirty_workspace_staged_baseline_trust_status,
+                'FAIL'
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
         it('does not expand glob-looking changed files as git pathspecs', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-literal-pathspec-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
