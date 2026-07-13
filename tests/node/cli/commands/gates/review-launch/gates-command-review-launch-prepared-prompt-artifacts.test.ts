@@ -12,8 +12,85 @@ import {
     runCliWithCapturedOutput,
     seedPromptBoundReviewFixture
 } from './gates-command-review-launch-fixtures';
+import {
+    buildCopyPasteReviewerLaunchPrompt,
+    type ReviewerLaunchPromptOptions
+} from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
+
+function buildPromptOptions(executionProvider: string): ReviewerLaunchPromptOptions {
+    return {
+        repoRoot: 'D:/repo',
+        executionProvider,
+        taskId: 'T-provider-notice',
+        reviewType: 'code',
+        reviewContextSha256: '1'.repeat(64),
+        reviewTreeStateSha256: '2'.repeat(64),
+        rolePromptPath: 'D:/repo/role-prompt.md',
+        rolePromptSha256: '3'.repeat(64),
+        reviewerPromptPath: 'D:/repo/reviewer-prompt.md',
+        reviewerPromptSha256: '4'.repeat(64),
+        promptTemplatePath: 'D:/repo/prompt-template.md',
+        promptTemplateSha256: '5'.repeat(64),
+        outputTemplatePath: 'D:/repo/output-template.md',
+        outputTemplateSha256: '6'.repeat(64),
+        evidenceManifestPath: 'D:/repo/evidence-manifest.json',
+        evidenceManifestSha256: '7'.repeat(64),
+        reviewOutputPath: 'D:/repo/review-output.json'
+    };
+}
 
 describe('cli/commands/gates review launch prepared prompt artifacts', () => {
+    it('names ChatGPT Codex as the completeness checker for a Claude executor', () => {
+        const prompt = buildCopyPasteReviewerLaunchPrompt(buildPromptOptions('Claude'));
+        const notices = prompt.match(/The completeness of your review will be checked by [^.]+\./g) || [];
+
+        assert.deepEqual(notices, [
+            'The completeness of your review will be checked by ChatGPT Codex.'
+        ]);
+    });
+
+    it('names Claude as the completeness checker for non-Claude executors', () => {
+        for (const executionProvider of ['Codex', 'Gemini', 'Cursor']) {
+            const prompt = buildCopyPasteReviewerLaunchPrompt(buildPromptOptions(executionProvider));
+            const notices = prompt.match(/The completeness of your review will be checked by [^.]+\./g) || [];
+
+            assert.deepEqual(notices, [
+                'The completeness of your review will be checked by Claude.'
+            ], executionProvider);
+        }
+    });
+
+    it('prepare-reviewer-launch injects the executor-specific notice exactly once', async () => {
+        for (const [provider, expectedChecker] of [
+            ['Claude', 'ChatGPT Codex'],
+            ['Codex', 'Claude']
+        ] as const) {
+            const repoRoot = createTempRepo();
+            const taskId = `T-provider-notice-${provider.toLowerCase()}`;
+            const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId, provider });
+            const prepare = await runCliWithCapturedOutput([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+            ], { cwd: repoRoot });
+
+            assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
+            const artifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+            const prompt = String(artifact.copy_paste_reviewer_launch_prompt || '');
+            const notices = prompt.match(/The completeness of your review will be checked by [^.]+\./g) || [];
+            assert.deepEqual(notices, [
+                `The completeness of your review will be checked by ${expectedChecker}.`
+            ]);
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('prepare-reviewer-launch rejects stale reviewer prompt artifacts', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-265-stale-prompt-prepare';

@@ -287,6 +287,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath, reviewOutputAttemptSha256);
         const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
             repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+            executionProvider: providerLaunch.provider,
             taskId,
             reviewType,
             reviewContextSha256: contextSha256,
@@ -308,6 +309,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         const copyPasteReviewerLaunchPromptSha256 = stringSha256(copyPasteReviewerLaunchPrompt);
         const expectedReviewerLaunchInputArtifact = buildReviewerLaunchInputHandoffArtifact({
             repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+            executionProvider: providerLaunch.provider,
             taskId,
             reviewType,
             reviewerExecutionMode,
@@ -485,6 +487,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath, reviewOutputAttemptSha256);
     const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
         repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+        executionProvider: providerLaunch.provider,
         taskId,
         reviewType,
         reviewContextSha256: contextSha256,
@@ -646,6 +649,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     writeReviewArtifactJson(launchArtifactPath, preparedArtifactWithEvent);
     const reviewerLaunchInputArtifact = buildReviewerLaunchInputHandoffArtifact({
         repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+        executionProvider: providerLaunch.provider,
         taskId,
         reviewType,
         reviewerExecutionMode,

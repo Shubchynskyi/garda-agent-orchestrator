@@ -6,7 +6,10 @@ import {
     getSourceCliCommand,
     resolveBundleNameForTarget
 } from '../../../../core/constants';
-import { getProviderEntryById } from '../../../../core/provider-registry';
+import {
+    getProviderEntryById,
+    normalizeProviderId
+} from '../../../../core/provider-registry';
 import { isOrchestratorSourceCheckout, normalizePath } from '../../../../gates/shared/helpers';
 import {
     resolveReviewerHandoffArtifactBinding,
@@ -31,6 +34,7 @@ export interface ReviewerHandoffBindings {
 
 export interface ReviewerLaunchPromptOptions {
     repoRoot: string;
+    executionProvider?: string | null;
     taskId?: string | null;
     reviewType: string;
     reviewContextSha256?: string | null;
@@ -46,6 +50,13 @@ export interface ReviewerLaunchPromptOptions {
     evidenceManifestPath: string;
     evidenceManifestSha256: string;
     reviewOutputPath: string;
+}
+
+export function buildReviewerCompletenessCheckNotice(executionProvider: unknown): string {
+    const checkingProvider = normalizeProviderId(executionProvider) === 'Claude'
+        ? 'ChatGPT Codex'
+        : 'Claude';
+    return `The completeness of your review will be checked by ${checkingProvider}.`;
 }
 
 export interface ReviewerLaunchInputHandoffArtifactOptions extends ReviewerLaunchPromptOptions {
@@ -232,6 +243,7 @@ export function resolveReviewerDraftOutputPath(
 export function buildCopyPasteReviewerLaunchPrompt(options: ReviewerLaunchPromptOptions): string {
     const lines = [
         `You are the delegated ${options.reviewType} reviewer for this Garda task.`,
+        buildReviewerCompletenessCheckNotice(options.executionProvider),
         `Repository: ${options.repoRoot}`
     ];
     if (options.rolePromptPath) {
