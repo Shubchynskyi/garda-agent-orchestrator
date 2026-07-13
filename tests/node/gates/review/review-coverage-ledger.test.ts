@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import {
     buildReviewCoverageContract,
     getReviewCoverageContractViolations,
+    resolveReviewCoverageEvidenceSnapshotCommit,
     validateReviewCoverageLedger
 } from '../../../../src/gates/review/review-coverage-ledger';
 
@@ -120,6 +121,51 @@ test('validateReviewCoverageLedger rejects missing, duplicate, generic, and unkn
     assert.ok(result.violations.some((entry) => entry.includes('generic evidence')));
 });
 
+test('validateReviewCoverageLedger rejects mixed valid and malformed evidence members', () => {
+    const contract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/example.ts'],
+        categoryIds: []
+    });
+    const lines = contract.obligations.map((obligation) => ledgerLine(
+        obligation.id,
+        'src/example.ts:1',
+        `Concrete ${obligation.kind} evidence covers malformed-member validation`
+    ));
+    const output = buildReviewOutput(lines).replace(
+        '"evidence":[{',
+        '"evidence":[null,42,[],{"location":1,"observation":"invalid"},{'
+    );
+
+    const result = validateReviewCoverageLedger(output, contract);
+
+    assert.equal(result.status, 'FAIL');
+    assert.ok(result.violations.some((entry) => entry.includes('malformed evidence member')));
+});
+
+test('validateReviewCoverageLedger rejects malformed finding_ids containers and members', () => {
+    const contract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/example.ts'],
+        categoryIds: []
+    });
+    const lines = contract.obligations.map((obligation) => ledgerLine(
+        obligation.id,
+        'src/example.ts:1',
+        `Concrete ${obligation.kind} evidence covers malformed finding identifier validation`
+    ));
+    const nonArray = buildReviewOutput(lines).replace('"finding_ids":[]', '"finding_ids":"F-001"');
+    const malformedMembers = buildReviewOutput(lines).replace('"finding_ids":[]', '"finding_ids":[null,"",42]');
+
+    const nonArrayResult = validateReviewCoverageLedger(nonArray, contract);
+    const malformedMembersResult = validateReviewCoverageLedger(malformedMembers, contract);
+
+    assert.equal(nonArrayResult.status, 'FAIL');
+    assert.ok(nonArrayResult.violations.some((entry) => entry.includes('must use a finding_ids array')));
+    assert.equal(malformedMembersResult.status, 'FAIL');
+    assert.ok(malformedMembersResult.violations.some((entry) => entry.includes('malformed finding_ids member')));
+});
+
 test('controlled multi-defect fixture cannot pass after only the first finding', () => {
     const base = buildReviewCoverageContract({
         reviewType: 'code',
@@ -221,6 +267,91 @@ test('validateReviewCoverageLedger accepts deleted-file evidence from the bound 
 
     assert.equal(result.status, 'PASS');
     fs.rmSync(repoRoot, { recursive: true, force: true });
+});
+
+test('validateReviewCoverageLedger accepts evidence from a committed deletion parent snapshot', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-coverage-committed-deletion-'));
+    fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'src', 'deleted.ts'), 'export const first = 1;\nexport const second = 2;\n', 'utf8');
+    execFileSync('git', ['init', '--quiet', '--object-format=sha256'], { cwd: repoRoot });
+    execFileSync('git', ['config', 'user.email', 'review-test@example.invalid'], { cwd: repoRoot });
+    execFileSync('git', ['config', 'user.name', 'Review Test'], { cwd: repoRoot });
+    execFileSync('git', ['add', 'src/deleted.ts'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: repoRoot });
+    const evidenceSnapshotCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repoRoot,
+        encoding: 'utf8'
+    }).trim();
+    assert.equal(evidenceSnapshotCommit.length, 64);
+    fs.rmSync(path.join(repoRoot, 'src', 'deleted.ts'));
+    execFileSync('git', ['add', '-u'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '--quiet', '-m', 'delete fixture'], { cwd: repoRoot });
+    fs.writeFileSync(
+        path.join(repoRoot, 'src', 'deleted.ts'),
+        'export const replacement = 1;\nexport const replacementSecond = 2;\nexport const staleThird = 3;\n',
+        'utf8'
+    );
+    execFileSync('git', ['add', 'src/deleted.ts'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '--quiet', '-m', 'recreate fixture'], { cwd: repoRoot });
+    fs.rmSync(path.join(repoRoot, 'src', 'deleted.ts'));
+    const contract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/deleted.ts'],
+        categoryIds: []
+    });
+    const lines = contract.obligations.map((obligation) => ledgerLine(
+        obligation.id,
+        'src/deleted.ts:2',
+        `Committed deletion ${obligation.kind} evidence checks the bound parent snapshot`
+    ));
+
+    const staleLines = lines.map((line) => line.replace('src/deleted.ts:2', 'src/deleted.ts:3'));
+    const unboundResult = validateReviewCoverageLedger(buildReviewOutput(staleLines), contract, { repoRoot });
+    const boundStaleResult = validateReviewCoverageLedger(buildReviewOutput(staleLines), contract, {
+        repoRoot,
+        evidenceSnapshotCommit
+    });
+    const result = validateReviewCoverageLedger(buildReviewOutput(lines), contract, {
+        repoRoot,
+        evidenceSnapshotCommit
+    });
+
+    assert.equal(unboundResult.status, 'PASS');
+    assert.equal(boundStaleResult.status, 'FAIL');
+    assert.ok(boundStaleResult.violations.some((entry) => entry.includes('authenticated pre-change snapshot line count 2')));
+    assert.equal(result.status, 'PASS');
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+});
+
+test('authenticated snapshot binding is propagated through result, trust, and reuse consumers', () => {
+    const baseCommit = '1'.repeat(40);
+    const checkpointCommit = '2'.repeat(40);
+    assert.equal(resolveReviewCoverageEvidenceSnapshotCommit({
+        detection_source: `git_split_checkpoint:${baseCommit}:${checkpointCommit}`
+    }), baseCommit);
+
+    const consumers = [
+        {
+            path: 'src/cli/commands/gate-review-handlers/result/review-result-handlers.ts',
+            preflight: 'preflight'
+        },
+        {
+            path: 'src/gates/required-reviews/required-reviews-check-trust.ts',
+            preflight: 'preflightPayload'
+        },
+        {
+            path: 'src/gates/review-reuse/review-reuse-materialization.ts',
+            preflight: 'options.preflightPayload'
+        }
+    ];
+    for (const consumer of consumers) {
+        const source = fs.readFileSync(path.resolve(consumer.path), 'utf8');
+        assert.match(source, /evidenceSnapshotCommit:\s*resolveReviewCoverageEvidenceSnapshotCommit\(/u);
+        assert.ok(
+            source.includes(`resolveReviewCoverageEvidenceSnapshotCommit(${consumer.preflight})`),
+            `${consumer.path} must bind coverage validation to its authoritative preflight payload`
+        );
+    }
 });
 
 test('canonical evidence-only finding uses reserved ledger id without changing marker syntax', () => {

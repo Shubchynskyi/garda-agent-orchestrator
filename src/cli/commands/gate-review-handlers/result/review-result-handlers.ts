@@ -89,6 +89,7 @@ import {
 } from './review-receipt-validation';
 import { assertReviewLifecycleGuard } from '../../../../gates/review/review-lifecycle-guard';
 import {
+    resolveReviewCoverageEvidenceSnapshotCommit,
     validateReviewCoverageLedger,
     type ReviewCoverageContract,
     type ReviewCoverageValidationSummary
@@ -220,7 +221,10 @@ async function recordReviewReceiptFromArtifacts(options: {
         ? validateReviewCoverageLedger(
             reviewArtifactContent,
             parsedReviewContext.coverage_contract as ReviewCoverageContract,
-            { repoRoot: options.repoRoot }
+            {
+                repoRoot: options.repoRoot,
+                evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflight)
+            }
         )
         : null;
     if (coverageValidation && coverageValidation.status !== 'PASS') {

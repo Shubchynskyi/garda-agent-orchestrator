@@ -31,6 +31,7 @@ import {
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from '../review/reviewer-routing';
 import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
+    resolveReviewCoverageEvidenceSnapshotCommit,
     validateReviewCoverageLedger,
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
@@ -201,7 +202,10 @@ export function validateReviewArtifactGateEligibility(options: {
                 const coverageValidation = validateReviewCoverageLedger(
                     artifactContent,
                     reviewContext.coverage_contract as ReviewCoverageContract,
-                    { repoRoot: options.repoRoot || undefined }
+                    {
+                        repoRoot: options.repoRoot || undefined,
+                        evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
+                    }
                 );
                 if (coverageValidation.status !== 'PASS') {
                     errors.push(...coverageValidation.violations.map((violation) =>

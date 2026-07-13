@@ -8,6 +8,7 @@ import {
     getFindingsBySeverity
 } from '../completion/completion-verdict-markdown';
 import { normalizePath } from '../shared/helpers';
+import { parseSplitCheckpointDetectionSource } from '../split-required/split-checkpoint-scope';
 
 export type ReviewCoverageObligationKind = 'file' | 'boundary' | 'category';
 
@@ -38,6 +39,12 @@ export interface ReviewCoverageValidationSummary {
     unknown_obligation_ids: string[];
     finding_ids: string[];
     violations: string[];
+}
+
+export function resolveReviewCoverageEvidenceSnapshotCommit(
+    preflight: Record<string, unknown> | null | undefined
+): string | undefined {
+    return parseSplitCheckpointDetectionSource(preflight?.detection_source)?.base_commit;
 }
 
 interface ReviewCoverageEvidenceEntry {
@@ -214,6 +221,24 @@ function parseCoverageLedgerEntries(reviewContent: string): {
         }
         try {
             const parsed = JSON.parse(trimmed.slice(2)) as Record<string, unknown>;
+            const entryId = String(parsed.id || '').trim().toUpperCase();
+            const evidenceMembers = Array.isArray(parsed.evidence) ? parsed.evidence : [];
+            evidenceMembers.forEach((entry, index) => {
+                const isRecord = Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry);
+                const keys = isRecord ? Object.keys(entry as Record<string, unknown>).sort() : [];
+                if (
+                    !isRecord
+                    || keys.length !== 2
+                    || keys[0] !== 'location'
+                    || keys[1] !== 'observation'
+                    || typeof (entry as Record<string, unknown>).location !== 'string'
+                    || typeof (entry as Record<string, unknown>).observation !== 'string'
+                ) {
+                    violations.push(
+                        `Coverage ledger entry '${entryId || '<missing>'}' has malformed evidence member at index ${index}.`
+                    );
+                }
+            });
             const evidence = Array.isArray(parsed.evidence)
                 ? parsed.evidence
                     .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
@@ -222,9 +247,20 @@ function parseCoverageLedgerEntries(reviewContent: string): {
                         observation: String(entry.observation || '').trim()
                     }))
                 : [];
-            const findingIds = Array.isArray(parsed.finding_ids)
-                ? parsed.finding_ids.map((entry) => String(entry || '').trim().toUpperCase()).filter(Boolean)
-                : [];
+            const findingIdMembers = Array.isArray(parsed.finding_ids) ? parsed.finding_ids : [];
+            if (!Array.isArray(parsed.finding_ids)) {
+                violations.push(`Coverage ledger entry '${entryId || '<missing>'}' must use a finding_ids array.`);
+            }
+            findingIdMembers.forEach((entry, index) => {
+                if (typeof entry !== 'string' || !entry.trim()) {
+                    violations.push(
+                        `Coverage ledger entry '${entryId || '<missing>'}' has malformed finding_ids member at index ${index}.`
+                    );
+                }
+            });
+            const findingIds = findingIdMembers
+                .filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+                .map((entry) => entry.trim().toUpperCase());
             const result = parsed.result === 'finding' || parsed.result === 'no-finding'
                 ? parsed.result
                 : null;
@@ -234,7 +270,7 @@ function parseCoverageLedgerEntries(reviewContent: string): {
                 );
             }
             entries.push({
-                id: String(parsed.id || '').trim().toUpperCase(),
+                id: entryId,
                 evidence,
                 result,
                 finding_ids: findingIds
@@ -298,7 +334,7 @@ function collectFindingIds(reviewContent: string): { ids: string[]; violations: 
 export function validateReviewCoverageLedger(
     reviewContent: string,
     contract: ReviewCoverageContract,
-    options: { repoRoot?: string } = {}
+    options: { repoRoot?: string; evidenceSnapshotCommit?: string } = {}
 ): ReviewCoverageValidationSummary {
     if (!contract?.required) {
         return {
@@ -336,7 +372,7 @@ export function validateReviewCoverageLedger(
     omittedObligationIds.forEach((id) => violations.push(`Coverage obligation '${id}' is omitted.`));
 
     const changedFiles = contract.obligations.filter((entry) => entry.kind === 'file').map((entry) => entry.target);
-    const lineCountCache = new Map<string, { count: number; source: 'current' | 'head' } | null>();
+    const lineCountCache = new Map<string, { count: number; source: 'current' | 'head' | 'bound-snapshot' } | null>();
     const countLines = (content: string): number => {
         const lines = content.replace(/\r\n?/gu, '\n').split('\n');
         if (lines.at(-1) === '') {
@@ -346,7 +382,7 @@ export function validateReviewCoverageLedger(
     };
     const getChangedFileLineCount = (
         filePath: string
-    ): { count: number; source: 'current' | 'head' } | null => {
+    ): { count: number; source: 'current' | 'head' | 'bound-snapshot' } | null => {
         if (!options.repoRoot) {
             return null;
         }
@@ -366,12 +402,21 @@ export function validateReviewCoverageLedger(
             return result;
         } catch {
             try {
-                const previousContent = execFileSync('git', ['show', `HEAD:${filePath}`], {
-                    cwd: repoRoot,
-                    encoding: 'utf8',
-                    stdio: ['ignore', 'pipe', 'ignore']
-                });
-                const result = { count: countLines(previousContent), source: 'head' as const };
+                const evidenceSnapshotCommit = String(options.evidenceSnapshotCommit || '').trim();
+                const hasBoundSnapshot = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(evidenceSnapshotCommit);
+                const snapshotContent = execFileSync(
+                    'git',
+                    ['show', `${hasBoundSnapshot ? evidenceSnapshotCommit : 'HEAD'}:${filePath}`],
+                    {
+                        cwd: repoRoot,
+                        encoding: 'utf8',
+                        stdio: ['ignore', 'pipe', 'ignore']
+                    }
+                );
+                const result = {
+                    count: countLines(snapshotContent),
+                    source: hasBoundSnapshot ? 'bound-snapshot' as const : 'head' as const
+                };
                 lineCountCache.set(filePath, result);
                 return result;
             } catch {
@@ -408,7 +453,11 @@ export function validateReviewCoverageLedger(
                 } else if (location.line > lineEvidence.count) {
                     violations.push(
                         `Coverage obligation '${entry.id}' evidence location '${evidence.location}' exceeds ` +
-                        `${lineEvidence.source === 'head' ? 'deleted-file HEAD snapshot' : 'current file'} line count ${lineEvidence.count}.`
+                        `${lineEvidence.source === 'head'
+                            ? 'deleted-file HEAD snapshot'
+                            : lineEvidence.source === 'bound-snapshot'
+                            ? 'authenticated pre-change snapshot'
+                            : 'current file'} line count ${lineEvidence.count}.`
                     );
                 }
             }

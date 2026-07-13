@@ -24,6 +24,7 @@ import {
 import type { HistoricalReviewReuseCandidate } from './review-reuse-validation';
 import {
     getReviewCoverageContractViolations,
+    resolveReviewCoverageEvidenceSnapshotCommit,
     validateReviewCoverageLedger,
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
@@ -95,7 +96,10 @@ export async function materializeReusedReviewEvidence(
         const reviewCoverage = validateReviewCoverageLedger(
             options.artifactText,
             currentReviewContext.coverage_contract as ReviewCoverageContract,
-            { repoRoot: options.repoRoot }
+            {
+                repoRoot: options.repoRoot,
+                evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(options.preflightPayload)
+            }
         );
         if (reviewCoverage.status !== 'PASS') {
             return {
