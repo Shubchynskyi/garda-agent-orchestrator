@@ -748,6 +748,49 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.deepEqual(getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight), ['src/app.ts']);
     });
 
+    it('keeps valid in-root dirty-baseline files usable after alias normalization', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        const changedContent = 'export const owned = true;\n';
+        const changedPath = 'src/owned.ts';
+        const traversalAlias = 'src/../src/owned.ts';
+        const absoluteAlias = path.join(repoRoot, changedPath);
+        fs.writeFileSync(path.join(repoRoot, changedPath), changedContent, 'utf8');
+
+        const ownedHash = sha256Text(changedContent);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [changedPath]
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.changed_files = [changedPath];
+        preflight.triggers = {
+            dirty_workspace_protected_files: [traversalAlias, absoluteAlias, changedPath],
+            dirty_workspace_protected_file_hashes: {
+                [traversalAlias]: ownedHash,
+                [absoluteAlias]: ownedHash,
+                [changedPath]: ownedHash
+            },
+            dirty_workspace_baseline_changed_files: [traversalAlias, absoluteAlias, changedPath]
+        };
+        const taskMode = {
+            orchestrator_work: true,
+            dirty_workspace_baseline: {
+                changed_files: [traversalAlias, absoluteAlias, changedPath],
+                file_hashes: {
+                    [traversalAlias]: ownedHash,
+                    [absoluteAlias]: ownedHash,
+                    [changedPath]: ownedHash
+                }
+            }
+        };
+
+        assert.deepEqual(getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode), [changedPath]);
+        assert.deepEqual(getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode), {
+            [changedPath]: ownedHash
+        });
+        assert.deepEqual(getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight), [changedPath]);
+    });
+
     it('keeps planned-scope readiness waiting until the planned source diff materializes', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
