@@ -689,6 +689,75 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.equal(splitCheckpointScope.violation, null);
             assert.equal(splitCheckpointScope.scope?.base_commit, baseCommit);
             assert.equal(splitCheckpointScope.scope?.checkpoint_commit, checkpointCommit);
+            const directTaskQueue = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                `| T-901-checkpoint | DECOMPOSED | P1 | workflow | Root | gpt-5 | 2026-07-12 | balanced | Split checkpoint \`${checkpointCommit}\` preserves parent work. Child tasks: \`T-901-checkpoint-1\`. |`,
+                `| T-901-checkpoint-1 | DECOMPOSED | P1 | workflow | Parent | gpt-5 | 2026-07-12 | balanced | Split checkpoint \`${checkpointCommit}\` preserves inherited work. Child tasks: \`T-901-checkpoint-1-1\`. |`,
+                `| T-901-checkpoint-1-1 | TODO | P1 | workflow | Child | gpt-5 | 2026-07-12 | balanced | Checkpoint: \`${checkpointCommit}\`. Checkpoint files: \`src/app.ts\`. |`
+            ].join('\n'), 'utf8');
+            const nestedScope = resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1');
+            assert.equal(nestedScope.violation, null);
+            assert.equal(nestedScope.scope?.parent_task_id, 'T-901-checkpoint-1');
+            assert.equal(nestedScope.scope?.checkpoint_commit, checkpointCommit);
+            const writeNestedQueue = (rootStatus: string, rootNotes: string, parentNotes: string) => {
+                fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    `| T-901-checkpoint | ${rootStatus} | P1 | workflow | Root | gpt-5 | 2026-07-12 | balanced | ${rootNotes} |`,
+                    `| T-901-checkpoint-1 | DECOMPOSED | P1 | workflow | Parent | gpt-5 | 2026-07-12 | balanced | ${parentNotes} |`,
+                    `| T-901-checkpoint-1-1 | TODO | P1 | workflow | Child | gpt-5 | 2026-07-12 | balanced | Checkpoint: \`${checkpointCommit}\`. Checkpoint files: \`src/app.ts\`. |`
+                ].join('\n'), 'utf8');
+            };
+            const validRootNotes = `Split checkpoint \`${checkpointCommit}\` preserves parent work. Child tasks: \`T-901-checkpoint-1\`.`;
+            const validParentNotes = `Split checkpoint \`${checkpointCommit}\` preserves inherited work. Child tasks: \`T-901-checkpoint-1-1\`.`;
+            writeNestedQueue('TODO', validRootNotes, validParentNotes);
+            assert.match(String(resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1').violation), /subject must be/);
+            writeNestedQueue('DONE', validRootNotes, validParentNotes);
+            assert.match(String(resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1').violation), /subject must be/);
+            writeNestedQueue('DECOMPOSED', `Split checkpoint \`${checkpointCommit}\` preserves parent work.`, validParentNotes);
+            assert.match(String(resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1').violation), /subject must be/);
+            writeNestedQueue(
+                'DECOMPOSED',
+                `Split checkpoint \`${checkpointCommit}\` preserves parent work. T-901-checkpoint-1 is not a child. Child tasks: \`T-901-other\`.`,
+                validParentNotes
+            );
+            assert.match(String(resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1').violation), /subject must be/);
+            writeNestedQueue(
+                'DECOMPOSED',
+                validRootNotes,
+                `Split checkpoint \`${baseCommit}\` preserves inherited work. Child tasks: \`T-901-checkpoint-1-1\`.`
+            );
+            assert.match(String(resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1').violation), /not bound to parent task/);
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                `| T-901-checkpoint-1 | DECOMPOSED | P1 | workflow | Parent | gpt-5 | 2026-07-12 | balanced | ${validParentNotes} |`,
+                `| T-901-checkpoint-1-1 | TODO | P1 | workflow | Child | gpt-5 | 2026-07-12 | balanced | Checkpoint: \`${checkpointCommit}\`. Checkpoint files: \`src/app.ts\`. |`
+            ].join('\n'), 'utf8');
+            assert.match(String(resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1').violation), /subject must be/);
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                `| T-901-checkpoint | DECOMPOSED | P1 | workflow | Root | gpt-5 | 2026-07-12 | balanced | ${validRootNotes} |`,
+                `| T-901-checkpoint-1-1 | DECOMPOSED | P1 | workflow | Parent | gpt-5 | 2026-07-12 | balanced | Split checkpoint \`${checkpointCommit}\` preserves inherited work. Child tasks: \`T-901-checkpoint-1-1-1\`. |`,
+                `| T-901-checkpoint-1-1-1 | TODO | P1 | workflow | Child | gpt-5 | 2026-07-12 | balanced | Checkpoint: \`${checkpointCommit}\`. Checkpoint files: \`src/app.ts\`. |`
+            ].join('\n'), 'utf8');
+            assert.match(String(resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1-1').violation), /subject must be/);
+            writeNestedQueue(
+                'DECOMPOSED',
+                `Split checkpoint \`${checkpointCommit}\` preserves parent work. Child tasks: \`T-901-checkpoint\`.`,
+                validParentNotes
+            );
+            assert.match(String(resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1').violation), /subject must be/);
+            writeNestedQueue(
+                'DECOMPOSED',
+                `Split checkpoint \`${baseCommit}\` preserves parent work. Child tasks: \`T-901-checkpoint-1\`.`,
+                validParentNotes
+            );
+            assert.match(String(resolveSplitCheckpointTaskScope(repoRoot, 'T-901-checkpoint-1-1').violation), /subject must be/);
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), directTaskQueue, 'utf8');
             const detectionSource = String(splitCheckpointScope.scope?.detection_source || '');
             const snapshot = getWorkspaceSnapshot(repoRoot, detectionSource, false, ['src/app.ts']);
             const preflightPath = path.join(reviewsRoot, 'T-901-checkpoint-1-preflight.json');

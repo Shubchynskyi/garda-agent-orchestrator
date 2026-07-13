@@ -207,6 +207,15 @@ function deriveParentTaskId(taskId: string): string | null {
     return parts.slice(0, -1).join('-');
 }
 
+function explicitlyLinksChild(notes: string, childTaskId: string): boolean {
+    const childList = /\bchild tasks\s*:\s*([^.]*)/iu.exec(notes);
+    if (!childList) {
+        return false;
+    }
+    return [...String(childList[1] || '').matchAll(/`([^`]+)`/gu)]
+        .some((entry) => String(entry[1] || '').trim() === childTaskId);
+}
+
 function parseCommitHash(notes: string, pattern: RegExp): string | null {
     const match = pattern.exec(notes);
     return match ? String(match[1] || '').trim().toLowerCase() || null : null;
@@ -478,7 +487,7 @@ export function resolveSplitCheckpointTaskScope(repoRoot: string, taskId: string
             violation: `Task '${taskId}' can use split checkpoint evidence only as a linked child of a DECOMPOSED parent task.`
         };
     }
-    if (!String(parentTask.notes || '').includes(`\`${taskId}\``)) {
+    if (!explicitlyLinksChild(String(parentTask.notes || ''), taskId)) {
         return {
             scope: null,
             violation: `Parent task '${parentTaskId}' does not explicitly link split-checkpoint child '${taskId}'.`
@@ -528,7 +537,33 @@ export function resolveSplitCheckpointTaskScope(repoRoot: string, taskId: string
             ['show', '-s', '--format=%s', canonicalCheckpointCommit],
             'Split checkpoint validation'
         ).trim();
-        const expectedSubject = `checkpoint(split): preserve ${parentTaskId} dirty diff before decomposition`;
+        let checkpointOwnerTaskId = parentTaskId;
+        let expectedSubject = `checkpoint(split): preserve ${checkpointOwnerTaskId} dirty diff before decomposition`;
+        while (subject !== expectedSubject) {
+            const ancestorTaskId = deriveParentTaskId(checkpointOwnerTaskId);
+            const ancestorTask = ancestorTaskId ? taskEntries.get(ancestorTaskId) : null;
+            if (
+                !ancestorTaskId
+                || !ancestorTask
+                || !isTaskQueueDecomposedStatus(ancestorTask.status)
+                || !explicitlyLinksChild(String(ancestorTask.notes || ''), checkpointOwnerTaskId)
+            ) {
+                break;
+            }
+            const ancestorCheckpointCommit = parseCommitHash(
+                String(ancestorTask.notes || ''),
+                PARENT_CHECKPOINT_COMMIT_PATTERN
+            );
+            if (!ancestorCheckpointCommit || resolveCanonicalCommitObjectId(
+                repoRoot,
+                ancestorCheckpointCommit,
+                'Split checkpoint validation'
+            ) !== canonicalCheckpointCommit) {
+                break;
+            }
+            checkpointOwnerTaskId = ancestorTaskId;
+            expectedSubject = `checkpoint(split): preserve ${checkpointOwnerTaskId} dirty diff before decomposition`;
+        }
         if (subject !== expectedSubject) {
             return {
                 scope: null,
