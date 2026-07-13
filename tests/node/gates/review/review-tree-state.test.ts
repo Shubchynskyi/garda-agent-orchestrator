@@ -25,6 +25,15 @@ function runGit(repoRoot: string, args: string[]): void {
     assert.equal(result.status, 0, String(result.stderr || result.error || 'git command failed'));
 }
 
+function readGitRepositoryState(repoRoot: string) {
+    return {
+        head: childProcess.execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim(),
+        status: childProcess.execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot, encoding: 'utf8' }).trimEnd(),
+        indexDiff: childProcess.execFileSync('git', ['diff', '--cached', '--name-status'], { cwd: repoRoot, encoding: 'utf8' }).trimEnd(),
+        worktreeDiff: childProcess.execFileSync('git', ['diff', '--name-status'], { cwd: repoRoot, encoding: 'utf8' }).trimEnd()
+    };
+}
+
 function findTreeEntry(treeState: ReturnType<typeof buildReviewTreeState>, filePath: string) {
     const entry = treeState.entries.find((candidate) => candidate.path === filePath);
     assert.ok(entry, `expected tree-state entry for ${filePath}`);
@@ -187,6 +196,7 @@ describe('gates/review-tree-state', () => {
             runGit(repoRoot, ['commit', '-m', 'checkpoint']);
             const checkpointCommit = childProcess.execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
             const detectionSource = `git_split_checkpoint:${baseCommit}:${checkpointCommit}`;
+            const beforeValidationState = readGitRepositoryState(repoRoot);
             const snapshot = getWorkspaceSnapshot(repoRoot, detectionSource, false, ['src/app.ts']);
             const treeState = buildReviewTreeState({ repoRoot, detectionSource, includeUntracked: false, changedFiles: snapshot.changed_files, metrics: snapshot });
             assert.doesNotThrow(() => assertReviewTreeStateFresh({
@@ -195,6 +205,7 @@ describe('gates/review-tree-state', () => {
                 contextPath: path.join(repoRoot, 'runtime', 'reviews', 'T-1-code-review-context.json'),
                 gateName: 'record-review-routing'
             }));
+            assert.deepEqual(readGitRepositoryState(repoRoot), beforeValidationState);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
