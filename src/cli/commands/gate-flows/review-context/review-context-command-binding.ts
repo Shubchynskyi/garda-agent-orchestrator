@@ -113,6 +113,7 @@ export interface BuildReviewContextCommandOptions {
     scopedDiffMetadataPath?: unknown;
     outputPath?: unknown;
     repoRoot?: unknown;
+    focusedRequiredTestPath?: unknown;
     reviewReuseBlockedReason?: unknown;
     remediationPreservedScopeMismatchReason?: unknown;
     ruleContextSectionsCache?: Map<string, ReviewContextSectionsResult> | null;
@@ -136,6 +137,7 @@ export interface ResolvedBuildReviewContextCommandInputs {
     tokenEconomyConfigPath: string;
     outputPath: string;
     scopedDiffMetadataPath: string;
+    focusedRequiredTestPath: string | null;
     reviewReuseBlockedReason: string;
 }
 
@@ -205,6 +207,8 @@ export function resolveBuildReviewContextCommandInputs(
         reviewType,
         repoRoot
     );
+    const focusedRequiredTestPath = gateHelpers.normalizePath(String(options.focusedRequiredTestPath || '').trim())
+        .replace(/^\.\/?/u, '') || null;
 
     return {
         repoRoot,
@@ -221,6 +225,7 @@ export function resolveBuildReviewContextCommandInputs(
         tokenEconomyConfigPath,
         outputPath,
         scopedDiffMetadataPath,
+        focusedRequiredTestPath,
         reviewReuseBlockedReason: String(options.reviewReuseBlockedReason || '').trim()
     };
 }

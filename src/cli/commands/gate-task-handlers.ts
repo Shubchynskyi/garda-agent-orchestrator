@@ -438,6 +438,9 @@ export async function handleRunIntermediateCommand(gateArgv: string[]): Promise<
         '--artifact-path': { key: 'artifactPath', type: 'string' },
         '--output-path': { key: 'outputPath', type: 'string' },
         '--timeout-ms': { key: 'timeoutMs', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--preflight-sha256': { key: 'preflightSha256', type: 'string' },
+        '--coverage-contract-sha256': { key: 'coverageContractSha256', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' },
         '--events-root': { key: 'eventsRoot', type: 'string' }
     };

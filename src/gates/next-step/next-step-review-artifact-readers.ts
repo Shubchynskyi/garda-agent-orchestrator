@@ -31,6 +31,7 @@ import {
 } from '../review/review-trust-summary';
 import {
     jsonReviewFindingsArtifactHasActiveFindings,
+    jsonReviewFindingsArtifactContainsOnlyMissingFocusedValidation,
     resolveReviewFindingsArtifactVerdictToken,
     validateJsonReviewFindingsArtifact
 } from '../review/review-findings-artifact-verdict';
@@ -279,9 +280,17 @@ export function readReviewArtifactState(
         } else if (jsonFindingsArtifact.report && jsonArtifactHasActiveFindings) {
             verdictToken = failToken || null;
             failed = true;
-            violations.push(
-                `review artifact contains active findings in findings JSON; fix implementation and rerun compile plus '${reviewType}' review before launching dependent reviews`
-            );
+            if (jsonReviewFindingsArtifactContainsOnlyMissingFocusedValidation(jsonFindingsArtifact.report)) {
+                failureKind = 'missing-focused-validation-evidence';
+                failureReason = 'missing auditable focused validation evidence';
+                violations.push(
+                    `review artifact contains active findings in findings JSON for missing focused validation evidence (${failureReason}); preserve the failed artifact and use current task-owned focused validation evidence without fake implementation changes`
+                );
+            } else {
+                violations.push(
+                    `review artifact contains active findings in findings JSON; fix implementation and rerun compile plus '${reviewType}' review before launching dependent reviews`
+                );
+            }
         } else if (jsonFindingsArtifact.report) {
             verdictToken = passToken || null;
         } else if (failToken && parsedVerdictToken === failToken) {

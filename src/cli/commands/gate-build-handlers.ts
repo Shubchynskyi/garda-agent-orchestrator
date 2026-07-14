@@ -171,6 +171,7 @@ export async function handleBuildReviewContext(gateArgv: string[]): Promise<void
         '--token-economy-config-path': { key: 'tokenEconomyConfigPath', type: 'string' },
         '--scoped-diff-metadata-path': { key: 'scopedDiffMetadataPath', type: 'string' },
         '--output-path': { key: 'outputPath', type: 'string' },
+        '--focused-required-test-path': { key: 'focusedRequiredTestPath', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
     const { options: rawOptions } = parseOptions(gateArgv, defs);

@@ -30,6 +30,9 @@ metadata:
 
 # Performance Review
 
+## Generated Findings-Only Handoff
+When orchestration supplies generated role-prompt, reviewer-prompt, output-template, and evidence-manifest artifacts, those artifacts are the sole output-format authority and override legacy verdict-oriented format text below. Return exactly one findings-only JSON object, complete the entire assigned scope and every coverage-ledger obligation, and do not add verdict, pass/fail, status, downstream disposition, or remediation fields.
+
 ## Core Workflow
 
 1. **Establish the latency budget.** Identify the SLO or target percentile (p50/p95/p99) for every affected endpoint or pipeline stage. If no budget exists, flag this as a prerequisite before any optimization claim can be evaluated.

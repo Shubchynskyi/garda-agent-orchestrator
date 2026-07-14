@@ -24,6 +24,9 @@ export interface RunIntermediateCommandOptions {
     artifactPath?: unknown;
     outputPath?: unknown;
     timeoutMs?: unknown;
+    preflightPath?: unknown;
+    preflightSha256?: unknown;
+    coverageContractSha256?: unknown;
     repoRoot?: unknown;
     eventsRoot?: unknown;
 }
@@ -49,6 +52,9 @@ interface IntermediateCommandRecord {
     output_artifact: string;
     output_artifact_sha256: string;
     output_artifact_size_bytes: number;
+    preflight_path?: string;
+    preflight_sha256?: string;
+    coverage_contract_sha256?: string;
     output_telemetry: ReturnType<typeof buildOutputTelemetry>;
 }
 
@@ -61,6 +67,18 @@ function normalizeRequiredString(value: unknown, fieldName: string): string {
 
 function normalizeOptionalString(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeOptionalSha256(value: unknown, fieldName: string): string | undefined {
+    const normalized = normalizeOptionalString(value);
+    if (!normalized) {
+        return undefined;
+    }
+    const lower = normalized.toLowerCase();
+    if (!/^[0-9a-f]{64}$/u.test(lower)) {
+        throw new Error(`${fieldName} must be a 64-character lowercase or uppercase SHA-256 hex string.`);
+    }
+    return lower;
 }
 
 function normalizeTimeoutMs(value: unknown): number {
@@ -210,6 +228,9 @@ async function persistCommandEvent(
             output_artifact_path: record.output_artifact,
             output_artifact_sha256: record.output_artifact_sha256,
             output_artifact_size_bytes: record.output_artifact_size_bytes,
+            ...(record.preflight_path ? { preflight_path: record.preflight_path } : {}),
+            ...(record.preflight_sha256 ? { preflight_sha256: record.preflight_sha256 } : {}),
+            ...(record.coverage_contract_sha256 ? { coverage_contract_sha256: record.coverage_contract_sha256 } : {}),
             output_telemetry: record.output_telemetry,
             exit_code: record.exit_code,
             duration_ms: record.duration_ms,
@@ -229,6 +250,11 @@ export async function runIntermediateCommandCommand(
     const command = normalizeRequiredString(options.command, '--command');
     const commandSource = normalizeCommandSource(options.commandSource);
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+    const preflightPathInput = normalizeOptionalString(options.preflightPath);
+    const preflightPath = preflightPathInput ? path.resolve(repoRoot, preflightPathInput) : undefined;
+    const preflightSha256 = normalizeOptionalSha256(options.preflightSha256, '--preflight-sha256')
+        ?? (preflightPath ? gateHelpers.fileSha256(preflightPath) ?? undefined : undefined);
+    const coverageContractSha256 = normalizeOptionalSha256(options.coverageContractSha256, '--coverage-contract-sha256');
 
     if (!isAllowedIntermediateCommand(command, commandSource)) {
         const message = 'Command is not eligible for auditable intermediate compaction for the selected source.';
@@ -285,6 +311,9 @@ export async function runIntermediateCommandCommand(
         output_artifact: artifacts.outputPath,
         output_artifact_sha256: outputArtifactSha256,
         output_artifact_size_bytes: outputArtifactSizeBytes,
+        ...(preflightPath ? { preflight_path: gateHelpers.normalizePath(preflightPath) } : {}),
+        ...(preflightSha256 ? { preflight_sha256: preflightSha256 } : {}),
+        ...(coverageContractSha256 ? { coverage_contract_sha256: coverageContractSha256 } : {}),
         output_telemetry: telemetry,
     };
     fs.mkdirSync(path.dirname(artifacts.artifactPath), { recursive: true });

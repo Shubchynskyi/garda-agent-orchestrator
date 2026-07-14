@@ -17,6 +17,10 @@ import { prioritizePromptDiffForReview } from './review-context-prompt-diff';
 import { type ReviewTreeState } from '../review/review-tree-state';
 import { type ReviewCoverageContract } from '../review/review-coverage-ledger';
 import { normalizePath } from '../shared/helpers';
+import {
+    buildFocusedIntermediateValidationEvidenceMarkdown,
+    type ReviewContextFocusedIntermediateEvidence
+} from './review-context-focused-intermediate-evidence';
 
 export function buildTaskScopeMarkdown(options: {
     taskId: string | null;
@@ -32,6 +36,7 @@ export function buildTaskScopeMarkdown(options: {
     treeState: ReviewTreeState | null;
     fullSuiteValidation: ReviewContextFullSuiteValidationEvidence | null;
     manualValidation: ReviewContextManualValidationEvidence | null;
+    focusedIntermediateValidation: ReviewContextFocusedIntermediateEvidence;
     taskCriteria: ReviewContextTaskCriteria;
     rolePromptArtifactPath: string;
     promptTemplateArtifactPath: string;
@@ -123,6 +128,8 @@ export function buildTaskScopeMarkdown(options: {
         lines.push(...buildManualValidationEvidenceMarkdown(options.manualValidation));
         lines.push('');
     }
+    lines.push(...buildFocusedIntermediateValidationEvidenceMarkdown(options.focusedIntermediateValidation));
+    lines.push('');
     lines.push(...buildReviewerOutputContractMarkdown({
         reviewType: options.reviewType,
         rolePromptArtifactPath: options.rolePromptArtifactPath,

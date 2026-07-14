@@ -132,6 +132,80 @@ describe('cli/commands/gates intermediate command wrapper', () => {
         }
     });
 
+    it('persists optional preflight and coverage bindings for focused evidence', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-INTERMEDIATE';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeFoundationFocusedWrapperFixture(repoRoot);
+            const preflightPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'reviews', `${taskId}-preflight.json`);
+            fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
+            fs.writeFileSync(preflightPath, '{"task_id":"T-INTERMEDIATE"}\n', 'utf8');
+            const coverageContractSha256 = 'b'.repeat(64);
+
+            const result = await runIntermediateCommandCommand({
+                repoRoot,
+                taskId,
+                commandSource: 'targeted-test',
+                command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts',
+                preflightPath,
+                coverageContractSha256,
+                timeoutMs: 60_000
+            });
+
+            assert.equal(result.exitCode, 0);
+            const events = readTaskTimelineEvents(repoRoot, taskId);
+            const event = events.find((candidate) => candidate.event_type === 'INTERMEDIATE_COMMAND_RUN');
+            assert.ok(event);
+            const details = event.details as Record<string, unknown>;
+            assert.equal(String(details.preflight_path).replace(/\\/g, '/'), preflightPath.replace(/\\/g, '/'));
+            assert.match(String(details.preflight_sha256), /^[a-f0-9]{64}$/u);
+            assert.equal(details.coverage_contract_sha256, coverageContractSha256);
+            const artifact = JSON.parse(fs.readFileSync(String(details.artifact_path), 'utf8')) as Record<string, unknown>;
+            assert.equal(String(artifact.preflight_path).replace(/\\/g, '/'), preflightPath.replace(/\\/g, '/'));
+            assert.equal(artifact.preflight_sha256, details.preflight_sha256);
+            assert.equal(artifact.coverage_contract_sha256, coverageContractSha256);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects malformed optional focused evidence hash bindings before execution', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-INTERMEDIATE';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeFoundationFocusedWrapperFixture(repoRoot);
+
+            await assert.rejects(
+                () => runIntermediateCommandCommand({
+                    repoRoot,
+                    taskId,
+                    commandSource: 'targeted-test',
+                    command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts',
+                    preflightSha256: 'not-a-sha256',
+                    timeoutMs: 60_000
+                }),
+                /--preflight-sha256 must be a 64-character/u
+            );
+            await assert.rejects(
+                () => runIntermediateCommandCommand({
+                    repoRoot,
+                    taskId,
+                    commandSource: 'targeted-test',
+                    command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-command.test.ts',
+                    coverageContractSha256: 'not-a-sha256',
+                    timeoutMs: 60_000
+                }),
+                /--coverage-contract-sha256 must be a 64-character/u
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('allows node-foundation focused test wrapper through the reviewer-facing CLI entrypoint', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-INTERMEDIATE';

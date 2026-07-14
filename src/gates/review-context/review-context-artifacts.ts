@@ -88,6 +88,7 @@ const CURRENT_VERIFICATION_ARTIFACTS = Object.freeze([
     'scoped_diff',
     'compile_gate',
     'full_suite_validation',
+    'focused_intermediate_validation',
     'manual_validation',
     'tree_state'
 ]);
@@ -419,6 +420,7 @@ export function buildReviewEvidenceManifest(options: {
     gitDiff: GitDiffSummary;
     compileGateEvidence: unknown;
     fullSuiteValidationEvidence: unknown;
+    focusedIntermediateValidationEvidence: unknown;
     manualValidationEvidence: unknown;
     taskEvidence: {
         task_intent: unknown;
@@ -447,7 +449,7 @@ export function buildReviewEvidenceManifest(options: {
                 'task_mode.dirty_workspace_baseline'
             ],
             current_verification: CURRENT_VERIFICATION_ARTIFACTS,
-            instruction: 'Historical task-mode authorization snapshots describe what was authorized at task entry. Use current verification artifacts for current file hashes, scoped diffs, compile/full-suite status, and review tree state.'
+            instruction: 'Historical task-mode authorization snapshots describe what was authorized at task entry. Use current verification artifacts for current file hashes, scoped diffs, compile/full-suite status, authenticated focused validation evidence, and review tree state.'
         },
         trust_boundary: {
             evidence_is_untrusted: true,
@@ -507,6 +509,7 @@ export function buildReviewEvidenceManifest(options: {
             },
             compile_gate: options.compileGateEvidence,
             full_suite_validation: options.fullSuiteValidationEvidence,
+            focused_intermediate_validation: options.focusedIntermediateValidationEvidence,
             manual_validation: options.manualValidationEvidence
         },
         task_evidence: options.taskEvidence,

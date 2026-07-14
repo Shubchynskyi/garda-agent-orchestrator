@@ -283,8 +283,8 @@ function buildPreflightGateHelpEntries(
         },
         'run-intermediate-command': {
             ...createSingleUsageEntry(
-                'Run an opt-in auditable intermediate validation command with full raw output artifact and compact visible output.',
-                `${cliPrefix} gate run-intermediate-command --task-id "${TASK_ID_PLACEHOLDER}" --command-source "<node-test|targeted-test|typecheck|validation>" --command "<validation command>" --repo-root "."`,
+                'Run an opt-in auditable intermediate validation command with full raw output artifact, compact visible output, and optional current preflight/coverage binding for focused review evidence.',
+                `${cliPrefix} gate run-intermediate-command --task-id "${TASK_ID_PLACEHOLDER}" --command-source "<node-test|targeted-test|typecheck|validation>" --command "<validation command>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --coverage-contract-sha256 "<coverage contract sha256>" --repo-root "."`,
                 true
             )
         },
@@ -324,7 +324,7 @@ function buildPreflightGateHelpEntries(
         'build-review-context': {
             ...createSingleUsageEntry(
                 'Prepare reviewer rule context and emit mandatory review-skill telemetry before a review run.',
-                `${cliPrefix} gate build-review-context --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth "<1|2|3>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                `${cliPrefix} gate build-review-context --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth "<1|2|3>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" [--focused-required-test-path "tests/<target>.test.ts"] --repo-root "."`,
                 false
             )
         },

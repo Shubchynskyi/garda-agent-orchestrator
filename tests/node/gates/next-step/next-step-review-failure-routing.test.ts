@@ -13,6 +13,11 @@ import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import { runIntermediateCommandCommand } from '../../../../src/cli/commands/gates';
+import {
+    buildReviewCoverageContract,
+    type ReviewCoverageContract
+} from '../../../../src/gates/review/review-coverage-ledger';
+import { resolveReviewCoverageChangedFiles } from '../../../../src/gates/review-context/review-coverage-scope';
 import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
@@ -350,6 +355,15 @@ function seedCompilePass(
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED', 'PASS', {}, timestampUtc);
 }
 
+function currentReviewCoverageContractSha256(repoRoot: string, reviewType = 'code'): string {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    return buildReviewCoverageContract({
+        reviewType,
+        changedFiles: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
+    }).contract_sha256;
+}
+
 
 
 function buildReviewContextScopeFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
@@ -411,12 +425,20 @@ function writeReviewEvidence(
     const reviewTreeState = reviewContextScope.tree_state as Record<string, unknown> | undefined;
     const reviewTreeStateSha256 = String(reviewTreeState?.tree_state_sha256 || '').trim();
     const domainScopeFingerprints = reviewTreeState?.domain_scope_fingerprints;
+    const preflight = fs.existsSync(preflightPath)
+        ? JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>
+        : {};
+    const coverageContract = buildReviewCoverageContract({
+        reviewType,
+        changedFiles: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
+    });
     const reviewContext = {
         task_id: taskId,
         review_type: reviewType,
         preflight_path: preflightPath,
         preflight_sha256: fileSha256(preflightPath),
         ...reviewContextScope,
+        coverage_contract: coverageContract,
         reviewer_routing: {
             actual_execution_mode: 'delegated_subagent',
             reviewer_session_id: `agent:${reviewType}-reviewer`
@@ -582,6 +604,76 @@ function writeReviewEvidence(
         review_result_recorded_at_utc: reviewResultRecordedAtUtc,
         review_output_source_mtime_utc: reviewResultRecordedAtUtc
     });
+}
+
+function writeJsonFocusedValidationReviewEvidence(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    requiredTestPath: string,
+    options: {
+        markerField?: 'title' | 'description';
+    } = {}
+): void {
+    writeReviewEvidence(repoRoot, taskId, reviewType, { verdict: 'fail' });
+    const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
+    const receiptPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt.json`);
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+    const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    assert.ok(coverageContract?.obligations?.length, 'fixture coverage contract must have obligations');
+    const primaryObligation = coverageContract.obligations[0];
+    const evidence = {
+        location: `${requiredTestPath}:1`,
+        observation: 'The changed focused test requires a current task-owned focused validation run.'
+    };
+    const marker = `[garda:evidence-only:missing-focused-validation] test=${requiredTestPath}; action=run-and-record-focused-test`;
+    const markerField = options.markerField ?? 'title';
+    const report = {
+        schema_version: 1,
+        task_id: taskId,
+        review_type: reviewType,
+        review_context_sha256: fileSha256(reviewContextPath),
+        tree_state_sha256: String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || ''),
+        validation_notes: [{
+            id: 'N-001',
+            topic: 'Focused validation handoff',
+            note: 'Reviewed the focused-validation handoff evidence for the changed test scope.',
+            evidence: [evidence]
+        }],
+        coverage_ledger: {
+            coverage_contract_sha256: coverageContract.contract_sha256,
+            entries: coverageContract.obligations.map((obligation, index) => ({
+                obligation_id: obligation.id,
+                evidence: [{
+                    location: `${requiredTestPath}:1`,
+                    observation: `Reviewed coverage obligation ${obligation.id} for ${obligation.target}.`
+                }],
+                finding_ids: index === 0 ? ['F-000'] : []
+            }))
+        },
+        findings: {
+            critical: [],
+            high: [],
+            medium: [{
+                id: 'F-000',
+                title: markerField === 'title' ? marker : 'Missing focused validation evidence for the named changed test.',
+                description: markerField === 'description'
+                    ? marker
+                    : 'The review handoff does not include current focused validation evidence for the named changed test.',
+                evidence: [evidence],
+                coverage_obligation_ids: [primaryObligation.id]
+            }],
+            low: []
+        },
+        residual_risks: [],
+        reviewer_notes: ['Findings-only JSON artifact used for focused-validation recovery routing.']
+    };
+    const artifactText = `${JSON.stringify(report, null, 2)}\n`;
+    fs.writeFileSync(artifactPath, artifactText, 'utf8');
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    receipt.review_artifact_sha256 = fileSha256(artifactPath);
+    writeJson(receiptPath, receipt);
 }
 
 
@@ -837,6 +929,8 @@ describe('gates/next-step', () => {
                 taskId: TASK_ID,
                 commandSource: 'targeted-test',
                 command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
+                preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+                coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
                 timeoutMs: 60_000
             });
             assert.equal(commandResult.exitCode, 0);
@@ -847,6 +941,79 @@ describe('gates/next-step', () => {
             assert.match(result.title, /focused validation evidence/);
             assert.match(result.reason, /intermediate-command-targeted-test-[a-f0-9]{12}\.json/);
             assert.match(result.reason, /do not make fake implementation changes/);
+            assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+            assert.ok(!result.commands[0].command.includes('--changed-file'));
+        }
+    });
+
+    it('restarts a failed code review when the required focused test is not in changed files', async () => {
+        const repoRoot = makeTempRepo();
+        const requiredTestPath = 'tests/node/gates/focused-evidence.test.ts';
+        const focusedFinding = `[garda:evidence-only:missing-focused-validation] test=${requiredTestPath}; action=run-and-record-focused-test`;
+        seedStartedTask(repoRoot, TASK_ID);
+        seedRunnableFocusedIntermediateCommand(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/focused-remediation.ts']
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['src/focused-remediation.ts']);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                `- Medium: ${focusedFinding}`,
+                '',
+                '## Deferred Findings',
+                'None',
+                ''
+            ].join('\n')
+        });
+        const commandResult = await runIntermediateCommandCommand({
+            repoRoot,
+            taskId: TASK_ID,
+            commandSource: 'targeted-test',
+            command: `node scripts/node-foundation/build-scripts.cjs test.js ${requiredTestPath}`,
+            preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
+            timeoutMs: 60_000
+        });
+        assert.equal(commandResult.exitCode, 0);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.match(result.reason, /focused validation evidence/);
+        assert.match(result.reason, new RegExp(requiredTestPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    });
+
+    it('restarts a failed code review after findings-only JSON reports missing focused validation and bound evidence passes', async () => {
+        for (const markerField of ['title', 'description'] as const) {
+            const repoRoot = makeTempRepo();
+            const requiredTestPath = 'tests/node/gates/focused-evidence.test.ts';
+            seedStartedTask(repoRoot, TASK_ID);
+            seedRunnableFocusedIntermediateCommand(repoRoot);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+                changedFiles: [requiredTestPath]
+            });
+            seedCompilePass(repoRoot, TASK_ID, undefined, [requiredTestPath]);
+            writeJsonFocusedValidationReviewEvidence(repoRoot, TASK_ID, 'code', requiredTestPath, { markerField });
+
+            const commandResult = await runIntermediateCommandCommand({
+                repoRoot,
+                taskId: TASK_ID,
+                commandSource: 'targeted-test',
+                command: `node scripts/node-foundation/build-scripts.cjs test.js ${requiredTestPath}`,
+                preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+                coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
+                timeoutMs: 60_000
+            });
+            assert.equal(commandResult.exitCode, 0, markerField);
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'restart-review-cycle', markerField + ': ' + result.reason);
+            assert.match(result.title, /focused validation evidence/);
+            assert.match(result.reason, /missing focused validation evidence/);
+            assert.match(result.reason, new RegExp(requiredTestPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
             assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
             assert.ok(!result.commands[0].command.includes('--changed-file'));
         }
@@ -882,6 +1049,8 @@ describe('gates/next-step', () => {
                 taskId: TASK_ID,
                 commandSource: 'targeted-test',
                 command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
+                preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+                coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
                 timeoutMs: 60_000
             });
             assert.equal(commandResult.exitCode, 0);
@@ -918,6 +1087,8 @@ describe('gates/next-step', () => {
             taskId: TASK_ID,
             commandSource: 'targeted-test',
             command: 'npm test -- tests/node/gates/focused-evidence.test.ts',
+            preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
             timeoutMs: 60_000
         });
         assert.equal(commandResult.exitCode, 0);
@@ -957,6 +1128,8 @@ describe('gates/next-step', () => {
             command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/focused-evidence.test.ts',
             artifactPath: path.join(customEvidenceRoot, 'focused-command.json'),
             outputPath: path.join(customEvidenceRoot, 'focused-command.log'),
+            preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            coverageContractSha256: currentReviewCoverageContractSha256(repoRoot),
             timeoutMs: 60_000
         });
         assert.equal(commandResult.exitCode, 0);
@@ -1032,10 +1205,13 @@ describe('gates/next-step', () => {
                 })
             },
             {
-                name: 'scope mismatch',
-                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID),
-                mutateScope: (repoRoot) => writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
-                    changedFiles: ['tests/node/gates/other-scope.test.ts']
+                name: 'unbound preflight and coverage binding',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID)
+            },
+            {
+                name: 'required focused test mismatch',
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    command: 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/other-scope.test.ts'
                 })
             },
             {

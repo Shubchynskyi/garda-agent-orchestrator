@@ -276,6 +276,14 @@ function isReviewFailTokenViolation(state: ReviewArtifactState, violation: strin
     );
 }
 
+function isFailedReviewOutcomeViolation(state: ReviewArtifactState, violation: string): boolean {
+    return isReviewFailTokenViolation(state, violation)
+        || Boolean(
+            state.failed
+            && violation.includes('review artifact contains active findings in findings JSON')
+        );
+}
+
 export function reviewStateHasCurrentRecordedEvidence(
     repoRoot: string,
     eventsRoot: string,
@@ -286,7 +294,7 @@ export function reviewStateHasCurrentRecordedEvidence(
         return false;
     }
     const nonVerdictViolations = state.violations.filter(
-        (violation) => !isReviewFailTokenViolation(state, violation)
+        (violation) => !isFailedReviewOutcomeViolation(state, violation)
     );
     if (nonVerdictViolations.length > 0) {
         return false;

@@ -53,6 +53,7 @@ export async function runBuildReviewContextCommand(
         tokenEconomyConfigPath,
         outputPath,
         scopedDiffMetadataPath,
+        focusedRequiredTestPath,
         reviewReuseBlockedReason
     } = resolveBuildReviewContextCommandInputs(options);
     if (taskId) {
@@ -132,6 +133,7 @@ export async function runBuildReviewContextCommand(
         scopedDiffMetadataPath,
         outputPath,
         repoRoot,
+        focusedRequiredTestPath,
         ruleContextSectionsCache: options.ruleContextSectionsCache || null,
         ruleFileContentCache: options.ruleFileContentCache || null
     });

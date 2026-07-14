@@ -1,3 +1,8 @@
+import {
+    findJsonReviewMissingFocusedValidationTestPaths,
+    parseJsonReviewFindingsArtifact
+} from '../review/review-findings-artifact-verdict';
+
 const REVIEW_LAUNCH_PACKAGE_FAILURE_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
     { pattern: /\breviewer_prompt_sha256\b[\s\S]{0,160}\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b/i, reason: 'reviewer_prompt_sha256 mismatch' },
     { pattern: /\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b[\s\S]{0,160}\breviewer_prompt_sha256\b/i, reason: 'reviewer_prompt_sha256 mismatch' },
@@ -115,11 +120,23 @@ export function findReviewFindingTestPaths(content: string, candidateTestPaths: 
         .map((testPath) => normalizeWorkspacePath(testPath))
         .filter(Boolean)
     );
-    return [...new Set(findingsBySeverityLines(content)
+    return findReviewFocusedFindingTestPaths(content)
+        .filter((testPath) => normalizedCandidatePaths.has(testPath));
+}
+
+export function findReviewFocusedFindingTestPaths(content: string): string[] {
+    const jsonReport = parseJsonReviewFindingsArtifact(content);
+    const jsonTestPaths = jsonReport
+        ? findJsonReviewMissingFocusedValidationTestPaths(jsonReport)
+        : [];
+    return [...new Set([
+        ...jsonTestPaths,
+        ...findingsBySeverityLines(content)
         .map((line) => line.replace(/^(?:critical|high|medium|low|p[0-3])\s*:\s*/iu, ''))
         .map((line) => line.match(REVIEW_MISSING_FOCUSED_VALIDATION_EVIDENCE_PATTERN)?.[1] || '')
         .map((testPath) => normalizeWorkspacePath(testPath))
-        .filter((testPath) => normalizedCandidatePaths.has(testPath)))];
+        .filter(Boolean)
+    ])];
 }
 
 function hasNonEmptyFindingsBySeveritySection(content: string): boolean {

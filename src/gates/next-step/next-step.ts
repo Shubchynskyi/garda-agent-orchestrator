@@ -52,6 +52,8 @@ import {
 import {
     readFullSuiteRepairTaskMaterializationEvidence
 } from '../full-suite/full-suite-repair-task';
+import { buildReviewCoverageContract } from '../review/review-coverage-ledger';
+import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
 import {
     readInterruptedFullSuiteValidationRunMarker,
     resolveFullSuiteValidationRunMarkerPath
@@ -206,6 +208,7 @@ import {
 } from './next-step-review-reuse-routing';
 import {
     isPassedIntermediateCommandEvent,
+    readFocusedTestRequiredByReview,
     readPostReviewFocusedIntermediateEvidence
 } from './next-step-focused-intermediate-evidence';
 import {
@@ -3631,6 +3634,17 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
                 depth: reviewDepth
             });
+            const requiredFocusedTestPath = state.failureKind === 'missing-focused-validation-evidence'
+                ? readFocusedTestRequiredByReview({
+                    reviewArtifactPath: state.artifactPath
+                })
+                : null;
+            const focusedRecoveryCoverageContractSha256 = state.failureKind === 'missing-focused-validation-evidence'
+                ? buildReviewCoverageContract({
+                    reviewType,
+                    changedFiles: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
+                }).contract_sha256
+                : null;
             const focusedIntermediateEvidence = state.failureKind === 'missing-focused-validation-evidence'
                 ? readPostReviewFocusedIntermediateEvidence({
                     repoRoot,
@@ -3640,7 +3654,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     reviewArtifactPath: state.artifactPath,
                     reviewResultRecordedAtUtc: state.reviewResultRecordedAtUtc,
                     reviewerProvenanceTaskSequence: state.reviewerProvenance?.task_sequence ?? null,
-                    changedFiles: getPreflightChangedFilesForReviewRemediation(preflight)
+                    changedFiles: getPreflightChangedFilesForReviewRemediation(preflight),
+                    expectedPreflightPath: preflightPath,
+                    expectedPreflightSha256: preflightSha256,
+                    expectedCoverageContractSha256: focusedRecoveryCoverageContractSha256
                 })
                 : { available: false, reason: null };
             const failedReviewRoute = resolveFailedReviewRemediationRoute({
@@ -3704,7 +3721,16 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     ),
                     buildReviewContext: buildCommand(
                         'Build review context',
-                        buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
+                        buildReviewContextCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewDepth,
+                            preflightCommandPath,
+                            taskModePath,
+                            requiredFocusedTestPath
+                        )
                     )
                 }
             });

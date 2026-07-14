@@ -45,6 +45,57 @@ function parseJsonReviewFindingsArtifactObject(content: string): Record<string, 
     }
 }
 
+export const EVIDENCE_ONLY_MISSING_FOCUSED_VALIDATION_PATTERN =
+    /^\[garda:evidence-only:missing-focused-validation\]\s+test=(tests\/[^\s;]+\.(?:test|spec)\.(?:c|m)?[jt]sx?);\s*action=run-and-record-focused-test$/iu;
+
+function findMissingFocusedValidationMarker(value: string): RegExpMatchArray | null {
+    return value.match(EVIDENCE_ONLY_MISSING_FOCUSED_VALIDATION_PATTERN);
+}
+
+function findJsonReviewMissingFocusedValidationMarker(finding: { title: string; description: string }): RegExpMatchArray | null {
+    return findMissingFocusedValidationMarker(finding.title)
+        || findMissingFocusedValidationMarker(finding.description);
+}
+
+export function findJsonReviewMissingFocusedValidationTestPaths(report: ReviewFindingsReport): string[] {
+    const findings = [
+        ...report.findings.critical,
+        ...report.findings.high,
+        ...report.findings.medium,
+        ...report.findings.low
+    ];
+    return [...new Set(findings
+        .map((finding) => findJsonReviewMissingFocusedValidationMarker(finding)?.[1] || '')
+        .filter(Boolean))];
+}
+
+export function parseJsonReviewFindingsArtifact(content: string): ReviewFindingsReport | null {
+    const parsed = parseJsonReviewFindingsArtifactObject(content);
+    if (!parsed) {
+        return null;
+    }
+    const validation = validateReviewFindingsReport(parsed, {
+        expectedTaskId: String(parsed.task_id || '').trim(),
+        expectedReviewType: String(parsed.review_type || '').trim()
+    });
+    return validation.report;
+}
+
+export function jsonReviewFindingsArtifactContainsOnlyMissingFocusedValidation(report: ReviewFindingsReport): boolean {
+    const findings = [
+        ...report.findings.critical,
+        ...report.findings.high,
+        ...report.findings.medium,
+        ...report.findings.low
+    ];
+    return findings.length > 0
+        && report.residual_risks.length === 0
+        && findings.every((finding) =>
+            finding.id === 'F-000'
+            && Boolean(findJsonReviewMissingFocusedValidationMarker(finding))
+        );
+}
+
 export function validateJsonReviewFindingsArtifact(options: {
     content: string;
     expectedTaskId: string;

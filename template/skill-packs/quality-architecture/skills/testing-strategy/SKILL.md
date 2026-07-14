@@ -21,6 +21,9 @@ metadata:
 
 # Testing Strategy
 
+## Generated Findings-Only Handoff
+When orchestration supplies generated role-prompt, reviewer-prompt, output-template, and evidence-manifest artifacts, those artifacts are the sole output-format authority and override legacy verdict-oriented format text below. Return exactly one findings-only JSON object, complete the entire assigned scope and every coverage-ledger obligation, and do not add verdict, pass/fail, status, downstream disposition, or remediation fields.
+
 ## Core Workflow
 
 1. **Identify the risk surface.** List changed modules and their outbound contracts (APIs, events, persistence, UI entry points). Rank each by blast radius — a shared service adapter outranks a leaf utility.

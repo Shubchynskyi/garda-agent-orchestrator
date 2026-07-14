@@ -121,6 +121,7 @@ describe('gates/review-context-artifacts', () => {
             gitDiff,
             compileGateEvidence: { status: 'PASSED' },
             fullSuiteValidationEvidence: { status: 'PASSED' },
+            focusedIntermediateValidationEvidence: { status: 'AVAILABLE' },
             manualValidationEvidence: { selected_log_count: 1 },
             taskEvidence,
             coverageContract: buildReviewCoverageContract({
@@ -144,10 +145,11 @@ describe('gates/review-context-artifacts', () => {
                 'scoped_diff',
                 'compile_gate',
                 'full_suite_validation',
+                'focused_intermediate_validation',
                 'manual_validation',
                 'tree_state'
             ],
-            instruction: 'Historical task-mode authorization snapshots describe what was authorized at task entry. Use current verification artifacts for current file hashes, scoped diffs, compile/full-suite status, and review tree state.'
+            instruction: 'Historical task-mode authorization snapshots describe what was authorized at task entry. Use current verification artifacts for current file hashes, scoped diffs, compile/full-suite status, authenticated focused validation evidence, and review tree state.'
         });
 
         const artifacts = result.evidenceManifest.artifacts as Record<string, Record<string, unknown>>;
@@ -170,6 +172,7 @@ describe('gates/review-context-artifacts', () => {
             'scoped_diff',
             'compile_gate',
             'full_suite_validation',
+            'focused_intermediate_validation',
             'manual_validation',
             'tree_state'
         ]);
@@ -187,6 +190,7 @@ describe('gates/review-context-artifacts', () => {
         assert.equal(artifacts.scoped_diff.diff_sha256, sha256Text(gitDiff.diff || ''));
         assert.deepEqual(artifacts.compile_gate, { status: 'PASSED' });
         assert.deepEqual(artifacts.full_suite_validation, { status: 'PASSED' });
+        assert.deepEqual(artifacts.focused_intermediate_validation, { status: 'AVAILABLE' });
         assert.deepEqual(artifacts.manual_validation, { selected_log_count: 1 });
 
         assert.ok(result.evidenceManifestText.endsWith('\n'));

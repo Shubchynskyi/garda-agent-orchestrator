@@ -16,7 +16,8 @@ import {
     runGit,
     sha256Text,
     cloneJson,
-    writeTaskModeArtifactFixture
+    writeTaskModeArtifactFixture,
+    appendTaskEvent
 } from './build-review-context-fixtures';
 import {
     parseSplitCheckpointDetectionSource,
@@ -96,6 +97,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             fs.mkdirSync(rulesRoot, { recursive: true });
             fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
             fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
             runGit(repoRoot, ['init']);
             runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
             runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
@@ -108,6 +110,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             const codeSkillPath = path.join(codeSkillRoot, 'SKILL.md');
             fs.writeFileSync(codeSkillPath, '# Code Review Skill\nReview code changes.\n', 'utf8');
             fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'export {};\n', 'utf8');
             const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
             fs.writeFileSync(tokenConfigPath, JSON.stringify({
                 enabled: true,
@@ -120,16 +123,55 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 executionProviderSource: 'explicit_provider',
                 runtimeIdentityStatus: 'resolved'
             });
+            appendTaskEvent(orchestratorRoot, 'T-901-scope', 'TASK_MODE_ENTERED', 'PASS', 'Current review cycle.', {});
             const preflightPath = path.join(reviewsRoot, 'T-901-scope-preflight.json');
             fs.writeFileSync(preflightPath, JSON.stringify({
                 task_id: 'T-901-scope',
                 detection_source: 'explicit_changed_files',
                 mode: 'FULL_PATH',
                 scope_category: 'code',
-                changed_files: ['src/app.ts'],
+                changed_files: ['src/app.ts', 'tests/app.test.ts'],
                 required_reviews: { code: true, security: true },
                 triggers: { runtime_changed: true, runtime_code_changed: true }
             }, null, 2), 'utf8');
+            const preflightSha256 = sha256Text(fs.readFileSync(preflightPath, 'utf8'));
+            const focusedCoverageContractSha256 = buildReviewCoverageContract({
+                reviewType: 'code',
+                changedFiles: ['src/app.ts']
+            }).contract_sha256;
+            const focusedCommand = 'node scripts/node-foundation/build-scripts.cjs test.js tests/app.test.ts';
+            const focusedOutputPath = path.join(reviewsRoot, 'T-901-scope-focused.log');
+            const focusedArtifactPath = path.join(reviewsRoot, 'T-901-scope-focused.json');
+            fs.writeFileSync(focusedOutputPath, 'focused validation passed\n', 'utf8');
+            const focusedOutputSha256 = sha256Text(fs.readFileSync(focusedOutputPath, 'utf8'));
+            const focusedOutputSize = fs.statSync(focusedOutputPath).size;
+            fs.writeFileSync(focusedArtifactPath, JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-901-scope',
+                command_source: 'targeted-test',
+                command: focusedCommand,
+                status: 'PASSED',
+                exit_code: 0,
+                output_artifact: focusedOutputPath,
+                output_artifact_sha256: focusedOutputSha256,
+                output_artifact_size_bytes: focusedOutputSize,
+                preflight_path: preflightPath,
+                preflight_sha256: preflightSha256,
+                coverage_contract_sha256: focusedCoverageContractSha256
+            }), 'utf8');
+            appendTaskEvent(orchestratorRoot, 'T-901-scope', 'INTERMEDIATE_COMMAND_RUN', 'PASSED', 'Focused validation passed.', {
+                command_source: 'targeted-test',
+                command: focusedCommand,
+                artifact_path: focusedArtifactPath,
+                artifact_sha256: sha256Text(fs.readFileSync(focusedArtifactPath, 'utf8')),
+                output_artifact_path: focusedOutputPath,
+                output_artifact_sha256: focusedOutputSha256,
+                output_artifact_size_bytes: focusedOutputSize,
+                exit_code: 0,
+                preflight_path: preflightPath,
+                preflight_sha256: preflightSha256,
+                coverage_contract_sha256: focusedCoverageContractSha256
+            });
 
             const result = buildReviewContext({
                 reviewType: 'code',
@@ -145,6 +187,10 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptArtifact.includes('# Review Context: T-901-scope code'));
             assert.ok(promptArtifact.includes('## Changed Files'));
             assert.ok(promptArtifact.includes('- src/app.ts'));
+            assert.ok(promptArtifact.includes('- tests/app.test.ts'));
+            assert.ok(promptArtifact.includes('## Focused Intermediate Validation Evidence'));
+            assert.ok(promptArtifact.includes(`- PASS targeted-test: ${focusedCommand}`));
+            assert.ok(promptArtifact.includes('does not replace compile, full-suite validation, or required review gates'));
             assert.equal(promptArtifact.includes('- Depth:'), false);
             assert.equal(promptArtifact.includes('- TASK.md profile:'), false);
             assert.equal(/profile strictness|balanced profile|strict profile/iu.test(promptArtifact), false);
@@ -241,9 +287,17 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 'scoped_diff',
                 'compile_gate',
                 'full_suite_validation',
+                'focused_intermediate_validation',
                 'manual_validation',
                 'tree_state'
             ]);
+            assert.equal(result.focused_intermediate_validation.status, 'AVAILABLE');
+            assert.equal(result.focused_intermediate_validation.entries.length, 1);
+            assert.equal(result.focused_intermediate_validation.entries[0].artifact_sha256, sha256Text(fs.readFileSync(focusedArtifactPath, 'utf8')));
+            assert.equal(result.focused_intermediate_validation.entries[0].output_artifact_sha256, focusedOutputSha256);
+            assert.equal(result.focused_intermediate_validation.scope_binding.preflight_sha256, result.preflight_sha256);
+            assert.equal(result.focused_intermediate_validation.scope_binding.coverage_contract_sha256, result.coverage_contract.contract_sha256);
+            assert.deepEqual(manifest.artifacts.focused_intermediate_validation, result.focused_intermediate_validation);
             assert.equal(manifest.artifacts.task_mode.evidence_role, 'historical_authorization');
             assert.equal(manifest.artifacts.task_mode.current_verification_source, false);
             assert.equal(manifest.artifacts.task_mode.dirty_workspace_baseline.file_hashes_are_current, false);
@@ -254,7 +308,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.equal(manifest.artifacts.compile_gate.artifact_path.endsWith('/T-901-scope-compile-gate.json'), true);
             assert.equal(manifest.task_evidence.task_row.source_path.endsWith('/TASK.md'), true);
             assert.equal(Object.hasOwn(manifest.task_evidence.task_row, 'profile'), false);
-            assert.deepEqual(result.task_scope.changed_files, ['src/app.ts']);
+            assert.deepEqual(result.task_scope.changed_files, ['src/app.ts', 'tests/app.test.ts']);
             assert.deepEqual(result.task_scope.required_reviews, ['code', 'security']);
             const forgedCoverageScope = cloneJson(result);
             forgedCoverageScope.coverage_scope.changed_files = [];
@@ -263,7 +317,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 contextPath: path.join(reviewsRoot, 'T-901-scope-code-review-context.json'),
                 reviewContext: forgedCoverageScope,
                 expectedReviewType: 'code',
-                expectedChangedFiles: ['src/app.ts'],
+                expectedChangedFiles: ['src/app.ts', 'tests/app.test.ts'],
                 expectedPreflightPayload: JSON.parse(fs.readFileSync(preflightPath, 'utf8')),
                 repoRoot
             });
@@ -275,7 +329,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 contextPath: path.join(reviewsRoot, 'T-901-scope-code-review-context.json'),
                 reviewContext: forgedCoverageScope,
                 expectedReviewType: 'code',
-                expectedChangedFiles: ['src/app.ts'],
+                expectedChangedFiles: ['src/app.ts', 'tests/app.test.ts'],
                 expectedPreflightPayload: {
                     ...JSON.parse(fs.readFileSync(preflightPath, 'utf8')),
                     review_coverage_contract_required: true
@@ -285,6 +339,129 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(downgradedCoverageViolations.some((entry) =>
                 entry.includes('cannot downgrade below schema_version 3')
             ));
+            const initialPromptSha256 = result.rule_context.artifact_sha256;
+            const initialEvidenceManifestSha256 = result.reviewer_handoff.evidence_manifest.artifact_sha256;
+            fs.appendFileSync(focusedOutputPath, 'tampered\n', 'utf8');
+            const rebuilt = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-scope-code-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-scope-code-review-context.json'),
+                repoRoot
+            });
+            assert.equal(rebuilt.focused_intermediate_validation.status, 'NOT_AVAILABLE');
+            assert.ok(rebuilt.focused_intermediate_validation.warnings.some((warning: string) => warning.includes('size or sha256')));
+            assert.notEqual(rebuilt.rule_context.artifact_sha256, initialPromptSha256);
+            assert.notEqual(rebuilt.reviewer_handoff.evidence_manifest.artifact_sha256, initialEvidenceManifestSha256);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('includes focused evidence for an unmodified test required by a failed review marker', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-focused-required-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            runGit(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+            for (const ruleFile of getRulePack('code').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'export {};\n', 'utf8');
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-focused-required', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            appendTaskEvent(orchestratorRoot, 'T-901-focused-required', 'TASK_MODE_ENTERED', 'PASS', 'Current review cycle.', {});
+            const preflightPath = path.join(reviewsRoot, 'T-901-focused-required-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-focused-required',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: ['src/app.ts'],
+                required_reviews: { code: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true }
+            }, null, 2), 'utf8');
+            const preflightSha256 = sha256Text(fs.readFileSync(preflightPath, 'utf8'));
+            const coverageContractSha256 = buildReviewCoverageContract({
+                reviewType: 'code',
+                changedFiles: ['src/app.ts']
+            }).contract_sha256;
+            const requiredTestPath = 'tests/app.test.ts';
+            const focusedCommand = `node scripts/node-foundation/build-scripts.cjs test.js ${requiredTestPath}`;
+            const focusedOutputPath = path.join(reviewsRoot, 'T-901-focused-required-focused.log');
+            const focusedArtifactPath = path.join(reviewsRoot, 'T-901-focused-required-focused.json');
+            fs.writeFileSync(focusedOutputPath, 'focused validation passed\n', 'utf8');
+            const focusedOutputSha256 = sha256Text(fs.readFileSync(focusedOutputPath, 'utf8'));
+            const focusedOutputSize = fs.statSync(focusedOutputPath).size;
+            fs.writeFileSync(focusedArtifactPath, JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-901-focused-required',
+                command_source: 'targeted-test',
+                command: focusedCommand,
+                status: 'PASSED',
+                exit_code: 0,
+                output_artifact: focusedOutputPath,
+                output_artifact_sha256: focusedOutputSha256,
+                output_artifact_size_bytes: focusedOutputSize,
+                preflight_path: preflightPath,
+                preflight_sha256: preflightSha256,
+                coverage_contract_sha256: coverageContractSha256
+            }), 'utf8');
+            appendTaskEvent(orchestratorRoot, 'T-901-focused-required', 'INTERMEDIATE_COMMAND_RUN', 'PASSED', 'Focused validation passed.', {
+                command_source: 'targeted-test',
+                command: focusedCommand,
+                artifact_path: focusedArtifactPath,
+                artifact_sha256: sha256Text(fs.readFileSync(focusedArtifactPath, 'utf8')),
+                output_artifact_path: focusedOutputPath,
+                output_artifact_sha256: focusedOutputSha256,
+                output_artifact_size_bytes: focusedOutputSize,
+                exit_code: 0,
+                preflight_path: preflightPath,
+                preflight_sha256: preflightSha256,
+                coverage_contract_sha256: coverageContractSha256
+            });
+
+            const withoutRequiredPath = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-focused-required-code-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-focused-required-code-review-context-unbound.json'),
+                repoRoot
+            });
+            const withRequiredPath = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-focused-required-code-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-focused-required-code-review-context.json'),
+                repoRoot,
+                focusedRequiredTestPath: requiredTestPath
+            });
+
+            assert.equal(withoutRequiredPath.focused_intermediate_validation.status, 'NOT_AVAILABLE');
+            assert.equal(withRequiredPath.focused_intermediate_validation.status, 'AVAILABLE');
+            assert.equal(withRequiredPath.focused_intermediate_validation.entries.length, 1);
+            assert.deepEqual(withRequiredPath.focused_intermediate_validation.entries[0].focused_test_paths, [requiredTestPath]);
+            assert.equal(withRequiredPath.focused_intermediate_validation.entries[0].output_artifact_sha256, focusedOutputSha256);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 

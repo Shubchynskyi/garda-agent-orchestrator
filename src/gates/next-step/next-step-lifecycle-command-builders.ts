@@ -514,14 +514,19 @@ export function buildReviewContextCommand(
     reviewType: string,
     reviewDepth: number,
     preflightCommandPath: string,
-    taskModePath: string | null
+    taskModePath: string | null,
+    focusedRequiredTestPath?: string | null
 ): string {
+    const focusedRequiredTest = normalizeWorkspaceRelativePath(repoRoot, String(focusedRequiredTestPath || '').trim());
     return [
         `${cliPrefix} gate build-review-context`,
         `--review-type "${reviewType}"`,
         `--depth "${reviewDepth}"`,
         `--preflight-path "${preflightCommandPath}"`,
         ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
+        ...(focusedRequiredTest
+            ? [`--focused-required-test-path ${quoteCommandValue(focusedRequiredTest)}`]
+            : []),
         '--repo-root "."'
     ].join(' ');
 }

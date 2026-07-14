@@ -15,6 +15,9 @@ metadata:
 
 # Refactor Review
 
+## Generated Findings-Only Handoff
+When orchestration supplies generated role-prompt, reviewer-prompt, output-template, and evidence-manifest artifacts, those artifacts are the sole output-format authority and override legacy verdict-oriented format text below. Return exactly one findings-only JSON object, complete the entire assigned scope and every coverage-ledger obligation, and do not add verdict, pass/fail, status, downstream disposition, or remediation fields.
+
 Use this skill for independent refactor safety assessment.
 Primary goal is behavior preservation with lower maintenance risk.
 
