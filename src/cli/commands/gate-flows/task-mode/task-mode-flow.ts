@@ -11,6 +11,8 @@ import {
 } from '../../../../gate-runtime/task-events';
 import {
     buildTaskModeArtifact,
+    getTaskModeEvidence,
+    getTaskModeEvidenceViolations,
     parseTaskModeDepth,
     readOptionalMarkdownWorkingPlan,
     resolveTaskModeArtifactPath,
@@ -34,6 +36,13 @@ import * as gateHelpers from '../../../../gates/shared/helpers';
 import {
     resolveTaskProfileSelection
 } from '../../../../policy/task-profile-selection';
+import {
+    buildTaskProfilePolicySnapshot,
+    type TaskProfilePolicySnapshot
+} from '../../../../policy/task-profile-policy-snapshot';
+import {
+    loadReviewExecutionPolicyConfig
+} from '../../../../core/review-execution-policy';
 import {
     normalizeOptionalPath,
     removeArtifactIfExists,
@@ -124,6 +133,64 @@ export type {
     RetireSplitRequiredWipCommandOptions,
     ShellSmokePreflightCommandOptions
 };
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readReusableProfilePolicySnapshot(
+    repoRoot: string,
+    taskId: string,
+    artifactPath: string,
+    options: { requireSnapshot: boolean }
+): TaskProfilePolicySnapshot | null {
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+        const evidence = getTaskModeEvidence(repoRoot, taskId, artifactPath);
+        if (evidence.timeline_declares_profile_policy_snapshot) {
+            throw new Error(
+                `Existing task-mode profile policy snapshot is not reusable (${evidence.profile_policy_snapshot_status}). ` +
+                `${getTaskModeEvidenceViolations(evidence).join(' ') || 'Snapshot evidence validation failed.'}`
+            );
+        }
+        return null;
+    }
+
+    let declaresSnapshot = false;
+    try {
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as unknown;
+        if (isPlainRecord(artifact)) {
+            declaresSnapshot = artifact.profile_policy_snapshot_required === true
+                || artifact.profile_policy_snapshot != null;
+        }
+    } catch (error: unknown) {
+        if (options.requireSnapshot) {
+            throw new Error(
+                `Existing task-mode profile policy snapshot is not reusable (INVALID). ` +
+                `Task-mode artifact could not be parsed: ${getErrorMessage(error)}`
+            );
+        }
+        return null;
+    }
+
+    const evidence = getTaskModeEvidence(repoRoot, taskId, artifactPath);
+    if (
+        evidence.evidence_status === 'PASS'
+        && evidence.profile_policy_snapshot_status === 'PASS'
+        && evidence.profile_policy_snapshot
+    ) {
+        return evidence.profile_policy_snapshot;
+    }
+    if (declaresSnapshot || evidence.timeline_declares_profile_policy_snapshot || options.requireSnapshot) {
+        throw new Error(
+            `Existing task-mode profile policy snapshot is not reusable (${evidence.profile_policy_snapshot_status}). ` +
+            `${[
+                ...evidence.profile_policy_snapshot_violations,
+                ...getTaskModeEvidenceViolations(evidence)
+            ].join(' ') || 'Snapshot evidence validation failed.'}`
+        );
+    }
+    return null;
+}
 
 export interface EnterTaskModeCommandOptions {
     repoRoot?: string;
@@ -228,35 +295,55 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     let profileSource: 'built_in' | 'user' | null = null;
     let runtimeActiveProfile: string | null = null;
     let runtimeProfileSource: 'built_in' | 'user' | null = null;
+    let profilePolicySnapshot: TaskProfilePolicySnapshot | null = null;
     let defaultTaskModeDepth = 2;
     let defaultTaskModeDepthResolvedFromProfile = false;
     const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
-    try {
-        if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
-            const resolvedProfile = resolveTaskProfileSelection(orchestratorRoot, rawTaskProfile);
-            taskProfile = resolvedProfile.selection.task_profile;
-            profileSelectionSource = resolvedProfile.selection.profile_selection_source;
-            activeProfile = resolvedProfile.selection.effective_profile;
-            profileSource = resolvedProfile.selection.effective_profile_source;
-            runtimeActiveProfile = resolvedProfile.selection.runtime_active_profile;
-            runtimeProfileSource = resolvedProfile.selection.runtime_profile_source;
-            if (
-                Number.isInteger(resolvedProfile.effective_policy.depth)
-                && resolvedProfile.effective_policy.depth >= 1
-                && resolvedProfile.effective_policy.depth <= 3
-            ) {
-                defaultTaskModeDepth = resolvedProfile.effective_policy.depth;
-                defaultTaskModeDepthResolvedFromProfile = true;
-            }
-        } else if (String(rawTaskProfile || '').trim() && String(rawTaskProfile || '').trim().toLowerCase() !== 'default') {
-            throw new Error(
-                `Task profile '${String(rawTaskProfile).trim()}' cannot be resolved because profiles config is missing: ${gateHelpers.normalizePath(profilesConfigPath)}`
-            );
+    const profilesConfigExists = fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile();
+    const reusableProfilePolicySnapshot = readReusableProfilePolicySnapshot(repoRoot, taskId, artifactPath, {
+        requireSnapshot: profilesConfigExists
+    });
+    if (reusableProfilePolicySnapshot) {
+        profilePolicySnapshot = reusableProfilePolicySnapshot;
+        taskProfile = reusableProfilePolicySnapshot.source.task_profile;
+        profileSelectionSource = reusableProfilePolicySnapshot.source.profile_selection_source;
+        activeProfile = reusableProfilePolicySnapshot.source.effective_profile;
+        profileSource = reusableProfilePolicySnapshot.source.effective_profile_source;
+        runtimeActiveProfile = reusableProfilePolicySnapshot.source.runtime_active_profile;
+        runtimeProfileSource = reusableProfilePolicySnapshot.source.runtime_profile_source;
+        if (
+            Number.isInteger(reusableProfilePolicySnapshot.depth)
+            && reusableProfilePolicySnapshot.depth >= 1
+            && reusableProfilePolicySnapshot.depth <= 3
+        ) {
+            defaultTaskModeDepth = reusableProfilePolicySnapshot.depth;
+            defaultTaskModeDepthResolvedFromProfile = true;
         }
-    } catch (error: unknown) {
-        if (String(rawTaskProfile || '').trim() && String(rawTaskProfile || '').trim().toLowerCase() !== 'default') {
-            throw error;
+    } else if (profilesConfigExists) {
+        const resolvedProfile = resolveTaskProfileSelection(orchestratorRoot, rawTaskProfile);
+        taskProfile = resolvedProfile.selection.task_profile;
+        profileSelectionSource = resolvedProfile.selection.profile_selection_source;
+        activeProfile = resolvedProfile.selection.effective_profile;
+        profileSource = resolvedProfile.selection.effective_profile_source;
+        runtimeActiveProfile = resolvedProfile.selection.runtime_active_profile;
+        runtimeProfileSource = resolvedProfile.selection.runtime_profile_source;
+        const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
+        profilePolicySnapshot = buildTaskProfilePolicySnapshot(orchestratorRoot, rawTaskProfile, {
+            reviewExecutionPolicyMode: reviewExecutionPolicy.mode,
+            reviewExecutionPolicyConfigured: reviewExecutionPolicy.configured
+        });
+        if (
+            Number.isInteger(resolvedProfile.effective_policy.depth)
+            && resolvedProfile.effective_policy.depth >= 1
+            && resolvedProfile.effective_policy.depth <= 3
+        ) {
+            defaultTaskModeDepth = resolvedProfile.effective_policy.depth;
+            defaultTaskModeDepthResolvedFromProfile = true;
         }
+    } else if (String(rawTaskProfile || '').trim() && String(rawTaskProfile || '').trim().toLowerCase() !== 'default') {
+        throw new Error(
+            `Task profile '${String(rawTaskProfile).trim()}' cannot be resolved because profiles config is missing: ${gateHelpers.normalizePath(profilesConfigPath)}`
+        );
     }
 
     const reviewerRoutingFields = resolveTaskModeReviewerRoutingFields(routingDecision.provider);
@@ -304,6 +391,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         profileSource,
         runtimeActiveProfile,
         runtimeProfileSource,
+        profilePolicySnapshot,
         dirtyWorkspaceBaseline,
         workflowConfigFileHashes: workflowConfigFileHashesForArtifact,
         workflowConfigCompatibilityBaselineFiles
@@ -335,6 +423,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         profile_source: taskModeArtifact.profile_source,
         runtime_active_profile: taskModeArtifact.runtime_active_profile,
         runtime_profile_source: taskModeArtifact.runtime_profile_source,
+        profile_policy_snapshot_required: taskModeArtifact.profile_policy_snapshot_required,
+        profile_policy_snapshot_hash: taskModeArtifact.profile_policy_snapshot?.snapshot_hash ?? null,
+        profile_policy_snapshot_config_hash: taskModeArtifact.profile_policy_snapshot?.config_hash ?? null,
         dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
         dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null,
         workflow_config_file_hash_count: Object.keys(taskModeArtifact.workflow_config_file_hashes || {}).length,
@@ -385,6 +476,13 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 profile_source: taskModeArtifact.profile_source,
                 runtime_active_profile: taskModeArtifact.runtime_active_profile,
                 runtime_profile_source: taskModeArtifact.runtime_profile_source,
+                ...(taskModeArtifact.profile_policy_snapshot
+                    ? {
+                        profile_policy_snapshot_required: true,
+                        profile_policy_snapshot_hash: taskModeArtifact.profile_policy_snapshot.snapshot_hash,
+                        profile_policy_snapshot_config_hash: taskModeArtifact.profile_policy_snapshot.config_hash
+                    }
+                    : {}),
                 dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
                 dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null,
                 workflow_config_file_hash_count: Object.keys(taskModeArtifact.workflow_config_file_hashes || {}).length,
@@ -413,6 +511,12 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         runtime_identity_status: taskModeArtifact.runtime_identity_status,
         runtime_identity_violations: taskModeArtifact.runtime_identity_violations,
         routed_to: taskModeArtifact.routed_to,
+        ...(taskModeArtifact.profile_policy_snapshot
+            ? {
+                profile_policy_snapshot_hash: taskModeArtifact.profile_policy_snapshot.snapshot_hash,
+                profile_policy_snapshot_config_hash: taskModeArtifact.profile_policy_snapshot.config_hash
+            }
+            : {}),
         plan_guided: !!taskModeArtifact.plan,
         plan_path: taskModeArtifact.plan?.plan_path ?? null,
         plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null,
@@ -469,6 +573,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             ...(taskModeArtifact.active_profile ? [`ActiveProfile: ${taskModeArtifact.active_profile} (${taskModeArtifact.profile_source || 'unknown'})`] : []),
             ...(taskModeArtifact.runtime_active_profile
                 ? [`RuntimeActiveProfile: ${taskModeArtifact.runtime_active_profile} (${taskModeArtifact.runtime_profile_source || 'unknown'})`]
+                : []),
+            ...(taskModeArtifact.profile_policy_snapshot
+                ? [`ProfilePolicySnapshotHash: ${taskModeArtifact.profile_policy_snapshot.snapshot_hash}`]
                 : []),
             ...(plannedChangedFiles.length > 0 ? [`PlannedChangedFilesCount: ${plannedChangedFiles.length}`] : []),
             ...(protectedPlannedFiles.length > 0 ? [`PlannedProtectedFilesCount: ${protectedPlannedFiles.length}`] : []),

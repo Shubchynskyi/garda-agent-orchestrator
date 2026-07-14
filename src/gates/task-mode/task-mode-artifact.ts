@@ -181,6 +181,8 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         profile_source: options.profileSource || null,
         runtime_active_profile: normalizeOptionalString(options.runtimeActiveProfile),
         runtime_profile_source: options.runtimeProfileSource || null,
+        profile_policy_snapshot_required: !!options.profilePolicySnapshot,
+        profile_policy_snapshot: options.profilePolicySnapshot || null,
         dirty_workspace_baseline: dirtyWorkspaceBaseline,
         workflow_config_file_hashes: normalizeWorkflowConfigFileHashes(options.workflowConfigFileHashes || null),
         workflow_config_compatibility_baseline_files: normalizeTaskModePathList(options.workflowConfigCompatibilityBaselineFiles)

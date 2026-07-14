@@ -1235,6 +1235,42 @@ test('getTaskModeEvidence returns null profile fields when absent', () => {
     }
 });
 
+test('runEnterTaskModeCommand fails closed when default-profile snapshot cannot be resolved', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+        const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+        const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-100 | TODO | P1 | orchestration | Default profile snapshot test | gpt-5.5 | 2026-07-14 | default | fixture |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(configDir, 'profiles.json'), '{ broken json', 'utf8');
+
+        assert.throws(
+            () => runEnterTaskModeWithDefaultRouting({
+                repoRoot: tmpDir,
+                taskId: 'T-100',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                taskSummary: 'Default profile snapshot test',
+                emitMetrics: false
+            }),
+            /JSON|Unexpected|Expected|profile/i
+        );
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-100-task-mode.json')), false);
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
 test('runEnterTaskModeCommand banner includes ActiveProfile when profile is set', () => {
     const tmpDir = makeTempDir();
     try {
@@ -1363,6 +1399,283 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(artifact.runtime_profile_source, 'built_in');
         assert.equal(artifact.requested_depth_source, 'explicit');
         assert.equal(artifact.effective_depth_source, 'explicit');
+        assert.equal(artifact.profile_policy_snapshot_required, true);
+        assert.equal(artifact.profile_policy_snapshot.source.effective_profile, 'fast');
+        assert.equal(artifact.profile_policy_snapshot.source.runtime_active_profile, 'balanced');
+        assert.equal(artifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.test, false);
+        assert.match(artifact.profile_policy_snapshot.snapshot_hash, /^[a-f0-9]{64}$/);
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-100');
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.profile_policy_snapshot_status, 'PASS');
+        assert.equal(evidence.profile_policy_snapshot_hash, artifact.profile_policy_snapshot.snapshot_hash);
+
+        const firstSnapshotHash = artifact.profile_policy_snapshot.snapshot_hash;
+        const firstSnapshotLockTimestamp = artifact.profile_policy_snapshot.lock_timestamp_utc;
+        const profilesPath = path.join(configDir, 'profiles.json');
+        const mutatedProfiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+        mutatedProfiles.active_profile = 'fast';
+        mutatedProfiles.built_in_profiles.fast.review_policy.test = true;
+        fs.writeFileSync(profilesPath, JSON.stringify(mutatedProfiles), 'utf8');
+
+        const rerunResult = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 1,
+            effectiveDepth: 1,
+            taskSummary: 'Profile routing test rerun',
+            emitMetrics: false
+        });
+        assert.equal(rerunResult.exitCode, 0);
+
+        const rerunArtifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(rerunArtifact.profile_policy_snapshot.snapshot_hash, firstSnapshotHash);
+        assert.equal(rerunArtifact.profile_policy_snapshot.lock_timestamp_utc, firstSnapshotLockTimestamp);
+        assert.equal(rerunArtifact.profile_policy_snapshot.source.effective_profile, 'fast');
+        assert.equal(rerunArtifact.profile_policy_snapshot.source.runtime_active_profile, 'balanced');
+        assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.test, false);
+
+        const rerunEvidence = getTaskModeEvidence(tmpDir, 'T-100');
+        assert.equal(rerunEvidence.evidence_status, 'PASS');
+        assert.equal(rerunEvidence.profile_policy_snapshot_status, 'PASS');
+        assert.equal(rerunEvidence.profile_policy_snapshot_hash, firstSnapshotHash);
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('runEnterTaskModeCommand fails closed when existing profile policy snapshot evidence is stripped before restart', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+        const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+        const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-100 | TODO | P1 | orchestration | Profile snapshot tamper test | gpt-5.5 | 2026-07-14 | fast | fixture |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                },
+                fast: {
+                    description: 'Fast',
+                    depth: 1,
+                    review_policy: { code: true, test: false },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        }), 'utf8');
+
+        const first = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            taskSummary: 'Profile snapshot tamper test',
+            emitMetrics: false
+        });
+        assert.equal(first.exitCode, 0);
+
+        const artifactPath = path.join(reviewsDir, 'T-100-task-mode.json');
+        const originalArtifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        const firstSnapshotHash = originalArtifact.profile_policy_snapshot.snapshot_hash;
+        const strippedArtifact = { ...originalArtifact };
+        strippedArtifact.profile_policy_snapshot_required = false;
+        delete strippedArtifact.profile_policy_snapshot;
+        fs.writeFileSync(artifactPath, JSON.stringify(strippedArtifact, null, 2));
+
+        assert.throws(
+            () => runEnterTaskModeWithDefaultRouting({
+                repoRoot: tmpDir,
+                taskId: 'T-100',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                taskSummary: 'Profile snapshot tamper test restart',
+                emitMetrics: false
+            }),
+            /profile policy snapshot is not reusable/i
+        );
+
+        fs.unlinkSync(artifactPath);
+        const missingEvidence = getTaskModeEvidence(tmpDir, 'T-100');
+        assert.equal(missingEvidence.evidence_status, 'EVIDENCE_FILE_MISSING');
+        assert.equal(missingEvidence.timeline_declares_profile_policy_snapshot, true);
+        assert.equal(missingEvidence.timeline_profile_policy_snapshot_hash, firstSnapshotHash);
+        assert.throws(
+            () => runEnterTaskModeWithDefaultRouting({
+                repoRoot: tmpDir,
+                taskId: 'T-100',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                taskSummary: 'Profile snapshot tamper test missing artifact restart',
+                emitMetrics: false
+            }),
+            /profile policy snapshot is not reusable/i
+        );
+
+        fs.writeFileSync(artifactPath, '{ broken json', 'utf8');
+        assert.throws(
+            () => runEnterTaskModeWithDefaultRouting({
+                repoRoot: tmpDir,
+                taskId: 'T-100',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                taskSummary: 'Profile snapshot tamper test malformed restart',
+                emitMetrics: false
+            }),
+            /could not be parsed/i
+        );
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('runEnterTaskModeCommand fails closed when existing profile policy snapshot is missing or stale against timeline hash', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+        const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+        const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-100 | TODO | P1 | orchestration | Profile snapshot stale test | gpt-5.5 | 2026-07-14 | fast | fixture |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                },
+                fast: {
+                    description: 'Fast',
+                    depth: 1,
+                    review_policy: { code: true, test: false },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        }), 'utf8');
+
+        const first = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            taskSummary: 'Profile snapshot stale test',
+            emitMetrics: false
+        });
+        assert.equal(first.exitCode, 0);
+
+        const artifactPath = path.join(reviewsDir, 'T-100-task-mode.json');
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.match(artifact.profile_policy_snapshot.snapshot_hash, /^[a-f0-9]{64}$/);
+        const eventsPath = path.join(eventsDir, 'T-100.jsonl');
+        let timelineLines = fs.readFileSync(eventsPath, 'utf8').trimEnd().split('\n');
+        for (let index = timelineLines.length - 1; index >= 0; index -= 1) {
+            const event = JSON.parse(timelineLines[index]) as Record<string, unknown>;
+            if (event.event_type !== 'TASK_MODE_ENTERED') {
+                continue;
+            }
+            const details = event.details as Record<string, unknown>;
+            delete details.profile_policy_snapshot_hash;
+            timelineLines[index] = JSON.stringify(event);
+            break;
+        }
+        fs.writeFileSync(eventsPath, `${timelineLines.join('\n')}\n`, 'utf8');
+
+        const missingHashEvidence = getTaskModeEvidence(tmpDir, 'T-100');
+        assert.equal(
+            missingHashEvidence.evidence_status,
+            'EVIDENCE_PROFILE_POLICY_SNAPSHOT_TIMELINE_HASH_MISSING'
+        );
+        assert.throws(
+            () => runEnterTaskModeWithDefaultRouting({
+                repoRoot: tmpDir,
+                taskId: 'T-100',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                taskSummary: 'Profile snapshot missing timeline hash test restart',
+                emitMetrics: false
+            }),
+            /profile policy snapshot is not reusable/i
+        );
+
+        timelineLines = fs.readFileSync(eventsPath, 'utf8').trimEnd().split('\n');
+        for (let index = timelineLines.length - 1; index >= 0; index -= 1) {
+            const event = JSON.parse(timelineLines[index]) as Record<string, unknown>;
+            if (event.event_type !== 'TASK_MODE_ENTERED') {
+                continue;
+            }
+            const details = event.details as Record<string, unknown>;
+            details.profile_policy_snapshot_hash = '0'.repeat(64);
+            timelineLines[index] = JSON.stringify(event);
+            break;
+        }
+        fs.writeFileSync(eventsPath, `${timelineLines.join('\n')}\n`, 'utf8');
+
+        const staleEvidence = getTaskModeEvidence(tmpDir, 'T-100');
+        assert.equal(staleEvidence.evidence_status, 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_STALE');
+        assert.throws(
+            () => runEnterTaskModeWithDefaultRouting({
+                repoRoot: tmpDir,
+                taskId: 'T-100',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                taskSummary: 'Profile snapshot stale test restart',
+                emitMetrics: false
+            }),
+            /profile policy snapshot is not reusable/i
+        );
     } finally {
         cleanupDir(tmpDir);
     }

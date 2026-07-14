@@ -9,6 +9,7 @@ import { assertValidTaskId } from '../../gate-runtime/task-events';
 import { fileSha256, joinOrchestratorPath, normalizePath } from '../shared/helpers';
 import { normalizeDirtyWorkspaceBaseline } from '../workspace/dirty-worktree-protection';
 import { normalizeWorkflowConfigFileHashes } from '../workflow-config/workflow-config-work';
+import { validateTaskProfilePolicySnapshot } from '../../policy/task-profile-policy-snapshot';
 import {
     TASK_MODE_ENTRY_EXECUTION_PROVIDER_SOURCES,
     TASK_MODE_ENTRY_MODES,
@@ -28,6 +29,8 @@ function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
     declares_runtime_identity_metadata: boolean;
     declares_start_banner: boolean;
     start_banner: string | null;
+    declares_profile_policy_snapshot: boolean;
+    profile_policy_snapshot_hash: string | null;
 } {
     const timelinePath = getTaskTimelinePath(repoRoot, taskId);
     if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
@@ -35,7 +38,9 @@ function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
             artifact_path: null,
             declares_runtime_identity_metadata: false,
             declares_start_banner: false,
-            start_banner: null
+            start_banner: null,
+            declares_profile_policy_snapshot: false,
+            profile_policy_snapshot_hash: null
         };
     }
 
@@ -69,11 +74,18 @@ function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
                 'runtime_identity_violations'
             ].some((key) => Object.prototype.hasOwnProperty.call(details || {}, key));
             const declaresStartBanner = Object.prototype.hasOwnProperty.call(details || {}, 'start_banner');
+            const profilePolicySnapshotHash = String(details?.profile_policy_snapshot_hash || '').trim().toLowerCase();
+            const validProfilePolicySnapshotHash = /^[a-f0-9]{64}$/u.test(profilePolicySnapshotHash)
+                ? profilePolicySnapshotHash
+                : null;
             return {
                 artifact_path: artifactPath ? normalizePath(artifactPath) : null,
                 declares_runtime_identity_metadata: declaresRuntimeIdentityMetadata,
                 declares_start_banner: declaresStartBanner,
-                start_banner: normalizeOrchestratorStartBanner(details?.start_banner)
+                start_banner: normalizeOrchestratorStartBanner(details?.start_banner),
+                declares_profile_policy_snapshot: details?.profile_policy_snapshot_required === true
+                    || validProfilePolicySnapshotHash !== null,
+                profile_policy_snapshot_hash: validProfilePolicySnapshotHash
             };
         } catch {
             continue;
@@ -84,7 +96,9 @@ function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
         artifact_path: null,
         declares_runtime_identity_metadata: false,
         declares_start_banner: false,
-        start_banner: null
+        start_banner: null,
+        declares_profile_policy_snapshot: false,
+        profile_policy_snapshot_hash: null
     };
 }
 
@@ -135,6 +149,14 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         profile_source: null,
         runtime_active_profile: null,
         runtime_profile_source: null,
+        profile_policy_snapshot_required: null,
+        profile_policy_snapshot: null,
+        profile_policy_snapshot_status: 'MISSING',
+        profile_policy_snapshot_hash: null,
+        profile_policy_snapshot_config_hash: null,
+        profile_policy_snapshot_violations: [],
+        timeline_declares_profile_policy_snapshot: false,
+        timeline_profile_policy_snapshot_hash: null,
         dirty_workspace_baseline: null,
         workflow_config_file_hashes: null,
         workflow_config_compatibility_baseline_files: []
@@ -148,6 +170,13 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     const resolvedTaskId = assertValidTaskId(taskId);
     const resolvedPath = resolveTaskModeArtifactPath(repoRoot, resolvedTaskId, artifactPath);
     result.evidence_path = normalizePath(resolvedPath);
+    const timelineMetadata = getLatestTaskModeTimelineMetadata(repoRoot, resolvedTaskId);
+    result.timeline_artifact_path = timelineMetadata.artifact_path;
+    result.timeline_declares_runtime_identity_metadata = timelineMetadata.declares_runtime_identity_metadata;
+    result.timeline_declares_start_banner = timelineMetadata.declares_start_banner;
+    result.timeline_start_banner = timelineMetadata.start_banner;
+    result.timeline_declares_profile_policy_snapshot = timelineMetadata.declares_profile_policy_snapshot;
+    result.timeline_profile_policy_snapshot_hash = timelineMetadata.profile_policy_snapshot_hash;
 
     if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
         result.evidence_status = 'EVIDENCE_FILE_MISSING';
@@ -206,11 +235,6 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         ? artifactObject.runtime_identity_violations.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
     result.routed_to = String(artifactObject.routed_to || '').trim() || null;
-    const timelineMetadata = getLatestTaskModeTimelineMetadata(repoRoot, resolvedTaskId);
-    result.timeline_artifact_path = timelineMetadata.artifact_path;
-    result.timeline_declares_runtime_identity_metadata = timelineMetadata.declares_runtime_identity_metadata;
-    result.timeline_declares_start_banner = timelineMetadata.declares_start_banner;
-    result.timeline_start_banner = timelineMetadata.start_banner;
     applyLegacyTaskModeIdentityBackfill(repoRoot, result);
 
     const rawPlan = artifactObject.plan;
@@ -246,6 +270,15 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.profile_source = String(artifactObject.profile_source || '').trim() || null;
     result.runtime_active_profile = String(artifactObject.runtime_active_profile || '').trim() || null;
     result.runtime_profile_source = String(artifactObject.runtime_profile_source || '').trim() || null;
+    result.profile_policy_snapshot_required = typeof artifactObject.profile_policy_snapshot_required === 'boolean'
+        ? artifactObject.profile_policy_snapshot_required
+        : null;
+    const snapshotValidation = validateTaskProfilePolicySnapshot(artifactObject.profile_policy_snapshot);
+    result.profile_policy_snapshot_status = snapshotValidation.status;
+    result.profile_policy_snapshot = snapshotValidation.snapshot;
+    result.profile_policy_snapshot_hash = snapshotValidation.snapshot?.snapshot_hash || null;
+    result.profile_policy_snapshot_config_hash = snapshotValidation.snapshot?.config_hash || null;
+    result.profile_policy_snapshot_violations = snapshotValidation.violations;
     result.dirty_workspace_baseline = normalizeDirtyWorkspaceBaseline(
         artifactObject.dirty_workspace_baseline,
         repoRoot
@@ -343,6 +376,32 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         result.evidence_status = 'EVIDENCE_ARTIFACT_PATH_MISMATCH';
         return result;
     }
+    if (
+        result.profile_policy_snapshot_required === true
+        || result.timeline_declares_profile_policy_snapshot
+        || result.profile_policy_snapshot_status !== 'MISSING'
+    ) {
+        if (result.profile_policy_snapshot_status === 'MISSING') {
+            result.evidence_status = 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_MISSING';
+            return result;
+        }
+        if (result.profile_policy_snapshot_status !== 'PASS') {
+            result.evidence_status = 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_INVALID';
+            return result;
+        }
+        if (!result.timeline_profile_policy_snapshot_hash) {
+            result.evidence_status = 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_TIMELINE_HASH_MISSING';
+            return result;
+        }
+        if (
+            result.timeline_profile_policy_snapshot_hash
+            && result.profile_policy_snapshot_hash
+            && result.timeline_profile_policy_snapshot_hash !== result.profile_policy_snapshot_hash
+        ) {
+            result.evidence_status = 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_STALE';
+            return result;
+        }
+    }
     if (result.evidence_status === 'PASSED' && result.evidence_outcome === 'PASS') {
         result.evidence_status = 'PASS';
         return result;
@@ -425,6 +484,27 @@ export function getTaskModeEvidenceViolations(result: TaskModeEvidenceResult): s
             return [
                 `Task-mode entry evidence artifact path mismatch. Timeline recorded '${result.timeline_artifact_path}', ` +
                 `but current evidence path is '${evidencePath}'. Re-run downstream gates with the task-mode artifact path recorded by TASK_MODE_ENTERED.`
+            ];
+        case 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_MISSING':
+            return [
+                'Task-mode entry evidence is missing the required profile policy snapshot. ' +
+                'Re-run enter-task-mode so the effective review policy is locked before preflight.'
+            ];
+        case 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_INVALID':
+            return [
+                'Task-mode entry evidence has an invalid profile policy snapshot: ' +
+                (result.profile_policy_snapshot_violations.join(' ') || 'snapshot validation failed.')
+            ];
+        case 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_TIMELINE_HASH_MISSING':
+            return [
+                'Task-mode entry evidence profile policy snapshot is not bound to the latest TASK_MODE_ENTERED timeline: ' +
+                'profile_policy_snapshot_hash is missing from the timeline event. Re-run enter-task-mode so the frozen policy snapshot is recorded in immutable task history.'
+            ];
+        case 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_STALE':
+            return [
+                `Task-mode entry evidence profile policy snapshot hash '${result.profile_policy_snapshot_hash || 'missing'}' ` +
+                `does not match the latest TASK_MODE_ENTERED timeline hash '${result.timeline_profile_policy_snapshot_hash || 'missing'}'. ` +
+                'Re-run downstream gates with the current task-mode artifact.'
             ];
         case 'EVIDENCE_NOT_PASS':
             return [

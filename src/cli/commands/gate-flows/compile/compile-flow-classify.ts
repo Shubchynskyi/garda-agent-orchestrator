@@ -22,6 +22,10 @@ import {
 import { buildGeneratedRuntimeArtifactHygieneWarnings } from '../../../../gates/shared/generated-runtime-artifacts';
 import { loadReviewExecutionPolicyConfig } from '../../../../core/review-execution-policy';
 import { resolveTaskProfileSelection } from '../../../../policy/task-profile-selection';
+import {
+    resolveTaskProfileSelectionFromSnapshot,
+    summarizeTaskProfilePolicySnapshot
+} from '../../../../policy/task-profile-policy-snapshot';
 import { detectCodeChanged } from '../../../../gates/preflight/preflight-code-change';
 import {
     buildOptionalSkillSelectionArtifact,
@@ -123,6 +127,38 @@ function reconcileProfileGuardrailsWithRequiredReviews(
             };
         })
     };
+}
+
+function applyEffectiveTaskPolicyToPreflightResult(
+    result: ClassifyChangeResult,
+    effectiveTaskPolicy: ReturnType<typeof resolveTaskProfileSelection>['effective_policy']
+): void {
+    const guardrailDecisions = new Map(
+        (effectiveTaskPolicy.guardrail_diagnostics?.decisions || []).map((decision) => [decision.review_type, decision])
+    );
+    for (const [reviewType, currentValue] of Object.entries(result.required_reviews)) {
+        const guardrailDecision = guardrailDecisions.get(reviewType);
+        if (guardrailDecision?.decision === 'zero_diff_no_reviewable_scope') {
+            result.required_reviews[reviewType] = false;
+        } else if (currentValue === true) {
+            result.required_reviews[reviewType] = true;
+        } else if (
+            guardrailDecision?.effective_value === true
+            && (
+                guardrailDecision.profile_wanted === true
+                || guardrailDecision.decision === 'profile_forced'
+                || guardrailDecision.decision === 'domain_triggered'
+            )
+        ) {
+            result.required_reviews[reviewType] = true;
+        } else {
+            result.required_reviews[reviewType] = false;
+        }
+    }
+    result.profile_guardrails = reconcileProfileGuardrailsWithRequiredReviews(
+        effectiveTaskPolicy.guardrail_diagnostics,
+        result.required_reviews
+    );
 }
 
 function parseFiniteNumber(value: unknown): number | null {
@@ -435,57 +471,68 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         let trustedWorkflowConfigBaselineFiles: string[] = [];
         const rawTaskProfile = taskModeEvidence.task_profile || taskQueueMetadata?.profile || null;
         const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
-        if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
+        const domainSurface = buildDomainReviewSurface(result);
+        const profileGuardrailOptions = {
+            domainSurface,
+            forceAllDomainReviews: parseBooleanOption(options.forceAllDomainReviews, false),
+            forceCodeReview: parseBooleanOption(options.forceCodeReview, false),
+            localizationOnlyScope: isLocalizationOnlyReviewTriggerScope(result),
+            protectedControlPlaneChanged: result.triggers.protected_control_plane_changed === true,
+            protectedControlPlaneDocsOnly: result.triggers.protected_control_plane_docs_only === true,
+            zeroDiffBaselineOnly: isZeroDiffBaselineOnlyNoReviewableScope(
+                result,
+                domainSurface,
+                taskModeEvidence.planned_changed_files || [],
+                taskModeEvidence.dirty_workspace_baseline?.changed_files || []
+            )
+        };
+        if (
+            taskModeEvidence.evidence_status === 'PASS'
+            && taskModeEvidence.profile_policy_snapshot_status === 'PASS'
+            && taskModeEvidence.profile_policy_snapshot
+        ) {
             try {
-                const domainSurface = buildDomainReviewSurface(result);
+                const resolvedProfile = resolveTaskProfileSelectionFromSnapshot(
+                    taskModeEvidence.profile_policy_snapshot,
+                    typeof result.scope_category === 'string' ? result.scope_category : null,
+                    profileGuardrailOptions
+                );
+                effectiveTaskPolicy = resolvedProfile.effective_policy;
+                result.profile_selection = resolvedProfile.selection;
+                result.profile_policy_snapshot = summarizeTaskProfilePolicySnapshot(taskModeEvidence.profile_policy_snapshot);
+                result.review_execution_policy = {
+                    mode: taskModeEvidence.profile_policy_snapshot.review_execution_policy.mode,
+                    visible_summary_line: taskModeEvidence.profile_policy_snapshot.review_execution_policy.visible_summary_line
+                };
+                applyEffectiveTaskPolicyToPreflightResult(result, effectiveTaskPolicy);
+            } catch (error: unknown) {
+                preflightErrors.push(error instanceof Error ? error.message : String(error));
+            }
+        } else if (taskModeEvidence.profile_policy_snapshot_status === 'PASS' && taskModeEvidence.profile_policy_snapshot) {
+            preflightErrors.push(
+                `Task-mode profile policy snapshot is not reusable because task-mode evidence is ${taskModeEvidence.evidence_status}. ` +
+                `${getTaskModeEvidenceViolations(taskModeEvidence).join(' ') || 'Snapshot evidence validation failed.'}`
+            );
+        } else if (
+            fs.existsSync(profilesConfigPath)
+            && fs.statSync(profilesConfigPath).isFile()
+            && taskModeEvidence.evidence_status === 'PASS'
+        ) {
+            preflightErrors.push(
+                `Task-mode profile policy snapshot is required but not reusable (${taskModeEvidence.profile_policy_snapshot_status}). ` +
+                `${taskModeEvidence.profile_policy_snapshot_violations.join(' ') || 'Profile policy snapshot is missing from task-mode evidence.'}`
+            );
+        } else if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
+            try {
                 const resolvedProfile = resolveTaskProfileSelection(
                     orchestratorRoot,
                     rawTaskProfile,
                     typeof result.scope_category === 'string' ? result.scope_category : null,
-                    {
-                        domainSurface,
-                        forceAllDomainReviews: parseBooleanOption(options.forceAllDomainReviews, false),
-                        forceCodeReview: parseBooleanOption(options.forceCodeReview, false),
-                        localizationOnlyScope: isLocalizationOnlyReviewTriggerScope(result),
-                        protectedControlPlaneChanged: result.triggers.protected_control_plane_changed === true,
-                        protectedControlPlaneDocsOnly: result.triggers.protected_control_plane_docs_only === true,
-                        zeroDiffBaselineOnly: isZeroDiffBaselineOnlyNoReviewableScope(
-                            result,
-                            domainSurface,
-                            taskModeEvidence.planned_changed_files || [],
-                            taskModeEvidence.dirty_workspace_baseline?.changed_files || []
-                        )
-                    }
+                    profileGuardrailOptions
                 );
                 effectiveTaskPolicy = resolvedProfile.effective_policy;
-        result.profile_selection = resolvedProfile.selection;
-
-                const guardrailDecisions = new Map(
-                    (effectiveTaskPolicy.guardrail_diagnostics?.decisions || []).map((decision) => [decision.review_type, decision])
-                );
-                for (const [reviewType, currentValue] of Object.entries(result.required_reviews)) {
-                    const guardrailDecision = guardrailDecisions.get(reviewType);
-                    if (guardrailDecision?.decision === 'zero_diff_no_reviewable_scope') {
-                        result.required_reviews[reviewType] = false;
-                    } else if (currentValue === true) {
-                        result.required_reviews[reviewType] = true;
-                    } else if (
-                        guardrailDecision?.effective_value === true
-                        && (
-                            guardrailDecision.profile_wanted === true
-                            || guardrailDecision.decision === 'profile_forced'
-                            || guardrailDecision.decision === 'domain_triggered'
-                        )
-                    ) {
-                        result.required_reviews[reviewType] = true;
-                    } else {
-                        result.required_reviews[reviewType] = false;
-                    }
-                }
-                result.profile_guardrails = reconcileProfileGuardrailsWithRequiredReviews(
-                    effectiveTaskPolicy.guardrail_diagnostics,
-                    result.required_reviews
-                );
+                result.profile_selection = resolvedProfile.selection;
+                applyEffectiveTaskPolicyToPreflightResult(result, effectiveTaskPolicy);
             } catch (error: unknown) {
                 preflightErrors.push(error instanceof Error ? error.message : String(error));
             }
@@ -966,6 +1013,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     review_execution_policy: result.review_execution_policy ?? null,
                     profile_selection: result.profile_selection ?? null,
                     profile_guardrails: result.profile_guardrails ?? null,
+                    profile_policy_snapshot: result.profile_policy_snapshot ?? null,
                     optional_skill_selection_artifact_path: optionalSkillSelectionArtifactPath,
                     zero_diff_guard: result.zero_diff_guard,
                     budget_forecast: result.budget_forecast || null,

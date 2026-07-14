@@ -1,4 +1,5 @@
 import type { DirtyWorkspaceBaseline } from '../workspace/dirty-worktree-protection';
+import type { TaskProfilePolicySnapshot } from '../../policy/task-profile-policy-snapshot';
 
 export const TASK_MODE_ENTRY_MODES = Object.freeze([
     'EXPLICIT_TASK_EXECUTION',
@@ -72,6 +73,8 @@ export interface TaskModeArtifact {
     profile_source: 'built_in' | 'user' | null;
     runtime_active_profile: string | null;
     runtime_profile_source: 'built_in' | 'user' | null;
+    profile_policy_snapshot_required: boolean;
+    profile_policy_snapshot: TaskProfilePolicySnapshot | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
     workflow_config_file_hashes: Record<string, string | null> | null;
     workflow_config_compatibility_baseline_files: string[];
@@ -112,6 +115,7 @@ export interface BuildTaskModeArtifactOptions {
     profileSource?: 'built_in' | 'user' | null;
     runtimeActiveProfile?: string | null;
     runtimeProfileSource?: 'built_in' | 'user' | null;
+    profilePolicySnapshot?: TaskProfilePolicySnapshot | null;
     dirtyWorkspaceBaseline?: DirtyWorkspaceBaseline | null;
     workflowConfigFileHashes?: Record<string, string | null> | null;
     workflowConfigCompatibilityBaselineFiles?: string[] | null;
@@ -163,6 +167,14 @@ export interface TaskModeEvidenceResult {
     profile_source: string | null;
     runtime_active_profile: string | null;
     runtime_profile_source: string | null;
+    profile_policy_snapshot_required: boolean | null;
+    profile_policy_snapshot: TaskProfilePolicySnapshot | null;
+    profile_policy_snapshot_status: string;
+    profile_policy_snapshot_hash: string | null;
+    profile_policy_snapshot_config_hash: string | null;
+    profile_policy_snapshot_violations: string[];
+    timeline_declares_profile_policy_snapshot: boolean;
+    timeline_profile_policy_snapshot_hash: string | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
     workflow_config_file_hashes: Record<string, string | null> | null;
     workflow_config_compatibility_baseline_files: string[];

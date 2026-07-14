@@ -200,6 +200,7 @@ export interface ClassifyChangeResult {
     isolation_mode_violation?: string;
     profile_selection?: unknown;
     profile_guardrails?: unknown;
+    profile_policy_snapshot?: unknown;
     budget_forecast?: BudgetForecast;
     depth_escalation?: DepthEscalationRecord;
     risk_aware_depth?: RiskAwareDepthResult;

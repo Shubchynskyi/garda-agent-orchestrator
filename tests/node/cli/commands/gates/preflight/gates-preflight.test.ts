@@ -20,6 +20,10 @@ import {
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-config';
 import {
+    computeTaskProfilePolicySnapshotHash,
+    type TaskProfilePolicySnapshot
+} from '../../../../../../src/policy/task-profile-policy-snapshot';
+import {
     captureExpectedError,
     createTempRepo,
     getOrchestratorRoot,
@@ -265,6 +269,112 @@ function seedStrictProfileConfig(repoRoot: string): void {
         },
         user_profiles: {}
     }, null, 2), 'utf8');
+}
+
+function seedSnapshotFreezeProfiles(repoRoot: string): string {
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'review-capabilities.json'), JSON.stringify({
+        code: true,
+        db: true,
+        security: true,
+        refactor: true,
+        api: true,
+        test: true,
+        performance: true,
+        infra: true,
+        dependency: true
+    }, null, 2), 'utf8');
+    const profilesPath = path.join(configDir, 'profiles.json');
+    fs.writeFileSync(profilesPath, JSON.stringify({
+        version: 1,
+        active_profile: 'lean',
+        built_in_profiles: {
+            lean: {
+                description: 'Lean profile for snapshot freeze tests',
+                depth: 2,
+                review_policy: {
+                    code: true,
+                    db: 'auto',
+                    security: 'auto',
+                    refactor: 'auto',
+                    api: 'auto',
+                    test: 'auto',
+                    performance: false,
+                    infra: 'auto',
+                    dependency: 'auto'
+                },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            },
+            strict: {
+                description: 'Strict profile after task start',
+                depth: 3,
+                review_policy: {
+                    code: true,
+                    db: 'auto',
+                    security: true,
+                    refactor: 'auto',
+                    api: 'auto',
+                    test: true,
+                    performance: true,
+                    infra: 'auto',
+                    dependency: 'auto'
+                },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: false,
+                    strip_code_blocks: false,
+                    scoped_diffs: true,
+                    compact_reviewer_output: false
+                },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    }, null, 2), 'utf8');
+    return profilesPath;
+}
+
+function mutateActiveProfileToStrict(profilesPath: string): void {
+    const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as Record<string, unknown>;
+    profiles.active_profile = 'strict';
+    const builtInProfiles = profiles.built_in_profiles as Record<string, Record<string, unknown>>;
+    const leanProfile = builtInProfiles.lean;
+    leanProfile.review_policy = {
+        ...(leanProfile.review_policy as Record<string, unknown>),
+        performance: true
+    };
+    fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+}
+
+function updateLatestTaskModeEventDetails(
+    repoRoot: string,
+    taskId: string,
+    mutateDetails: (details: Record<string, unknown>) => void
+): void {
+    const eventsPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
+    const timelineLines = fs.readFileSync(eventsPath, 'utf8').trimEnd().split('\n');
+    let updated = false;
+    for (let index = timelineLines.length - 1; index >= 0; index -= 1) {
+        const event = JSON.parse(timelineLines[index]) as Record<string, unknown>;
+        if (event.event_type !== 'TASK_MODE_ENTERED') {
+            continue;
+        }
+        const details = event.details as Record<string, unknown>;
+        mutateDetails(details);
+        timelineLines[index] = JSON.stringify(event);
+        updated = true;
+        break;
+    }
+    assert.equal(updated, true, `Expected TASK_MODE_ENTERED event for ${taskId}`);
+    fs.writeFileSync(eventsPath, `${timelineLines.join('\n')}\n`, 'utf8');
 }
 
 function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string): void {
@@ -654,6 +764,249 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(forcedCodePayload.budget_forecast.required_reviews.includes('code'), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change retains task-mode profile policy snapshot after profiles config changes', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-profile-freeze';
+        try {
+            const profilesPath = seedSnapshotFreezeProfiles(repoRoot);
+            seedTaskQueue(repoRoot, taskId, 'TODO', 'default');
+            seedInitAnswers(repoRoot);
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Freeze profile policy at task mode entry',
+                emitMetrics: false
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            mutateActiveProfileToStrict(profilesPath);
+
+            const result = runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskId,
+                taskIntent: 'Freeze profile policy at task mode entry',
+                outputPath: path.join(repoRoot, 'preflight-profile-freeze.json'),
+                emitMetrics: false
+            });
+            const payload = JSON.parse(result.outputText);
+
+            assert.equal(payload.profile_selection.profile_selection_source, 'workspace_active');
+            assert.equal(payload.profile_selection.effective_profile, 'lean');
+            assert.equal(payload.profile_selection.runtime_active_profile, 'lean');
+            assert.equal(payload.required_reviews.performance, false);
+            assert.equal(payload.profile_policy_snapshot.source.effective_profile, 'lean');
+            assert.match(payload.profile_policy_snapshot.snapshot_hash, /^[a-f0-9]{64}$/);
+            assert.equal(payload.profile_policy_snapshot.finding_policy.policy_id, 'legacy_strict_review_findings_v1');
+            assert.equal(payload.profile_policy_snapshot.remediation_policy.review_restarts_retain_profile_snapshot, true);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('classify-change fails closed when the task profile policy snapshot is mutated', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-profile-snapshot-tamper';
+        try {
+            seedSnapshotFreezeProfiles(repoRoot);
+            seedTaskQueue(repoRoot, taskId, 'TODO', 'default');
+            seedInitAnswers(repoRoot);
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Reject mutable profile policy snapshot evidence',
+                emitMetrics: false
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+            const artifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+            const snapshot = artifact.profile_policy_snapshot as Record<string, unknown>;
+            const source = snapshot.source as Record<string, unknown>;
+            source.effective_profile = 'strict';
+            fs.writeFileSync(taskModePath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+
+            const error = captureExpectedError(() => runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskId,
+                taskIntent: 'Reject mutable profile policy snapshot evidence',
+                outputPath: path.join(repoRoot, 'preflight-profile-snapshot-tamper.json'),
+                emitMetrics: false
+            }));
+            assert.match(error.message, /profile policy snapshot/i);
+            assert.match(error.message, /hash mismatch/i);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('classify-change fails closed when task-mode profile policy semantics are forged with a recomputed snapshot hash', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-profile-snapshot-policy-forged';
+        try {
+            seedSnapshotFreezeProfiles(repoRoot);
+            seedTaskQueue(repoRoot, taskId, 'TODO', 'default');
+            seedInitAnswers(repoRoot);
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Reject forged profile policy snapshot semantics',
+                emitMetrics: false
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+            const artifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+            const snapshot = artifact.profile_policy_snapshot as TaskProfilePolicySnapshot;
+            snapshot.finding_policy.active_findings.medium = 'allow_without_resolution' as 'block_until_resolved';
+            snapshot.remediation_policy.active_findings_require_fix_before_pass = false as true;
+            snapshot.snapshot_hash = computeTaskProfilePolicySnapshotHash(snapshot);
+            updateLatestTaskModeEventDetails(repoRoot, taskId, (details) => {
+                details.profile_policy_snapshot_hash = snapshot.snapshot_hash;
+            });
+            fs.writeFileSync(taskModePath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+
+            const error = captureExpectedError(() => runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskId,
+                taskIntent: 'Reject forged profile policy snapshot semantics',
+                outputPath: path.join(repoRoot, 'preflight-profile-snapshot-policy-forged.json'),
+                emitMetrics: false
+            }));
+            assert.match(error.message, /profile policy snapshot/i);
+            assert.match(error.message, /finding_policy\.active_findings\.medium/i);
+            assert.match(error.message, /remediation_policy\.active_findings_require_fix_before_pass/i);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('classify-change fails closed when task-mode evidence omits the profile policy snapshot', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-profile-snapshot-missing';
+        try {
+            const profilesPath = seedSnapshotFreezeProfiles(repoRoot);
+            seedTaskQueue(repoRoot, taskId, 'TODO', 'default');
+            seedInitAnswers(repoRoot);
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Reject missing profile policy snapshot evidence',
+                emitMetrics: false
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+            const artifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+            artifact.profile_policy_snapshot_required = false;
+            delete artifact.profile_policy_snapshot;
+            fs.writeFileSync(taskModePath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+
+            updateLatestTaskModeEventDetails(repoRoot, taskId, (details) => {
+                delete details.profile_policy_snapshot_required;
+                delete details.profile_policy_snapshot_hash;
+                delete details.profile_policy_snapshot_config_hash;
+            });
+            mutateActiveProfileToStrict(profilesPath);
+
+            const error = captureExpectedError(() => runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskId,
+                taskIntent: 'Reject missing profile policy snapshot evidence',
+                outputPath: path.join(repoRoot, 'preflight-profile-snapshot-missing.json'),
+                emitMetrics: false
+            }));
+            assert.match(error.message, /profile policy snapshot is required/i);
+            assert.match(error.message, /missing/i);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('classify-change fails closed when the task-mode timeline omits the profile policy snapshot hash', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-profile-snapshot-timeline-hash-missing';
+        try {
+            seedSnapshotFreezeProfiles(repoRoot);
+            seedTaskQueue(repoRoot, taskId, 'TODO', 'default');
+            seedInitAnswers(repoRoot);
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Reject unbound profile policy snapshot evidence',
+                emitMetrics: false
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            updateLatestTaskModeEventDetails(repoRoot, taskId, (details) => {
+                delete details.profile_policy_snapshot_hash;
+            });
+
+            const error = captureExpectedError(() => runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskId,
+                taskIntent: 'Reject unbound profile policy snapshot evidence',
+                outputPath: path.join(repoRoot, 'preflight-profile-snapshot-timeline-hash-missing.json'),
+                emitMetrics: false
+            }));
+            assert.match(error.message, /profile policy snapshot/i);
+            assert.match(error.message, /timeline/i);
+            assert.match(error.message, /profile_policy_snapshot_hash is missing/i);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('classify-change fails closed when the task profile policy snapshot is stale against timeline', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-profile-snapshot-stale';
+        try {
+            seedSnapshotFreezeProfiles(repoRoot);
+            seedTaskQueue(repoRoot, taskId, 'TODO', 'default');
+            seedInitAnswers(repoRoot);
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Reject stale profile policy snapshot evidence',
+                emitMetrics: false
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            updateLatestTaskModeEventDetails(repoRoot, taskId, (details) => {
+                details.profile_policy_snapshot_hash = '0'.repeat(64);
+            });
+
+            const error = captureExpectedError(() => runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskId,
+                taskIntent: 'Reject stale profile policy snapshot evidence',
+                outputPath: path.join(repoRoot, 'preflight-profile-snapshot-stale.json'),
+                emitMetrics: false
+            }));
+            assert.match(error.message, /profile policy snapshot/i);
+            assert.match(error.message, /stale|does not match/i);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('classify-change strict profile does not force DB review without DB surface evidence', { concurrency: false }, () => {
