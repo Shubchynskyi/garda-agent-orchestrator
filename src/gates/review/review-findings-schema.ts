@@ -1,3 +1,9 @@
+import {
+    createChangedFileLineCountResolver,
+    formatReviewEvidenceLineCountSource,
+    parseReviewEvidenceLocation
+} from './review-coverage-ledger';
+
 export const REVIEW_FINDINGS_SCHEMA_VERSION = 1 as const;
 
 export const REVIEW_FINDINGS_ID_PATTERN = /^F-\d{3}$/u;
@@ -107,6 +113,8 @@ export interface ReviewFindingsValidationOptions {
     expectedChangedFilePaths?: readonly string[];
     expectedReviewContextSha256?: string;
     expectedTreeStateSha256?: string;
+    repoRoot?: string;
+    evidenceSnapshotCommit?: string;
 }
 
 export interface ReviewFindingsValidationResult {
@@ -443,35 +451,34 @@ function parseCoverageLedger(value: unknown, violations: string[]): ReviewFindin
     return coverageContractSha256 ? { coverage_contract_sha256: coverageContractSha256, entries } : null;
 }
 
-function parseEvidenceLocation(location: string): { filePath: string; line: number } | null {
-    const normalized = location.trim().replace(/\\/g, '/');
-    const match = /^(.+):([1-9]\d*)$/u.exec(normalized);
-    if (!match) {
-        return null;
-    }
-    const filePath = match[1].trim();
-    if (!filePath || filePath.startsWith('<') || filePath.includes('..')) {
-        return null;
-    }
-    return {
-        filePath,
-        line: Number(match[2])
-    };
-}
-
 function validateEvidenceLocations(
     evidenceItems: readonly ReviewFindingsEvidence[],
     subject: string,
     changedFiles: ReadonlySet<string>,
+    getChangedFileLineCount: ((filePath: string) => { count: number; source: 'current' | 'head' | 'bound-snapshot' } | null) | null,
     violations: string[]
 ): void {
     for (const [evidenceIndex, evidence] of evidenceItems.entries()) {
         const evidenceSubject = `${subject}.evidence[${evidenceIndex}]`;
-        const location = parseEvidenceLocation(evidence.location);
+        const location = parseReviewEvidenceLocation(evidence.location);
         if (!location || !changedFiles.has(location.filePath)) {
             violations.push(
                 `${evidenceSubject}.location '${evidence.location}' must be a current changed-file path:line.`
             );
+            continue;
+        }
+        if (getChangedFileLineCount) {
+            const lineEvidence = getChangedFileLineCount(location.filePath);
+            if (lineEvidence == null) {
+                violations.push(
+                    `${evidenceSubject}.location '${evidence.location}' references a changed file that is unreadable in both the current repository and HEAD snapshot.`
+                );
+            } else if (location.line > lineEvidence.count) {
+                violations.push(
+                    `${evidenceSubject}.location '${evidence.location}' exceeds ` +
+                    `${formatReviewEvidenceLineCountSource(lineEvidence.source)} line count ${lineEvidence.count}.`
+                );
+            }
         }
     }
 }
@@ -484,6 +491,7 @@ function validateConcreteReviewEvidenceLocations(
         residualRisks: readonly ReviewResidualRisk[];
     },
     expectedChangedFilePaths: readonly string[] | undefined,
+    lineValidationOptions: { repoRoot?: string; evidenceSnapshotCommit?: string },
     violations: string[]
 ): void {
     if (!expectedChangedFilePaths) {
@@ -497,9 +505,12 @@ function validateConcreteReviewEvidenceLocations(
     if (changedFiles.size === 0) {
         return;
     }
+    const getChangedFileLineCount = lineValidationOptions.repoRoot
+        ? createChangedFileLineCountResolver(lineValidationOptions)
+        : null;
 
     for (const [noteIndex, note] of reportParts.validationNotes.entries()) {
-        validateEvidenceLocations(note.evidence, `validation_notes[${noteIndex}]`, changedFiles, violations);
+        validateEvidenceLocations(note.evidence, `validation_notes[${noteIndex}]`, changedFiles, getChangedFileLineCount, violations);
     }
     if (reportParts.coverageLedger) {
         for (const [entryIndex, entry] of reportParts.coverageLedger.entries.entries()) {
@@ -507,6 +518,7 @@ function validateConcreteReviewEvidenceLocations(
                 entry.evidence,
                 `coverage_ledger.entries[${entryIndex}]`,
                 changedFiles,
+                getChangedFileLineCount,
                 violations
             );
         }
@@ -518,13 +530,14 @@ function validateConcreteReviewEvidenceLocations(
                     finding.evidence,
                     `findings.${severity}[${findingIndex}]`,
                     changedFiles,
+                    getChangedFileLineCount,
                     violations
                 );
             }
         }
     }
     for (const [riskIndex, risk] of reportParts.residualRisks.entries()) {
-        validateEvidenceLocations(risk.evidence, `residual_risks[${riskIndex}]`, changedFiles, violations);
+        validateEvidenceLocations(risk.evidence, `residual_risks[${riskIndex}]`, changedFiles, getChangedFileLineCount, violations);
     }
 }
 
@@ -744,6 +757,10 @@ export function validateReviewFindingsReport(
     validateConcreteReviewEvidenceLocations(
         { validationNotes, coverageLedger, findings, residualRisks },
         options.expectedChangedFilePaths,
+        {
+            repoRoot: options.repoRoot,
+            evidenceSnapshotCommit: options.evidenceSnapshotCommit
+        },
         violations
     );
     if (coverageLedger && findings) {

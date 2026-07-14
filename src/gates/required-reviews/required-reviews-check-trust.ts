@@ -32,7 +32,6 @@ import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveRev
 import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
     resolveReviewCoverageEvidenceSnapshotCommit,
-    validateReviewCoverageLedger,
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
 import {
@@ -209,7 +208,9 @@ export function validateReviewArtifactGateEligibility(options: {
                     expectedReviewType: reviewKey,
                     expectedReviewContextSha256: reviewArtifact.reviewContextSha256 || undefined,
                     expectedTreeStateSha256: reviewContextTreeStateSha256 || undefined,
-                    coverageContract: reviewContext.coverage_contract as ReviewCoverageContract
+                    coverageContract: reviewContext.coverage_contract as ReviewCoverageContract,
+                    repoRoot: options.repoRoot || undefined,
+                    evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
                 });
                 if (!findingsArtifact.detected) {
                     errors.push(
@@ -221,19 +222,6 @@ export function validateReviewArtifactGateEligibility(options: {
                         `Review artifact '${normalizePath(artifactPath)}' contains invalid findings JSON: ` +
                         findingsArtifact.violations.join(' ')
                     );
-                }
-                const coverageValidation = validateReviewCoverageLedger(
-                    artifactContent,
-                    reviewContext.coverage_contract as ReviewCoverageContract,
-                    {
-                        repoRoot: options.repoRoot || undefined,
-                        evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
-                    }
-                );
-                if (coverageValidation.status !== 'PASS') {
-                    errors.push(...coverageValidation.violations.map((violation) =>
-                        `Review coverage validation for '${reviewKey}' failed: ${violation}`
-                    ));
                 }
             }
             if (reviewContext && !reviewContextTreeStateSha256) {

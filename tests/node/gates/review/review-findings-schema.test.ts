@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -6,6 +9,12 @@ import {
     reviewFindingsReportJsonSchema,
     validateReviewFindingsReport
 } from '../../../../src/gates/review/review-findings-schema';
+import {
+    buildReviewCoverageContract
+} from '../../../../src/gates/review/review-coverage-ledger';
+import {
+    validateReviewFindingsContract
+} from '../../../../src/gates/review/review-findings-artifact-verdict';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
@@ -272,6 +281,72 @@ test('validateReviewFindingsReport rejects non-concrete evidence locations outsi
     assert.ok(result.violations.some((entry) => entry.includes(
         "residual_risks[0].evidence[0].location 'src/other.ts:10' must be a current changed-file path:line"
     )));
+});
+
+test('validateReviewFindingsContract authenticates non-ledger evidence line numbers', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-findings-lines-'));
+    try {
+        fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'example.ts'), 'export const example = 1;\n', 'utf8');
+        const contract = buildReviewCoverageContract({
+            reviewType: 'code',
+            changedFiles: ['src/example.ts'],
+            categoryIds: ['schema']
+        });
+        const report = validReport();
+        report.coverage_ledger = {
+            coverage_contract_sha256: contract.contract_sha256,
+            entries: contract.obligations.map((obligation, index) => ({
+                obligation_id: obligation.id,
+                evidence: [
+                    evidence(
+                        'src/example.ts:1',
+                        `Concrete current-file evidence covers ${obligation.kind} obligation ${index + 1}.`
+                    )
+                ],
+                finding_ids: index === 0 ? ['F-001'] : []
+            }))
+        };
+        (report.validation_notes as Array<Record<string, unknown>>)[0].evidence = [
+            evidence('src/example.ts:999', 'Validation-note evidence points beyond the current file.')
+        ];
+        (report.findings as Record<string, unknown>).medium = [{
+            id: 'F-001',
+            title: 'Out-of-range non-ledger evidence',
+            description: 'Finding evidence must be authenticated against current changed-file line counts.',
+            evidence: [evidence('src/example.ts:999', 'Finding evidence points beyond the current file.')],
+            coverage_obligation_ids: [contract.obligations[0].id]
+        }];
+        report.residual_risks = [{
+            id: 'R-001',
+            description: 'Residual risk evidence must be authenticated against current changed-file line counts.',
+            evidence: [evidence('src/example.ts:999', 'Residual-risk evidence points beyond the current file.')]
+        }];
+
+        const result = validateReviewFindingsContract({
+            content: JSON.stringify(report),
+            expectedTaskId: 'T-979-1',
+            expectedReviewType: 'code',
+            expectedReviewContextSha256: HASH_A,
+            expectedTreeStateSha256: HASH_B,
+            coverageContract: contract,
+            repoRoot
+        });
+
+        assert.equal(result.detected, true);
+        assert.equal(result.valid, false);
+        assert.ok(result.violations.some((entry) => entry.includes(
+            "validation_notes[0].evidence[0].location 'src/example.ts:999' exceeds current file line count 1"
+        )));
+        assert.ok(result.violations.some((entry) => entry.includes(
+            "findings.medium[0].evidence[0].location 'src/example.ts:999' exceeds current file line count 1"
+        )));
+        assert.ok(result.violations.some((entry) => entry.includes(
+            "residual_risks[0].evidence[0].location 'src/example.ts:999' exceeds current file line count 1"
+        )));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
 });
 
 test('validateReviewFindingsReport rejects empty findings when expected coverage is incomplete', () => {
@@ -557,4 +632,108 @@ test('validateReviewFindingsReport rejects per-obligation coverage and finding r
     assert.ok(result.violations.some((entry) => entry.includes(
         "Coverage ledger entry 'CATEGORY-SCHEMA' references finding 'F-001' but that finding does not reference the coverage obligation"
     )));
+});
+
+test('validateReviewFindingsContract returns one deterministic violation set for malformed findings and coverage', () => {
+    const contract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/example.ts'],
+        categoryIds: ['schema']
+    });
+    const fileObligation = contract.obligations.find((entry) => entry.kind === 'file');
+    const categoryObligation = contract.obligations.find((entry) => entry.kind === 'category');
+    assert.ok(fileObligation);
+    assert.ok(categoryObligation);
+    const report = {
+        ...validReport(),
+        task_id: 'T-OTHER',
+        review_context_sha256: 'd'.repeat(64),
+        tree_state_sha256: 'e'.repeat(64),
+        verdict: 'REVIEW PASSED',
+        coverage_ledger: {
+            coverage_contract_sha256: 'f'.repeat(64),
+            entries: [
+                {
+                    obligation_id: fileObligation.id,
+                    evidence: [evidence('src/example.ts:10', 'Reviewed the whole file')],
+                    finding_ids: ['F-999']
+                },
+                {
+                    obligation_id: fileObligation.id,
+                    evidence: [],
+                    finding_ids: []
+                },
+                {
+                    obligation_id: 'CATEGORY-UNKNOWN',
+                    evidence: [evidence('tests/outside.test.ts:2', 'Concrete unknown category evidence was inspected')],
+                    finding_ids: []
+                }
+            ]
+        },
+        findings: {
+            critical: [],
+            high: [
+                {
+                    id: 'F-001',
+                    title: 'Unlinked category finding',
+                    description: 'The finding references an omitted system-owned category obligation.',
+                    evidence: [evidence('tests/outside.test.ts:2', 'Concrete outside-scope finding evidence was inspected')],
+                    coverage_obligation_ids: [categoryObligation.id]
+                },
+                {
+                    id: 'F-001',
+                    title: 'Duplicate finding without evidence',
+                    description: 'The duplicate finding is malformed and must not hide later coverage failures.',
+                    evidence: [],
+                    coverage_obligation_ids: [fileObligation.id]
+                }
+            ],
+            medium: [],
+            low: []
+        },
+        residual_risks: [{
+            id: 'RISK-001',
+            description: 'Malformed residual risk shape must be reported with the same result.',
+            evidence: []
+        }]
+    };
+
+    const first = validateReviewFindingsContract({
+        content: JSON.stringify(report),
+        expectedTaskId: 'T-979-1',
+        expectedReviewType: 'code',
+        expectedReviewContextSha256: HASH_A,
+        expectedTreeStateSha256: HASH_B,
+        coverageContract: contract
+    });
+    const second = validateReviewFindingsContract({
+        content: JSON.stringify(report),
+        expectedTaskId: 'T-979-1',
+        expectedReviewType: 'code',
+        expectedReviewContextSha256: HASH_A,
+        expectedTreeStateSha256: HASH_B,
+        coverageContract: contract
+    });
+
+    assert.equal(first.detected, true);
+    assert.equal(first.valid, false);
+    assert.equal(first.report, null);
+    assert.equal(first.coverage_validation?.status, 'FAIL');
+    assert.deepEqual(second.violations, first.violations);
+    assert.ok(first.violations.some((entry) => entry.includes("unknown field 'verdict'")));
+    assert.ok(first.violations.some((entry) => entry.includes('$.verdict is a reviewer-owned verdict')));
+    assert.ok(first.violations.some((entry) => entry.includes("task_id 'T-OTHER'")));
+    assert.ok(first.violations.some((entry) => entry.includes('review_context_sha256 does not match')));
+    assert.ok(first.violations.some((entry) => entry.includes('tree_state_sha256 does not match')));
+    assert.ok(first.violations.some((entry) => entry.includes('coverage_ledger.coverage_contract_sha256 does not match')));
+    assert.ok(first.violations.some((entry) => entry.includes("Duplicate finding id 'F-001'")));
+    assert.ok(first.violations.some((entry) => entry.includes('findings.high[1].evidence must contain')));
+    assert.ok(first.violations.some((entry) => entry.includes('residual_risks[0].id must match R-###')));
+    assert.ok(first.violations.some((entry) => entry.includes('residual_risks[0].evidence must contain')));
+    assert.ok(first.violations.some((entry) => entry.includes(`Expected coverage obligation '${categoryObligation.id}'`)));
+    assert.ok(first.violations.some((entry) => entry.includes(`Coverage obligation '${fileObligation.id}' is duplicated`)));
+    assert.ok(first.violations.some((entry) => entry.includes("Coverage obligation 'CATEGORY-UNKNOWN' is not part of the current contract")));
+    assert.ok(first.violations.some((entry) => entry.includes('generic evidence')));
+    assert.ok(first.violations.some((entry) => entry.includes("Coverage ledger references unknown finding 'F-999'")));
+    assert.ok(first.violations.some((entry) => entry.includes("Finding 'F-001' is not referenced by any coverage ledger entry")));
 });

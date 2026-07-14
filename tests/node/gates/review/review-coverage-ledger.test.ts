@@ -333,19 +333,28 @@ test('authenticated snapshot binding is propagated through result, trust, and re
     const consumers = [
         {
             path: 'src/cli/commands/gate-review-handlers/result/review-result-handlers.ts',
-            preflight: 'preflight'
+            preflight: 'preflight',
+            validator: 'contract'
         },
         {
             path: 'src/gates/required-reviews/required-reviews-check-trust.ts',
-            preflight: 'preflightPayload'
+            preflight: 'preflightPayload',
+            validator: 'contract'
         },
         {
             path: 'src/gates/review-reuse/review-reuse-materialization.ts',
-            preflight: 'options.preflightPayload'
+            preflight: 'options.preflightPayload',
+            validator: 'ledger'
         }
-    ];
+    ] as const;
     for (const consumer of consumers) {
         const source = fs.readFileSync(path.resolve(consumer.path), 'utf8');
+        assert.match(
+            source,
+            consumer.validator === 'contract'
+                ? /validate(?:Json)?ReviewFindings(?:Contract|Artifact)\(/u
+                : /validateReviewCoverageLedger\(/u
+        );
         assert.match(source, /evidenceSnapshotCommit:\s*resolveReviewCoverageEvidenceSnapshotCommit\(/u);
         assert.ok(
             source.includes(`resolveReviewCoverageEvidenceSnapshotCommit(${consumer.preflight})`),

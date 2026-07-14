@@ -90,16 +90,16 @@ import {
 import { assertReviewLifecycleGuard } from '../../../../gates/review/review-lifecycle-guard';
 import {
     resolveReviewCoverageEvidenceSnapshotCommit,
-    validateReviewCoverageLedger,
     type ReviewCoverageContract,
     type ReviewCoverageValidationSummary
 } from '../../../../gates/review/review-coverage-ledger';
 import {
-    validateReviewFindingsReport,
     type ReviewFindingsReport
 } from '../../../../gates/review/review-findings-schema';
 import {
-    reviewContextRequiresFindingsOnlyArtifact
+    reviewContextRequiresFindingsOnlyArtifact,
+    validateReviewFindingsContract,
+    type JsonReviewFindingsArtifactValidation
 } from '../../../../gates/review/review-findings-artifact-verdict';
 
 function sha256JsonPayload(value: unknown): string {
@@ -403,31 +403,26 @@ async function recordReviewReceiptFromArtifacts(options: {
     });
     const strictFindingsOnlyOutput = reviewContextRequiresFindingsOnlyArtifact(parsedReviewContext);
     let findingsReport: ReviewFindingsReport | null = null;
+    let coverageValidation: ReviewCoverageValidationSummary | null = null;
     if (String(reviewArtifactContent || '').trim().startsWith('{')) {
-        findingsReport = parseValidatedFindingsOnlyReviewOutput({
+        const findingsValidation = validateFindingsOnlyReviewOutput({
             reviewContent: reviewArtifactContent,
             taskId: options.taskId,
             reviewType: options.reviewType,
             reviewContextSha256: contextSha256,
             reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
-            coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined
+            coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined,
+            repoRoot: options.repoRoot,
+            evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflight)
         });
+        findingsReport = findingsValidation.report;
+        coverageValidation = findingsValidation.coverage_validation;
     } else if (strictFindingsOnlyOutput) {
         throw new Error(
             `Current '${options.reviewType}' review receipts require a verdict-free findings JSON report. ` +
             'Legacy PASS/FAIL verdict-token artifacts are readable history only and cannot satisfy a new review cycle.'
         );
     }
-    const coverageValidation: ReviewCoverageValidationSummary | null = Number(parsedReviewContext.schema_version) >= 3
-        ? validateReviewCoverageLedger(
-            reviewArtifactContent,
-            parsedReviewContext.coverage_contract as ReviewCoverageContract,
-            {
-                repoRoot: options.repoRoot,
-                evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflight)
-            }
-        )
-        : null;
     if (coverageValidation && coverageValidation.status !== 'PASS') {
         throw new Error(
             `Review coverage ledger validation failed for '${options.reviewType}'. ` +
@@ -524,61 +519,39 @@ async function recordReviewReceiptFromArtifacts(options: {
     });
 }
 
-function getCoverageObligationIds(contract: ReviewCoverageContract | null | undefined): string[] {
-    return Array.isArray(contract?.obligations)
-        ? contract.obligations
-            .map((entry) => String(entry?.id || '').trim())
-            .filter(Boolean)
-        : [];
-}
-
-function getCoverageChangedFilePaths(contract: ReviewCoverageContract | null | undefined): string[] {
-    return Array.isArray(contract?.obligations)
-        ? contract.obligations
-            .filter((entry) => entry?.kind === 'file')
-            .map((entry) => String(entry?.target || '').trim())
-            .filter(Boolean)
-        : [];
-}
-
-function parseValidatedFindingsOnlyReviewOutput(options: {
+function validateFindingsOnlyReviewOutput(options: {
     reviewContent: string;
     taskId: string;
     reviewType: string;
     reviewContextSha256: string;
     reviewTreeStateSha256: string | null;
     coverageContract: ReviewCoverageContract | null | undefined;
-}): ReviewFindingsReport | null {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(String(options.reviewContent || ''));
-    } catch {
-        return null;
-    }
-    const validation = validateReviewFindingsReport(parsed, {
+    repoRoot: string;
+    evidenceSnapshotCommit?: string | null;
+}): JsonReviewFindingsArtifactValidation {
+    const validation = validateReviewFindingsContract({
+        content: options.reviewContent,
         expectedTaskId: options.taskId,
         expectedReviewType: options.reviewType,
-        expectedCoverageObligationIds: getCoverageObligationIds(options.coverageContract),
-        expectedChangedFilePaths: getCoverageChangedFilePaths(options.coverageContract),
-        expectedReviewContextSha256: options.reviewContextSha256 || undefined,
-        expectedTreeStateSha256: options.reviewTreeStateSha256 || undefined
+        expectedReviewContextSha256: options.reviewContextSha256,
+        expectedTreeStateSha256: options.reviewTreeStateSha256,
+        coverageContract: options.coverageContract,
+        repoRoot: options.repoRoot,
+        evidenceSnapshotCommit: options.evidenceSnapshotCommit
     });
+    if (!validation.detected) {
+        throw new Error(
+            `Verdict-free findings JSON report is invalid for '${options.reviewType}': ` +
+            'review output must be a JSON object.'
+        );
+    }
     if (!validation.valid || !validation.report) {
         throw new Error(
             `Verdict-free findings JSON report is invalid for '${options.reviewType}': ` +
             validation.violations.join(' ')
         );
     }
-    if (
-        options.coverageContract?.contract_sha256
-        && validation.report.coverage_ledger.coverage_contract_sha256 !== options.coverageContract.contract_sha256
-    ) {
-        throw new Error(
-            `Verdict-free findings JSON report coverage_contract_sha256 does not match current coverage contract. ` +
-            `Expected ${options.coverageContract.contract_sha256}; actual ${validation.report.coverage_ledger.coverage_contract_sha256}.`
-        );
-    }
-    return validation.report;
+    return validation;
 }
 
 function hasActiveFindings(report: ReviewFindingsReport): boolean {
@@ -653,15 +626,19 @@ async function handleRecordReviewResultWithDependencies(
     const reviewContextSha256 = fileSha256(contextPath) || '';
     const strictFindingsOnlyOutput = reviewContextRequiresFindingsOnlyArtifact(parsedReviewContext);
     let findingsReport: ReviewFindingsReport | null = null;
-    if ((strictFindingsOnlyOutput && !detectedLegacyVerdictToken) || (!strictFindingsOnlyOutput && !verdictToken)) {
-        findingsReport = parseValidatedFindingsOnlyReviewOutput({
+    const reviewContentLooksLikeFindingsJson = String(reviewContent || '').trim().startsWith('{');
+    if ((strictFindingsOnlyOutput && !detectedLegacyVerdictToken) || (!strictFindingsOnlyOutput && !verdictToken && reviewContentLooksLikeFindingsJson)) {
+        const findingsValidation = validateFindingsOnlyReviewOutput({
             reviewContent,
             taskId,
             reviewType,
             reviewContextSha256,
             reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
-            coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined
+            coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined,
+            repoRoot,
+            evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
         });
+        findingsReport = findingsValidation.report;
         if (findingsReport) {
             verdictToken = hasActiveFindings(findingsReport) ? expectedFailVerdict : expectedPassVerdict;
         }

@@ -4,12 +4,29 @@ import {
     validateReviewFindingsReport,
     type ReviewFindingsReport
 } from './review-findings-schema';
-import type { ReviewCoverageContract } from './review-coverage-ledger';
+import {
+    validateReviewCoverageLedger,
+    type ReviewCoverageContract,
+    type ReviewCoverageValidationSummary
+} from './review-coverage-ledger';
 
 export interface JsonReviewFindingsArtifactValidation {
     detected: boolean;
+    valid: boolean;
     report: ReviewFindingsReport | null;
     violations: string[];
+    coverage_validation: ReviewCoverageValidationSummary | null;
+}
+
+export interface ReviewFindingsContractValidationOptions {
+    content: string;
+    expectedTaskId: string;
+    expectedReviewType: string;
+    expectedReviewContextSha256?: string | null;
+    expectedTreeStateSha256?: string | null;
+    coverageContract?: ReviewCoverageContract | null;
+    repoRoot?: string | null;
+    evidenceSnapshotCommit?: string | null;
 }
 
 export function reviewContextRequiresFindingsOnlyArtifact(reviewContext: unknown): boolean {
@@ -19,23 +36,6 @@ export function reviewContextRequiresFindingsOnlyArtifact(reviewContext: unknown
     return Number(reviewContext.schema_version) >= 3;
 }
 
-function getCoverageObligationIds(contract: ReviewCoverageContract | null | undefined): string[] {
-    return Array.isArray(contract?.obligations)
-        ? contract.obligations
-            .map((entry) => String(entry?.id || '').trim())
-            .filter(Boolean)
-        : [];
-}
-
-function getCoverageChangedFilePaths(contract: ReviewCoverageContract | null | undefined): string[] {
-    return Array.isArray(contract?.obligations)
-        ? contract.obligations
-            .filter((entry) => entry?.kind === 'file')
-            .map((entry) => String(entry?.target || '').trim())
-            .filter(Boolean)
-        : [];
-}
-
 function parseJsonReviewFindingsArtifactObject(content: string): Record<string, unknown> | null {
     const trimmed = String(content || '').trim();
     if (!trimmed.startsWith('{')) {
@@ -43,7 +43,7 @@ function parseJsonReviewFindingsArtifactObject(content: string): Record<string, 
     }
     try {
         const parsed = JSON.parse(trimmed) as unknown;
-        if (!isPlainRecord(parsed) || Number(parsed.schema_version) !== 1 || !isPlainRecord(parsed.findings)) {
+        if (!isPlainRecord(parsed)) {
             return null;
         }
         return parsed;
@@ -88,6 +88,96 @@ export function parseJsonReviewFindingsArtifact(content: string): ReviewFindings
     return validation.report;
 }
 
+function getCoverageContractSha256(value: Record<string, unknown>): string | null {
+    const ledger = value.coverage_ledger;
+    if (!isPlainRecord(ledger) || typeof ledger.coverage_contract_sha256 !== 'string') {
+        return null;
+    }
+    const normalized = ledger.coverage_contract_sha256.trim().toLowerCase();
+    return normalized || null;
+}
+
+function buildCoverageContractSha256Violation(
+    parsed: Record<string, unknown>,
+    coverageContract: ReviewCoverageContract | null | undefined
+): string | null {
+    const expectedSha256 = String(coverageContract?.contract_sha256 || '').trim().toLowerCase();
+    if (!expectedSha256) {
+        return null;
+    }
+    const actualSha256 = getCoverageContractSha256(parsed);
+    if (!actualSha256 || actualSha256 === expectedSha256) {
+        return null;
+    }
+    return `coverage_ledger.coverage_contract_sha256 does not match current coverage contract '${expectedSha256}'.`;
+}
+
+function getCoverageObligationIds(contract: ReviewCoverageContract | null | undefined): string[] {
+    return Array.isArray(contract?.obligations)
+        ? contract.obligations
+            .map((entry) => String(entry?.id || '').trim())
+            .filter(Boolean)
+        : [];
+}
+
+function getCoverageChangedFilePaths(contract: ReviewCoverageContract | null | undefined): string[] {
+    return Array.isArray(contract?.obligations)
+        ? contract.obligations
+            .filter((entry) => entry?.kind === 'file')
+            .map((entry) => String(entry?.target || '').trim())
+            .filter(Boolean)
+        : [];
+}
+
+export function validateReviewFindingsContract(
+    options: ReviewFindingsContractValidationOptions
+): JsonReviewFindingsArtifactValidation {
+    const parsed = parseJsonReviewFindingsArtifactObject(options.content);
+    if (!parsed) {
+        return {
+            detected: false,
+            valid: false,
+            report: null,
+            violations: [],
+            coverage_validation: null
+        };
+    }
+
+    const validation = validateReviewFindingsReport(parsed, {
+        expectedTaskId: options.expectedTaskId,
+        expectedReviewType: options.expectedReviewType,
+        expectedCoverageObligationIds: getCoverageObligationIds(options.coverageContract),
+        expectedChangedFilePaths: getCoverageChangedFilePaths(options.coverageContract),
+        expectedReviewContextSha256: options.expectedReviewContextSha256 || undefined,
+        expectedTreeStateSha256: options.expectedTreeStateSha256 || undefined,
+        repoRoot: options.repoRoot || undefined,
+        evidenceSnapshotCommit: options.evidenceSnapshotCommit || undefined
+    });
+    const coverageContractSha256Violation = buildCoverageContractSha256Violation(parsed, options.coverageContract);
+    const coverageValidation = options.coverageContract
+        ? validateReviewCoverageLedger(options.content, options.coverageContract, {
+            repoRoot: options.repoRoot || undefined,
+            evidenceSnapshotCommit: options.evidenceSnapshotCommit || undefined
+        })
+        : null;
+    const coverageViolations = coverageValidation?.status === 'FAIL'
+        ? coverageValidation.violations
+        : [];
+    const violations = [
+        ...validation.violations,
+        ...(coverageContractSha256Violation ? [coverageContractSha256Violation] : []),
+        ...coverageViolations
+    ];
+
+    return {
+        detected: true,
+        valid: violations.length === 0,
+        report: violations.length === 0 ? validation.report : null,
+        violations,
+        coverage_validation: coverageValidation
+    };
+}
+
 export function jsonReviewFindingsArtifactContainsOnlyMissingFocusedValidation(report: ReviewFindingsReport): boolean {
     const findings = [
         ...report.findings.critical,
@@ -110,38 +200,10 @@ export function validateJsonReviewFindingsArtifact(options: {
     expectedReviewContextSha256?: string | null;
     expectedTreeStateSha256?: string | null;
     coverageContract?: ReviewCoverageContract | null;
+    repoRoot?: string | null;
+    evidenceSnapshotCommit?: string | null;
 }): JsonReviewFindingsArtifactValidation {
-    const parsed = parseJsonReviewFindingsArtifactObject(options.content);
-    if (!parsed) {
-        return {
-            detected: false,
-            report: null,
-            violations: []
-        };
-    }
-    const validation = validateReviewFindingsReport(parsed, {
-        expectedTaskId: options.expectedTaskId,
-        expectedReviewType: options.expectedReviewType,
-        expectedCoverageObligationIds: getCoverageObligationIds(options.coverageContract),
-        expectedChangedFilePaths: getCoverageChangedFilePaths(options.coverageContract),
-        expectedReviewContextSha256: options.expectedReviewContextSha256 || undefined,
-        expectedTreeStateSha256: options.expectedTreeStateSha256 || undefined
-    });
-    const violations = [...validation.violations];
-    if (
-        validation.report
-        && options.coverageContract?.contract_sha256
-        && validation.report.coverage_ledger.coverage_contract_sha256 !== options.coverageContract.contract_sha256
-    ) {
-        violations.push(
-            `coverage_ledger.coverage_contract_sha256 does not match current coverage contract '${options.coverageContract.contract_sha256}'.`
-        );
-    }
-    return {
-        detected: true,
-        report: violations.length === 0 ? validation.report : null,
-        violations
-    };
+    return validateReviewFindingsContract(options);
 }
 
 export function jsonReviewFindingsArtifactHasActiveFindings(report: ReviewFindingsReport): boolean {
@@ -161,6 +223,8 @@ export function resolveReviewFindingsArtifactVerdictToken(options: {
     expectedReviewContextSha256?: string | null;
     expectedTreeStateSha256?: string | null;
     coverageContract?: ReviewCoverageContract | null;
+    repoRoot?: string | null;
+    evidenceSnapshotCommit?: string | null;
 }): string | null {
     const parsedJsonArtifact = parseJsonReviewFindingsArtifactObject(options.content);
     if (!parsedJsonArtifact) {
@@ -177,7 +241,9 @@ export function resolveReviewFindingsArtifactVerdictToken(options: {
         expectedReviewType: options.reviewType,
         expectedReviewContextSha256: options.expectedReviewContextSha256 || undefined,
         expectedTreeStateSha256: options.expectedTreeStateSha256 || undefined,
-        coverageContract: options.coverageContract || null
+        coverageContract: options.coverageContract || null,
+        repoRoot: options.repoRoot || undefined,
+        evidenceSnapshotCommit: options.evidenceSnapshotCommit || undefined
     });
     if (!validation.report) {
         return null;

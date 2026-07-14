@@ -365,7 +365,12 @@ function parseJsonCoverageLedgerEntries(reviewContent: string): {
     return { entries, violations };
 }
 
-function parseEvidenceLocation(location: string): { filePath: string; line: number } | null {
+export interface ReviewEvidenceLineCount {
+    count: number;
+    source: 'current' | 'head' | 'bound-snapshot';
+}
+
+export function parseReviewEvidenceLocation(location: string): { filePath: string; line: number } | null {
     const match = /^(.*?)(?::(\d+)|#L(\d+))$/u.exec(String(location || '').trim());
     if (!match) {
         return null;
@@ -373,6 +378,74 @@ function parseEvidenceLocation(location: string): { filePath: string; line: numb
     const line = Number(match[2] || match[3]);
     const filePath = normalizePath(match[1]);
     return filePath && Number.isSafeInteger(line) && line > 0 ? { filePath, line } : null;
+}
+
+function countReviewEvidenceLines(content: string): number {
+    const lines = content.replace(/\r\n?/gu, '\n').split('\n');
+    if (lines.at(-1) === '') {
+        lines.pop();
+    }
+    return lines.length;
+}
+
+export function createChangedFileLineCountResolver(
+    options: { repoRoot?: string; evidenceSnapshotCommit?: string } = {}
+): (filePath: string) => ReviewEvidenceLineCount | null {
+    const lineCountCache = new Map<string, ReviewEvidenceLineCount | null>();
+    return (filePath: string): ReviewEvidenceLineCount | null => {
+        if (!options.repoRoot) {
+            return null;
+        }
+        if (lineCountCache.has(filePath)) {
+            return lineCountCache.get(filePath) || null;
+        }
+        const repoRoot = path.resolve(options.repoRoot);
+        const resolvedPath = path.resolve(repoRoot, filePath);
+        const relativePath = path.relative(repoRoot, resolvedPath);
+        if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+            lineCountCache.set(filePath, null);
+            return null;
+        }
+        try {
+            const result = {
+                count: countReviewEvidenceLines(fs.readFileSync(resolvedPath, 'utf8')),
+                source: 'current' as const
+            };
+            lineCountCache.set(filePath, result);
+            return result;
+        } catch {
+            try {
+                const evidenceSnapshotCommit = String(options.evidenceSnapshotCommit || '').trim();
+                const hasBoundSnapshot = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(evidenceSnapshotCommit);
+                const snapshotContent = execFileSync(
+                    'git',
+                    ['show', `${hasBoundSnapshot ? evidenceSnapshotCommit : 'HEAD'}:${filePath}`],
+                    {
+                        cwd: repoRoot,
+                        encoding: 'utf8',
+                        stdio: ['ignore', 'pipe', 'ignore']
+                    }
+                );
+                const result = {
+                    count: countReviewEvidenceLines(snapshotContent),
+                    source: hasBoundSnapshot ? 'bound-snapshot' as const : 'head' as const
+                };
+                lineCountCache.set(filePath, result);
+                return result;
+            } catch {
+                lineCountCache.set(filePath, null);
+                return null;
+            }
+        }
+    };
+}
+
+export function formatReviewEvidenceLineCountSource(source: ReviewEvidenceLineCount['source']): string {
+    return source === 'head'
+        ? 'deleted-file HEAD snapshot'
+        : source === 'bound-snapshot'
+        ? 'authenticated pre-change snapshot'
+        : 'current file';
 }
 
 function isGenericObservation(observation: string): boolean {
@@ -512,59 +585,7 @@ export function validateReviewCoverageLedger(
     omittedObligationIds.forEach((id) => violations.push(`Coverage obligation '${id}' is omitted.`));
 
     const changedFiles = contract.obligations.filter((entry) => entry.kind === 'file').map((entry) => entry.target);
-    const lineCountCache = new Map<string, { count: number; source: 'current' | 'head' | 'bound-snapshot' } | null>();
-    const countLines = (content: string): number => {
-        const lines = content.replace(/\r\n?/gu, '\n').split('\n');
-        if (lines.at(-1) === '') {
-            lines.pop();
-        }
-        return lines.length;
-    };
-    const getChangedFileLineCount = (
-        filePath: string
-    ): { count: number; source: 'current' | 'head' | 'bound-snapshot' } | null => {
-        if (!options.repoRoot) {
-            return null;
-        }
-        if (lineCountCache.has(filePath)) {
-            return lineCountCache.get(filePath) || null;
-        }
-        const repoRoot = path.resolve(options.repoRoot);
-        const resolvedPath = path.resolve(repoRoot, filePath);
-        const relativePath = path.relative(repoRoot, resolvedPath);
-        if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-            lineCountCache.set(filePath, null);
-            return null;
-        }
-        try {
-            const result = { count: countLines(fs.readFileSync(resolvedPath, 'utf8')), source: 'current' as const };
-            lineCountCache.set(filePath, result);
-            return result;
-        } catch {
-            try {
-                const evidenceSnapshotCommit = String(options.evidenceSnapshotCommit || '').trim();
-                const hasBoundSnapshot = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(evidenceSnapshotCommit);
-                const snapshotContent = execFileSync(
-                    'git',
-                    ['show', `${hasBoundSnapshot ? evidenceSnapshotCommit : 'HEAD'}:${filePath}`],
-                    {
-                        cwd: repoRoot,
-                        encoding: 'utf8',
-                        stdio: ['ignore', 'pipe', 'ignore']
-                    }
-                );
-                const result = {
-                    count: countLines(snapshotContent),
-                    source: hasBoundSnapshot ? 'bound-snapshot' as const : 'head' as const
-                };
-                lineCountCache.set(filePath, result);
-                return result;
-            } catch {
-                lineCountCache.set(filePath, null);
-                return null;
-            }
-        }
-    };
+    const getChangedFileLineCount = createChangedFileLineCountResolver(options);
     const ledgerFindingIds = new Set<string>();
     for (const entry of parsed.entries) {
         const obligation = expectedById.get(entry.id);
@@ -576,7 +597,7 @@ export function validateReviewCoverageLedger(
         }
         let hasTargetFileEvidence = obligation.kind !== 'file';
         for (const evidence of entry.evidence) {
-            const location = parseEvidenceLocation(evidence.location);
+            const location = parseReviewEvidenceLocation(evidence.location);
             if (!location || !changedFiles.includes(location.filePath)) {
                 violations.push(
                     `Coverage obligation '${entry.id}' evidence location '${evidence.location}' is not a current changed-file path:line.`
@@ -593,11 +614,7 @@ export function validateReviewCoverageLedger(
                 } else if (location.line > lineEvidence.count) {
                     violations.push(
                         `Coverage obligation '${entry.id}' evidence location '${evidence.location}' exceeds ` +
-                        `${lineEvidence.source === 'head'
-                            ? 'deleted-file HEAD snapshot'
-                            : lineEvidence.source === 'bound-snapshot'
-                            ? 'authenticated pre-change snapshot'
-                            : 'current file'} line count ${lineEvidence.count}.`
+                        `${formatReviewEvidenceLineCountSource(lineEvidence.source)} line count ${lineEvidence.count}.`
                     );
                 }
             }

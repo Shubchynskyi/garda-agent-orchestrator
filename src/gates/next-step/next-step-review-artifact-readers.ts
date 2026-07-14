@@ -36,7 +36,10 @@ import {
     resolveReviewFindingsArtifactVerdictToken,
     validateJsonReviewFindingsArtifact
 } from '../review/review-findings-artifact-verdict';
-import type { ReviewCoverageContract } from '../review/review-coverage-ledger';
+import {
+    resolveReviewCoverageEvidenceSnapshotCommit,
+    type ReviewCoverageContract
+} from '../review/review-coverage-ledger';
 import {
     normalizeReviewEvidenceSha256,
     validateReviewReceiptEvidenceContract
@@ -258,22 +261,28 @@ export function readReviewArtifactState(
             expectedReviewType: reviewType,
             expectedReviewContextSha256: contextSha256 || undefined,
             expectedTreeStateSha256: contextReviewTreeStateSha256 || undefined,
-            coverageContract: context?.coverage_contract as ReviewCoverageContract | null | undefined
+            coverageContract: context?.coverage_contract as ReviewCoverageContract | null | undefined,
+            repoRoot: repoRoot || undefined,
+            evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
         });
         const jsonArtifactHasActiveFindings = jsonFindingsArtifact.report
             ? jsonReviewFindingsArtifactHasActiveFindings(jsonFindingsArtifact.report)
             : false;
         const requiresFindingsOnlyArtifact = reviewContextRequiresFindingsOnlyArtifact(context);
-        const parsedVerdictToken = resolveReviewFindingsArtifactVerdictToken({
-            content,
-            passToken: passToken || null,
-            failToken: failToken || null,
-            reviewType,
-            expectedTaskId: taskId,
-            expectedReviewContextSha256: contextSha256 || undefined,
-            expectedTreeStateSha256: contextReviewTreeStateSha256 || undefined,
-            coverageContract: context?.coverage_contract as ReviewCoverageContract | null | undefined
-        });
+        const parsedVerdictToken = jsonFindingsArtifact.detected
+            ? null
+            : resolveReviewFindingsArtifactVerdictToken({
+                content,
+                passToken: passToken || null,
+                failToken: failToken || null,
+                reviewType,
+                expectedTaskId: taskId,
+                expectedReviewContextSha256: contextSha256 || undefined,
+                expectedTreeStateSha256: contextReviewTreeStateSha256 || undefined,
+                coverageContract: context?.coverage_contract as ReviewCoverageContract | null | undefined,
+                repoRoot: repoRoot || undefined,
+                evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
+            });
         const acceptedTokens = buildReviewVerdictTokenSet(reviewType, passToken || null, failToken || null);
         if (jsonFindingsArtifact.detected && !jsonFindingsArtifact.report) {
             violations.push(
