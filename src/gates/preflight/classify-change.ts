@@ -10,6 +10,7 @@ import type {
     RiskAwareDepthResult
 } from '../../gate-runtime/budget-preflight';
 import type { ReviewCapabilities } from '../../core/review-capabilities';
+import type { TaskProfilePolicySnapshotSummary } from '../../policy/task-profile-policy-snapshot';
 import { testPathPrefix } from '../shared/helpers';
 import {
     type ClassifyChangeOptions,
@@ -200,7 +201,7 @@ export interface ClassifyChangeResult {
     isolation_mode_violation?: string;
     profile_selection?: unknown;
     profile_guardrails?: unknown;
-    profile_policy_snapshot?: unknown;
+    profile_policy_snapshot?: TaskProfilePolicySnapshotSummary;
     budget_forecast?: BudgetForecast;
     depth_escalation?: DepthEscalationRecord;
     risk_aware_depth?: RiskAwareDepthResult;

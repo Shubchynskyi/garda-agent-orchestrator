@@ -801,6 +801,17 @@ describe('cli/commands/gates — preflight', () => {
             assert.equal(payload.required_reviews.performance, false);
             assert.equal(payload.profile_policy_snapshot.source.effective_profile, 'lean');
             assert.match(payload.profile_policy_snapshot.snapshot_hash, /^[a-f0-9]{64}$/);
+            assert.equal(
+                payload.review_execution_policy.mode,
+                payload.profile_policy_snapshot.review_execution_policy.mode
+            );
+            assert.equal(
+                payload.review_execution_policy.visible_summary_line,
+                payload.profile_policy_snapshot.review_execution_policy.visible_summary_line
+            );
+            assert.equal(payload.profile_policy_snapshot.review_lane_selection.effective_review_policy.security, true);
+            assert.equal(payload.profile_policy_snapshot.review_lane_selection.effective_review_policy.performance, false);
+            assert.deepEqual(payload.profile_policy_snapshot.review_lane_selection.safety_floors_applied, []);
             assert.equal(payload.profile_policy_snapshot.finding_policy.policy_id, 'legacy_strict_review_findings_v1');
             assert.equal(payload.profile_policy_snapshot.remediation_policy.review_restarts_retain_profile_snapshot, true);
         } finally {
