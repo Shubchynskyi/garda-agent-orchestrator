@@ -206,6 +206,7 @@ export interface CheckRequiredReviewsOptions {
     executionProvider?: string | null;
     executionProviderSource?: string | null;
     allowLegacyReviewContextIdentityFallback?: boolean;
+    taskModePath?: string | null;
     repoRoot?: string | null;
 }
 
@@ -258,6 +259,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         const runtimeIdentity = resolveRuntimeReviewerIdentity({
             repoRoot: options.repoRoot,
             taskId: resolvedTaskId,
+            taskModePath: String(options.taskModePath || ''),
             allowLegacyFallback: true
         });
         if (runtimeIdentity.identity_status !== 'resolved') {

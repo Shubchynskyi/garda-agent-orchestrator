@@ -17,6 +17,9 @@ import {
     REVIEW_CONTRACTS
 } from '../../../../gates/required-reviews/required-reviews-check';
 import {
+    jsonReviewFindingsArtifactHasActiveFindings,
+    reviewContextRequiresFindingsOnlyArtifact,
+    validateJsonReviewFindingsArtifact,
     resolveReviewFindingsArtifactVerdictToken
 } from '../../../../gates/review/review-findings-artifact-verdict';
 import {
@@ -221,7 +224,8 @@ export function testReviewArtifacts(
             const content = fs.readFileSync(artifactPath, 'utf8');
             const failToken = passToken.replace(/\bPASSED\b/g, 'FAILED');
             const acceptedTokens = buildReviewVerdictTokenSet(reviewKey, passToken, failToken);
-            entry.token_found = extractReviewVerdictToken(content, passToken, failToken, reviewKey) === passToken;
+            const legacyVerdictToken = extractReviewVerdictToken(content, passToken, failToken, reviewKey);
+            entry.token_found = legacyVerdictToken === passToken;
 
         let reviewContextPath: string | null = null;
         let reviewContextPathSafe = true;
@@ -261,7 +265,38 @@ export function testReviewArtifacts(
             );
         }
 
-        if (!entry.token_found) {
+        const requiresFindingsOnlyArtifact = reviewContextRequiresFindingsOnlyArtifact(reviewContext);
+        if (requiresFindingsOnlyArtifact) {
+            const findingsArtifact = validateJsonReviewFindingsArtifact({
+                content,
+                expectedTaskId: resolvedTaskId || '',
+                expectedReviewType: reviewKey,
+                expectedReviewContextSha256: reviewContextPath && entry.review_context_valid
+                    ? gateHelpers.fileSha256(reviewContextPath)
+                    : null,
+                expectedTreeStateSha256: getReviewContextTreeStateSha256(reviewContext),
+                coverageContract: getReviewContextCoverageContract(reviewContext)
+            });
+            if (!findingsArtifact.detected) {
+                entry.token_found = false;
+                result.violations.push(
+                    `Review artifact '${entry.path}' must be verdict-free findings JSON for current '${reviewKey}' review context; ` +
+                    'legacy PASS/FAIL verdict-token artifacts are readable history only and cannot satisfy current review evidence.'
+                );
+            } else if (!findingsArtifact.report) {
+                entry.token_found = false;
+                result.violations.push(
+                    `Review artifact '${entry.path}' contains invalid findings JSON: ${findingsArtifact.violations.join(' ')}`
+                );
+            } else if (jsonReviewFindingsArtifactHasActiveFindings(findingsArtifact.report)) {
+                entry.token_found = false;
+                result.violations.push(
+                    `Review artifact '${entry.path}' contains active findings or residual risks and cannot satisfy claimed '${passToken}'.`
+                );
+            } else {
+                entry.token_found = true;
+            }
+        } else if (!entry.token_found) {
             const findingsVerdict = resolveReviewFindingsArtifactVerdictToken({
                 content,
                 passToken,
@@ -276,7 +311,7 @@ export function testReviewArtifacts(
             });
             entry.token_found = findingsVerdict === passToken;
         }
-        if (!entry.token_found) {
+        if (!requiresFindingsOnlyArtifact && !entry.token_found) {
             result.violations.push(
                 `Review artifact '${entry.path}' does not contain an accepted pass token ` +
                 `(${formatReviewVerdictTokenList(acceptedTokens.passTokens)}) or a valid verdict-free findings JSON pass artifact.`

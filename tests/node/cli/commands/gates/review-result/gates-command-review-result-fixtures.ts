@@ -281,6 +281,84 @@ export function fileSha256(pathToFile: string): string {
     return createHash('sha256').update(fs.readFileSync(pathToFile)).digest('hex');
 }
 
+export function buildNoFindingsJsonReviewReport(
+    reviewContextPath: string,
+    taskId: string,
+    reviewType = 'code'
+): Record<string, unknown> {
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
+        coverage_contract: {
+            contract_sha256: string;
+            obligations: Array<{ id: string; kind: string; target: string }>;
+        };
+        task_scope: { changed_files: string[] };
+        tree_state: { tree_state_sha256: string };
+    };
+    const defaultFile = reviewContext.task_scope.changed_files[0] || 'src/app.ts';
+    const reviewContextSha256 = fileSha256(reviewContextPath);
+    return {
+        schema_version: 1,
+        task_id: taskId,
+        review_type: reviewType,
+        review_context_sha256: reviewContextSha256,
+        tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
+        validation_notes: [{
+            id: 'N-001',
+            topic: 'complete-scope-sweep',
+            note: `Reviewed the complete assigned ${reviewType} scope and generated coverage obligations for verdict-free findings JSON ingestion.`,
+            evidence: [{
+                location: `${defaultFile}:1`,
+                observation: 'Validated concrete source behavior and receipt materialization for the assigned review contract.'
+            }]
+        }],
+        coverage_ledger: {
+            coverage_contract_sha256: reviewContext.coverage_contract.contract_sha256,
+            entries: reviewContext.coverage_contract.obligations.map((obligation) => ({
+                obligation_id: obligation.id,
+                evidence: [{
+                    location: `${obligation.kind === 'file' ? obligation.target : defaultFile}:1`,
+                    observation: `Verified concrete ${obligation.kind} behavior for ${obligation.target} against the assigned review contract.`
+                }],
+                finding_ids: []
+            }))
+        },
+        findings: { critical: [], high: [], medium: [], low: [] },
+        residual_risks: [],
+        reviewer_notes: ['No legacy verdict token is present in this JSON output.']
+    };
+}
+
+export function buildFailedJsonReviewReport(
+    reviewContextPath: string,
+    taskId: string,
+    reviewType = 'code'
+): Record<string, unknown> {
+    const report = buildNoFindingsJsonReviewReport(reviewContextPath, taskId, reviewType);
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
+        coverage_contract: { obligations: Array<{ id: string }> };
+        task_scope: { changed_files: string[] };
+    };
+    const firstObligation = reviewContext.coverage_contract.obligations[0];
+    const coverageLedger = report.coverage_ledger as {
+        entries: Array<{ finding_ids: string[] }>;
+    };
+    coverageLedger.entries[0].finding_ids = ['F-001'];
+    const findings = report.findings as {
+        high: Array<Record<string, unknown>>;
+    };
+    findings.high = [{
+        id: 'F-001',
+        title: 'Fixture active finding',
+        description: 'The fixture intentionally records a failed verdict-free JSON review result.',
+        evidence: [{
+            location: `${reviewContext.task_scope.changed_files[0] || 'src/app.ts'}:1`,
+            observation: 'Active finding evidence is bound to the changed source file.'
+        }],
+        coverage_obligation_ids: [firstObligation.id]
+    }];
+    return report;
+}
+
 // Manual review-context fixtures are used only by CLI routing/receipt tests that
 // do not exercise production review-context construction.
 export function manualReviewContextTaskScopeFixture(repoRoot: string, taskId: string): Record<string, unknown> {

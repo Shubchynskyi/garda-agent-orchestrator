@@ -602,6 +602,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         canonicalSourceOfTruth: runtimeIdentity.canonical_source_of_truth,
         executionProvider: runtimeIdentity.execution_provider,
         executionProviderSource: runtimeIdentity.execution_provider_source,
+        taskModePath: String(options.taskModePath || ''),
         allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled,
         repoRoot
     });

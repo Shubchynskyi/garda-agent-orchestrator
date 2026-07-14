@@ -223,6 +223,72 @@ describe('gates/required-reviews-check core helpers', () => {
             assert.deepEqual(result.violations, []);
             assert.equal(result.checked[0]?.token_found, true);
         });
+
+        it('rejects legacy pass-token artifacts for current findings-only review contexts', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-reviews-legacy-token-'));
+            try {
+                const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+                fs.mkdirSync(reviewsRoot, { recursive: true });
+
+                const taskId = 'T-979-5';
+                const reviewType = 'code';
+                const treeStateSha256 = sha256Text('tree-state');
+                const coverageContractSha256 = sha256Text('coverage-contract');
+                fs.writeFileSync(path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`), `${JSON.stringify({
+                    schema_version: 3,
+                    task_id: taskId,
+                    review_type: reviewType,
+                    tree_state: {
+                        tree_state_sha256: treeStateSha256
+                    },
+                    coverage_contract: {
+                        schema_version: 1,
+                        required: true,
+                        review_type: reviewType,
+                        obligations: [
+                            {
+                                id: 'FILE-001',
+                                kind: 'file',
+                                target: 'src/example.ts'
+                            }
+                        ],
+                        obligation_count: 1,
+                        contract_sha256: coverageContractSha256
+                    }
+                }, null, 2)}\n`, 'utf8');
+                fs.writeFileSync(path.join(reviewsRoot, `${taskId}-${reviewType}.md`), [
+                    '# Review',
+                    '',
+                    'This artifact is bound to a current review context but still uses legacy verdict-token evidence.',
+                    '',
+                    '## Findings by Severity',
+                    'none',
+                    '',
+                    '## Residual Risks',
+                    'none',
+                    '',
+                    '## Verdict',
+                    'REVIEW PASSED'
+                ].join('\n'), 'utf8');
+
+                const result = testReviewArtifacts(
+                    repoRoot,
+                    taskId,
+                    { code: true },
+                    { code: 'REVIEW PASSED' },
+                    [],
+                    'runtime/reviews'
+                );
+
+                assert.equal(result.checked[0]?.token_found, false);
+                assert.ok(result.violations.some((violation) =>
+                    violation.includes('must be verdict-free findings JSON')
+                    && violation.includes('legacy PASS/FAIL verdict-token artifacts')
+                ), result.violations.join('\n'));
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        });
     });
 
     describe('detectZeroDiffFromPreflight', () => {

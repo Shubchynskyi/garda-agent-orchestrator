@@ -32,6 +32,7 @@ import {
 import {
     jsonReviewFindingsArtifactHasActiveFindings,
     jsonReviewFindingsArtifactContainsOnlyMissingFocusedValidation,
+    reviewContextRequiresFindingsOnlyArtifact,
     resolveReviewFindingsArtifactVerdictToken,
     validateJsonReviewFindingsArtifact
 } from '../review/review-findings-artifact-verdict';
@@ -262,6 +263,7 @@ export function readReviewArtifactState(
         const jsonArtifactHasActiveFindings = jsonFindingsArtifact.report
             ? jsonReviewFindingsArtifactHasActiveFindings(jsonFindingsArtifact.report)
             : false;
+        const requiresFindingsOnlyArtifact = reviewContextRequiresFindingsOnlyArtifact(context);
         const parsedVerdictToken = resolveReviewFindingsArtifactVerdictToken({
             content,
             passToken: passToken || null,
@@ -276,6 +278,11 @@ export function readReviewArtifactState(
         if (jsonFindingsArtifact.detected && !jsonFindingsArtifact.report) {
             violations.push(
                 `review artifact contains invalid findings JSON: ${jsonFindingsArtifact.violations.join(' ')}`
+            );
+        } else if (requiresFindingsOnlyArtifact && !jsonFindingsArtifact.report) {
+            violations.push(
+                `review artifact must be verdict-free findings JSON for current '${reviewType}' review context; ` +
+                'legacy PASS/FAIL verdict-token artifacts are readable history only and cannot satisfy current review evidence'
             );
         } else if (jsonFindingsArtifact.report && jsonArtifactHasActiveFindings) {
             verdictToken = failToken || null;

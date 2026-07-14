@@ -12,6 +12,13 @@ export interface JsonReviewFindingsArtifactValidation {
     violations: string[];
 }
 
+export function reviewContextRequiresFindingsOnlyArtifact(reviewContext: unknown): boolean {
+    if (!isPlainRecord(reviewContext)) {
+        return false;
+    }
+    return Number(reviewContext.schema_version) >= 3;
+}
+
 function getCoverageObligationIds(contract: ReviewCoverageContract | null | undefined): string[] {
     return Array.isArray(contract?.obligations)
         ? contract.obligations

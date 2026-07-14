@@ -98,6 +98,43 @@ import {
     validateReviewFindingsReport,
     type ReviewFindingsReport
 } from '../../../../gates/review/review-findings-schema';
+import {
+    reviewContextRequiresFindingsOnlyArtifact
+} from '../../../../gates/review/review-findings-artifact-verdict';
+
+function sha256JsonPayload(value: unknown): string {
+    return createHash('sha256')
+        .update(`${JSON.stringify(value, null, 2)}\n`)
+        .digest('hex');
+}
+
+function summarizeReviewFindingsReport(report: ReviewFindingsReport): Record<string, unknown> {
+    const findingIdsBySeverity = {
+        critical: report.findings.critical.map((finding) => finding.id),
+        high: report.findings.high.map((finding) => finding.id),
+        medium: report.findings.medium.map((finding) => finding.id),
+        low: report.findings.low.map((finding) => finding.id)
+    };
+    return {
+        schema_version: 1,
+        validation_note_ids: report.validation_notes.map((note) => note.id),
+        coverage_obligation_ids: report.coverage_ledger.entries.map((entry) => entry.obligation_id),
+        finding_ids_by_severity: findingIdsBySeverity,
+        active_finding_count: Object.values(findingIdsBySeverity)
+            .reduce((total, ids) => total + ids.length, 0),
+        residual_risk_ids: report.residual_risks.map((risk) => risk.id),
+        residual_risk_count: report.residual_risks.length
+    };
+}
+
+function buildBoundedReviewRecordedTelemetryDetails(receipt: Record<string, unknown>): Record<string, unknown> {
+    const telemetryDetails = { ...receipt };
+    if (Object.prototype.hasOwnProperty.call(telemetryDetails, 'review_findings_report')) {
+        delete telemetryDetails.review_findings_report;
+        telemetryDetails.review_findings_report_telemetry_policy = 'omitted_full_payload_receipt_only';
+    }
+    return telemetryDetails;
+}
 
 async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     repoRoot: string;
@@ -152,7 +189,7 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     ];
     await writeReviewArtifactsWithRollback(writes, async () => {
         const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
-            ...options.receipt,
+            ...buildBoundedReviewRecordedTelemetryDetails(options.receipt),
             receipt_path: normalizePath(receiptPath),
             receipt_sha256: options.receiptPayloadSha256,
             receipt_snapshot_path: normalizePath(receiptSnapshotPath),
@@ -221,33 +258,6 @@ async function recordReviewReceiptFromArtifacts(options: {
     });
     const reviewArtifactContent = options.reviewArtifactContent
         ?? fs.readFileSync(options.artifactPath, 'utf8');
-    const reviewContextSha256 = fileSha256(options.contextPath) || '';
-    if (String(reviewArtifactContent || '').trim().startsWith('{')) {
-        parseValidatedFindingsOnlyReviewOutput({
-            reviewContent: reviewArtifactContent,
-            taskId: options.taskId,
-            reviewType: options.reviewType,
-            reviewContextSha256,
-            reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
-            coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined
-        });
-    }
-    const coverageValidation: ReviewCoverageValidationSummary | null = Number(parsedReviewContext.schema_version) >= 3
-        ? validateReviewCoverageLedger(
-            reviewArtifactContent,
-            parsedReviewContext.coverage_contract as ReviewCoverageContract,
-            {
-                repoRoot: options.repoRoot,
-                evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflight)
-            }
-        )
-        : null;
-    if (coverageValidation && coverageValidation.status !== 'PASS') {
-        throw new Error(
-            `Review coverage ledger validation failed for '${options.reviewType}'. ` +
-            coverageValidation.violations.join(' ')
-        );
-    }
     const historicalStaleReviewResultReason = options.historicalStaleReviewResultReason || null;
     assertReviewTreeStateFreshOrHistoricalFailure({
         repoRoot: options.repoRoot,
@@ -391,6 +401,39 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewOutputSourceMtimeUtc: options.rawReviewOutputSourceMtimeUtc,
         delegationStartedAtUtc: getDelegationStartedAtUtc(reviewerProvenance)
     });
+    const strictFindingsOnlyOutput = reviewContextRequiresFindingsOnlyArtifact(parsedReviewContext);
+    let findingsReport: ReviewFindingsReport | null = null;
+    if (String(reviewArtifactContent || '').trim().startsWith('{')) {
+        findingsReport = parseValidatedFindingsOnlyReviewOutput({
+            reviewContent: reviewArtifactContent,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewContextSha256: contextSha256,
+            reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
+            coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined
+        });
+    } else if (strictFindingsOnlyOutput) {
+        throw new Error(
+            `Current '${options.reviewType}' review receipts require a verdict-free findings JSON report. ` +
+            'Legacy PASS/FAIL verdict-token artifacts are readable history only and cannot satisfy a new review cycle.'
+        );
+    }
+    const coverageValidation: ReviewCoverageValidationSummary | null = Number(parsedReviewContext.schema_version) >= 3
+        ? validateReviewCoverageLedger(
+            reviewArtifactContent,
+            parsedReviewContext.coverage_contract as ReviewCoverageContract,
+            {
+                repoRoot: options.repoRoot,
+                evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflight)
+            }
+        )
+        : null;
+    if (coverageValidation && coverageValidation.status !== 'PASS') {
+        throw new Error(
+            `Review coverage ledger validation failed for '${options.reviewType}'. ` +
+            coverageValidation.violations.join(' ')
+        );
+    }
     const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(preflight, options.repoRoot);
     const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(
         options.reviewType,
@@ -440,6 +483,27 @@ async function recordReviewReceiptFromArtifacts(options: {
         (receipt as unknown as Record<string, unknown>).historical_stale_review_result = true;
         (receipt as unknown as Record<string, unknown>).review_result_scope = 'historical_stale_after_remediation';
         (receipt as unknown as Record<string, unknown>).historical_stale_review_reason = historicalStaleReviewResultReason;
+    }
+    if (findingsReport) {
+        const findingsReportSha256 = sha256JsonPayload(findingsReport);
+        const receiptRecord = receipt as unknown as Record<string, unknown>;
+        receiptRecord.review_output_format = 'findings_json';
+        receiptRecord.review_output_schema_version = findingsReport.schema_version;
+        receiptRecord.review_findings_report_sha256 = findingsReportSha256;
+        receiptRecord.review_findings_report = findingsReport;
+        receiptRecord.review_findings_summary = summarizeReviewFindingsReport(findingsReport);
+        receiptRecord.review_output_contract = {
+            schema_version: 1,
+            format: 'findings_json',
+            report_sha256: findingsReportSha256,
+            raw_output_sha256: options.rawReviewOutputSha256 || null,
+            review_artifact_sha256: artifactSha256,
+            review_context_sha256: contextSha256,
+            review_tree_state_sha256: reviewTreeStateSha256,
+            coverage_contract_sha256: findingsReport.coverage_ledger.coverage_contract_sha256,
+            reviewer_identity: options.reviewerIdentity,
+            reviewer_provenance_event_sha256: reviewerProvenance?.event_sha256 ?? null
+        };
     }
 
     const receiptPayloadSha256 = createHash('sha256')
@@ -560,7 +624,13 @@ async function handleRecordReviewResultWithDependencies(
     }
     const expectedFailVerdict = expectedPassVerdict.replace(/\bPASSED\b/, 'FAILED');
     const verdictTokenSet = buildReviewVerdictTokenSet(reviewType, expectedPassVerdict, expectedFailVerdict);
-    let verdictToken = extractReviewVerdictToken(reviewContent, expectedPassVerdict, expectedFailVerdict, reviewType);
+    const detectedLegacyVerdictToken = extractReviewVerdictToken(
+        reviewContent,
+        expectedPassVerdict,
+        expectedFailVerdict,
+        reviewType
+    );
+    let verdictToken = detectedLegacyVerdictToken;
     const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = dependencies.parseReviewerIdentity(
         options,
         "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
@@ -581,8 +651,9 @@ async function handleRecordReviewResultWithDependencies(
         repoRoot
     });
     const reviewContextSha256 = fileSha256(contextPath) || '';
+    const strictFindingsOnlyOutput = reviewContextRequiresFindingsOnlyArtifact(parsedReviewContext);
     let findingsReport: ReviewFindingsReport | null = null;
-    if (!verdictToken) {
+    if ((strictFindingsOnlyOutput && !detectedLegacyVerdictToken) || (!strictFindingsOnlyOutput && !verdictToken)) {
         findingsReport = parseValidatedFindingsOnlyReviewOutput({
             reviewContent,
             taskId,
@@ -598,12 +669,18 @@ async function handleRecordReviewResultWithDependencies(
     if (!verdictToken) {
         const passExample = verdictTokenSet.canonicalPassToken || expectedPassVerdict;
         const failExample = verdictTokenSet.canonicalFailToken || expectedFailVerdict;
+        const expectedOutputMessage = strictFindingsOnlyOutput
+            ? (
+                `Review output must contain a valid verdict-free findings JSON report for '${reviewType}'. ` +
+                `Legacy PASS/FAIL verdict tokens are readable history only for current generated review contexts. `
+            )
+            : `Review output must contain a recognized verdict token for '${reviewType}' or a valid verdict-free findings JSON report. `;
         throw new Error(
-            `Review output must contain a recognized verdict token for '${reviewType}' or a valid verdict-free findings JSON report. ` +
+            expectedOutputMessage +
             formatAcceptedReviewVerdictTokens(verdictTokenSet) +
-            ` The token must appear as a standalone line inside the reviewer output file (--review-output-path), not as a CLI flag. ` +
-            `Example PASS line: '${passExample}'. Example FAIL line: '${failExample}'. ` +
-            `Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.\n\n` +
+            (strictFindingsOnlyOutput
+                ? ` Legacy examples: '${passExample}' / '${failExample}'. Do not pass '--verdict pass' or similar flags; write the findings JSON object to the review output file.\n\n`
+                : ` The token must appear as a standalone line inside the reviewer output file (--review-output-path), not as a CLI flag. Example PASS line: '${passExample}'. Example FAIL line: '${failExample}'. Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.\n\n`) +
             dependencies.buildMinimalPassReviewTemplateHint(reviewType, passExample) +
             `\n\n${buildSafeReviewOutputRetryInstruction(taskId, reviewType)}`
         );

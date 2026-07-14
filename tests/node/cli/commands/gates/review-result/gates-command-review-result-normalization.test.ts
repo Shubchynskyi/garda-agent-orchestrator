@@ -18,6 +18,7 @@ import {
     manualReviewContextTaskScopeFixture,
     manualReviewContextBindingFixture,
     reviewContextScopedDiffFixture,
+    writeManualReviewerHandoffFixture,
     recordReviewRoutingViaCli,
     attestReviewerInvocationForTest,
     seedPromptBoundReviewFixture
@@ -41,6 +42,49 @@ function buildNoFindingCoverageLedger(reviewContextPath: string): string[] {
         result: 'no-finding',
         finding_ids: []
     })}`);
+}
+
+function buildNoFindingsJsonReport(reviewContextPath: string, taskId: string, reviewType = 'code'): Record<string, unknown> {
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
+        coverage_contract: {
+            contract_sha256: string;
+            obligations: Array<{ id: string; kind: string; target: string }>;
+        };
+        task_scope: { changed_files: string[] };
+        tree_state: { tree_state_sha256: string };
+    };
+    const defaultFile = reviewContext.task_scope.changed_files[0];
+    const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
+    return {
+        schema_version: 1,
+        task_id: taskId,
+        review_type: reviewType,
+        review_context_sha256: reviewContextSha256,
+        tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
+        validation_notes: [{
+            id: 'N-001',
+            topic: 'complete-scope-sweep',
+            note: 'Reviewed the complete assigned code scope and generated coverage obligations for verdict-free findings JSON ingestion.',
+            evidence: [{
+                location: `${defaultFile}:1`,
+                observation: 'Validated concrete source behavior and receipt materialization for the assigned review contract.'
+            }]
+        }],
+        coverage_ledger: {
+            coverage_contract_sha256: reviewContext.coverage_contract.contract_sha256,
+            entries: reviewContext.coverage_contract.obligations.map((obligation) => ({
+                obligation_id: obligation.id,
+                evidence: [{
+                    location: `${obligation.kind === 'file' ? obligation.target : defaultFile}:1`,
+                    observation: `Verified concrete ${obligation.kind} behavior for ${obligation.target} against the assigned review contract.`
+                }],
+                finding_ids: []
+            }))
+        },
+        findings: { critical: [], high: [], medium: [], low: [] },
+        residual_risks: [],
+        reviewer_notes: ['No legacy verdict token is present in this JSON output.']
+    };
 }
 
 describe('gates command review result - normalization', () => {
@@ -940,27 +984,11 @@ describe('gates command review result - normalization', () => {
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
-        fs.writeFileSync(reviewOutputPath, [
-            '# Review',
-            '',
-            '## Validation Notes',
-            'Reviewed `src/app.ts`, the prompt-bound review context, delegated invocation telemetry, and no-findings PASS materialization path. The implementation behavior, review boundaries, and receipt persistence were checked against the generated output template.',
-            '',
-            '## Coverage Ledger',
-            ...buildNoFindingCoverageLedger(fixture.reviewContextPath),
-            '',
-            '## Findings by Severity',
-            'none',
-            '',
-            '## Deferred Findings',
-            'none',
-            '',
-            '## Residual Risks',
-            'none',
-            '',
-            '## Verdict',
-            'REVIEW PASSED'
-        ].join('\n'), 'utf8');
+        fs.writeFileSync(
+            reviewOutputPath,
+            `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
 
         const result = await runCliWithCapturedOutput([
             'gate',
@@ -975,13 +1003,17 @@ describe('gates command review result - normalization', () => {
         ], { cwd: repoRoot });
 
         assert.equal(result.exitCode, 0, result.errors.join('\n'));
-        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), true);
+        const artifactPath = path.join(fixture.reviewsRoot, `${taskId}-code.md`);
+        assert.equal(fs.existsSync(artifactPath), true);
+        const artifact = fs.readFileSync(artifactPath, 'utf8');
+        assert.equal(/REVIEW PASSED|REVIEW FAILED|## Verdict/u.test(artifact), false);
         const receiptPath = path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`);
         assert.equal(fs.existsSync(receiptPath), true);
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
         const coverage = receipt.review_coverage as Record<string, unknown>;
         assert.equal(coverage.status, 'PASS');
         assert.equal(coverage.completed_obligation_count, coverage.obligation_count);
+        assert.equal(receipt.review_output_format, 'findings_json');
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
@@ -999,24 +1031,9 @@ describe('gates command review result - normalization', () => {
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
-        fs.writeFileSync(reviewOutputPath, [
-            '# Review',
-            '',
-            '## Validation Notes',
-            'none',
-            '',
-            '## Findings by Severity',
-            'none',
-            '',
-            '## Deferred Findings',
-            'none',
-            '',
-            '## Residual Risks',
-            'none',
-            '',
-            '## Verdict',
-            'REVIEW PASSED'
-        ].join('\n'), 'utf8');
+        const report = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        report.validation_notes = [];
+        fs.writeFileSync(reviewOutputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 
         const result = await runCliWithCapturedOutput([
             'gate',
@@ -1033,19 +1050,10 @@ describe('gates command review result - normalization', () => {
         assert.notEqual(result.exitCode, 0);
         assert.ok(
             result.errors.some((line) => (
-                line.includes('empty or non-substantive PASS validation notes')
-                    || line.includes('trivial or obviously synthetic')
+                line.includes('validation_notes must contain at least one validation note')
             )),
             result.errors.join('\n')
         );
-        const errorText = result.errors.join('\n');
-        assert.ok(errorText.includes("Exact accepted PASS verdict token for 'code': REVIEW PASSED"));
-        assert.ok(errorText.includes('# Code Review'));
-        assert.ok(errorText.includes('## Validation Notes'));
-        assert.ok(errorText.includes('## Findings by Severity'));
-        assert.ok(errorText.includes('## Deferred Findings'));
-        assert.ok(errorText.includes('## Residual Risks'));
-        assert.ok(errorText.includes('## Verdict'));
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1214,6 +1222,28 @@ describe('gates command review result - normalization', () => {
         assert.equal(/REVIEW PASSED|REVIEW FAILED|## Verdict/u.test(artifact), false);
         const receipt = JSON.parse(fs.readFileSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`), 'utf8'));
         assert.deepEqual(receipt.review_coverage.finding_ids, ['F-001']);
+        assert.equal(receipt.review_output_format, 'findings_json');
+        assert.equal(receipt.review_output_schema_version, 1);
+        assert.equal(receipt.review_output_contract.format, 'findings_json');
+        assert.equal(receipt.review_output_contract.review_context_sha256, reviewContextSha256);
+        assert.equal(receipt.review_output_contract.review_tree_state_sha256, reviewContext.tree_state.tree_state_sha256);
+        assert.equal(receipt.review_output_contract.coverage_contract_sha256, reviewContext.coverage_contract.contract_sha256);
+        assert.equal(receipt.review_output_contract.reviewer_identity, fixture.reviewerIdentity);
+        assert.equal(receipt.review_findings_report.findings.high.length, 1);
+        assert.equal(receipt.review_findings_report.findings.high[0].id, 'F-001');
+        assert.deepEqual(receipt.review_findings_summary.finding_ids_by_severity.high, ['F-001']);
+        assert.equal(receipt.review_findings_summary.active_finding_count, 1);
+        const recordedEvents = readTaskTimelineEvents(repoRoot, taskId)
+            .filter((event) => event.event_type === 'REVIEW_RECORDED');
+        assert.equal(recordedEvents.length, 1);
+        const recordedDetails = recordedEvents[0].details as Record<string, unknown>;
+        assert.equal(Object.prototype.hasOwnProperty.call(recordedDetails, 'review_findings_report'), false);
+        assert.equal(recordedDetails.review_findings_report_sha256, receipt.review_findings_report_sha256);
+        assert.deepEqual(recordedDetails.review_findings_summary, receipt.review_findings_summary);
+        assert.equal(
+            recordedDetails.review_findings_report_telemetry_policy,
+            'omitted_full_payload_receipt_only'
+        );
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
@@ -1295,6 +1325,55 @@ describe('gates command review result - normalization', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result rejects legacy verdict-token output for current generated review contexts', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-5-result-rejects-legacy-verdict';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        fs.mkdirSync(outputDir, { recursive: true });
+        const outputPath = path.join(outputDir, 'review-output.md');
+        fs.writeFileSync(outputPath, [
+            '# Review',
+            '',
+            'Reviewed the current generated review context for the changed orchestrator receipt ingestion files, including the binding between review context hashes, coverage obligations, and delegated reviewer identity. This output is intentionally substantive but still returns a legacy verdict token instead of the required verdict-free findings JSON report.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(
+            result.errors.some((line) => line.includes('require a verdict-free findings JSON report')),
+            result.errors.join('\n')
+        );
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result preserves canonical evidence-only marker with reserved coverage id', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-976-result-evidence-only-coverage';
@@ -1309,21 +1388,30 @@ describe('gates command review result - normalization', () => {
         const outputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(outputDir, { recursive: true });
         const outputPath = path.join(outputDir, 'review-output.md');
-        const ledger = buildNoFindingCoverageLedger(fixture.reviewContextPath);
-        ledger[0] = ledger[0]
-            .replace('"result":"no-finding"', '"result":"finding"')
-            .replace('"finding_ids":[]', '"finding_ids":["F-000"]');
-        fs.writeFileSync(outputPath, [
-            '# Review', '',
-            '## Validation Notes',
-            'Reviewed the complete current code scope and focused evidence remediation contract.', '',
-            '## Coverage Ledger', ...ledger, '',
-            '## Findings by Severity',
-            '- High: [garda:evidence-only:missing-focused-validation] test=tests/node/example.test.ts; action=run-and-record-focused-test', '',
-            '## Deferred Findings', 'None', '',
-            '## Residual Risks', 'None', '',
-            '## Verdict', 'REVIEW FAILED'
-        ].join('\n'), 'utf8');
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as {
+            coverage_contract: { obligations: Array<{ id: string; kind: string; target: string }> };
+            task_scope: { changed_files: string[] };
+        };
+        const report = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        const coverageLedger = report.coverage_ledger as {
+            entries: Array<{ finding_ids: string[] }>;
+        };
+        coverageLedger.entries[0].finding_ids = ['F-000'];
+        const findings = report.findings as {
+            high: Array<Record<string, unknown>>;
+        };
+        const marker = '[garda:evidence-only:missing-focused-validation] test=tests/node/example.test.ts; action=run-and-record-focused-test';
+        findings.high = [{
+            id: 'F-000',
+            title: marker,
+            description: marker,
+            evidence: [{
+                location: `${reviewContext.task_scope.changed_files[0]}:1`,
+                observation: 'Focused validation was not available during reviewer execution and must be run as the exact evidence-only follow-up.'
+            }],
+            coverage_obligation_ids: [reviewContext.coverage_contract.obligations[0].id]
+        }];
+        fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 
         const result = await runCliWithCapturedOutput([
             'gate', 'record-review-result',
@@ -1391,20 +1479,33 @@ describe('gates command review result - normalization', () => {
     it('record-review-result fails closed when bound output template is stale before PASS notes policy resolution', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-validation-notes-template-stale';
-        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
-        attestReviewerInvocationForTest({
-            repoRoot,
-            taskId,
-            reviewType: 'code',
-            reviewContextPath: fixture.reviewContextPath,
-            reviewerIdentity: fixture.reviewerIdentity
-        });
-        fs.writeFileSync(fixture.outputTemplatePath, '# tampered output template\n', 'utf8');
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const reviewerHandoff = writeManualReviewerHandoffFixture(repoRoot, taskId, 'code');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_handoff: reviewerHandoff,
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+        const outputTemplate = reviewerHandoff.output_template as Record<string, unknown>;
+        fs.writeFileSync(String(outputTemplate.artifact_path), '# tampered output template\n', 'utf8');
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.writeFileSync(reviewOutputPath, [
             '# Review',
+            '',
+            '## Validation Notes',
+            'Reviewed the legacy markdown output-template binding path before PASS notes policy resolution.',
             '',
             '## Findings by Severity',
             'none',
@@ -1418,46 +1519,62 @@ describe('gates command review result - normalization', () => {
             '## Verdict',
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
+        await recordReviewRoutingViaCli({
+            taskId,
+            reviewType: 'code',
+            repoRoot,
+            reviewerExecutionMode: 'delegated_subagent',
+            reviewerIdentity: 'agent:code-reviewer'
+        });
 
         const result = await runCliWithCapturedOutput([
             'gate',
             'record-review-result',
             '--task-id', taskId,
             '--review-type', 'code',
-            '--preflight-path', fixture.preflightPath,
+            '--preflight-path', preflightPath,
             '--review-output-path', reviewOutputPath,
             '--repo-root', repoRoot,
             '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', fixture.reviewerIdentity
+            '--reviewer-identity', 'agent:code-reviewer'
         ], { cwd: repoRoot });
 
         assert.notEqual(result.exitCode, 0);
         assert.ok(result.errors.some((line) => line.includes('reviewer output template artifact is stale')), result.errors.join('\n'));
-        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
-        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-code.md`)), false);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`)), false);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
     it('record-review-result fails closed when output template binding is missing before PASS notes policy resolution', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-validation-notes-template-missing';
-        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
-        attestReviewerInvocationForTest({
-            repoRoot,
-            taskId,
-            reviewType: 'code',
-            reviewContextPath: fixture.reviewContextPath,
-            reviewerIdentity: fixture.reviewerIdentity
-        });
-        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>;
-        const reviewerHandoff = reviewContext.reviewer_handoff as Record<string, unknown>;
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const reviewerHandoff = writeManualReviewerHandoffFixture(repoRoot, taskId, 'code');
         delete reviewerHandoff.output_template;
-        fs.writeFileSync(fixture.reviewContextPath, `${JSON.stringify(reviewContext, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_handoff: reviewerHandoff,
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.writeFileSync(reviewOutputPath, [
             '# Review',
+            '',
+            '## Validation Notes',
+            'Reviewed the legacy markdown output-template binding path before PASS notes policy resolution.',
             '',
             '## Findings by Severity',
             'none',
@@ -1471,23 +1588,30 @@ describe('gates command review result - normalization', () => {
             '## Verdict',
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
+        await recordReviewRoutingViaCli({
+            taskId,
+            reviewType: 'code',
+            repoRoot,
+            reviewerExecutionMode: 'delegated_subagent',
+            reviewerIdentity: 'agent:code-reviewer'
+        });
 
         const result = await runCliWithCapturedOutput([
             'gate',
             'record-review-result',
             '--task-id', taskId,
             '--review-type', 'code',
-            '--preflight-path', fixture.preflightPath,
+            '--preflight-path', preflightPath,
             '--review-output-path', reviewOutputPath,
             '--repo-root', repoRoot,
             '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', fixture.reviewerIdentity
+            '--reviewer-identity', 'agent:code-reviewer'
         ], { cwd: repoRoot });
 
         assert.notEqual(result.exitCode, 0);
         assert.ok(result.errors.some((line) => line.includes('reviewer_handoff.output_template.artifact_path')), result.errors.join('\n'));
-        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
-        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-code.md`)), false);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`)), false);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 

@@ -36,6 +36,10 @@ import {
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
 import {
+    reviewContextRequiresFindingsOnlyArtifact,
+    validateJsonReviewFindingsArtifact
+} from '../review/review-findings-artifact-verdict';
+import {
     findLatestRoutingEventForReviewType,
     findLatestTimelineSequence,
     findMatchingInvocationAttestationEvent,
@@ -198,7 +202,26 @@ export function validateReviewArtifactGateEligibility(options: {
                 expectedScopedDiff: laneDomainPreflightBindingAllowed ? false : diffExpectations.expectedScopedDiff,
                 requireDiffMaterialForRequiredReview: !laneDomainPreflightBindingAllowed
             }));
-            if (reviewContext && Number(reviewContext.schema_version) >= 3) {
+            if (reviewContext && reviewContextRequiresFindingsOnlyArtifact(reviewContext)) {
+                const findingsArtifact = validateJsonReviewFindingsArtifact({
+                    content: artifactContent,
+                    expectedTaskId: resolvedTaskId || '',
+                    expectedReviewType: reviewKey,
+                    expectedReviewContextSha256: reviewArtifact.reviewContextSha256 || undefined,
+                    expectedTreeStateSha256: reviewContextTreeStateSha256 || undefined,
+                    coverageContract: reviewContext.coverage_contract as ReviewCoverageContract
+                });
+                if (!findingsArtifact.detected) {
+                    errors.push(
+                        `Review artifact '${normalizePath(artifactPath)}' must be verdict-free findings JSON for current '${reviewKey}' review context; ` +
+                        'legacy PASS/FAIL verdict-token artifacts are readable history only and cannot satisfy current review evidence.'
+                    );
+                } else if (!findingsArtifact.report) {
+                    errors.push(
+                        `Review artifact '${normalizePath(artifactPath)}' contains invalid findings JSON: ` +
+                        findingsArtifact.violations.join(' ')
+                    );
+                }
                 const coverageValidation = validateReviewCoverageLedger(
                     artifactContent,
                     reviewContext.coverage_contract as ReviewCoverageContract,

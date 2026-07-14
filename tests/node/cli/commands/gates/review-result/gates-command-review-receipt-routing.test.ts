@@ -40,6 +40,8 @@ import {
     reviewContextScopedDiffFixture,
     recordReviewRoutingViaCli,
     attestReviewerInvocationForTest,
+    buildNoFindingsJsonReviewReport,
+    buildFailedJsonReviewReport,
     seedPromptBoundReviewFixture} from './gates-command-review-result-fixtures';
 
 describe('gates command review receipt - routing', () => {
@@ -57,20 +59,11 @@ describe('gates command review receipt - routing', () => {
         });
 
         const artifactPath = path.join(fixture.reviewsRoot, `${taskId}-code.md`);
-        fs.writeFileSync(artifactPath, [
-            '# Code Review',
-            '',
-            'Validated the reviewer prompt binding path and current invocation telemetry before writing the receipt artifact.',
-            '',
-            '## Findings by Severity',
-            'none',
-            '',
-            '## Residual Risks',
-            'none',
-            '',
-            '## Verdict',
-            'REVIEW PASSED'
-        ].join('\n'), 'utf8');
+        fs.writeFileSync(
+            artifactPath,
+            `${JSON.stringify(buildNoFindingsJsonReviewReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
 
         fs.writeFileSync(fixture.reviewerPromptPath, 'stale reviewer prompt payload before receipt recording\n', 'utf8');
         const receipt = await runCliWithCapturedOutput([
@@ -720,21 +713,6 @@ describe('gates command review receipt - routing', () => {
             assert.equal(reviewerRouting.execution_provider, 'Antigravity');
             assert.equal(reviewerRouting.source_of_truth, 'Antigravity');
 
-            fs.writeFileSync(artifactPath, [
-                '# Review',
-                '',
-                'Validated `src/cli/commands/gate-review-handlers.ts`, `src/gates/reviewer-routing.ts`, and the split routing/receipt lifecycle, confirming that the explicit custom task-mode artifact path remains authoritative even when a conflicting default task-mode artifact exists.',
-                '',
-                '## Findings by Severity',
-                'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'REVIEW PASSED'
-            ].join('\n'), 'utf8');
-
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
@@ -755,6 +733,11 @@ describe('gates command review receipt - routing', () => {
                 reviewContextPath,
                 reviewerIdentity: 'agent:code-reviewer'
             });
+            fs.writeFileSync(
+                artifactPath,
+                `${JSON.stringify(buildNoFindingsJsonReviewReport(reviewContextPath, taskId), null, 2)}\n`,
+                'utf8'
+            );
 
             process.exitCode = 0;
             await runCliMainWithHandling([
@@ -1013,20 +996,11 @@ describe('gates command review receipt - routing', () => {
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
-        fs.writeFileSync(reviewOutputPath, [
-            '# Review',
-            '',
-            'Validated the original staged review snapshot and found a defect before the main agent changed `src/app.ts` during remediation.',
-            '',
-            '## Findings by Severity',
-            '- Medium: `src/app.ts:1` stale failed review finding is historical evidence and must not disappear from review accounting.',
-            '',
-            '## Residual Risks',
-            'none',
-            '',
-            '## Verdict',
-            'REVIEW FAILED'
-        ].join('\n'), 'utf8');
+        fs.writeFileSync(
+            reviewOutputPath,
+            `${JSON.stringify(buildFailedJsonReviewReport(reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
 
         const result = await runCliWithCapturedOutput([
             'gate',
@@ -1046,7 +1020,7 @@ describe('gates command review receipt - routing', () => {
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         assert.equal(fs.existsSync(artifactPath), true);
         assert.equal(fs.existsSync(receiptPath), true);
-        assert.match(fs.readFileSync(artifactPath, 'utf8'), /REVIEW FAILED/);
+        assert.equal(/REVIEW PASSED|REVIEW FAILED|## Verdict/u.test(fs.readFileSync(artifactPath, 'utf8')), false);
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
         assert.equal(receipt.historical_stale_review_result, true);
         assert.equal(receipt.review_result_scope, 'historical_stale_after_remediation');
@@ -1679,24 +1653,6 @@ describe('gates command review receipt - routing', () => {
             assert.ok(String(reviewerRouting.reviewer_session_reuse_note || '').includes('not valid fresh-context launch evidence'));
             assert.ok(String(reviewerRouting.cleanup_instruction || '').includes('close or release the reviewer sub-agent session'));
 
-            fs.writeFileSync(codeReviewOutputPath, [
-                '# Review',
-                '',
-                'Validated `src/gates/build-review-context.ts`, `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gate-flows/review-flow.ts`, and `src/gates/completion.ts`, confirming that the explicit custom task-mode artifact path remains authoritative through review materialization, review-gate verification, and completion-gate closeout even when a conflicting default task-mode artifact exists.',
-                '',
-                '## Validation Notes',
-                'Reviewed `src/gates/build-review-context.ts`, `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gate-flows/review-flow.ts`, and `src/gates/completion.ts` for explicit custom task-mode path authority across review materialization and closeout.',
-                '',
-                '## Findings by Severity',
-                'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'REVIEW PASSED'
-            ].join('\n'), 'utf8');
-
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
@@ -1716,6 +1672,11 @@ describe('gates command review receipt - routing', () => {
                 reviewContextPath: customCodeReviewContextPath,
                 reviewerIdentity: 'agent:code-reviewer'
             });
+            fs.writeFileSync(
+                codeReviewOutputPath,
+                `${JSON.stringify(buildNoFindingsJsonReviewReport(customCodeReviewContextPath, taskId, 'code'), null, 2)}\n`,
+                'utf8'
+            );
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -1860,24 +1821,6 @@ describe('gates command review receipt - routing', () => {
             ]);
             codeReviewBuildExitCode = Number(process.exitCode ?? 0);
 
-            fs.writeFileSync(codeReviewOutputPath, [
-                '# Review',
-                '',
-                'Validated `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that upstream code-review evidence remains bound to the explicit custom task-mode artifact path even when a drifted default task-mode artifact exists.',
-                '',
-                '## Validation Notes',
-                'Reviewed `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts` for upstream code-review evidence bound to the explicit custom task-mode artifact path.',
-                '',
-                '## Findings by Severity',
-                'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'REVIEW PASSED'
-            ].join('\n'), 'utf8');
-
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
@@ -1897,6 +1840,11 @@ describe('gates command review receipt - routing', () => {
                 reviewContextPath: customCodeReviewContextPath,
                 reviewerIdentity: 'agent:code-reviewer'
             });
+            fs.writeFileSync(
+                codeReviewOutputPath,
+                `${JSON.stringify(buildNoFindingsJsonReviewReport(customCodeReviewContextPath, taskId, 'code'), null, 2)}\n`,
+                'utf8'
+            );
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -1930,24 +1878,6 @@ describe('gates command review receipt - routing', () => {
             assert.equal(reviewerRouting.execution_provider, 'Antigravity');
             assert.equal(reviewerRouting.canonical_source_of_truth, 'Codex');
 
-            fs.writeFileSync(testReviewOutputPath, [
-                '# Review',
-                '',
-                'Validated `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that downstream test-review dependency checks now stay bound to the explicit custom task-mode artifact path instead of falling back to a drifted default task-mode artifact.',
-                '',
-                '## Validation Notes',
-                'Reviewed `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts` for downstream test-review dependency checks bound to the explicit custom task-mode artifact path.',
-                '',
-                '## Findings by Severity',
-                'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'TEST REVIEW PASSED'
-            ].join('\n'), 'utf8');
-
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
@@ -1967,6 +1897,11 @@ describe('gates command review receipt - routing', () => {
                 reviewContextPath: customTestReviewContextPath,
                 reviewerIdentity: 'agent:test-reviewer'
             });
+            fs.writeFileSync(
+                testReviewOutputPath,
+                `${JSON.stringify(buildNoFindingsJsonReviewReport(customTestReviewContextPath, taskId, 'test'), null, 2)}\n`,
+                'utf8'
+            );
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',

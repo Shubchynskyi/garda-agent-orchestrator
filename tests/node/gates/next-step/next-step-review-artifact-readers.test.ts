@@ -118,6 +118,57 @@ test('readReviewArtifactState derives pass state from findings JSON artifacts wi
     assert.ok(!state.violations.some((violation) => violation.includes('accepted pass token')));
 });
 
+test('readReviewArtifactState rejects legacy verdict tokens for current findings-only contexts', () => {
+    const reviewsRoot = tempRoot('garda-next-step-review-legacy-token-readers-');
+    const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
+    const contextPath = path.join(reviewsRoot, 'T-100-code-review-context.json');
+    writeJson(contextPath, {
+        schema_version: 3,
+        task_id: 'T-100',
+        review_type: 'code',
+        tree_state: {
+            tree_state_sha256: TREE_STATE_SHA256
+        },
+        coverage_contract: {
+            schema_version: 1,
+            required: true,
+            review_type: 'code',
+            obligations: [{ id: 'FILE-001', kind: 'file', target: 'src/gates/next-step/next-step-review-artifact-readers.ts' }],
+            obligation_count: 1,
+            contract_sha256: COVERAGE_CONTRACT_SHA256
+        }
+    });
+    fs.writeFileSync(path.join(reviewsRoot, 'T-100-code.md'), [
+        '# Review',
+        '',
+        'This current generated review context must not accept legacy verdict-token evidence.',
+        '',
+        '## Findings by Severity',
+        'none',
+        '',
+        '## Residual Risks',
+        'none',
+        '',
+        '## Verdict',
+        'REVIEW PASSED'
+    ].join('\n'));
+
+    const state = readReviewArtifactState(
+        reviewsRoot,
+        'T-100',
+        'code',
+        preflightPath,
+        null,
+        null
+    );
+
+    assert.equal(state.verdictToken, null);
+    assert.ok(state.violations.some((violation) =>
+        violation.includes('must be verdict-free findings JSON')
+        && violation.includes('legacy PASS/FAIL verdict-token artifacts')
+    ));
+});
+
 test('readReviewArtifactState treats active findings JSON artifacts as failed even without legacy fail token', () => {
     const reviewsRoot = tempRoot('garda-next-step-review-json-failed-readers-');
     const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
