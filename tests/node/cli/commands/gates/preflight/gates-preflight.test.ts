@@ -234,6 +234,17 @@ function seedStrictProfileConfig(repoRoot: string): void {
                     infra: 'auto',
                     dependency: 'auto'
                 },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'balanced',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'create_follow_up',
+                        low: 'create_follow_up'
+                    },
+                    residual_risk: 'create_follow_up'
+                },
                 token_economy: {
                     enabled: true,
                     strip_examples: true,
@@ -256,6 +267,17 @@ function seedStrictProfileConfig(repoRoot: string): void {
                     performance: true,
                     infra: 'auto',
                     dependency: 'auto'
+                },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'strict',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'fix_now',
+                        low: 'fix_now'
+                    },
+                    residual_risk: 'fix_now'
                 },
                 token_economy: {
                     enabled: true,
@@ -304,6 +326,17 @@ function seedSnapshotFreezeProfiles(repoRoot: string): string {
                     infra: 'auto',
                     dependency: 'auto'
                 },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'custom',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'create_follow_up',
+                        medium: 'ignore',
+                        low: 'ignore'
+                    },
+                    residual_risk: 'ignore'
+                },
                 token_economy: {
                     enabled: true,
                     strip_examples: true,
@@ -326,6 +359,17 @@ function seedSnapshotFreezeProfiles(repoRoot: string): string {
                     performance: true,
                     infra: 'auto',
                     dependency: 'auto'
+                },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'strict',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'fix_now',
+                        low: 'fix_now'
+                    },
+                    residual_risk: 'fix_now'
                 },
                 token_economy: {
                     enabled: true,
@@ -812,7 +856,15 @@ describe('cli/commands/gates — preflight', () => {
             assert.equal(payload.profile_policy_snapshot.review_lane_selection.effective_review_policy.security, true);
             assert.equal(payload.profile_policy_snapshot.review_lane_selection.effective_review_policy.performance, false);
             assert.deepEqual(payload.profile_policy_snapshot.review_lane_selection.safety_floors_applied, []);
-            assert.equal(payload.profile_policy_snapshot.finding_policy.policy_id, 'legacy_strict_review_findings_v1');
+            assert.equal(payload.profile_policy_snapshot.review_finding_policy.policy_id, 'custom');
+            assert.equal(payload.profile_policy_snapshot.review_finding_policy.findings.critical, 'fix_now');
+            assert.equal(payload.profile_policy_snapshot.review_finding_policy.findings.high, 'create_follow_up');
+            assert.equal(payload.profile_policy_snapshot.review_finding_policy.residual_risk, 'ignore');
+            assert.equal(payload.profile_policy_snapshot.finding_policy.policy_id, 'profile_review_finding_dispositions_v1');
+            assert.equal(payload.profile_policy_snapshot.finding_policy.active_findings.critical, 'block_until_resolved');
+            assert.equal(payload.profile_policy_snapshot.finding_policy.active_findings.high, 'create_follow_up');
+            assert.equal(payload.profile_policy_snapshot.finding_policy.active_findings.medium, 'ignore');
+            assert.equal(payload.profile_policy_snapshot.finding_policy.residual_risks, 'ignore');
             assert.equal(payload.profile_policy_snapshot.remediation_policy.review_restarts_retain_profile_snapshot, true);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -879,6 +931,7 @@ describe('cli/commands/gates — preflight', () => {
             const artifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
             const snapshot = artifact.profile_policy_snapshot as TaskProfilePolicySnapshot;
             snapshot.finding_policy.active_findings.medium = 'allow_without_resolution' as 'block_until_resolved';
+            snapshot.review_finding_policy.findings.critical = 'ignore';
             snapshot.remediation_policy.active_findings_require_fix_before_pass = false as true;
             snapshot.snapshot_hash = computeTaskProfilePolicySnapshotHash(snapshot);
             updateLatestTaskModeEventDetails(repoRoot, taskId, (details) => {
@@ -896,6 +949,7 @@ describe('cli/commands/gates — preflight', () => {
             }));
             assert.match(error.message, /profile policy snapshot/i);
             assert.match(error.message, /finding_policy\.active_findings\.medium/i);
+            assert.match(error.message, /review_finding_policy\.findings\.critical/i);
             assert.match(error.message, /remediation_policy\.active_findings_require_fix_before_pass/i);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });

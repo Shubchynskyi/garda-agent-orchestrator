@@ -16,6 +16,17 @@
         "infra": "auto",
         "dependency": "auto"
       },
+      "review_finding_policy": {
+        "schema_version": 1,
+        "policy_id": "balanced",
+        "findings": {
+          "critical": "fix_now",
+          "high": "fix_now",
+          "medium": "create_follow_up",
+          "low": "create_follow_up"
+        },
+        "residual_risk": "create_follow_up"
+      },
       "token_economy": {
         "enabled": true,
         "strip_examples": true,
@@ -40,6 +51,17 @@
         "performance": false,
         "infra": false,
         "dependency": false
+      },
+      "review_finding_policy": {
+        "schema_version": 1,
+        "policy_id": "soft",
+        "findings": {
+          "critical": "fix_now",
+          "high": "create_follow_up",
+          "medium": "ignore",
+          "low": "ignore"
+        },
+        "residual_risk": "ignore"
       },
       "token_economy": {
         "enabled": true,
@@ -66,6 +88,17 @@
         "infra": "auto",
         "dependency": "auto"
       },
+      "review_finding_policy": {
+        "schema_version": 1,
+        "policy_id": "strict",
+        "findings": {
+          "critical": "fix_now",
+          "high": "fix_now",
+          "medium": "fix_now",
+          "low": "fix_now"
+        },
+        "residual_risk": "fix_now"
+      },
       "token_economy": {
         "enabled": true,
         "strip_examples": false,
@@ -90,6 +123,17 @@
         "performance": false,
         "infra": false,
         "dependency": false
+      },
+      "review_finding_policy": {
+        "schema_version": 1,
+        "policy_id": "soft",
+        "findings": {
+          "critical": "fix_now",
+          "high": "create_follow_up",
+          "medium": "ignore",
+          "low": "ignore"
+        },
+        "residual_risk": "ignore"
       },
       "token_economy": {
         "enabled": true,

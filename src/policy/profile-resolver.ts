@@ -27,10 +27,31 @@ export interface ProfileSkills {
     [key: string]: boolean;
 }
 
+export type ReviewFindingDispositionAction = 'fix_now' | 'create_follow_up' | 'ignore';
+export type ReviewFindingPolicyId = 'soft' | 'balanced' | 'strict' | 'custom';
+
+export interface ReviewFindingPolicy {
+    schema_version: 1;
+    policy_id: ReviewFindingPolicyId;
+    findings: {
+        critical: ReviewFindingDispositionAction;
+        high: ReviewFindingDispositionAction;
+        medium: ReviewFindingDispositionAction;
+        low: ReviewFindingDispositionAction;
+    };
+    residual_risk: ReviewFindingDispositionAction;
+}
+
+export interface ReviewFindingPolicyResolution {
+    policy: ReviewFindingPolicy;
+    diagnostics: string[];
+}
+
 export interface ProfileEntry {
     description: string;
     depth: number;
     review_policy: ProfileReviewPolicy;
+    review_finding_policy?: ReviewFindingPolicy;
     token_economy: ProfileTokenEconomy;
     skills: ProfileSkills;
 }
@@ -86,6 +107,8 @@ export interface EffectivePolicy {
     profile_source: 'built_in' | 'user';
     depth: number;
     review_policy: EffectiveReviewPolicy;
+    review_finding_policy: ReviewFindingPolicy;
+    review_finding_policy_diagnostics: string[];
     token_economy: TokenEconomyConfig;
     skills: ProfileSkills;
     installed_packs: string[];
@@ -154,6 +177,55 @@ const TRIGGER_GATED_AUTO_REVIEW_TYPES = new Set([
 const TEST_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'security', 'refactor', 'performance']);
 const DOCS_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'refactor', 'test', 'performance']);
 const LOCALIZATION_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'security', 'refactor', 'test', 'performance']);
+const REVIEW_FINDING_POLICY_SCHEMA_VERSION = 1 as const;
+const REVIEW_FINDING_POLICY_ACTIONS = new Set<ReviewFindingDispositionAction>([
+    'fix_now',
+    'create_follow_up',
+    'ignore'
+]);
+const REVIEW_FINDING_POLICY_IDS = new Set<ReviewFindingPolicyId>([
+    'soft',
+    'balanced',
+    'strict',
+    'custom'
+]);
+const REVIEW_FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
+
+export const REVIEW_FINDING_POLICY_PRESETS: Readonly<Record<'soft' | 'balanced' | 'strict', ReviewFindingPolicy>> = Object.freeze({
+    soft: Object.freeze({
+        schema_version: REVIEW_FINDING_POLICY_SCHEMA_VERSION,
+        policy_id: 'soft',
+        findings: Object.freeze({
+            critical: 'fix_now',
+            high: 'create_follow_up',
+            medium: 'ignore',
+            low: 'ignore'
+        }),
+        residual_risk: 'ignore'
+    }),
+    balanced: Object.freeze({
+        schema_version: REVIEW_FINDING_POLICY_SCHEMA_VERSION,
+        policy_id: 'balanced',
+        findings: Object.freeze({
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'create_follow_up',
+            low: 'create_follow_up'
+        }),
+        residual_risk: 'create_follow_up'
+    }),
+    strict: Object.freeze({
+        schema_version: REVIEW_FINDING_POLICY_SCHEMA_VERSION,
+        policy_id: 'strict',
+        findings: Object.freeze({
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'fix_now',
+            low: 'fix_now'
+        }),
+        residual_risk: 'fix_now'
+    })
+});
 
 export interface ProfileReviewDecision {
     review_type: string;
@@ -263,6 +335,157 @@ function readJsonFile<T>(filePath: string): T | null {
     if (!fs.existsSync(filePath)) return null;
     const raw = fs.readFileSync(filePath, 'utf8');
     return JSON.parse(raw) as T;
+}
+
+function cloneReviewFindingPolicy(policy: ReviewFindingPolicy): ReviewFindingPolicy {
+    return {
+        schema_version: policy.schema_version,
+        policy_id: policy.policy_id,
+        findings: { ...policy.findings },
+        residual_risk: policy.residual_risk
+    };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isReviewFindingDispositionAction(value: unknown): value is ReviewFindingDispositionAction {
+    return typeof value === 'string'
+        && REVIEW_FINDING_POLICY_ACTIONS.has(value as ReviewFindingDispositionAction);
+}
+
+function formatReviewFindingPolicy(policy: ReviewFindingPolicy): string {
+    return [
+        `policy_id=${policy.policy_id}`,
+        ...REVIEW_FINDING_SEVERITIES.map((severity) => `${severity}=${policy.findings[severity]}`),
+        `residual_risk=${policy.residual_risk}`
+    ].join(', ');
+}
+
+function presetMismatchReason(policy: ReviewFindingPolicy): string | null {
+    if (policy.policy_id === 'custom') {
+        return null;
+    }
+    const preset = REVIEW_FINDING_POLICY_PRESETS[policy.policy_id];
+    for (const severity of REVIEW_FINDING_SEVERITIES) {
+        if (policy.findings[severity] !== preset.findings[severity]) {
+            return `review_finding_policy.${severity} does not match ${policy.policy_id} preset.`;
+        }
+    }
+    if (policy.residual_risk !== preset.residual_risk) {
+        return `review_finding_policy.residual_risk does not match ${policy.policy_id} preset.`;
+    }
+    return null;
+}
+
+export function resolveReviewFindingPolicy(
+    policyInput: unknown,
+    profileName: string
+): ReviewFindingPolicyResolution {
+    const strictPolicy = cloneReviewFindingPolicy(REVIEW_FINDING_POLICY_PRESETS.strict);
+    const diagnostics: string[] = [];
+
+    if (policyInput === undefined) {
+        return {
+            policy: strictPolicy,
+            diagnostics: [
+                `Profile '${profileName}' is missing review_finding_policy; resolved fail-closed to strict. Add review_finding_policy to migrate this legacy profile.`
+            ]
+        };
+    }
+    if (!isPlainRecord(policyInput)) {
+        return {
+            policy: strictPolicy,
+            diagnostics: [
+                `Profile '${profileName}' has invalid review_finding_policy; resolved fail-closed to strict.`
+            ]
+        };
+    }
+
+    const allowedKeys = new Set(['schema_version', 'policy_id', 'findings', 'residual_risk']);
+    const unknownKeys = Object.keys(policyInput).filter((key) => !allowedKeys.has(key));
+    const policyId = policyInput.policy_id;
+    if (
+        policyInput.schema_version !== REVIEW_FINDING_POLICY_SCHEMA_VERSION
+        || typeof policyId !== 'string'
+        || !REVIEW_FINDING_POLICY_IDS.has(policyId as ReviewFindingPolicyId)
+        || unknownKeys.length > 0
+        || !isPlainRecord(policyInput.findings)
+    ) {
+        return {
+            policy: strictPolicy,
+            diagnostics: [
+                `Profile '${profileName}' has malformed review_finding_policy; resolved fail-closed to strict.`
+            ]
+        };
+    }
+
+    const findings: ReviewFindingPolicy['findings'] = {
+        critical: 'fix_now',
+        high: 'fix_now',
+        medium: 'fix_now',
+        low: 'fix_now'
+    };
+    const findingKeys = Object.keys(policyInput.findings);
+    const unknownFindingKeys = findingKeys.filter((key) => !(REVIEW_FINDING_SEVERITIES as readonly string[]).includes(key));
+    if (unknownFindingKeys.length > 0) {
+        return {
+            policy: strictPolicy,
+            diagnostics: [
+                `Profile '${profileName}' has malformed review_finding_policy findings; resolved fail-closed to strict.`
+            ]
+        };
+    }
+    for (const severity of REVIEW_FINDING_SEVERITIES) {
+        const action = policyInput.findings[severity];
+        if (!isReviewFindingDispositionAction(action)) {
+            return {
+                policy: strictPolicy,
+                diagnostics: [
+                    `Profile '${profileName}' has invalid review_finding_policy.findings.${severity}; resolved fail-closed to strict.`
+                ]
+            };
+        }
+        findings[severity] = action;
+    }
+    if (!isReviewFindingDispositionAction(policyInput.residual_risk)) {
+        return {
+            policy: strictPolicy,
+            diagnostics: [
+                `Profile '${profileName}' has invalid review_finding_policy.residual_risk; resolved fail-closed to strict.`
+            ]
+        };
+    }
+
+    if (findings.critical !== 'fix_now') {
+        return {
+            policy: strictPolicy,
+            diagnostics: [
+                `Profile '${profileName}' attempted to weaken critical finding disposition; critical is an immutable safety floor. ` +
+                'Resolved fail-closed to strict.'
+            ]
+        };
+    }
+
+    const policy: ReviewFindingPolicy = {
+        schema_version: REVIEW_FINDING_POLICY_SCHEMA_VERSION,
+        policy_id: policyId as ReviewFindingPolicyId,
+        findings,
+        residual_risk: policyInput.residual_risk
+    };
+    const presetMismatch = presetMismatchReason(policy);
+    if (presetMismatch) {
+        return {
+            policy: strictPolicy,
+            diagnostics: [
+                `Profile '${profileName}' has inconsistent ${policy.policy_id} review_finding_policy; ${presetMismatch} Resolved fail-closed to strict.`
+            ]
+        };
+    }
+
+    diagnostics.push(`Profile '${profileName}' review_finding_policy resolved: ${formatReviewFindingPolicy(policy)}.`);
+    return { policy, diagnostics };
 }
 
 export function loadProfilesData(profilesPath: string): ProfilesData {
@@ -690,6 +913,10 @@ export function resolveEffectivePolicy(
         capabilities,
         isCodeChangingTask
     );
+    const reviewFindingPolicyResolution = resolveReviewFindingPolicy(
+        entry.review_finding_policy,
+        profileName
+    );
 
     const tokenEconomy = mergeTokenEconomy(entry.token_economy, tokenEconomyConfig);
 
@@ -727,6 +954,8 @@ export function resolveEffectivePolicy(
         profile_source: profileSource,
         depth: entry.depth,
         review_policy: reviewPolicy,
+        review_finding_policy: reviewFindingPolicyResolution.policy,
+        review_finding_policy_diagnostics: reviewFindingPolicyResolution.diagnostics,
         token_economy: tokenEconomy,
         skills,
         installed_packs,
@@ -757,6 +986,20 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
     lines.push('ReviewPolicy:');
     for (const [key, value] of Object.entries(policy.review_policy)) {
         lines.push(`  ${key}: ${String(value)}`);
+    }
+    lines.push('');
+
+    lines.push('ReviewFindingPolicy:');
+    lines.push(`  policy_id: ${policy.review_finding_policy.policy_id}`);
+    for (const severity of REVIEW_FINDING_SEVERITIES) {
+        lines.push(`  ${severity}: ${policy.review_finding_policy.findings[severity]}`);
+    }
+    lines.push(`  residual_risk: ${policy.review_finding_policy.residual_risk}`);
+    if (policy.review_finding_policy_diagnostics.length > 0) {
+        lines.push('  diagnostics:');
+        for (const diagnostic of policy.review_finding_policy_diagnostics) {
+            lines.push(`    - ${diagnostic}`);
+        }
     }
     lines.push('');
 

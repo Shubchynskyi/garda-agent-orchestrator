@@ -6,6 +6,17 @@ export interface ProfileEntry {
     description: string;
     depth: number;
     review_policy: Record<string, boolean | 'auto'>;
+    review_finding_policy?: {
+        schema_version: 1;
+        policy_id: 'soft' | 'balanced' | 'strict' | 'custom';
+        findings: {
+            critical: 'fix_now' | 'create_follow_up' | 'ignore';
+            high: 'fix_now' | 'create_follow_up' | 'ignore';
+            medium: 'fix_now' | 'create_follow_up' | 'ignore';
+            low: 'fix_now' | 'create_follow_up' | 'ignore';
+        };
+        residual_risk: 'fix_now' | 'create_follow_up' | 'ignore';
+    };
     token_economy: Record<string, boolean>;
     skills: Record<string, boolean>;
 }

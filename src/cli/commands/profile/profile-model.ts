@@ -1,5 +1,9 @@
 import { getAllProfileNames, getProfileEntry } from './profile-data';
 import { ProfileEntry, ProfilesData } from './profile-types';
+import {
+    resolveReviewFindingPolicy,
+    REVIEW_FINDING_POLICY_PRESETS
+} from '../../../policy/profile-resolver';
 
 export const KNOWN_REVIEW_TYPES = Object.freeze([
     'code',
@@ -46,6 +50,16 @@ export function validateProfilesIntegrity(data: ProfilesData): string[] {
         if (entry.depth < 1 || entry.depth > 3) {
             issues.push(`Profile '${name}' has invalid depth ${entry.depth}; must be 1–3.`);
         }
+        const findingPolicyResolution = resolveReviewFindingPolicy(entry.review_finding_policy, name);
+        const hasBlockingDiagnostic = findingPolicyResolution.diagnostics.some((diagnostic) => (
+            diagnostic.includes('invalid review_finding_policy')
+            || diagnostic.includes('malformed review_finding_policy')
+            || diagnostic.includes('inconsistent')
+            || diagnostic.includes('attempted to weaken critical')
+        ));
+        if (hasBlockingDiagnostic) {
+            issues.push(...findingPolicyResolution.diagnostics);
+        }
     }
     return issues;
 }
@@ -90,6 +104,10 @@ export function buildDefaultProfileEntry(description: string, depth: number): Pr
             infra: 'auto',
             dependency: 'auto'
         },
+        review_finding_policy: {
+            ...REVIEW_FINDING_POLICY_PRESETS.balanced,
+            findings: { ...REVIEW_FINDING_POLICY_PRESETS.balanced.findings }
+        },
         token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
         skills: { auto_suggest: true }
     };
@@ -97,7 +115,7 @@ export function buildDefaultProfileEntry(description: string, depth: number): Pr
 
 export function buildPromptReadyProfileEntry(entry: ProfileEntry): ProfileEntry {
     const baseline = buildDefaultProfileEntry(entry.description, entry.depth);
-    return {
+    const prepared: ProfileEntry = {
         description: entry.description,
         depth: entry.depth,
         review_policy: {
@@ -113,6 +131,13 @@ export function buildPromptReadyProfileEntry(entry: ProfileEntry): ProfileEntry 
             ...entry.skills
         }
     };
+    if (entry.review_finding_policy) {
+        prepared.review_finding_policy = {
+            ...entry.review_finding_policy,
+            findings: { ...entry.review_finding_policy.findings }
+        };
+    }
+    return prepared;
 }
 
 export function buildSuggestedProfileName(data: ProfilesData): string {

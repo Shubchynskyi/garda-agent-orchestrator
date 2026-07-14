@@ -17,6 +17,7 @@ import {serializeTaskPlan, validateTaskPlan} from '../../../../src/schemas/task-
 import {formatCompletionGateResult} from '../../../../src/gates/completion';
 import {
     computeTaskProfilePolicySnapshotHash,
+    summarizeTaskProfilePolicySnapshot,
     type TaskProfilePolicySnapshot
 } from '../../../../src/policy/task-profile-policy-snapshot';
 
@@ -66,6 +67,25 @@ function cleanupDir(dir: string): void {
             // Another test may still be using the parent directory.
         }
     }
+}
+
+function updateLatestTaskModeProfileSnapshotHash(eventsDir: string, taskId: string, snapshotHash: string): void {
+    const eventsPath = path.join(eventsDir, `${taskId}.jsonl`);
+    const timelineLines = fs.readFileSync(eventsPath, 'utf8').trimEnd().split('\n');
+    let updated = false;
+    for (let index = timelineLines.length - 1; index >= 0; index -= 1) {
+        const event = JSON.parse(timelineLines[index]) as Record<string, unknown>;
+        if (event.event_type !== 'TASK_MODE_ENTERED') {
+            continue;
+        }
+        const details = event.details as Record<string, unknown>;
+        details.profile_policy_snapshot_hash = snapshotHash;
+        timelineLines[index] = JSON.stringify(event);
+        updated = true;
+        break;
+    }
+    assert.equal(updated, true, `Expected TASK_MODE_ENTERED event for ${taskId}`);
+    fs.writeFileSync(eventsPath, `${timelineLines.join('\n')}\n`, 'utf8');
 }
 
 const PLAN_METADATA: TaskModePlanMetadata = {
@@ -1353,6 +1373,17 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
                     description: 'Balanced',
                     depth: 2,
                     review_policy: { code: true, test: 'auto' },
+                    review_finding_policy: {
+                        schema_version: 1,
+                        policy_id: 'balanced',
+                        findings: {
+                            critical: 'fix_now',
+                            high: 'fix_now',
+                            medium: 'create_follow_up',
+                            low: 'create_follow_up'
+                        },
+                        residual_risk: 'create_follow_up'
+                    },
                     token_economy: {
                         enabled: true,
                         strip_examples: true,
@@ -1366,6 +1397,17 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
                     description: 'Fast',
                     depth: 1,
                     review_policy: { code: true, test: false, custom_profile_only: 'auto' },
+                    review_finding_policy: {
+                        schema_version: 1,
+                        policy_id: 'custom',
+                        findings: {
+                            critical: 'fix_now',
+                            high: 'create_follow_up',
+                            medium: 'ignore',
+                            low: 'ignore'
+                        },
+                        residual_risk: 'ignore'
+                    },
                     token_economy: {
                         enabled: true,
                         strip_examples: true,
@@ -1409,6 +1451,16 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(artifact.profile_policy_snapshot.review_lane_selection.profile_review_policy.custom_profile_only, 'auto');
         assert.equal(artifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.test, false);
         assert.equal(artifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.custom_profile_only, false);
+        assert.equal(artifact.profile_policy_snapshot.review_finding_policy.policy_id, 'custom');
+        assert.equal(artifact.profile_policy_snapshot.review_finding_policy.findings.critical, 'fix_now');
+        assert.equal(artifact.profile_policy_snapshot.review_finding_policy.findings.high, 'create_follow_up');
+        assert.equal(artifact.profile_policy_snapshot.review_finding_policy.findings.medium, 'ignore');
+        assert.equal(artifact.profile_policy_snapshot.review_finding_policy.residual_risk, 'ignore');
+        assert.equal(artifact.profile_policy_snapshot.finding_policy.policy_id, 'profile_review_finding_dispositions_v1');
+        assert.equal(artifact.profile_policy_snapshot.finding_policy.active_findings.critical, 'block_until_resolved');
+        assert.equal(artifact.profile_policy_snapshot.finding_policy.active_findings.high, 'create_follow_up');
+        assert.equal(artifact.profile_policy_snapshot.finding_policy.active_findings.medium, 'ignore');
+        assert.equal(artifact.profile_policy_snapshot.finding_policy.residual_risks, 'ignore');
         assert.match(artifact.profile_policy_snapshot.snapshot_hash, /^[a-f0-9]{64}$/);
 
         const evidence = getTaskModeEvidence(tmpDir, 'T-100');
@@ -1443,11 +1495,136 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.profile_review_policy.custom_profile_only, 'auto');
         assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.test, false);
         assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.custom_profile_only, false);
+        assert.equal(rerunArtifact.profile_policy_snapshot.review_finding_policy.policy_id, 'custom');
+        assert.equal(rerunArtifact.profile_policy_snapshot.review_finding_policy.findings.high, 'create_follow_up');
+        assert.equal(rerunArtifact.profile_policy_snapshot.review_finding_policy.residual_risk, 'ignore');
+        assert.equal(rerunArtifact.profile_policy_snapshot.finding_policy.active_findings.high, 'create_follow_up');
+        assert.equal(rerunArtifact.profile_policy_snapshot.finding_policy.residual_risks, 'ignore');
 
         const rerunEvidence = getTaskModeEvidence(tmpDir, 'T-100');
         assert.equal(rerunEvidence.evidence_status, 'PASS');
         assert.equal(rerunEvidence.profile_policy_snapshot_status, 'PASS');
         assert.equal(rerunEvidence.profile_policy_snapshot_hash, firstSnapshotHash);
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('runEnterTaskModeCommand reuses legacy strict finding-policy snapshots without rewriting their hash', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+        const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+        const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-100 | TODO | P1 | orchestration | Legacy profile snapshot restart test | gpt-5.5 | 2026-07-14 | strict | fixture |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                strict: {
+                    description: 'Strict',
+                    depth: 3,
+                    review_policy: { code: true, test: true, security: true, refactor: true },
+                    review_finding_policy: {
+                        schema_version: 1,
+                        policy_id: 'strict',
+                        findings: {
+                            critical: 'fix_now',
+                            high: 'fix_now',
+                            medium: 'fix_now',
+                            low: 'fix_now'
+                        },
+                        residual_risk: 'fix_now'
+                    },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: false,
+                        strip_code_blocks: false,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        }), 'utf8');
+
+        const first = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            taskSummary: 'Legacy profile snapshot restart test',
+            emitMetrics: false
+        });
+        assert.equal(first.exitCode, 0);
+
+        const artifactPath = path.join(reviewsDir, 'T-100-task-mode.json');
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        const legacySnapshot = artifact.profile_policy_snapshot as Record<string, unknown>;
+        delete legacySnapshot.review_finding_policy;
+        delete legacySnapshot.review_finding_policy_diagnostics;
+        legacySnapshot.finding_policy = {
+            schema_version: 1,
+            policy_id: 'legacy_strict_review_findings_v1',
+            active_findings: {
+                critical: 'block_until_resolved',
+                high: 'block_until_resolved',
+                medium: 'block_until_resolved',
+                low: 'block_until_resolved'
+            },
+            residual_risks: 'block_unless_deferred_with_justification',
+            deferred_findings: 'allowed_only_with_justification'
+        };
+        legacySnapshot.snapshot_hash = computeTaskProfilePolicySnapshotHash(
+            legacySnapshot as unknown as TaskProfilePolicySnapshot
+        );
+        artifact.profile_policy_snapshot = legacySnapshot;
+        fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+        updateLatestTaskModeProfileSnapshotHash(eventsDir, 'T-100', String(legacySnapshot.snapshot_hash));
+
+        const legacyEvidence = getTaskModeEvidence(tmpDir, 'T-100');
+        assert.equal(legacyEvidence.evidence_status, 'PASS');
+        assert.equal(legacyEvidence.profile_policy_snapshot_status, 'PASS');
+        assert.equal(legacyEvidence.profile_policy_snapshot_hash, legacySnapshot.snapshot_hash);
+        assert.ok(legacyEvidence.profile_policy_snapshot);
+        assert.equal(
+            (legacyEvidence.profile_policy_snapshot as unknown as Record<string, unknown>).review_finding_policy,
+            undefined
+        );
+        const legacySummary = summarizeTaskProfilePolicySnapshot(legacyEvidence.profile_policy_snapshot);
+        assert.equal(legacySummary.review_finding_policy.policy_id, 'strict');
+        assert.equal(legacySummary.finding_policy.policy_id, 'profile_review_finding_dispositions_v1');
+        assert.equal(
+            legacySummary.review_finding_policy_diagnostics.some((entry) => (
+                entry.includes('Legacy task profile policy snapshot')
+            )),
+            true
+        );
+
+        const rerun = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            taskSummary: 'Legacy profile snapshot restart test rerun',
+            emitMetrics: false
+        });
+        assert.equal(rerun.exitCode, 0);
+
+        const rerunArtifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(rerunArtifact.profile_policy_snapshot.snapshot_hash, legacySnapshot.snapshot_hash);
+        assert.equal(rerunArtifact.profile_policy_snapshot.review_finding_policy, undefined);
+        assert.equal(rerunArtifact.profile_policy_snapshot.finding_policy.policy_id, 'legacy_strict_review_findings_v1');
     } finally {
         cleanupDir(tmpDir);
     }
@@ -1825,7 +2002,7 @@ test('runEnterTaskModeCommand fails closed when profile policy snapshot review p
     }
 });
 
-test('runEnterTaskModeCommand fails closed when profile policy snapshot finding and remediation semantics are forged with a recomputed hash', () => {
+test('runEnterTaskModeCommand fails closed when profile policy snapshot finding, review finding, and remediation semantics are forged with a recomputed hash', () => {
     const tmpDir = makeTempDir();
     try {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
@@ -1892,6 +2069,9 @@ test('runEnterTaskModeCommand fails closed when profile policy snapshot finding 
         snapshot.finding_policy.active_findings.low = 'allow_without_resolution' as 'block_until_resolved';
         snapshot.finding_policy.residual_risks = 'allow_without_justification' as 'block_unless_deferred_with_justification';
         snapshot.finding_policy.deferred_findings = 'allow_without_justification' as 'allowed_only_with_justification';
+        snapshot.review_finding_policy.findings.critical = 'ignore';
+        snapshot.review_finding_policy.findings.high = 'ignore';
+        snapshot.review_finding_policy.residual_risk = 'ignore';
         snapshot.remediation_policy.failed_review_requires_rework = false as true;
         snapshot.remediation_policy.review_restarts_retain_profile_snapshot = false as true;
         snapshot.remediation_policy.remediation_restarts_retain_profile_snapshot = false as true;
@@ -1915,6 +2095,21 @@ test('runEnterTaskModeCommand fails closed when profile policy snapshot finding 
         assert.ok(
             forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
                 entry.includes('finding_policy.deferred_findings')
+            ))
+        );
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_finding_policy.findings.critical')
+            ))
+        );
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_finding_policy.findings.high')
+            ))
+        );
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_finding_policy.residual_risk')
             ))
         );
         assert.ok(

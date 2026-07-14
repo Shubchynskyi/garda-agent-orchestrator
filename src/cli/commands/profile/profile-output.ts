@@ -5,7 +5,7 @@ import {
     isBuiltInProfile,
     resolveProfilesPath
 } from './profile-data';
-import { ProfilesData } from './profile-types';
+import { ProfileEntry, ProfilesData } from './profile-types';
 
 export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, jsonMode: boolean): string {
     if (jsonMode) {
@@ -59,6 +59,7 @@ export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string
         lines.push(`Description: ${entry.description}`);
         lines.push(`Depth: ${entry.depth}`);
         lines.push(`ReviewPolicy: ${formatReviewPolicy(entry.review_policy)}`);
+        lines.push(`ReviewFindingPolicy: ${formatReviewFindingPolicy(entry.review_finding_policy)}`);
         lines.push(`TokenEconomy: ${formatTokenEconomy(entry.token_economy)}`);
         lines.push(`Skills: ${formatSkills(entry.skills)}`);
         lines.push('Why: Active profile settings are used by default.');
@@ -137,6 +138,20 @@ function formatReviewPolicy(policy: Record<string, boolean | 'auto'>): string {
     return Object.entries(policy)
         .map(([k, v]) => `${k}=${String(v)}`)
         .join(', ');
+}
+
+function formatReviewFindingPolicy(policy: ProfileEntry['review_finding_policy']): string {
+    if (!policy) {
+        return 'legacy_missing=fail_closed_to_strict';
+    }
+    return [
+        `policy_id=${policy.policy_id}`,
+        `critical=${policy.findings.critical}`,
+        `high=${policy.findings.high}`,
+        `medium=${policy.findings.medium}`,
+        `low=${policy.findings.low}`,
+        `residual_risk=${policy.residual_risk}`
+    ].join(', ');
 }
 
 function formatTokenEconomy(economy: Record<string, boolean>): string {

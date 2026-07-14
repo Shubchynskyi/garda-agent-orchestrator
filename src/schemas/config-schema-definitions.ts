@@ -721,6 +721,91 @@ const REVIEW_POLICY_VALUE = {
     ]
 } as const;
 
+const REVIEW_FINDING_POLICY_ACTION = {
+    type: 'string',
+    enum: ['fix_now', 'create_follow_up', 'ignore'],
+    description: 'Disposition action for a system-validated reviewer finding.'
+} as const;
+
+function reviewFindingPolicyPresetVariant(
+    policyId: string,
+    findings: { critical: string; high: string; medium: string; low: string },
+    residualRisk: string
+): Record<string, unknown> {
+    return {
+        type: 'object',
+        properties: {
+            policy_id: { const: policyId },
+            findings: {
+                type: 'object',
+                properties: {
+                    critical: { const: findings.critical },
+                    high: { const: findings.high },
+                    medium: { const: findings.medium },
+                    low: { const: findings.low }
+                },
+                required: ['critical', 'high', 'medium', 'low']
+            },
+            residual_risk: { const: residualRisk }
+        },
+        required: ['policy_id', 'findings', 'residual_risk']
+    };
+}
+
+const REVIEW_FINDING_POLICY_SCHEMA: Record<string, unknown> = Object.freeze({
+    type: 'object',
+    description: 'Profile-owned finding disposition policy. Missing legacy fields resolve fail-closed to strict at runtime.',
+    properties: {
+        schema_version: { type: 'integer', const: 1 },
+        policy_id: {
+            type: 'string',
+            enum: ['soft', 'balanced', 'strict', 'custom'],
+            description: 'Named built-in policy or custom policy marker.'
+        },
+        findings: {
+            type: 'object',
+            properties: {
+                critical: { type: 'string', enum: ['fix_now'], description: 'Immutable critical safety floor.' },
+                high: REVIEW_FINDING_POLICY_ACTION,
+                medium: REVIEW_FINDING_POLICY_ACTION,
+                low: REVIEW_FINDING_POLICY_ACTION
+            },
+            required: ['critical', 'high', 'medium', 'low'],
+            additionalProperties: false
+        },
+        residual_risk: REVIEW_FINDING_POLICY_ACTION
+    },
+    required: ['schema_version', 'policy_id', 'findings', 'residual_risk'],
+    anyOf: [
+        reviewFindingPolicyPresetVariant('soft', {
+            critical: 'fix_now',
+            high: 'create_follow_up',
+            medium: 'ignore',
+            low: 'ignore'
+        }, 'ignore'),
+        reviewFindingPolicyPresetVariant('balanced', {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'create_follow_up',
+            low: 'create_follow_up'
+        }, 'create_follow_up'),
+        reviewFindingPolicyPresetVariant('strict', {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'fix_now',
+            low: 'fix_now'
+        }, 'fix_now'),
+        {
+            type: 'object',
+            properties: {
+                policy_id: { const: 'custom' }
+            },
+            required: ['policy_id']
+        }
+    ],
+    additionalProperties: false
+});
+
 const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
     type: 'object',
     description: 'A single workspace profile defining policy overlays.',
@@ -738,6 +823,7 @@ const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
             },
             additionalProperties: REVIEW_POLICY_VALUE
         },
+        review_finding_policy: REVIEW_FINDING_POLICY_SCHEMA,
         token_economy: {
             type: 'object',
             description: 'Token economy overrides.',

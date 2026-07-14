@@ -15,6 +15,7 @@ import {
     loadProfilesData,
     loadReviewCapabilities,
     mergeReviewPolicy,
+    REVIEW_FINDING_POLICY_PRESETS,
     resolveConfigPaths,
     type EffectivePolicy,
     type EffectiveReviewPolicy,
@@ -22,6 +23,7 @@ import {
     type ProfileGuardrailOptions,
     type ProfileReviewPolicy,
     type ProfileSkills,
+    type ReviewFindingPolicy,
     type ReviewCapabilities,
     type TokenEconomyConfig
 } from './profile-resolver';
@@ -33,16 +35,19 @@ import {
 
 export const TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
+export type TaskProfileActiveFindingDisposition = 'block_until_resolved' | 'create_follow_up' | 'ignore';
+export type TaskProfileResidualRiskDisposition = 'block_unless_deferred_with_justification' | 'create_follow_up' | 'ignore';
+
 export interface TaskProfileFindingPolicySnapshot {
     schema_version: 1;
-    policy_id: 'legacy_strict_review_findings_v1';
+    policy_id: 'profile_review_finding_dispositions_v1';
     active_findings: {
         critical: 'block_until_resolved';
-        high: 'block_until_resolved';
-        medium: 'block_until_resolved';
-        low: 'block_until_resolved';
+        high: TaskProfileActiveFindingDisposition;
+        medium: TaskProfileActiveFindingDisposition;
+        low: TaskProfileActiveFindingDisposition;
     };
-    residual_risks: 'block_unless_deferred_with_justification';
+    residual_risks: TaskProfileResidualRiskDisposition;
     deferred_findings: 'allowed_only_with_justification';
 }
 
@@ -75,6 +80,8 @@ export interface TaskProfilePolicySnapshot {
     depth: number;
     review_lane_selection: TaskProfilePolicySnapshotReviewLaneSelection;
     review_execution_policy: TaskProfilePolicySnapshotReviewExecutionPolicy;
+    review_finding_policy: ReviewFindingPolicy;
+    review_finding_policy_diagnostics: string[];
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
     token_economy: TokenEconomyConfig;
@@ -110,6 +117,8 @@ export interface TaskProfilePolicySnapshotSummary {
         safety_floors_applied: string[];
     };
     review_execution_policy: TaskProfilePolicySnapshotReviewExecutionPolicy;
+    review_finding_policy: ReviewFindingPolicy;
+    review_finding_policy_diagnostics: string[];
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
     config_hash: string;
@@ -118,7 +127,7 @@ export interface TaskProfilePolicySnapshotSummary {
 
 const DEFAULT_FINDING_POLICY = {
     schema_version: 1,
-    policy_id: 'legacy_strict_review_findings_v1',
+    policy_id: 'profile_review_finding_dispositions_v1',
     active_findings: {
         critical: 'block_until_resolved',
         high: 'block_until_resolved',
@@ -128,6 +137,10 @@ const DEFAULT_FINDING_POLICY = {
     residual_risks: 'block_unless_deferred_with_justification',
     deferred_findings: 'allowed_only_with_justification'
 } as const satisfies TaskProfileFindingPolicySnapshot;
+
+const LEGACY_STRICT_FINDING_POLICY_ID = 'legacy_strict_review_findings_v1';
+const LEGACY_REVIEW_FINDING_POLICY_DIAGNOSTIC =
+    'Legacy task profile policy snapshot missing review_finding_policy; resolved fail-closed to strict.';
 
 const DEFAULT_REMEDIATION_POLICY = {
     schema_version: 1,
@@ -156,6 +169,18 @@ const REMEDIATION_POLICY_KEYS = [
     'review_restarts_retain_profile_snapshot',
     'remediation_restarts_retain_profile_snapshot'
 ] as const;
+
+const REVIEW_FINDING_POLICY_KEYS = [
+    'schema_version',
+    'policy_id',
+    'findings',
+    'residual_risk'
+] as const;
+
+const REVIEW_FINDING_POLICY_IDS = ['soft', 'balanced', 'strict', 'custom'] as const;
+const REVIEW_FINDING_POLICY_ACTIONS = ['fix_now', 'create_follow_up', 'ignore'] as const;
+const ACTIVE_FINDING_DISPOSITIONS = ['block_until_resolved', 'create_follow_up', 'ignore'] as const;
+const RESIDUAL_RISK_DISPOSITIONS = ['block_unless_deferred_with_justification', 'create_follow_up', 'ignore'] as const;
 
 const REVIEW_LANE_SELECTION_KEYS = [
     'profile_review_policy',
@@ -217,7 +242,7 @@ function canonicalJsonSha256(value: unknown): string {
     return sha256Text(JSON.stringify(canonicalJsonValue(value)));
 }
 
-function withoutSnapshotHash(snapshot: TaskProfilePolicySnapshot): Omit<TaskProfilePolicySnapshot, 'snapshot_hash'> {
+function withoutSnapshotHash(snapshot: Record<string, unknown>): Omit<Record<string, unknown>, 'snapshot_hash'> {
     const { snapshot_hash: _snapshotHash, ...snapshotBody } = snapshot;
     return snapshotBody;
 }
@@ -479,7 +504,100 @@ function normalizeProfileReviewPolicyForSnapshot(
     return normalized;
 }
 
-function validateFindingPolicySnapshot(value: unknown, violations: string[]): void {
+function mapReviewFindingActionToActiveFindingDisposition(
+    action: ReviewFindingPolicy['residual_risk']
+): TaskProfileActiveFindingDisposition {
+    return action === 'fix_now' ? 'block_until_resolved' : action;
+}
+
+function mapReviewFindingActionToResidualRiskDisposition(
+    action: ReviewFindingPolicy['residual_risk']
+): TaskProfileResidualRiskDisposition {
+    return action === 'fix_now' ? 'block_unless_deferred_with_justification' : action;
+}
+
+export function buildTaskProfileFindingPolicySnapshot(
+    reviewFindingPolicy: ReviewFindingPolicy
+): TaskProfileFindingPolicySnapshot {
+    return {
+        schema_version: DEFAULT_FINDING_POLICY.schema_version,
+        policy_id: DEFAULT_FINDING_POLICY.policy_id,
+        active_findings: {
+            critical: 'block_until_resolved',
+            high: mapReviewFindingActionToActiveFindingDisposition(reviewFindingPolicy.findings.high),
+            medium: mapReviewFindingActionToActiveFindingDisposition(reviewFindingPolicy.findings.medium),
+            low: mapReviewFindingActionToActiveFindingDisposition(reviewFindingPolicy.findings.low)
+        },
+        residual_risks: mapReviewFindingActionToResidualRiskDisposition(reviewFindingPolicy.residual_risk),
+        deferred_findings: DEFAULT_FINDING_POLICY.deferred_findings
+    };
+}
+
+function isActiveFindingDisposition(value: unknown): value is TaskProfileActiveFindingDisposition {
+    return typeof value === 'string'
+        && (ACTIVE_FINDING_DISPOSITIONS as readonly string[]).includes(value);
+}
+
+function isResidualRiskDisposition(value: unknown): value is TaskProfileResidualRiskDisposition {
+    return typeof value === 'string'
+        && (RESIDUAL_RISK_DISPOSITIONS as readonly string[]).includes(value);
+}
+
+function parseReviewFindingPolicySnapshot(value: unknown): ReviewFindingPolicy | null {
+    if (!isPlainRecord(value) || value.schema_version !== 1) {
+        return null;
+    }
+    if (
+        typeof value.policy_id !== 'string'
+        || !(REVIEW_FINDING_POLICY_IDS as readonly string[]).includes(value.policy_id)
+        || !isPlainRecord(value.findings)
+        || !isReviewFindingPolicyAction(value.residual_risk)
+    ) {
+        return null;
+    }
+    const findings: ReviewFindingPolicy['findings'] = {
+        critical: 'fix_now',
+        high: 'fix_now',
+        medium: 'fix_now',
+        low: 'fix_now'
+    };
+    for (const severity of ACTIVE_FINDING_SEVERITY_KEYS) {
+        if (!isReviewFindingPolicyAction(value.findings[severity])) {
+            return null;
+        }
+        findings[severity] = value.findings[severity];
+    }
+    if (findings.critical !== 'fix_now') {
+        return null;
+    }
+    const policy: ReviewFindingPolicy = {
+        schema_version: 1,
+        policy_id: value.policy_id as ReviewFindingPolicy['policy_id'],
+        findings,
+        residual_risk: value.residual_risk
+    };
+    if (policy.policy_id !== 'custom') {
+        const preset = REVIEW_FINDING_POLICY_PRESETS[policy.policy_id as keyof typeof REVIEW_FINDING_POLICY_PRESETS];
+        if (!preset) {
+            return null;
+        }
+        for (const severity of ACTIVE_FINDING_SEVERITY_KEYS) {
+            if (policy.findings[severity] !== preset.findings[severity]) {
+                return null;
+            }
+        }
+        if (policy.residual_risk !== preset.residual_risk) {
+            return null;
+        }
+    }
+    return policy;
+}
+
+function validateFindingPolicySnapshot(
+    value: unknown,
+    reviewFindingPolicy: ReviewFindingPolicy | null,
+    violations: string[]
+): void {
     if (!isPlainRecord(value)) {
         violations.push('Task profile policy snapshot finding_policy must be a JSON object.');
         return;
@@ -497,16 +615,86 @@ function validateFindingPolicySnapshot(value: unknown, violations: string[]): vo
             violations
         );
         for (const severity of ACTIVE_FINDING_SEVERITY_KEYS) {
+            if (!isActiveFindingDisposition(value.active_findings[severity])) {
+                violations.push(
+                    `Task profile policy snapshot finding_policy.active_findings.${severity} must be one of ${ACTIVE_FINDING_DISPOSITIONS.join(', ')}.`
+                );
+            }
+        }
+        validateLiteral(value.active_findings.critical, 'block_until_resolved', 'finding_policy.active_findings.critical', violations);
+    }
+    if (!isResidualRiskDisposition(value.residual_risks)) {
+        violations.push(
+            `Task profile policy snapshot finding_policy.residual_risks must be one of ${RESIDUAL_RISK_DISPOSITIONS.join(', ')}.`
+        );
+    }
+    validateLiteral(value.deferred_findings, DEFAULT_FINDING_POLICY.deferred_findings, 'finding_policy.deferred_findings', violations);
+    if (reviewFindingPolicy && isPlainRecord(value.active_findings)) {
+        const expected = buildTaskProfileFindingPolicySnapshot(reviewFindingPolicy);
+        for (const severity of ACTIVE_FINDING_SEVERITY_KEYS) {
             validateLiteral(
                 value.active_findings[severity],
-                DEFAULT_FINDING_POLICY.active_findings[severity],
+                expected.active_findings[severity],
                 `finding_policy.active_findings.${severity}`,
                 violations
             );
         }
+        validateLiteral(value.residual_risks, expected.residual_risks, 'finding_policy.residual_risks', violations);
     }
-    validateLiteral(value.residual_risks, DEFAULT_FINDING_POLICY.residual_risks, 'finding_policy.residual_risks', violations);
-    validateLiteral(value.deferred_findings, DEFAULT_FINDING_POLICY.deferred_findings, 'finding_policy.deferred_findings', violations);
+}
+
+function isLegacyStrictFindingPolicySnapshot(value: unknown): value is Record<string, unknown> {
+    if (!isPlainRecord(value) || !isPlainRecord(value.active_findings)) {
+        return false;
+    }
+    return value.schema_version === DEFAULT_FINDING_POLICY.schema_version
+        && value.policy_id === LEGACY_STRICT_FINDING_POLICY_ID
+        && value.active_findings.critical === 'block_until_resolved'
+        && value.active_findings.high === 'block_until_resolved'
+        && value.active_findings.medium === 'block_until_resolved'
+        && value.active_findings.low === 'block_until_resolved'
+        && value.residual_risks === 'block_unless_deferred_with_justification'
+        && value.deferred_findings === 'allowed_only_with_justification';
+}
+
+function validateLegacyStrictFindingPolicySnapshot(value: unknown, violations: string[]): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot finding_policy must be a JSON object.');
+        return;
+    }
+    validateExactKeys(value, FINDING_POLICY_KEYS, 'finding_policy', violations);
+    validateLiteral(value.schema_version, DEFAULT_FINDING_POLICY.schema_version, 'finding_policy.schema_version', violations);
+    validateLiteral(value.policy_id, LEGACY_STRICT_FINDING_POLICY_ID, 'finding_policy.policy_id', violations);
+    if (!isPlainRecord(value.active_findings)) {
+        violations.push('Task profile policy snapshot finding_policy.active_findings must be a JSON object.');
+        return;
+    }
+    validateExactKeys(
+        value.active_findings,
+        ACTIVE_FINDING_SEVERITY_KEYS,
+        'finding_policy.active_findings',
+        violations
+    );
+    for (const severity of ACTIVE_FINDING_SEVERITY_KEYS) {
+        validateLiteral(
+            value.active_findings[severity],
+            'block_until_resolved',
+            `finding_policy.active_findings.${severity}`,
+            violations
+        );
+    }
+    validateLiteral(
+        value.residual_risks,
+        'block_unless_deferred_with_justification',
+        'finding_policy.residual_risks',
+        violations
+    );
+    validateLiteral(
+        value.deferred_findings,
+        'allowed_only_with_justification',
+        'finding_policy.deferred_findings',
+        violations
+    );
 }
 
 function validateRemediationPolicySnapshot(value: unknown, violations: string[]): void {
@@ -543,6 +731,108 @@ function validateRemediationPolicySnapshot(value: unknown, violations: string[])
     );
 }
 
+function isReviewFindingPolicyAction(value: unknown): value is ReviewFindingPolicy['residual_risk'] {
+    return typeof value === 'string'
+        && (REVIEW_FINDING_POLICY_ACTIONS as readonly string[]).includes(value);
+}
+
+function validateReviewFindingPolicySnapshot(value: unknown, violations: string[]): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot review_finding_policy must be a JSON object.');
+        return;
+    }
+    validateExactKeys(value, REVIEW_FINDING_POLICY_KEYS, 'review_finding_policy', violations);
+    validateLiteral(value.schema_version, 1, 'review_finding_policy.schema_version', violations);
+    if (
+        typeof value.policy_id !== 'string'
+        || !(REVIEW_FINDING_POLICY_IDS as readonly string[]).includes(value.policy_id)
+    ) {
+        violations.push(
+            `Task profile policy snapshot review_finding_policy.policy_id must be one of ${REVIEW_FINDING_POLICY_IDS.join(', ')}.`
+        );
+    }
+    if (!isPlainRecord(value.findings)) {
+        violations.push('Task profile policy snapshot review_finding_policy.findings must be a JSON object.');
+    } else {
+        validateExactKeys(
+            value.findings,
+            ACTIVE_FINDING_SEVERITY_KEYS,
+            'review_finding_policy.findings',
+            violations
+        );
+        for (const severity of ACTIVE_FINDING_SEVERITY_KEYS) {
+            if (!isReviewFindingPolicyAction(value.findings[severity])) {
+                violations.push(
+                    `Task profile policy snapshot review_finding_policy.findings.${severity} must be one of ${REVIEW_FINDING_POLICY_ACTIONS.join(', ')}.`
+                );
+            }
+        }
+        validateLiteral(value.findings.critical, 'fix_now', 'review_finding_policy.findings.critical', violations);
+    }
+    if (!isReviewFindingPolicyAction(value.residual_risk)) {
+        violations.push(
+            `Task profile policy snapshot review_finding_policy.residual_risk must be one of ${REVIEW_FINDING_POLICY_ACTIONS.join(', ')}.`
+        );
+    }
+    if (
+        typeof value.policy_id === 'string'
+        && value.policy_id !== 'custom'
+        && Object.hasOwn(REVIEW_FINDING_POLICY_PRESETS, value.policy_id)
+        && isPlainRecord(value.findings)
+    ) {
+        const preset = REVIEW_FINDING_POLICY_PRESETS[value.policy_id as keyof typeof REVIEW_FINDING_POLICY_PRESETS];
+        for (const severity of ACTIVE_FINDING_SEVERITY_KEYS) {
+            if (value.findings[severity] !== preset.findings[severity]) {
+                violations.push(
+                    `Task profile policy snapshot review_finding_policy.findings.${severity} must match ${value.policy_id} preset.`
+                );
+            }
+        }
+        if (value.residual_risk !== preset.residual_risk) {
+            violations.push(
+                `Task profile policy snapshot review_finding_policy.residual_risk must match ${value.policy_id} preset.`
+            );
+        }
+    }
+}
+
+function isLegacyStrictReviewFindingPolicySnapshot(value: Record<string, unknown>): boolean {
+    return value.review_finding_policy == null
+        && value.review_finding_policy_diagnostics == null
+        && isLegacyStrictFindingPolicySnapshot(value.finding_policy);
+}
+
+function cloneReviewFindingPolicy(policy: ReviewFindingPolicy): ReviewFindingPolicy {
+    return {
+        ...policy,
+        findings: { ...policy.findings }
+    };
+}
+
+function resolveSnapshotReviewFindingPolicy(snapshot: TaskProfilePolicySnapshot): ReviewFindingPolicy {
+    if (isLegacyStrictReviewFindingPolicySnapshot(snapshot as unknown as Record<string, unknown>)) {
+        return cloneReviewFindingPolicy(REVIEW_FINDING_POLICY_PRESETS.strict);
+    }
+    return {
+        ...snapshot.review_finding_policy,
+        findings: { ...snapshot.review_finding_policy.findings }
+    };
+}
+
+function resolveSnapshotReviewFindingPolicyDiagnostics(snapshot: TaskProfilePolicySnapshot): string[] {
+    if (isLegacyStrictReviewFindingPolicySnapshot(snapshot as unknown as Record<string, unknown>)) {
+        return [LEGACY_REVIEW_FINDING_POLICY_DIAGNOSTIC];
+    }
+    return [...snapshot.review_finding_policy_diagnostics];
+}
+
+function resolveSnapshotFindingPolicy(snapshot: TaskProfilePolicySnapshot): TaskProfileFindingPolicySnapshot {
+    if (isLegacyStrictReviewFindingPolicySnapshot(snapshot as unknown as Record<string, unknown>)) {
+        return buildTaskProfileFindingPolicySnapshot(REVIEW_FINDING_POLICY_PRESETS.strict);
+    }
+    return snapshot.finding_policy;
+}
+
 function computeConfigHashes(bundleRoot: string, resolutionSources: EffectivePolicy['resolution_sources']): Record<string, string | null> {
     const workflowConfig = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
     return {
@@ -556,6 +846,10 @@ function computeConfigHashes(bundleRoot: string, resolutionSources: EffectivePol
 }
 
 export function computeTaskProfilePolicySnapshotHash(snapshot: TaskProfilePolicySnapshot): string {
+    return canonicalJsonSha256(withoutSnapshotHash(snapshot as unknown as Record<string, unknown>));
+}
+
+function computeRawTaskProfilePolicySnapshotHash(snapshot: Record<string, unknown>): string {
     return canonicalJsonSha256(withoutSnapshotHash(snapshot));
 }
 
@@ -598,7 +892,12 @@ export function buildTaskProfilePolicySnapshot(
             configured: options.reviewExecutionPolicyConfigured,
             visible_summary_line: buildReviewExecutionPolicySummaryLine(options.reviewExecutionPolicyMode)
         },
-        finding_policy: { ...DEFAULT_FINDING_POLICY, active_findings: { ...DEFAULT_FINDING_POLICY.active_findings } },
+        review_finding_policy: {
+            ...resolvedProfile.effective_policy.review_finding_policy,
+            findings: { ...resolvedProfile.effective_policy.review_finding_policy.findings }
+        },
+        review_finding_policy_diagnostics: [...resolvedProfile.effective_policy.review_finding_policy_diagnostics],
+        finding_policy: buildTaskProfileFindingPolicySnapshot(resolvedProfile.effective_policy.review_finding_policy),
         remediation_policy: { ...DEFAULT_REMEDIATION_POLICY },
         token_economy: resolvedProfile.effective_policy.token_economy,
         skills: resolvedProfile.effective_policy.skills,
@@ -637,6 +936,7 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
             violations: ['Task profile policy snapshot must be a JSON object.']
         };
     }
+    const legacyStrictReviewFindingPolicySnapshot = isLegacyStrictReviewFindingPolicySnapshot(value);
     if (value.schema_version !== TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION) {
         violations.push(`Task profile policy snapshot schema_version must be ${TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION}.`);
     }
@@ -651,7 +951,13 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
     }
     validateReviewLaneSelectionSnapshot(value.review_lane_selection, violations);
     validateReviewExecutionPolicySnapshot(value.review_execution_policy, violations);
-    validateFindingPolicySnapshot(value.finding_policy, violations);
+    if (legacyStrictReviewFindingPolicySnapshot) {
+        validateLegacyStrictFindingPolicySnapshot(value.finding_policy, violations);
+    } else {
+        validateReviewFindingPolicySnapshot(value.review_finding_policy, violations);
+        validateStringArray(value.review_finding_policy_diagnostics, 'review_finding_policy_diagnostics', violations);
+        validateFindingPolicySnapshot(value.finding_policy, parseReviewFindingPolicySnapshot(value.review_finding_policy), violations);
+    }
     validateRemediationPolicySnapshot(value.remediation_policy, violations);
     if (!isPlainRecord(value.config_hashes)) {
         violations.push('Task profile policy snapshot config_hashes must be a JSON object.');
@@ -671,6 +977,7 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
         };
     }
 
+    const snapshotRecord = value as Record<string, unknown>;
     const snapshot = value as unknown as TaskProfilePolicySnapshot;
     const expectedConfigHash = canonicalJsonSha256(snapshot.config_hashes);
     if (snapshot.config_hash !== expectedConfigHash) {
@@ -682,7 +989,9 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
             ]
         };
     }
-    const expectedSnapshotHash = computeTaskProfilePolicySnapshotHash(snapshot);
+    const expectedSnapshotHash = legacyStrictReviewFindingPolicySnapshot
+        ? computeRawTaskProfilePolicySnapshotHash(snapshotRecord)
+        : computeTaskProfilePolicySnapshotHash(snapshot);
     if (snapshot.snapshot_hash !== expectedSnapshotHash) {
         return {
             status: 'HASH_MISMATCH',
@@ -704,6 +1013,7 @@ export function resolveTaskProfileSelectionFromSnapshot(
     scopeCategory: string | null = null,
     options: ProfileGuardrailOptions = {}
 ): ResolvedTaskProfileSelection {
+    const reviewFindingPolicy = resolveSnapshotReviewFindingPolicy(snapshot);
     const guardrailDiagnostics = scopeCategory
         ? applyProfileGuardrails(
             snapshot.review_lane_selection.profile_review_policy,
@@ -727,6 +1037,8 @@ export function resolveTaskProfileSelectionFromSnapshot(
             profile_source: snapshot.source.effective_profile_source,
             depth: snapshot.depth,
             review_policy: reviewPolicy,
+            review_finding_policy: reviewFindingPolicy,
+            review_finding_policy_diagnostics: resolveSnapshotReviewFindingPolicyDiagnostics(snapshot),
             token_economy: snapshot.token_economy,
             skills: snapshot.skills,
             installed_packs: snapshot.installed_packs,
@@ -759,7 +1071,9 @@ export function summarizeTaskProfilePolicySnapshot(
             safety_floors_applied: snapshot.review_lane_selection.safety_floors_applied
         },
         review_execution_policy: snapshot.review_execution_policy,
-        finding_policy: snapshot.finding_policy,
+        review_finding_policy: resolveSnapshotReviewFindingPolicy(snapshot),
+        review_finding_policy_diagnostics: resolveSnapshotReviewFindingPolicyDiagnostics(snapshot),
+        finding_policy: resolveSnapshotFindingPolicy(snapshot),
         remediation_policy: snapshot.remediation_policy,
         config_hash: snapshot.config_hash,
         snapshot_hash: snapshot.snapshot_hash

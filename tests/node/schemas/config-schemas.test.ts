@@ -296,6 +296,23 @@ test('template profiles.json validates against schema', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('profiles schema rejects named review_finding_policy preset mismatches', () => {
+    const data = readTemplateConfig('profiles.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const builtInProfiles = clone.built_in_profiles as Record<string, Record<string, unknown>>;
+    const balancedProfile = builtInProfiles.balanced;
+    const reviewFindingPolicy = balancedProfile.review_finding_policy as Record<string, unknown>;
+    const findings = reviewFindingPolicy.findings as Record<string, unknown>;
+    findings.high = 'create_follow_up';
+
+    const result = validateAgainstSchema(clone, profilesSchema);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => (
+        error.path.includes('review_finding_policy')
+        && error.message.includes('any allowed schema')
+    )));
+});
+
 test('template review-artifact-storage.json validates against schema', () => {
     const data = readTemplateConfig('review-artifact-storage.json');
     const result = validateAgainstSchema(data, reviewArtifactStorageSchema);

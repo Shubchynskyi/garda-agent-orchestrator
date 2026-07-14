@@ -330,9 +330,92 @@ function normalizeReviewPolicyValue(value: unknown, fieldName: string): boolean 
     return normalizeBooleanLike(value, fieldName);
 }
 
+const REVIEW_FINDING_POLICY_ACTIONS = new Set(['fix_now', 'create_follow_up', 'ignore']);
+const REVIEW_FINDING_POLICY_IDS = new Set(['soft', 'balanced', 'strict', 'custom']);
+const REVIEW_FINDING_POLICY_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
+const REVIEW_FINDING_POLICY_PRESETS = {
+    soft: {
+        findings: {
+            critical: 'fix_now',
+            high: 'create_follow_up',
+            medium: 'ignore',
+            low: 'ignore'
+        },
+        residual_risk: 'ignore'
+    },
+    balanced: {
+        findings: {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'create_follow_up',
+            low: 'create_follow_up'
+        },
+        residual_risk: 'create_follow_up'
+    },
+    strict: {
+        findings: {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'fix_now',
+            low: 'fix_now'
+        },
+        residual_risk: 'fix_now'
+    }
+} as const;
+
+function normalizeReviewFindingPolicyAction(value: unknown, fieldName: string): string {
+    const action = normalizeNonEmptyString(value, fieldName);
+    if (!REVIEW_FINDING_POLICY_ACTIONS.has(action)) {
+        throw new Error(`${fieldName} must be one of: fix_now, create_follow_up, ignore.`);
+    }
+    return action;
+}
+
+function validateReviewFindingPolicy(input: unknown, fieldName: string): Record<string, unknown> {
+    const raw = ensurePlainObject(input, fieldName);
+    const knownKeys = ['schema_version', 'policy_id', 'findings', 'residual_risk'] as const;
+    assertNoUnknownKeys(raw, knownKeys, fieldName);
+    const normalized = cloneUnknownProperties(raw, new Set<string>(knownKeys));
+
+    normalized.schema_version = normalizeInteger(raw.schema_version, `${fieldName}.schema_version`, { minimum: 1, maximum: 1 });
+    const policyId = normalizeNonEmptyString(raw.policy_id, `${fieldName}.policy_id`);
+    if (!REVIEW_FINDING_POLICY_IDS.has(policyId)) {
+        throw new Error(`${fieldName}.policy_id must be one of: soft, balanced, strict, custom.`);
+    }
+    normalized.policy_id = policyId;
+
+    const findingsRaw = ensurePlainObject(raw.findings, `${fieldName}.findings`);
+    assertNoUnknownKeys(findingsRaw, REVIEW_FINDING_POLICY_SEVERITIES, `${fieldName}.findings`);
+    const findings: Record<string, string> = {};
+    for (const severity of REVIEW_FINDING_POLICY_SEVERITIES) {
+        findings[severity] = normalizeReviewFindingPolicyAction(
+            findingsRaw[severity],
+            `${fieldName}.findings.${severity}`
+        );
+    }
+    if (findings.critical !== 'fix_now') {
+        throw new Error(`${fieldName}.findings.critical is immutable and must be fix_now.`);
+    }
+    normalized.findings = findings;
+    normalized.residual_risk = normalizeReviewFindingPolicyAction(raw.residual_risk, `${fieldName}.residual_risk`);
+    if (policyId !== 'custom') {
+        const preset = REVIEW_FINDING_POLICY_PRESETS[policyId as keyof typeof REVIEW_FINDING_POLICY_PRESETS];
+        for (const severity of REVIEW_FINDING_POLICY_SEVERITIES) {
+            if (findings[severity] !== preset.findings[severity]) {
+                throw new Error(`${fieldName}.findings.${severity} must match ${policyId} preset.`);
+            }
+        }
+        if (normalized.residual_risk !== preset.residual_risk) {
+            throw new Error(`${fieldName}.residual_risk must match ${policyId} preset.`);
+        }
+    }
+
+    return normalized;
+}
+
 function validateProfileEntry(input: unknown, profilePath: string): Record<string, unknown> {
     const raw = ensurePlainObject(input, profilePath);
-    const knownKeys = new Set(['description', 'depth', 'review_policy', 'token_economy', 'skills']);
+    const knownKeys = new Set(['description', 'depth', 'review_policy', 'review_finding_policy', 'token_economy', 'skills']);
     const normalized = cloneUnknownProperties(raw, knownKeys);
 
     normalized.description = normalizeNonEmptyString(raw.description, `${profilePath}.description`);
@@ -344,6 +427,13 @@ function validateProfileEntry(input: unknown, profilePath: string): Record<strin
         reviewPolicy[key] = normalizeReviewPolicyValue(value, `${profilePath}.review_policy.${key}`);
     }
     normalized.review_policy = reviewPolicy;
+
+    if (raw.review_finding_policy !== undefined) {
+        normalized.review_finding_policy = validateReviewFindingPolicy(
+            raw.review_finding_policy,
+            `${profilePath}.review_finding_policy`
+        );
+    }
 
     const ALLOWED_TOKEN_ECONOMY_KEYS = new Set(['enabled', 'strip_examples', 'strip_code_blocks', 'scoped_diffs', 'compact_reviewer_output']);
     const tokenEconomyRaw = ensurePlainObject(raw.token_economy, `${profilePath}.token_economy`);

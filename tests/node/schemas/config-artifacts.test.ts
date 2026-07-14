@@ -862,6 +862,17 @@ test('validateProfilesConfig normalizes boolean-like review_policy values', () =
                 description: 'Test profile',
                 depth: 2,
                 review_policy: { code: 'yes', db: 'auto', security: 'false' },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'custom',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'create_follow_up',
+                        medium: 'ignore',
+                        low: 'ignore'
+                    },
+                    residual_risk: 'ignore'
+                },
                 token_economy: { enabled: 'true' },
                 skills: { auto_suggest: 1 }
             }
@@ -874,6 +885,90 @@ test('validateProfilesConfig normalizes boolean-like review_policy values', () =
     assert.equal(policy.code, true);
     assert.equal(policy.db, 'auto');
     assert.equal(policy.security, false);
+    const findingPolicy = builtIn.test.review_finding_policy as Record<string, unknown>;
+    assert.equal(findingPolicy.policy_id, 'custom');
+    assert.equal((findingPolicy.findings as Record<string, unknown>).critical, 'fix_now');
+    assert.equal(findingPolicy.residual_risk, 'ignore');
+});
+
+test('validateProfilesConfig allows legacy profiles without review_finding_policy for fail-closed runtime migration', () => {
+    const normalized = validateProfilesConfig({
+        version: 1,
+        active_profile: 'legacy',
+        built_in_profiles: {
+            legacy: {
+                description: 'Legacy profile',
+                depth: 2,
+                review_policy: { code: true },
+                token_economy: { enabled: true },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    });
+
+    const builtIn = normalized.built_in_profiles as Record<string, Record<string, unknown>>;
+    assert.equal(builtIn.legacy.review_finding_policy, undefined);
+});
+
+test('validateProfilesConfig rejects review_finding_policy that weakens critical finding disposition', () => {
+    assert.throws(() => {
+        validateProfilesConfig({
+            version: 1,
+            active_profile: 'bad',
+            built_in_profiles: {
+                bad: {
+                    description: 'Bad finding policy',
+                    depth: 2,
+                    review_policy: { code: true },
+                    review_finding_policy: {
+                        schema_version: 1,
+                        policy_id: 'custom',
+                        findings: {
+                            critical: 'ignore',
+                            high: 'create_follow_up',
+                            medium: 'ignore',
+                            low: 'ignore'
+                        },
+                        residual_risk: 'ignore'
+                    },
+                    token_economy: { enabled: true },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        });
+    }, /critical is immutable and must be fix_now/);
+});
+
+test('validateProfilesConfig rejects named review_finding_policy preset mismatches', () => {
+    assert.throws(() => {
+        validateProfilesConfig({
+            version: 1,
+            active_profile: 'bad',
+            built_in_profiles: {
+                bad: {
+                    description: 'Bad named finding policy',
+                    depth: 2,
+                    review_policy: { code: true },
+                    review_finding_policy: {
+                        schema_version: 1,
+                        policy_id: 'balanced',
+                        findings: {
+                            critical: 'fix_now',
+                            high: 'create_follow_up',
+                            medium: 'create_follow_up',
+                            low: 'create_follow_up'
+                        },
+                        residual_risk: 'create_follow_up'
+                    },
+                    token_economy: { enabled: true },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        });
+    }, /findings\.high must match balanced preset/);
 });
 
 test('validateProfilesConfig rejects active_profile pointing to nonexistent profile', () => {

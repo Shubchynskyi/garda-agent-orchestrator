@@ -59,6 +59,17 @@ function makeTempBundle(configs: {
                     infra: 'auto',
                     dependency: 'auto'
                 },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'balanced',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'create_follow_up',
+                        low: 'create_follow_up'
+                    },
+                    residual_risk: 'create_follow_up'
+                },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
                 skills: { auto_suggest: true }
             },
@@ -75,6 +86,17 @@ function makeTempBundle(configs: {
                     performance: false,
                     infra: false,
                     dependency: false
+                },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'soft',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'create_follow_up',
+                        medium: 'ignore',
+                        low: 'ignore'
+                    },
+                    residual_risk: 'ignore'
                 },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
                 skills: { auto_suggest: false }
@@ -93,6 +115,17 @@ function makeTempBundle(configs: {
                     infra: 'auto',
                     dependency: 'auto'
                 },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'strict',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'fix_now',
+                        low: 'fix_now'
+                    },
+                    residual_risk: 'fix_now'
+                },
                 token_economy: { enabled: true, strip_examples: false, strip_code_blocks: false, scoped_diffs: true, compact_reviewer_output: false },
                 skills: { auto_suggest: true }
             },
@@ -109,6 +142,17 @@ function makeTempBundle(configs: {
                     performance: false,
                     infra: false,
                     dependency: false
+                },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'soft',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'create_follow_up',
+                        medium: 'ignore',
+                        low: 'ignore'
+                    },
+                    residual_risk: 'ignore'
                 },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: false, compact_reviewer_output: true },
                 skills: { auto_suggest: false }
@@ -186,7 +230,7 @@ test('shipped template profiles and review capabilities use profile-driven revie
     const repoRoot = process.cwd();
     const profiles = JSON.parse(
         fs.readFileSync(path.join(repoRoot, 'template', 'config', 'profiles.json'), 'utf8')
-    ) as { built_in_profiles: Record<string, { review_policy: Record<string, unknown> }> };
+    ) as { built_in_profiles: Record<string, { review_policy: Record<string, unknown>; review_finding_policy: Record<string, unknown> }> };
     const capabilities = JSON.parse(
         fs.readFileSync(path.join(repoRoot, 'template', 'config', 'review-capabilities.json'), 'utf8')
     ) as Record<string, boolean>;
@@ -213,6 +257,17 @@ test('shipped template profiles and review capabilities use profile-driven revie
         infra: 'auto',
         dependency: 'auto'
     });
+    assert.deepEqual(profiles.built_in_profiles.balanced.review_finding_policy, {
+        schema_version: 1,
+        policy_id: 'balanced',
+        findings: {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'create_follow_up',
+            low: 'create_follow_up'
+        },
+        residual_risk: 'create_follow_up'
+    });
     assert.deepEqual(profiles.built_in_profiles.fast.review_policy, {
         code: 'auto',
         db: false,
@@ -223,6 +278,17 @@ test('shipped template profiles and review capabilities use profile-driven revie
         performance: false,
         infra: false,
         dependency: false
+    });
+    assert.deepEqual(profiles.built_in_profiles.fast.review_finding_policy, {
+        schema_version: 1,
+        policy_id: 'soft',
+        findings: {
+            critical: 'fix_now',
+            high: 'create_follow_up',
+            medium: 'ignore',
+            low: 'ignore'
+        },
+        residual_risk: 'ignore'
     });
     assert.deepEqual(profiles.built_in_profiles.strict.review_policy, {
         code: true,
@@ -235,6 +301,17 @@ test('shipped template profiles and review capabilities use profile-driven revie
         infra: 'auto',
         dependency: 'auto'
     });
+    assert.deepEqual(profiles.built_in_profiles.strict.review_finding_policy, {
+        schema_version: 1,
+        policy_id: 'strict',
+        findings: {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'fix_now',
+            low: 'fix_now'
+        },
+        residual_risk: 'fix_now'
+    });
     assert.deepEqual(profiles.built_in_profiles['docs-only'].review_policy, {
         code: false,
         db: false,
@@ -245,6 +322,17 @@ test('shipped template profiles and review capabilities use profile-driven revie
         performance: false,
         infra: false,
         dependency: false
+    });
+    assert.deepEqual(profiles.built_in_profiles['docs-only'].review_finding_policy, {
+        schema_version: 1,
+        policy_id: 'soft',
+        findings: {
+            critical: 'fix_now',
+            high: 'create_follow_up',
+            medium: 'ignore',
+            low: 'ignore'
+        },
+        residual_risk: 'ignore'
     });
 });
 
@@ -496,8 +584,93 @@ test('resolveEffectivePolicy: balanced profile with defaults', () => {
         assert.equal(policy.profile_source, 'built_in');
         assert.equal(policy.depth, 2);
         assert.equal(policy.review_policy.code, true);
+        assert.equal(policy.review_finding_policy.policy_id, 'balanced');
+        assert.equal(policy.review_finding_policy.findings.critical, 'fix_now');
+        assert.equal(policy.review_finding_policy.findings.high, 'fix_now');
+        assert.equal(policy.review_finding_policy.findings.medium, 'create_follow_up');
+        assert.equal(policy.review_finding_policy.findings.low, 'create_follow_up');
+        assert.equal(policy.review_finding_policy.residual_risk, 'create_follow_up');
+        assert.equal(policy.review_finding_policy_diagnostics.length, 1);
+        assert.match(policy.review_finding_policy_diagnostics[0], /resolved/i);
         assert.equal(policy.token_economy.enabled, true);
         assert.equal(policy.safety_floors_applied.length, 0);
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy: legacy profile without review_finding_policy resolves fail-closed to strict', () => {
+    const profiles = {
+        version: 1,
+        active_profile: 'legacy',
+        built_in_profiles: {
+            legacy: {
+                description: 'Legacy profile.',
+                depth: 2,
+                review_policy: { code: true, db: 'auto', security: 'auto', refactor: 'auto' },
+                token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    };
+    const bundleRoot = makeTempBundle({ profiles });
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot);
+        assert.equal(policy.review_finding_policy.policy_id, 'strict');
+        assert.deepEqual(policy.review_finding_policy.findings, {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'fix_now',
+            low: 'fix_now'
+        });
+        assert.equal(policy.review_finding_policy.residual_risk, 'fix_now');
+        assert.match(policy.review_finding_policy_diagnostics.join('\n'), /missing review_finding_policy/i);
+        assert.match(policy.review_finding_policy_diagnostics.join('\n'), /fail-closed to strict/i);
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy: custom review_finding_policy cannot weaken critical safety floor', () => {
+    const profiles = {
+        version: 1,
+        active_profile: 'custom',
+        built_in_profiles: {
+            custom: {
+                description: 'Custom profile.',
+                depth: 2,
+                review_policy: { code: true, db: 'auto', security: 'auto', refactor: 'auto' },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'custom',
+                    findings: {
+                        critical: 'ignore',
+                        high: 'create_follow_up',
+                        medium: 'ignore',
+                        low: 'ignore'
+                    },
+                    residual_risk: 'ignore'
+                },
+                token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    };
+    const bundleRoot = makeTempBundle({ profiles });
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot);
+        assert.equal(policy.review_finding_policy.policy_id, 'strict');
+        assert.deepEqual(policy.review_finding_policy.findings, {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'fix_now',
+            low: 'fix_now'
+        });
+        assert.equal(policy.review_finding_policy.residual_risk, 'fix_now');
+        assert.match(policy.review_finding_policy_diagnostics.join('\n'), /immutable safety floor/i);
+        assert.match(policy.review_finding_policy_diagnostics.join('\n'), /fail-closed to strict/i);
     } finally {
         cleanUp(bundleRoot);
     }

@@ -28,6 +28,17 @@ function createTempBundleWithProfiles(profiles?: Record<string, unknown>): strin
                 description: 'Default profile.',
                 depth: 2,
                 review_policy: { code: true, db: 'auto', security: 'auto', refactor: 'auto' },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'balanced',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'create_follow_up',
+                        low: 'create_follow_up'
+                    },
+                    residual_risk: 'create_follow_up'
+                },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
                 skills: { auto_suggest: true }
             },
@@ -35,6 +46,17 @@ function createTempBundleWithProfiles(profiles?: Record<string, unknown>): strin
                 description: 'Speed-optimised profile.',
                 depth: 1,
                 review_policy: { code: true, db: 'auto', security: 'auto', refactor: false },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'soft',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'create_follow_up',
+                        medium: 'ignore',
+                        low: 'ignore'
+                    },
+                    residual_risk: 'ignore'
+                },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
                 skills: { auto_suggest: false }
             },
@@ -42,6 +64,17 @@ function createTempBundleWithProfiles(profiles?: Record<string, unknown>): strin
                 description: 'Maximum rigour.',
                 depth: 3,
                 review_policy: { code: true, db: true, security: true, refactor: true },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'strict',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'fix_now',
+                        low: 'fix_now'
+                    },
+                    residual_risk: 'fix_now'
+                },
                 token_economy: { enabled: true, strip_examples: false, strip_code_blocks: false, scoped_diffs: true, compact_reviewer_output: false },
                 skills: { auto_suggest: true }
             },
@@ -49,6 +82,17 @@ function createTempBundleWithProfiles(profiles?: Record<string, unknown>): strin
                 description: 'Documentation-focused profile.',
                 depth: 1,
                 review_policy: { code: false, db: false, security: false, refactor: false },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'soft',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'create_follow_up',
+                        medium: 'ignore',
+                        low: 'ignore'
+                    },
+                    residual_risk: 'ignore'
+                },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: false, compact_reviewer_output: true },
                 skills: { auto_suggest: false }
             }
@@ -122,6 +166,9 @@ test('profile current shows active profile details', () => {
     assert.ok(output.includes('ActiveProfile: balanced'));
     assert.ok(output.includes('Type: built-in'));
     assert.ok(output.includes('Depth: 2'));
+    assert.ok(output.includes('ReviewFindingPolicy: policy_id=balanced'));
+    assert.ok(output.includes('critical=fix_now'));
+    assert.ok(output.includes('residual_risk=create_follow_up'));
 });
 
 test('profile current --json returns valid JSON', () => {
@@ -175,6 +222,9 @@ test('profile create adds a user profile', () => {
     assert.ok(data.user_profiles['my-custom']);
     assert.equal(data.user_profiles['my-custom'].depth, 3);
     assert.equal(data.user_profiles['my-custom'].description, 'A custom test profile');
+    assert.equal(data.user_profiles['my-custom'].review_finding_policy.policy_id, 'balanced');
+    assert.equal(data.user_profiles['my-custom'].review_finding_policy.findings.critical, 'fix_now');
+    assert.equal(data.user_profiles['my-custom'].review_finding_policy.residual_risk, 'create_follow_up');
 });
 
 test('profile create with --copy-from clones an existing profile', () => {
@@ -191,6 +241,35 @@ test('profile create with --copy-from clones an existing profile', () => {
     assert.equal(data.user_profiles['strict-copy'].depth, 3);
     assert.equal(data.user_profiles['strict-copy'].description, 'Strict clone');
     assert.equal(data.user_profiles['strict-copy'].review_policy.code, true);
+    assert.equal(data.user_profiles['strict-copy'].review_finding_policy.policy_id, 'strict');
+    assert.equal(data.user_profiles['strict-copy'].review_finding_policy.findings.low, 'fix_now');
+});
+
+test('profile create with --copy-from preserves legacy missing review finding policy', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.user_profiles.legacy = {
+        description: 'Legacy profile without review finding policy.',
+        depth: 2,
+        review_policy: { code: true, db: 'auto', security: 'auto', refactor: false },
+        token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
+        skills: { auto_suggest: true }
+    };
+    fs.writeFileSync(profilesPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+
+    captureConsole(() => handleProfile([
+        'create', 'legacy-copy',
+        '--bundle-root', bundleRoot,
+        '--copy-from', 'legacy',
+        '--description', 'Legacy clone'
+    ], PACKAGE_JSON));
+
+    const updated = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    assert.ok(updated.user_profiles['legacy-copy']);
+    assert.equal(updated.user_profiles['legacy-copy'].description, 'Legacy clone');
+    assert.equal(updated.user_profiles['legacy-copy'].review_policy.code, true);
+    assert.equal(Object.hasOwn(updated.user_profiles['legacy-copy'], 'review_finding_policy'), false);
 });
 
 test('profile create rejects name conflicting with built-in', () => {
@@ -365,6 +444,24 @@ test('profile delete reassigns active profile to first built-in when deleting th
 
 test('profile validate passes for valid profiles', () => {
     const bundleRoot = createTempBundleWithProfiles();
+    const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    assert.ok(result && typeof result === 'object');
+    assert.equal((result as { passed: boolean }).passed, true);
+});
+
+test('profile validate passes for legacy missing review finding policy', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.user_profiles.legacy = {
+        description: 'Legacy profile without review finding policy.',
+        depth: 2,
+        review_policy: { code: true, db: 'auto', security: 'auto', refactor: false },
+        token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
+        skills: { auto_suggest: true }
+    };
+    fs.writeFileSync(profilesPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+
     const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
     assert.ok(result && typeof result === 'object');
     assert.equal((result as { passed: boolean }).passed, true);
