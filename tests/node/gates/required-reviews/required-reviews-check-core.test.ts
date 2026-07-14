@@ -16,9 +16,78 @@ import {
 import {
     testReviewArtifacts
 } from '../../../../src/cli/commands/gate-flows/review/review-flow-support';
+import {
+    buildReviewFindingsValidationArtifact,
+    getReviewFindingsValidationArtifactPath
+} from '../../../../src/gates/review/review-findings-validation-artifact';
+import {
+    validateReviewFindingsContract
+} from '../../../../src/gates/review/review-findings-artifact-verdict';
 
 function sha256Text(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function sha256File(filePath: string): string {
+    return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function writeJson(filePath: string, value: unknown): void {
+    fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function writeAcceptedFindingsValidationReceipt(options: {
+    artifactPath: string;
+    contextPath: string;
+    taskId: string;
+    reviewType: string;
+    treeStateSha256: string;
+    coverageContract: Record<string, unknown>;
+}): void {
+    const artifactSha256 = sha256File(options.artifactPath);
+    const contextSha256 = sha256File(options.contextPath);
+    const validation = validateReviewFindingsContract({
+        content: fs.readFileSync(options.artifactPath, 'utf8'),
+        expectedTaskId: options.taskId,
+        expectedReviewType: options.reviewType,
+        expectedReviewContextSha256: contextSha256,
+        expectedTreeStateSha256: options.treeStateSha256,
+        coverageContract: options.coverageContract as never
+    });
+    assert.equal(validation.valid, true, validation.violations.join(' '));
+    const validationArtifactPath = getReviewFindingsValidationArtifactPath(options.artifactPath);
+    const validationArtifact = buildReviewFindingsValidationArtifact({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        validation,
+        reviewOutputSha256: artifactSha256,
+        reviewArtifactPath: options.artifactPath,
+        reviewArtifactSha256: artifactSha256,
+        reviewContextPath: options.contextPath,
+        reviewContextSha256: contextSha256,
+        reviewTreeStateSha256: options.treeStateSha256,
+        coverageContract: options.coverageContract as never
+    });
+    writeJson(validationArtifactPath, validationArtifact);
+    const validationArtifactSha256 = sha256File(validationArtifactPath);
+    writeJson(options.artifactPath.replace(/\.md$/u, '-receipt.json'), {
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        review_output_sha256: artifactSha256,
+        review_artifact_sha256: artifactSha256,
+        review_context_sha256: contextSha256,
+        review_tree_state_sha256: options.treeStateSha256,
+        review_findings_validation: {
+            artifact_path: validationArtifactPath.replace(/\\/g, '/'),
+            artifact_sha256: validationArtifactSha256,
+            snapshot_path: null,
+            snapshot_sha256: null,
+            status: validationArtifact.validation_result.status,
+            accepted: validationArtifact.validation_result.accepted,
+            validation_result_sha256: validationArtifact.validation_result_sha256,
+            violation_count: validationArtifact.validation_result.violations.length
+        }
+    });
 }
 
 describe('gates/required-reviews-check core helpers', () => {
@@ -140,6 +209,20 @@ describe('gates/required-reviews-check core helpers', () => {
             const reviewType = 'code';
             const treeStateSha256 = sha256Text('tree-state');
             const coverageContractSha256 = sha256Text('coverage-contract');
+            const coverageContract = {
+                schema_version: 1,
+                required: true,
+                review_type: reviewType,
+                obligations: [
+                    {
+                        id: 'FILE-001',
+                        kind: 'file',
+                        target: 'src/example.ts'
+                    }
+                ],
+                obligation_count: 1,
+                contract_sha256: coverageContractSha256
+            };
             const reviewContext = {
                 schema_version: 3,
                 task_id: taskId,
@@ -147,24 +230,11 @@ describe('gates/required-reviews-check core helpers', () => {
                 tree_state: {
                     tree_state_sha256: treeStateSha256
                 },
-                coverage_contract: {
-                    schema_version: 1,
-                    required: true,
-                    review_type: reviewType,
-                    obligations: [
-                        {
-                            id: 'FILE-001',
-                            kind: 'file',
-                            target: 'src/example.ts'
-                        }
-                    ],
-                    obligation_count: 1,
-                    contract_sha256: coverageContractSha256
-                }
+                coverage_contract: coverageContract
             };
             const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
-            fs.writeFileSync(reviewContextPath, `${JSON.stringify(reviewContext, null, 2)}\n`, 'utf8');
-            const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
+            writeJson(reviewContextPath, reviewContext);
+            const reviewContextSha256 = sha256File(reviewContextPath);
 
             const report = {
                 schema_version: 1,
@@ -209,7 +279,16 @@ describe('gates/required-reviews-check core helpers', () => {
                 residual_risks: [],
                 reviewer_notes: ['No active findings.']
             };
-            fs.writeFileSync(path.join(reviewsRoot, `${taskId}-${reviewType}.md`), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+            const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
+            writeJson(artifactPath, report);
+            writeAcceptedFindingsValidationReceipt({
+                artifactPath,
+                contextPath: reviewContextPath,
+                taskId,
+                reviewType,
+                treeStateSha256,
+                coverageContract
+            });
 
             const result = testReviewArtifacts(
                 repoRoot,

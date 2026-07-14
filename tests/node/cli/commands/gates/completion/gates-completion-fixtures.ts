@@ -12,6 +12,13 @@ import {
 } from '../../../../../../src/cli/commands/gates';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { buildReviewTreeState } from '../../../../../../src/gates/review/review-tree-state';
+import type { ReviewCoverageContract } from '../../../../../../src/gates/review/review-coverage-ledger';
+import { validateReviewFindingsContract } from '../../../../../../src/gates/review/review-findings-artifact-verdict';
+import {
+    buildReviewFindingsValidationArtifact,
+    getReviewFindingsValidationArtifactPath,
+    getReviewFindingsValidationArtifactSnapshotPath
+} from '../../../../../../src/gates/review/review-findings-validation-artifact';
 import { resolveDefaultReviewScratchPath } from '../../../../../../src/gates/review/review-scratch-paths';
 import { getWorkspaceSnapshot } from '../../../../../../src/gates/compile/compile-gate';
 import {
@@ -38,6 +45,89 @@ const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function sha256JsonFixture(value: unknown): string {
+    return createHash('sha256').update(`${JSON.stringify(value, null, 2)}\n`).digest('hex');
+}
+
+function buildFixtureFindingsReport(options: {
+    taskId: string;
+    reviewKey: string;
+    reviewContextSha256: string;
+    reviewTreeStateSha256: string | null;
+    coverageContract: ReviewCoverageContract;
+    failed: boolean;
+}): Record<string, unknown> {
+    const defaultEvidenceFile = options.coverageContract.obligations.find((entry) => entry.kind === 'file')?.target
+        || 'src/app.ts';
+    const findingId = 'F-001';
+    const finding = {
+        id: findingId,
+        title: 'Fixture active finding',
+        description: 'Seeded failed-review fixture finding for downstream gate behavior.',
+        evidence: [{
+            location: `${defaultEvidenceFile}:1`,
+            observation: 'The fixture intentionally records an active finding.'
+        }],
+        coverage_obligation_ids: options.coverageContract.obligations.map((obligation) => obligation.id)
+    };
+    return {
+        schema_version: 1,
+        task_id: options.taskId,
+        review_type: options.reviewKey,
+        review_context_sha256: options.reviewContextSha256,
+        tree_state_sha256: options.reviewTreeStateSha256,
+        validation_notes: [{
+            id: 'N-001',
+            topic: 'fixture-scope',
+            note: `Validated the complete ${options.reviewKey} fixture scope and every generated coverage obligation.`,
+            evidence: [{
+                location: `${defaultEvidenceFile}:1`,
+                observation: `Concrete fixture evidence covers the ${options.reviewKey} review scope.`
+            }]
+        }],
+        coverage_ledger: {
+            coverage_contract_sha256: options.coverageContract.contract_sha256,
+            entries: options.coverageContract.required
+                ? options.coverageContract.obligations.map((obligation) => ({
+                    obligation_id: obligation.id,
+                    evidence: [{
+                        location: `${obligation.kind === 'file' ? obligation.target : defaultEvidenceFile}:1`,
+                        observation: `Concrete fixture evidence covers ${obligation.kind} ${obligation.target} for receipt-backed review behavior.`
+                    }],
+                    finding_ids: options.failed ? [findingId] : []
+                }))
+                : []
+        },
+        findings: {
+            critical: [],
+            high: options.failed ? [finding] : [],
+            medium: [],
+            low: []
+        },
+        residual_risks: [],
+        reviewer_notes: []
+    };
+}
+
+function buildFixtureFindingsContent(options: {
+    taskId: string;
+    reviewKey: string;
+    reviewContextSha256: string;
+    reviewTreeStateSha256: string | null;
+    coverageContract: ReviewCoverageContract;
+    verdict: string;
+}): string {
+    const report = buildFixtureFindingsReport({
+        taskId: options.taskId,
+        reviewKey: options.reviewKey,
+        reviewContextSha256: options.reviewContextSha256,
+        reviewTreeStateSha256: options.reviewTreeStateSha256,
+        coverageContract: options.coverageContract,
+        failed: /\bFAILED\b/u.test(options.verdict)
+    });
+    return `${JSON.stringify(report, null, 2)}\n`;
 }
 
 function createReviewerRoutingFixture(
@@ -823,20 +913,6 @@ function seedReusableReviewEvidence(
     fs.mkdirSync(reviewsRoot, { recursive: true });
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`);
-    const artifactText = [
-        '# Review',
-        '',
-        `Validated \`${reviewKey === 'code' ? 'src/app.ts' : 'tests/app.test.ts'}\` and the reuse contract in detail so this artifact remains realistic and non-trivial while reporting no findings for the current scope.`,
-        '',
-        '## Findings by Severity',
-        'none',
-        '',
-        '## Residual Risks',
-        'none',
-        '',
-        '## Verdict',
-        verdict
-    ].join('\n');
     prepareReviewDiffFixture(repoRoot, preflightPath);
     buildReviewContext({
         reviewType: reviewKey,
@@ -892,11 +968,35 @@ function seedReusableReviewEvidence(
     const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
     const reviewContext = JSON.parse(reviewContextText) as Record<string, unknown>;
     const reviewTreeStateSha256 = resolveReviewTreeStateSha256(reviewContext);
+    const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
+    const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract | undefined;
+    const artifactText = Number(reviewContext.schema_version) >= 3 && coverageContract
+        ? buildFixtureFindingsContent({
+            taskId,
+            reviewKey,
+            reviewContextSha256: reviewContextHash,
+            reviewTreeStateSha256,
+            coverageContract,
+            verdict
+        })
+        : [
+            '# Review',
+            '',
+            `Validated \`${reviewKey === 'code' ? 'src/app.ts' : 'tests/app.test.ts'}\` and the reuse contract in detail so this artifact remains realistic and non-trivial while reporting no findings for the current scope.`,
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            verdict
+        ].join('\n');
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
     const artifactHash = crypto.createHash('sha256').update(artifactText).digest('hex');
     const artifactSnapshotPath = artifactPath.replace(/\.md$/, `-artifact-${artifactHash}.md`);
     fs.writeFileSync(artifactSnapshotPath, artifactText, 'utf8');
-    const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     const preflightText = fs.readFileSync(preflightPath, 'utf8');
     const preflight = JSON.parse(preflightText) as Record<string, unknown>;
     const preflightHash = crypto.createHash('sha256').update(preflightText).digest('hex');
@@ -948,15 +1048,27 @@ function seedReusableReviewEvidence(
         invocationDetails,
         { passThru: true }
     );
+    const scopeSha256 = String(
+        (preflight.metrics as Record<string, unknown> | undefined)?.scope_sha256
+        || (preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256
+        || ''
+    ).trim() || null;
+    const reviewScopeSha256 = computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256;
+    const codeScopeSha256 = reviewKey === 'code'
+        ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
+        : null;
+    const reviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(
+        'REVIEWER_INVOCATION_ATTESTED',
+        invocationEvent?.integrity,
+        invocationDetails
+    );
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
         preflightSha256: preflightHash,
-        scopeSha256: String((preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
-        reviewScopeSha256: computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256,
-        codeScopeSha256: reviewKey === 'code'
-            ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
-            : null,
+        scopeSha256,
+        reviewScopeSha256,
+        codeScopeSha256,
         reviewContextSha256: reviewContextHash,
         reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
         reviewTreeStateSha256,
@@ -964,14 +1076,81 @@ function seedReusableReviewEvidence(
         reviewerExecutionMode: execution.reviewerExecutionMode,
         reviewerIdentity: execution.reviewerIdentity,
         reviewerFallbackReason: execution.reviewerFallbackReason,
-        reviewerProvenance: buildReviewReceiptReviewerInvocationProvenance(
-            'REVIEWER_INVOCATION_ATTESTED',
-            invocationEvent?.integrity,
-            invocationDetails
-        ),
+        reviewerProvenance,
         trustLevel: execution.trustLevel
     });
     const receiptRecord = receipt as unknown as Record<string, unknown>;
+    if (Number(reviewContext.schema_version) >= 3 && coverageContract) {
+        const findingsValidation = validateReviewFindingsContract({
+            content: artifactText,
+            expectedTaskId: taskId,
+            expectedReviewType: reviewKey,
+            expectedReviewContextSha256: reviewContextHash,
+            expectedTreeStateSha256: reviewTreeStateSha256 || undefined,
+            coverageContract,
+            repoRoot
+        });
+        assert.equal(findingsValidation.valid, true, findingsValidation.violations.join('\n'));
+        const validationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
+        const validationArtifact = buildReviewFindingsValidationArtifact({
+            taskId,
+            reviewType: reviewKey,
+            validation: findingsValidation,
+            reviewOutputSha256: artifactHash,
+            reviewArtifactPath: artifactPath,
+            reviewArtifactSha256: artifactHash,
+            reviewContextPath,
+            reviewContextSha256: reviewContextHash,
+            preflightPath,
+            preflightSha256: preflightHash,
+            scopeSha256,
+            reviewScopeSha256,
+            codeScopeSha256,
+            reviewTreeStateSha256,
+            coverageContract
+        });
+        const validationArtifactSha256 = sha256JsonFixture(validationArtifact);
+        const validationArtifactSnapshotPath = getReviewFindingsValidationArtifactSnapshotPath(
+            validationArtifactPath,
+            validationArtifactSha256
+        );
+        fs.writeFileSync(validationArtifactPath, `${JSON.stringify(validationArtifact, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(validationArtifactSnapshotPath, `${JSON.stringify(validationArtifact, null, 2)}\n`, 'utf8');
+        receiptRecord.review_coverage = findingsValidation.coverage_validation;
+        receiptRecord.review_output_sha256 = artifactHash;
+        receiptRecord.review_output_format = 'findings_json';
+        receiptRecord.review_output_schema_version = findingsValidation.report?.schema_version ?? null;
+        receiptRecord.review_findings_report_sha256 = findingsValidation.report
+            ? sha256JsonFixture(findingsValidation.report)
+            : null;
+        if (findingsValidation.report) {
+            receiptRecord.review_findings_report = findingsValidation.report;
+        }
+        receiptRecord.review_findings_validation = {
+            artifact_path: path.normalize(validationArtifactPath).replace(/\\/g, '/'),
+            artifact_sha256: validationArtifactSha256,
+            snapshot_path: path.normalize(validationArtifactSnapshotPath).replace(/\\/g, '/'),
+            snapshot_sha256: validationArtifactSha256,
+            status: validationArtifact.validation_result.status,
+            accepted: validationArtifact.validation_result.accepted,
+            validation_result_sha256: validationArtifact.validation_result_sha256,
+            violation_count: validationArtifact.validation_result.violations.length
+        };
+        receiptRecord.review_output_contract = {
+            schema_version: 1,
+            format: 'findings_json',
+            report_sha256: findingsValidation.report ? sha256JsonFixture(findingsValidation.report) : null,
+            validation_artifact_sha256: validationArtifactSha256,
+            validation_result_sha256: validationArtifact.validation_result_sha256,
+            raw_output_sha256: artifactHash,
+            review_artifact_sha256: artifactHash,
+            review_context_sha256: reviewContextHash,
+            review_tree_state_sha256: reviewTreeStateSha256,
+            coverage_contract_sha256: coverageContract.contract_sha256,
+            reviewer_identity: execution.reviewerIdentity,
+            reviewer_provenance_event_sha256: reviewerProvenance?.event_sha256 ?? null
+        };
+    }
     receiptRecord.review_result_recorded_at_utc = receipt.recorded_at_utc;
     receiptRecord.review_output_source_mtime_utc = fs.statSync(artifactPath).mtime.toISOString();
     const receiptText = `${JSON.stringify(receipt, null, 2)}\n`;

@@ -334,17 +334,23 @@ test('authenticated snapshot binding is propagated through result, trust, and re
         {
             path: 'src/cli/commands/gate-review-handlers/result/review-result-handlers.ts',
             preflight: 'preflight',
-            validator: 'contract'
+            validator: 'contract',
+            validatesSnapshotCommit: true,
+            buildsValidationArtifact: false
         },
         {
             path: 'src/gates/required-reviews/required-reviews-check-trust.ts',
             preflight: 'preflightPayload',
-            validator: 'contract'
+            validator: 'validation_artifact',
+            validatesSnapshotCommit: false,
+            buildsValidationArtifact: false
         },
         {
             path: 'src/gates/review-reuse/review-reuse-materialization.ts',
             preflight: 'options.preflightPayload',
-            validator: 'ledger'
+            validator: 'validation_artifact',
+            validatesSnapshotCommit: false,
+            buildsValidationArtifact: true
         }
     ] as const;
     for (const consumer of consumers) {
@@ -352,14 +358,24 @@ test('authenticated snapshot binding is propagated through result, trust, and re
         assert.match(
             source,
             consumer.validator === 'contract'
-                ? /validate(?:Json)?ReviewFindings(?:Contract|Artifact)\(/u
+                ? /validate(?:Json)?ReviewFindings(?:Contract|Artifact|ValidationArtifact(?:ForReceipt)?)\(/u
+                : consumer.validator === 'validation_artifact'
+                    ? /validateReviewFindingsValidationArtifactForReceipt\(/u
                 : /validateReviewCoverageLedger\(/u
         );
-        assert.match(source, /evidenceSnapshotCommit:\s*resolveReviewCoverageEvidenceSnapshotCommit\(/u);
-        assert.ok(
-            source.includes(`resolveReviewCoverageEvidenceSnapshotCommit(${consumer.preflight})`),
-            `${consumer.path} must bind coverage validation to its authoritative preflight payload`
-        );
+        if (consumer.validatesSnapshotCommit) {
+            assert.match(source, /evidenceSnapshotCommit:\s*resolveReviewCoverageEvidenceSnapshotCommit\(/u);
+            assert.ok(
+                source.includes(`resolveReviewCoverageEvidenceSnapshotCommit(${consumer.preflight})`),
+                `${consumer.path} must bind coverage validation to its authoritative preflight payload`
+            );
+        } else {
+            assert.match(source, /expectedPreflightSha256:/u);
+            assert.match(source, /expectedScopeSha256:/u);
+            if (consumer.buildsValidationArtifact) {
+                assert.match(source, /buildReviewFindingsValidationArtifact\(/u);
+            }
+        }
     }
 });
 

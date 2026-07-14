@@ -4,7 +4,11 @@ import {
     normalizeCompatibilityReviewerExecutionMode,
     type ReviewReceipt
 } from '../../gate-runtime/review-context';
-import { getReviewArtifactFindingsEvidence, isTrivialReview } from '../completion';
+import {
+    getReviewArtifactFindingsEvidence,
+    getReviewFindingsEvidenceFromValidationArtifact,
+    isTrivialReview
+} from '../completion';
 import { fileSha256, normalizePath, toPlainRecord } from '../shared/helpers';
 import {
     buildReviewContextPreflightDiffExpectations,
@@ -31,13 +35,13 @@ import {
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from '../review/reviewer-routing';
 import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
-    resolveReviewCoverageEvidenceSnapshotCommit,
-    type ReviewCoverageContract
-} from '../review/review-coverage-ledger';
-import {
-    reviewContextRequiresFindingsOnlyArtifact,
-    validateJsonReviewFindingsArtifact
+    reviewContextRequiresFindingsOnlyArtifact
 } from '../review/review-findings-artifact-verdict';
+import {
+    reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation,
+    reviewFindingsValidationArtifactHasActiveFindings,
+    validateReviewFindingsValidationArtifactForReceipt
+} from '../review/review-findings-validation-artifact';
 import {
     findLatestRoutingEventForReviewType,
     findLatestTimelineSequence,
@@ -65,6 +69,20 @@ export interface ReviewArtifactGateEligibilityResult {
     trivialReview: boolean;
     findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null;
     violations: string[];
+}
+
+function getPreflightScopeSha256(preflightPayload: Record<string, unknown> | null): string | null {
+    const metrics = preflightPayload?.metrics && typeof preflightPayload.metrics === 'object' && !Array.isArray(preflightPayload.metrics)
+        ? preflightPayload.metrics as Record<string, unknown>
+        : null;
+    return normalizeSha256String(metrics?.scope_sha256) || normalizeSha256String(metrics?.changed_files_sha256);
+}
+
+function getReceiptOutputContractString(receipt: ReviewReceipt, key: string): string | null {
+    const receiptRecord = receipt as unknown as Record<string, unknown>;
+    const contract = toPlainRecord(receiptRecord.review_output_contract);
+    const value = contract?.[key];
+    return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
 }
 
 export function validateReviewArtifactGateEligibility(options: {
@@ -151,6 +169,11 @@ export function validateReviewArtifactGateEligibility(options: {
     let trivialReview = false;
     let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
     let laneDomainPreflightBindingAllowed = false;
+    const requiresFindingsOnlyArtifact = reviewContextRequiresFindingsOnlyArtifact(reviewContext);
+    const preflightPayload = resolvePreflightPayloadForReviewValidation({
+        preflightPayload: options.preflightPayload,
+        preflightPath: options.preflightPath
+    });
 
     if (artifactPath && artifactContent) {
         compactionAudit = auditReviewArtifactCompaction({
@@ -166,17 +189,15 @@ export function validateReviewArtifactGateEligibility(options: {
                     'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
                 );
             }
-            findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
-            errors.push(...findingsEvidence.violations);
+            if (!requiresFindingsOnlyArtifact) {
+                findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
+                errors.push(...findingsEvidence.violations);
+            }
         }
         if (required && !skippedByOverride) {
             if (!reviewContext) {
                 errors.push(`Required review '${reviewKey}' is missing a valid review-context artifact.`);
             }
-            const preflightPayload = resolvePreflightPayloadForReviewValidation({
-                preflightPayload: options.preflightPayload,
-                preflightPath: options.preflightPath
-            });
             const diffExpectations = buildReviewContextPreflightDiffExpectations(preflightPayload, reviewKey);
             laneDomainPreflightBindingAllowed = options.allowLaneDomainPreflightBinding === true
                 && reviewContextLaneScopeMatchesCurrentPreflight(reviewKey, reviewContext || null, preflightPayload);
@@ -201,28 +222,11 @@ export function validateReviewArtifactGateEligibility(options: {
                 expectedScopedDiff: laneDomainPreflightBindingAllowed ? false : diffExpectations.expectedScopedDiff,
                 requireDiffMaterialForRequiredReview: !laneDomainPreflightBindingAllowed
             }));
-            if (reviewContext && reviewContextRequiresFindingsOnlyArtifact(reviewContext)) {
-                const findingsArtifact = validateJsonReviewFindingsArtifact({
-                    content: artifactContent,
-                    expectedTaskId: resolvedTaskId || '',
-                    expectedReviewType: reviewKey,
-                    expectedReviewContextSha256: reviewArtifact.reviewContextSha256 || undefined,
-                    expectedTreeStateSha256: reviewContextTreeStateSha256 || undefined,
-                    coverageContract: reviewContext.coverage_contract as ReviewCoverageContract,
-                    repoRoot: options.repoRoot || undefined,
-                    evidenceSnapshotCommit: resolveReviewCoverageEvidenceSnapshotCommit(preflightPayload)
-                });
-                if (!findingsArtifact.detected) {
-                    errors.push(
-                        `Review artifact '${normalizePath(artifactPath)}' must be verdict-free findings JSON for current '${reviewKey}' review context; ` +
-                        'legacy PASS/FAIL verdict-token artifacts are readable history only and cannot satisfy current review evidence.'
-                    );
-                } else if (!findingsArtifact.report) {
-                    errors.push(
-                        `Review artifact '${normalizePath(artifactPath)}' contains invalid findings JSON: ` +
-                        findingsArtifact.violations.join(' ')
-                    );
-                }
+            if (reviewContext && requiresFindingsOnlyArtifact && !String(artifactContent || '').trim().startsWith('{')) {
+                errors.push(
+                    `Review artifact '${normalizePath(artifactPath)}' must be verdict-free findings JSON for current '${reviewKey}' review context; ` +
+                    'legacy PASS/FAIL verdict-token artifacts are readable history only and cannot satisfy current review evidence.'
+                );
             }
             if (reviewContext && !reviewContextTreeStateSha256) {
                 errors.push(
@@ -375,16 +379,72 @@ export function validateReviewArtifactGateEligibility(options: {
                         errors.push(`Review receipt for '${reviewKey}' is missing reused_from_review_tree_state_sha256 for reused evidence.`);
                     }
                     receiptReviewContextSha256 = evidenceFields.reviewContextSha256;
-                    if (reviewContext && Number(reviewContext.schema_version) >= 3) {
+                    if (reviewContext && requiresFindingsOnlyArtifact) {
                         const reviewCoverage = toPlainRecord((receipt as unknown as Record<string, unknown>).review_coverage);
                         const coverageContract = toPlainRecord(reviewContext.coverage_contract);
+                        const expectedCoverageContractSha256 = reusedExistingReview
+                            ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
+                            : String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null;
                         if (reviewCoverage?.status !== 'PASS') {
                             errors.push(`Review receipt for '${reviewKey}' is missing complete review_coverage evidence.`);
                         } else if (
+                            expectedCoverageContractSha256
+                            &&
                             String(reviewCoverage.contract_sha256 || '').trim().toLowerCase()
-                            !== String(coverageContract?.contract_sha256 || '').trim().toLowerCase()
+                            !== expectedCoverageContractSha256
                         ) {
                             errors.push(`Review receipt coverage contract hash mismatch for '${reviewKey}'.`);
+                        }
+                        const validationArtifact = validateReviewFindingsValidationArtifactForReceipt({
+                            receipt: receipt as unknown as Record<string, unknown>,
+                            reviewArtifactPath: artifactPath,
+                            expectedTaskId: resolvedTaskId || '',
+                            expectedReviewType: reviewKey,
+                            expectedReviewOutputSha256: typeof (receipt as unknown as Record<string, unknown>).review_output_sha256 === 'string'
+                                ? (receipt as unknown as Record<string, unknown>).review_output_sha256 as string
+                                : null,
+                            expectedReviewArtifactSha256: currentArtifactHash,
+                            expectedReviewContextPath: reusedExistingReview
+                                ? null
+                                : reviewArtifact.reviewContextPath || artifactPath.replace(/\.md$/, '-review-context.json'),
+                            expectedReviewContextSha256: reusedExistingReview
+                                ? typeof receipt.reused_from_review_context_sha256 === 'string' ? receipt.reused_from_review_context_sha256 : null
+                                : receipt.review_context_sha256 || reviewArtifact.reviewContextSha256 || null,
+                            expectedPreflightPath: reusedExistingReview ? null : options.preflightPath,
+                            expectedPreflightSha256: reusedExistingReview ? null : options.preflightSha256,
+                            expectedScopeSha256: reusedExistingReview ? null : getPreflightScopeSha256(preflightPayload),
+                            expectedReviewScopeSha256: reusedExistingReview
+                                ? typeof receipt.reused_from_review_scope_sha256 === 'string' ? receipt.reused_from_review_scope_sha256 : null
+                                : typeof receipt.review_scope_sha256 === 'string' ? receipt.review_scope_sha256 : null,
+                            expectedCodeScopeSha256: reusedExistingReview
+                                ? typeof receipt.reused_from_code_scope_sha256 === 'string' ? receipt.reused_from_code_scope_sha256 : null
+                                : typeof receipt.code_scope_sha256 === 'string' ? receipt.code_scope_sha256 : null,
+                            expectedReviewTreeStateSha256: reusedExistingReview
+                                ? typeof receipt.reused_from_review_tree_state_sha256 === 'string' ? receipt.reused_from_review_tree_state_sha256 : null
+                                : reviewContextTreeStateSha256,
+                            expectedCoverageContractSha256,
+                            requireAccepted: true
+                        });
+                        errors.push(...validationArtifact.violations);
+                        findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(
+                            artifactPath,
+                            validationArtifact.artifact
+                        );
+                        if (
+                            validationArtifact.valid
+                            && reviewFindingsValidationArtifactHasActiveFindings(validationArtifact.artifact)
+                        ) {
+                            if (reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(validationArtifact.artifact)) {
+                                errors.push(
+                                    `Review artifact '${normalizePath(artifactPath)}' contains active findings in validation artifact ` +
+                                    'for missing focused validation evidence; preserve the failed artifact and record current task-owned focused validation evidence.'
+                                );
+                            } else {
+                                errors.push(
+                                    `Review artifact '${normalizePath(artifactPath)}' contains active findings in validation artifact; ` +
+                                    `fix implementation and rerun compile plus '${reviewKey}' review before continuing.`
+                                );
+                            }
                         }
                     }
                 } catch {

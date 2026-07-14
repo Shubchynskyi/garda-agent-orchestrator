@@ -22,6 +22,11 @@ import {
     evaluateHiddenReviewTimingTrust,
     stripReviewTimingProvenanceTimestamps
 } from '../review/review-timing-trust';
+import {
+    normalizeReviewFindingsValidationReceiptReference,
+    reviewFindingsValidationArtifactHasActiveFindings,
+    validateReviewFindingsValidationArtifactForReceipt
+} from '../review/review-findings-validation-artifact';
 
 export interface HistoricalReviewReuseCandidate {
     telemetryReceiptPath: string;
@@ -97,6 +102,98 @@ function artifactHasPassVerdict(reviewType: string, artifactText: string): boole
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getReceiptRecordString(receipt: ReviewReceipt, key: string): string | null {
+    const value = (receipt as unknown as Record<string, unknown>)[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getReceiptOutputContract(receipt: ReviewReceipt): Record<string, unknown> | null {
+    const contract = (receipt as unknown as Record<string, unknown>).review_output_contract;
+    return isRecord(contract) ? contract : null;
+}
+
+function getReceiptOutputContractString(receipt: ReviewReceipt, key: string): string | null {
+    const value = getReceiptOutputContract(receipt)?.[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function receiptRequiresFindingsValidation(receipt: ReviewReceipt): boolean {
+    const receiptRecord = receipt as unknown as Record<string, unknown>;
+    const format = String(
+        receiptRecord.review_output_format
+        || getReceiptOutputContract(receipt)?.format
+        || ''
+    ).trim().toLowerCase();
+    return format === 'findings_json'
+        || normalizeReviewFindingsValidationReceiptReference(receiptRecord.review_findings_validation) !== null;
+}
+
+function getReceiptBoundFindingsReviewArtifactPath(receipt: ReviewReceipt): string | null {
+    const reference = normalizeReviewFindingsValidationReceiptReference(
+        (receipt as unknown as Record<string, unknown>).review_findings_validation
+    );
+    if (!reference?.artifact_path.endsWith('-findings-validation.json')) {
+        return null;
+    }
+    return reference.artifact_path.replace(/-findings-validation\.json$/u, '.md');
+}
+
+function validateFindingsValidationForHistoricalReuse(options: {
+    receipt: ReviewReceipt;
+    taskId: string;
+    reviewType: string;
+    reviewArtifactPath: string;
+    artifactSha256: string;
+    sourceReceiptContextSha256: string | null;
+    sourceReceiptReviewTreeStateSha256: string | null;
+    sourceReceiptReviewScopeSha256: string | null;
+    sourceReceiptCodeScopeSha256: string | null;
+    expectedContextSha256: string | null;
+    expectedReviewTreeStateSha256: string | null;
+    expectedReviewScopeSha256: string | null;
+    expectedCodeScopeSha256: string | null;
+    preferSnapshot: boolean;
+}): string | null {
+    const reusedExistingReview = options.receipt.reused_existing_review === true;
+    const validation = validateReviewFindingsValidationArtifactForReceipt({
+        receipt: options.receipt as unknown as Record<string, unknown>,
+        reviewArtifactPath: options.reviewArtifactPath,
+        expectedTaskId: options.taskId,
+        expectedReviewType: options.reviewType,
+        expectedReviewOutputSha256: getReceiptRecordString(options.receipt, 'review_output_sha256')
+            || getReceiptOutputContractString(options.receipt, 'raw_output_sha256'),
+        expectedReviewArtifactSha256: options.artifactSha256,
+        expectedReviewContextSha256: reusedExistingReview
+            ? options.expectedContextSha256
+            : options.sourceReceiptContextSha256,
+        expectedPreflightSha256: reusedExistingReview
+            ? null
+            : getReceiptRecordString(options.receipt, 'preflight_sha256'),
+        expectedScopeSha256: reusedExistingReview
+            ? null
+            : getReceiptRecordString(options.receipt, 'scope_sha256'),
+        expectedReviewScopeSha256: reusedExistingReview
+            ? options.expectedReviewScopeSha256
+            : options.sourceReceiptReviewScopeSha256,
+        expectedCodeScopeSha256: reusedExistingReview
+            ? options.expectedCodeScopeSha256
+            : options.sourceReceiptCodeScopeSha256,
+        expectedReviewTreeStateSha256: reusedExistingReview
+            ? options.expectedReviewTreeStateSha256
+            : options.sourceReceiptReviewTreeStateSha256,
+        expectedCoverageContractSha256: getReceiptOutputContractString(options.receipt, 'coverage_contract_sha256'),
+        requireAccepted: true,
+        preferSnapshot: options.preferSnapshot
+    });
+    if (!validation.valid) {
+        return `prior findings validation artifact is invalid: ${validation.violations.join(' ')}`;
+    }
+    if (reviewFindingsValidationArtifactHasActiveFindings(validation.artifact)) {
+        return 'prior findings validation artifact contains active findings or residual risks';
+    }
+    return null;
 }
 
 function normalizeLowerText(value: unknown): string {
@@ -423,12 +520,42 @@ export function validateHistoricalReviewReuseCandidate(options: {
         };
     }
     const artifactText = verifiedArtifact.artifactText;
-    if (!artifactHasPassVerdict(options.reviewType, artifactText)) {
-        return { accepted: false, reason: 'prior review artifact is not a PASS verdict' };
-    }
     const historicalReviewArtifactSha256 = String(gateHelpers.fileSha256(verifiedArtifact.artifactPath) || '')
         .trim()
         .toLowerCase();
+    if (receiptRequiresFindingsValidation(receipt)) {
+        const sourceEventDetails = isRecord(sourceEventResolution.event?.details)
+            ? sourceEventResolution.event?.details as Record<string, unknown>
+            : null;
+        const receiptBoundReviewArtifactPath = getReceiptBoundFindingsReviewArtifactPath(receipt);
+        const mutableReviewArtifactPath = String(
+            receiptBoundReviewArtifactPath
+            ?? sourceEventDetails?.review_artifact_path
+            ?? sourceEventDetails?.reviewArtifactPath
+            ?? verifiedArtifact.artifactPath
+        ).trim();
+        const findingsValidationReuseReason = validateFindingsValidationForHistoricalReuse({
+            receipt,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewArtifactPath: mutableReviewArtifactPath,
+            artifactSha256: historicalReviewArtifactSha256,
+            sourceReceiptContextSha256,
+            sourceReceiptReviewTreeStateSha256,
+            sourceReceiptReviewScopeSha256,
+            sourceReceiptCodeScopeSha256,
+            expectedContextSha256,
+            expectedReviewTreeStateSha256,
+            expectedReviewScopeSha256,
+            expectedCodeScopeSha256,
+            preferSnapshot: options.candidate.sourceKind === 'historical_review_recorded'
+        });
+        if (findingsValidationReuseReason) {
+            return { accepted: false, reason: findingsValidationReuseReason };
+        }
+    } else if (!artifactHasPassVerdict(options.reviewType, artifactText)) {
+        return { accepted: false, reason: 'prior review artifact is not a PASS verdict' };
+    }
     if (String(receipt.review_artifact_sha256 || '').trim().toLowerCase() !== historicalReviewArtifactSha256) {
         return { accepted: false, reason: 'prior review artifact hash no longer matches the receipt' };
     }

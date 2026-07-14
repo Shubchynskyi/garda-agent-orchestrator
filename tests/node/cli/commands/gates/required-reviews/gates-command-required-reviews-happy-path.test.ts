@@ -40,6 +40,9 @@ import {
     runShellSmokeForTask,
     readTaskTimelineEvents,
     readTaskQueueStatusFromTaskFile} from '../../gate-test-helpers';
+import {
+    buildNoFindingsJsonReviewReport
+} from '../review-result/gates-command-review-result-fixtures';
 
 const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
 const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
@@ -879,24 +882,6 @@ describe('gates command required reviews', () => {
             ]);
             buildExitCode = Number(process.exitCode ?? 0);
 
-            fs.writeFileSync(reviewOutputPath, [
-            '# Review',
-            '',
-            'Validated `src/cli/commands/gates/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts`, confirming that review gates now resolve the canonical review-context artifact deterministically and ignore stale legacy default siblings.',
-            '',
-            '## Validation Notes',
-            'Reviewed `src/cli/commands/gates/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts` for canonical review-context resolution and stale legacy sibling rejection.',
-            '',
-            '## Findings by Severity',
-            'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'REVIEW PASSED'
-            ].join('\n'), 'utf8');
-
             process.exitCode = 0;
             await recordReviewRoutingViaCli({
                 taskId,
@@ -905,6 +890,11 @@ describe('gates command required reviews', () => {
                 reviewerExecutionMode: 'delegated_subagent',
                 reviewerIdentity: 'agent:code-reviewer'
             });
+            fs.writeFileSync(
+                reviewOutputPath,
+                `${JSON.stringify(buildNoFindingsJsonReviewReport(canonicalContextPath, taskId, 'code'), null, 2)}\n`,
+                'utf8'
+            );
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',

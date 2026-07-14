@@ -32,7 +32,9 @@ export {
 
 export {
     isTrivialReview,
-    getReviewArtifactFindingsEvidence
+    getReviewArtifactFindingsEvidence,
+    getReviewFindingsValidationArtifactEvidence,
+    getReviewFindingsEvidenceFromValidationArtifact
 } from './completion-verdict-findings';
 
 export {

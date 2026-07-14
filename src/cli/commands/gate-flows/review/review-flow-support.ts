@@ -17,11 +17,13 @@ import {
     REVIEW_CONTRACTS
 } from '../../../../gates/required-reviews/required-reviews-check';
 import {
-    jsonReviewFindingsArtifactHasActiveFindings,
     reviewContextRequiresFindingsOnlyArtifact,
-    validateJsonReviewFindingsArtifact,
     resolveReviewFindingsArtifactVerdictToken
 } from '../../../../gates/review/review-findings-artifact-verdict';
+import {
+    reviewFindingsValidationArtifactHasActiveFindings,
+    validateReviewFindingsValidationArtifactForReceipt
+} from '../../../../gates/review/review-findings-validation-artifact';
 import {
     type ReviewCoverageContract
 } from '../../../../gates/review/review-coverage-ledger';
@@ -64,6 +66,19 @@ function getReviewContextCoverageContract(reviewContext: Record<string, unknown>
         return null;
     }
     return coverageContract as ReviewCoverageContract;
+}
+
+function getReceiptString(receipt: Record<string, unknown>, key: string): string | null {
+    const value = receipt[key];
+    return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
+}
+
+function getReceiptOutputContractString(receipt: Record<string, unknown>, key: string): string | null {
+    const contract = receipt.review_output_contract;
+    const value = contract && typeof contract === 'object' && !Array.isArray(contract)
+        ? (contract as Record<string, unknown>)[key]
+        : null;
+    return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
 }
 
 export interface ReviewArtifactCheckEntry {
@@ -267,31 +282,68 @@ export function testReviewArtifacts(
 
         const requiresFindingsOnlyArtifact = reviewContextRequiresFindingsOnlyArtifact(reviewContext);
         if (requiresFindingsOnlyArtifact) {
-            const findingsArtifact = validateJsonReviewFindingsArtifact({
-                content,
-                expectedTaskId: resolvedTaskId || '',
-                expectedReviewType: reviewKey,
-                expectedReviewContextSha256: reviewContextPath && entry.review_context_valid
-                    ? gateHelpers.fileSha256(reviewContextPath)
-                    : null,
-                expectedTreeStateSha256: getReviewContextTreeStateSha256(reviewContext),
-                coverageContract: getReviewContextCoverageContract(reviewContext)
-            });
-            if (!findingsArtifact.detected) {
+            if (!String(content || '').trim().startsWith('{')) {
                 entry.token_found = false;
                 result.violations.push(
                     `Review artifact '${entry.path}' must be verdict-free findings JSON for current '${reviewKey}' review context; ` +
                     'legacy PASS/FAIL verdict-token artifacts are readable history only and cannot satisfy current review evidence.'
                 );
-            } else if (!findingsArtifact.report) {
+                result.checked.push(entry);
+                continue;
+            }
+            const receiptPath = artifactPath.replace(/\.md$/u, '-receipt.json');
+            if (!fs.existsSync(receiptPath) || !fs.statSync(receiptPath).isFile()) {
                 entry.token_found = false;
                 result.violations.push(
-                    `Review artifact '${entry.path}' contains invalid findings JSON: ${findingsArtifact.violations.join(' ')}`
+                    `Review receipt '${gateHelpers.normalizePath(receiptPath)}' is required for current findings validation evidence.`
                 );
-            } else if (jsonReviewFindingsArtifactHasActiveFindings(findingsArtifact.report)) {
+                result.checked.push(entry);
+                continue;
+            }
+            let receipt: Record<string, unknown> | null = null;
+            try {
+                const parsedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as unknown;
+                receipt = isPlainObject(parsedReceipt) ? parsedReceipt : null;
+            } catch {
+                receipt = null;
+            }
+            if (!receipt) {
+                entry.token_found = false;
+                result.violations.push(`Review receipt '${gateHelpers.normalizePath(receiptPath)}' is invalid JSON.`);
+                result.checked.push(entry);
+                continue;
+            }
+            const reusedExistingReview = receipt.reused_existing_review === true;
+            const validationArtifact = validateReviewFindingsValidationArtifactForReceipt({
+                receipt,
+                reviewArtifactPath: artifactPath,
+                expectedTaskId: resolvedTaskId || '',
+                expectedReviewType: reviewKey,
+                expectedReviewOutputSha256: typeof receipt.review_output_sha256 === 'string'
+                    ? receipt.review_output_sha256
+                    : null,
+                expectedReviewArtifactSha256: entry.sha256,
+                expectedReviewContextPath: reusedExistingReview ? null : reviewContextPath || null,
+                expectedReviewContextSha256: reusedExistingReview
+                    ? getReceiptString(receipt, 'reused_from_review_context_sha256')
+                    : reviewContextPath && entry.review_context_valid
+                        ? gateHelpers.fileSha256(reviewContextPath)
+                        : null,
+                expectedReviewTreeStateSha256: reusedExistingReview
+                    ? getReceiptString(receipt, 'reused_from_review_tree_state_sha256')
+                    : getReviewContextTreeStateSha256(reviewContext),
+                expectedCoverageContractSha256: reusedExistingReview
+                    ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
+                    : getReviewContextCoverageContract(reviewContext)?.contract_sha256 || null,
+                requireAccepted: true
+            });
+            if (!validationArtifact.valid) {
+                entry.token_found = false;
+                result.violations.push(...validationArtifact.violations);
+            } else if (reviewFindingsValidationArtifactHasActiveFindings(validationArtifact.artifact)) {
                 entry.token_found = false;
                 result.violations.push(
-                    `Review artifact '${entry.path}' contains active findings or residual risks and cannot satisfy claimed '${passToken}'.`
+                    `Review findings validation artifact for '${entry.path}' contains active findings or residual risks and cannot satisfy claimed '${passToken}'.`
                 );
             } else {
                 entry.token_found = true;

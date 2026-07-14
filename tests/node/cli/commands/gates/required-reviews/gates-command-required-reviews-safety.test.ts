@@ -43,6 +43,9 @@ import {
     initializeGitRepo,
     readTaskTimelineEvents,
     runCliWithCapturedOutput} from '../../gate-test-helpers';
+import {
+    buildNoFindingsJsonReviewReport
+} from '../review-result/gates-command-review-result-fixtures';
 
 const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
 const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
@@ -770,8 +773,8 @@ describe('gates command required reviews', () => {
 
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'REVIEW_GATE_FAILED');
-        assert.ok(result.outputLines.some((line) => line.includes("missing required section '## Findings by Severity'")));
-        assert.ok(result.outputLines.some((line) => line.includes("missing required section '## Residual Risks'")));
+        assert.ok(result.outputLines.some((line) => line.includes('Review findings validation artifact')), result.outputLines.join('\n'));
+        assert.ok(result.outputLines.some((line) => line.includes('review output must be a JSON object')), result.outputLines.join('\n'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1022,23 +1025,11 @@ describe('gates command required reviews', () => {
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
-        fs.writeFileSync(reviewOutputPath, [
-            '# Review',
-            '',
-            'Validated reviewer prompt binding, receipt provenance, and required review gate enforcement for `src/app.ts` before intentionally mutating the prompt artifact after receipt recording.',
-            '',
-            '## Validation Notes',
-            'Reviewed `src/app.ts`, reviewer prompt binding, receipt provenance, and required-review gate enforcement before mutating the prompt artifact after receipt recording.',
-            '',
-            '## Findings by Severity',
-            'none',
-            '',
-            '## Residual Risks',
-            'none',
-            '',
-            '## Verdict',
-            'REVIEW PASSED'
-        ].join('\n'), 'utf8');
+        fs.writeFileSync(
+            reviewOutputPath,
+            `${JSON.stringify(buildNoFindingsJsonReviewReport(fixture.reviewContextPath, taskId, 'code'), null, 2)}\n`,
+            'utf8'
+        );
 
         const recordResult = await runCliWithCapturedOutput([
             'gate',
@@ -1142,23 +1133,11 @@ describe('gates command required reviews', () => {
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
-        fs.writeFileSync(reviewOutputPath, [
-            '# Review',
-            '',
-            'Validated the staged review snapshot and current required-review receipt binding for `src/app.ts` before any later workspace drift occurs.',
-            '',
-            '## Validation Notes',
-            'Reviewed `src/app.ts`, the staged review snapshot, and current required-review receipt binding before later same-path working-tree drift is introduced.',
-            '',
-            '## Findings by Severity',
-            'none',
-            '',
-            '## Residual Risks',
-            'none',
-            '',
-            '## Verdict',
-            'REVIEW PASSED'
-        ].join('\n'), 'utf8');
+        fs.writeFileSync(
+            reviewOutputPath,
+            `${JSON.stringify(buildNoFindingsJsonReviewReport(reviewContextPath, taskId, 'code'), null, 2)}\n`,
+            'utf8'
+        );
 
         const recordResult = await runCliWithCapturedOutput([
             'gate',

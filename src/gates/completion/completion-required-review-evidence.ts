@@ -3,7 +3,7 @@ import * as path from 'node:path';
 
 import type { ReviewReceipt } from '../../gate-runtime/review-context';
 import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
-import { normalizePath } from '../shared/helpers';
+import { fileSha256, normalizePath } from '../shared/helpers';
 import { resolveCanonicalReviewContextPath } from '../review-context/review-context-paths';
 import {
     buildReviewContextPreflightDiffExpectations,
@@ -22,8 +22,62 @@ import {
 } from './completion-evidence';
 import {
     REVIEW_CONTRACTS,
-    getReviewArtifactFindingsEvidence
+    getReviewArtifactFindingsEvidence,
+    getReviewFindingsEvidenceFromValidationArtifact
 } from './completion-verdict';
+import { reviewContextRequiresFindingsOnlyArtifact } from '../review/review-findings-artifact-verdict';
+import {
+    validateReviewFindingsValidationArtifactForReceipt
+} from '../review/review-findings-validation-artifact';
+import {
+    computeReviewRelevantScopeFingerprint,
+    computeReviewReuseCodeScopeFingerprint,
+    isNonTestReviewScope
+} from '../review-reuse/review-reuse';
+
+function getPreflightScopeSha256(preflight: Record<string, unknown>): string | null {
+    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+        ? preflight.metrics as Record<string, unknown>
+        : null;
+    const candidate = String(metrics?.scope_sha256 || metrics?.changed_files_sha256 || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(candidate) ? candidate : null;
+}
+
+function getReceiptString(receipt: ReviewReceipt | null, key: string): string | null {
+    const value = receipt
+        ? (receipt as unknown as Record<string, unknown>)[key]
+        : null;
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getReceiptOutputContractString(receipt: ReviewReceipt | null, key: string): string | null {
+    const contract = receipt
+        ? (receipt as unknown as Record<string, unknown>).review_output_contract
+        : null;
+    const value = contract && typeof contract === 'object' && !Array.isArray(contract)
+        ? (contract as Record<string, unknown>)[key]
+        : null;
+    return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
+}
+
+function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown> | null): string | null {
+    const treeState = reviewContext?.tree_state;
+    if (!treeState || typeof treeState !== 'object' || Array.isArray(treeState)) {
+        return null;
+    }
+    const candidate = String((treeState as Record<string, unknown>).tree_state_sha256 || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(candidate) ? candidate : null;
+}
+
+function getCoverageContractSha256(reviewContext: Record<string, unknown> | null): string | null {
+    const coverageContract = reviewContext?.coverage_contract;
+    if (!coverageContract || typeof coverageContract !== 'object' || Array.isArray(coverageContract)) {
+        return null;
+    }
+    const value = (coverageContract as Record<string, unknown>).contract_sha256;
+    const candidate = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    return /^[0-9a-f]{64}$/u.test(candidate) ? candidate : null;
+}
 
 function toRequiredReviewBooleanRecord(value: Record<string, unknown>): Record<string, boolean> {
     const result: Record<string, boolean> = {};
@@ -129,7 +183,53 @@ export function collectRequiredReviewEvidence(input: {
             } else {
                 input.errors.push(`Required review receipt not found: ${normalizePath(receiptPath)}`);
             }
-            const findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
+            let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence>;
+            if (reviewContextRequiresFindingsOnlyArtifact(reviewContext)) {
+                if (!receipt) {
+                    findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(artifactPath, null);
+                } else {
+                    const repoRoot = path.resolve(input.reviewsRoot, '..', '..', '..');
+                    const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(input.preflight, repoRoot);
+                    const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(reviewKey, input.preflight, repoRoot);
+                    const validationArtifact = validateReviewFindingsValidationArtifactForReceipt({
+                        receipt: receipt as unknown as Record<string, unknown>,
+                        reviewArtifactPath: artifactPath,
+                        expectedTaskId: input.taskId,
+                        expectedReviewType: reviewKey,
+                        expectedReviewOutputSha256: getReceiptString(receipt, 'review_output_sha256'),
+                        expectedReviewArtifactSha256: fileSha256(artifactPath),
+                        expectedReviewContextPath: receipt.reused_existing_review === true ? null : reviewContextPath,
+                        expectedReviewContextSha256: receipt.reused_existing_review === true
+                            ? getReceiptString(receipt, 'reused_from_review_context_sha256')
+                            : fileSha256(reviewContextPath),
+                        expectedPreflightPath: receipt.reused_existing_review === true ? null : input.preflightPath,
+                        expectedPreflightSha256: receipt.reused_existing_review === true ? null : input.preflightSha256,
+                        expectedScopeSha256: receipt.reused_existing_review === true ? null : getPreflightScopeSha256(input.preflight),
+                        expectedReviewScopeSha256: receipt.reused_existing_review === true
+                            ? getReceiptString(receipt, 'reused_from_review_scope_sha256')
+                            : String(reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase() || null,
+                        expectedCodeScopeSha256: receipt.reused_existing_review === true
+                            ? getReceiptString(receipt, 'reused_from_code_scope_sha256')
+                            : isNonTestReviewScope(reviewKey)
+                                ? String(codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase() || null
+                                : null,
+                        expectedReviewTreeStateSha256: receipt.reused_existing_review === true
+                            ? getReceiptString(receipt, 'reused_from_review_tree_state_sha256')
+                            : getReviewContextTreeStateSha256(reviewContext),
+                        expectedCoverageContractSha256: receipt.reused_existing_review === true
+                            ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
+                            : getCoverageContractSha256(reviewContext),
+                        requireAccepted: true
+                    });
+                    input.errors.push(...validationArtifact.violations);
+                    findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(
+                        artifactPath,
+                        validationArtifact.valid ? validationArtifact.artifact : null
+                    );
+                }
+            } else {
+                findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
+            }
             reviewArtifacts[reviewKey] = {
                 path: normalizePath(artifactPath),
                 content: artifactContent,

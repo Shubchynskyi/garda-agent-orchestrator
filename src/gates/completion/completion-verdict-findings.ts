@@ -3,6 +3,7 @@ import {
     validateReviewFindingsReport,
     type ReviewFindingsReport
 } from '../review/review-findings-schema';
+import type { ReviewFindingsValidationArtifact } from '../review/review-findings-validation-artifact';
 import {
     countCanonicalReviewSectionHeadings,
     extractMarkdownSectionLines,
@@ -14,6 +15,8 @@ import {
 } from './completion-verdict-markdown';
 
 type SeverityLevel = 'critical' | 'high' | 'medium' | 'low';
+
+type ReviewArtifactFindingsEvidence = ReturnType<typeof getReviewArtifactFindingsEvidence>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -249,6 +252,144 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
         }
     }
 
+    result.status = result.violations.length > 0 ? 'FAILED' : 'PASS';
+    return result;
+}
+
+export function getReviewFindingsValidationArtifactEvidence(
+    artifactPath: string,
+    validationArtifact: ReviewFindingsValidationArtifact | null
+): ReturnType<typeof getReviewArtifactFindingsEvidence> {
+    const artifactPathNormalized = normalizePath(artifactPath);
+    const result: ReturnType<typeof getReviewArtifactFindingsEvidence> = {
+        status: 'UNKNOWN',
+        findings_section_present: true,
+        residual_risks_section_present: true,
+        deferred_findings_section_present: false,
+        findings_by_severity: { critical: [], high: [], medium: [], low: [] },
+        residual_risks: [],
+        deferred_findings: [],
+        missing_sections: [],
+        invalid_deferred_findings: [],
+        violations: []
+    };
+    if (!validationArtifact) {
+        result.status = 'FAILED';
+        result.violations.push(
+            `Review artifact '${artifactPathNormalized}' is missing accepted review findings validation evidence.`
+        );
+        return result;
+    }
+    if (!validationArtifact.validation_result.accepted) {
+        result.status = 'FAILED';
+        result.violations.push(
+            `Review artifact '${artifactPathNormalized}' has rejected review findings validation evidence: ` +
+            validationArtifact.validation_result.violations.join(' ')
+        );
+        return result;
+    }
+    const inventory = validationArtifact.validation_result.normalized_inventory;
+    result.findings_by_severity = {
+        critical: inventory.findings_by_severity.critical.map((finding) =>
+            [finding.id, finding.title, ...finding.evidence_locations].filter(Boolean).join(' ')
+        ),
+        high: inventory.findings_by_severity.high.map((finding) =>
+            [finding.id, finding.title, ...finding.evidence_locations].filter(Boolean).join(' ')
+        ),
+        medium: inventory.findings_by_severity.medium.map((finding) =>
+            [finding.id, finding.title, ...finding.evidence_locations].filter(Boolean).join(' ')
+        ),
+        low: inventory.findings_by_severity.low.map((finding) =>
+            [finding.id, finding.title, ...finding.evidence_locations].filter(Boolean).join(' ')
+        )
+    };
+    result.residual_risks = inventory.residual_risks.map((risk) =>
+        [risk.id, risk.description, ...risk.evidence_locations].filter(Boolean).join(' ')
+    );
+    for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
+        if (result.findings_by_severity[severity].length > 0) {
+            const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
+            result.violations.push(
+                `Review artifact '${artifactPathNormalized}' still contains active ${severityLabel} findings. ` +
+                "Resolve active defects. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:'; validation-boundary or command/log notes must stay out of strict follow-up sections."
+            );
+        }
+    }
+    if (result.residual_risks.length > 0) {
+        result.violations.push(
+            `Review artifact '${artifactPathNormalized}' still contains active residual risks. ` +
+            "For validation-boundary or command/log notes, set 'Residual Risks' and 'Deferred Findings' to 'None' and keep the note in prose. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:' and will require follow-up tracking."
+        );
+    }
+    result.status = result.violations.length > 0 ? 'FAILED' : 'PASS';
+    return result;
+}
+
+export function getReviewFindingsEvidenceFromValidationArtifact(
+    artifactPath: string,
+    artifact: ReviewFindingsValidationArtifact | null
+): ReviewArtifactFindingsEvidence {
+    const artifactPathNormalized = normalizePath(artifactPath);
+    const result: ReviewArtifactFindingsEvidence = {
+        status: 'UNKNOWN',
+        findings_section_present: true,
+        residual_risks_section_present: true,
+        deferred_findings_section_present: false,
+        findings_by_severity: { critical: [], high: [], medium: [], low: [] },
+        residual_risks: [],
+        deferred_findings: [],
+        missing_sections: [],
+        invalid_deferred_findings: [],
+        violations: []
+    };
+    if (!artifact) {
+        result.status = 'FAILED';
+        result.violations.push(
+            `Review artifact '${artifactPathNormalized}' is missing accepted findings validation artifact evidence.`
+        );
+        return result;
+    }
+    if (!artifact.validation_result.accepted) {
+        result.status = 'FAILED';
+        result.violations.push(
+            `Review artifact '${artifactPathNormalized}' has rejected findings validation artifact evidence: ` +
+            artifact.validation_result.violations.join(' ')
+        );
+        return result;
+    }
+    const inventory = artifact.validation_result.normalized_inventory;
+    result.findings_by_severity = {
+        critical: inventory.findings_by_severity.critical.map((finding) =>
+            [finding.id, finding.title, ...finding.evidence_locations].filter(Boolean).join(' ')
+        ),
+        high: inventory.findings_by_severity.high.map((finding) =>
+            [finding.id, finding.title, ...finding.evidence_locations].filter(Boolean).join(' ')
+        ),
+        medium: inventory.findings_by_severity.medium.map((finding) =>
+            [finding.id, finding.title, ...finding.evidence_locations].filter(Boolean).join(' ')
+        ),
+        low: inventory.findings_by_severity.low.map((finding) =>
+            [finding.id, finding.title, ...finding.evidence_locations].filter(Boolean).join(' ')
+        )
+    };
+    result.residual_risks = inventory.residual_risks.map((risk) =>
+        [risk.id, risk.description, ...risk.evidence_locations].filter(Boolean).join(' ')
+    );
+    for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
+        if (result.findings_by_severity[severity].length > 0) {
+            const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
+            result.violations.push(
+                `Review artifact '${artifactPathNormalized}' still contains active ${severityLabel} findings in accepted findings validation artifact. ` +
+                'Resolve active defects before completing the task.'
+            );
+        }
+    }
+    if (result.residual_risks.length > 0) {
+        result.violations.push(
+            `Review artifact '${artifactPathNormalized}' still contains active residual risks in accepted findings validation artifact. ` +
+            'Resolve or explicitly disposition residual risks before completing the task.'
+        );
+    }
     result.status = result.violations.length > 0 ? 'FAILED' : 'PASS';
     return result;
 }

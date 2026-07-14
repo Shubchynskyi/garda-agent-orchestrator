@@ -117,7 +117,8 @@ export {
     isMeaningfulReviewEntry,
     getMarkdownMeaningfulEntries,
     getFindingsBySeverity,
-    getReviewArtifactFindingsEvidence
+    getReviewArtifactFindingsEvidence,
+    getReviewFindingsEvidenceFromValidationArtifact
 } from './completion-verdict';
 export type { StageSequenceEvidence, ZeroDiffCompletionEvidence } from './completion-verdict';
 

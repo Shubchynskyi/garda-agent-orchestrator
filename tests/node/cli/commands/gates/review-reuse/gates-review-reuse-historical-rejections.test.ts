@@ -1290,9 +1290,9 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('does not reuse review artifacts with a malformed verdict section and stray pass token', async () => {
+    it('does not reuse findings JSON review evidence when the validation artifact is tampered', async () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-904a-no-malformed-verdict-reuse';
+        const taskId = 'T-904a-no-tampered-findings-validation-reuse';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Qwen');
         const reviewsRoot = getReviewsRoot(repoRoot);
@@ -1301,7 +1301,7 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         runEnterTaskMode({
             repoRoot,
             taskId,
-            taskSummary: 'Do not reuse malformed verdict review evidence'
+            taskSummary: 'Do not reuse tampered findings validation evidence'
         });
 
         const priorPreflightPath = writePreflight(repoRoot, taskId, {
@@ -1322,36 +1322,15 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
-        const malformedArtifact = fs.readFileSync(artifactPath, 'utf8')
-            .replace('## Verdict\nREVIEW PASSED', '## Verdict\nNeeds follow-up before reuse.\n\n## Notes\nREVIEW PASSED');
-        fs.writeFileSync(artifactPath, malformedArtifact, 'utf8');
-        const artifactHash = require('node:crypto').createHash('sha256').update(malformedArtifact).digest('hex');
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
-        receipt.review_artifact_sha256 = artifactHash;
-        fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
-        const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
-        const timeline = fs.readFileSync(timelinePath, 'utf8')
-            .split('\n')
-            .map((line) => {
-                if (!line.trim()) {
-                    return line;
-                }
-                const event = JSON.parse(line) as Record<string, unknown>;
-                const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
-                    ? event.details as Record<string, unknown>
-                    : null;
-                if (
-                    event.event_type === 'REVIEW_RECORDED'
-                    && details
-                    && String(details.review_type || '').toLowerCase() === 'code'
-                ) {
-                    details.review_artifact_sha256 = artifactHash;
-                }
-                return JSON.stringify(event);
-            })
-            .join('\n');
-        fs.writeFileSync(timelinePath, timeline.endsWith('\n') ? timeline : `${timeline}\n`, 'utf8');
+        const validationReference = receipt.review_findings_validation as Record<string, unknown>;
+        for (const validationPath of [
+            String(validationReference.artifact_path || ''),
+            String(validationReference.snapshot_path || '')
+        ].filter(Boolean)) {
+            fs.writeFileSync(path.normalize(validationPath), '{"tampered":true}\n', 'utf8');
+        }
 
         const preflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['tests/app.test.ts'],

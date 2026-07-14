@@ -8,12 +8,9 @@ import {
     extractReviewVerdictToken
 } from '../../gate-runtime/review-context';
 import {
-    jsonReviewFindingsArtifactHasActiveFindings,
-    validateJsonReviewFindingsArtifact
-} from '../review/review-findings-artifact-verdict';
-import {
-    type ReviewCoverageContract
-} from '../review/review-coverage-ledger';
+    reviewFindingsValidationArtifactHasActiveFindings,
+    validateReviewFindingsValidationArtifactForReceipt
+} from '../review/review-findings-validation-artifact';
 import {
     type TimelineEventEntry
 } from '../completion/completion-evidence';
@@ -167,31 +164,6 @@ function readReviewCycleJsonRecord(filePath: string): Record<string, unknown> | 
     }
 }
 
-function readReviewCycleContextCoverageContract(
-    repoRoot: string,
-    taskId: string,
-    reviewType: string,
-    details: Record<string, unknown> | null
-): ReviewCoverageContract | null {
-    const contextPath = resolveCanonicalReviewCycleSnapshotPath(
-        repoRoot,
-        details?.review_context_path ?? details?.reviewContextPath,
-        `${taskId}-${reviewType}-review-context.json`
-    );
-    if (!contextPath) {
-        return null;
-    }
-    const expectedContextSha256 = normalizeReviewCycleSha256(
-        details?.review_context_sha256 ?? details?.reviewContextSha256
-    );
-    if (expectedContextSha256 && fileSha256(contextPath) !== expectedContextSha256) {
-        return null;
-    }
-    const context = readReviewCycleJsonRecord(contextPath);
-    const coverageContract = context?.coverage_contract;
-    return isPlainRecord(coverageContract) ? coverageContract as unknown as ReviewCoverageContract : null;
-}
-
 function validateReviewCycleReceiptSnapshotBinding(
     repoRoot: string,
     taskId: string,
@@ -271,6 +243,98 @@ function resolveValidatedReviewCycleArtifactForVerdict(options: {
     return { resolvedPath: resolvedSnapshotPath, invalidSnapshot: false };
 }
 
+function readValidatedReviewCycleReceiptSnapshot(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    details: Record<string, unknown> | null;
+    reviewArtifactSha256: string;
+}): { receipt: Record<string, unknown> | null; invalidSnapshot: boolean } {
+    const receiptSnapshotSha256 = normalizeReviewCycleSha256(
+        options.details?.receipt_snapshot_sha256 ?? options.details?.receiptSnapshotSha256
+    );
+    const receiptSnapshotPath = options.details?.receipt_snapshot_path ?? options.details?.receiptSnapshotPath;
+    if (!receiptSnapshotSha256 && !String(receiptSnapshotPath || '').trim()) {
+        return { receipt: null, invalidSnapshot: false };
+    }
+    if (!receiptSnapshotSha256) {
+        return { receipt: null, invalidSnapshot: true };
+    }
+    const resolvedReceiptPath = resolveCanonicalReviewCycleSnapshotPath(
+        options.repoRoot,
+        receiptSnapshotPath,
+        `${options.taskId}-${options.reviewType}-receipt-${receiptSnapshotSha256}.json`
+    );
+    if (!resolvedReceiptPath || fileSha256(resolvedReceiptPath) !== receiptSnapshotSha256) {
+        return { receipt: null, invalidSnapshot: true };
+    }
+    const receipt = readReviewCycleJsonRecord(resolvedReceiptPath);
+    if (!receipt || receipt.task_id !== options.taskId || receipt.review_type !== options.reviewType) {
+        return { receipt: null, invalidSnapshot: true };
+    }
+    if (normalizeReviewCycleSha256(receipt.review_artifact_sha256) !== options.reviewArtifactSha256) {
+        return { receipt: null, invalidSnapshot: true };
+    }
+    return { receipt, invalidSnapshot: false };
+}
+
+function getReviewCycleValidationArtifactVerdict(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    details: Record<string, unknown> | null;
+    reviewArtifactSha256: string;
+}): ReviewCycleArtifactVerdictResult | null {
+    const receiptResult = readValidatedReviewCycleReceiptSnapshot(options);
+    if (receiptResult.invalidSnapshot) {
+        return { failed: null, invalidSnapshot: true };
+    }
+    if (!receiptResult.receipt || !receiptResult.receipt.review_findings_validation) {
+        return null;
+    }
+    const reusedExistingReview = receiptResult.receipt.reused_existing_review === true;
+    const validationResult = validateReviewFindingsValidationArtifactForReceipt({
+        receipt: receiptResult.receipt,
+        reviewArtifactPath: String(options.details?.review_artifact_path ?? options.details?.reviewArtifactPath ?? ''),
+        expectedTaskId: options.taskId,
+        expectedReviewType: options.reviewType,
+        expectedReviewOutputSha256: typeof receiptResult.receipt.review_output_sha256 === 'string'
+            ? receiptResult.receipt.review_output_sha256
+            : null,
+        expectedReviewArtifactSha256: options.reviewArtifactSha256,
+        expectedReviewContextPath: reusedExistingReview
+            ? null
+            : String(options.details?.review_context_path ?? options.details?.reviewContextPath ?? '').trim() || null,
+        expectedReviewContextSha256: reusedExistingReview
+            ? normalizeReviewCycleSha256(receiptResult.receipt.reused_from_review_context_sha256)
+            : normalizeReviewCycleSha256(options.details?.review_context_sha256 ?? options.details?.reviewContextSha256),
+        expectedPreflightSha256: reusedExistingReview
+            ? null
+            : normalizeReviewCycleSha256(options.details?.preflight_sha256 ?? options.details?.preflightSha256),
+        expectedScopeSha256: reusedExistingReview
+            ? null
+            : normalizeReviewCycleSha256(options.details?.scope_sha256 ?? options.details?.scopeSha256),
+        expectedReviewScopeSha256: reusedExistingReview
+            ? normalizeReviewCycleSha256(receiptResult.receipt.reused_from_review_scope_sha256)
+            : normalizeReviewCycleSha256(options.details?.review_scope_sha256 ?? options.details?.reviewScopeSha256),
+        expectedCodeScopeSha256: reusedExistingReview
+            ? normalizeReviewCycleSha256(receiptResult.receipt.reused_from_code_scope_sha256)
+            : normalizeReviewCycleSha256(options.details?.code_scope_sha256 ?? options.details?.codeScopeSha256),
+        expectedReviewTreeStateSha256: reusedExistingReview
+            ? normalizeReviewCycleSha256(receiptResult.receipt.reused_from_review_tree_state_sha256)
+            : normalizeReviewCycleSha256(options.details?.review_tree_state_sha256 ?? options.details?.reviewTreeStateSha256),
+        requireAccepted: true,
+        preferSnapshot: true
+    });
+    if (!validationResult.valid) {
+        return { failed: null, invalidSnapshot: true };
+    }
+    return {
+        failed: reviewFindingsValidationArtifactHasActiveFindings(validationResult.artifact),
+        invalidSnapshot: false
+    };
+}
+
 function readReviewCycleArtifactPrefix(resolvedArtifactPath: string): string {
     const file = fs.openSync(resolvedArtifactPath, 'r');
     try {
@@ -319,24 +383,25 @@ function getReviewCycleArtifactVerdict(
     if (cached !== undefined) {
         return cached;
     }
+    const snapshotSha256 = normalizeReviewCycleSha256(
+        details?.review_artifact_snapshot_sha256 ?? details?.reviewArtifactSnapshotSha256
+    );
+    if (snapshotSha256) {
+        const validationArtifactVerdict = getReviewCycleValidationArtifactVerdict({
+            repoRoot,
+            taskId,
+            reviewType,
+            details,
+            reviewArtifactSha256: snapshotSha256
+        });
+        if (validationArtifactVerdict) {
+            verdictCache.set(cacheKey, validationArtifactVerdict);
+            return validationArtifactVerdict;
+        }
+    }
     const content = readReviewCycleArtifactContentForVerdict(resolvedArtifactPath);
-    const jsonValidation = validateJsonReviewFindingsArtifact({
-        content,
-        expectedTaskId: taskId,
-        expectedReviewType: reviewType,
-        expectedReviewContextSha256: getTimelineReviewContextSha256(details) || undefined,
-        expectedTreeStateSha256: normalizeReviewCycleSha256(
-            details?.review_tree_state_sha256 ?? details?.reviewTreeStateSha256
-        ) || undefined,
-        coverageContract: readReviewCycleContextCoverageContract(repoRoot, taskId, reviewType, details)
-    });
-    if (jsonValidation.detected) {
-        const result = {
-            failed: jsonValidation.report
-                ? jsonReviewFindingsArtifactHasActiveFindings(jsonValidation.report)
-                : null,
-            invalidSnapshot: false
-        };
+    if (content.trimStart().startsWith('{')) {
+        const result = { failed: null, invalidSnapshot: false };
         verdictCache.set(cacheKey, result);
         return result;
     }

@@ -399,6 +399,7 @@ export async function tryReuseReviewEvidence(options: {
                 repoRoot: options.repoRoot,
                 taskId: options.taskId,
                 reviewType: options.reviewType,
+                preflightPath: options.preflightPath,
                 preflightPayload: options.preflightPayload,
                 reviewContextPath: options.reviewContextPath,
                 artifactPath,

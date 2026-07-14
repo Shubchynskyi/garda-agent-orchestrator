@@ -17,6 +17,16 @@ import {
     buildReviewCoverageContract,
     type ReviewCoverageContract
 } from '../../../../src/gates/review/review-coverage-ledger';
+import { validateReviewFindingsContract } from '../../../../src/gates/review/review-findings-artifact-verdict';
+import {
+    buildReviewFindingsValidationArtifact,
+    getReviewFindingsValidationArtifactPath,
+    getReviewFindingsValidationArtifactSnapshotPath
+} from '../../../../src/gates/review/review-findings-validation-artifact';
+import {
+    computeReviewRelevantScopeFingerprint,
+    computeReviewReuseCodeScopeFingerprint
+} from '../../../../src/gates/review-reuse/review-reuse';
 import { resolveReviewCoverageChangedFiles } from '../../../../src/gates/review-context/review-coverage-scope';
 import { initGitRepo } from '../git-fixtures';
 
@@ -139,6 +149,10 @@ function writeJson(filePath: string, payload: unknown): void {
 
 function sha256Text(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function sha256Json(value: unknown): string {
+    return sha256Text(`${JSON.stringify(value, null, 2)}\n`);
 }
 
 function fileSha256(filePath: string): string {
@@ -411,6 +425,7 @@ function writeReviewEvidence(
     options: {
         verdict?: 'pass' | 'fail';
         body?: string;
+        contextSchemaVersion?: number;
         includeLaunchArtifact?: boolean;
     } = {}
 ): void {
@@ -433,6 +448,9 @@ function writeReviewEvidence(
         changedFiles: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
     });
     const reviewContext = {
+        ...(options.contextSchemaVersion
+            ? { schema_version: options.contextSchemaVersion }
+            : {}),
         task_id: taskId,
         review_type: reviewType,
         preflight_path: preflightPath,
@@ -615,11 +633,16 @@ function writeJsonFocusedValidationReviewEvidence(
         markerField?: 'title' | 'description';
     } = {}
 ): void {
-    writeReviewEvidence(repoRoot, taskId, reviewType, { verdict: 'fail' });
+    writeReviewEvidence(repoRoot, taskId, reviewType, {
+        verdict: 'fail',
+        contextSchemaVersion: 3
+    });
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
     const receiptPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt.json`);
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
     assert.ok(coverageContract?.obligations?.length, 'fixture coverage contract must have obligations');
     const primaryObligation = coverageContract.obligations[0];
@@ -671,8 +694,83 @@ function writeJsonFocusedValidationReviewEvidence(
     };
     const artifactText = `${JSON.stringify(report, null, 2)}\n`;
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
+    const artifactSha256 = fileSha256(artifactPath);
+    const reviewContextSha256 = fileSha256(reviewContextPath);
+    const reviewTreeStateSha256 = String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || '');
+    const metrics = preflight.metrics as Record<string, unknown> | undefined;
+    const scopeSha256 = String(metrics?.scope_sha256 || metrics?.changed_files_sha256 || '').trim().toLowerCase() || null;
+    const reviewScopeSha256 = computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256;
+    const codeScopeSha256 = computeReviewReuseCodeScopeFingerprint(reviewType, preflight, repoRoot).code_scope_sha256;
+    const findingsValidation = validateReviewFindingsContract({
+        content: artifactText,
+        expectedTaskId: taskId,
+        expectedReviewType: reviewType,
+        expectedReviewContextSha256: reviewContextSha256,
+        expectedTreeStateSha256: reviewTreeStateSha256,
+        coverageContract,
+        repoRoot
+    });
+    assert.equal(findingsValidation.valid, true, findingsValidation.violations.join('\n'));
+    const validationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
+    const validationArtifact = buildReviewFindingsValidationArtifact({
+        taskId,
+        reviewType,
+        validation: findingsValidation,
+        reviewOutputSha256: artifactSha256,
+        reviewArtifactPath: artifactPath,
+        reviewArtifactSha256: artifactSha256,
+        reviewContextPath,
+        reviewContextSha256,
+        preflightPath,
+        preflightSha256: fileSha256(preflightPath),
+        scopeSha256,
+        reviewScopeSha256,
+        codeScopeSha256,
+        reviewTreeStateSha256,
+        coverageContract
+    });
+    const validationArtifactSha256 = sha256Json(validationArtifact);
+    const validationArtifactSnapshotPath = getReviewFindingsValidationArtifactSnapshotPath(
+        validationArtifactPath,
+        validationArtifactSha256
+    );
+    writeJson(validationArtifactPath, validationArtifact);
+    writeJson(validationArtifactSnapshotPath, validationArtifact);
     const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
-    receipt.review_artifact_sha256 = fileSha256(artifactPath);
+    receipt.review_artifact_sha256 = artifactSha256;
+    receipt.review_output_sha256 = artifactSha256;
+    receipt.review_coverage = findingsValidation.coverage_validation;
+    receipt.review_output_format = 'findings_json';
+    receipt.review_output_schema_version = findingsValidation.report?.schema_version ?? null;
+    receipt.review_findings_report_sha256 = findingsValidation.report ? sha256Json(findingsValidation.report) : null;
+    receipt.review_findings_report = findingsValidation.report;
+    receipt.scope_sha256 = scopeSha256;
+    receipt.review_scope_sha256 = reviewScopeSha256;
+    receipt.code_scope_sha256 = codeScopeSha256;
+    receipt.review_findings_validation = {
+        artifact_path: path.normalize(validationArtifactPath).replace(/\\/g, '/'),
+        artifact_sha256: validationArtifactSha256,
+        snapshot_path: path.normalize(validationArtifactSnapshotPath).replace(/\\/g, '/'),
+        snapshot_sha256: validationArtifactSha256,
+        status: validationArtifact.validation_result.status,
+        accepted: validationArtifact.validation_result.accepted,
+        validation_result_sha256: validationArtifact.validation_result_sha256,
+        violation_count: validationArtifact.validation_result.violations.length
+    };
+    receipt.review_output_contract = {
+        schema_version: 1,
+        format: 'findings_json',
+        report_sha256: findingsValidation.report ? sha256Json(findingsValidation.report) : null,
+        validation_artifact_sha256: validationArtifactSha256,
+        validation_result_sha256: validationArtifact.validation_result_sha256,
+        raw_output_sha256: artifactSha256,
+        review_artifact_sha256: artifactSha256,
+        review_context_sha256: reviewContextSha256,
+        review_tree_state_sha256: reviewTreeStateSha256,
+        coverage_contract_sha256: coverageContract.contract_sha256,
+        reviewer_identity: `agent:${reviewType}-reviewer`,
+        reviewer_provenance_event_sha256: (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 ?? null
+    };
     writeJson(receiptPath, receipt);
 }
 
@@ -994,7 +1092,7 @@ describe('gates/next-step', () => {
             writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
                 changedFiles: [requiredTestPath]
             });
-            seedCompilePass(repoRoot, TASK_ID, undefined, [requiredTestPath]);
+            seedCompilePass(repoRoot, TASK_ID, '2026-04-28T00:00:20.000Z', [requiredTestPath]);
             writeJsonFocusedValidationReviewEvidence(repoRoot, TASK_ID, 'code', requiredTestPath, { markerField });
 
             const commandResult = await runIntermediateCommandCommand({

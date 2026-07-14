@@ -3636,6 +3636,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             });
             const requiredFocusedTestPath = state.failureKind === 'missing-focused-validation-evidence'
                 ? readFocusedTestRequiredByReview({
+                    taskId,
+                    reviewType,
                     reviewArtifactPath: state.artifactPath
                 })
                 : null;
@@ -3651,6 +3653,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     reviewsRoot,
                     eventsRoot,
                     taskId,
+                    reviewType,
                     reviewArtifactPath: state.artifactPath,
                     reviewResultRecordedAtUtc: state.reviewResultRecordedAtUtc,
                     reviewerProvenanceTaskSequence: state.reviewerProvenance?.task_sequence ?? null,

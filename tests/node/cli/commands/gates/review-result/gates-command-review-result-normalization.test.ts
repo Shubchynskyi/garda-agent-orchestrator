@@ -87,6 +87,47 @@ function buildNoFindingsJsonReport(reviewContextPath: string, taskId: string, re
     };
 }
 
+function writeProfilesConfig(repoRoot: string, activeProfile: 'soft' | 'balanced' | 'strict' | 'custom-reviewer'): void {
+    const profileEntry = (description: string, depth: number) => ({
+        description,
+        depth,
+        review_policy: {
+            code: true,
+            db: false,
+            security: false,
+            refactor: false,
+            api: false,
+            test: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        },
+        token_economy: { enabled: depth < 3 },
+        skills: {}
+    });
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, `${JSON.stringify({
+        version: 1,
+        active_profile: activeProfile,
+        built_in_profiles: {
+            soft: profileEntry('Soft fixture profile', 1),
+            balanced: profileEntry('Balanced fixture profile', 2),
+            strict: profileEntry('Strict fixture profile', 3)
+        },
+        user_profiles: {
+            'custom-reviewer': profileEntry('Custom fixture profile', 3)
+        }
+    }, null, 2)}\n`, 'utf8');
+}
+
+function profileNeutralValidationSnapshot(validationArtifact: Record<string, unknown>): Record<string, unknown> {
+    const validationResult = validationArtifact.validation_result as Record<string, unknown>;
+    const profileNeutralResult = { ...validationResult };
+    delete profileNeutralResult.bindings;
+    return profileNeutralResult;
+}
+
 describe('gates command review result - normalization', () => {
 
     it('record-review-result preserves multiple independent findings through normalization and receipt recording', async () => {
@@ -1229,6 +1270,23 @@ describe('gates command review result - normalization', () => {
         assert.equal(receipt.review_output_contract.review_tree_state_sha256, reviewContext.tree_state.tree_state_sha256);
         assert.equal(receipt.review_output_contract.coverage_contract_sha256, reviewContext.coverage_contract.contract_sha256);
         assert.equal(receipt.review_output_contract.reviewer_identity, fixture.reviewerIdentity);
+        assert.equal(receipt.review_findings_validation.status, 'accepted');
+        assert.equal(receipt.review_findings_validation.accepted, true);
+        assert.equal(receipt.review_output_contract.validation_artifact_sha256, receipt.review_findings_validation.artifact_sha256);
+        assert.equal(
+            receipt.review_output_contract.validation_result_sha256,
+            receipt.review_findings_validation.validation_result_sha256
+        );
+        const validationArtifactPath = path.join(fixture.reviewsRoot, `${taskId}-code-findings-validation.json`);
+        assert.equal(receipt.review_findings_validation.artifact_path, validationArtifactPath.replace(/\\/g, '/'));
+        const validationArtifact = JSON.parse(fs.readFileSync(validationArtifactPath, 'utf8'));
+        assert.equal(validationArtifact.artifact_type, 'review_findings_validation');
+        assert.equal(validationArtifact.validation_result.status, 'accepted');
+        assert.equal(validationArtifact.validation_result.normalized_inventory.finding_count, 1);
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex'),
+            receipt.review_findings_validation.artifact_sha256
+        );
         assert.equal(receipt.review_findings_report.findings.high.length, 1);
         assert.equal(receipt.review_findings_report.findings.high[0].id, 'F-001');
         assert.deepEqual(receipt.review_findings_summary.finding_ids_by_severity.high, ['F-001']);
@@ -1244,6 +1302,143 @@ describe('gates command review result - normalization', () => {
             recordedDetails.review_findings_report_telemetry_policy,
             'omitted_full_payload_receipt_only'
         );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result keeps findings validation profile-independent across profile variants', async () => {
+        const profileNames = ['soft', 'balanced', 'strict', 'custom-reviewer'] as const;
+        let expectedProfileNeutralValidation: Record<string, unknown> | null = null;
+
+        for (const profileName of profileNames) {
+            const repoRoot = createTempRepo();
+            try {
+                const taskId = 'T-979-7-profile-independent-validation';
+                const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+                writeProfilesConfig(repoRoot, profileName);
+                attestReviewerInvocationForTest({
+                    repoRoot,
+                    taskId,
+                    reviewType: 'code',
+                    reviewContextPath: fixture.reviewContextPath,
+                    reviewerIdentity: fixture.reviewerIdentity
+                });
+
+                const outputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+                fs.mkdirSync(outputDir, { recursive: true });
+                const outputPath = path.join(outputDir, 'review-output.md');
+                fs.writeFileSync(
+                    outputPath,
+                    `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+                    'utf8'
+                );
+
+                const result = await runCliWithCapturedOutput([
+                    'gate', 'record-review-result',
+                    '--task-id', taskId,
+                    '--review-type', 'code',
+                    '--preflight-path', fixture.preflightPath,
+                    '--review-output-path', outputPath,
+                    '--repo-root', repoRoot,
+                    '--reviewer-execution-mode', 'delegated_subagent',
+                    '--reviewer-identity', fixture.reviewerIdentity
+                ], { cwd: repoRoot });
+
+                assert.equal(result.exitCode, 0, result.errors.join('\n'));
+                const validationArtifactPath = path.join(fixture.reviewsRoot, `${taskId}-code-findings-validation.json`);
+                const validationArtifact = JSON.parse(fs.readFileSync(validationArtifactPath, 'utf8')) as Record<string, unknown>;
+                const validationResult = validationArtifact.validation_result as Record<string, unknown>;
+                assert.equal(validationResult.status, 'accepted');
+                assert.equal(validationResult.accepted, true);
+                assert.equal(
+                    JSON.stringify(validationResult).includes(profileName),
+                    false,
+                    `profile '${profileName}' leaked into findings validation result`
+                );
+
+                const actualProfileNeutralValidation = profileNeutralValidationSnapshot(validationArtifact);
+                if (expectedProfileNeutralValidation === null) {
+                    expectedProfileNeutralValidation = actualProfileNeutralValidation;
+                } else {
+                    assert.deepEqual(actualProfileNeutralValidation, expectedProfileNeutralValidation);
+                }
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        }
+    });
+
+    it('record-review-result persists rejected findings validation artifact before failing invalid findings JSON', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-json-invalid-validation-artifact';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as {
+            coverage_contract: {
+                contract_sha256: string;
+                obligations: Array<{ id: string; kind: string; target: string }>;
+            };
+            task_scope: { changed_files: string[] };
+            tree_state: { tree_state_sha256: string };
+        };
+        const defaultFile = reviewContext.task_scope.changed_files[0];
+        const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(fixture.reviewContextPath)).digest('hex');
+        const outputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        fs.mkdirSync(outputDir, { recursive: true });
+        const outputPath = path.join(outputDir, 'review-output.md');
+        fs.writeFileSync(outputPath, `${JSON.stringify({
+            schema_version: 1,
+            task_id: taskId,
+            review_type: 'code',
+            review_context_sha256: reviewContextSha256,
+            tree_state_sha256: reviewContext.tree_state.tree_state_sha256,
+            validation_notes: [],
+            coverage_ledger: {
+                coverage_contract_sha256: reviewContext.coverage_contract.contract_sha256,
+                entries: reviewContext.coverage_contract.obligations.map((obligation) => ({
+                    obligation_id: obligation.id,
+                    evidence: [{
+                        location: `${obligation.kind === 'file' ? obligation.target : defaultFile}:1`,
+                        observation: `Verified concrete ${obligation.kind} behavior for ${obligation.target} against the assigned review contract.`
+                    }],
+                    finding_ids: []
+                }))
+            },
+            findings: { critical: [], high: [], medium: [], low: [] },
+            residual_risks: [],
+            reviewer_notes: []
+        }, null, 2)}\n`, 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(
+            result.errors.some((line) => line.includes('Verdict-free findings JSON report is invalid')),
+            result.errors.join('\n')
+        );
+        const validationArtifactPath = path.join(fixture.reviewsRoot, `${taskId}-code-findings-validation.json`);
+        assert.equal(fs.existsSync(validationArtifactPath), true);
+        const validationArtifact = JSON.parse(fs.readFileSync(validationArtifactPath, 'utf8'));
+        assert.equal(validationArtifact.validation_result.status, 'rejected');
+        assert.equal(validationArtifact.validation_result.accepted, false);
+        assert.ok(validationArtifact.validation_result.violations.some((violation: string) =>
+            violation.includes('validation_notes must contain at least one validation note')
+        ));
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 

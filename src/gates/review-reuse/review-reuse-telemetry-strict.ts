@@ -5,6 +5,11 @@ import {
     buildReviewVerdictTokenSet,
     extractReviewVerdictSectionTokenMatch
 } from '../../gate-runtime/review-context';
+import {
+    normalizeReviewFindingsValidationReceiptReference,
+    reviewFindingsValidationArtifactHasActiveFindings,
+    validateReviewFindingsValidationArtifactForReceipt
+} from '../review/review-findings-validation-artifact';
 import { fileSha256, joinOrchestratorPath, normalizePath } from '../shared/helpers';
 import {
     type ReviewReuseTelemetryMatchResult,
@@ -594,6 +599,75 @@ function validateReviewRecordedPassVerdict(
     );
     if (!artifactValidation.valid) {
         return `${label}: ${artifactValidation.message}`;
+    }
+    const outputContractCandidate = details.review_output_contract ?? details.reviewOutputContract;
+    const outputContract: Record<string, unknown> | null = isPlainRecord(outputContractCandidate)
+        ? outputContractCandidate as Record<string, unknown>
+        : null;
+    const outputFormat = String(
+        details.review_output_format
+        ?? details.reviewOutputFormat
+        ?? outputContract?.format
+        ?? ''
+    ).trim().toLowerCase();
+    const validationReference = normalizeReviewFindingsValidationReceiptReference(
+        details.review_findings_validation ?? details.reviewFindingsValidation
+    );
+    if (outputFormat === 'findings_json' || validationReference) {
+        const reusedExistingReview = details.reused_existing_review === true || details.reusedExistingReview === true;
+        const sourceReviewArtifactPath = String(
+            details.review_artifact_path
+            ?? details.reviewArtifactPath
+            ?? ''
+        ).trim();
+        if (!sourceReviewArtifactPath) {
+            return `${label}: findings JSON review artifact path is missing from REVIEW_RECORDED telemetry`;
+        }
+        const getString = (key: string, alias?: string): string | null => {
+            const value = details[key] ?? (alias ? details[alias] : undefined);
+            return typeof value === 'string' && value.trim() ? value.trim() : null;
+        };
+        const getContractString = (key: string): string | null => {
+            const value = outputContract?.[key];
+            return typeof value === 'string' && value.trim() ? value.trim() : null;
+        };
+        const validation = validateReviewFindingsValidationArtifactForReceipt({
+            receipt: details,
+            reviewArtifactPath: sourceReviewArtifactPath,
+            expectedTaskId: input.taskId,
+            expectedReviewType: input.reviewType,
+            expectedReviewOutputSha256: getString('review_output_sha256', 'reviewOutputSha256')
+                || getContractString('raw_output_sha256'),
+            expectedReviewArtifactSha256: artifactValidation.expectedSha256,
+            expectedReviewContextSha256: reusedExistingReview
+                ? getString('reused_from_review_context_sha256', 'reusedFromReviewContextSha256')
+                : getString('review_context_sha256', 'reviewContextSha256'),
+            expectedPreflightSha256: reusedExistingReview
+                ? null
+                : getString('preflight_sha256', 'preflightSha256'),
+            expectedScopeSha256: reusedExistingReview
+                ? null
+                : getString('scope_sha256', 'scopeSha256'),
+            expectedReviewScopeSha256: reusedExistingReview
+                ? getString('reused_from_review_scope_sha256', 'reusedFromReviewScopeSha256')
+                : getString('review_scope_sha256', 'reviewScopeSha256'),
+            expectedCodeScopeSha256: reusedExistingReview
+                ? getString('reused_from_code_scope_sha256', 'reusedFromCodeScopeSha256')
+                : getString('code_scope_sha256', 'codeScopeSha256'),
+            expectedReviewTreeStateSha256: reusedExistingReview
+                ? getString('reused_from_review_tree_state_sha256', 'reusedFromReviewTreeStateSha256')
+                : getString('review_tree_state_sha256', 'reviewTreeStateSha256'),
+            expectedCoverageContractSha256: getContractString('coverage_contract_sha256'),
+            requireAccepted: true,
+            preferSnapshot: true
+        });
+        if (!validation.valid) {
+            return `${label}: findings validation artifact is invalid: ${validation.violations.join(' ')}`;
+        }
+        if (reviewFindingsValidationArtifactHasActiveFindings(validation.artifact)) {
+            return `${label}: findings validation artifact contains active findings or residual risks`;
+        }
+        return null;
     }
     const artifactText = fs.readFileSync(artifactValidation.resolvedPath, 'utf8');
     const verdict = extractReviewVerdictSectionTokenMatch(

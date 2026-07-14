@@ -7,6 +7,14 @@ import {
 import {
     readReviewCycleGuardAttempts
 } from '../../../../src/gates/next-step/next-step-review-cycle-guard-attempts';
+import {
+    buildReviewFindingsValidationArtifact,
+    getReviewFindingsValidationArtifactPath,
+    getReviewFindingsValidationArtifactSnapshotPath
+} from '../../../../src/gates/review/review-findings-validation-artifact';
+import {
+    validateReviewFindingsContract
+} from '../../../../src/gates/review/review-findings-artifact-verdict';
 
 const {
     ALL_REVIEW_FLAGS,
@@ -748,24 +756,26 @@ describe('gates/next-step review cycle guard attempts', () => {
         const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-review-context.json`);
         const treeStateSha256 = sha256Text('json-review-cycle-tree-state');
         const coverageContractSha256 = sha256Text('json-review-cycle-coverage-contract');
+        const coverageContract = {
+            schema_version: 1,
+            required: true,
+            review_type: reviewType,
+            obligations: [{
+                id: 'FILE-001',
+                kind: 'file',
+                target: 'src/gates/next-step/next-step-review-cycle-guard-attempts.ts'
+            }],
+            obligation_count: 1,
+            contract_sha256: coverageContractSha256
+        };
         writeJson(contextPath, {
+            schema_version: 3,
             task_id: TASK_ID,
             review_type: reviewType,
             tree_state: {
                 tree_state_sha256: treeStateSha256
             },
-            coverage_contract: {
-                schema_version: 1,
-                required: true,
-                review_type: reviewType,
-                obligations: [{
-                    id: 'FILE-001',
-                    kind: 'file',
-                    target: 'src/gates/next-step/next-step-review-cycle-guard-attempts.ts'
-                }],
-                obligation_count: 1,
-                contract_sha256: coverageContractSha256
-            }
+            coverage_contract: coverageContract
         });
         const reviewContextSha256 = fileSha256(contextPath);
         const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}.md`);
@@ -817,6 +827,58 @@ describe('gates/next-step review cycle guard attempts', () => {
         const artifactSha256 = fileSha256(artifactPath);
         const artifactSnapshotPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-artifact-${artifactSha256}.md`);
         fs.writeFileSync(artifactSnapshotPath, artifactContent, 'utf8');
+        const findingsValidation = validateReviewFindingsContract({
+            content: artifactContent,
+            expectedTaskId: TASK_ID,
+            expectedReviewType: reviewType,
+            expectedReviewContextSha256: reviewContextSha256,
+            expectedTreeStateSha256: treeStateSha256,
+            coverageContract: coverageContract as never
+        });
+        assert.equal(findingsValidation.valid, true, findingsValidation.violations.join('\n'));
+        const validationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
+        const validationArtifact = buildReviewFindingsValidationArtifact({
+            taskId: TASK_ID,
+            reviewType,
+            validation: findingsValidation,
+            reviewOutputSha256: artifactSha256,
+            reviewArtifactPath: artifactPath,
+            reviewArtifactSha256: artifactSha256,
+            reviewContextPath: contextPath,
+            reviewContextSha256,
+            reviewTreeStateSha256: treeStateSha256,
+            coverageContract: coverageContract as never
+        });
+        writeJson(validationArtifactPath, validationArtifact);
+        const validationArtifactSha256 = fileSha256(validationArtifactPath);
+        const validationArtifactSnapshotPath = getReviewFindingsValidationArtifactSnapshotPath(
+            validationArtifactPath,
+            validationArtifactSha256
+        );
+        writeJson(validationArtifactSnapshotPath, validationArtifact);
+        const receiptPath = artifactPath.replace(/\.md$/u, '-receipt.json');
+        const receipt = {
+            task_id: TASK_ID,
+            review_type: reviewType,
+            review_output_sha256: artifactSha256,
+            review_artifact_sha256: artifactSha256,
+            review_context_sha256: reviewContextSha256,
+            review_tree_state_sha256: treeStateSha256,
+            review_findings_validation: {
+                artifact_path: validationArtifactPath.replace(/\\/g, '/'),
+                artifact_sha256: validationArtifactSha256,
+                snapshot_path: validationArtifactSnapshotPath.replace(/\\/g, '/'),
+                snapshot_sha256: validationArtifactSha256,
+                status: validationArtifact.validation_result.status,
+                accepted: validationArtifact.validation_result.accepted,
+                validation_result_sha256: validationArtifact.validation_result_sha256,
+                violation_count: validationArtifact.validation_result.violations.length
+            }
+        };
+        writeJson(receiptPath, receipt);
+        const receiptSha256 = fileSha256(receiptPath);
+        const receiptSnapshotPath = artifactPath.replace(/\.md$/u, `-receipt-${receiptSha256}.json`);
+        writeJson(receiptSnapshotPath, receipt);
         for (let index = 0; index < 2; index += 1) {
             appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: reviewType,
@@ -828,6 +890,10 @@ describe('gates/next-step review cycle guard attempts', () => {
                 review_artifact_snapshot_path: artifactSnapshotPath,
                 review_artifact_snapshot_sha256: artifactSha256,
                 review_context_path: contextPath,
+                receipt_path: receiptPath,
+                receipt_sha256: receiptSha256,
+                receipt_snapshot_path: receiptSnapshotPath,
+                receipt_snapshot_sha256: receiptSha256,
                 summary: `verdict-free JSON code finding ${index}`
             });
         }

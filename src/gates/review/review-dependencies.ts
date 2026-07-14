@@ -13,7 +13,10 @@ import * as gateHelpers from '../shared/helpers';
 import { reviewContextLaneScopeMatchesCurrentPreflight } from '../scope/domain-scope-fingerprints';
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from '../required-reviews/required-reviews-check';
 import { resolveCanonicalReviewContextPath } from '../review-context/review-context-paths';
-import { resolveReviewFindingsArtifactVerdictToken } from './review-findings-artifact-verdict';
+import {
+    reviewContextRequiresFindingsOnlyArtifact,
+    resolveReviewFindingsArtifactVerdictToken
+} from './review-findings-artifact-verdict';
 import type { ReviewCoverageContract } from './review-coverage-ledger';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
 
@@ -306,30 +309,33 @@ export function assessUpstreamReviewDependencyStatus(options: {
     const passToken = REVIEW_CONTRACTS.find(([candidate]) => candidate === options.upstreamReviewType)?.[1] || null;
     const failToken = resolveReviewFailToken(options.upstreamReviewType);
     const reviewContextSha256 = String(gateHelpers.fileSha256(reviewContextPath) || '').trim().toLowerCase() || null;
-    const reviewVerdict = resolveReviewFindingsArtifactVerdictToken({
-        content: artifactContent,
-        passToken,
-        failToken,
-        reviewType: options.upstreamReviewType,
-        expectedTaskId: options.taskId,
-        expectedReviewContextSha256: reviewContextSha256,
-        expectedTreeStateSha256: getReviewTreeStateSha256(reviewContext),
-        coverageContract: reviewContext.coverage_contract as ReviewCoverageContract | null | undefined
-    });
-    if (failToken && reviewVerdict === failToken) {
-        return blockedDependencyStatus(
-            options.upstreamReviewType,
-            'missing_upstream_pass',
-            `upstream review failed with '${failToken}'; fix implementation and rerun compile plus ` +
-            `'${options.upstreamReviewType}' review before launching dependent reviews`
-        );
-    }
-    if (!passToken || reviewVerdict !== passToken) {
-        return blockedDependencyStatus(
-            options.upstreamReviewType,
-            'missing_upstream_pass',
-            `review artifact verdict is '${reviewVerdict || 'missing'}' instead of '${passToken || 'unknown'}'`
-        );
+    const requiresFindingsOnlyArtifact = reviewContextRequiresFindingsOnlyArtifact(reviewContext);
+    if (!requiresFindingsOnlyArtifact) {
+        const reviewVerdict = resolveReviewFindingsArtifactVerdictToken({
+            content: artifactContent,
+            passToken,
+            failToken,
+            reviewType: options.upstreamReviewType,
+            expectedTaskId: options.taskId,
+            expectedReviewContextSha256: reviewContextSha256,
+            expectedTreeStateSha256: getReviewTreeStateSha256(reviewContext),
+            coverageContract: reviewContext.coverage_contract as ReviewCoverageContract | null | undefined
+        });
+        if (failToken && reviewVerdict === failToken) {
+            return blockedDependencyStatus(
+                options.upstreamReviewType,
+                'missing_upstream_pass',
+                `upstream review failed with '${failToken}'; fix implementation and rerun compile plus ` +
+                `'${options.upstreamReviewType}' review before launching dependent reviews`
+            );
+        }
+        if (!passToken || reviewVerdict !== passToken) {
+            return blockedDependencyStatus(
+                options.upstreamReviewType,
+                'missing_upstream_pass',
+                `review artifact verdict is '${reviewVerdict || 'missing'}' instead of '${passToken || 'unknown'}'`
+            );
+        }
     }
     const domainScopeCurrent = reviewContextLaneScopeMatchesCurrentPreflight(
         options.upstreamReviewType,

@@ -7,6 +7,11 @@ import {
     readTaskOwnedFocusedIntermediateEvidence
 } from '../review/focused-intermediate-evidence';
 import { findReviewFocusedFindingTestPaths } from './next-step-review-artifact-failure-detection';
+import {
+    findReviewFindingsValidationMissingFocusedValidationTestPaths,
+    getReviewFindingsValidationArtifactPath,
+    validateReviewFindingsValidationArtifact
+} from '../review/review-findings-validation-artifact';
 
 export { isPassedIntermediateCommandEvent };
 
@@ -16,8 +21,25 @@ export interface FocusedIntermediateReviewEvidence {
 }
 
 export function readFocusedTestRequiredByReview(options: {
+    taskId: string;
+    reviewType: string;
     reviewArtifactPath: string;
 }): string | null {
+    const validationArtifactPath = getReviewFindingsValidationArtifactPath(options.reviewArtifactPath);
+    if (fs.existsSync(validationArtifactPath)) {
+        const validationArtifact = validateReviewFindingsValidationArtifact({
+            artifactPath: validationArtifactPath,
+            expectedTaskId: options.taskId,
+            expectedReviewType: options.reviewType,
+            requireAccepted: true
+        });
+        if (validationArtifact.valid) {
+            const findingTestPaths = findReviewFindingsValidationMissingFocusedValidationTestPaths(validationArtifact.artifact)
+                .map((filePath) => normalizePath(filePath))
+                .filter((filePath) => filePath && isFocusedReviewTestPath(filePath));
+            return findingTestPaths.length === 1 ? findingTestPaths[0] : null;
+        }
+    }
     if (!fs.existsSync(options.reviewArtifactPath)) {
         return null;
     }
@@ -42,6 +64,7 @@ export function readPostReviewFocusedIntermediateEvidence(options: {
     reviewsRoot: string;
     eventsRoot: string;
     taskId: string;
+    reviewType: string;
     reviewArtifactPath: string;
     reviewResultRecordedAtUtc: string | null;
     reviewerProvenanceTaskSequence: number | null;
@@ -52,6 +75,8 @@ export function readPostReviewFocusedIntermediateEvidence(options: {
 }): FocusedIntermediateReviewEvidence {
     const reviewResultTimestamp = parseUtcTimestamp(options.reviewResultRecordedAtUtc);
     const requiredFocusedTest = readFocusedTestRequiredByReview({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
         reviewArtifactPath: options.reviewArtifactPath
     });
     if (

@@ -281,6 +281,10 @@ function isFailedReviewOutcomeViolation(state: ReviewArtifactState, violation: s
         || Boolean(
             state.failed
             && violation.includes('review artifact contains active findings in findings JSON')
+        )
+        || Boolean(
+            state.failed
+            && violation.includes('review findings validation artifact contains active findings')
         );
 }
 

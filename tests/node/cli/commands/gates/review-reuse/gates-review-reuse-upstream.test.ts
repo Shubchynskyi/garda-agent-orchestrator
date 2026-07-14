@@ -35,12 +35,6 @@ import {
     runGit,
     getReviewTreeStateSha256FromFixtureContext
 } from './gates-review-reuse-fixtures';
-import {
-    materializeReusedReviewEvidence,
-    type MaterializeReusedReviewEvidenceOptions
-} from '../../../../../../src/gates/review-reuse/review-reuse-materialization';
-import { buildReviewCoverageContract } from '../../../../../../src/gates/review/review-coverage-ledger';
-
 function sha256File(filePath: string): string {
     const crypto = require('node:crypto');
     return crypto.createHash('sha256').update(fs.readFileSync(filePath, 'utf8')).digest('hex');
@@ -109,53 +103,101 @@ function writeFullSuitePassEvidence(
 }
 
 describe('cli/commands/gates - review reuse upstream reuse', () => {
-    it('rejects a schema-v3 reused artifact with an incomplete coverage ledger before materialization', async () => {
+    it('rejects schema-v3 reuse when the source findings validation artifact is tampered before materialization', async () => {
         const repoRoot = createTempRepo();
-        const reviewContextPath = path.join(getReviewsRoot(repoRoot), 'T-976-code-review-context.json');
-        fs.mkdirSync(path.dirname(reviewContextPath), { recursive: true });
-        fs.writeFileSync(reviewContextPath, JSON.stringify({
-            schema_version: 3,
-            coverage_contract: buildReviewCoverageContract({
-                reviewType: 'code',
-                changedFiles: ['src/app.ts']
-            })
-        }), 'utf8');
-
-        const result = await materializeReusedReviewEvidence({
+        const taskId = 'T-976-validation-reject';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 1;\n', 'utf8');
+        runEnterTaskMode({
             repoRoot,
-            reviewType: 'code',
-            preflightPayload: { changed_files: ['src/app.ts'] },
-            reviewContextPath,
-            artifactText: '# Review\n\n## Verdict\nREVIEW PASSED'
-        } as unknown as MaterializeReusedReviewEvidenceOptions);
+            taskId,
+            taskSummary: 'Reject tampered findings validation reuse evidence'
+        });
 
-        assert.equal(result.materialized, false);
-        assert.match(result.reason || '', /missing required section '## Coverage Ledger'/);
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'explicit_changed_files',
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 1 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+        const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        const validationReference = receipt.review_findings_validation as Record<string, unknown>;
+        const validationArtifactPath = String(validationReference.artifact_path || '').trim();
+        const validationSnapshotPath = String(validationReference.snapshot_path || '').trim();
+        assert.ok(validationArtifactPath);
+        assert.ok(validationSnapshotPath);
+        fs.writeFileSync(validationArtifactPath, `${JSON.stringify({ tampered: true }, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(validationSnapshotPath, `${JSON.stringify({ tampered: true }, null, 2)}\n`, 'utf8');
 
-        fs.writeFileSync(reviewContextPath, JSON.stringify({
-            schema_version: 3,
-            coverage_contract: buildReviewCoverageContract({ reviewType: 'code', changedFiles: [] })
-        }), 'utf8');
-        const forgedScopeResult = await materializeReusedReviewEvidence({
-            repoRoot,
-            reviewType: 'code',
-            preflightPayload: { changed_files: ['src/app.ts'] },
-            reviewContextPath,
-            artifactText: '# Review\n\n## Coverage Ledger\nNone\n\n## Findings by Severity\nNone\n\n## Verdict\nREVIEW PASSED'
-        } as unknown as MaterializeReusedReviewEvidenceOptions);
-        assert.equal(forgedScopeResult.materialized, false);
-        assert.match(forgedScopeResult.reason || '', /does not match the deterministic current-scope contract/);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'explicit_changed_files',
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 1 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
 
-        fs.writeFileSync(reviewContextPath, JSON.stringify({ schema_version: 2 }), 'utf8');
-        const downgradedResult = await materializeReusedReviewEvidence({
-            repoRoot,
-            reviewType: 'code',
-            preflightPayload: { changed_files: ['src/app.ts'] },
-            reviewContextPath,
-            artifactText: '# Review\n\n## Verdict\nREVIEW PASSED'
-        } as unknown as MaterializeReusedReviewEvidenceOptions);
-        assert.equal(downgradedResult.materialized, false);
-        assert.match(downgradedResult.reason || '', /legacy contexts cannot be rematerialized/);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', reviewContextPath,
+                '--repo-root', repoRoot
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        const latestReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        assert.notEqual(latestReceipt.reused_existing_review, true);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latestCompileSequence = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        const currentCycleRecordedEvents = events.filter((event, index) => (
+            index > latestCompileSequence
+            && event.event_type === 'REVIEW_RECORDED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+        ));
+        assert.equal(currentCycleRecordedEvents.length, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
     it('reuses current-cycle code review evidence and unblocks downstream test review when runtime code scope is unchanged', async () => {
@@ -267,20 +309,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
                 '--preflight-path', preflightPath,
                 '--repo-root', repoRoot
             ]);
-            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'test', 'TEST REVIEW PASSED', [
-                '# Test Review',
-                '',
-                'Validated `tests/app.test.ts` and the rerun-only scope for the fresh review cycle. This review artifact is intentionally detailed enough to satisfy the anti-triviality check while reporting no concrete failures for the updated test surface.',
-                '',
-                '## Findings by Severity',
-                'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'TEST REVIEW PASSED'
-            ]);
+            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'test', 'TEST REVIEW PASSED');
         } finally {
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
@@ -377,16 +406,10 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
             }
         }, `${taskId}-prior-preflight.json`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
-        const receiptReboundContextSha256 = 'f'.repeat(64);
-        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer', {
-            receiptReviewContextSha256Override: receiptReboundContextSha256
-        });
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
         const priorReceipt = JSON.parse(
             fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
         ) as Record<string, unknown>;
-        const priorProvenance = priorReceipt.reviewer_provenance as Record<string, unknown>;
-        assert.equal(priorReceipt.review_context_sha256, receiptReboundContextSha256);
-        assert.notEqual(priorProvenance.review_context_sha256, priorReceipt.review_context_sha256);
 
         const preflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['tests/app.test.ts'],

@@ -26,6 +26,10 @@ import {
     isNonTestReviewScope
 } from '../../../../gates/review-reuse/review-reuse';
 import {
+    reviewFindingsValidationArtifactHasActiveFindings,
+    validateReviewFindingsValidationArtifactForReceipt
+} from '../../../../gates/review/review-findings-validation-artifact';
+import {
     validateStrictReusedReviewEvidence
 } from '../../../../gates/review-reuse/review-reuse-telemetry';
 import {
@@ -125,6 +129,31 @@ function artifactHasPassVerdict(reviewType: string, artifactText: string): boole
         buildReviewVerdictTokenSet(reviewType, getReviewPassVerdict(reviewType))
     );
     return tokenMatch?.outcome === 'pass';
+}
+
+function getReceiptRecordString(receipt: ReviewReceipt, key: string): string | null {
+    const value = (receipt as unknown as Record<string, unknown>)[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getReceiptOutputContractString(receipt: ReviewReceipt, key: string): string | null {
+    const contract = (receipt as unknown as Record<string, unknown>).review_output_contract;
+    if (!contract || typeof contract !== 'object' || Array.isArray(contract)) {
+        return null;
+    }
+    const value = (contract as Record<string, unknown>)[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function receiptRequiresFindingsValidation(receipt: ReviewReceipt, reviewContext: Record<string, unknown>): boolean {
+    const format = String(
+        getReceiptRecordString(receipt, 'review_output_format')
+        || getReceiptOutputContractString(receipt, 'format')
+        || ''
+    ).trim().toLowerCase();
+    return Number(reviewContext.schema_version) >= 3
+        || format === 'findings_json'
+        || Boolean((receipt as unknown as Record<string, unknown>).review_findings_validation);
 }
 
 function findLatestCurrentCycleReviewRecordedEvent(options: {
@@ -324,10 +353,6 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
     }
     const artifactText = fs.readFileSync(artifactPath, 'utf8');
     const artifactSha256 = normalizeOptionalSha256(gateHelpers.fileSha256(artifactPath));
-    if (!artifactHasPassVerdict(options.reviewType, artifactText)) {
-        return reject('review artifact does not contain an accepted PASS verdict token');
-    }
-
     const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(options.preflightPayload, options.repoRoot);
     if (reviewScopeFingerprint.missing_review_relevant_files.length > 0) {
         return reject(`missing review-relevant scope file(s): ${reviewScopeFingerprint.missing_review_relevant_files.join(', ')}`);
@@ -342,6 +367,47 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
     const expectedCodeScopeSha256 = isNonTestReviewScope(options.reviewType)
         ? normalizeOptionalSha256(codeScopeFingerprint.code_scope_sha256)
         : null;
+    if (receiptRequiresFindingsValidation(receipt, reviewContext)) {
+        const findingsValidation = validateReviewFindingsValidationArtifactForReceipt({
+            receipt: receipt as unknown as Record<string, unknown>,
+            reviewArtifactPath: artifactPath,
+            expectedTaskId: options.taskId,
+            expectedReviewType: options.reviewType,
+            expectedReviewOutputSha256: getReceiptRecordString(receipt, 'review_output_sha256')
+                || getReceiptOutputContractString(receipt, 'raw_output_sha256'),
+            expectedReviewArtifactSha256: artifactSha256,
+            expectedReviewContextPath: receipt.reused_existing_review === true ? null : options.reviewContextPath,
+            expectedReviewContextSha256: receipt.reused_existing_review === true
+                ? normalizeOptionalSha256(receipt.reused_from_review_context_sha256)
+                : reviewContextSha256,
+            expectedPreflightPath: receipt.reused_existing_review === true ? null : options.preflightPath,
+            expectedPreflightSha256: receipt.reused_existing_review === true ? null : currentPreflightHash,
+            expectedScopeSha256: receipt.reused_existing_review === true ? null : expectedScopeSha256,
+            expectedReviewScopeSha256: receipt.reused_existing_review === true
+                ? normalizeOptionalSha256(receipt.reused_from_review_scope_sha256)
+                : expectedReviewScopeSha256,
+            expectedCodeScopeSha256: receipt.reused_existing_review === true
+                ? normalizeOptionalSha256(receipt.reused_from_code_scope_sha256)
+                : expectedCodeScopeSha256,
+            expectedReviewTreeStateSha256: receipt.reused_existing_review === true
+                ? normalizeOptionalSha256(receipt.reused_from_review_tree_state_sha256)
+                : reviewTreeStateSha256,
+            expectedCoverageContractSha256: getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
+                || (isRecord(reviewContext.coverage_contract)
+                    ? normalizeOptionalSha256((reviewContext.coverage_contract as Record<string, unknown>).contract_sha256)
+                    : null),
+            requireAccepted: true,
+            preferSnapshot: receipt.reused_existing_review === true
+        });
+        if (!findingsValidation.valid) {
+            return reject(`review findings validation artifact is invalid for current PASS reuse: ${findingsValidation.violations.join(' ')}`);
+        }
+        if (reviewFindingsValidationArtifactHasActiveFindings(findingsValidation.artifact)) {
+            return reject('review findings validation artifact contains active findings or residual risks');
+        }
+    } else if (!artifactHasPassVerdict(options.reviewType, artifactText)) {
+        return reject('review artifact does not contain an accepted PASS verdict token');
+    }
     if (
         String(receipt.task_id || '').trim() !== options.taskId
         || normalizeLowerText(receipt.review_type) !== normalizeLowerText(options.reviewType)
