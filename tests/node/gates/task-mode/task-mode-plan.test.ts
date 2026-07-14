@@ -15,6 +15,10 @@ import {
 import {runEnterTaskModeCommand} from '../../../../src/cli/commands/gates';
 import {serializeTaskPlan, validateTaskPlan} from '../../../../src/schemas/task-plan';
 import {formatCompletionGateResult} from '../../../../src/gates/completion';
+import {
+    computeTaskProfilePolicySnapshotHash,
+    type TaskProfilePolicySnapshot
+} from '../../../../src/policy/task-profile-policy-snapshot';
 
 
 const ownedScratchRoots = new Set<string>();
@@ -1361,7 +1365,7 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
                 fast: {
                     description: 'Fast',
                     depth: 1,
-                    review_policy: { code: true, test: false },
+                    review_policy: { code: true, test: false, custom_profile_only: 'auto' },
                     token_economy: {
                         enabled: true,
                         strip_examples: true,
@@ -1402,7 +1406,9 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(artifact.profile_policy_snapshot_required, true);
         assert.equal(artifact.profile_policy_snapshot.source.effective_profile, 'fast');
         assert.equal(artifact.profile_policy_snapshot.source.runtime_active_profile, 'balanced');
+        assert.equal(artifact.profile_policy_snapshot.review_lane_selection.profile_review_policy.custom_profile_only, 'auto');
         assert.equal(artifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.test, false);
+        assert.equal(artifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.custom_profile_only, false);
         assert.match(artifact.profile_policy_snapshot.snapshot_hash, /^[a-f0-9]{64}$/);
 
         const evidence = getTaskModeEvidence(tmpDir, 'T-100');
@@ -1434,7 +1440,9 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(rerunArtifact.profile_policy_snapshot.lock_timestamp_utc, firstSnapshotLockTimestamp);
         assert.equal(rerunArtifact.profile_policy_snapshot.source.effective_profile, 'fast');
         assert.equal(rerunArtifact.profile_policy_snapshot.source.runtime_active_profile, 'balanced');
+        assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.profile_review_policy.custom_profile_only, 'auto');
         assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.test, false);
+        assert.equal(rerunArtifact.profile_policy_snapshot.review_lane_selection.effective_review_policy.custom_profile_only, false);
 
         const rerunEvidence = getTaskModeEvidence(tmpDir, 'T-100');
         assert.equal(rerunEvidence.evidence_status, 'PASS');
@@ -1672,6 +1680,142 @@ test('runEnterTaskModeCommand fails closed when existing profile policy snapshot
                 taskId: 'T-100',
                 entryMode: 'EXPLICIT_TASK_EXECUTION',
                 taskSummary: 'Profile snapshot stale test restart',
+                emitMetrics: false
+            }),
+            /profile policy snapshot is not reusable/i
+        );
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('runEnterTaskModeCommand fails closed when profile policy snapshot review policy semantics are forged with a recomputed hash', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+        const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+        const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-100 | TODO | P1 | orchestration | Profile snapshot forged policy test | gpt-5.5 | 2026-07-14 | fast | fixture |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                },
+                fast: {
+                    description: 'Fast',
+                    depth: 1,
+                    review_policy: { code: true, test: false },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        }), 'utf8');
+
+        const first = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            taskSummary: 'Profile snapshot forged policy test',
+            emitMetrics: false
+        });
+        assert.equal(first.exitCode, 0);
+
+        const artifactPath = path.join(reviewsDir, 'T-100-task-mode.json');
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        const snapshot = artifact.profile_policy_snapshot as unknown as {
+            snapshot_hash: string;
+            review_lane_selection: {
+                profile_review_policy: Record<string, unknown>;
+                review_capabilities: Record<string, unknown>;
+                effective_review_policy: Record<string, unknown>;
+                safety_floors_applied: unknown[];
+            };
+            review_execution_policy: Record<string, unknown>;
+        };
+        snapshot.review_lane_selection.review_capabilities.custom_lane = true;
+        snapshot.review_lane_selection.profile_review_policy.custom_lane = 'auto';
+        snapshot.review_lane_selection.effective_review_policy.custom_lane = true;
+        assert.equal(snapshot.review_lane_selection.profile_review_policy.custom_lane, 'auto');
+        delete snapshot.review_lane_selection.profile_review_policy.code;
+        delete snapshot.review_lane_selection.profile_review_policy.custom_lane;
+        snapshot.review_lane_selection.effective_review_policy.code = 'auto';
+        snapshot.review_lane_selection.effective_review_policy.custom_lane = 'auto';
+        snapshot.review_lane_selection.safety_floors_applied = ['forged floor evidence'];
+        snapshot.review_execution_policy.mode = 'not_a_real_mode';
+        snapshot.review_execution_policy.visible_summary_line = 'Review execution policy: not_a_real_mode';
+        snapshot.snapshot_hash = computeTaskProfilePolicySnapshotHash(snapshot as unknown as TaskProfilePolicySnapshot);
+        artifact.profile_policy_snapshot = snapshot;
+        fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+        const forgedEvidence = getTaskModeEvidence(tmpDir, 'T-100');
+        assert.equal(forgedEvidence.evidence_status, 'EVIDENCE_PROFILE_POLICY_SNAPSHOT_INVALID');
+        assert.equal(forgedEvidence.profile_policy_snapshot_status, 'INVALID');
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_lane_selection.effective_review_policy.code')
+            ))
+        );
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_lane_selection.effective_review_policy.custom_lane')
+            ))
+        );
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_lane_selection.profile_review_policy.code')
+            ))
+        );
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_lane_selection.profile_review_policy.custom_lane')
+            ))
+        );
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_lane_selection.safety_floors_applied')
+            ))
+        );
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_execution_policy.mode')
+            ))
+        );
+        assert.throws(
+            () => runEnterTaskModeWithDefaultRouting({
+                repoRoot: tmpDir,
+                taskId: 'T-100',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                taskSummary: 'Profile snapshot forged policy test restart',
                 emitMetrics: false
             }),
             /profile policy snapshot is not reusable/i

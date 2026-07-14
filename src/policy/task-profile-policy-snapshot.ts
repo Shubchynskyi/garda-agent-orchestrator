@@ -3,14 +3,18 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+    LEGACY_REVIEW_EXECUTION_POLICY_MODE,
+    REVIEW_EXECUTION_POLICY_MODES,
     buildReviewExecutionPolicySummaryLine,
     type EffectiveReviewExecutionPolicyMode
 } from '../core/review-execution-policy';
+import { REVIEW_CAPABILITY_KEYS } from '../core/review-capabilities';
 import {
     applyProfileGuardrails,
     getProfileEntry,
     loadProfilesData,
     loadReviewCapabilities,
+    mergeReviewPolicy,
     resolveConfigPaths,
     type EffectivePolicy,
     type EffectiveReviewPolicy,
@@ -153,6 +157,19 @@ const REMEDIATION_POLICY_KEYS = [
     'remediation_restarts_retain_profile_snapshot'
 ] as const;
 
+const REVIEW_LANE_SELECTION_KEYS = [
+    'profile_review_policy',
+    'review_capabilities',
+    'effective_review_policy',
+    'safety_floors_applied'
+] as const;
+
+const REVIEW_EXECUTION_POLICY_KEYS = [
+    'mode',
+    'configured',
+    'visible_summary_line'
+] as const;
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -232,6 +249,234 @@ function validateLiteral(
     if (value !== expected) {
         violations.push(`Task profile policy snapshot ${pathLabel} must be ${JSON.stringify(expected)}.`);
     }
+}
+
+function isReviewPolicyValue(value: unknown): value is boolean | 'auto' {
+    return typeof value === 'boolean' || value === 'auto';
+}
+
+function normalizeEffectiveReviewPolicyForSnapshot(policy: EffectiveReviewPolicy): EffectiveReviewPolicy {
+    const normalized: EffectiveReviewPolicy = { ...policy };
+    for (const [key, value] of Object.entries(normalized)) {
+        if (value === 'auto') {
+            normalized[key] = false;
+        }
+    }
+    return normalized;
+}
+
+function collectExpectedReviewCapabilityKeys(reviewCapabilities: Record<string, unknown>): string[] {
+    return [...new Set([
+        ...REVIEW_CAPABILITY_KEYS,
+        ...Object.keys(reviewCapabilities)
+    ])];
+}
+
+function validateProfileReviewPolicySnapshot(
+    value: unknown,
+    expectedReviewCapabilityKeys: readonly string[],
+    violations: string[]
+): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot review_lane_selection.profile_review_policy must be a JSON object.');
+        return;
+    }
+    for (const key of expectedReviewCapabilityKeys) {
+        if (!isReviewPolicyValue(value[key])) {
+            violations.push(
+                `Task profile policy snapshot review_lane_selection.profile_review_policy.${key} must be boolean or "auto".`
+            );
+        }
+    }
+    for (const [key, policyValue] of Object.entries(value)) {
+        if ((REVIEW_CAPABILITY_KEYS as readonly string[]).includes(key)) {
+            continue;
+        }
+        if (!isReviewPolicyValue(policyValue)) {
+            violations.push(
+                `Task profile policy snapshot review_lane_selection.profile_review_policy.${key} must be boolean or "auto".`
+            );
+        }
+    }
+}
+
+function validateReviewCapabilitiesSnapshot(value: unknown, violations: string[]): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot review_lane_selection.review_capabilities must be a JSON object.');
+        return;
+    }
+    for (const key of REVIEW_CAPABILITY_KEYS) {
+        if (typeof value[key] !== 'boolean') {
+            violations.push(
+                `Task profile policy snapshot review_lane_selection.review_capabilities.${key} must be boolean.`
+            );
+        }
+    }
+    for (const [key, capabilityValue] of Object.entries(value)) {
+        if ((REVIEW_CAPABILITY_KEYS as readonly string[]).includes(key)) {
+            continue;
+        }
+        if (typeof capabilityValue !== 'boolean') {
+            violations.push(
+                `Task profile policy snapshot review_lane_selection.review_capabilities.${key} must be boolean.`
+            );
+        }
+    }
+}
+
+function validateEffectiveReviewPolicySnapshot(
+    value: unknown,
+    expectedReviewCapabilityKeys: readonly string[],
+    violations: string[]
+): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot review_lane_selection.effective_review_policy must be a JSON object.');
+        return;
+    }
+    for (const key of expectedReviewCapabilityKeys) {
+        if (typeof value[key] !== 'boolean') {
+            violations.push(
+                `Task profile policy snapshot review_lane_selection.effective_review_policy.${key} must be boolean.`
+            );
+        }
+    }
+    for (const [key, policyValue] of Object.entries(value)) {
+        if ((REVIEW_CAPABILITY_KEYS as readonly string[]).includes(key)) {
+            continue;
+        }
+        if (typeof policyValue !== 'boolean') {
+            violations.push(
+                `Task profile policy snapshot review_lane_selection.effective_review_policy.${key} must be boolean.`
+            );
+        }
+    }
+}
+
+function validateReviewLaneSelectionConsistency(
+    profileReviewPolicy: Record<string, unknown>,
+    reviewCapabilities: Record<string, unknown>,
+    effectiveReviewPolicy: Record<string, unknown>,
+    safetyFloorsApplied: unknown,
+    violations: string[]
+): void {
+    const recomputed = mergeReviewPolicy(
+        profileReviewPolicy as unknown as ProfileReviewPolicy,
+        reviewCapabilities as unknown as ReviewCapabilities,
+        true
+    );
+    const expectedEffectiveReviewPolicy = normalizeEffectiveReviewPolicyForSnapshot(recomputed.merged);
+    const reviewKeys = new Set([
+        ...Object.keys(expectedEffectiveReviewPolicy),
+        ...Object.keys(effectiveReviewPolicy)
+    ]);
+    for (const key of reviewKeys) {
+        if (effectiveReviewPolicy[key] !== expectedEffectiveReviewPolicy[key]) {
+            violations.push(
+                `Task profile policy snapshot review_lane_selection.effective_review_policy.${key} must match recomputed profile policy.`
+            );
+        }
+    }
+    if (Array.isArray(safetyFloorsApplied)) {
+        const actualFloors = safetyFloorsApplied.filter((entry): entry is string => typeof entry === 'string');
+        if (actualFloors.length === safetyFloorsApplied.length) {
+            const expectedJson = JSON.stringify([...recomputed.floorsApplied].sort());
+            const actualJson = JSON.stringify([...actualFloors].sort());
+            if (actualJson !== expectedJson) {
+                violations.push(
+                    'Task profile policy snapshot review_lane_selection.safety_floors_applied must match recomputed profile policy.'
+                );
+            }
+        }
+    }
+}
+
+function validateStringArray(value: unknown, pathLabel: string, violations: string[]): void {
+    if (!Array.isArray(value)) {
+        violations.push(`Task profile policy snapshot ${pathLabel} must be an array.`);
+        return;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+        if (typeof value[index] !== 'string') {
+            violations.push(`Task profile policy snapshot ${pathLabel}[${index}] must be a string.`);
+        }
+    }
+}
+
+function validateReviewLaneSelectionSnapshot(value: unknown, violations: string[]): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot review_lane_selection must be a JSON object.');
+        return;
+    }
+    validateExactKeys(value, REVIEW_LANE_SELECTION_KEYS, 'review_lane_selection', violations);
+    validateReviewCapabilitiesSnapshot(value.review_capabilities, violations);
+    const expectedReviewCapabilityKeys = isPlainRecord(value.review_capabilities)
+        ? collectExpectedReviewCapabilityKeys(value.review_capabilities)
+        : REVIEW_CAPABILITY_KEYS;
+    validateProfileReviewPolicySnapshot(value.profile_review_policy, expectedReviewCapabilityKeys, violations);
+    validateEffectiveReviewPolicySnapshot(value.effective_review_policy, expectedReviewCapabilityKeys, violations);
+    validateStringArray(value.safety_floors_applied, 'review_lane_selection.safety_floors_applied', violations);
+    if (
+        isPlainRecord(value.profile_review_policy)
+        && isPlainRecord(value.review_capabilities)
+        && isPlainRecord(value.effective_review_policy)
+    ) {
+        validateReviewLaneSelectionConsistency(
+            value.profile_review_policy,
+            value.review_capabilities,
+            value.effective_review_policy,
+            value.safety_floors_applied,
+            violations
+        );
+    }
+}
+
+function isReviewExecutionPolicyMode(value: unknown): value is EffectiveReviewExecutionPolicyMode {
+    return typeof value === 'string' && (
+        (REVIEW_EXECUTION_POLICY_MODES as readonly string[]).includes(value)
+        || value === LEGACY_REVIEW_EXECUTION_POLICY_MODE
+    );
+}
+
+function validateReviewExecutionPolicySnapshot(value: unknown, violations: string[]): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot review_execution_policy must be a JSON object.');
+        return;
+    }
+    validateExactKeys(value, REVIEW_EXECUTION_POLICY_KEYS, 'review_execution_policy', violations);
+    if (!isReviewExecutionPolicyMode(value.mode)) {
+        violations.push(
+            `Task profile policy snapshot review_execution_policy.mode must be one of ${[
+                ...REVIEW_EXECUTION_POLICY_MODES,
+                LEGACY_REVIEW_EXECUTION_POLICY_MODE
+            ].join(', ')}.`
+        );
+    }
+    if (typeof value.configured !== 'boolean') {
+        violations.push('Task profile policy snapshot review_execution_policy.configured must be boolean.');
+    }
+    if (typeof value.visible_summary_line !== 'string') {
+        violations.push('Task profile policy snapshot review_execution_policy.visible_summary_line must be a string.');
+    } else if (isReviewExecutionPolicyMode(value.mode)) {
+        validateLiteral(
+            value.visible_summary_line,
+            buildReviewExecutionPolicySummaryLine(value.mode),
+            'review_execution_policy.visible_summary_line',
+            violations
+        );
+    }
+}
+
+function normalizeProfileReviewPolicyForSnapshot(
+    profilePolicy: ProfileReviewPolicy,
+    capabilities: ReviewCapabilities
+): ProfileReviewPolicy {
+    const normalized: ProfileReviewPolicy = { ...profilePolicy };
+    for (const key of Object.keys(capabilities)) {
+        if (!Object.prototype.hasOwnProperty.call(normalized, key)) {
+            normalized[key] = 'auto';
+        }
+    }
+    return normalized;
 }
 
 function validateFindingPolicySnapshot(value: unknown, violations: string[]): void {
@@ -328,6 +573,13 @@ export function buildTaskProfilePolicySnapshot(
     }
 
     const reviewCapabilities = loadReviewCapabilities(profileConfigPaths.reviewCapabilities);
+    const normalizedProfileReviewPolicy = normalizeProfileReviewPolicyForSnapshot(
+        profileEntry.review_policy,
+        reviewCapabilities
+    );
+    const snapshotEffectiveReviewPolicy = normalizeEffectiveReviewPolicyForSnapshot(
+        resolvedProfile.effective_policy.review_policy
+    );
     const configHashes = computeConfigHashes(bundleRoot, resolvedProfile.effective_policy.resolution_sources);
     const configHash = canonicalJsonSha256(configHashes);
     const body: Omit<TaskProfilePolicySnapshot, 'snapshot_hash'> = {
@@ -336,9 +588,9 @@ export function buildTaskProfilePolicySnapshot(
         source: resolvedProfile.selection,
         depth: resolvedProfile.effective_policy.depth,
         review_lane_selection: {
-            profile_review_policy: profileEntry.review_policy,
+            profile_review_policy: normalizedProfileReviewPolicy,
             review_capabilities: reviewCapabilities,
-            effective_review_policy: resolvedProfile.effective_policy.review_policy,
+            effective_review_policy: snapshotEffectiveReviewPolicy,
             safety_floors_applied: resolvedProfile.effective_policy.safety_floors_applied
         },
         review_execution_policy: {
@@ -397,12 +649,8 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
     if (!isPlainRecord(value.source)) {
         violations.push('Task profile policy snapshot source must be a JSON object.');
     }
-    if (!isPlainRecord(value.review_lane_selection)) {
-        violations.push('Task profile policy snapshot review_lane_selection must be a JSON object.');
-    }
-    if (!isPlainRecord(value.review_execution_policy)) {
-        violations.push('Task profile policy snapshot review_execution_policy must be a JSON object.');
-    }
+    validateReviewLaneSelectionSnapshot(value.review_lane_selection, violations);
+    validateReviewExecutionPolicySnapshot(value.review_execution_policy, violations);
     validateFindingPolicySnapshot(value.finding_policy, violations);
     validateRemediationPolicySnapshot(value.remediation_policy, violations);
     if (!isPlainRecord(value.config_hashes)) {
