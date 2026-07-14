@@ -39,9 +39,13 @@ import {
 } from '../review/review-findings-artifact-verdict';
 import {
     reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation,
-    reviewFindingsValidationArtifactHasActiveFindings,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
+import {
+    resolveLockedReviewFindingPolicyFromPreflight,
+    resolveLockedReviewFindingPolicyFromReceiptDisposition,
+    reviewFindingsValidationArtifactHasBlockingFindings
+} from '../review/review-finding-disposition';
 import {
     findLatestRoutingEventForReviewType,
     findLatestTimelineSequence,
@@ -428,23 +432,32 @@ export function validateReviewArtifactGateEligibility(options: {
                         errors.push(...validationArtifact.violations);
                         findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(
                             artifactPath,
-                            validationArtifact.artifact
+                            validationArtifact.artifact,
+                            reusedExistingReview
+                                ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt as unknown as Record<string, unknown>)
+                                : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload)
                         );
                         if (
                             validationArtifact.valid
-                            && reviewFindingsValidationArtifactHasActiveFindings(validationArtifact.artifact)
+                            && reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(validationArtifact.artifact)
                         ) {
-                            if (reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(validationArtifact.artifact)) {
-                                errors.push(
-                                    `Review artifact '${normalizePath(artifactPath)}' contains active findings in validation artifact ` +
-                                    'for missing focused validation evidence; preserve the failed artifact and record current task-owned focused validation evidence.'
-                                );
-                            } else {
-                                errors.push(
-                                    `Review artifact '${normalizePath(artifactPath)}' contains active findings in validation artifact; ` +
-                                    `fix implementation and rerun compile plus '${reviewKey}' review before continuing.`
-                                );
-                            }
+                            errors.push(
+                                `Review artifact '${normalizePath(artifactPath)}' contains active findings in validation artifact ` +
+                                'for missing focused validation evidence; preserve the failed artifact and record current task-owned focused validation evidence.'
+                            );
+                        } else if (
+                            validationArtifact.valid
+                            && reviewFindingsValidationArtifactHasBlockingFindings(
+                                validationArtifact.artifact,
+                                reusedExistingReview
+                                    ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt as unknown as Record<string, unknown>)
+                                    : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload)
+                            )
+                        ) {
+                            errors.push(
+                                `Review artifact '${normalizePath(artifactPath)}' contains fix_now findings in validation artifact; ` +
+                                `fix implementation and rerun compile plus '${reviewKey}' review before continuing.`
+                            );
                         }
                     }
                 } catch {

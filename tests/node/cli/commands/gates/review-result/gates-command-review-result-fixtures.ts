@@ -737,6 +737,7 @@ export async function seedPromptBoundReviewFixture(options: {
     taskId: string;
     provider?: string;
     reviewerIdentity?: string;
+    preflightOverrides?: Record<string, unknown>;
 }) {
     const provider = options.provider || 'Codex';
     const reviewerIdentity = options.reviewerIdentity || `agent:${options.taskId}-reviewer`;
@@ -767,7 +768,8 @@ export async function seedPromptBoundReviewFixture(options: {
             infra: false,
             dependency: false
         },
-        triggers: { runtime_changed: true, runtime_code_changed: true }
+        triggers: { runtime_changed: true, runtime_code_changed: true },
+        ...(options.preflightOverrides || {})
     });
     prepareCurrentReviewPhase(options.repoRoot, options.taskId, preflightPath, provider);
 

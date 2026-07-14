@@ -30,6 +30,9 @@ import {
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
 import {
+    resolveLockedReviewFindingPolicyFromReceiptDisposition
+} from '../review/review-finding-disposition';
+import {
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint,
     isNonTestReviewScope
@@ -224,7 +227,8 @@ export function collectRequiredReviewEvidence(input: {
                     input.errors.push(...validationArtifact.violations);
                     findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(
                         artifactPath,
-                        validationArtifact.valid ? validationArtifact.artifact : null
+                        validationArtifact.valid ? validationArtifact.artifact : null,
+                        resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt as unknown as Record<string, unknown>)
                     );
                 }
             } else {

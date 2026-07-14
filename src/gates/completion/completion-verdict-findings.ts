@@ -5,6 +5,14 @@ import {
 } from '../review/review-findings-schema';
 import type { ReviewFindingsValidationArtifact } from '../review/review-findings-validation-artifact';
 import {
+    evaluateReviewFindingsValidationArtifactDispositions,
+    type LockedReviewFindingPolicyResolution,
+    resolveLockedReviewFindingPolicyFromReceiptDisposition
+} from '../review/review-finding-disposition';
+import {
+    reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation
+} from '../review/review-findings-validation-artifact';
+import {
     countCanonicalReviewSectionHeadings,
     extractMarkdownSectionLines,
     formatAcceptedReviewSectionHeadingShapes,
@@ -327,7 +335,8 @@ export function getReviewFindingsValidationArtifactEvidence(
 
 export function getReviewFindingsEvidenceFromValidationArtifact(
     artifactPath: string,
-    artifact: ReviewFindingsValidationArtifact | null
+    artifact: ReviewFindingsValidationArtifact | null,
+    policyResolution: LockedReviewFindingPolicyResolution = resolveLockedReviewFindingPolicyFromReceiptDisposition(null)
 ): ReviewArtifactFindingsEvidence {
     const artifactPathNormalized = normalizePath(artifactPath);
     const result: ReviewArtifactFindingsEvidence = {
@@ -375,18 +384,25 @@ export function getReviewFindingsEvidenceFromValidationArtifact(
     result.residual_risks = inventory.residual_risks.map((risk) =>
         [risk.id, risk.description, ...risk.evidence_locations].filter(Boolean).join(' ')
     );
+    if (reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(artifact)) {
+        result.violations.push(
+            `Review artifact '${artifactPathNormalized}' contains active findings in accepted findings validation artifact ` +
+            'for missing focused validation evidence; preserve the failed artifact and record current task-owned focused validation evidence.'
+        );
+    }
+    const disposition = evaluateReviewFindingsValidationArtifactDispositions(artifact, policyResolution);
     for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
-        if (result.findings_by_severity[severity].length > 0) {
+        if (disposition.findings[severity].action === 'fix_now' && result.findings_by_severity[severity].length > 0) {
             const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
             result.violations.push(
-                `Review artifact '${artifactPathNormalized}' still contains active ${severityLabel} findings in accepted findings validation artifact. ` +
-                'Resolve active defects before completing the task.'
+                `Review artifact '${artifactPathNormalized}' still contains fix_now ${severityLabel} findings in accepted findings validation artifact. ` +
+                'Fix implementation and rerun the affected review before completing the task.'
             );
         }
     }
-    if (result.residual_risks.length > 0) {
+    if (disposition.residual_risks.action === 'fix_now' && result.residual_risks.length > 0) {
         result.violations.push(
-            `Review artifact '${artifactPathNormalized}' still contains active residual risks in accepted findings validation artifact. ` +
+            `Review artifact '${artifactPathNormalized}' still contains fix_now residual risks in accepted findings validation artifact. ` +
             'Resolve or explicitly disposition residual risks before completing the task.'
         );
     }

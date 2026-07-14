@@ -36,10 +36,14 @@ import {
 import {
     getReviewFindingsValidationArtifactPath,
     reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation,
-    reviewFindingsValidationArtifactHasActiveFindings,
     validateReviewFindingsValidationArtifact,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
+import {
+    resolveLockedReviewFindingPolicyFromPreflight,
+    resolveLockedReviewFindingPolicyFromReceiptDisposition,
+    reviewFindingsValidationArtifactHasBlockingFindings
+} from '../review/review-finding-disposition';
 import {
     resolveReviewCoverageEvidenceSnapshotCommit,
     type ReviewCoverageContract
@@ -455,20 +459,25 @@ export function readReviewArtifactState(
             });
             violations.push(...validationArtifact.violations);
             if (validationArtifact.valid) {
-                if (reviewFindingsValidationArtifactHasActiveFindings(validationArtifact.artifact)) {
+                if (reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(validationArtifact.artifact)) {
                     verdictToken = failToken || null;
                     failed = true;
-                    if (reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(validationArtifact.artifact)) {
-                        failureKind = 'missing-focused-validation-evidence';
-                        failureReason = 'missing auditable focused validation evidence';
-                        violations.push(
-                            `review findings validation artifact contains active findings for missing focused validation evidence (${failureReason}); preserve the failed artifact and use current task-owned focused validation evidence without fake implementation changes`
-                        );
-                    } else {
-                        violations.push(
-                            `review findings validation artifact contains active findings; fix implementation and rerun compile plus '${reviewType}' review before launching dependent reviews`
-                        );
-                    }
+                    failureKind = 'missing-focused-validation-evidence';
+                    failureReason = 'missing auditable focused validation evidence';
+                    violations.push(
+                        `review findings validation artifact contains active findings for missing focused validation evidence (${failureReason}); preserve the failed artifact and use current task-owned focused validation evidence without fake implementation changes`
+                    );
+                } else if (reviewFindingsValidationArtifactHasBlockingFindings(
+                    validationArtifact.artifact,
+                    reusedExistingReview
+                        ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt)
+                        : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload)
+                )) {
+                    verdictToken = failToken || null;
+                    failed = true;
+                    violations.push(
+                        `review findings validation artifact contains fix_now findings or residual risks; fix implementation and rerun compile plus '${reviewType}' review before launching dependent reviews`
+                    );
                 } else {
                     verdictToken = passToken || null;
                 }

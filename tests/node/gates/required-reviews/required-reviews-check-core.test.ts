@@ -90,6 +90,76 @@ function writeAcceptedFindingsValidationReceipt(options: {
     });
 }
 
+function buildMissingFocusedValidationReport(options: {
+    taskId: string;
+    reviewType: string;
+    reviewContextSha256: string;
+    treeStateSha256: string;
+    coverageContract: Record<string, unknown>;
+}): Record<string, unknown> {
+    const obligations = Array.isArray(options.coverageContract.obligations)
+        ? options.coverageContract.obligations as Array<Record<string, unknown>>
+        : [];
+    const obligationIds = obligations
+        .map((obligation) => String(obligation.id || '').trim())
+        .filter(Boolean);
+    const marker = '[garda:evidence-only:missing-focused-validation] test=tests/node/focused-validation.test.ts; action=run-and-record-focused-test';
+    return {
+        schema_version: 1,
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        review_context_sha256: options.reviewContextSha256,
+        tree_state_sha256: options.treeStateSha256,
+        validation_notes: [
+            {
+                id: 'N-001',
+                topic: 'missing-focused-validation',
+                note: 'Reviewed the in-scope changed file and found the canonical missing focused-validation evidence marker.',
+                evidence: [
+                    {
+                        location: 'src/example.ts:1',
+                        observation: 'Scoped changed file evidence for the missing focused-validation marker.'
+                    }
+                ]
+            }
+        ],
+        coverage_ledger: {
+            coverage_contract_sha256: options.coverageContract.contract_sha256,
+            entries: obligationIds.map((obligationId) => ({
+                obligation_id: obligationId,
+                evidence: [
+                    {
+                        location: 'src/example.ts:1',
+                        observation: `Obligation ${obligationId} is blocked by missing focused-validation evidence.`
+                    }
+                ],
+                finding_ids: ['F-000']
+            }))
+        },
+        findings: {
+            critical: [],
+            high: [],
+            medium: [
+                {
+                    id: 'F-000',
+                    title: marker,
+                    description: 'Focused validation evidence is missing for the assigned current review scope.',
+                    evidence: [
+                        {
+                            location: 'src/example.ts:1',
+                            observation: 'No focused-validation evidence was available for this scoped change.'
+                        }
+                    ],
+                    coverage_obligation_ids: obligationIds
+                }
+            ],
+            low: []
+        },
+        residual_risks: [],
+        reviewer_notes: ['This is the canonical evidence-only missing focused-validation marker.']
+    };
+}
+
 describe('gates/required-reviews-check core helpers', () => {
     describe('parseSkipReviews', () => {
         it('parses comma-separated list', () => {
@@ -301,6 +371,100 @@ describe('gates/required-reviews-check core helpers', () => {
 
             assert.deepEqual(result.violations, []);
             assert.equal(result.checked[0]?.token_found, true);
+        });
+
+        it('rejects missing-focused-validation findings even when the locked policy would not fix_now the severity', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-reviews-missing-focused-'));
+            try {
+                const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+                fs.mkdirSync(reviewsRoot, { recursive: true });
+
+                const taskId = 'T-979-missing-focused';
+                const reviewType = 'code';
+                const treeStateSha256 = sha256Text('tree-state');
+                const coverageContractSha256 = sha256Text('coverage-contract');
+                const coverageContract = {
+                    schema_version: 1,
+                    required: true,
+                    review_type: reviewType,
+                    obligations: [
+                        {
+                            id: 'FILE-001',
+                            kind: 'file',
+                            target: 'src/example.ts'
+                        }
+                    ],
+                    obligation_count: 1,
+                    contract_sha256: coverageContractSha256
+                };
+                const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+                writeJson(preflightPath, {
+                    task_id: taskId,
+                    profile_policy_snapshot: {
+                        review_finding_policy: {
+                            schema_version: 1,
+                            policy_id: 'balanced',
+                            findings: {
+                                critical: 'fix_now',
+                                high: 'fix_now',
+                                medium: 'create_follow_up',
+                                low: 'create_follow_up'
+                            },
+                            residual_risk: 'create_follow_up'
+                        }
+                    }
+                });
+                const reviewContext = {
+                    schema_version: 3,
+                    task_id: taskId,
+                    review_type: reviewType,
+                    preflight_path: preflightPath,
+                    tree_state: {
+                        tree_state_sha256: treeStateSha256
+                    },
+                    coverage_contract: coverageContract
+                };
+                const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
+                writeJson(reviewContextPath, reviewContext);
+                const reviewContextSha256 = sha256File(reviewContextPath);
+                const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
+                writeJson(artifactPath, buildMissingFocusedValidationReport({
+                    taskId,
+                    reviewType,
+                    reviewContextSha256,
+                    treeStateSha256,
+                    coverageContract
+                }));
+                writeAcceptedFindingsValidationReceipt({
+                    artifactPath,
+                    contextPath: reviewContextPath,
+                    taskId,
+                    reviewType,
+                    treeStateSha256,
+                    coverageContract
+                });
+
+                const result = testReviewArtifacts(
+                    repoRoot,
+                    taskId,
+                    { code: true },
+                    { code: 'REVIEW PASSED' },
+                    [],
+                    'runtime/reviews'
+                );
+
+                assert.equal(result.checked[0]?.token_found, false);
+                assert.ok(result.violations.some((violation) =>
+                    violation.includes('missing-focused-validation evidence')
+                ), result.violations.join('\n'));
+                assert.equal(
+                    result.violations.some((violation) => violation.includes('fix_now findings')),
+                    false,
+                    result.violations.join('\n')
+                );
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
         });
 
         it('rejects legacy pass-token artifacts for current findings-only review contexts', () => {

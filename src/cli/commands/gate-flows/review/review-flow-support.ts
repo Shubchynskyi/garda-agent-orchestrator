@@ -21,9 +21,14 @@ import {
     resolveReviewFindingsArtifactVerdictToken
 } from '../../../../gates/review/review-findings-artifact-verdict';
 import {
-    reviewFindingsValidationArtifactHasActiveFindings,
+    reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../../../../gates/review/review-findings-validation-artifact';
+import {
+    resolveLockedReviewFindingPolicyFromPreflight,
+    resolveLockedReviewFindingPolicyFromReceiptDisposition,
+    reviewFindingsValidationArtifactHasBlockingFindings
+} from '../../../../gates/review/review-finding-disposition';
 import {
     type ReviewCoverageContract
 } from '../../../../gates/review/review-coverage-ledger';
@@ -282,6 +287,9 @@ export function testReviewArtifacts(
 
         const requiresFindingsOnlyArtifact = reviewContextRequiresFindingsOnlyArtifact(reviewContext);
         if (requiresFindingsOnlyArtifact) {
+            const reviewContextPreflightPayload = typeof reviewContext?.preflight_path === 'string'
+                ? readCurrentPreflightObject(repoRoot, reviewContext.preflight_path)
+                : null;
             if (!String(content || '').trim().startsWith('{')) {
                 entry.token_found = false;
                 result.violations.push(
@@ -340,10 +348,20 @@ export function testReviewArtifacts(
             if (!validationArtifact.valid) {
                 entry.token_found = false;
                 result.violations.push(...validationArtifact.violations);
-            } else if (reviewFindingsValidationArtifactHasActiveFindings(validationArtifact.artifact)) {
+            } else if (reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(validationArtifact.artifact)) {
                 entry.token_found = false;
                 result.violations.push(
-                    `Review findings validation artifact for '${entry.path}' contains active findings or residual risks and cannot satisfy claimed '${passToken}'.`
+                    `Review findings validation artifact for '${entry.path}' contains missing-focused-validation evidence and cannot satisfy claimed '${passToken}'.`
+                );
+            } else if (reviewFindingsValidationArtifactHasBlockingFindings(
+                validationArtifact.artifact,
+                reusedExistingReview
+                    ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt as unknown as Record<string, unknown>)
+                    : resolveLockedReviewFindingPolicyFromPreflight(reviewContextPreflightPayload)
+            )) {
+                entry.token_found = false;
+                result.violations.push(
+                    `Review findings validation artifact for '${entry.path}' contains fix_now findings or residual risks and cannot satisfy claimed '${passToken}'.`
                 );
             } else {
                 entry.token_found = true;

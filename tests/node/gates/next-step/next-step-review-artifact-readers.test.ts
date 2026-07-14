@@ -58,12 +58,51 @@ function findingsPreflightPayload(): Record<string, unknown> {
     };
 }
 
+function balancedFindingsPreflightPayload(): Record<string, unknown> {
+    return {
+        ...findingsPreflightPayload(),
+        profile_policy_snapshot: {
+            review_finding_policy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        }
+    };
+}
+
+function softFindingsPreflightPayload(): Record<string, unknown> {
+    return {
+        ...findingsPreflightPayload(),
+        profile_policy_snapshot: {
+            review_finding_policy: {
+                schema_version: 1,
+                policy_id: 'soft',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'create_follow_up',
+                    medium: 'ignore',
+                    low: 'ignore'
+                },
+                residual_risk: 'ignore'
+            }
+        }
+    };
+}
+
 function writeFindingsReviewPackage(options: {
     reviewsRoot: string;
     taskId: string;
     reviewType: string;
     preflightPath: string;
     report: Record<string, unknown>;
+    receiptOverrides?: Record<string, unknown>;
 }): void {
     const contextPath = path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}-review-context.json`);
     const artifactPath = path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}.md`);
@@ -174,7 +213,10 @@ function writeFindingsReviewPackage(options: {
         reviewer_identity: `agent:${options.taskId}-${options.reviewType}`,
         reviewer_provenance_event_sha256: null
     };
-    writeJson(path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}-receipt.json`), receipt);
+    writeJson(path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}-receipt.json`), {
+        ...receipt,
+        ...(options.receiptOverrides || {})
+    });
 }
 
 test('readReviewArtifactState reports missing review artifacts without route decisions', () => {
@@ -304,7 +346,7 @@ test('readReviewArtifactState rejects legacy verdict tokens for current findings
     ));
 });
 
-test('readReviewArtifactState treats active findings JSON artifacts as failed even without legacy fail token', () => {
+test('readReviewArtifactState treats fix_now findings JSON artifacts as failed even without legacy fail token', () => {
     const reviewsRoot = tempRoot('garda-next-step-review-json-failed-readers-');
     const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
     writeFindingsReviewPackage({
@@ -354,7 +396,18 @@ test('readReviewArtifactState treats active findings JSON artifacts as failed ev
                 medium: [],
                 low: []
             },
-            residual_risks: [],
+            residual_risks: [
+                {
+                    id: 'R-001',
+                    description: 'The balanced policy should route this residual risk to a follow-up instead of failed review state.',
+                    evidence: [
+                        {
+                            location: 'src/gates/next-step/next-step-review-artifact-readers.ts:140',
+                            observation: 'JSON residual risks are mapped through the locked disposition policy.'
+                        }
+                    ]
+                }
+            ],
             reviewer_notes: []
         }
     });
@@ -370,7 +423,267 @@ test('readReviewArtifactState treats active findings JSON artifacts as failed ev
 
     assert.equal(state.verdictToken, 'CODE REVIEW FAILED');
     assert.equal(state.failed, true);
-    assert.ok(state.violations.some((violation) => violation.includes('validation artifact contains active findings')));
+    assert.ok(state.violations.some((violation) => violation.includes('validation artifact contains fix_now findings')));
+});
+
+test('readReviewArtifactState treats balanced medium findings JSON artifacts as non-blocking pass', () => {
+    const reviewsRoot = tempRoot('garda-next-step-review-json-balanced-readers-');
+    const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
+    writeFindingsReviewPackage({
+        reviewsRoot,
+        taskId: 'T-100',
+        reviewType: 'refactor',
+        preflightPath,
+        report: {
+            schema_version: 1,
+            task_id: 'T-100',
+            review_type: 'refactor',
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'scope',
+                note: 'Reviewed the JSON artifact reader balanced-policy path.',
+                evidence: [{
+                    location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                    observation: 'The findings JSON non-blocking branch was inspected.'
+                }]
+            }],
+            coverage_ledger: {
+                entries: [{
+                    obligation_id: 'FILE-001',
+                    evidence: [{
+                        location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                        observation: 'The reader branch was covered.'
+                    }],
+                    finding_ids: ['F-001']
+                }]
+            },
+            findings: {
+                critical: [],
+                high: [],
+                medium: [
+                    {
+                        id: 'F-001',
+                        title: 'Follow-up-only finding',
+                        description: 'The balanced policy should route this medium finding to a follow-up instead of failed review state.',
+                        evidence: [
+                            {
+                                location: 'src/gates/next-step/next-step-review-artifact-readers.ts:140',
+                                observation: 'JSON findings are mapped through the locked disposition policy.'
+                            }
+                        ],
+                        coverage_obligation_ids: ['FILE-001']
+                    }
+                ],
+                low: []
+            },
+            residual_risks: [],
+            reviewer_notes: []
+        }
+    });
+
+    const state = readReviewArtifactState(
+        reviewsRoot,
+        'T-100',
+        'refactor',
+        preflightPath,
+        null,
+        balancedFindingsPreflightPayload()
+    );
+
+    assert.equal(state.verdictToken, 'REFACTOR REVIEW PASSED');
+    assert.equal(state.failed, false);
+    assert.ok(!state.violations.some((violation) => violation.includes('fix_now findings')));
+});
+
+test('readReviewArtifactState treats ignored findings and residual risks JSON artifacts as non-blocking pass', () => {
+    const reviewsRoot = tempRoot('garda-next-step-review-json-soft-readers-');
+    const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
+    writeFindingsReviewPackage({
+        reviewsRoot,
+        taskId: 'T-100',
+        reviewType: 'refactor',
+        preflightPath,
+        report: {
+            schema_version: 1,
+            task_id: 'T-100',
+            review_type: 'refactor',
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'scope',
+                note: 'Reviewed the JSON artifact reader soft-policy path.',
+                evidence: [{
+                    location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                    observation: 'The findings JSON ignore branch was inspected.'
+                }]
+            }],
+            coverage_ledger: {
+                entries: [{
+                    obligation_id: 'FILE-001',
+                    evidence: [{
+                        location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                        observation: 'The reader ignore branch was covered.'
+                    }],
+                    finding_ids: ['F-001']
+                }]
+            },
+            findings: {
+                critical: [],
+                high: [],
+                medium: [],
+                low: [
+                    {
+                        id: 'F-001',
+                        title: 'Ignored low finding',
+                        description: 'The soft policy should route this low finding to ignore instead of failed review state.',
+                        evidence: [
+                            {
+                                location: 'src/gates/next-step/next-step-review-artifact-readers.ts:140',
+                                observation: 'JSON findings are mapped through the locked ignore disposition policy.'
+                            }
+                        ],
+                        coverage_obligation_ids: ['FILE-001']
+                    }
+                ]
+            },
+            residual_risks: [
+                {
+                    id: 'R-001',
+                    description: 'The soft policy should route this residual risk to ignore instead of failed review state.',
+                    evidence: [
+                        {
+                            location: 'src/gates/next-step/next-step-review-artifact-readers.ts:140',
+                            observation: 'JSON residual risks are mapped through the locked ignore disposition policy.'
+                        }
+                    ]
+                }
+            ],
+            reviewer_notes: []
+        }
+    });
+
+    const state = readReviewArtifactState(
+        reviewsRoot,
+        'T-100',
+        'refactor',
+        preflightPath,
+        null,
+        softFindingsPreflightPayload()
+    );
+
+    assert.equal(state.verdictToken, 'REFACTOR REVIEW PASSED');
+    assert.equal(state.failed, false);
+    assert.ok(!state.violations.some((violation) => violation.includes('fix_now findings')));
+    assert.ok(!state.violations.some((violation) => violation.includes('fix_now residual risks')));
+});
+
+test('readReviewArtifactState uses receipt disposition for reused findings JSON artifacts', () => {
+    const reviewsRoot = tempRoot('garda-next-step-review-json-reused-disposition-readers-');
+    const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
+    const receiptDisposition = {
+        schema_version: 1,
+        policy_id: 'balanced',
+        policy_source: 'preflight_profile_policy_snapshot',
+        policy_diagnostics: [],
+        findings: {
+            critical: { action: 'fix_now', ids: [], count: 0 },
+            high: { action: 'fix_now', ids: [], count: 0 },
+            medium: { action: 'create_follow_up', ids: ['F-001'], count: 1 },
+            low: { action: 'create_follow_up', ids: [], count: 0 }
+        },
+        residual_risks: { action: 'create_follow_up', ids: [], count: 0 },
+        counts_by_action: { fix_now: 0, create_follow_up: 1, ignore: 0 },
+        blocking_count: 0,
+        blocking_ids: [],
+        non_blocking_count: 1,
+        total_count: 1,
+        verdict: 'pass_with_follow_up_or_ignored_findings'
+    };
+    writeFindingsReviewPackage({
+        reviewsRoot,
+        taskId: 'T-100',
+        reviewType: 'code',
+        preflightPath,
+        receiptOverrides: {
+            reused_existing_review: true,
+            reused_from_receipt_path: path.join(reviewsRoot, 'historical-code-receipt.json').replace(/\\/g, '/'),
+            reused_from_receipt_sha256: 'f'.repeat(64),
+            reused_from_review_context_sha256: null,
+            reused_from_review_tree_state_sha256: TREE_STATE_SHA256,
+            reused_from_review_scope_sha256: computeReviewRelevantScopeFingerprint(
+                findingsPreflightPayload(),
+                process.cwd()
+            ).review_scope_sha256,
+            reused_from_code_scope_sha256: computeReviewReuseCodeScopeFingerprint(
+                'code',
+                findingsPreflightPayload(),
+                process.cwd()
+            ).code_scope_sha256,
+            review_findings_disposition: receiptDisposition
+        },
+        report: {
+            schema_version: 1,
+            task_id: 'T-100',
+            review_type: 'code',
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'scope',
+                note: 'Reviewed the JSON artifact reader reused-disposition path.',
+                evidence: [{
+                    location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                    observation: 'The findings JSON reused branch was inspected.'
+                }]
+            }],
+            coverage_ledger: {
+                entries: [{
+                    obligation_id: 'FILE-001',
+                    evidence: [{
+                        location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                        observation: 'The reused receipt disposition branch was covered.'
+                    }],
+                    finding_ids: ['F-001']
+                }]
+            },
+            findings: {
+                critical: [],
+                high: [],
+                medium: [
+                    {
+                        id: 'F-001',
+                        title: 'Historical follow-up finding',
+                        description: 'A reused receipt with a balanced policy should keep this medium finding non-blocking even when current preflight falls back to strict.',
+                        evidence: [
+                            {
+                                location: 'src/gates/next-step/next-step-review-artifact-readers.ts:140',
+                                observation: 'Reused JSON findings are mapped through the receipt disposition policy.'
+                            }
+                        ],
+                        coverage_obligation_ids: ['FILE-001']
+                    }
+                ],
+                low: []
+            },
+            residual_risks: [],
+            reviewer_notes: []
+        }
+    });
+    const receiptPath = path.join(reviewsRoot, 'T-100-code-receipt.json');
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    receipt.reused_from_review_context_sha256 = receipt.review_context_sha256;
+    writeJson(receiptPath, receipt);
+
+    const state = readReviewArtifactState(
+        reviewsRoot,
+        'T-100',
+        'code',
+        preflightPath,
+        null,
+        findingsPreflightPayload()
+    );
+
+    assert.equal(state.reusedExistingReview, true);
+    assert.equal(state.verdictToken, 'REVIEW PASSED');
+    assert.equal(state.failed, false);
+    assert.ok(!state.violations.some((violation) => violation.includes('fix_now findings')));
 });
 
 test('readReviewArtifactState rejects malformed findings JSON instead of deriving a clean pass', () => {

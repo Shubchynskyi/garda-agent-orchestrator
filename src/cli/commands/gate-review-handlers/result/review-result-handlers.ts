@@ -97,6 +97,11 @@ import {
     type ReviewFindingsReport
 } from '../../../../gates/review/review-findings-schema';
 import {
+    evaluateReviewFindingsReportDispositions,
+    resolveLockedReviewFindingPolicyFromPreflight,
+    type ReviewFindingsDispositionEvaluation
+} from '../../../../gates/review/review-finding-disposition';
+import {
     reviewContextRequiresFindingsOnlyArtifact,
     validateReviewFindingsContract,
     type JsonReviewFindingsArtifactValidation
@@ -131,6 +136,16 @@ function summarizeReviewFindingsReport(report: ReviewFindingsReport): Record<str
         residual_risk_ids: report.residual_risks.map((risk) => risk.id),
         residual_risk_count: report.residual_risks.length
     };
+}
+
+function evaluateReviewFindingsReportDispositionsFromPreflight(
+    report: ReviewFindingsReport,
+    preflight: Record<string, unknown>
+): ReviewFindingsDispositionEvaluation {
+    return evaluateReviewFindingsReportDispositions(
+        report,
+        resolveLockedReviewFindingPolicyFromPreflight(preflight)
+    );
 }
 
 function buildBoundedReviewRecordedTelemetryDetails(receipt: Record<string, unknown>): Record<string, unknown> {
@@ -513,6 +528,7 @@ async function recordReviewReceiptFromArtifacts(options: {
     let coverageValidation: ReviewCoverageValidationSummary | null = null;
     let findingsValidationEvidence: ReviewFindingsValidationEvidence | null = null;
     let findingsValidation: JsonReviewFindingsArtifactValidation | null = null;
+    let findingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     if (String(reviewArtifactContent || '').trim().startsWith('{')) {
         findingsValidation = validateFindingsOnlyReviewOutput({
             reviewContent: reviewArtifactContent,
@@ -526,6 +542,9 @@ async function recordReviewReceiptFromArtifacts(options: {
         });
         findingsReport = findingsValidation.report;
         coverageValidation = findingsValidation.coverage_validation;
+        if (findingsReport) {
+            findingsDisposition = evaluateReviewFindingsReportDispositionsFromPreflight(findingsReport, preflight);
+        }
     } else if (strictFindingsOnlyOutput) {
         throw new Error(
             `Current '${options.reviewType}' review receipts require a verdict-free findings JSON report. ` +
@@ -620,6 +639,8 @@ async function recordReviewReceiptFromArtifacts(options: {
         receiptRecord.review_findings_report_sha256 = findingsReportSha256;
         receiptRecord.review_findings_report = findingsReport;
         receiptRecord.review_findings_summary = summarizeReviewFindingsReport(findingsReport);
+        receiptRecord.review_findings_disposition =
+            findingsDisposition || evaluateReviewFindingsReportDispositionsFromPreflight(findingsReport, preflight);
         if (findingsValidationEvidence) {
             receiptRecord.review_findings_validation = summarizeReviewFindingsValidationEvidence(findingsValidationEvidence);
         }
@@ -679,14 +700,6 @@ function validateFindingsOnlyReviewOutput(options: {
         evidenceSnapshotCommit: options.evidenceSnapshotCommit
     });
     return validation;
-}
-
-function hasActiveFindings(report: ReviewFindingsReport): boolean {
-    return report.findings.critical.length > 0
-        || report.findings.high.length > 0
-        || report.findings.medium.length > 0
-        || report.findings.low.length > 0
-        || report.residual_risks.length > 0;
 }
 
 async function handleRecordReviewResultWithDependencies(
@@ -753,6 +766,7 @@ async function handleRecordReviewResultWithDependencies(
     const reviewContextSha256 = fileSha256(contextPath) || '';
     const strictFindingsOnlyOutput = reviewContextRequiresFindingsOnlyArtifact(parsedReviewContext);
     let findingsReport: ReviewFindingsReport | null = null;
+    let findingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     const rawReviewOutputSha256 = sha256ReviewArtifactContent(reviewOutput.reviewContent);
     const reviewContentLooksLikeFindingsJson = String(reviewContent || '').trim().startsWith('{');
     if (reviewContentLooksLikeFindingsJson && (strictFindingsOnlyOutput || (!strictFindingsOnlyOutput && !verdictToken))) {
@@ -799,7 +813,8 @@ async function handleRecordReviewResultWithDependencies(
         }
         findingsReport = findingsValidation.report;
         if (findingsReport) {
-            verdictToken = hasActiveFindings(findingsReport) ? expectedFailVerdict : expectedPassVerdict;
+            findingsDisposition = evaluateReviewFindingsReportDispositionsFromPreflight(findingsReport, preflightPayload);
+            verdictToken = findingsDisposition.blocking_count > 0 ? expectedFailVerdict : expectedPassVerdict;
         }
     }
     if (!verdictToken) {
@@ -973,6 +988,10 @@ async function handleRecordReviewResultWithDependencies(
         console.log(`ReviewerFallbackReason: ${reviewerFallbackReason}`);
     }
     console.log(`VerdictToken: ${verdictToken}`);
+    if (findingsDisposition) {
+        console.log(`ReviewFindingsDisposition: ${findingsDisposition.verdict}`);
+        console.log(`ReviewFindingsBlockingCount: ${findingsDisposition.blocking_count}`);
+    }
     console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
 }
 

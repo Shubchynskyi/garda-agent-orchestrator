@@ -121,6 +121,92 @@ function writeProfilesConfig(repoRoot: string, activeProfile: 'soft' | 'balanced
     }, null, 2)}\n`, 'utf8');
 }
 
+function balancedProfilePolicySnapshot(): Record<string, unknown> {
+    return {
+        review_finding_policy: {
+            schema_version: 1,
+            policy_id: 'balanced',
+            findings: {
+                critical: 'fix_now',
+                high: 'fix_now',
+                medium: 'create_follow_up',
+                low: 'create_follow_up'
+            },
+            residual_risk: 'create_follow_up'
+        }
+    };
+}
+
+function softProfilePolicySnapshot(): Record<string, unknown> {
+    return {
+        review_finding_policy: {
+            schema_version: 1,
+            policy_id: 'soft',
+            findings: {
+                critical: 'fix_now',
+                high: 'create_follow_up',
+                medium: 'ignore',
+                low: 'ignore'
+            },
+            residual_risk: 'ignore'
+        }
+    };
+}
+
+function addFindingToReport(
+    report: Record<string, unknown>,
+    reviewContextPath: string,
+    severity: 'critical' | 'high' | 'medium' | 'low',
+    id: string
+): Record<string, unknown> {
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
+        coverage_contract: {
+            obligations: Array<{ id: string; kind: string; target: string }>;
+        };
+        task_scope: { changed_files: string[] };
+    };
+    const defaultFile = reviewContext.task_scope.changed_files[0];
+    const obligationId = reviewContext.coverage_contract.obligations[0].id;
+    const findings = report.findings as Record<string, unknown[]>;
+    findings[severity] = [{
+        id,
+        title: `${severity} policy disposition fixture finding`,
+        description: `The reviewer reported a ${severity} finding so record-review-result must apply the locked profile disposition.`,
+        evidence: [{
+            location: `${defaultFile}:1`,
+            observation: `Concrete ${severity} evidence bound to the changed file for policy disposition coverage.`
+        }],
+        coverage_obligation_ids: [obligationId]
+    }];
+    const coverageLedger = report.coverage_ledger as { entries: Array<{ obligation_id: string; finding_ids: string[] }> };
+    coverageLedger.entries = coverageLedger.entries.map((entry, index) => ({
+        ...entry,
+        finding_ids: index === 0 ? [id] : entry.finding_ids
+    }));
+    return report;
+}
+
+function addResidualRiskToReport(
+    report: Record<string, unknown>,
+    reviewContextPath: string,
+    id: string
+): Record<string, unknown> {
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
+        task_scope: { changed_files: string[] };
+    };
+    const defaultFile = reviewContext.task_scope.changed_files[0];
+    const residualRisks = report.residual_risks as unknown[];
+    residualRisks.push({
+        id,
+        description: 'Evidence-bound residual risk used to verify locked profile disposition behavior.',
+        evidence: [{
+            location: `${defaultFile}:1`,
+            observation: 'Concrete residual-risk evidence bound to the changed file for policy disposition coverage.'
+        }]
+    });
+    return report;
+}
+
 function profileNeutralValidationSnapshot(validationArtifact: Record<string, unknown>): Record<string, unknown> {
     const validationResult = validationArtifact.validation_result as Record<string, unknown>;
     const profileNeutralResult = { ...validationResult };
@@ -1303,6 +1389,149 @@ describe('gates command review result - normalization', () => {
             'omitted_full_payload_receipt_only'
         );
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result applies locked balanced dispositions before deriving the gate verdict', async () => {
+        const scenarios = [
+            {
+                taskId: 'T-979-9-balanced-low-follow-up',
+                profilePolicySnapshot: balancedProfilePolicySnapshot(),
+                subject: 'finding' as const,
+                severity: 'low' as const,
+                expectedVerdict: 'REVIEW PASSED',
+                expectedPolicyId: 'balanced',
+                expectedAction: 'create_follow_up',
+                expectedBlockingCount: 0,
+                expectedDispositionVerdict: 'pass_with_follow_up_or_ignored_findings'
+            },
+            {
+                taskId: 'T-979-9-balanced-residual-follow-up',
+                profilePolicySnapshot: balancedProfilePolicySnapshot(),
+                subject: 'residual_risk' as const,
+                severity: null,
+                expectedVerdict: 'REVIEW PASSED',
+                expectedPolicyId: 'balanced',
+                expectedAction: 'create_follow_up',
+                expectedBlockingCount: 0,
+                expectedDispositionVerdict: 'pass_with_follow_up_or_ignored_findings'
+            },
+            {
+                taskId: 'T-979-9-soft-low-ignore',
+                profilePolicySnapshot: softProfilePolicySnapshot(),
+                subject: 'finding' as const,
+                severity: 'low' as const,
+                expectedVerdict: 'REVIEW PASSED',
+                expectedPolicyId: 'soft',
+                expectedAction: 'ignore',
+                expectedBlockingCount: 0,
+                expectedDispositionVerdict: 'pass_with_follow_up_or_ignored_findings'
+            },
+            {
+                taskId: 'T-979-9-soft-residual-ignore',
+                profilePolicySnapshot: softProfilePolicySnapshot(),
+                subject: 'residual_risk' as const,
+                severity: null,
+                expectedVerdict: 'REVIEW PASSED',
+                expectedPolicyId: 'soft',
+                expectedAction: 'ignore',
+                expectedBlockingCount: 0,
+                expectedDispositionVerdict: 'pass_with_follow_up_or_ignored_findings'
+            },
+            {
+                taskId: 'T-979-9-balanced-high-fix-now',
+                profilePolicySnapshot: balancedProfilePolicySnapshot(),
+                subject: 'finding' as const,
+                severity: 'high' as const,
+                expectedVerdict: 'REVIEW FAILED',
+                expectedPolicyId: 'balanced',
+                expectedAction: 'fix_now',
+                expectedBlockingCount: 1,
+                expectedDispositionVerdict: 'fail_for_fix_now'
+            }
+        ];
+
+        for (const scenario of scenarios) {
+            const repoRoot = createTempRepo();
+            try {
+                const fixture = await seedPromptBoundReviewFixture({
+                    repoRoot,
+                    taskId: scenario.taskId,
+                    preflightOverrides: {
+                        profile_policy_snapshot: scenario.profilePolicySnapshot
+                    }
+                });
+                attestReviewerInvocationForTest({
+                    repoRoot,
+                    taskId: scenario.taskId,
+                    reviewType: 'code',
+                    reviewContextPath: fixture.reviewContextPath,
+                    reviewerIdentity: fixture.reviewerIdentity
+                });
+                const outputDir = path.join(
+                    repoRoot,
+                    'garda-agent-orchestrator',
+                    'runtime',
+                    'tmp',
+                    'reviews',
+                    scenario.taskId,
+                    'code'
+                );
+                fs.mkdirSync(outputDir, { recursive: true });
+                const outputPath = path.join(outputDir, 'review-output.md');
+                const report = scenario.subject === 'finding'
+                    ? addFindingToReport(
+                        buildNoFindingsJsonReport(fixture.reviewContextPath, scenario.taskId),
+                        fixture.reviewContextPath,
+                        scenario.severity,
+                        'F-001'
+                    )
+                    : addResidualRiskToReport(
+                        buildNoFindingsJsonReport(fixture.reviewContextPath, scenario.taskId),
+                        fixture.reviewContextPath,
+                        'R-001'
+                    );
+                fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+
+                const result = await runCliWithCapturedOutput([
+                    'gate', 'record-review-result',
+                    '--task-id', scenario.taskId,
+                    '--review-type', 'code',
+                    '--preflight-path', fixture.preflightPath,
+                    '--review-output-path', outputPath,
+                    '--repo-root', repoRoot,
+                    '--reviewer-execution-mode', 'delegated_subagent',
+                    '--reviewer-identity', fixture.reviewerIdentity
+                ], { cwd: repoRoot });
+
+                assert.equal(result.exitCode, 0, result.errors.join('\n'));
+                assert.ok(
+                    result.logs.some((line) => line.includes(`VerdictToken: ${scenario.expectedVerdict}`)),
+                    result.logs.join('\n')
+                );
+                assert.ok(
+                    result.logs.some((line) => line.includes(`ReviewFindingsBlockingCount: ${scenario.expectedBlockingCount}`)),
+                    result.logs.join('\n')
+                );
+                const receipt = JSON.parse(fs.readFileSync(
+                    path.join(fixture.reviewsRoot, `${scenario.taskId}-code-receipt.json`),
+                    'utf8'
+                ));
+                assert.equal(receipt.review_findings_disposition.policy_id, scenario.expectedPolicyId);
+                assert.equal(receipt.review_findings_disposition.policy_source, 'preflight_profile_policy_snapshot');
+                if (scenario.subject === 'finding') {
+                    assert.equal(receipt.review_findings_disposition.findings[scenario.severity].action, scenario.expectedAction);
+                    assert.deepEqual(receipt.review_findings_disposition.findings[scenario.severity].ids, ['F-001']);
+                } else {
+                    assert.equal(receipt.review_findings_disposition.residual_risks.action, scenario.expectedAction);
+                    assert.deepEqual(receipt.review_findings_disposition.residual_risks.ids, ['R-001']);
+                }
+                assert.equal(receipt.review_findings_disposition.blocking_count, scenario.expectedBlockingCount);
+                assert.equal(receipt.review_findings_disposition.verdict, scenario.expectedDispositionVerdict);
+                assert.equal(receipt.review_findings_disposition.counts_by_action[scenario.expectedAction], 1);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        }
     });
 
     it('record-review-result keeps findings validation profile-independent across profile variants', async () => {

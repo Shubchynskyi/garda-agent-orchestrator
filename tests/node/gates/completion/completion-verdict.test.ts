@@ -16,12 +16,189 @@ import {
     getMarkdownMeaningfulEntries,
     getFindingsBySeverity,
     getReviewArtifactFindingsEvidence,
+    getReviewFindingsEvidenceFromValidationArtifact,
     validatePreflightForCompletion
 } from '../../../../src/gates/completion/completion-verdict';
 import type { TimelineEventEntry } from '../../../../src/gates/completion/completion-evidence';
+import { buildReviewFindingsValidationArtifact } from '../../../../src/gates/review/review-findings-validation-artifact';
+import type { ReviewFindingsSeverity } from '../../../../src/gates/review/review-findings-schema';
+import type { LockedReviewFindingPolicyResolution } from '../../../../src/gates/review/review-finding-disposition';
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+
+function buildAcceptedValidationArtifactWithFinding(severity: ReviewFindingsSeverity) {
+    const finding = {
+        id: 'F-001',
+        title: `${severity} policy finding`,
+        description: 'Evidence-bound finding used to verify completion policy disposition behavior.',
+        evidence: [
+            {
+                location: 'src/app.ts:1',
+                observation: 'The changed line is covered by the review finding.'
+            }
+        ],
+        coverage_obligation_ids: ['FILE-001']
+    };
+    return buildReviewFindingsValidationArtifact({
+        taskId: 'T-979-policy',
+        reviewType: 'code',
+        validation: {
+            detected: true,
+            valid: true,
+            violations: [],
+            coverage_validation: null,
+            report: {
+                schema_version: 1,
+                task_id: 'T-979-policy',
+                review_type: 'code',
+                review_context_sha256: 'a'.repeat(64),
+                tree_state_sha256: 'b'.repeat(64),
+                validation_notes: [
+                    {
+                        id: 'N-001',
+                        topic: 'scope',
+                        note: 'Reviewed src/app.ts:1.',
+                        evidence: [
+                            {
+                                location: 'src/app.ts:1',
+                                observation: 'Review scope was checked.'
+                            }
+                        ]
+                    }
+                ],
+                coverage_ledger: {
+                    coverage_contract_sha256: 'c'.repeat(64),
+                    entries: [
+                        {
+                            obligation_id: 'FILE-001',
+                            evidence: [
+                                {
+                                    location: 'src/app.ts:1',
+                                    observation: 'The changed file was reviewed.'
+                                }
+                            ],
+                            finding_ids: ['F-001']
+                        }
+                    ]
+                },
+                findings: {
+                    critical: severity === 'critical' ? [finding] : [],
+                    high: severity === 'high' ? [finding] : [],
+                    medium: severity === 'medium' ? [finding] : [],
+                    low: severity === 'low' ? [finding] : []
+                },
+                residual_risks: [],
+                reviewer_notes: []
+            }
+        },
+        reviewOutputSha256: 'd'.repeat(64),
+        reviewArtifactPath: '/review.md',
+        reviewArtifactSha256: 'e'.repeat(64)
+    });
+}
+
+function buildAcceptedValidationArtifactWithResidualRisk() {
+    return buildReviewFindingsValidationArtifact({
+        taskId: 'T-979-policy',
+        reviewType: 'code',
+        validation: {
+            detected: true,
+            valid: true,
+            violations: [],
+            coverage_validation: null,
+            report: {
+                schema_version: 1,
+                task_id: 'T-979-policy',
+                review_type: 'code',
+                review_context_sha256: 'a'.repeat(64),
+                tree_state_sha256: 'b'.repeat(64),
+                validation_notes: [
+                    {
+                        id: 'N-001',
+                        topic: 'scope',
+                        note: 'Reviewed src/app.ts:1.',
+                        evidence: [
+                            {
+                                location: 'src/app.ts:1',
+                                observation: 'Review scope was checked.'
+                            }
+                        ]
+                    }
+                ],
+                coverage_ledger: {
+                    coverage_contract_sha256: 'c'.repeat(64),
+                    entries: [
+                        {
+                            obligation_id: 'FILE-001',
+                            evidence: [
+                                {
+                                    location: 'src/app.ts:1',
+                                    observation: 'The changed file was reviewed.'
+                                }
+                            ],
+                            finding_ids: []
+                        }
+                    ]
+                },
+                findings: {
+                    critical: [],
+                    high: [],
+                    medium: [],
+                    low: []
+                },
+                residual_risks: [
+                    {
+                        id: 'R-001',
+                        description: 'Evidence-bound residual risk used to verify completion policy disposition behavior.',
+                        evidence: [
+                            {
+                                location: 'src/app.ts:1',
+                                observation: 'Residual risk evidence remains linked to the reviewed changed file.'
+                            }
+                        ]
+                    }
+                ],
+                reviewer_notes: []
+            }
+        },
+        reviewOutputSha256: 'd'.repeat(64),
+        reviewArtifactPath: '/review.md',
+        reviewArtifactSha256: 'e'.repeat(64)
+    });
+}
+
+const BALANCED_RECEIPT_POLICY: LockedReviewFindingPolicyResolution = {
+    policy: {
+        schema_version: 1,
+        policy_id: 'balanced',
+        findings: {
+            critical: 'fix_now',
+            high: 'fix_now',
+            medium: 'create_follow_up',
+            low: 'create_follow_up'
+        },
+        residual_risk: 'create_follow_up'
+    },
+    source: 'receipt_review_findings_disposition',
+    diagnostics: []
+};
+
+const SOFT_RECEIPT_POLICY: LockedReviewFindingPolicyResolution = {
+    policy: {
+        schema_version: 1,
+        policy_id: 'soft',
+        findings: {
+            critical: 'fix_now',
+            high: 'create_follow_up',
+            medium: 'ignore',
+            low: 'ignore'
+        },
+        residual_risk: 'ignore'
+    },
+    source: 'receipt_review_findings_disposition',
+    diagnostics: []
+};
 
 describe('gates/completion-verdict', () => {
     describe('STAGE_SEQUENCE_ORDER constants', () => {
@@ -574,6 +751,65 @@ describe('gates/completion-verdict', () => {
             assert.equal(result.findings_by_severity.high.length, 1);
             assert.match(result.findings_by_severity.high[0], /F-001/u);
             assert.match(result.violations.join('\n'), /active High findings/u);
+        });
+
+        it('accepts policy-dispositioned non-blocking findings validation artifacts at completion', () => {
+            const artifact = buildAcceptedValidationArtifactWithFinding('low');
+
+            const result = getReviewFindingsEvidenceFromValidationArtifact(
+                '/review.md',
+                artifact,
+                BALANCED_RECEIPT_POLICY
+            );
+
+            assert.equal(result.status, 'PASS');
+            assert.equal(result.findings_by_severity.low.length, 1);
+            assert.match(result.findings_by_severity.low[0], /F-001/u);
+            assert.equal(result.violations.length, 0);
+        });
+
+        it('accepts policy-dispositioned non-blocking residual risks validation artifacts at completion', () => {
+            const artifact = buildAcceptedValidationArtifactWithResidualRisk();
+
+            const result = getReviewFindingsEvidenceFromValidationArtifact(
+                '/review.md',
+                artifact,
+                BALANCED_RECEIPT_POLICY
+            );
+
+            assert.equal(result.status, 'PASS');
+            assert.equal(result.residual_risks.length, 1);
+            assert.match(result.residual_risks[0], /R-001/u);
+            assert.equal(result.violations.length, 0);
+        });
+
+        it('accepts ignored residual risks validation artifacts at completion', () => {
+            const artifact = buildAcceptedValidationArtifactWithResidualRisk();
+
+            const result = getReviewFindingsEvidenceFromValidationArtifact(
+                '/review.md',
+                artifact,
+                SOFT_RECEIPT_POLICY
+            );
+
+            assert.equal(result.status, 'PASS');
+            assert.equal(result.residual_risks.length, 1);
+            assert.match(result.residual_risks[0], /R-001/u);
+            assert.equal(result.violations.length, 0);
+        });
+
+        it('rejects policy-blocking findings validation artifacts at completion', () => {
+            const artifact = buildAcceptedValidationArtifactWithFinding('high');
+
+            const result = getReviewFindingsEvidenceFromValidationArtifact(
+                '/review.md',
+                artifact,
+                BALANCED_RECEIPT_POLICY
+            );
+
+            assert.equal(result.status, 'FAILED');
+            assert.equal(result.findings_by_severity.high.length, 1);
+            assert.match(result.violations.join('\n'), /fix_now High findings/u);
         });
 
         it('passes canonical None reports', () => {
