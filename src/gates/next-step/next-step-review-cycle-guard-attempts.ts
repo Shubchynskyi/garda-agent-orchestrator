@@ -8,9 +8,12 @@ import {
     extractReviewVerdictToken
 } from '../../gate-runtime/review-context';
 import {
-    reviewFindingsValidationArtifactHasActiveFindings,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
+import {
+    resolveLockedReviewFindingPolicyFromReceiptDisposition,
+    reviewFindingsValidationArtifactHasBlockingFindings
+} from '../review/review-finding-disposition';
 import {
     type TimelineEventEntry
 } from '../completion/completion-evidence';
@@ -329,8 +332,9 @@ function getReviewCycleValidationArtifactVerdict(options: {
     if (!validationResult.valid) {
         return { failed: null, invalidSnapshot: true };
     }
+    const policyResolution = resolveLockedReviewFindingPolicyFromReceiptDisposition(receiptResult.receipt);
     return {
-        failed: reviewFindingsValidationArtifactHasActiveFindings(validationResult.artifact),
+        failed: reviewFindingsValidationArtifactHasBlockingFindings(validationResult.artifact, policyResolution),
         invalidSnapshot: false
     };
 }

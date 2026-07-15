@@ -28,13 +28,14 @@ export interface ProfileSkills {
 }
 
 export type ReviewFindingDispositionAction = 'fix_now' | 'create_follow_up' | 'ignore';
+export type CriticalReviewFindingDispositionAction = 'fix_now';
 export type ReviewFindingPolicyId = 'soft' | 'balanced' | 'strict' | 'custom';
 
 export interface ReviewFindingPolicy {
     schema_version: 1;
     policy_id: ReviewFindingPolicyId;
     findings: {
-        critical: ReviewFindingDispositionAction;
+        critical: CriticalReviewFindingDispositionAction;
         high: ReviewFindingDispositionAction;
         medium: ReviewFindingDispositionAction;
         low: ReviewFindingDispositionAction;
@@ -447,6 +448,19 @@ export function resolveReviewFindingPolicy(
                 ]
             };
         }
+        if (severity === 'critical') {
+            if (action !== 'fix_now') {
+                return {
+                    policy: strictPolicy,
+                    diagnostics: [
+                        `Profile '${profileName}' attempted to weaken critical finding disposition; critical is an immutable safety floor. ` +
+                        'Resolved fail-closed to strict.'
+                    ]
+                };
+            }
+            findings.critical = action;
+            continue;
+        }
         findings[severity] = action;
     }
     if (!isReviewFindingDispositionAction(policyInput.residual_risk)) {
@@ -454,16 +468,6 @@ export function resolveReviewFindingPolicy(
             policy: strictPolicy,
             diagnostics: [
                 `Profile '${profileName}' has invalid review_finding_policy.residual_risk; resolved fail-closed to strict.`
-            ]
-        };
-    }
-
-    if (findings.critical !== 'fix_now') {
-        return {
-            policy: strictPolicy,
-            diagnostics: [
-                `Profile '${profileName}' attempted to weaken critical finding disposition; critical is an immutable safety floor. ` +
-                'Resolved fail-closed to strict.'
             ]
         };
     }

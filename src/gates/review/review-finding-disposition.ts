@@ -86,10 +86,14 @@ function parseReviewFindingPolicy(value: unknown): ReviewFindingPolicy | null {
         if (!isDispositionAction(value.findings[severity])) {
             return null;
         }
+        if (severity === 'critical') {
+            if (value.findings[severity] !== 'fix_now') {
+                return null;
+            }
+            findings.critical = value.findings[severity];
+            continue;
+        }
         findings[severity] = value.findings[severity];
-    }
-    if (findings.critical !== 'fix_now') {
-        return null;
     }
     const policy: ReviewFindingPolicy = {
         schema_version: 1,
@@ -132,9 +136,16 @@ function parseReviewFindingPolicyFromDisposition(value: unknown): ReviewFindingP
         if (!isRecord(bucket) || !isDispositionAction(bucket.action)) {
             return null;
         }
+        if (severity === 'critical') {
+            if (bucket.action !== 'fix_now') {
+                return null;
+            }
+            findings.critical = bucket.action;
+            continue;
+        }
         findings[severity] = bucket.action;
     }
-    if (!isDispositionAction(value.residual_risks.action) || findings.critical !== 'fix_now') {
+    if (!isDispositionAction(value.residual_risks.action)) {
         return null;
     }
     return parseReviewFindingPolicy({

@@ -565,10 +565,14 @@ function parseReviewFindingPolicySnapshot(value: unknown): ReviewFindingPolicy |
         if (!isReviewFindingPolicyAction(value.findings[severity])) {
             return null;
         }
+        if (severity === 'critical') {
+            if (value.findings[severity] !== 'fix_now') {
+                return null;
+            }
+            findings.critical = value.findings[severity];
+            continue;
+        }
         findings[severity] = value.findings[severity];
-    }
-    if (findings.critical !== 'fix_now') {
-        return null;
     }
     const policy: ReviewFindingPolicy = {
         schema_version: 1,

@@ -2,6 +2,9 @@ export type ParsedOptionsRecord = Record<string, string | boolean | string[] | u
 
 export type MaybePromise<T> = T | Promise<T>;
 
+type ReviewFindingDispositionAction = 'fix_now' | 'create_follow_up' | 'ignore';
+type CriticalReviewFindingDispositionAction = 'fix_now';
+
 export interface ProfileEntry {
     description: string;
     depth: number;
@@ -10,12 +13,12 @@ export interface ProfileEntry {
         schema_version: 1;
         policy_id: 'soft' | 'balanced' | 'strict' | 'custom';
         findings: {
-            critical: 'fix_now' | 'create_follow_up' | 'ignore';
-            high: 'fix_now' | 'create_follow_up' | 'ignore';
-            medium: 'fix_now' | 'create_follow_up' | 'ignore';
-            low: 'fix_now' | 'create_follow_up' | 'ignore';
+            critical: CriticalReviewFindingDispositionAction;
+            high: ReviewFindingDispositionAction;
+            medium: ReviewFindingDispositionAction;
+            low: ReviewFindingDispositionAction;
         };
-        residual_risk: 'fix_now' | 'create_follow_up' | 'ignore';
+        residual_risk: ReviewFindingDispositionAction;
     };
     token_economy: Record<string, boolean>;
     skills: Record<string, boolean>;

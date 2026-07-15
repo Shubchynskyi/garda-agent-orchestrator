@@ -2069,7 +2069,7 @@ test('runEnterTaskModeCommand fails closed when profile policy snapshot finding,
         snapshot.finding_policy.active_findings.low = 'allow_without_resolution' as 'block_until_resolved';
         snapshot.finding_policy.residual_risks = 'allow_without_justification' as 'block_unless_deferred_with_justification';
         snapshot.finding_policy.deferred_findings = 'allow_without_justification' as 'allowed_only_with_justification';
-        snapshot.review_finding_policy.findings.critical = 'ignore';
+        (snapshot.review_finding_policy.findings as unknown as Record<string, string>).critical = 'ignore';
         snapshot.review_finding_policy.findings.high = 'ignore';
         snapshot.review_finding_policy.residual_risk = 'ignore';
         snapshot.remediation_policy.failed_review_requires_rework = false as true;

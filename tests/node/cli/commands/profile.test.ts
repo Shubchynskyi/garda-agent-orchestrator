@@ -13,6 +13,7 @@ import {
     buildProfileDeleteOutput,
     buildProfileValidateOutput
 } from '../../../../src/cli/commands/profile';
+import type { ProfileEntry } from '../../../../src/cli/commands/profile/profile-types';
 
 const PACKAGE_JSON = { name: 'test-pkg', version: '1.0.0' };
 
@@ -465,6 +466,17 @@ test('profile validate passes for legacy missing review finding policy', () => {
     const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
     assert.ok(result && typeof result === 'object');
     assert.equal((result as { passed: boolean }).passed, true);
+});
+
+test('ProfileEntry critical finding action type is fixed to fix_now', () => {
+    type CriticalAction = NonNullable<ProfileEntry['review_finding_policy']>['findings']['critical'];
+
+    const allowedCriticalAction: CriticalAction = 'fix_now';
+    assert.equal(allowedCriticalAction, 'fix_now');
+
+    // @ts-expect-error critical finding disposition is schema-locked to fix_now.
+    const disallowedCriticalAction: CriticalAction = 'ignore';
+    assert.equal(disallowedCriticalAction, 'ignore');
 });
 
 test('profile validate --json returns valid JSON', () => {
