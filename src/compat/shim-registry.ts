@@ -24,6 +24,7 @@ const SHIMMED_GATE_NAME_VALUES = [
     'doc-impact-gate',
     'required-reviews-check',
     'record-review-result',
+    'materialize-review-follow-up-tasks',
     'record-review-routing',
     'prepare-reviewer-launch',
     'record-reviewer-delegation-started',

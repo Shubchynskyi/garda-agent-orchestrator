@@ -2,6 +2,12 @@ import {
     normalizeCanonicalReviewSectionHeadings
 } from '../../../gates/completion/completion';
 import {
+    runMaterializeReviewFollowUpTasksCommand
+} from '../gate-flows/review/review-follow-up-task-flow';
+import {
+    parseOptions
+} from '../cli-helpers';
+import {
     createReviewInvocationHandlers
 } from './launch/review-invocation-handlers';
 import {
@@ -203,3 +209,20 @@ export const {
     handleRecordReviewResult,
     handleRecordReviewReceipt
 } = reviewResultHandlers;
+
+export async function handleMaterializeReviewFollowUpTasks(gateArgv: string[]): Promise<void> {
+    const { options } = parseOptions(gateArgv, {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--disposition-artifact-path': { key: 'dispositionArtifactPath', type: 'string' },
+        '--receipt-path': { key: 'receiptPath', type: 'string' },
+        '--artifact-path': { key: 'artifactPath', type: 'string' },
+        '--reviews-root': { key: 'reviewsRoot', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    });
+    const result = runMaterializeReviewFollowUpTasksCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}

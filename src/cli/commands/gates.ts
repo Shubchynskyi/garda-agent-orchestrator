@@ -48,6 +48,10 @@ export {
 } from './gate-flows/review/review-flow';
 
 export {
+    runMaterializeReviewFollowUpTasksCommand
+} from './gate-flows/review/review-follow-up-task-flow';
+
+export {
     runLogTaskEventCommand,
     runHumanCommitCommand
 } from './gate-flows/completion/completion-flow';

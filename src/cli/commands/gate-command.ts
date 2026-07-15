@@ -23,7 +23,8 @@ import {
     handleRecordReviewerDelegationStarted,
     handleCompleteReviewerLaunch,
     handleRecordReviewInvocation,
-    handleRecordReviewReceipt
+    handleRecordReviewReceipt,
+    handleMaterializeReviewFollowUpTasks
 } from './gate-review-handlers';
 import {
     handleBindRulePackToPreflight,
@@ -178,6 +179,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleRecordReviewInvocation(gateArgv);
         case 'record-review-receipt':
             return handleRecordReviewReceipt(gateArgv);
+        case 'materialize-review-follow-up-tasks':
+            return handleMaterializeReviewFollowUpTasks(gateArgv);
         case 'human-commit':
             return handleHumanCommit(gateArgv);
         case 'validate-isolation':

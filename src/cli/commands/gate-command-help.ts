@@ -412,6 +412,16 @@ function buildReviewGateHelpEntries(
                 `${cliPrefix} gate record-review-receipt --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`,
                 true
             )
+        },
+        'materialize-review-follow-up-tasks': {
+            ...createGateHelpEntry(
+                'Materialize idempotent F-suffixed backlog tasks from accepted review_findings_disposition and validation artifacts, carrying severity, evidence, remediation, receipt hashes, validation hashes, and a stable fingerprint.',
+                [
+                    `${cliPrefix} gate materialize-review-follow-up-tasks --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --disposition-artifact-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-findings-disposition.json`)}" --repo-root "."`,
+                    `${cliPrefix} gate materialize-review-follow-up-tasks --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --disposition-artifact-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-findings-disposition.json`)}" --receipt-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-receipt.json`)}" --artifact-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-findings-follow-ups.json`)}" --repo-root "."`
+                ],
+                true
+            )
         }
     };
 }
