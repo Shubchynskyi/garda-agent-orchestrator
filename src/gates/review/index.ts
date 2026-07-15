@@ -1,6 +1,7 @@
 export * from './review-dependencies';
 export * from './review-evidence-contract';
 export * from './review-findings-artifact-verdict';
+export * from './review-findings-follow-up-tasks';
 export * from './review-findings-schema';
 export * from './review-lifecycle-guard';
 export * from './review-prompt-artifact';
