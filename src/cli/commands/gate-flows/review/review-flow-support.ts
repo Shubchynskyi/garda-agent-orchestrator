@@ -21,7 +21,7 @@ import {
     resolveReviewFindingsArtifactVerdictToken
 } from '../../../../gates/review/review-findings-artifact-verdict';
 import {
-    reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation,
+    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../../../../gates/review/review-findings-validation-artifact';
 import {
@@ -348,7 +348,7 @@ export function testReviewArtifacts(
             if (!validationArtifact.valid) {
                 entry.token_found = false;
                 result.violations.push(...validationArtifact.violations);
-            } else if (reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(validationArtifact.artifact)) {
+            } else if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(validationArtifact.artifact)) {
                 entry.token_found = false;
                 result.violations.push(
                     `Review findings validation artifact for '${entry.path}' contains missing-focused-validation evidence and cannot satisfy claimed '${passToken}'.`

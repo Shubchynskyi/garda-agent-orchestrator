@@ -656,6 +656,35 @@ export function reviewFindingsValidationArtifactHasActiveFindings(
     return inventory.finding_count > 0 || inventory.residual_risk_count > 0;
 }
 
+function getReviewFindingsValidationArtifactFindings(
+    artifact: ReviewFindingsValidationArtifact | null
+): NormalizedReviewFindingInventoryEntry[] {
+    if (!artifact?.validation_result.accepted) {
+        return [];
+    }
+    const inventory = artifact.validation_result.normalized_inventory;
+    return [
+        ...inventory.findings_by_severity.critical,
+        ...inventory.findings_by_severity.high,
+        ...inventory.findings_by_severity.medium,
+        ...inventory.findings_by_severity.low
+    ];
+}
+
+function isMissingFocusedValidationFinding(finding: NormalizedReviewFindingInventoryEntry): boolean {
+    return finding.id === 'F-000'
+        && /\[garda:evidence-only:missing-focused-validation\]\s+/iu.test(
+            `${finding.title} ${finding.description}`
+        );
+}
+
+export function reviewFindingsValidationArtifactContainsMissingFocusedValidation(
+    artifact: ReviewFindingsValidationArtifact | null
+): boolean {
+    return getReviewFindingsValidationArtifactFindings(artifact)
+        .some((finding) => isMissingFocusedValidationFinding(finding));
+}
+
 export function reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(
     artifact: ReviewFindingsValidationArtifact | null
 ): boolean {
@@ -663,20 +692,10 @@ export function reviewFindingsValidationArtifactContainsOnlyMissingFocusedValida
         return false;
     }
     const inventory = artifact.validation_result.normalized_inventory;
-    const findings = [
-        ...inventory.findings_by_severity.critical,
-        ...inventory.findings_by_severity.high,
-        ...inventory.findings_by_severity.medium,
-        ...inventory.findings_by_severity.low
-    ];
+    const findings = getReviewFindingsValidationArtifactFindings(artifact);
     return findings.length > 0
         && inventory.residual_risk_count === 0
-        && findings.every((finding) =>
-            finding.id === 'F-000'
-            && /\[garda:evidence-only:missing-focused-validation\]\s+/iu.test(
-                `${finding.title} ${finding.description}`
-            )
-        );
+        && findings.every((finding) => isMissingFocusedValidationFinding(finding));
 }
 
 export function findReviewFindingsValidationMissingFocusedValidationTestPaths(

@@ -34,11 +34,17 @@ import {
     buildReviewFindingsValidationArtifact,
     getReviewFindingsValidationArtifactPath,
     getReviewFindingsValidationArtifactSnapshotPath,
-    reviewFindingsValidationArtifactHasActiveFindings,
+    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt,
     type ReviewFindingsValidationArtifact
 } from '../review/review-findings-validation-artifact';
 import type { ReviewFindingsReport } from '../review/review-findings-schema';
+import {
+    evaluateReviewFindingsReportDispositions,
+    type LockedReviewFindingPolicyResolution,
+    resolveLockedReviewFindingPolicyFromReceiptDisposition,
+    reviewFindingsValidationArtifactHasBlockingFindings
+} from '../review/review-finding-disposition';
 
 export interface MaterializeReusedReviewEvidenceOptions {
     repoRoot: string;
@@ -79,6 +85,7 @@ interface ReusedReviewFindingsValidationEvidence {
     payload: ReviewFindingsValidationArtifact;
     validation: JsonReviewFindingsArtifactValidation;
     rawOutputSha256: string | null;
+    policyResolution: LockedReviewFindingPolicyResolution;
 }
 
 function sha256JsonPayload(value: unknown): string {
@@ -352,8 +359,14 @@ function buildReusedReviewFindingsValidationEvidence(
     if (!sourceValidation.valid || !sourceValidation.artifact) {
         return { reason: `reused review findings validation failed: ${sourceValidation.violations.join(' ')}` };
     }
-    if (reviewFindingsValidationArtifactHasActiveFindings(sourceValidation.artifact)) {
-        return { reason: 'reused review findings validation contains active findings or residual risks' };
+    const policyResolution = resolveLockedReviewFindingPolicyFromReceiptDisposition(
+        options.receipt as unknown as Record<string, unknown>
+    );
+    if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(sourceValidation.artifact)) {
+        return { reason: 'reused review findings validation contains missing focused validation evidence' };
+    }
+    if (reviewFindingsValidationArtifactHasBlockingFindings(sourceValidation.artifact, policyResolution)) {
+        return { reason: 'reused review findings validation contains policy-blocking active findings or residual risks' };
     }
     const receiptRecord = options.receipt as unknown as Record<string, unknown>;
     const sourceReport = receiptRecord.review_findings_report
@@ -414,7 +427,8 @@ function buildReusedReviewFindingsValidationEvidence(
             artifactSha256,
             payload,
             validation,
-            rawOutputSha256
+            rawOutputSha256,
+            policyResolution
         }
     };
 }
@@ -436,6 +450,10 @@ function attachReusedReviewFindingsReceiptEvidence(
     receiptRecord.review_findings_report = report;
     receiptRecord.review_findings_summary = summarizeReviewFindingsReport(report);
     receiptRecord.review_findings_validation = summarizeReviewFindingsValidationEvidence(evidence);
+    receiptRecord.review_findings_disposition = evaluateReviewFindingsReportDispositions(
+        report,
+        evidence.policyResolution
+    );
     receiptRecord.review_output_contract = {
         schema_version: 1,
         format: 'findings_json',

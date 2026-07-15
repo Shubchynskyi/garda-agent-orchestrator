@@ -10,7 +10,7 @@ import {
     resolveLockedReviewFindingPolicyFromReceiptDisposition
 } from '../review/review-finding-disposition';
 import {
-    reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation
+    reviewFindingsValidationArtifactContainsMissingFocusedValidation
 } from '../review/review-findings-validation-artifact';
 import {
     countCanonicalReviewSectionHeadings,
@@ -384,7 +384,7 @@ export function getReviewFindingsEvidenceFromValidationArtifact(
     result.residual_risks = inventory.residual_risks.map((risk) =>
         [risk.id, risk.description, ...risk.evidence_locations].filter(Boolean).join(' ')
     );
-    if (reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(artifact)) {
+    if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(artifact)) {
         result.violations.push(
             `Review artifact '${artifactPathNormalized}' contains active findings in accepted findings validation artifact ` +
             'for missing focused validation evidence; preserve the failed artifact and record current task-owned focused validation evidence.'

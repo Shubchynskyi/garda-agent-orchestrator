@@ -4,7 +4,10 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { buildClassifyChangeOrchestratorWorkRestartCommand } from '../../../../../../src/cli/commands/gate-flows/compile/compile-flow-shared-evidence';
+import {
+    buildClassifyChangeOrchestratorWorkRestartCommand,
+    resolveOptionalSkillTaskText
+} from '../../../../../../src/cli/commands/gate-flows/compile/compile-flow-shared-evidence';
 import type { TaskModeEvidenceResult } from '../../../../../../src/gates/task-mode/task-mode-contracts';
 
 function createTempRepo(): string {
@@ -38,6 +41,31 @@ function baseTaskModeEvidence(overrides: Partial<TaskModeEvidenceResult> = {}): 
 }
 
 describe('compile-flow shared restart evidence', () => {
+    it('binds optional-skill task text to the canonical TASK.md summary before task-intent fallback', () => {
+        const repoRoot = createTempRepo();
+        try {
+            fs.writeFileSync(
+                path.join(repoRoot, 'TASK.md'),
+                '| ID | Status | P | Area | Title | Model | Date | Profile | Notes |\n'
+                + '|---|---|---|---|---|---|---|---|---|\n'
+                + '| T-979-9 | 🟨 IN_PROGRESS | P1 | workflow | Add soft, balanced, strict, and custom finding disposition policies | gpt-5 | 2026-07-13 | balanced | notes |\n',
+                'utf8'
+            );
+
+            assert.equal(
+                resolveOptionalSkillTaskText(
+                    repoRoot,
+                    'T-979-9',
+                    'Apply locked review finding disposition policy to accepted findings',
+                    'Fallback task-mode summary'
+                ),
+                'Add soft, balanced, strict, and custom finding disposition policies'
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('preserves profile-default task-mode depth in protected restart commands', () => {
         const repoRoot = createTempRepo();
         try {

@@ -38,7 +38,7 @@ import {
     reviewContextRequiresFindingsOnlyArtifact
 } from '../review/review-findings-artifact-verdict';
 import {
-    reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation,
+    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
 import {
@@ -439,7 +439,7 @@ export function validateReviewArtifactGateEligibility(options: {
                         );
                         if (
                             validationArtifact.valid
-                            && reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(validationArtifact.artifact)
+                            && reviewFindingsValidationArtifactContainsMissingFocusedValidation(validationArtifact.artifact)
                         ) {
                             errors.push(
                                 `Review artifact '${normalizePath(artifactPath)}' contains active findings in validation artifact ` +

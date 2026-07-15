@@ -33,11 +33,179 @@ import {
     writePreflight,
     writeReceiptBackedReviewArtifact,
     runGit,
-    getReviewTreeStateSha256FromFixtureContext
+    getReviewTreeStateSha256FromFixtureContext,
+    updateLatestHistoricalReviewRecordedDetails
 } from './gates-review-reuse-fixtures';
+import {
+    buildReviewFindingsValidationArtifact,
+    getReviewFindingsValidationArtifactPath,
+    getReviewFindingsValidationArtifactSnapshotPath
+} from '../../../../../../src/gates/review/review-findings-validation-artifact';
+import {
+    validateReviewFindingsContract
+} from '../../../../../../src/gates/review/review-findings-artifact-verdict';
+
 function sha256File(filePath: string): string {
     const crypto = require('node:crypto');
     return crypto.createHash('sha256').update(fs.readFileSync(filePath, 'utf8')).digest('hex');
+}
+
+function sha256Text(text: string): string {
+    const crypto = require('node:crypto');
+    return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+function sha256Json(value: unknown): string {
+    return sha256Text(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function addBalancedLowFindingToReusableCodeReview(repoRoot: string, taskId: string): void {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+    const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+    const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+    const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
+    const reviewContext = JSON.parse(reviewContextText) as Record<string, unknown>;
+    const reviewContextSha256 = sha256Text(reviewContextText);
+    const reviewTreeStateSha256 = getReviewTreeStateSha256FromFixtureContext(reviewContext);
+    const coverageContract = reviewContext.coverage_contract as Record<string, unknown>;
+    const report = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+    const findings = report.findings as Record<string, unknown[]>;
+    const coverageLedger = report.coverage_ledger as Record<string, unknown>;
+    const entries = coverageLedger.entries as Array<Record<string, unknown>>;
+    const obligationId = String(entries[0]?.obligation_id || 'FILE-001');
+    findings.low = [
+        {
+            id: 'F-001',
+            title: 'Accepted low follow-up finding',
+            description: 'A low severity reviewer finding should be retained as non-blocking under balanced review finding policy.',
+            evidence: [
+                {
+                    location: 'src/app.ts:1',
+                    observation: 'The changed line remains covered by historical review evidence.'
+                }
+            ],
+            coverage_obligation_ids: [obligationId]
+        }
+    ];
+    entries[0].finding_ids = ['F-001'];
+    const artifactText = `${JSON.stringify(report, null, 2)}\n`;
+    fs.writeFileSync(artifactPath, artifactText, 'utf8');
+    const artifactSha256 = sha256Text(artifactText);
+    const artifactSnapshotPath = artifactPath.replace(/\.md$/u, `-artifact-${artifactSha256}.md`);
+    fs.writeFileSync(artifactSnapshotPath, artifactText, 'utf8');
+
+    const validation = validateReviewFindingsContract({
+        content: artifactText,
+        expectedTaskId: taskId,
+        expectedReviewType: 'code',
+        expectedReviewContextSha256: reviewContextSha256,
+        expectedTreeStateSha256: reviewTreeStateSha256 || undefined,
+        coverageContract: coverageContract as never,
+        repoRoot
+    });
+    assert.equal(validation.valid, true, validation.violations.join('\n'));
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    const validationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
+    const validationArtifact = buildReviewFindingsValidationArtifact({
+        taskId,
+        reviewType: 'code',
+        validation,
+        reviewOutputSha256: artifactSha256,
+        reviewArtifactPath: artifactPath,
+        reviewArtifactSha256: artifactSha256,
+        reviewContextPath,
+        reviewContextSha256,
+        preflightPath: String(receipt.preflight_path || ''),
+        preflightSha256: String(receipt.preflight_sha256 || ''),
+        scopeSha256: typeof receipt.scope_sha256 === 'string' ? receipt.scope_sha256 : null,
+        reviewScopeSha256: typeof receipt.review_scope_sha256 === 'string' ? receipt.review_scope_sha256 : null,
+        codeScopeSha256: typeof receipt.code_scope_sha256 === 'string' ? receipt.code_scope_sha256 : null,
+        reviewTreeStateSha256,
+        coverageContract: coverageContract as never
+    });
+    const validationArtifactSha256 = sha256Json(validationArtifact);
+    const validationArtifactSnapshotPath = getReviewFindingsValidationArtifactSnapshotPath(
+        validationArtifactPath,
+        validationArtifactSha256
+    );
+    fs.writeFileSync(validationArtifactPath, `${JSON.stringify(validationArtifact, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(validationArtifactSnapshotPath, `${JSON.stringify(validationArtifact, null, 2)}\n`, 'utf8');
+
+    const reportSha256 = sha256Json(report);
+    Object.assign(receipt, {
+        review_artifact_sha256: artifactSha256,
+        review_output_sha256: artifactSha256,
+        review_output_format: 'findings_json',
+        review_output_schema_version: 1,
+        review_findings_report_sha256: reportSha256,
+        review_findings_report: report,
+        review_findings_summary: {
+            finding_counts: { critical: 0, high: 0, medium: 0, low: 1 },
+            residual_risk_count: 0,
+            coverage_entry_count: entries.length
+        },
+        review_findings_validation: {
+            artifact_path: validationArtifactPath.replace(/\\/g, '/'),
+            artifact_sha256: validationArtifactSha256,
+            snapshot_path: validationArtifactSnapshotPath.replace(/\\/g, '/'),
+            snapshot_sha256: validationArtifactSha256,
+            status: validationArtifact.validation_result.status,
+            accepted: validationArtifact.validation_result.accepted,
+            validation_result_sha256: validationArtifact.validation_result_sha256,
+            violation_count: validationArtifact.validation_result.violations.length
+        },
+        review_findings_disposition: {
+            schema_version: 1,
+            policy_id: 'balanced',
+            policy_source: 'preflight_profile_policy_snapshot',
+            policy_diagnostics: [],
+            findings: {
+                critical: { action: 'fix_now', ids: [], count: 0 },
+                high: { action: 'fix_now', ids: [], count: 0 },
+                medium: { action: 'create_follow_up', ids: [], count: 0 },
+                low: { action: 'create_follow_up', ids: ['F-001'], count: 1 }
+            },
+            residual_risks: { action: 'create_follow_up', ids: [], count: 0 },
+            counts_by_action: { fix_now: 0, create_follow_up: 1, ignore: 0 },
+            blocking_count: 0,
+            blocking_ids: [],
+            non_blocking_count: 1,
+            total_count: 1,
+            verdict: 'pass_with_follow_up_or_ignored_findings'
+        },
+        review_output_contract: {
+            schema_version: 1,
+            format: 'findings_json',
+            report_sha256: reportSha256,
+            validation_artifact_sha256: validationArtifactSha256,
+            validation_result_sha256: validationArtifact.validation_result_sha256,
+            raw_output_sha256: artifactSha256,
+            review_artifact_sha256: artifactSha256,
+            review_context_sha256: reviewContextSha256,
+            review_tree_state_sha256: reviewTreeStateSha256,
+            coverage_contract_sha256: String(coverageContract.contract_sha256 || ''),
+            reviewer_identity: receipt.reviewer_identity,
+            reviewer_provenance_event_sha256: (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 ?? null
+        }
+    });
+    const receiptText = `${JSON.stringify(receipt, null, 2)}\n`;
+    const receiptSha256 = sha256Text(receiptText);
+    const receiptSnapshotPath = artifactPath.replace(/\.md$/u, `-receipt-${receiptSha256}.json`);
+    fs.writeFileSync(receiptPath, receiptText, 'utf8');
+    fs.writeFileSync(receiptSnapshotPath, receiptText, 'utf8');
+    updateLatestHistoricalReviewRecordedDetails(repoRoot, taskId, 'code', (details) => {
+        Object.assign(details, receipt, {
+            receipt_path: receiptPath.replace(/\\/g, '/'),
+            receipt_sha256: receiptSha256,
+            receipt_snapshot_path: receiptSnapshotPath.replace(/\\/g, '/'),
+            receipt_snapshot_sha256: receiptSha256,
+            review_artifact_path: artifactPath.replace(/\\/g, '/'),
+            review_artifact_snapshot_path: artifactSnapshotPath.replace(/\\/g, '/'),
+            review_artifact_snapshot_sha256: artifactSha256,
+            review_context_path: reviewContextPath.replace(/\\/g, '/')
+        });
+    });
 }
 
 function enablePreReviewFullSuite(repoRoot: string): void {
@@ -270,6 +438,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
             review_type: 'code',
             reused_existing_review: false
         });
+        addBalancedLowFindingToReusableCodeReview(repoRoot, taskId);
         const preflightPath = runExplicitPreflight(
             repoRoot,
             taskId,
@@ -321,6 +490,10 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         assert.equal(refreshedReceipt.reviewer_execution_mode, 'delegated_subagent');
         assert.equal(refreshedReceipt.reviewer_identity, codeExecution.reviewerIdentity);
         assert.equal(refreshedReceipt.reused_existing_review, true);
+        const reusedDisposition = refreshedReceipt.review_findings_disposition as Record<string, unknown>;
+        assert.equal(reusedDisposition.verdict, 'pass_with_follow_up_or_ignored_findings');
+        assert.equal(reusedDisposition.blocking_count, 0);
+        assert.equal(((reusedDisposition.findings as Record<string, Record<string, unknown>>).low).action, 'create_follow_up');
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         const reusedCoverage = refreshedReceipt.review_coverage as Record<string, unknown>;
         assert.equal(reusedCoverage.status, 'PASS');

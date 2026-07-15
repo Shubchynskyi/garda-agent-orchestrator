@@ -197,6 +197,43 @@ The CLI validates that a matching live review skill is installed before enabling
 
 `skills-index.json` is still a generated runtime index under `live/config/`, but it is **not** part of `garda.config.json` and is **not** validated by `gate validate-config`.
 
+## Profile Review Finding Policy
+
+Profiles can define how findings reported by delegated reviewers are handled independently from which review lanes run.
+
+**File:** `live/config/profiles.json`
+
+```json
+{
+  "review_finding_policy": {
+    "schema_version": 1,
+    "policy_id": "balanced",
+    "findings": {
+      "critical": "fix_now",
+      "high": "fix_now",
+      "medium": "create_follow_up",
+      "low": "create_follow_up"
+    },
+    "residual_risk": "create_follow_up"
+  }
+}
+```
+
+| Field | Values | Description |
+|---|---|---|
+| `policy_id` | `soft`, `balanced`, `strict`, `custom` | Named disposition preset, or `custom` for explicit per-severity behavior. |
+| `findings.critical` | `fix_now` | Critical findings are always fixed in the current task. The resolver and schemas reject or normalize weaker critical actions. |
+| `findings.high`, `findings.medium`, `findings.low` | `fix_now`, `create_follow_up`, `ignore` | Disposition for each non-critical reviewer finding severity. |
+| `residual_risk` | `fix_now`, `create_follow_up`, `ignore` | Disposition for reviewer residual-risk entries. |
+
+Built-in presets:
+
+- `soft`: critical findings are fixed now; high findings create follow-up work; medium, low, and residual-risk entries are ignored.
+- `balanced`: critical and high findings are fixed now; medium, low, and residual-risk entries create follow-up work.
+- `strict`: every finding severity and residual-risk entry is fixed now.
+
+For backward compatibility, legacy profiles without `review_finding_policy` remain loadable. At runtime they resolve fail-closed to the `strict` preset and emit diagnostics so the missing field is visible in profile output and task evidence.
+
 ## Skill Packs
 
 Tracks which built-in domain packs are currently installed in the workspace.

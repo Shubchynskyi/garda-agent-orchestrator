@@ -35,7 +35,7 @@ import {
 } from '../review/review-findings-artifact-verdict';
 import {
     getReviewFindingsValidationArtifactPath,
-    reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation,
+    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifact,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
@@ -459,7 +459,7 @@ export function readReviewArtifactState(
             });
             violations.push(...validationArtifact.violations);
             if (validationArtifact.valid) {
-                if (reviewFindingsValidationArtifactContainsOnlyMissingFocusedValidation(validationArtifact.artifact)) {
+                if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(validationArtifact.artifact)) {
                     verdictToken = failToken || null;
                     failed = true;
                     failureKind = 'missing-focused-validation-evidence';

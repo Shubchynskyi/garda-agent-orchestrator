@@ -26,9 +26,13 @@ import {
     isNonTestReviewScope
 } from '../../../../gates/review-reuse/review-reuse';
 import {
-    reviewFindingsValidationArtifactHasActiveFindings,
+    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../../../../gates/review/review-findings-validation-artifact';
+import {
+    resolveLockedReviewFindingPolicyFromPreflight,
+    reviewFindingsValidationArtifactHasBlockingFindings
+} from '../../../../gates/review/review-finding-disposition';
 import {
     validateStrictReusedReviewEvidence
 } from '../../../../gates/review-reuse/review-reuse-telemetry';
@@ -402,8 +406,14 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
         if (!findingsValidation.valid) {
             return reject(`review findings validation artifact is invalid for current PASS reuse: ${findingsValidation.violations.join(' ')}`);
         }
-        if (reviewFindingsValidationArtifactHasActiveFindings(findingsValidation.artifact)) {
-            return reject('review findings validation artifact contains active findings or residual risks');
+        if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(findingsValidation.artifact)) {
+            return reject('review findings validation artifact contains missing-focused-validation evidence and cannot satisfy current PASS reuse');
+        }
+        if (reviewFindingsValidationArtifactHasBlockingFindings(
+            findingsValidation.artifact,
+            resolveLockedReviewFindingPolicyFromPreflight(options.preflightPayload)
+        )) {
+            return reject('review findings validation artifact contains fix_now findings or residual risks');
         }
     } else if (!artifactHasPassVerdict(options.reviewType, artifactText)) {
         return reject('review artifact does not contain an accepted PASS verdict token');

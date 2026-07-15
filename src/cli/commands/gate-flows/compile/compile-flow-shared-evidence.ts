@@ -210,11 +210,15 @@ export function resolveOptionalSkillTaskText(
     taskIntent: unknown,
     fallbackTaskSummary: string | null
 ): string {
+    const currentTaskSummary = String(readCurrentTaskSummary(repoRoot, taskId, fallbackTaskSummary) || '').trim();
+    if (currentTaskSummary) {
+        return currentTaskSummary;
+    }
     const explicitTaskIntent = String(taskIntent || '').trim();
     if (explicitTaskIntent) {
         return explicitTaskIntent;
     }
-    return String(readCurrentTaskSummary(repoRoot, taskId, fallbackTaskSummary) || '').trim();
+    return '';
 }
 
 export function listChangedFilesPredatingTaskMode(

@@ -7,9 +7,13 @@ import {
 } from '../../gate-runtime/review-context';
 import {
     normalizeReviewFindingsValidationReceiptReference,
-    reviewFindingsValidationArtifactHasActiveFindings,
+    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
+import {
+    resolveLockedReviewFindingPolicyFromReceiptDisposition,
+    reviewFindingsValidationArtifactHasBlockingFindings
+} from '../review/review-finding-disposition';
 import { fileSha256, joinOrchestratorPath, normalizePath } from '../shared/helpers';
 import {
     type ReviewReuseTelemetryMatchResult,
@@ -664,8 +668,14 @@ function validateReviewRecordedPassVerdict(
         if (!validation.valid) {
             return `${label}: findings validation artifact is invalid: ${validation.violations.join(' ')}`;
         }
-        if (reviewFindingsValidationArtifactHasActiveFindings(validation.artifact)) {
-            return `${label}: findings validation artifact contains active findings or residual risks`;
+        if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(validation.artifact)) {
+            return `${label}: findings validation artifact contains missing focused validation evidence`;
+        }
+        if (reviewFindingsValidationArtifactHasBlockingFindings(
+            validation.artifact,
+            resolveLockedReviewFindingPolicyFromReceiptDisposition(details)
+        )) {
+            return `${label}: findings validation artifact contains policy-blocking active findings or residual risks`;
         }
         return null;
     }

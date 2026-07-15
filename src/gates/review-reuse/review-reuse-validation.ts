@@ -24,9 +24,13 @@ import {
 } from '../review/review-timing-trust';
 import {
     normalizeReviewFindingsValidationReceiptReference,
-    reviewFindingsValidationArtifactHasActiveFindings,
+    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
+import {
+    resolveLockedReviewFindingPolicyFromReceiptDisposition,
+    reviewFindingsValidationArtifactHasBlockingFindings
+} from '../review/review-finding-disposition';
 
 export interface HistoricalReviewReuseCandidate {
     telemetryReceiptPath: string;
@@ -190,8 +194,14 @@ function validateFindingsValidationForHistoricalReuse(options: {
     if (!validation.valid) {
         return `prior findings validation artifact is invalid: ${validation.violations.join(' ')}`;
     }
-    if (reviewFindingsValidationArtifactHasActiveFindings(validation.artifact)) {
-        return 'prior findings validation artifact contains active findings or residual risks';
+    if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(validation.artifact)) {
+        return 'prior findings validation artifact contains missing focused validation evidence';
+    }
+    if (reviewFindingsValidationArtifactHasBlockingFindings(
+        validation.artifact,
+        resolveLockedReviewFindingPolicyFromReceiptDisposition(options.receipt as unknown as Record<string, unknown>)
+    )) {
+        return 'prior findings validation artifact contains policy-blocking active findings or residual risks';
     }
     return null;
 }
