@@ -3242,7 +3242,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             cliPrefix,
             taskId,
             preflightCommandPath,
-            taskModePath
+            taskModePath,
+            qualityChecklistReadiness.answersTemplatePath
         )
     }) : null;
     if (qualityChecklistRoute) {

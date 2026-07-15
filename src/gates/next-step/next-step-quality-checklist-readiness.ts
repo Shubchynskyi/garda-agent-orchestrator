@@ -16,6 +16,9 @@ import {
     QUALITY_CHECKLIST_STATUSES,
     resolveDefaultQualityChecklistAnswersTemplatePath
 } from '../quality-checklist';
+import type {
+    MaterializeQualityChecklistAnswersTemplateResult
+} from '../quality-checklist';
 import { appendMandatoryTaskEvent } from '../../gate-runtime/task-events';
 import {
     fileSha256,
@@ -61,6 +64,7 @@ export interface NextStepQualityChecklistReadiness {
     skippedByScopeRuleCount: number;
     reviewFailureCadenceInterval: number;
     artifactPath: string | null;
+    answersTemplatePath: string | null;
 }
 
 export interface NextStepQualityChecklistSummary {
@@ -82,6 +86,7 @@ export interface NextStepQualityChecklistSummary {
     active_rule_count: number;
     skipped_by_scope_rule_count: number;
     review_failure_cadence_interval: number;
+    answers_template_path: string | null;
     visible_summary_line: string;
 }
 
@@ -254,6 +259,20 @@ function combineMaterializationErrors(
     return [first, second].filter((value): value is string => !!value).join(' ') || null;
 }
 
+interface QualityChecklistTemplateMaterialization {
+    error: string | null;
+    answersPath: string | null;
+}
+
+function buildTemplateMaterializationResult(
+    result: MaterializeQualityChecklistAnswersTemplateResult
+): QualityChecklistTemplateMaterialization {
+    return {
+        error: result.warning || null,
+        answersPath: result.answers_path || null
+    };
+}
+
 function reviewFailureCadence(repoRoot: string, taskId: string, reviewFailureCadenceInterval: number): {
     due: boolean;
     skip: boolean;
@@ -329,7 +348,7 @@ function materializePendingQualityChecklistAnswers(
         preflightPath: string;
     },
     refreshIfOlderThanUtc: string | null = null
-): string | null {
+): QualityChecklistTemplateMaterialization {
     try {
         const result = materializeQualityChecklistAnswersTemplate({
             repoRoot: options.repoRoot,
@@ -337,9 +356,12 @@ function materializePendingQualityChecklistAnswers(
             preflightPath: options.preflightPath,
             refreshIfOlderThanUtc
         });
-        return result.warning || null;
+        return buildTemplateMaterializationResult(result);
     } catch (error) {
-        return error instanceof Error ? error.message : String(error);
+        return {
+            error: error instanceof Error ? error.message : String(error),
+            answersPath: null
+        };
     }
 }
 
@@ -360,6 +382,7 @@ function buildQualityChecklistReadiness(options: {
     skippedByScopeRuleCount?: number;
     reviewFailureCadenceInterval?: number;
     templateMaterializationError?: string | null;
+    answersTemplatePath?: string | null;
 }): NextStepQualityChecklistReadiness {
     const artifact = options.artifact || null;
     const templateMaterializationError = String(options.templateMaterializationError || '').trim();
@@ -390,7 +413,8 @@ function buildQualityChecklistReadiness(options: {
         skippedByScopeRuleCount: options.skippedByScopeRuleCount ?? 0,
         reviewFailureCadenceInterval: options.reviewFailureCadenceInterval
             ?? DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
-        artifactPath: options.artifactPath || null
+        artifactPath: options.artifactPath || null,
+        answersTemplatePath: options.answersTemplatePath || null
     };
 }
 
@@ -490,9 +514,9 @@ export function readQualityChecklistReadiness(options: {
     const cadence = reviewFailureCadence(options.repoRoot, options.taskId, cadenceInterval.value);
     if (cadence.skip && !forceChecklistRun) {
         const answersTemplatePath = resolveDefaultQualityChecklistAnswersTemplatePath(options.repoRoot, options.taskId);
-        const templateMaterializationError = fileExists(answersTemplatePath)
+        const templateMaterialization = fileExists(answersTemplatePath)
             ? materializePendingQualityChecklistAnswers(options)
-            : null;
+            : { error: null, answersPath: null };
         const expectedPreflightSha256 = String(options.preflightSha256 || '').trim().toLowerCase()
             || (fileExists(options.preflightPath) ? fileSha256(options.preflightPath) : '');
         const existingPreflightSha256 = String(existingArtifact?.preflight_sha256 || '').trim().toLowerCase();
@@ -536,7 +560,8 @@ export function readQualityChecklistReadiness(options: {
                 enabledRuleCount,
                 activeRuleCount,
                 skippedByScopeRuleCount,
-                templateMaterializationError
+                templateMaterializationError: templateMaterialization.error,
+                answersTemplatePath: templateMaterialization.answersPath
             });
         }
         return buildReadiness({
@@ -556,7 +581,8 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount,
             activeRuleCount,
             skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
     const activeRules = optionalQualityChecks.rules
@@ -570,17 +596,21 @@ export function readQualityChecklistReadiness(options: {
         });
         return activeQuestionReference;
     };
-    const materializeRequiredChecklistInputs = (): string | null => {
+    const materializeRequiredChecklistInputs = (): QualityChecklistTemplateMaterialization => {
         const activeQuestionReferenceResult = getActiveQuestionReference();
-        return combineMaterializationErrors(
-            materializePendingQualityChecklistAnswers(options),
-            activeQuestionReferenceResult.error
-                ? `Active-question reference was not materialized: ${activeQuestionReferenceResult.error}`
-                : null
-        );
+        const templateMaterialization = materializePendingQualityChecklistAnswers(options);
+        return {
+            error: combineMaterializationErrors(
+                templateMaterialization.error,
+                activeQuestionReferenceResult.error
+                    ? `Active-question reference was not materialized: ${activeQuestionReferenceResult.error}`
+                    : null
+            ),
+            answersPath: templateMaterialization.answersPath
+        };
     };
     if (cadence.due && artifactExists && !forceChecklistRun) {
-        const templateMaterializationError = materializeRequiredChecklistInputs();
+        const templateMaterialization = materializeRequiredChecklistInputs();
         return buildReadiness({
             enabled,
             required: true,
@@ -598,11 +628,12 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount,
             activeRuleCount,
             skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
     if (!fileExists(artifactPath)) {
-        const templateMaterializationError = materializeRequiredChecklistInputs();
+        const templateMaterialization = materializeRequiredChecklistInputs();
         const activeQuestionReferenceResult = getActiveQuestionReference();
         const activeQuestionReferencePath = activeQuestionReferenceResult.path || joinOrchestratorPath(
             options.repoRoot,
@@ -630,13 +661,14 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount,
             activeRuleCount,
             skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
 
     const artifact = readJsonRecordOrNull(artifactPath);
     if (!artifact) {
-        const templateMaterializationError = materializeRequiredChecklistInputs();
+        const templateMaterialization = materializeRequiredChecklistInputs();
         return buildReadiness({
             enabled,
             required,
@@ -650,13 +682,14 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount,
             activeRuleCount,
             skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
 
     const status = String(artifact.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
     if (!QUALITY_CHECKLIST_STATUSES.includes(status as typeof QUALITY_CHECKLIST_STATUSES[number])) {
-        const templateMaterializationError = materializeRequiredChecklistInputs();
+        const templateMaterialization = materializeRequiredChecklistInputs();
         return buildReadiness({
             enabled,
             required,
@@ -672,11 +705,12 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount,
             activeRuleCount,
             skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
     if (artifact.task_id !== options.taskId) {
-        const templateMaterializationError = materializeRequiredChecklistInputs();
+        const templateMaterialization = materializeRequiredChecklistInputs();
         return buildReadiness({
             enabled,
             required,
@@ -692,11 +726,12 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount,
             activeRuleCount,
             skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
     if (artifact.checklist_id !== QUALITY_CHECKLIST_ID) {
-        const templateMaterializationError = materializeRequiredChecklistInputs();
+        const templateMaterialization = materializeRequiredChecklistInputs();
         return buildReadiness({
             enabled,
             required,
@@ -712,7 +747,8 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount,
             activeRuleCount,
             skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
 
@@ -720,7 +756,7 @@ export function readQualityChecklistReadiness(options: {
         || (fileExists(options.preflightPath) ? fileSha256(options.preflightPath) : '');
     const artifactPreflightSha256 = String(artifact.preflight_sha256 || '').trim().toLowerCase();
     if (expectedPreflightSha256 && artifactPreflightSha256 !== expectedPreflightSha256) {
-        const templateMaterializationError = materializeRequiredChecklistInputs();
+        const templateMaterialization = materializeRequiredChecklistInputs();
         return buildReadiness({
             enabled,
             required,
@@ -738,7 +774,8 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount,
             activeRuleCount,
             skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
 
@@ -761,8 +798,11 @@ export function readQualityChecklistReadiness(options: {
             : null;
         if (compatibility?.compatible === true) {
             let templateMaterializationError: string | null = null;
+            let answersTemplatePath: string | null = null;
             if (status === 'CONFIG_ERROR') {
-                templateMaterializationError = materializePendingQualityChecklistAnswers(options);
+                const templateMaterialization = materializePendingQualityChecklistAnswers(options);
+                templateMaterializationError = templateMaterialization.error;
+                answersTemplatePath = templateMaterialization.answersPath;
             }
             return buildReadiness({
                 enabled,
@@ -794,10 +834,11 @@ export function readQualityChecklistReadiness(options: {
                 enabledRuleCount,
                 activeRuleCount,
                 skippedByScopeRuleCount,
-                templateMaterializationError
+                templateMaterializationError,
+                answersTemplatePath
             });
         }
-        const templateMaterializationError = materializeRequiredChecklistInputs();
+        const templateMaterialization = materializeRequiredChecklistInputs();
         return buildReadiness({
             enabled,
             required,
@@ -816,7 +857,8 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount,
             activeRuleCount,
             skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
 
@@ -837,7 +879,7 @@ export function readQualityChecklistReadiness(options: {
         ? formatQualityChecklistActions(artifact.violations)
         : null;
     if (status === 'CONFIG_ERROR') {
-        const templateMaterializationError = materializePendingQualityChecklistAnswers(options);
+        const templateMaterialization = materializePendingQualityChecklistAnswers(options);
         return buildReadiness({
             enabled,
             required,
@@ -856,7 +898,8 @@ export function readQualityChecklistReadiness(options: {
             enabledRuleCount: parseOptionalNumberField(artifact.enabled_rule_count) ?? enabledRuleCount,
             activeRuleCount: parseOptionalNumberField(artifact.active_rule_count) ?? activeRuleCount,
             skippedByScopeRuleCount: parseOptionalNumberField(artifact.skipped_by_scope_rule_count) ?? skippedByScopeRuleCount,
-            templateMaterializationError
+            templateMaterializationError: templateMaterialization.error,
+            answersTemplatePath: templateMaterialization.answersPath
         });
     }
     return buildReadiness({
@@ -902,6 +945,7 @@ export function buildNextStepQualityChecklistSummary(
         active_rule_count: readiness.activeRuleCount,
         skipped_by_scope_rule_count: readiness.skippedByScopeRuleCount,
         review_failure_cadence_interval: readiness.reviewFailureCadenceInterval,
+        answers_template_path: readiness.answersTemplatePath,
         visible_summary_line:
             `QualityChecklist: enabled=${readiness.enabled}; required=${readiness.required}; ready=${readiness.ready}; ` +
             `evidence=${readiness.evidenceStatus}; status=${readiness.status || 'none'}; effect=${readiness.effect}; ` +

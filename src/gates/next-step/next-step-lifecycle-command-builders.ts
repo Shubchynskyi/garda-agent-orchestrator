@@ -21,7 +21,8 @@ import type {
 } from './next-step-task-queue';
 import {
     buildBundleRelativePath,
-    quoteCommandValue
+    quoteCommandValue,
+    toRepoDisplayPath
 } from './next-step-command-formatters';
 import {
     buildReviewPhaseCommand,
@@ -484,9 +485,12 @@ export function buildQualityChecklistCommand(
     cliPrefix: string,
     taskId: string,
     preflightCommandPath: string,
-    taskModePath: string | null
+    taskModePath: string | null,
+    answersTemplatePath?: string | null
 ): string {
-    const absoluteAnswersPath = resolveDefaultQualityChecklistAnswersTemplatePath(repoRoot, taskId);
+    const absoluteAnswersPath = answersTemplatePath
+        ? path.resolve(repoRoot, answersTemplatePath)
+        : resolveDefaultQualityChecklistAnswersTemplatePath(repoRoot, taskId);
     const answersAssessment = assessQualityChecklistAnswersTemplateFile({
         repoRoot,
         taskId,
@@ -496,7 +500,7 @@ export function buildQualityChecklistCommand(
     if (answersAssessment.status !== 'current') {
         return '';
     }
-    const answersPath = buildBundleRelativePath(repoRoot, `runtime/tmp/${taskId}-quality-checklist-answers.json`);
+    const answersPath = toRepoDisplayPath(repoRoot, absoluteAnswersPath);
     return [
         `${cliPrefix} gate quality-checklist`,
         `--task-id "${taskId}"`,
