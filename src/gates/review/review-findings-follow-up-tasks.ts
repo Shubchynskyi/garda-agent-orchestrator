@@ -599,6 +599,7 @@ function validateValidationInventoryShape(artifact: ReviewFindingsValidationArti
     if (!isPlainRecord(inventory.findings_by_severity)) {
         violations.push('Review findings validation artifact normalized_inventory.findings_by_severity must be an object.');
     } else {
+        const seenFindingIds = new Set<string>();
         for (const severity of REVIEW_FINDING_SEVERITIES) {
             const bucket = inventory.findings_by_severity[severity];
             if (!Array.isArray(bucket)) {
@@ -614,10 +615,18 @@ function validateValidationInventoryShape(artifact: ReviewFindingsValidationArti
                     );
                     return;
                 }
-                if (!normalizeText(entry.id)) {
+                const id = normalizeText(entry.id);
+                if (!id) {
                     violations.push(
                         `Review findings validation artifact ${severity} finding inventory entry ${index} is missing id.`
                     );
+                } else {
+                    if (seenFindingIds.has(id)) {
+                        violations.push(
+                            `Review findings validation artifact duplicate finding inventory id '${id}' for severity '${severity}'.`
+                        );
+                    }
+                    seenFindingIds.add(id);
                 }
                 if (entry.severity !== severity) {
                     violations.push(
@@ -650,6 +659,7 @@ function validateValidationInventoryShape(artifact: ReviewFindingsValidationArti
     if (!Array.isArray(inventory.residual_risks)) {
         violations.push('Review findings validation artifact normalized_inventory.residual_risks must be an array.');
     } else {
+        const seenResidualRiskIds = new Set<string>();
         inventory.residual_risks.forEach((entry, index) => {
             if (!isPlainRecord(entry)) {
                 violations.push(
@@ -657,8 +667,16 @@ function validateValidationInventoryShape(artifact: ReviewFindingsValidationArti
                 );
                 return;
             }
-            if (!normalizeText(entry.id)) {
+            const id = normalizeText(entry.id);
+            if (!id) {
                 violations.push(`Review findings validation artifact residual risk inventory entry ${index} is missing id.`);
+            } else {
+                if (seenResidualRiskIds.has(id)) {
+                    violations.push(
+                        `Review findings validation artifact duplicate residual risk inventory id '${id}'.`
+                    );
+                }
+                seenResidualRiskIds.add(id);
             }
             if (!normalizeText(entry.description)) {
                 violations.push(

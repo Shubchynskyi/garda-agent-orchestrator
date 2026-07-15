@@ -596,6 +596,121 @@ describe('review findings follow-up task materialization', () => {
         assert.equal(artifactItems[0].task_id, `${TASK_ID}-F1`);
     });
 
+    it('blocks duplicate accepted validation residual risk inventory ids before materializing ambiguous follow-ups', () => {
+        const repoRoot = makeRepo();
+        const artifacts = seedReviewArtifacts(repoRoot);
+        const validation = readJson(artifacts.validationArtifactPath);
+        const validationResult = validation.validation_result as Record<string, unknown>;
+        validationResult.normalized_inventory = {
+            finding_count: 0,
+            residual_risk_count: 2,
+            findings_by_severity: emptyFindingsBySeverity(),
+            residual_risks: [
+                {
+                    id: 'R-001',
+                    description: 'Residual deployment risk needs owner confirmation before closeout.',
+                    evidence_locations: ['src/gates/review/residual-risk.ts:12']
+                },
+                {
+                    id: 'R-001',
+                    description: 'Ambiguous duplicate residual deployment risk must fail closed.',
+                    evidence_locations: ['src/gates/review/residual-risk-duplicate.ts:18']
+                }
+            ]
+        };
+        validationResult.evidence_diagnostics = {
+            validation_note_evidence_locations: [],
+            coverage_evidence_locations: [],
+            finding_evidence_locations: [],
+            residual_risk_evidence_locations: [
+                'src/gates/review/residual-risk.ts:12',
+                'src/gates/review/residual-risk-duplicate.ts:18'
+            ],
+            total_evidence_locations: 2
+        };
+        validation.validation_result_sha256 = sha256JsonPayload(validationResult);
+        writeJson(artifacts.validationArtifactPath, validation);
+        const validationArtifactSha256 = fileSha256(artifacts.validationArtifactPath);
+
+        const disposition = readJson(artifacts.dispositionArtifactPath);
+        const sourceValidation = disposition.source_validation as Record<string, unknown>;
+        sourceValidation.artifact_sha256 = validationArtifactSha256;
+        sourceValidation.validation_result_sha256 = validation.validation_result_sha256;
+        const policy = disposition.policy as Record<string, unknown>;
+        const reviewFindingPolicy = policy.review_finding_policy as Record<string, unknown>;
+        reviewFindingPolicy.residual_risk = 'create_follow_up';
+        disposition.disposition_result = {
+            findings: {
+                critical: { action: 'fix_now', ids: [] },
+                high: { action: 'fix_now', ids: [] },
+                medium: { action: 'create_follow_up', ids: [] },
+                low: { action: 'ignore', ids: [] }
+            },
+            residual_risks: { action: 'create_follow_up', ids: ['R-001'] },
+            counts_by_action: {
+                fix_now: 0,
+                create_follow_up: 1,
+                ignore: 0
+            },
+            blocking_count: 0,
+            verdict: 'follow_up_required'
+        };
+        disposition.disposition_result_sha256 = sha256JsonPayload(disposition.disposition_result);
+        disposition.items = [{
+            id: 'R-001',
+            kind: 'residual_risk',
+            severity: 'residual_risk',
+            action: 'create_follow_up',
+            source_rule: 'review_finding_policy.residual_risk',
+            policy_source: 'preflight_profile_policy_snapshot',
+            blocking: false,
+            materialization_status: 'pending_follow_up_materialization',
+            audit_status: 'retained_in_disposition_artifact'
+        }];
+        disposition.summary = {
+            item_count: 1,
+            fix_now_count: 0,
+            follow_up_pending_count: 1,
+            ignored_count: 0,
+            blocking_count: 0,
+            non_blocking_count: 1
+        };
+        writeJson(artifacts.dispositionArtifactPath, disposition);
+        const dispositionArtifactSha256 = fileSha256(artifacts.dispositionArtifactPath);
+
+        const receipt = readJson(artifacts.receiptPath);
+        const receiptValidation = receipt.review_findings_validation as Record<string, unknown>;
+        receiptValidation.artifact_sha256 = validationArtifactSha256;
+        receiptValidation.validation_result_sha256 = validation.validation_result_sha256;
+        const receiptDisposition = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        receiptDisposition.artifact_sha256 = dispositionArtifactSha256;
+        receiptDisposition.disposition_result_sha256 = disposition.disposition_result_sha256;
+        receiptDisposition.follow_up_pending_count = 1;
+        receiptDisposition.blocking_count = 0;
+        const contract = receipt.review_output_contract as Record<string, unknown>;
+        contract.validation_artifact_sha256 = validationArtifactSha256;
+        contract.validation_result_sha256 = validation.validation_result_sha256;
+        contract.disposition_artifact_sha256 = dispositionArtifactSha256;
+        contract.disposition_result_sha256 = disposition.disposition_result_sha256;
+        writeJson(artifacts.receiptPath, receipt);
+        const originalTaskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.ok(
+            result.violations.some((violation) => violation.includes("duplicate residual risk inventory id 'R-001'")),
+            result.violations.join('\n')
+        );
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), originalTaskMd);
+        assert.equal(taskRows(repoRoot).some((row) => row.taskId === `${TASK_ID}-F1`), false);
+    });
+
     it('does not reuse matching fingerprints from unrelated task rows', () => {
         const repoRoot = makeRepo();
         const artifacts = seedReviewArtifacts(repoRoot);
@@ -975,6 +1090,146 @@ describe('review findings follow-up task materialization', () => {
         assert.ok(result.violations.some((violation) => violation.includes('is not present in the accepted validation inventory')));
         assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), originalTaskMd);
         assert.equal(taskRows(repoRoot).some((row) => row.taskId === `${TASK_ID}-F1`), false);
+    });
+
+    it('blocks duplicate accepted validation finding inventory ids before materializing ambiguous follow-ups', () => {
+        const repoRoot = makeRepo();
+        const artifacts = seedReviewArtifacts(repoRoot);
+        const validation = readJson(artifacts.validationArtifactPath);
+        const validationResult = validation.validation_result as Record<string, unknown>;
+        const inventory = validationResult.normalized_inventory as Record<string, unknown>;
+        const findingsBySeverity = inventory.findings_by_severity as Record<string, unknown>;
+        const mediumFindings = findingsBySeverity.medium as Array<Record<string, unknown>>;
+        const lowFindings = findingsBySeverity.low as Array<Record<string, unknown>>;
+        lowFindings.push({
+            ...mediumFindings[0],
+            severity: 'low',
+            title: 'Ambiguous duplicate follow-up evidence',
+            description: 'The same accepted finding id appears twice and must not be silently overwritten.'
+        });
+        inventory.finding_count = 2;
+        validation.validation_result_sha256 = sha256JsonPayload(validation.validation_result);
+        writeJson(artifacts.validationArtifactPath, validation);
+        const validationArtifactSha256 = fileSha256(artifacts.validationArtifactPath);
+
+        const disposition = readJson(artifacts.dispositionArtifactPath);
+        const sourceValidation = disposition.source_validation as Record<string, unknown>;
+        sourceValidation.artifact_sha256 = validationArtifactSha256;
+        sourceValidation.validation_result_sha256 = validation.validation_result_sha256;
+        writeJson(artifacts.dispositionArtifactPath, disposition);
+        const dispositionArtifactSha256 = fileSha256(artifacts.dispositionArtifactPath);
+
+        const receipt = readJson(artifacts.receiptPath);
+        const receiptValidation = receipt.review_findings_validation as Record<string, unknown>;
+        receiptValidation.artifact_sha256 = validationArtifactSha256;
+        receiptValidation.validation_result_sha256 = validation.validation_result_sha256;
+        const receiptDisposition = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        receiptDisposition.artifact_sha256 = dispositionArtifactSha256;
+        const contract = receipt.review_output_contract as Record<string, unknown>;
+        contract.validation_artifact_sha256 = validationArtifactSha256;
+        contract.validation_result_sha256 = validation.validation_result_sha256;
+        contract.disposition_artifact_sha256 = dispositionArtifactSha256;
+        writeJson(artifacts.receiptPath, receipt);
+        const originalTaskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.ok(
+            result.violations.some((violation) => violation.includes("duplicate finding inventory id 'F-001'")),
+            result.violations.join('\n')
+        );
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), originalTaskMd);
+        assert.equal(taskRows(repoRoot).some((row) => row.taskId === `${TASK_ID}-F1`), false);
+    });
+
+    it('uses the accepted validation inventory index for large follow-up sets without scanning ambiguity', () => {
+        const repoRoot = makeRepo();
+        const artifacts = seedReviewArtifacts(repoRoot);
+        const targetFindingId = 'F-240';
+        const validation = readJson(artifacts.validationArtifactPath);
+        const validationResult = validation.validation_result as Record<string, unknown>;
+        const inventory = validationResult.normalized_inventory as Record<string, unknown>;
+        const findingsBySeverity = inventory.findings_by_severity as Record<string, unknown>;
+        findingsBySeverity.medium = Array.from({ length: 250 }, (_, index) => ({
+            id: `F-${String(index + 1).padStart(3, '0')}`,
+            severity: 'medium',
+            title: `Large inventory finding ${index + 1}`,
+            description: `Large inventory entry ${index + 1} should remain addressable by id.`,
+            evidence_locations: [`src/gates/review/large-inventory-${index + 1}.ts:10`],
+            coverage_obligation_ids: [`C-${String(index + 1).padStart(3, '0')}`]
+        }));
+        inventory.finding_count = 250;
+        validationResult.evidence_diagnostics = {
+            validation_note_evidence_locations: [],
+            coverage_evidence_locations: [],
+            finding_evidence_locations: ['src/gates/review/large-inventory-240.ts:10'],
+            residual_risk_evidence_locations: [],
+            total_evidence_locations: 250
+        };
+        validation.validation_result_sha256 = sha256JsonPayload(validation.validation_result);
+        writeJson(artifacts.validationArtifactPath, validation);
+        const validationArtifactSha256 = fileSha256(artifacts.validationArtifactPath);
+
+        const disposition = readJson(artifacts.dispositionArtifactPath);
+        const sourceValidation = disposition.source_validation as Record<string, unknown>;
+        sourceValidation.artifact_sha256 = validationArtifactSha256;
+        sourceValidation.validation_result_sha256 = validation.validation_result_sha256;
+        disposition.disposition_result = {
+            findings: {
+                critical: { action: 'fix_now', ids: [] },
+                high: { action: 'fix_now', ids: [] },
+                medium: { action: 'create_follow_up', ids: [targetFindingId] },
+                low: { action: 'ignore', ids: [] }
+            },
+            residual_risks: { action: 'ignore', ids: [] },
+            counts_by_action: {
+                fix_now: 0,
+                create_follow_up: 1,
+                ignore: 0
+            },
+            blocking_count: 0,
+            verdict: 'follow_up_required'
+        };
+        disposition.disposition_result_sha256 = sha256JsonPayload(disposition.disposition_result);
+        const dispositionItems = disposition.items as Array<Record<string, unknown>>;
+        dispositionItems[0].id = targetFindingId;
+        writeJson(artifacts.dispositionArtifactPath, disposition);
+        const dispositionArtifactSha256 = fileSha256(artifacts.dispositionArtifactPath);
+
+        const receipt = readJson(artifacts.receiptPath);
+        const receiptValidation = receipt.review_findings_validation as Record<string, unknown>;
+        receiptValidation.artifact_sha256 = validationArtifactSha256;
+        receiptValidation.validation_result_sha256 = validation.validation_result_sha256;
+        const receiptDisposition = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        receiptDisposition.artifact_sha256 = dispositionArtifactSha256;
+        receiptDisposition.disposition_result_sha256 = disposition.disposition_result_sha256;
+        const contract = receipt.review_output_contract as Record<string, unknown>;
+        contract.validation_artifact_sha256 = validationArtifactSha256;
+        contract.validation_result_sha256 = validation.validation_result_sha256;
+        contract.disposition_artifact_sha256 = dispositionArtifactSha256;
+        contract.disposition_result_sha256 = disposition.disposition_result_sha256;
+        writeJson(artifacts.receiptPath, receipt);
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(result.status, 'MATERIALIZED', result.output_lines.join('\n'));
+        assert.deepEqual(result.created_task_ids, [`${TASK_ID}-F1`]);
+        const childRow = rowFor(repoRoot, `${TASK_ID}-F1`);
+        assert.ok(childRow);
+        assert.match(childRow.title, /Large inventory finding 240/u);
+        assert.match(childRow.notes, /src\/gates\/review\/large-inventory-240\.ts:10/u);
+        assert.doesNotMatch(childRow.title, /Large inventory finding 1\b/u);
     });
 
     it('blocks missing receipts before writing follow-up task rows', () => {
