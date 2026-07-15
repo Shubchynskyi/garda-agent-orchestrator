@@ -379,6 +379,17 @@ function writePreflight(
             changedFiles
         })
         : null;
+    const workflowConfigFileHashes = Object.fromEntries(
+        changedFiles
+            .filter((entry) => entry.endsWith('/workflow-config.json') || entry === 'workflow-config.json')
+            .map((entry) => {
+                const filePath = path.join(repoRoot, ...entry.split('/'));
+                return [
+                    entry,
+                    fs.existsSync(filePath) ? fileSha256(filePath) : null
+                ];
+            })
+    );
     const reviewPolicyMode = options.reviewPolicyMode || 'code_first_optional';
     writeJson(preflightPath, {
         task_id: taskId,
@@ -394,6 +405,9 @@ function writePreflight(
         },
         required_reviews: requiredReviews,
         changed_files: changedFiles,
+        triggers: Object.keys(workflowConfigFileHashes).length > 0
+            ? { workflow_config_file_hashes: workflowConfigFileHashes }
+            : {},
         review_execution_policy: {
             mode: reviewPolicyMode,
             visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
@@ -1192,6 +1206,88 @@ describe('gates/next-step protected recovery', () => {
 
         assert.equal(readiness.ready, true, readiness.reason);
         assert.deepEqual(readiness.currentChangedFiles, [sourceRelativePath, testRelativePath]);
+    });
+
+    it('keeps preflight readiness current when ignored workflow-config local baseline is absent from git snapshot', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...workflowConfigRelativePath.split('/')), '{"validation":"baseline"}\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [workflowConfigRelativePath, 'src/app.ts']
+        });
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight);
+
+        assert.equal(readiness.ready, true, readiness.reason);
+        assert.deepEqual(readiness.currentChangedFiles, ['src/app.ts']);
+    });
+
+    it('marks preflight readiness stale when ignored workflow-config content drifts after preflight', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...workflowConfigRelativePath.split('/')), '{"validation":"baseline"}\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [workflowConfigRelativePath, 'src/app.ts']
+        });
+        fs.writeFileSync(path.join(repoRoot, ...workflowConfigRelativePath.split('/')), '{"validation":"changed"}\n', 'utf8');
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight);
+
+        assert.equal(readiness.ready, false);
+        assert.match(readiness.reason, /Preflight scope is stale before compile/);
+        assert.deepEqual(readiness.currentChangedFiles, [workflowConfigRelativePath, 'src/app.ts']);
+    });
+
+    it('marks preflight readiness stale when non-config content drifts while ignored workflow-config baseline is absent from git snapshot', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...workflowConfigRelativePath.split('/')), '{"validation":"baseline"}\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [workflowConfigRelativePath, 'src/app.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 3;\n', 'utf8');
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight);
+
+        assert.equal(readiness.ready, false);
+        assert.match(readiness.reason, /non-config domain scope differs/);
+        assert.deepEqual(readiness.currentChangedFiles, ['src/app.ts']);
+    });
+
+    it('marks legacy preflight readiness stale when non-config content drifts without domain fingerprints', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...workflowConfigRelativePath.split('/')), '{"validation":"baseline"}\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [workflowConfigRelativePath, 'src/app.ts']
+        });
+        const preflightBeforeDrift = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflightBeforeDrift.detection_source = 'git_auto';
+        writeJson(preflightPath, preflightBeforeDrift);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 3;\n', 'utf8');
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight);
+
+        assert.equal(readiness.ready, false);
+        assert.match(readiness.reason, /current full scope_content_sha256/);
+        assert.deepEqual(readiness.currentChangedFiles, ['src/app.ts']);
     });
 
     it('marks preflight readiness stale when executable source-checkout dist runtime drifts', () => {

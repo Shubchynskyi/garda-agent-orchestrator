@@ -194,6 +194,13 @@ export function reviewStateHasSatisfiedEvidence(
     if (getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state)) {
         return false;
     }
+    if (
+        state.reviewFindingsDisposition
+        && state.reviewFindingsDisposition.counts_by_action.create_follow_up > 0
+        && !state.reviewFindingsFollowUpSatisfied
+    ) {
+        return false;
+    }
     if (state.reusedExistingReview) {
         return timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state);
     }
@@ -285,6 +292,14 @@ function isFailedReviewOutcomeViolation(state: ReviewArtifactState, violation: s
         || Boolean(
             state.failed
             && violation.includes('review findings validation artifact contains active findings')
+        )
+        || Boolean(
+            state.failed
+            && violation.includes('review findings validation artifact contains fix_now findings or residual risks')
+        )
+        || Boolean(
+            state.failed
+            && violation.includes('review findings validation artifact is rejected')
         );
 }
 

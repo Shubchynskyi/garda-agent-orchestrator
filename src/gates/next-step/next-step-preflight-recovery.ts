@@ -659,6 +659,56 @@ export function readCoherentCycleReadiness(
         };
     }
 
+    const restartCompletedEventAfterLatestPreflight = findLatestTimelineEvent(
+        events,
+        (entry) => RESTART_COMPLETED_EVENT_TYPES.has(entry.event_type) && entry.sequence > latestPreflight.sequence
+    );
+    if (restartCompletedEventAfterLatestPreflight) {
+        const restartEventViolations = validateRestartCompletedEvent(
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            preflightPath,
+            restartCompletedEventAfterLatestPreflight
+        );
+        if (restartEventViolations.length === 0) {
+            return {
+                ready: true,
+                reason:
+                    `Latest preflight is covered by valid persisted ${restartCompletedEventAfterLatestPreflight.event_type} ` +
+                    `(seq ${restartCompletedEventAfterLatestPreflight.sequence}).`,
+                command: null
+            };
+        }
+
+        const compileEvidence = safeReadJson(path.join(reviewsRoot, `${taskId}-compile-gate.json`));
+        const commandsPath = typeof compileEvidence?.commands_path === 'string' && compileEvidence.commands_path.trim()
+            ? compileEvidence.commands_path.trim()
+            : getDefaultCommandsPath(repoRoot);
+        const outputFiltersPath = typeof compileEvidence?.output_filters_path === 'string' && compileEvidence.output_filters_path.trim()
+            ? compileEvidence.output_filters_path.trim()
+            : getDefaultOutputFiltersPath(repoRoot);
+        const taskModePayload = taskModePath ? safeReadJson(taskModePath) : null;
+        const requiresOperatorConfirmation = isPlainRecord(taskModePayload)
+            && (taskModePayload.orchestrator_work === true || taskModePayload.workflow_config_work === true);
+        return {
+            ready: false,
+            reason:
+                `Latest restart-completed event ${restartCompletedEventAfterLatestPreflight.event_type} ` +
+                `(seq ${restartCompletedEventAfterLatestPreflight.sequence}) is not valid durable recovery evidence: ` +
+                `${restartEventViolations.join('; ')}. Rerun restart-coherent-cycle to refresh task-mode, preflight, compile, and restart evidence together.`,
+            command: buildCoherentCycleRestartCommand(
+                repoRoot,
+                taskId,
+                normalizePath(preflightPath),
+                taskModePath,
+                commandsPath,
+                outputFiltersPath,
+                { requiresOperatorConfirmation }
+            )
+        };
+    }
+
     const preflightPayload = safeReadJson(preflightPath);
     const latestBoundaryType = String(latestBoundary?.event_type || '').trim();
     if (

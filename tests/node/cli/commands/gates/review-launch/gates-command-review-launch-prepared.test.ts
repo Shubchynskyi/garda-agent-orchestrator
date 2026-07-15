@@ -243,6 +243,21 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             Array.isArray(launchInputArtifact.reviewer_only_instructions)
                 && launchInputArtifact.reviewer_only_instructions.includes('Do not launch another reviewer or subagent.')
         );
+        assert.ok(
+            Array.isArray(launchInputArtifact.reviewer_only_instructions)
+                && launchInputArtifact.reviewer_only_instructions.includes('You are not the main orchestrating agent for TASK.md.')
+        );
+        assert.ok(
+            Array.isArray(launchInputArtifact.reviewer_only_instructions)
+                && launchInputArtifact.reviewer_only_instructions.some((instruction: unknown) => String(instruction).includes('Do not run Garda workflow/navigation/validation gates such as next-step'))
+        );
+        assert.ok(
+            Array.isArray(launchInputArtifact.reviewer_only_instructions)
+                && launchInputArtifact.reviewer_only_instructions.some((instruction: unknown) => String(instruction).includes('Do not modify reviewer launch/control artifacts'))
+        );
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Reviewer-only boundary: you are not the main orchestrating agent for TASK.md.'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Do not run Garda workflow/navigation/validation gates such as next-step'));
+        assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Only read the artifacts named in this handoff and write the completed review JSON to the single ReviewOutputPath'));
         assert.deepEqual(launchArtifact.preserve_prepared_fields, [
             'review_context_sha256',
             'routing_event_sha256',

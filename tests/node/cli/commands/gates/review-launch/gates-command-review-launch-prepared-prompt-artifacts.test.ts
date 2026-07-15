@@ -60,6 +60,18 @@ describe('cli/commands/gates review launch prepared prompt artifacts', () => {
         }
     });
 
+    it('copy-paste launch prompt keeps delegated reviewer inside reviewer-only boundaries', () => {
+        const prompt = buildCopyPasteReviewerLaunchPrompt(buildPromptOptions('Codex'));
+
+        assert.ok(prompt.includes('Reviewer-only boundary: you are not the main orchestrating agent for TASK.md.'));
+        assert.ok(prompt.includes('Do not run Garda workflow/navigation/validation gates such as next-step'));
+        assert.ok(prompt.includes('record-reviewer-delegation-started'));
+        assert.ok(prompt.includes('complete-reviewer-launch'));
+        assert.ok(prompt.includes('record-review-result'));
+        assert.ok(prompt.includes('Do not launch another reviewer or subagent'));
+        assert.ok(prompt.includes('Only read the artifacts named in this handoff and write the completed review JSON to the single ReviewOutputPath'));
+    });
+
     it('prepare-reviewer-launch injects the executor-specific notice exactly once', async () => {
         for (const [provider, expectedChecker] of [
             ['Claude', 'ChatGPT Codex'],

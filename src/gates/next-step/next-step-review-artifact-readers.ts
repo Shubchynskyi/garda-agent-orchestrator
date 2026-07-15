@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import {
     buildReviewVerdictTokenSet,
@@ -40,6 +41,8 @@ import {
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
 import {
+    evaluateReviewFindingsValidationArtifactDispositions,
+    type ReviewFindingsDispositionEvaluation,
     resolveLockedReviewFindingPolicyFromPreflight,
     resolveLockedReviewFindingPolicyFromReceiptDisposition,
     reviewFindingsValidationArtifactHasBlockingFindings
@@ -57,6 +60,9 @@ import {
     computeReviewReuseCodeScopeFingerprint,
     isNonTestReviewScope
 } from '../review-reuse/review-reuse';
+import {
+    parseCanonicalActiveTaskQueue
+} from '../../core/task-md-table';
 import {
     detectMissingFocusedValidationEvidenceFailureReason,
     detectMissingValidationEvidenceFailureReason,
@@ -88,8 +94,22 @@ export interface ReviewArtifactState {
     failToken: string;
     verdictToken: string | null;
     failed: boolean;
-    failureKind: 'launch-package' | 'missing-focused-validation-evidence' | 'missing-validation-evidence' | 'stale-validation-evidence' | null;
+    failureKind:
+        | 'launch-package'
+        | 'missing-focused-validation-evidence'
+        | 'missing-validation-evidence'
+        | 'stale-validation-evidence'
+        | 'review-validation-rejected'
+        | null;
     failureReason: string | null;
+    reviewFindingsValidationAccepted: boolean | null;
+    reviewFindingsValidationRejected: boolean;
+    reviewFindingsValidationArtifactPath: string | null;
+    reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null;
+    reviewFindingsDispositionArtifactPath: string | null;
+    reviewFindingsDispositionArtifactSha256: string | null;
+    reviewFindingsFollowUpArtifactPath: string | null;
+    reviewFindingsFollowUpSatisfied: boolean;
     domainScopeCurrent: boolean;
     ready: boolean;
     violations: string[];
@@ -152,6 +172,248 @@ function getReceiptOutputContractString(receipt: Record<string, unknown>, key: s
     return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
 }
 
+function normalizeSha256(value: unknown): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
+function sha256JsonPayload(value: unknown): string {
+    return createHash('sha256')
+        .update(`${JSON.stringify(value, null, 2)}\n`)
+        .digest('hex');
+}
+
+function extractReviewFollowUpFingerprint(notes: string): string | null {
+    return normalizeSha256(String(notes || '').match(/review_follow_up_fingerprint=([0-9a-f]{64})/iu)?.[1] || null);
+}
+
+function isParentFollowUpTaskId(parentTaskId: string, taskId: string): boolean {
+    const prefix = `${parentTaskId}-F`;
+    if (!taskId.startsWith(prefix)) {
+        return false;
+    }
+    return /^[1-9][0-9]*$/u.test(taskId.slice(prefix.length));
+}
+
+function readTaskQueueFollowUpFingerprintIndex(repoRoot: string, parentTaskId: string): Map<string, string> | null {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    if (!fileExists(taskPath)) {
+        return null;
+    }
+    const parsed = parseCanonicalActiveTaskQueue(fs.readFileSync(taskPath, 'utf8'));
+    if (!parsed.found) {
+        return null;
+    }
+    const index = new Map<string, string>();
+    for (const row of parsed.rows) {
+        if (!isParentFollowUpTaskId(parentTaskId, row.taskId)) {
+            continue;
+        }
+        const fingerprint = extractReviewFollowUpFingerprint(row.notes);
+        if (fingerprint) {
+            index.set(row.taskId, fingerprint);
+        }
+    }
+    return index;
+}
+
+function taskQueueHasFollowUpFingerprint(
+    taskQueueFollowUpFingerprints: ReadonlyMap<string, string>,
+    parentTaskId: string,
+    taskId: string,
+    fingerprint: string
+): boolean {
+    return (
+        isParentFollowUpTaskId(parentTaskId, taskId)
+        && taskQueueFollowUpFingerprints.get(taskId) === fingerprint
+    );
+}
+
+function dispositionFollowUpItemKey(item: Record<string, unknown>): string | null {
+    const id = typeof item.id === 'string' ? item.id.trim() : '';
+    const kind = typeof item.kind === 'string' ? item.kind.trim() : '';
+    const severity = typeof item.severity === 'string' ? item.severity.trim() : '';
+    const action = typeof item.action === 'string' ? item.action.trim() : '';
+    const sourceRule = typeof item.source_rule === 'string' ? item.source_rule.trim() : '';
+    if (!id || !kind || !severity || action !== 'create_follow_up' || !sourceRule) {
+        return null;
+    }
+    return [id, kind, severity, action, sourceRule].join('\u0000');
+}
+
+function followUpArtifactItemKey(item: Record<string, unknown>): string | null {
+    const id = typeof item.source_item_id === 'string' ? item.source_item_id.trim() : '';
+    const kind = typeof item.source_item_kind === 'string' ? item.source_item_kind.trim() : '';
+    const severity = typeof item.severity === 'string' ? item.severity.trim() : '';
+    const action = typeof item.action === 'string' ? item.action.trim() : '';
+    const sourceRule = typeof item.source_rule === 'string' ? item.source_rule.trim() : '';
+    if (!id || !kind || !severity || action !== 'create_follow_up' || !sourceRule) {
+        return null;
+    }
+    return [id, kind, severity, action, sourceRule].join('\u0000');
+}
+
+function buildDispositionFollowUpFingerprint(params: {
+    taskId: string;
+    reviewType: string;
+    item: Record<string, unknown>;
+    validationArtifactSha256: string;
+    validationResultSha256: string;
+    dispositionArtifactSha256: string;
+    dispositionResultSha256: string;
+}): string | null {
+    const id = typeof params.item.id === 'string' ? params.item.id.trim() : '';
+    const kind = typeof params.item.kind === 'string' ? params.item.kind.trim() : '';
+    const severity = typeof params.item.severity === 'string' ? params.item.severity.trim() : '';
+    const action = typeof params.item.action === 'string' ? params.item.action.trim() : '';
+    const sourceRule = typeof params.item.source_rule === 'string' ? params.item.source_rule.trim() : '';
+    if (!id || !kind || !severity || action !== 'create_follow_up' || !sourceRule) {
+        return null;
+    }
+    return sha256JsonPayload({
+        schema_version: 1,
+        parent_task_id: params.taskId,
+        review_type: params.reviewType,
+        item_id: id,
+        item_kind: kind,
+        severity,
+        action,
+        source_rule: sourceRule,
+        validation_artifact_sha256: params.validationArtifactSha256,
+        validation_result_sha256: params.validationResultSha256,
+        disposition_artifact_sha256: params.dispositionArtifactSha256,
+        disposition_result_sha256: params.dispositionResultSha256
+    });
+}
+
+function buildExpectedDispositionFollowUpFingerprintIndex(params: {
+    dispositionArtifact: Record<string, unknown>;
+    dispositionArtifactSha256: string;
+    taskId: string;
+    reviewType: string;
+    expectedFollowUpCount: number;
+}): Map<string, string> | null {
+    if (params.dispositionArtifact.task_id !== params.taskId || params.dispositionArtifact.review_type !== params.reviewType) {
+        return null;
+    }
+    const sourceValidation = isPlainRecord(params.dispositionArtifact.source_validation)
+        ? params.dispositionArtifact.source_validation
+        : null;
+    const validationArtifactSha256 = normalizeSha256(sourceValidation?.artifact_sha256);
+    const validationResultSha256 = normalizeSha256(sourceValidation?.validation_result_sha256);
+    const dispositionResultSha256 = normalizeSha256(params.dispositionArtifact.disposition_result_sha256);
+    if (!validationArtifactSha256 || !validationResultSha256 || !dispositionResultSha256) {
+        return null;
+    }
+    const dispositionItems = Array.isArray(params.dispositionArtifact.items)
+        ? params.dispositionArtifact.items.filter((item): item is Record<string, unknown> => (
+            isPlainRecord(item) && item.action === 'create_follow_up'
+        ))
+        : [];
+    if (dispositionItems.length !== params.expectedFollowUpCount) {
+        return null;
+    }
+    const expected = new Map<string, string>();
+    for (const item of dispositionItems) {
+        const key = dispositionFollowUpItemKey(item);
+        const fingerprint = buildDispositionFollowUpFingerprint({
+            taskId: params.taskId,
+            reviewType: params.reviewType,
+            item,
+            validationArtifactSha256,
+            validationResultSha256,
+            dispositionArtifactSha256: params.dispositionArtifactSha256,
+            dispositionResultSha256
+        });
+        if (!key || !fingerprint || expected.has(key)) {
+            return null;
+        }
+        expected.set(key, fingerprint);
+    }
+    return expected;
+}
+
+function followUpArtifactMatchesCurrentTaskQueue(params: {
+    artifact: Record<string, unknown>;
+    dispositionArtifact: Record<string, unknown>;
+    dispositionArtifactSha256: string;
+    repoRoot?: string;
+    taskId: string;
+    reviewType: string;
+    expectedFollowUpCount: number;
+}): boolean {
+    if (!params.repoRoot) {
+        return false;
+    }
+    if (params.artifact.task_id !== params.taskId || params.artifact.review_type !== params.reviewType) {
+        return false;
+    }
+    if (Array.isArray(params.artifact.violations) && params.artifact.violations.length > 0) {
+        return false;
+    }
+    const items = Array.isArray(params.artifact.items) ? params.artifact.items : [];
+    const followUpItems = items.filter((item): item is Record<string, unknown> => (
+        isPlainRecord(item) && item.action === 'create_follow_up'
+    ));
+    const summary = isPlainRecord(params.artifact.summary) ? params.artifact.summary : null;
+    const summaryFollowUpCount = typeof summary?.follow_up_obligation_count === 'number'
+        ? summary.follow_up_obligation_count
+        : null;
+    if (summaryFollowUpCount !== params.expectedFollowUpCount) {
+        return false;
+    }
+    if (followUpItems.length === 0) {
+        return params.expectedFollowUpCount === 0 && params.artifact.status === 'NOT_REQUIRED';
+    }
+    if (followUpItems.length !== params.expectedFollowUpCount) {
+        return false;
+    }
+    const expectedFingerprints = buildExpectedDispositionFollowUpFingerprintIndex({
+        dispositionArtifact: params.dispositionArtifact,
+        dispositionArtifactSha256: params.dispositionArtifactSha256,
+        taskId: params.taskId,
+        reviewType: params.reviewType,
+        expectedFollowUpCount: params.expectedFollowUpCount
+    });
+    if (!expectedFingerprints || expectedFingerprints.size !== params.expectedFollowUpCount) {
+        return false;
+    }
+    const taskQueueFollowUpFingerprints = readTaskQueueFollowUpFingerprintIndex(params.repoRoot, params.taskId);
+    if (!taskQueueFollowUpFingerprints) {
+        return false;
+    }
+    const sourceItemKeys = new Set<string>();
+    const taskIds = new Set<string>();
+    const fingerprints = new Set<string>();
+    return followUpItems.every((item) => {
+        const taskId = typeof item.task_id === 'string' ? item.task_id.trim() : '';
+        const fingerprint = normalizeSha256(item.fingerprint);
+        const sourceItemKey = followUpArtifactItemKey(item);
+        const expectedFingerprint = sourceItemKey ? expectedFingerprints.get(sourceItemKey) : null;
+        const materializationStatus = typeof item.materialization_status === 'string'
+            ? item.materialization_status
+            : '';
+        if (
+            !taskId
+            || !fingerprint
+            || !sourceItemKey
+            || sourceItemKeys.has(sourceItemKey)
+            || taskIds.has(taskId)
+            || fingerprints.has(fingerprint)
+        ) {
+            return false;
+        }
+        sourceItemKeys.add(sourceItemKey);
+        taskIds.add(taskId);
+        fingerprints.add(fingerprint);
+        return (
+            ['created', 'already_materialized'].includes(materializationStatus)
+            && fingerprint === expectedFingerprint
+            && taskQueueHasFollowUpFingerprint(taskQueueFollowUpFingerprints, params.taskId, taskId, fingerprint as string)
+        );
+    }) && sourceItemKeys.size === expectedFingerprints.size;
+}
+
 export function readReviewArtifactState(
     reviewsRoot: string,
     taskId: string,
@@ -195,6 +457,14 @@ export function readReviewArtifactState(
     let failed = false;
     let failureKind: ReviewArtifactState['failureKind'] = null;
     let failureReason: string | null = null;
+    let reviewFindingsValidationAccepted: boolean | null = null;
+    let reviewFindingsValidationRejected = false;
+    let reviewFindingsValidationArtifactPath: string | null = null;
+    let reviewFindingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
+    let reviewFindingsDispositionArtifactPath: string | null = null;
+    let reviewFindingsDispositionArtifactSha256: string | null = null;
+    let reviewFindingsFollowUpArtifactPath: string | null = null;
+    let reviewFindingsFollowUpSatisfied = false;
     let domainScopeCurrent = false;
     let reviewResultRecordedAtUtc: string | null = null;
     let recordedAtUtc: string | null = null;
@@ -415,6 +685,21 @@ export function readReviewArtifactState(
         recordedAtUtc = evidenceFields.recordedAtUtc;
         reviewOutputSourceMtimeUtc = evidenceFields.reviewOutputSourceMtimeUtc;
         if (requiresFindingsOnlyArtifact) {
+            const dispositionArtifact = isPlainRecord(receipt.review_findings_disposition_artifact)
+                ? receipt.review_findings_disposition_artifact
+                : null;
+            reviewFindingsDispositionArtifactPath = typeof dispositionArtifact?.artifact_path === 'string'
+                ? dispositionArtifact.artifact_path.trim() || null
+                : null;
+            reviewFindingsDispositionArtifactSha256 = typeof dispositionArtifact?.artifact_sha256 === 'string'
+                ? dispositionArtifact.artifact_sha256.trim().toLowerCase() || null
+                : null;
+            if (reviewFindingsDispositionArtifactPath) {
+                reviewFindingsFollowUpArtifactPath = reviewFindingsDispositionArtifactPath.replace(
+                    /-findings-disposition\.json$/u,
+                    '-findings-follow-ups.json'
+                );
+            }
             const coverageContract = isPlainRecord(context.coverage_contract)
                 ? context.coverage_contract as unknown as ReviewCoverageContract
                 : null;
@@ -457,6 +742,8 @@ export function readReviewArtifactState(
                     : String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null,
                 requireAccepted: true
             });
+            reviewFindingsValidationArtifactPath = validationArtifact.reference?.artifact_path || null;
+            reviewFindingsValidationAccepted = validationArtifact.accepted;
             violations.push(...validationArtifact.violations);
             if (validationArtifact.valid) {
                 if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(validationArtifact.artifact)) {
@@ -473,12 +760,64 @@ export function readReviewArtifactState(
                         ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt)
                         : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload)
                 )) {
+                    const policyResolution = reusedExistingReview
+                        ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt)
+                        : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload);
+                    reviewFindingsDisposition = evaluateReviewFindingsValidationArtifactDispositions(
+                        validationArtifact.artifact,
+                        policyResolution
+                    );
                     verdictToken = failToken || null;
                     failed = true;
                     violations.push(
                         `review findings validation artifact contains fix_now findings or residual risks; fix implementation and rerun compile plus '${reviewType}' review before launching dependent reviews`
                     );
                 } else {
+                    const policyResolution = reusedExistingReview
+                        ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt)
+                        : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload);
+                    reviewFindingsDisposition = evaluateReviewFindingsValidationArtifactDispositions(
+                        validationArtifact.artifact,
+                        policyResolution
+                    );
+                    if (
+                        reviewFindingsDisposition.counts_by_action.create_follow_up > 0
+                        && reviewFindingsFollowUpArtifactPath
+                        && reviewFindingsDispositionArtifactSha256
+                        && fileExists(reviewFindingsFollowUpArtifactPath)
+                    ) {
+                        const followUpArtifact = safeReadJson(reviewFindingsFollowUpArtifactPath);
+                        const sourceDisposition = isPlainRecord(followUpArtifact?.source_disposition)
+                            ? followUpArtifact.source_disposition
+                            : null;
+                        const status = typeof followUpArtifact?.status === 'string'
+                            ? followUpArtifact.status
+                            : '';
+                        const sourceDispositionSha256 = typeof sourceDisposition?.artifact_sha256 === 'string'
+                            ? sourceDisposition.artifact_sha256.trim().toLowerCase()
+                            : '';
+                        const dispositionArtifactPayload = reviewFindingsDispositionArtifactPath
+                            && reviewFindingsDispositionArtifactSha256
+                            && fileExists(reviewFindingsDispositionArtifactPath)
+                            && fileSha256(reviewFindingsDispositionArtifactPath) === reviewFindingsDispositionArtifactSha256
+                            ? safeReadJson(reviewFindingsDispositionArtifactPath)
+                            : null;
+                        reviewFindingsFollowUpSatisfied = (
+                            ['MATERIALIZED', 'ALREADY_MATERIALIZED', 'NOT_REQUIRED'].includes(status)
+                            && sourceDispositionSha256 === reviewFindingsDispositionArtifactSha256
+                            && isPlainRecord(followUpArtifact)
+                            && isPlainRecord(dispositionArtifactPayload)
+                            && followUpArtifactMatchesCurrentTaskQueue({
+                                artifact: followUpArtifact,
+                                dispositionArtifact: dispositionArtifactPayload,
+                                dispositionArtifactSha256: reviewFindingsDispositionArtifactSha256,
+                                repoRoot,
+                                taskId,
+                                reviewType,
+                                expectedFollowUpCount: reviewFindingsDisposition.counts_by_action.create_follow_up
+                            })
+                        );
+                    }
                     verdictToken = passToken || null;
                 }
             }
@@ -527,9 +866,16 @@ export function readReviewArtifactState(
         if (!rejectedValidationArtifact.valid) {
             violations.push(...rejectedValidationArtifact.violations);
         } else if (!rejectedValidationArtifact.accepted) {
+            reviewFindingsValidationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
+            reviewFindingsValidationAccepted = false;
+            reviewFindingsValidationRejected = true;
+            verdictToken = failToken || null;
+            failed = true;
+            failureKind = 'review-validation-rejected';
+            failureReason = rejectedValidationArtifact.artifact?.validation_result.violations.join(' ') || 'review findings validation rejected';
             violations.push(
                 `review findings validation artifact is rejected: ` +
-                rejectedValidationArtifact.artifact?.validation_result.violations.join(' ')
+                failureReason
             );
         }
     }
@@ -553,6 +899,14 @@ export function readReviewArtifactState(
         failed,
         failureKind,
         failureReason,
+        reviewFindingsValidationAccepted,
+        reviewFindingsValidationRejected,
+        reviewFindingsValidationArtifactPath,
+        reviewFindingsDisposition,
+        reviewFindingsDispositionArtifactPath,
+        reviewFindingsDispositionArtifactSha256,
+        reviewFindingsFollowUpArtifactPath,
+        reviewFindingsFollowUpSatisfied,
         domainScopeCurrent,
         ready: effectiveViolations.length === 0,
         violations: effectiveViolations,

@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 
 import { resolveNextStep } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
@@ -24,6 +25,20 @@ import {
     getReviewFindingsValidationArtifactSnapshotPath
 } from '../../../../src/gates/review/review-findings-validation-artifact';
 import {
+    readReviewArtifactState
+} from '../../../../src/gates/next-step/next-step-review-artifact-readers';
+import {
+    buildReviewFindingsDispositionArtifact,
+    getReviewFindingsDispositionArtifactPath,
+    getReviewFindingsDispositionArtifactSnapshotPath
+} from '../../../../src/gates/review/review-findings-disposition-artifact';
+import {
+    materializeReviewFindingsFollowUpTasks
+} from '../../../../src/gates/review/review-findings-follow-up-tasks';
+import {
+    resolveLockedReviewFindingPolicyFromPreflight
+} from '../../../../src/gates/review/review-finding-disposition';
+import {
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint
 } from '../../../../src/gates/review-reuse/review-reuse';
@@ -31,6 +46,7 @@ import { resolveReviewCoverageChangedFiles } from '../../../../src/gates/review-
 import { initGitRepo } from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
+const nodeRequire = createRequire(__filename);
 
 const ALL_REVIEW_FLAGS = Object.freeze({
     code: false,
@@ -297,6 +313,17 @@ function writePreflight(
     options: {
         seedPostPreflight?: boolean;
         reviewPolicyMode?: string;
+        reviewFindingPolicy?: {
+            schema_version: 1;
+            policy_id: 'soft' | 'balanced' | 'strict' | 'custom';
+            findings: {
+                critical: 'fix_now';
+                high: 'fix_now' | 'create_follow_up' | 'ignore';
+                medium: 'fix_now' | 'create_follow_up' | 'ignore';
+                low: 'fix_now' | 'create_follow_up' | 'ignore';
+            };
+            residual_risk: 'fix_now' | 'create_follow_up' | 'ignore';
+        };
         changedFiles?: string[];
         includeDomainScopeFingerprints?: boolean;
     } = {}
@@ -327,6 +354,13 @@ function writePreflight(
         },
         required_reviews: requiredReviews,
         changed_files: changedFiles,
+        ...(options.reviewFindingPolicy
+            ? {
+                profile_policy_snapshot: {
+                    review_finding_policy: options.reviewFindingPolicy
+                }
+            }
+            : {}),
         review_execution_policy: {
             mode: reviewPolicyMode,
             visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
@@ -409,6 +443,9 @@ function buildReviewContextScopeFixture(repoRoot: string, taskId: string, review
                 truncated: false,
                 error: null
             }
+        },
+        coverage_scope: {
+            changed_files: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
         },
         scoped_diff: {
             expected: false,
@@ -774,6 +811,263 @@ function writeJsonFocusedValidationReviewEvidence(
     writeJson(receiptPath, receipt);
 }
 
+function writeRejectedFindingsValidationReviewEvidence(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string
+): void {
+    writeReviewEvidence(repoRoot, taskId, reviewType, {
+        verdict: 'pass',
+        contextSchemaVersion: 3
+    });
+    const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
+    const receiptPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt.json`);
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const reviewContextSha256 = fileSha256(reviewContextPath);
+    const reviewTreeStateSha256 = String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || '');
+    const metrics = preflight.metrics as Record<string, unknown> | undefined;
+    const scopeSha256 = String(metrics?.scope_sha256 || metrics?.changed_files_sha256 || '').trim().toLowerCase() || null;
+    const artifactText = `${JSON.stringify({
+        schema_version: 1,
+        task_id: taskId,
+        review_type: reviewType,
+        review_context_sha256: reviewContextSha256,
+        tree_state_sha256: reviewTreeStateSha256,
+        validation_notes: [],
+        coverage_ledger: {
+            coverage_contract_sha256: coverageContract.contract_sha256,
+            entries: [{
+                obligation_id: coverageContract.obligations[0]?.id || 'FILE-001',
+                evidence: [{
+                    location: 'src/app.ts:1',
+                    observation: 'Intentionally incomplete report used to trigger system validation rejection.'
+                }],
+                finding_ids: []
+            }]
+        },
+        findings: { critical: [], high: [], medium: [], low: [] },
+        residual_risks: [],
+        reviewer_notes: []
+    }, null, 2)}\n`;
+    fs.writeFileSync(artifactPath, artifactText, 'utf8');
+    const validation = validateReviewFindingsContract({
+        content: artifactText,
+        expectedTaskId: taskId,
+        expectedReviewType: reviewType,
+        expectedReviewContextSha256: reviewContextSha256,
+        expectedTreeStateSha256: reviewTreeStateSha256,
+        coverageContract,
+        repoRoot
+    });
+    assert.equal(validation.valid, false);
+    const validationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
+    const validationArtifact = buildReviewFindingsValidationArtifact({
+        taskId,
+        reviewType,
+        validation,
+        reviewOutputSha256: fileSha256(artifactPath),
+        reviewArtifactPath: artifactPath,
+        reviewArtifactSha256: null,
+        reviewContextPath,
+        reviewContextSha256,
+        preflightPath,
+        preflightSha256: fileSha256(preflightPath),
+        scopeSha256,
+        reviewScopeSha256: null,
+        codeScopeSha256: null,
+        reviewTreeStateSha256,
+        coverageContract
+    });
+    writeJson(validationArtifactPath, validationArtifact);
+    fs.rmSync(receiptPath, { force: true });
+}
+
+function writeAcceptedFindingsDispositionReviewEvidence(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    options: { followUpFindingCount?: number } = {}
+): void {
+    writeReviewEvidence(repoRoot, taskId, reviewType, {
+        verdict: 'pass',
+        contextSchemaVersion: 3
+    });
+    const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
+    const receiptPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt.json`);
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract;
+    const followUpFindingCount = options.followUpFindingCount ?? 1;
+    const followUpFindingIds = Array.from({ length: followUpFindingCount }, (_, index) => `F-${String(index + 1).padStart(3, '0')}`);
+    const followUpFindings = followUpFindingIds.map((findingId, index) => {
+        const obligation = coverageContract.obligations[index] || coverageContract.obligations[0];
+        return {
+            id: findingId,
+            title: `Accepted follow-up finding ${index + 1}`,
+            description: 'Balanced policy should materialize this accepted finding as a follow-up task.',
+            evidence: [{
+                location: 'src/app.ts:1',
+                observation: 'The accepted finding remains non-blocking only after follow-up materialization.'
+            }],
+            coverage_obligation_ids: [obligation.id]
+        };
+    });
+    const reviewContextSha256 = fileSha256(reviewContextPath);
+    const reviewTreeStateSha256 = String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || '');
+    const artifactText = `${JSON.stringify({
+        schema_version: 1,
+        task_id: taskId,
+        review_type: reviewType,
+        review_context_sha256: reviewContextSha256,
+        tree_state_sha256: reviewTreeStateSha256,
+        validation_notes: [{
+            id: 'N-001',
+            topic: 'follow-up disposition',
+            note: 'Reviewed accepted follow-up disposition routing.',
+            evidence: [{
+                location: 'src/app.ts:1',
+                observation: 'Accepted finding should be materialized as a follow-up task.'
+            }]
+        }],
+        coverage_ledger: {
+            coverage_contract_sha256: coverageContract.contract_sha256,
+            entries: coverageContract.obligations.map((obligation, index) => ({
+                obligation_id: obligation.id,
+                evidence: [{
+                    location: 'src/app.ts:1',
+                    observation: `Covered obligation ${obligation.id} for accepted follow-up disposition routing.`
+                }],
+                finding_ids: followUpFindingIds[index] ? [followUpFindingIds[index]] : []
+            }))
+        },
+        findings: {
+            critical: [],
+            high: [],
+            medium: followUpFindings,
+            low: []
+        },
+        residual_risks: [],
+        reviewer_notes: []
+    }, null, 2)}\n`;
+    fs.writeFileSync(artifactPath, artifactText, 'utf8');
+    const artifactSha256 = fileSha256(artifactPath);
+    const metrics = preflight.metrics as Record<string, unknown> | undefined;
+    const scopeSha256 = String(metrics?.scope_sha256 || metrics?.changed_files_sha256 || '').trim().toLowerCase() || null;
+    const reviewScopeSha256 = computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256;
+    const codeScopeSha256 = computeReviewReuseCodeScopeFingerprint(reviewType, preflight, repoRoot).code_scope_sha256;
+    const validation = validateReviewFindingsContract({
+        content: artifactText,
+        expectedTaskId: taskId,
+        expectedReviewType: reviewType,
+        expectedReviewContextSha256: reviewContextSha256,
+        expectedTreeStateSha256: reviewTreeStateSha256,
+        coverageContract,
+        repoRoot
+    });
+    assert.equal(validation.valid, true, validation.violations.join('\n'));
+    const validationArtifactPath = getReviewFindingsValidationArtifactPath(artifactPath);
+    const validationArtifact = buildReviewFindingsValidationArtifact({
+        taskId,
+        reviewType,
+        validation,
+        reviewOutputSha256: artifactSha256,
+        reviewArtifactPath: artifactPath,
+        reviewArtifactSha256: artifactSha256,
+        reviewContextPath,
+        reviewContextSha256,
+        preflightPath,
+        preflightSha256: fileSha256(preflightPath),
+        scopeSha256,
+        reviewScopeSha256,
+        codeScopeSha256,
+        reviewTreeStateSha256,
+        coverageContract
+    });
+    const validationArtifactSha256 = sha256Json(validationArtifact);
+    const validationArtifactSnapshotPath = getReviewFindingsValidationArtifactSnapshotPath(
+        validationArtifactPath,
+        validationArtifactSha256
+    );
+    writeJson(validationArtifactPath, validationArtifact);
+    writeJson(validationArtifactSnapshotPath, validationArtifact);
+    const policyResolution = resolveLockedReviewFindingPolicyFromPreflight(preflight);
+    const dispositionArtifactPath = getReviewFindingsDispositionArtifactPath(artifactPath);
+    const dispositionArtifact = buildReviewFindingsDispositionArtifact({
+        taskId,
+        reviewType,
+        validationArtifact,
+        validationArtifactPath,
+        validationArtifactSha256,
+        policyResolution
+    });
+    const dispositionArtifactSha256 = sha256Json(dispositionArtifact);
+    const dispositionArtifactSnapshotPath = getReviewFindingsDispositionArtifactSnapshotPath(
+        dispositionArtifactPath,
+        dispositionArtifactSha256
+    );
+    writeJson(dispositionArtifactPath, dispositionArtifact);
+    writeJson(dispositionArtifactSnapshotPath, dispositionArtifact);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    receipt.review_artifact_sha256 = artifactSha256;
+    receipt.review_output_sha256 = artifactSha256;
+    receipt.review_coverage = validation.coverage_validation;
+    receipt.review_output_format = 'findings_json';
+    receipt.review_output_schema_version = validation.report?.schema_version ?? null;
+    receipt.review_findings_report_sha256 = validation.report ? sha256Json(validation.report) : null;
+    receipt.review_findings_report = validation.report;
+    receipt.scope_sha256 = scopeSha256;
+    receipt.review_scope_sha256 = reviewScopeSha256;
+    receipt.code_scope_sha256 = codeScopeSha256;
+    receipt.review_findings_validation = {
+        artifact_path: path.normalize(validationArtifactPath).replace(/\\/g, '/'),
+        artifact_sha256: validationArtifactSha256,
+        snapshot_path: path.normalize(validationArtifactSnapshotPath).replace(/\\/g, '/'),
+        snapshot_sha256: validationArtifactSha256,
+        status: validationArtifact.validation_result.status,
+        accepted: validationArtifact.validation_result.accepted,
+        validation_result_sha256: validationArtifact.validation_result_sha256,
+        violation_count: validationArtifact.validation_result.violations.length
+    };
+    receipt.review_findings_disposition = dispositionArtifact.disposition_result;
+    receipt.review_findings_disposition_artifact = {
+        artifact_path: path.normalize(dispositionArtifactPath).replace(/\\/g, '/'),
+        artifact_sha256: dispositionArtifactSha256,
+        snapshot_path: path.normalize(dispositionArtifactSnapshotPath).replace(/\\/g, '/'),
+        snapshot_sha256: dispositionArtifactSha256,
+        disposition_result_sha256: dispositionArtifact.disposition_result_sha256,
+        policy_id: dispositionArtifact.disposition_result.policy_id,
+        policy_source: dispositionArtifact.disposition_result.policy_source,
+        item_count: dispositionArtifact.summary.item_count,
+        fix_now_count: dispositionArtifact.summary.fix_now_count,
+        follow_up_pending_count: dispositionArtifact.summary.follow_up_pending_count,
+        ignored_count: dispositionArtifact.summary.ignored_count,
+        blocking_count: dispositionArtifact.summary.blocking_count
+    };
+    receipt.review_output_contract = {
+        schema_version: 1,
+        format: 'findings_json',
+        report_sha256: validation.report ? sha256Json(validation.report) : null,
+        validation_artifact_sha256: validationArtifactSha256,
+        validation_result_sha256: validationArtifact.validation_result_sha256,
+        disposition_artifact_sha256: dispositionArtifactSha256,
+        disposition_result_sha256: dispositionArtifact.disposition_result_sha256,
+        raw_output_sha256: artifactSha256,
+        review_artifact_sha256: artifactSha256,
+        review_context_sha256: reviewContextSha256,
+        review_tree_state_sha256: reviewTreeStateSha256,
+        coverage_contract_sha256: coverageContract.contract_sha256,
+        reviewer_identity: `agent:${reviewType}-reviewer`,
+        reviewer_provenance_event_sha256: (receipt.reviewer_provenance as Record<string, unknown> | undefined)?.event_sha256 ?? null
+    };
+    writeJson(receiptPath, receipt);
+}
+
 
 
 
@@ -930,6 +1224,736 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('record-review-result'));
+    });
+
+    it('routes rejected findings validation back to review result correction instead of implementation remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-review-result');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Correct rejected 'code' review findings report/);
+        assert.match(result.reason, /System validation rejected/);
+        assert.match(result.reason, /not an implementation defect/);
+        assert.ok(result.commands[0].command.includes('gate record-review-result'));
+        assert.ok(!result.commands[0].command.includes('compile-gate'));
+        assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+    });
+
+    it('routes fix_now findings-only review evidence to implementation remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'strict',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'fix_now',
+                    low: 'fix_now'
+                },
+                residual_risk: 'fix_now'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            TASK_ID,
+            'code',
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.failed, true);
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.fix_now, 1);
+        assert.ok(state.violations.some((violation) => violation.includes('fix_now findings or residual risks')));
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Fix failed 'code' review findings/);
+        assert.ok(!result.commands[0].command.includes('record-review-result'));
+        assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+    });
+
+    it('routes accepted create_follow_up dispositions to follow-up task materialization before downstream reviews', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            TASK_ID,
+            'code',
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.contextCurrent, true, state.violations.join('\n'));
+        assert.equal(
+            state.reviewFindingsDisposition?.counts_by_action.create_follow_up,
+            1,
+            JSON.stringify(state.reviewFindingsDisposition)
+        );
+        assert.equal(state.ready, true, state.violations.join('\n'));
+        assert.equal(state.reviewFindingsFollowUpSatisfied, false);
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'materialize-review-follow-up-tasks', `${result.next_gate}: ${result.title} :: ${result.reason}`);
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Materialize 'code' review follow-up tasks/);
+        assert.match(result.reason, /Accepted 'code' findings disposition requires 1 follow-up item/);
+        assert.match(result.reason, /before downstream review, reuse, required-review, or completion decisions/);
+        assert.ok(result.commands[0].command.includes('gate materialize-review-follow-up-tasks'));
+        assert.ok(result.commands[0].command.includes('--disposition-artifact-path'));
+        assert.ok(result.commands[0].command.includes('--receipt-path'));
+        assert.ok(result.commands[0].command.includes('--artifact-path'));
+        assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+    });
+
+    it('continues to downstream reviews after valid materialized follow-up tasks satisfy accepted dispositions', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code');
+        const receipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const dispositionArtifact = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+
+        const materialized = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            dispositionArtifactPath: String(dispositionArtifact.artifact_path),
+            receiptPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`)
+        });
+
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        assert.deepEqual(materialized.created_task_ids, [`${TASK_ID}-F1`]);
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            TASK_ID,
+            'code',
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.contextCurrent, true, state.violations.join('\n'));
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 1);
+        assert.equal(state.reviewFindingsFollowUpSatisfied, true, state.violations.join('\n'));
+        assert.equal(state.ready, true, state.violations.join('\n'));
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'materialize-review-follow-up-tasks');
+        assert.equal(result.next_gate, 'build-review-context', `${result.next_gate}: ${result.title} :: ${result.reason}`);
+        assert.equal(result.review.next_review_type, 'security');
+        assert.match(result.title, /Prepare 'security' review context/);
+    });
+
+    it('reads TASK.md once while validating multiple materialized follow-up fingerprints', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code', { followUpFindingCount: 3 });
+        const receipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const dispositionArtifact = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        const materialized = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            dispositionArtifactPath: String(dispositionArtifact.artifact_path),
+            receiptPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`)
+        });
+
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        assert.deepEqual(materialized.created_task_ids, [`${TASK_ID}-F1`, `${TASK_ID}-F2`, `${TASK_ID}-F3`]);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const mutableFs = nodeRequire('node:fs') as typeof fs;
+        const originalReadFileSync = mutableFs.readFileSync;
+        let taskReads = 0;
+        mutableFs.readFileSync = ((file: Parameters<typeof fs.readFileSync>[0], ...args: unknown[]) => {
+            if (typeof file === 'string' && path.resolve(file) === path.resolve(taskPath)) {
+                taskReads += 1;
+            }
+            return originalReadFileSync(file as never, ...(args as never[]));
+        }) as typeof fs.readFileSync;
+        try {
+            const state = readReviewArtifactState(
+                reviewsRoot(repoRoot),
+                TASK_ID,
+                'code',
+                path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+                fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+                JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
+                repoRoot
+            );
+            assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 3);
+            assert.equal(state.reviewFindingsFollowUpSatisfied, true, state.violations.join('\n'));
+        } finally {
+            mutableFs.readFileSync = originalReadFileSync;
+        }
+        assert.equal(taskReads, 1);
+    });
+
+    it('rejects stale materialized follow-up artifacts without current TASK.md fingerprint rows', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code');
+        const receipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const dispositionArtifact = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        const dispositionPath = String(dispositionArtifact.artifact_path);
+        const dispositionSha256 = String(dispositionArtifact.artifact_sha256);
+        writeJson(dispositionPath.replace(/-findings-disposition\.json$/u, '-findings-follow-ups.json'), {
+            schema_version: 1,
+            artifact_type: 'review_findings_follow_up_tasks',
+            task_id: TASK_ID,
+            review_type: 'code',
+            status: 'MATERIALIZED',
+            created_at_utc: '2026-07-15T00:00:00.000Z',
+            source_disposition: {
+                artifact_path: dispositionPath,
+                artifact_sha256: dispositionSha256,
+                disposition_result_sha256: null
+            },
+            source_validation: {
+                artifact_path: null,
+                artifact_sha256: null,
+                validation_result_sha256: null,
+                status: 'accepted',
+                accepted: true
+            },
+            source_receipt: {
+                receipt_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`),
+                receipt_sha256: null
+            },
+            items: [{
+                source_item_id: 'F-001',
+                source_item_kind: 'finding',
+                severity: 'medium',
+                action: 'create_follow_up',
+                source_rule: 'review_finding_policy.findings.medium',
+                source_policy: 'balanced',
+                blocking: false,
+                fingerprint: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                materialization_status: 'created',
+                task_id: `${TASK_ID}-F1`,
+                title: 'Stale follow-up row',
+                description: 'The artifact claims a row exists but TASK.md does not contain its fingerprint.',
+                evidence_locations: ['src/app.ts:1'],
+                remediation: 'Keep TASK.md follow-up rows current.'
+            }],
+            summary: {
+                item_count: 1,
+                follow_up_obligation_count: 1,
+                created_task_count: 1,
+                reused_task_count: 0,
+                blocked_task_count: 0,
+                not_required_count: 0
+            },
+            violations: []
+        });
+
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            TASK_ID,
+            'code',
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.reviewFindingsFollowUpSatisfied, false);
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'materialize-review-follow-up-tasks', `${result.next_gate}: ${result.title} :: ${result.reason}`);
+        assert.equal(result.review.next_review_type, 'code');
+    });
+
+    it('rejects materialized follow-up artifacts that point to unrelated task rows', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code');
+        const receipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const dispositionArtifact = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        const dispositionPath = String(dispositionArtifact.artifact_path);
+        const dispositionSha256 = String(dispositionArtifact.artifact_sha256);
+        const fingerprint = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                /\n$/u,
+                `| T-OTHER-F1 | TODO | P2 | workflow | Unrelated follow-up | gpt-5.5 | 2026-07-15 | balanced | review_follow_up_fingerprint=${fingerprint}. |\n`
+            ),
+            'utf8'
+        );
+        writeJson(dispositionPath.replace(/-findings-disposition\.json$/u, '-findings-follow-ups.json'), {
+            schema_version: 1,
+            artifact_type: 'review_findings_follow_up_tasks',
+            task_id: TASK_ID,
+            review_type: 'code',
+            status: 'MATERIALIZED',
+            created_at_utc: '2026-07-15T00:00:00.000Z',
+            source_disposition: {
+                artifact_path: dispositionPath,
+                artifact_sha256: dispositionSha256,
+                disposition_result_sha256: null
+            },
+            source_validation: {
+                artifact_path: null,
+                artifact_sha256: null,
+                validation_result_sha256: null,
+                status: 'accepted',
+                accepted: true
+            },
+            source_receipt: {
+                receipt_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`),
+                receipt_sha256: null
+            },
+            items: [{
+                source_item_id: 'F-001',
+                source_item_kind: 'finding',
+                severity: 'medium',
+                action: 'create_follow_up',
+                source_rule: 'review_finding_policy.findings.medium',
+                source_policy: 'balanced',
+                blocking: false,
+                fingerprint,
+                materialization_status: 'already_materialized',
+                task_id: 'T-OTHER-F1',
+                title: 'Unrelated follow-up row',
+                description: 'The artifact points at another task family.',
+                evidence_locations: ['src/app.ts:1'],
+                remediation: 'Require parent-derived follow-up task ids.'
+            }],
+            summary: {
+                item_count: 1,
+                follow_up_obligation_count: 1,
+                created_task_count: 0,
+                reused_task_count: 1,
+                blocked_task_count: 0,
+                not_required_count: 0
+            },
+            violations: []
+        });
+
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            TASK_ID,
+            'code',
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.reviewFindingsFollowUpSatisfied, false);
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'materialize-review-follow-up-tasks', `${result.next_gate}: ${result.title} :: ${result.reason}`);
+        assert.equal(result.review.next_review_type, 'code');
+    });
+
+    it('rejects materialized follow-up artifacts whose fingerprint is not derived from the current disposition item', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code');
+        const receipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const dispositionArtifact = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        const dispositionPath = String(dispositionArtifact.artifact_path);
+        const dispositionSha256 = String(dispositionArtifact.artifact_sha256);
+        const forgedFingerprint = 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                /\n$/u,
+                `| ${TASK_ID}-F1 | TODO | P2 | workflow | Forged follow-up fingerprint | gpt-5.5 | 2026-07-15 | balanced | review_follow_up_fingerprint=${forgedFingerprint}. |\n`
+            ),
+            'utf8'
+        );
+        writeJson(dispositionPath.replace(/-findings-disposition\.json$/u, '-findings-follow-ups.json'), {
+            schema_version: 1,
+            artifact_type: 'review_findings_follow_up_tasks',
+            task_id: TASK_ID,
+            review_type: 'code',
+            status: 'MATERIALIZED',
+            created_at_utc: '2026-07-15T00:00:00.000Z',
+            source_disposition: {
+                artifact_path: dispositionPath,
+                artifact_sha256: dispositionSha256,
+                disposition_result_sha256: null
+            },
+            source_validation: {
+                artifact_path: null,
+                artifact_sha256: null,
+                validation_result_sha256: null,
+                status: 'accepted',
+                accepted: true
+            },
+            source_receipt: {
+                receipt_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`),
+                receipt_sha256: null
+            },
+            items: [{
+                source_item_id: 'F-001',
+                source_item_kind: 'finding',
+                severity: 'medium',
+                action: 'create_follow_up',
+                source_rule: 'review_finding_policy.findings.medium',
+                source_policy: 'balanced',
+                blocking: false,
+                fingerprint: forgedFingerprint,
+                materialization_status: 'created',
+                task_id: `${TASK_ID}-F1`,
+                title: 'Forged follow-up fingerprint',
+                description: 'The TASK row and artifact agree with each other but not with the disposition-derived fingerprint.',
+                evidence_locations: ['src/app.ts:1'],
+                remediation: 'Bind follow-up satisfaction to the current disposition item fingerprint.'
+            }],
+            summary: {
+                item_count: 1,
+                follow_up_obligation_count: 1,
+                created_task_count: 1,
+                reused_task_count: 0,
+                blocked_task_count: 0,
+                not_required_count: 0
+            },
+            violations: []
+        });
+
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            TASK_ID,
+            'code',
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 1);
+        assert.equal(state.reviewFindingsFollowUpSatisfied, false);
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'materialize-review-follow-up-tasks', `${result.next_gate}: ${result.title} :: ${result.reason}`);
+        assert.equal(result.review.next_review_type, 'code');
+    });
+
+    it('rejects incomplete materialized follow-up artifacts that omit accepted follow-up obligations', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code', { followUpFindingCount: 2 });
+        const receipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const dispositionArtifact = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        const dispositionPath = String(dispositionArtifact.artifact_path);
+        const dispositionSha256 = String(dispositionArtifact.artifact_sha256);
+        const fingerprint = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                /\n$/u,
+                `| ${TASK_ID}-F1 | TODO | P2 | workflow | Materialized one follow-up | gpt-5.5 | 2026-07-15 | balanced | review_follow_up_fingerprint=${fingerprint}. |\n`
+            ),
+            'utf8'
+        );
+        writeJson(dispositionPath.replace(/-findings-disposition\.json$/u, '-findings-follow-ups.json'), {
+            schema_version: 1,
+            artifact_type: 'review_findings_follow_up_tasks',
+            task_id: TASK_ID,
+            review_type: 'code',
+            status: 'MATERIALIZED',
+            created_at_utc: '2026-07-15T00:00:00.000Z',
+            source_disposition: {
+                artifact_path: dispositionPath,
+                artifact_sha256: dispositionSha256,
+                disposition_result_sha256: null
+            },
+            source_validation: {
+                artifact_path: null,
+                artifact_sha256: null,
+                validation_result_sha256: null,
+                status: 'accepted',
+                accepted: true
+            },
+            source_receipt: {
+                receipt_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`),
+                receipt_sha256: null
+            },
+            items: [{
+                source_item_id: 'F-001',
+                source_item_kind: 'finding',
+                severity: 'medium',
+                action: 'create_follow_up',
+                source_rule: 'review_finding_policy.findings.medium',
+                source_policy: 'balanced',
+                blocking: false,
+                fingerprint,
+                materialization_status: 'created',
+                task_id: `${TASK_ID}-F1`,
+                title: 'Materialized one follow-up row',
+                description: 'The artifact omits the second accepted follow-up obligation.',
+                evidence_locations: ['src/app.ts:1'],
+                remediation: 'Keep TASK.md follow-up rows current.'
+            }],
+            summary: {
+                item_count: 1,
+                follow_up_obligation_count: 1,
+                created_task_count: 1,
+                reused_task_count: 0,
+                blocked_task_count: 0,
+                not_required_count: 0
+            },
+            violations: []
+        });
+
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            TASK_ID,
+            'code',
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 2);
+        assert.equal(state.reviewFindingsFollowUpSatisfied, false);
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'materialize-review-follow-up-tasks', `${result.next_gate}: ${result.title} :: ${result.reason}`);
+        assert.equal(result.review.next_review_type, 'code');
+    });
+
+    it('rejects duplicated materialized follow-up items that reuse one task row for multiple obligations', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code', { followUpFindingCount: 2 });
+        const receipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const dispositionArtifact = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        const dispositionPath = String(dispositionArtifact.artifact_path);
+        const dispositionSha256 = String(dispositionArtifact.artifact_sha256);
+        const fingerprint = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                /\n$/u,
+                `| ${TASK_ID}-F1 | TODO | P2 | workflow | Materialized duplicated follow-up | gpt-5.5 | 2026-07-15 | balanced | review_follow_up_fingerprint=${fingerprint}. |\n`
+            ),
+            'utf8'
+        );
+        const duplicatedFollowUp = {
+            source_item_id: 'F-001',
+            source_item_kind: 'finding',
+            severity: 'medium',
+            action: 'create_follow_up',
+            source_rule: 'review_finding_policy.findings.medium',
+            source_policy: 'balanced',
+            blocking: false,
+            fingerprint,
+            materialization_status: 'created',
+            task_id: `${TASK_ID}-F1`,
+            title: 'Duplicated follow-up row',
+            description: 'The artifact duplicates one follow-up row for multiple obligations.',
+            evidence_locations: ['src/app.ts:1'],
+            remediation: 'Keep TASK.md follow-up rows current.'
+        };
+        writeJson(dispositionPath.replace(/-findings-disposition\.json$/u, '-findings-follow-ups.json'), {
+            schema_version: 1,
+            artifact_type: 'review_findings_follow_up_tasks',
+            task_id: TASK_ID,
+            review_type: 'code',
+            status: 'MATERIALIZED',
+            created_at_utc: '2026-07-15T00:00:00.000Z',
+            source_disposition: {
+                artifact_path: dispositionPath,
+                artifact_sha256: dispositionSha256,
+                disposition_result_sha256: null
+            },
+            source_validation: {
+                artifact_path: null,
+                artifact_sha256: null,
+                validation_result_sha256: null,
+                status: 'accepted',
+                accepted: true
+            },
+            source_receipt: {
+                receipt_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`),
+                receipt_sha256: null
+            },
+            items: [
+                duplicatedFollowUp,
+                duplicatedFollowUp
+            ],
+            summary: {
+                item_count: 2,
+                follow_up_obligation_count: 2,
+                created_task_count: 2,
+                reused_task_count: 0,
+                blocked_task_count: 0,
+                not_required_count: 0
+            },
+            violations: []
+        });
+
+        const state = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            TASK_ID,
+            'code',
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 2);
+        assert.equal(state.reviewFindingsFollowUpSatisfied, false);
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'materialize-review-follow-up-tasks', `${result.next_gate}: ${result.title} :: ${result.reason}`);
+        assert.equal(result.review.next_review_type, 'code');
     });
 
     it('routes launch-package review failures to review-cycle retry without implementation changes', () => {

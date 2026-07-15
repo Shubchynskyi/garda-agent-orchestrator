@@ -3429,6 +3429,39 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             (candidateState) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, candidateState)
         );
         if (
+            state?.reviewFindingsDisposition
+            && state.ready
+            && currentReviewRecordedEvidenceCurrent
+            && state.reviewFindingsDisposition.counts_by_action.create_follow_up > 0
+            && !state.reviewFindingsFollowUpSatisfied
+        ) {
+            const dispositionArtifactPath = state.reviewFindingsDispositionArtifactPath
+                || path.join(reviewsRoot, `${taskId}-${reviewType}-findings-disposition.json`);
+            const followUpArtifactPath = state.reviewFindingsFollowUpArtifactPath
+                || dispositionArtifactPath.replace(/-findings-disposition\.json$/u, '-findings-follow-ups.json');
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'materialize-review-follow-up-tasks',
+                title: `Materialize '${reviewType}' review follow-up tasks.`,
+                reason:
+                    `Accepted '${reviewType}' findings disposition requires ` +
+                    `${state.reviewFindingsDisposition.counts_by_action.create_follow_up} follow-up item(s). ` +
+                    `Materialize TASK.md follow-up rows before downstream review, reuse, required-review, or completion decisions treat this review as satisfied. ` +
+                    `Validation artifact: ${state.reviewFindingsValidationArtifactPath ? formatNextStepInlineValue(toRepoDisplayPath(repoRoot, state.reviewFindingsValidationArtifactPath)) : 'unknown'}.`,
+                commands: [buildCommand(
+                    'Materialize review follow-up tasks',
+                    `${cliPrefix} gate materialize-review-follow-up-tasks ` +
+                    `--task-id "${taskId}" ` +
+                    `--review-type "${reviewType}" ` +
+                    `--disposition-artifact-path "${toRepoDisplayPath(repoRoot, dispositionArtifactPath)}" ` +
+                    `--receipt-path "${toRepoDisplayPath(repoRoot, state.receiptPath)}" ` +
+                    `--artifact-path "${toRepoDisplayPath(repoRoot, followUpArtifactPath)}" ` +
+                    '--repo-root "."'
+                )]
+            });
+        }
+        if (
             state
             && state.ready
             && state.contextExists
@@ -3733,6 +3766,19 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             preflightCommandPath,
                             taskModePath,
                             requiredFocusedTestPath
+                        )
+                    ),
+                    recordResult: buildCommand(
+                        'Record corrected delegated review result',
+                        buildRecordReviewResultCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            state.reviewerIdentity || state.contextReviewerIdentity || `agent:pending:${taskId}-${reviewType}`,
+                            preflightCommandPath,
+                            taskModePath,
+                            null
                         )
                     )
                 }

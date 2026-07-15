@@ -101,12 +101,26 @@ export interface FailedReviewRemediationRouteOptions {
         compileGate: ReviewReuseRoutingCommand;
         buildScopedDiff: ReviewReuseRoutingCommand;
         buildReviewContext: ReviewReuseRoutingCommand;
+        recordResult: ReviewReuseRoutingCommand;
     };
 }
 
 export function resolveFailedReviewRemediationRoute(
     options: FailedReviewRemediationRouteOptions
 ): ReviewReuseRoutingRoute | null {
+    if (options.failureKind === 'review-validation-rejected') {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'record-review-result',
+            title: `Correct rejected '${options.reviewType}' review findings report.`,
+            reason:
+                `System validation rejected the '${options.reviewType}' review findings report ` +
+                `(${options.failureReason || 'review findings validation rejected'}). ` +
+                'This is review/report correction work, not an implementation defect. Preserve the rejected validation artifact as audit evidence, correct the delegated reviewer output or rerun the reviewer with complete evidence, then record-review-result again before remediation or downstream reviews.',
+            commands: [options.commands.recordResult]
+        };
+    }
+
     if (options.failureKind === 'launch-package' && options.currentReviewRecordedEvidenceCurrent) {
         return {
             status: 'BLOCKED',

@@ -184,6 +184,7 @@ export interface OptionalSkillSelectionReferenceLoadEvidence {
     resolvedReferencePath: string;
     triggerReason: string | null;
     timestampUtc: string | null;
+    eventSequence?: number | null;
 }
 
 export interface OptionalSkillSelectionActivationEvidence {
@@ -214,6 +215,8 @@ export interface OptionalSkillSelectionTimelineEvidence {
     latestCycleBoundaryTaskSequence?: number | null;
     latestImplementationStartedTimestampUtc?: string | null;
     latestImplementationStartedTaskSequence?: number | null;
+    latestCoherentCycleRestartedTimestampUtc?: string | null;
+    latestCoherentCycleRestartedTaskSequence?: number | null;
     optionalSkillActivations: OptionalSkillSelectionActivationEvidence[];
     optionalSkillDeclines?: OptionalSkillSelectionDeclineEvidence[];
     optionalSkillReferenceLoads: OptionalSkillSelectionReferenceLoadEvidence[];

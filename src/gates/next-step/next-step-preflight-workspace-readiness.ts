@@ -1,7 +1,8 @@
 import * as path from 'node:path';
 
 import {
-    normalizeDomainScopeFingerprints
+    normalizeDomainScopeFingerprints,
+    type DomainScopeFingerprints
 } from '../scope/domain-scope-fingerprints';
 import {
     fileSha256,
@@ -27,6 +28,9 @@ import {
 import {
     isDependencyManifestLockfileRelatedToAny
 } from '../scope/dependency-manifest-lockfile-scope';
+import {
+    buildScopeContentFingerprint
+} from '../compile/compile-gate';
 import {
     buildDocsOnlyDeltaReadiness,
     describePathList,
@@ -66,6 +70,15 @@ function isDistRuntimeOutputRelatedToPlannedSource(changedFile: string, plannedC
     }
     const sourceCandidate = `src/${normalizedChangedFile.slice('dist/src/'.length).replace(/\.js$/u, '.ts')}`;
     return plannedChangedFiles.some((plannedFile) => normalizePath(plannedFile) === sourceCandidate);
+}
+
+function sameSortedStringList(left: readonly string[], right: readonly string[]): boolean {
+    if (left.length !== right.length) {
+        return false;
+    }
+    const sortedLeft = [...left].sort();
+    const sortedRight = [...right].sort();
+    return sortedLeft.every((entry, index) => entry === sortedRight[index]);
 }
 
 function isRelatedToPlannedScope(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
@@ -153,35 +166,89 @@ export function readPreflightWorkspaceReadiness(
         changedFiles,
         { noCache: true, readOnly: true }
     );
+    const currentScopeFiles = Array.isArray(currentScope.changed_files)
+        ? currentScope.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+    const currentScopeFileSet = new Set(currentScopeFiles);
+    const ignoredWorkflowConfigPreflightFiles = changedFiles.filter((entry) => (
+        isWorkflowConfigControlPlanePath(entry) && !currentScopeFileSet.has(entry)
+    ));
+    const comparableChangedFiles = changedFiles.filter((entry) => (
+        !ignoredWorkflowConfigPreflightFiles.includes(entry)
+    ));
+    const ignoredWorkflowConfigOnlyWorkspaceDelta = ignoredWorkflowConfigPreflightFiles.length > 0
+        && sameSortedStringList(comparableChangedFiles, currentScopeFiles);
+    const workflowConfigFileHashes = getWorkflowConfigFileHashes(repoRoot, preflight);
+    const expectedComparableChangedFilesSha256 = ignoredWorkflowConfigOnlyWorkspaceDelta
+        ? stringSha256(comparableChangedFiles.join('\n'))
+        : expectedChangedFilesSha256;
+    const expectedComparableChangedLinesTotal = ignoredWorkflowConfigOnlyWorkspaceDelta
+        ? currentScope.changed_lines_total
+        : expectedChangedLinesTotal;
     const violations: string[] = [];
-    if (currentScope.changed_files_sha256 !== expectedChangedFilesSha256) {
-        const currentScopeFiles = Array.isArray(currentScope.changed_files)
-            ? currentScope.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
-            : [];
-        const expectedSet = new Set(changedFiles);
+    if (currentScope.changed_files_sha256 !== expectedComparableChangedFilesSha256) {
+        const expectedSet = new Set(ignoredWorkflowConfigOnlyWorkspaceDelta ? comparableChangedFiles : changedFiles);
         const currentSet = new Set(currentScopeFiles);
         const missingFromPreflight = currentScopeFiles.filter((entry) => !expectedSet.has(entry));
-        const noLongerCurrent = changedFiles.filter((entry) => !currentSet.has(entry));
+        const noLongerCurrent = (ignoredWorkflowConfigOnlyWorkspaceDelta ? comparableChangedFiles : changedFiles)
+            .filter((entry) => !currentSet.has(entry));
+        const ignoredWorkflowConfigNote = ignoredWorkflowConfigOnlyWorkspaceDelta
+            ? `; ignored workflow-config-only local baseline files: ${describePathList(ignoredWorkflowConfigPreflightFiles)}`
+            : '';
         violations.push(
             `stale preflight file set ${describePathList(changedFiles)} differs from current workspace snapshot ${describePathList(currentScopeFiles)}` +
             `; missing from preflight: ${describePathList(missingFromPreflight)}` +
-            `; no longer current: ${describePathList(noLongerCurrent)}`
+            `; no longer current: ${describePathList(noLongerCurrent)}${ignoredWorkflowConfigNote}`
         );
     }
-    if (currentScope.changed_lines_total !== expectedChangedLinesTotal) {
+    if (currentScope.changed_lines_total !== expectedComparableChangedLinesTotal) {
         violations.push(
             `preflight changed_lines_total=${expectedChangedLinesTotal} differs from current changed_lines_total=${currentScope.changed_lines_total}`
         );
     }
-    if (expectedScopeContentSha256 && currentScope.scope_content_sha256 !== expectedScopeContentSha256) {
+    if (
+        !ignoredWorkflowConfigOnlyWorkspaceDelta
+        && expectedScopeContentSha256
+        && currentScope.scope_content_sha256 !== expectedScopeContentSha256
+    ) {
         violations.push(
             `preflight scope_content_sha256=${expectedScopeContentSha256} differs from current scope_content_sha256=${currentScope.scope_content_sha256}`
+        );
+    }
+    if (ignoredWorkflowConfigOnlyWorkspaceDelta && expectedScopeContentSha256) {
+        const currentFullScopeContentSha256 = buildScopeContentFingerprint(repoRoot, detectionSource, changedFiles);
+        if (currentFullScopeContentSha256 !== expectedScopeContentSha256) {
+            violations.push(
+                `preflight scope_content_sha256=${expectedScopeContentSha256} differs from current full scope_content_sha256=${currentFullScopeContentSha256}` +
+                ' while ignored workflow-config local baseline is absent from git snapshot'
+            );
+        }
+    }
+    if (ignoredWorkflowConfigOnlyWorkspaceDelta && expectedDomainScopeFingerprints) {
+        const currentDomainScopeFingerprints = buildCurrentDomainScopeFingerprints({
+            repoRoot,
+            detectionSource,
+            includeUntracked,
+            changedFiles: currentScope.changed_files
+        });
+        if (!comparableNonConfigDomainsMatch(expectedDomainScopeFingerprints, currentDomainScopeFingerprints)) {
+            violations.push(
+                'preflight non-config domain scope differs from current workspace while ignored workflow-config local baseline is absent from git snapshot'
+            );
+        }
+    }
+    if (
+        ignoredWorkflowConfigOnlyWorkspaceDelta
+        && !workflowConfigFilesMatchPreflightHashes(repoRoot, ignoredWorkflowConfigPreflightFiles, workflowConfigFileHashes)
+    ) {
+        violations.push(
+            'preflight workflow-config content differs from current workspace while ignored workflow-config local baseline is absent from git snapshot'
         );
     }
     const expectedScopeSha256 = typeof metrics.scope_sha256 === 'string'
         ? metrics.scope_sha256.trim().toLowerCase()
         : '';
-    if (expectedScopeSha256 && currentScope.scope_sha256 !== expectedScopeSha256) {
+    if (!ignoredWorkflowConfigOnlyWorkspaceDelta && expectedScopeSha256 && currentScope.scope_sha256 !== expectedScopeSha256) {
         violations.push(
             `preflight scope_sha256=${expectedScopeSha256} differs from current scope_sha256=${currentScope.scope_sha256}`
         );
@@ -289,10 +356,10 @@ export function readPreflightWorkspaceReadiness(
                     repoRoot,
                     currentComparableChangedFiles,
                     changedFiles,
-                    expectedChangedLinesTotal,
+                    expectedComparableChangedLinesTotal,
                     includeUntracked,
                     detectionSource,
-                    expectedChangedFilesSha256,
+                    expectedComparableChangedFilesSha256,
                     expectedScopeContentSha256,
                     getDocImpactDeclaredDocsUpdated(options.docImpactPath),
                     expectedDomainScopeFingerprints
@@ -301,18 +368,55 @@ export function readPreflightWorkspaceReadiness(
                     return docsOnlyDeltaReadiness;
                 }
             }
+            const currentComparableChangedFileSet = new Set(currentComparableChangedFiles);
+            const ignoredWorkflowConfigGitFiles = changedFiles.filter((entry) => (
+                isWorkflowConfigControlPlanePath(entry) && !currentComparableChangedFileSet.has(entry)
+            ));
+            const gitComparableChangedFiles = changedFiles.filter((entry) => (
+                !ignoredWorkflowConfigGitFiles.includes(entry)
+            ));
+            const ignoredWorkflowConfigOnlyGitDelta = ignoredWorkflowConfigGitFiles.length > 0
+                && sameSortedStringList(gitComparableChangedFiles, currentComparableChangedFiles);
             const currentFileSetHash = stringSha256(currentComparableChangedFiles.join('\n'));
-            if (currentFileSetHash !== expectedChangedFilesSha256) {
+            const expectedGitComparableChangedFilesSha256 = ignoredWorkflowConfigOnlyGitDelta
+                ? stringSha256(gitComparableChangedFiles.join('\n'))
+                : expectedComparableChangedFilesSha256;
+            if (ignoredWorkflowConfigOnlyGitDelta && expectedDomainScopeFingerprints) {
+                const currentDomainScopeFingerprints = buildCurrentDomainScopeFingerprints({
+                    repoRoot,
+                    detectionSource,
+                    includeUntracked,
+                    changedFiles: currentComparableChangedFiles
+                });
+                if (!comparableNonConfigDomainsMatch(expectedDomainScopeFingerprints, currentDomainScopeFingerprints)) {
+                    violations.push(
+                        'preflight non-config domain scope differs from current git snapshot while ignored workflow-config local baseline is absent from git snapshot'
+                    );
+                }
+            }
+            if (
+                ignoredWorkflowConfigOnlyGitDelta
+                && !workflowConfigFilesMatchPreflightHashes(repoRoot, ignoredWorkflowConfigGitFiles, workflowConfigFileHashes)
+            ) {
+                violations.push(
+                    'preflight workflow-config content differs from current git snapshot while ignored workflow-config local baseline is absent from git snapshot'
+                );
+            }
+            if (currentFileSetHash !== expectedGitComparableChangedFilesSha256) {
                 const currentSet = new Set(currentComparableChangedFiles);
                 const missingFromPreflight = currentComparableChangedFiles.filter((entry) => !preflightSet.has(entry));
-                const noLongerCurrent = changedFiles.filter((entry) => !currentSet.has(entry));
+                const noLongerCurrent = (ignoredWorkflowConfigOnlyGitDelta ? gitComparableChangedFiles : changedFiles)
+                    .filter((entry) => !currentSet.has(entry));
                 const ignoredProtectedNote = unchangedProtectedFiles.size > 0
                     ? `; ignored unchanged dirty-baseline files: ${describePathList([...unchangedProtectedFiles])}`
+                    : '';
+                const ignoredWorkflowConfigNote = ignoredWorkflowConfigOnlyGitDelta
+                    ? `; ignored workflow-config-only local baseline files: ${describePathList(ignoredWorkflowConfigGitFiles)}`
                     : '';
                 violations.push(
                     `stale preflight file set ${describePathList(changedFiles)} differs from current git snapshot ${describePathList(currentComparableChangedFiles)}` +
                     `; missing from preflight: ${describePathList(missingFromPreflight)}` +
-                    `; no longer current: ${describePathList(noLongerCurrent)}${ignoredProtectedNote}`
+                    `; no longer current: ${describePathList(noLongerCurrent)}${ignoredProtectedNote}${ignoredWorkflowConfigNote}`
                 );
             }
         }
@@ -323,10 +427,10 @@ export function readPreflightWorkspaceReadiness(
             repoRoot,
             currentScope.changed_files,
             changedFiles,
-            expectedChangedLinesTotal,
+            expectedComparableChangedLinesTotal,
             includeUntracked,
             detectionSource,
-            expectedChangedFilesSha256,
+            expectedComparableChangedFilesSha256,
             expectedScopeContentSha256,
             getDocImpactDeclaredDocsUpdated(options.docImpactPath),
             expectedDomainScopeFingerprints
@@ -401,6 +505,64 @@ function getUnchangedProtectedDirtyWorkspaceFiles(
 
 function getPreflightTriggers(preflight: Record<string, unknown> | null): Record<string, unknown> {
     return isPlainRecord(preflight?.triggers) ? preflight.triggers : {};
+}
+
+function comparableNonConfigDomainsMatch(
+    expected: DomainScopeFingerprints,
+    current: DomainScopeFingerprints
+): boolean {
+    for (const domainName of ['implementation', 'test', 'docs'] as const) {
+        const expectedDomain = expected.domains[domainName];
+        const currentDomain = current.domains[domainName];
+        if (
+            expectedDomain.changed_files_sha256 !== currentDomain.changed_files_sha256
+            || expectedDomain.scope_content_sha256 !== currentDomain.scope_content_sha256
+            || expectedDomain.scope_sha256 !== currentDomain.scope_sha256
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function getWorkflowConfigFileHashes(repoRoot: string, preflight: Record<string, unknown>): Record<string, string> {
+    const triggers = getPreflightTriggers(preflight);
+    const rawHashes = isPlainRecord(triggers.workflow_config_file_hashes)
+        ? triggers.workflow_config_file_hashes
+        : {};
+    const hashes: Record<string, string> = {};
+    for (const [rawPath, rawHash] of Object.entries(rawHashes)) {
+        const normalizedPath = normalizeWorkspaceRelativePath(repoRoot, rawPath);
+        if (!normalizedPath) {
+            continue;
+        }
+        const normalizedHash = typeof rawHash === 'string'
+            ? rawHash.trim().toLowerCase()
+            : '';
+        if (normalizedHash) {
+            hashes[normalizedPath] = normalizedHash;
+        }
+    }
+    return hashes;
+}
+
+function workflowConfigFilesMatchPreflightHashes(
+    repoRoot: string,
+    workflowConfigFiles: readonly string[],
+    workflowConfigFileHashes: Record<string, string>
+): boolean {
+    return workflowConfigFiles.every((entry) => {
+        const normalizedPath = normalizeWorkspaceRelativePath(repoRoot, entry);
+        if (!normalizedPath) {
+            return false;
+        }
+        const expectedHash = workflowConfigFileHashes[normalizedPath];
+        if (!expectedHash) {
+            return false;
+        }
+        const currentHash = fileSha256(path.resolve(repoRoot, normalizedPath));
+        return !!currentHash && currentHash.trim().toLowerCase() === expectedHash;
+    });
 }
 
 function getTriggerPathList(repoRoot: string, preflight: Record<string, unknown>, fieldName: string): string[] {

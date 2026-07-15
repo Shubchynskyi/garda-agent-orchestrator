@@ -770,7 +770,10 @@ test('readReviewArtifactState rejects malformed findings JSON instead of derivin
         findingsPreflightPayload()
     );
 
-    assert.equal(state.verdictToken, null);
+    assert.equal(state.verdictToken, 'CODE REVIEW FAILED');
+    assert.equal(state.failed, true);
+    assert.equal(state.failureKind, 'review-validation-rejected');
+    assert.equal(state.reviewFindingsValidationRejected, true);
     assert.ok(state.violations.some((violation) => violation.includes('review findings validation artifact is rejected')));
 });
 

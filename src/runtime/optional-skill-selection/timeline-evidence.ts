@@ -10,7 +10,6 @@ import {
     type OptionalSkillSelectionReferenceLoadEvidence,
     type OptionalSkillSelectionArtifact,
     computeOptionalSkillSelectionFingerprint,
-    normalizeText,
     resolvePortableRepoPath,
     selectLatestTimestamp,
     toTimestampMs
@@ -20,6 +19,8 @@ interface TimelinePoint {
     timestampUtc: string | null;
     taskSequence: number | null;
 }
+
+const OPTIONAL_SKILL_TIMELINE_MAX_READ_BYTES = 1024 * 1024;
 
 export interface OptionalSkillActivationPoint {
     timestampMs: number;
@@ -50,6 +51,27 @@ function selectLatestTimelinePoint(current: TimelinePoint, next: TimelinePoint):
         : current;
 }
 
+function normalizeSha256Fingerprint(value: unknown): string | null {
+    const fingerprint = String(value || '').trim().toLowerCase();
+    return /^[a-f0-9]{64}$/.test(fingerprint) ? fingerprint : null;
+}
+
+function readRecentTaskEventLines(taskEventsPath: string): string[] {
+    const stats = fs.statSync(taskEventsPath);
+    const bytesToRead = Math.min(stats.size, OPTIONAL_SKILL_TIMELINE_MAX_READ_BYTES);
+    const start = Math.max(0, stats.size - bytesToRead);
+    const buffer = Buffer.alloc(bytesToRead);
+    const handle = fs.openSync(taskEventsPath, 'r');
+    try {
+        fs.readSync(handle, buffer, 0, bytesToRead, start);
+    } finally {
+        fs.closeSync(handle);
+    }
+    const text = buffer.toString('utf8');
+    const lines = text.split(/\r?\n/);
+    return start > 0 ? lines.slice(1) : lines;
+}
+
 export function readOptionalSkillSelectionTimelineEvidence(
     bundleRoot: string,
     taskId: string,
@@ -65,6 +87,7 @@ export function readOptionalSkillSelectionTimelineEvidence(
     let latestTaskModeEntered: TimelinePoint = { timestampUtc: null, taskSequence: null };
     let latestCycleBoundary: TimelinePoint = { timestampUtc: null, taskSequence: null };
     let latestImplementationStarted: TimelinePoint = { timestampUtc: null, taskSequence: null };
+    let latestCoherentCycleRestarted: TimelinePoint = { timestampUtc: null, taskSequence: null };
 
     if (!pathExists(resolvedTaskEventsPath)) {
         return {
@@ -78,15 +101,17 @@ export function readOptionalSkillSelectionTimelineEvidence(
             latestCycleBoundaryTaskSequence: latestCycleBoundary.taskSequence,
             latestImplementationStartedTimestampUtc: latestImplementationStarted.timestampUtc,
             latestImplementationStartedTaskSequence: latestImplementationStarted.taskSequence,
+            latestCoherentCycleRestartedTimestampUtc: latestCoherentCycleRestarted.timestampUtc,
+            latestCoherentCycleRestartedTaskSequence: latestCoherentCycleRestarted.taskSequence,
             optionalSkillActivations,
             optionalSkillDeclines,
             optionalSkillReferenceLoads
         };
     }
 
-    const liveSkillsRoot = normalizeText(path.join(bundleRoot, 'live', 'skills'));
+    const liveSkillsRoot = path.join(bundleRoot, 'live', 'skills');
     let invalidJson = false;
-    for (const rawLine of fs.readFileSync(resolvedTaskEventsPath, 'utf8').split(/\r?\n/)) {
+    for (const rawLine of readRecentTaskEventLines(resolvedTaskEventsPath)) {
         if (!rawLine.trim()) {
             continue;
         }
@@ -113,7 +138,35 @@ export function readOptionalSkillSelectionTimelineEvidence(
         if (eventType === 'IMPLEMENTATION_STARTED') {
             latestImplementationStarted = selectLatestTimelinePoint(latestImplementationStarted, timelinePoint);
         }
+        if (eventType === 'COHERENT_CYCLE_RESTARTED') {
+            latestCoherentCycleRestarted = selectLatestTimelinePoint(latestCoherentCycleRestarted, timelinePoint);
+        }
         const details = parsedLine.details;
+        if (eventType === 'COHERENT_CYCLE_RESTARTED' && details && typeof details === 'object' && !Array.isArray(details)) {
+            const detailRecord = details as Record<string, unknown>;
+            const reboundSkillIds = Array.isArray(detailRecord.optional_skill_activation_rebound_skill_ids)
+                ? detailRecord.optional_skill_activation_rebound_skill_ids
+                : [];
+            const selectionFingerprintSha256 = normalizeSha256Fingerprint(
+                detailRecord.optional_skill_activation_rebind_fingerprint_sha256
+            );
+            if (!selectionFingerprintSha256) {
+                continue;
+            }
+            for (const reboundSkillId of reboundSkillIds) {
+                const skillId = String(reboundSkillId || '').trim();
+                if (!skillId) {
+                    continue;
+                }
+                optionalSkillActivations.push({
+                    skillId,
+                    triggerReason: 'coherent_cycle_restart_rebind',
+                    timestampUtc: eventTimestampUtc,
+                    eventSequence: taskSequence,
+                    selectionFingerprintSha256
+                });
+            }
+        }
         if (eventType === 'SKILL_SELECTED' && details && typeof details === 'object' && !Array.isArray(details)) {
             const detailRecord = details as Record<string, unknown>;
             const triggerReason = String(detailRecord.trigger_reason || '').trim();
@@ -157,10 +210,10 @@ export function readOptionalSkillSelectionTimelineEvidence(
             continue;
         }
         const resolvedReferencePath = resolvePortableRepoPath(bundleRoot, referencePath);
-        if (!normalizeText(resolvedReferencePath).startsWith(liveSkillsRoot)) {
+        const relativeReferencePath = path.relative(liveSkillsRoot, resolvedReferencePath).replace(/\\/g, '/');
+        if (!relativeReferencePath || relativeReferencePath === '..' || relativeReferencePath.startsWith('../') || path.isAbsolute(relativeReferencePath)) {
             continue;
         }
-        const relativeReferencePath = path.relative(path.join(bundleRoot, 'live', 'skills'), resolvedReferencePath).replace(/\\/g, '/');
         const skillDirectory = relativeReferencePath.split('/').filter(Boolean)[0] || '';
         if (BASELINE_SKILL_DIRECTORIES.includes(skillDirectory)) {
             continue;
@@ -170,7 +223,8 @@ export function readOptionalSkillSelectionTimelineEvidence(
             referencePath,
             resolvedReferencePath,
             triggerReason: triggerReason || null,
-            timestampUtc: String(parsedLine.timestamp_utc || '').trim() || null
+            timestampUtc: String(parsedLine.timestamp_utc || '').trim() || null,
+            eventSequence: taskSequence
         });
     }
 
@@ -185,6 +239,8 @@ export function readOptionalSkillSelectionTimelineEvidence(
         latestCycleBoundaryTaskSequence: latestCycleBoundary.taskSequence,
         latestImplementationStartedTimestampUtc: latestImplementationStarted.timestampUtc,
         latestImplementationStartedTaskSequence: latestImplementationStarted.taskSequence,
+        latestCoherentCycleRestartedTimestampUtc: latestCoherentCycleRestarted.timestampUtc,
+        latestCoherentCycleRestartedTaskSequence: latestCoherentCycleRestarted.taskSequence,
         optionalSkillActivations,
         optionalSkillDeclines,
         optionalSkillReferenceLoads
@@ -197,6 +253,8 @@ function isCurrentCycleOptionalSkillDecision(
     entry: {
         timestampUtc: string | null;
         selectionFingerprintSha256?: string | null;
+        triggerReason?: string | null;
+        eventSequence?: number | null;
     }
 ): boolean {
     const taskModeLowerBoundTimestampMs = toTimestampMs(
@@ -216,16 +274,42 @@ function isCurrentCycleOptionalSkillDecision(
     if (eventTimestampMs === null) {
         return false;
     }
-    if (taskModeLowerBoundTimestampMs !== null && eventTimestampMs < taskModeLowerBoundTimestampMs) {
+    const coherentRestartBoundary = getLatestCoherentCycleRestartPoint(timelineEvidence);
+    if (coherentRestartBoundary && didActivationOccurBeforeCycleBoundary({
+        timestampMs: eventTimestampMs,
+        eventSequence: entry.eventSequence ?? null
+    }, coherentRestartBoundary)) {
         return false;
+    }
+    const entrySelectionFingerprintSha256 = String(entry.selectionFingerprintSha256 || '').trim().toLowerCase();
+    if (entry.triggerReason === 'coherent_cycle_restart_rebind') {
+        return Boolean(
+            selectionFingerprintSha256
+            && entrySelectionFingerprintSha256
+            && entrySelectionFingerprintSha256 === selectionFingerprintSha256
+        );
+    }
+    if (
+        selectionFingerprintSha256
+        && entrySelectionFingerprintSha256
+            && entrySelectionFingerprintSha256 !== selectionFingerprintSha256
+    ) {
+        return false;
+    }
+    if (taskModeLowerBoundTimestampMs !== null && eventTimestampMs < taskModeLowerBoundTimestampMs) {
+        return Boolean(
+            selectionFingerprintSha256
+            && entrySelectionFingerprintSha256
+            && entrySelectionFingerprintSha256 === selectionFingerprintSha256
+        );
     }
     if (cycleLowerBoundTimestampMs === null || eventTimestampMs >= cycleLowerBoundTimestampMs) {
         return true;
     }
     return Boolean(
         selectionFingerprintSha256
-        && entry.selectionFingerprintSha256
-        && entry.selectionFingerprintSha256 === selectionFingerprintSha256
+        && entrySelectionFingerprintSha256
+        && entrySelectionFingerprintSha256 === selectionFingerprintSha256
     );
 }
 
@@ -233,17 +317,22 @@ export function getCurrentCycleOptionalSkillReferenceLoads(
     payload: OptionalSkillSelectionArtifact,
     timelineEvidence: OptionalSkillSelectionTimelineEvidence
 ): OptionalSkillSelectionReferenceLoadEvidence[] {
-    const lowerBoundTimestampMs = toTimestampMs(
-        timelineEvidence.latestCycleBoundaryTimestampUtc
-        || timelineEvidence.latestTaskModeEnteredTimestampUtc
-        || payload.timestamp_utc
+    const lowerBound = selectLatestOptionalSkillPoint(
+        getCurrentCycleBoundaryPoint(payload, timelineEvidence),
+        getLatestCoherentCycleRestartPoint(timelineEvidence)
     );
     return timelineEvidence.optionalSkillReferenceLoads.filter((entry) => {
-        if (lowerBoundTimestampMs === null) {
+        if (!lowerBound) {
             return true;
         }
         const eventTimestampMs = toTimestampMs(entry.timestampUtc);
-        return eventTimestampMs !== null && eventTimestampMs >= lowerBoundTimestampMs;
+        if (eventTimestampMs === null) {
+            return false;
+        }
+        return !didActivationOccurBeforeCycleBoundary({
+            timestampMs: eventTimestampMs,
+            eventSequence: entry.eventSequence ?? null
+        }, lowerBound);
     });
 }
 
@@ -269,16 +358,32 @@ export function buildCurrentCycleOptionalSkillActivationIndex(
     payload: OptionalSkillSelectionArtifact,
     timelineEvidence: OptionalSkillSelectionTimelineEvidence
 ): Map<string, number> {
+    const activationPointIndex = buildCurrentCycleOptionalSkillActivationPointIndex(payload, timelineEvidence);
     const activationIndex = new Map<string, number>();
+    for (const [skillId, activation] of activationPointIndex) {
+        activationIndex.set(skillId, activation.timestampMs);
+    }
+    return activationIndex;
+}
+
+function buildCurrentCycleOptionalSkillActivationPointIndex(
+    payload: OptionalSkillSelectionArtifact,
+    timelineEvidence: OptionalSkillSelectionTimelineEvidence
+): Map<string, OptionalSkillActivationPoint> {
+    const activationIndex = new Map<string, OptionalSkillActivationPoint>();
     for (const activation of getCurrentCycleOptionalSkillActivations(payload, timelineEvidence)) {
         const skillId = String(activation.skillId || '').trim();
         const timestampMs = toTimestampMs(activation.timestampUtc);
         if (!skillId || timestampMs === null) {
             continue;
         }
-        const previousTimestampMs = activationIndex.get(skillId);
-        if (previousTimestampMs === undefined || timestampMs > previousTimestampMs) {
-            activationIndex.set(skillId, timestampMs);
+        const activationPoint = {
+            timestampMs,
+            eventSequence: activation.eventSequence ?? null
+        };
+        const previous = activationIndex.get(skillId);
+        if (!previous || didActivationOccurBeforeCycleBoundary(activationPoint, previous)) {
+            activationIndex.set(skillId, activationPoint);
         }
     }
     return activationIndex;
@@ -323,6 +428,35 @@ function getCurrentCycleBoundaryPoint(
     };
 }
 
+function getLatestCoherentCycleRestartPoint(
+    timelineEvidence: OptionalSkillSelectionTimelineEvidence
+): OptionalSkillActivationPoint | null {
+    const timestampMs = toTimestampMs(timelineEvidence.latestCoherentCycleRestartedTimestampUtc || null);
+    if (timestampMs === null) {
+        return null;
+    }
+    return {
+        timestampMs,
+        eventSequence: timelineEvidence.latestCoherentCycleRestartedTaskSequence ?? null
+    };
+}
+
+function selectLatestOptionalSkillPoint(
+    current: OptionalSkillActivationPoint | null,
+    next: OptionalSkillActivationPoint | null
+): OptionalSkillActivationPoint | null {
+    if (!current) {
+        return next;
+    }
+    if (!next) {
+        return current;
+    }
+    if (current.eventSequence !== null && next.eventSequence !== null) {
+        return next.eventSequence >= current.eventSequence ? next : current;
+    }
+    return next.timestampMs >= current.timestampMs ? next : current;
+}
+
 function didActivationOccurBeforeCycleBoundary(
     activation: OptionalSkillActivationPoint,
     cycleBoundary: OptionalSkillActivationPoint
@@ -343,6 +477,22 @@ export function getCurrentImplementationStartPoint(
     }
     const implementationSequence = timelineEvidence.latestImplementationStartedTaskSequence ?? null;
     const cycleBoundarySequence = timelineEvidence.latestCycleBoundaryTaskSequence ?? null;
+    const coherentRestartTimestampMs = toTimestampMs(timelineEvidence.latestCoherentCycleRestartedTimestampUtc || null);
+    const coherentRestartSequence = timelineEvidence.latestCoherentCycleRestartedTaskSequence ?? null;
+    if (
+        implementationSequence !== null
+        && coherentRestartSequence !== null
+        && implementationSequence < coherentRestartSequence
+    ) {
+        return null;
+    }
+    if (
+        (implementationSequence === null || coherentRestartSequence === null)
+        && coherentRestartTimestampMs !== null
+        && implementationTimestampMs < coherentRestartTimestampMs
+    ) {
+        return null;
+    }
     if (
         implementationSequence !== null
         && cycleBoundarySequence !== null
@@ -449,14 +599,44 @@ export function buildMandatoryCurrentCycleOptionalSkillActivationIndex(
     timelineEvidence: OptionalSkillSelectionTimelineEvidence
 ): Map<string, number> {
     const implementationStart = getCurrentImplementationStartPoint(payload, timelineEvidence);
-    const activationIndex = new Map<string, number>();
-    for (const [skillId, activation] of buildFreshCurrentCycleOptionalSkillActivationPointIndex(payload, timelineEvidence)) {
+    const cycleBoundary = getCurrentCycleBoundaryPoint(payload, timelineEvidence);
+    const activationIndex = new Map<string, OptionalSkillActivationPoint>();
+    for (const activation of getCurrentCycleOptionalSkillActivations(payload, timelineEvidence)) {
+        const skillId = String(activation.skillId || '').trim();
+        const timestampMs = toTimestampMs(activation.timestampUtc);
+        if (!skillId || timestampMs === null) {
+            continue;
+        }
+        const activationPoint = {
+            timestampMs,
+            eventSequence: activation.eventSequence ?? null
+        };
+        if (cycleBoundary && didActivationOccurBeforeCycleBoundary(activationPoint, cycleBoundary)) {
+            continue;
+        }
+        if (implementationStart && didActivationOccurAfterImplementationStart(activationPoint, implementationStart)) {
+            continue;
+        }
+        const previous = activationIndex.get(skillId);
+        if (!previous) {
+            activationIndex.set(skillId, activationPoint);
+            continue;
+        }
+        const isNewer = activationPoint.eventSequence !== null && previous.eventSequence !== null
+            ? activationPoint.eventSequence > previous.eventSequence
+            : activationPoint.timestampMs > previous.timestampMs;
+        if (isNewer) {
+            activationIndex.set(skillId, activationPoint);
+        }
+    }
+    const timestampIndex = new Map<string, number>();
+    for (const [skillId, activation] of activationIndex) {
         if (implementationStart && didActivationOccurAfterImplementationStart(activation, implementationStart)) {
             continue;
         }
-        activationIndex.set(skillId, activation.timestampMs);
+        timestampIndex.set(skillId, activation.timestampMs);
     }
-    return activationIndex;
+    return timestampIndex;
 }
 
 export function getActivatedCurrentCycleOptionalSkillReferenceLoads(
@@ -466,14 +646,20 @@ export function getActivatedCurrentCycleOptionalSkillReferenceLoads(
     if (timelineEvidence.invalidJson) {
         return [];
     }
-    const activationIndex = buildCurrentCycleOptionalSkillActivationIndex(payload, timelineEvidence);
+    const activationIndex = buildCurrentCycleOptionalSkillActivationPointIndex(payload, timelineEvidence);
     return getCurrentCycleOptionalSkillReferenceLoads(payload, timelineEvidence).filter((entry) => {
         const skillId = String(entry.skillId || '').trim();
-        const activationTimestampMs = activationIndex.get(skillId);
-        if (!skillId || activationTimestampMs === undefined) {
+        const activation = activationIndex.get(skillId);
+        if (!skillId || !activation) {
             return false;
         }
         const eventTimestampMs = toTimestampMs(entry.timestampUtc);
-        return eventTimestampMs !== null && eventTimestampMs >= activationTimestampMs;
+        if (eventTimestampMs === null) {
+            return false;
+        }
+        return !didActivationOccurBeforeCycleBoundary({
+            timestampMs: eventTimestampMs,
+            eventSequence: entry.eventSequence ?? null
+        }, activation);
     });
 }

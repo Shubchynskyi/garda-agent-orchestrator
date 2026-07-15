@@ -244,7 +244,11 @@ export function buildCopyPasteReviewerLaunchPrompt(options: ReviewerLaunchPrompt
     const lines = [
         `You are the delegated ${options.reviewType} reviewer for this Garda task.`,
         buildReviewerCompletenessCheckNotice(options.executionProvider),
-        `Repository: ${options.repoRoot}`
+        `Repository: ${options.repoRoot}`,
+        'Reviewer-only boundary: you are not the main orchestrating agent for TASK.md.',
+        'Do not run Garda workflow/navigation/validation gates such as next-step, classify-change, compile-gate, full-suite-validation, build-review-context, record-review-routing, prepare-reviewer-launch, record-reviewer-delegation-started, complete-reviewer-launch, record-review-invocation, or record-review-result.',
+        'Do not launch another reviewer or subagent, and do not modify reviewer launch/control artifacts, task events, preflight artifacts, review context artifacts, receipts, TASK.md, or project memory.',
+        'Only read the artifacts named in this handoff and write the completed review JSON to the single ReviewOutputPath when file writing is available.'
     ];
     if (options.rolePromptPath) {
         lines.push(`First open and read RolePromptPath: ${options.rolePromptPath}`);
@@ -317,8 +321,11 @@ export function buildReviewerLaunchInputHandoffArtifact(
         copy_paste_reviewer_launch_prompt_sha256: options.copyPasteReviewerLaunchPromptSha256,
         reviewer_only_instructions: [
             'Act as the delegated reviewer named by this artifact.',
+            'You are not the main orchestrating agent for TASK.md.',
             'Do not launch another reviewer or subagent.',
-            'Do not run main-agent launch, attestation, completion, or routing gate commands.',
+            'Do not run Garda workflow/navigation/validation gates such as next-step, classify-change, compile-gate, full-suite-validation, build-review-context, record-review-routing, prepare-reviewer-launch, record-reviewer-delegation-started, complete-reviewer-launch, record-review-invocation, or record-review-result.',
+            'Do not modify reviewer launch/control artifacts, task events, preflight artifacts, review context artifacts, receipts, TASK.md, or project memory.',
+            'Only read the artifacts named in this handoff.',
             'Write the completed review report to review_output_path when file writing is available, or return it in the final response.'
         ],
         local_trust_boundary: options.localTrustBoundary

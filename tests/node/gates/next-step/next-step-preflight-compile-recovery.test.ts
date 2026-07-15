@@ -949,6 +949,35 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.notEqual(result.next_gate, 'restart-coherent-cycle', result.reason);
     });
 
+    it('accepts persisted restart evidence when recovery flow records preflight after implementation boundary', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'IMPLEMENTATION_STARTED', 'INFO');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+        const compileEvidencePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`);
+        appendEvent(repoRoot, TASK_ID, 'COHERENT_CYCLE_RESTARTED', 'PASS', {
+            restart_event_schema_version: 1,
+            task_id: TASK_ID,
+            event_type: 'COHERENT_CYCLE_RESTARTED',
+            task_mode_path: taskModePath.replace(/\\/g, '/'),
+            task_mode_sha256: fileSha256(taskModePath),
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: fileSha256(preflightPath),
+            compile_evidence_path: compileEvidencePath.replace(/\\/g, '/'),
+            compile_evidence_sha256: fileSha256(compileEvidencePath),
+            detected_changed_files_count: 1,
+            elapsed_ms: 1,
+            restart_reason: 'coherent_cycle_restart_after_downstream_boundary_or_invalid_preflight_order',
+            next_step_summary: 'continue after persisted restart evidence'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'restart-coherent-cycle', result.reason);
+    });
+
     it('blocks restarted compile recovery when restart evidence points to a stale compile artifact', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
