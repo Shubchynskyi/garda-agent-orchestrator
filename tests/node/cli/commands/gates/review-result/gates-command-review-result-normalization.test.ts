@@ -1373,6 +1373,38 @@ describe('gates command review result - normalization', () => {
             createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex'),
             receipt.review_findings_validation.artifact_sha256
         );
+        const dispositionArtifactPath = path.join(fixture.reviewsRoot, `${taskId}-code-findings-disposition.json`);
+        assert.equal(receipt.review_findings_disposition_artifact.artifact_path, dispositionArtifactPath.replace(/\\/g, '/'));
+        assert.equal(
+            receipt.review_output_contract.disposition_artifact_sha256,
+            receipt.review_findings_disposition_artifact.artifact_sha256
+        );
+        assert.equal(
+            receipt.review_output_contract.disposition_result_sha256,
+            receipt.review_findings_disposition_artifact.disposition_result_sha256
+        );
+        const dispositionArtifact = JSON.parse(fs.readFileSync(dispositionArtifactPath, 'utf8'));
+        assert.equal(dispositionArtifact.artifact_type, 'review_findings_disposition');
+        assert.equal(dispositionArtifact.source_validation.accepted, true);
+        assert.equal(
+            dispositionArtifact.source_validation.artifact_sha256,
+            receipt.review_findings_validation.artifact_sha256
+        );
+        assert.deepEqual(dispositionArtifact.disposition_result, receipt.review_findings_disposition);
+        assert.equal(dispositionArtifact.items.length, 1);
+        assert.equal(dispositionArtifact.items[0].id, 'F-001');
+        assert.equal(dispositionArtifact.items[0].kind, 'finding');
+        assert.equal(dispositionArtifact.items[0].severity, 'high');
+        assert.equal(dispositionArtifact.items[0].source_rule, 'review_finding_policy.findings.high');
+        assert.equal(
+            dispositionArtifact.items[0].action,
+            receipt.review_findings_disposition.findings.high.action
+        );
+        assert.equal(dispositionArtifact.items[0].audit_status, 'retained_in_disposition_artifact');
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(dispositionArtifactPath)).digest('hex'),
+            receipt.review_findings_disposition_artifact.artifact_sha256
+        );
         assert.equal(receipt.review_findings_report.findings.high.length, 1);
         assert.equal(receipt.review_findings_report.findings.high[0].id, 'F-001');
         assert.deepEqual(receipt.review_findings_summary.finding_ids_by_severity.high, ['F-001']);
@@ -1528,6 +1560,43 @@ describe('gates command review result - normalization', () => {
                 assert.equal(receipt.review_findings_disposition.blocking_count, scenario.expectedBlockingCount);
                 assert.equal(receipt.review_findings_disposition.verdict, scenario.expectedDispositionVerdict);
                 assert.equal(receipt.review_findings_disposition.counts_by_action[scenario.expectedAction], 1);
+                const dispositionArtifactPath = path.join(
+                    fixture.reviewsRoot,
+                    `${scenario.taskId}-code-findings-disposition.json`
+                );
+                const dispositionArtifact = JSON.parse(fs.readFileSync(dispositionArtifactPath, 'utf8'));
+                assert.deepEqual(dispositionArtifact.disposition_result, receipt.review_findings_disposition);
+                assert.equal(
+                    receipt.review_output_contract.disposition_artifact_sha256,
+                    receipt.review_findings_disposition_artifact.artifact_sha256
+                );
+                assert.equal(
+                    receipt.review_output_contract.disposition_result_sha256,
+                    receipt.review_findings_disposition_artifact.disposition_result_sha256
+                );
+                assert.equal(
+                    createHash('sha256').update(fs.readFileSync(dispositionArtifactPath)).digest('hex'),
+                    receipt.review_findings_disposition_artifact.artifact_sha256
+                );
+                assert.equal(dispositionArtifact.items.length, 1);
+                const dispositionItem = dispositionArtifact.items[0];
+                assert.equal(dispositionItem.id, scenario.subject === 'finding' ? 'F-001' : 'R-001');
+                assert.equal(dispositionItem.action, scenario.expectedAction);
+                assert.equal(
+                    dispositionItem.source_rule,
+                    scenario.subject === 'finding'
+                        ? `review_finding_policy.findings.${String(scenario.severity)}`
+                        : 'review_finding_policy.residual_risk'
+                );
+                assert.equal(
+                    dispositionItem.materialization_status,
+                    scenario.expectedAction === 'fix_now'
+                        ? 'requires_fix_now'
+                        : scenario.expectedAction === 'create_follow_up'
+                            ? 'pending_follow_up_materialization'
+                            : 'audited_ignored'
+                );
+                assert.equal(dispositionItem.audit_status, 'retained_in_disposition_artifact');
             } finally {
                 fs.rmSync(repoRoot, { recursive: true, force: true });
             }
@@ -1667,6 +1736,10 @@ describe('gates command review result - normalization', () => {
         assert.ok(validationArtifact.validation_result.violations.some((violation: string) =>
             violation.includes('validation_notes must contain at least one validation note')
         ));
+        assert.equal(
+            fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-findings-disposition.json`)),
+            false
+        );
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

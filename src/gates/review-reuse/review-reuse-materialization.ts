@@ -38,9 +38,14 @@ import {
     validateReviewFindingsValidationArtifactForReceipt,
     type ReviewFindingsValidationArtifact
 } from '../review/review-findings-validation-artifact';
+import {
+    buildReviewFindingsDispositionArtifact,
+    getReviewFindingsDispositionArtifactPath,
+    getReviewFindingsDispositionArtifactSnapshotPath,
+    type ReviewFindingsDispositionArtifact
+} from '../review/review-findings-disposition-artifact';
 import type { ReviewFindingsReport } from '../review/review-findings-schema';
 import {
-    evaluateReviewFindingsReportDispositions,
     type LockedReviewFindingPolicyResolution,
     resolveLockedReviewFindingPolicyFromReceiptDisposition,
     reviewFindingsValidationArtifactHasBlockingFindings
@@ -86,6 +91,14 @@ interface ReusedReviewFindingsValidationEvidence {
     validation: JsonReviewFindingsArtifactValidation;
     rawOutputSha256: string | null;
     policyResolution: LockedReviewFindingPolicyResolution;
+    dispositionEvidence: ReusedReviewFindingsDispositionEvidence;
+}
+
+interface ReusedReviewFindingsDispositionEvidence {
+    artifactPath: string;
+    snapshotPath: string;
+    artifactSha256: string;
+    payload: ReviewFindingsDispositionArtifact;
 }
 
 function sha256JsonPayload(value: unknown): string {
@@ -141,6 +154,25 @@ function summarizeReviewFindingsValidationEvidence(
         accepted: evidence.payload.validation_result.accepted,
         validation_result_sha256: evidence.payload.validation_result_sha256,
         violation_count: evidence.payload.validation_result.violations.length
+    };
+}
+
+function summarizeReviewFindingsDispositionEvidence(
+    evidence: ReusedReviewFindingsDispositionEvidence
+): Record<string, unknown> {
+    return {
+        artifact_path: gateHelpers.normalizePath(evidence.artifactPath),
+        artifact_sha256: evidence.artifactSha256,
+        snapshot_path: gateHelpers.normalizePath(evidence.snapshotPath),
+        snapshot_sha256: evidence.artifactSha256,
+        disposition_result_sha256: evidence.payload.disposition_result_sha256,
+        policy_id: evidence.payload.policy.policy_id,
+        policy_source: evidence.payload.policy.policy_source,
+        item_count: evidence.payload.summary.item_count,
+        fix_now_count: evidence.payload.summary.fix_now_count,
+        follow_up_pending_count: evidence.payload.summary.follow_up_pending_count,
+        ignored_count: evidence.payload.summary.ignored_count,
+        blocking_count: evidence.payload.summary.blocking_count
     };
 }
 
@@ -300,6 +332,16 @@ async function persistReusedReviewEvidence(
                         artifactPath: findingsValidationEvidence.snapshotPath,
                         contentType: 'json' as const,
                         payload: findingsValidationEvidence.payload
+                    },
+                    {
+                        artifactPath: findingsValidationEvidence.dispositionEvidence.artifactPath,
+                        contentType: 'json' as const,
+                        payload: findingsValidationEvidence.dispositionEvidence.payload
+                    },
+                    {
+                        artifactPath: findingsValidationEvidence.dispositionEvidence.snapshotPath,
+                        contentType: 'json' as const,
+                        payload: findingsValidationEvidence.dispositionEvidence.payload
                     }
                 ]
                 : [])
@@ -327,6 +369,33 @@ async function persistReusedReviewEvidence(
             reason: 'current-cycle REVIEW_RECORDED reuse telemetry could not be persisted'
         };
     }
+}
+
+function buildReusedReviewFindingsDispositionEvidence(options: {
+    taskId: string;
+    reviewType: string;
+    reviewArtifactPath: string;
+    validationArtifact: ReviewFindingsValidationArtifact;
+    validationArtifactPath: string;
+    validationArtifactSha256: string;
+    policyResolution: LockedReviewFindingPolicyResolution;
+}): ReusedReviewFindingsDispositionEvidence {
+    const artifactPath = getReviewFindingsDispositionArtifactPath(options.reviewArtifactPath);
+    const payload = buildReviewFindingsDispositionArtifact({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        validationArtifact: options.validationArtifact,
+        validationArtifactPath: options.validationArtifactPath,
+        validationArtifactSha256: options.validationArtifactSha256,
+        policyResolution: options.policyResolution
+    });
+    const artifactSha256 = sha256JsonPayload(payload);
+    return {
+        artifactPath,
+        snapshotPath: getReviewFindingsDispositionArtifactSnapshotPath(artifactPath, artifactSha256),
+        artifactSha256,
+        payload
+    };
 }
 
 function buildReusedReviewFindingsValidationEvidence(
@@ -420,6 +489,15 @@ function buildReusedReviewFindingsValidationEvidence(
         coverageContract: sourceCoverageContract
     });
     const artifactSha256 = sha256JsonPayload(payload);
+    const dispositionEvidence = buildReusedReviewFindingsDispositionEvidence({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewArtifactPath: options.artifactPath,
+        validationArtifact: payload,
+        validationArtifactPath: artifactPath,
+        validationArtifactSha256: artifactSha256,
+        policyResolution
+    });
     return {
         evidence: {
             artifactPath,
@@ -428,7 +506,8 @@ function buildReusedReviewFindingsValidationEvidence(
             payload,
             validation,
             rawOutputSha256,
-            policyResolution
+            policyResolution,
+            dispositionEvidence
         }
     };
 }
@@ -450,16 +529,17 @@ function attachReusedReviewFindingsReceiptEvidence(
     receiptRecord.review_findings_report = report;
     receiptRecord.review_findings_summary = summarizeReviewFindingsReport(report);
     receiptRecord.review_findings_validation = summarizeReviewFindingsValidationEvidence(evidence);
-    receiptRecord.review_findings_disposition = evaluateReviewFindingsReportDispositions(
-        report,
-        evidence.policyResolution
-    );
+    receiptRecord.review_findings_disposition = evidence.dispositionEvidence.payload.disposition_result;
+    receiptRecord.review_findings_disposition_artifact =
+        summarizeReviewFindingsDispositionEvidence(evidence.dispositionEvidence);
     receiptRecord.review_output_contract = {
         schema_version: 1,
         format: 'findings_json',
         report_sha256: reportSha256,
         validation_artifact_sha256: evidence.artifactSha256,
         validation_result_sha256: evidence.payload.validation_result_sha256,
+        disposition_artifact_sha256: evidence.dispositionEvidence.artifactSha256,
+        disposition_result_sha256: evidence.dispositionEvidence.payload.disposition_result_sha256,
         raw_output_sha256: evidence.rawOutputSha256,
         review_artifact_sha256: refreshedReceipt.review_artifact_sha256,
         review_context_sha256: refreshedReceipt.reused_from_review_context_sha256 ?? refreshedReceipt.review_context_sha256,

@@ -99,8 +99,15 @@ import {
 import {
     evaluateReviewFindingsReportDispositions,
     resolveLockedReviewFindingPolicyFromPreflight,
+    type LockedReviewFindingPolicyResolution,
     type ReviewFindingsDispositionEvaluation
 } from '../../../../gates/review/review-finding-disposition';
+import {
+    buildReviewFindingsDispositionArtifact,
+    getReviewFindingsDispositionArtifactPath,
+    getReviewFindingsDispositionArtifactSnapshotPath,
+    type ReviewFindingsDispositionArtifact
+} from '../../../../gates/review/review-findings-disposition-artifact';
 import {
     reviewContextRequiresFindingsOnlyArtifact,
     validateReviewFindingsContract,
@@ -164,6 +171,13 @@ interface ReviewFindingsValidationEvidence {
     payload: ReviewFindingsValidationArtifact;
 }
 
+interface ReviewFindingsDispositionEvidence {
+    artifactPath: string;
+    snapshotPath: string;
+    artifactSha256: string;
+    payload: ReviewFindingsDispositionArtifact;
+}
+
 function getPreflightScopeSha256(preflight: Record<string, unknown>): string | null {
     const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
         ? preflight.metrics as Record<string, unknown>
@@ -215,6 +229,31 @@ function buildReviewFindingsValidationEvidence(options: {
     };
 }
 
+function buildReviewFindingsDispositionEvidence(options: {
+    taskId: string;
+    reviewType: string;
+    reviewArtifactPath: string;
+    validationEvidence: ReviewFindingsValidationEvidence;
+    policyResolution: LockedReviewFindingPolicyResolution;
+}): ReviewFindingsDispositionEvidence {
+    const artifactPath = getReviewFindingsDispositionArtifactPath(options.reviewArtifactPath);
+    const payload = buildReviewFindingsDispositionArtifact({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        validationArtifact: options.validationEvidence.payload,
+        validationArtifactPath: options.validationEvidence.artifactPath,
+        validationArtifactSha256: options.validationEvidence.artifactSha256,
+        policyResolution: options.policyResolution
+    });
+    const artifactSha256 = sha256JsonPayload(payload);
+    return {
+        artifactPath,
+        snapshotPath: getReviewFindingsDispositionArtifactSnapshotPath(artifactPath, artifactSha256),
+        artifactSha256,
+        payload
+    };
+}
+
 async function writeRejectedReviewFindingsValidationEvidence(evidence: ReviewFindingsValidationEvidence): Promise<void> {
     await writeReviewArtifactsWithRollback([
         {
@@ -243,6 +282,23 @@ function summarizeReviewFindingsValidationEvidence(evidence: ReviewFindingsValid
     };
 }
 
+function summarizeReviewFindingsDispositionEvidence(evidence: ReviewFindingsDispositionEvidence): Record<string, unknown> {
+    return {
+        artifact_path: normalizePath(evidence.artifactPath),
+        artifact_sha256: evidence.artifactSha256,
+        snapshot_path: normalizePath(evidence.snapshotPath),
+        snapshot_sha256: evidence.artifactSha256,
+        disposition_result_sha256: evidence.payload.disposition_result_sha256,
+        policy_id: evidence.payload.policy.policy_id,
+        policy_source: evidence.payload.policy.policy_source,
+        item_count: evidence.payload.summary.item_count,
+        fix_now_count: evidence.payload.summary.fix_now_count,
+        follow_up_pending_count: evidence.payload.summary.follow_up_pending_count,
+        ignored_count: evidence.payload.summary.ignored_count,
+        blocking_count: evidence.payload.summary.blocking_count
+    };
+}
+
 async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     repoRoot: string;
     taskId: string;
@@ -257,6 +313,7 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     receiptPayloadSha256: string;
     artifactSha256: string | null;
     findingsValidationEvidence?: ReviewFindingsValidationEvidence | null;
+    findingsDispositionEvidence?: ReviewFindingsDispositionEvidence | null;
 }): Promise<string> {
     const receiptPath = options.artifactPath.replace(/\.md$/, '-receipt.json');
     const receiptSnapshotPath = options.artifactPath.replace(/\.md$/, `-receipt-${options.receiptPayloadSha256}.json`);
@@ -300,6 +357,20 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
                     artifactPath: options.findingsValidationEvidence.snapshotPath,
                     contentType: 'json' as const,
                     payload: options.findingsValidationEvidence.payload
+                }
+            ]
+            : []),
+        ...(options.findingsDispositionEvidence
+            ? [
+                {
+                    artifactPath: options.findingsDispositionEvidence.artifactPath,
+                    contentType: 'json' as const,
+                    payload: options.findingsDispositionEvidence.payload
+                },
+                {
+                    artifactPath: options.findingsDispositionEvidence.snapshotPath,
+                    contentType: 'json' as const,
+                    payload: options.findingsDispositionEvidence.payload
                 }
             ]
             : []),
@@ -527,8 +598,8 @@ async function recordReviewReceiptFromArtifacts(options: {
     let findingsReport: ReviewFindingsReport | null = null;
     let coverageValidation: ReviewCoverageValidationSummary | null = null;
     let findingsValidationEvidence: ReviewFindingsValidationEvidence | null = null;
+    let findingsDispositionEvidence: ReviewFindingsDispositionEvidence | null = null;
     let findingsValidation: JsonReviewFindingsArtifactValidation | null = null;
-    let findingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     if (String(reviewArtifactContent || '').trim().startsWith('{')) {
         findingsValidation = validateFindingsOnlyReviewOutput({
             reviewContent: reviewArtifactContent,
@@ -542,9 +613,6 @@ async function recordReviewReceiptFromArtifacts(options: {
         });
         findingsReport = findingsValidation.report;
         coverageValidation = findingsValidation.coverage_validation;
-        if (findingsReport) {
-            findingsDisposition = evaluateReviewFindingsReportDispositionsFromPreflight(findingsReport, preflight);
-        }
     } else if (strictFindingsOnlyOutput) {
         throw new Error(
             `Current '${options.reviewType}' review receipts require a verdict-free findings JSON report. ` +
@@ -590,6 +658,15 @@ async function recordReviewReceiptFromArtifacts(options: {
             `Verdict-free findings JSON report is invalid for '${options.reviewType}': ` +
             validationMessage
         );
+    }
+    if (findingsValidationEvidence?.payload.validation_result.accepted) {
+        findingsDispositionEvidence = buildReviewFindingsDispositionEvidence({
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewArtifactPath: options.artifactPath,
+            validationEvidence: findingsValidationEvidence,
+            policyResolution: resolveLockedReviewFindingPolicyFromPreflight(preflight)
+        });
     }
     const receipt = buildReviewReceipt({
         taskId: options.taskId,
@@ -639,8 +716,12 @@ async function recordReviewReceiptFromArtifacts(options: {
         receiptRecord.review_findings_report_sha256 = findingsReportSha256;
         receiptRecord.review_findings_report = findingsReport;
         receiptRecord.review_findings_summary = summarizeReviewFindingsReport(findingsReport);
-        receiptRecord.review_findings_disposition =
-            findingsDisposition || evaluateReviewFindingsReportDispositionsFromPreflight(findingsReport, preflight);
+        if (!findingsDispositionEvidence) {
+            throw new Error('Accepted findings JSON receipts require a hash-bound review_findings_disposition artifact.');
+        }
+        receiptRecord.review_findings_disposition = findingsDispositionEvidence.payload.disposition_result;
+        receiptRecord.review_findings_disposition_artifact =
+            summarizeReviewFindingsDispositionEvidence(findingsDispositionEvidence);
         if (findingsValidationEvidence) {
             receiptRecord.review_findings_validation = summarizeReviewFindingsValidationEvidence(findingsValidationEvidence);
         }
@@ -650,6 +731,8 @@ async function recordReviewReceiptFromArtifacts(options: {
             report_sha256: findingsReportSha256,
             validation_artifact_sha256: findingsValidationEvidence?.artifactSha256 || null,
             validation_result_sha256: findingsValidationEvidence?.payload.validation_result_sha256 || null,
+            disposition_artifact_sha256: findingsDispositionEvidence.artifactSha256,
+            disposition_result_sha256: findingsDispositionEvidence.payload.disposition_result_sha256,
             raw_output_sha256: options.rawReviewOutputSha256 || null,
             review_artifact_sha256: artifactSha256,
             review_context_sha256: contextSha256,
@@ -675,7 +758,8 @@ async function recordReviewReceiptFromArtifacts(options: {
         receipt: receipt as unknown as Record<string, unknown>,
         receiptPayloadSha256,
         artifactSha256,
-        findingsValidationEvidence
+        findingsValidationEvidence,
+        findingsDispositionEvidence
     });
 }
 
