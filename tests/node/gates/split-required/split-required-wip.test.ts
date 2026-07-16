@@ -329,6 +329,68 @@ describe('split-required WIP capture and restore', () => {
         assert.equal(readFile(repoRoot, 'src/b.ts'), 'export const child = 2;\n');
     });
 
+    it('blocks advanced restore when an untracked file obstructs a tracked selected path', () => {
+        const repoRoot = makeRepo();
+        writeFile(repoRoot, 'src/new.ts', 'export const captured = true;\n');
+        runGit(repoRoot, ['add', 'src/new.ts']);
+        const captured = capture(repoRoot, ['src/new.ts']);
+        assert.ok(captured.manifest_path);
+        assert.deepEqual(captured.tracked_files, ['src/new.ts']);
+        assert.equal(fs.existsSync(path.join(repoRoot, 'src/new.ts')), false);
+
+        writeFile(repoRoot, 'src/child.ts', 'export const child = true;\n');
+        runGit(repoRoot, ['add', 'src/child.ts']);
+        runGit(repoRoot, ['commit', '-m', 'advance child scope']);
+        writeFile(repoRoot, 'src/new.ts', 'untracked obstruction\n');
+        const beforeStatus = runGit(repoRoot, ['status', '--porcelain=v1']);
+
+        const restored = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/new.ts']
+        });
+
+        assert.equal(restored.status, 'BLOCKED');
+        assert.ok(restored.violations.some((violation) => violation.includes('untracked obstruction')));
+        assert.equal(readFile(repoRoot, 'src/new.ts'), 'untracked obstruction\n');
+        assert.equal(runGit(repoRoot, ['status', '--porcelain=v1']), beforeStatus);
+    });
+
+    it('blocks advanced restore dry-run when a dangling symlink obstructs a tracked selected path', () => {
+        const repoRoot = makeRepo();
+        writeFile(repoRoot, 'src/new.ts', 'export const captured = true;\n');
+        runGit(repoRoot, ['add', 'src/new.ts']);
+        const captured = capture(repoRoot, ['src/new.ts']);
+        assert.ok(captured.manifest_path);
+
+        writeFile(repoRoot, 'src/child.ts', 'export const child = true;\n');
+        runGit(repoRoot, ['add', 'src/child.ts']);
+        runGit(repoRoot, ['commit', '-m', 'advance child scope']);
+        const obstructionPath = path.join(repoRoot, 'src', 'new.ts');
+        fs.symlinkSync(
+            path.join(repoRoot, 'missing-symlink-target'),
+            obstructionPath,
+            process.platform === 'win32' ? 'junction' : 'file'
+        );
+        assert.equal(fs.existsSync(obstructionPath), false);
+        assert.equal(fs.lstatSync(obstructionPath).isSymbolicLink(), true);
+        const beforeStatus = runGit(repoRoot, ['status', '--porcelain=v1']);
+
+        const dryRun = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/new.ts'],
+            dryRun: true
+        });
+
+        assert.equal(dryRun.status, 'BLOCKED');
+        assert.ok(dryRun.violations.some((violation) => violation.includes('untracked obstruction')));
+        assert.equal(fs.lstatSync(obstructionPath).isSymbolicLink(), true);
+        assert.equal(runGit(repoRoot, ['status', '--porcelain=v1']), beforeStatus);
+    });
+
     it('treats authorized advanced-restore paths as literals instead of apply patterns', () => {
         const repoRoot = makeRepo();
         writeFile(repoRoot, 'src/file[1].ts', 'export const selected = 1;\n');

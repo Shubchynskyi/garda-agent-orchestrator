@@ -603,6 +603,24 @@ function indexEntriesByPath(repoRoot: string, indexPath: string): Map<string, st
     return entries;
 }
 
+function validateTrackedTargetObstructions(
+    repoRoot: string,
+    selectedTrackedFiles: SplitRequiredWipTrackedFileEvidence[]
+): string[] {
+    try {
+        const currentIndexEntries = indexEntriesByPath(repoRoot, currentIndexPath(repoRoot));
+        return selectedTrackedFiles
+            .map((entry) => normalizeGitPath(entry.path))
+            .filter((relativePath) => fileStateSha256(resolveRepoPath(repoRoot, relativePath)) !== null)
+            .filter((relativePath) => !currentIndexEntries.has(relativePath))
+            .sort()
+            .map((relativePath) => `selected tracked restore target has an untracked obstruction: ${relativePath}`);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return [`failed to inspect selected restore targets in the current index: ${message}`];
+    }
+}
+
 function unauthorizedIndexChanges(
     repoRoot: string,
     beforeIndexPath: string,
@@ -666,10 +684,16 @@ function currentIndexPath(repoRoot: string): string {
 }
 
 function fileStateSha256(filePath: string): string | null {
-    if (!fs.existsSync(filePath)) {
-        return null;
+    let stat: fs.Stats;
+    try {
+        stat = fs.lstatSync(filePath);
+    } catch (error: unknown) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
+            return null;
+        }
+        throw error;
     }
-    const stat = fs.lstatSync(filePath);
     if (!stat.isFile()) {
         return `non-file:${stat.mode}`;
     }
@@ -1205,6 +1229,7 @@ export function restoreSplitRequiredWip(params: {
                 violations.push(gitFailureMessage(['merge-base', '--is-ancestor', manifest.base_commit, currentHead], ancestry));
             }
             violations.push(...validateSelectedTargetsClean(repoRoot, selectedPaths));
+            violations.push(...validateTrackedTargetObstructions(repoRoot, selectedTrackedFiles));
             for (const selectedPath of selectedPaths) {
                 violations.push(...validateNoSymlinkPath(repoRoot, selectedPath));
             }
