@@ -95,6 +95,14 @@ function qualityChecklistRecoveryAnswersCommandPath(taskId = TASK_ID): string {
     return `${qualityChecklistRepairAnswersCommandPath(taskId)}.recovery.json`;
 }
 
+function qualityChecklistRotatedRecoveryAnswersPath(repoRoot: string, taskId = TASK_ID): string {
+    return `${qualityChecklistRepairAnswersPath(repoRoot, taskId)}.recovery.2.json`;
+}
+
+function qualityChecklistRotatedRecoveryAnswersCommandPath(taskId = TASK_ID): string {
+    return `${qualityChecklistRepairAnswersCommandPath(taskId)}.recovery.2.json`;
+}
+
 function writeWorkspaceChange(repoRoot: string, relativePath: string): void {
     const absolutePath = path.join(repoRoot, relativePath);
     fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
@@ -488,6 +496,39 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(fs.readFileSync(repairPath, 'utf8'), '{invalid repair json');
         assert.equal(fs.readFileSync(recoveryPath, 'utf8'), recoveryBytes);
         assert.ok(repeated.commands[0].command.includes(`--answers-path "${qualityChecklistRecoveryAnswersCommandPath()}"`));
+    });
+
+    it('routes through a rotated recovery path when both fixed repair candidates are unsafe', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const answersPath = qualityChecklistAnswersPath(repoRoot);
+        const repairPath = qualityChecklistRepairAnswersPath(repoRoot);
+        const recoveryPath = qualityChecklistRecoveryAnswersPath(repoRoot);
+        fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+        fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+        fs.writeFileSync(repairPath, '{unsafe repair json', 'utf8');
+        fs.writeFileSync(recoveryPath, '{unsafe recovery json', 'utf8');
+
+        const recovered = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const rotatedRecoveryPath = qualityChecklistRotatedRecoveryAnswersPath(repoRoot);
+        const rotatedRecoveryBytes = fs.readFileSync(rotatedRecoveryPath, 'utf8');
+        const repeated = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(recovered.next_gate, 'quality-checklist', recovered.reason);
+        assert.equal(recovered.commands.length, 1);
+        assert.ok(recovered.commands[0].command.includes(
+            `--answers-path "${qualityChecklistRotatedRecoveryAnswersCommandPath()}"`
+        ));
+        assert.match(recovered.reason, /existing repair candidate preserved/iu);
+        assert.equal(fs.readFileSync(answersPath, 'utf8'), '{unsafe canonical json');
+        assert.equal(fs.readFileSync(repairPath, 'utf8'), '{unsafe repair json');
+        assert.equal(fs.readFileSync(recoveryPath, 'utf8'), '{unsafe recovery json');
+        assert.equal(fs.readFileSync(rotatedRecoveryPath, 'utf8'), rotatedRecoveryBytes);
+        assert.ok(repeated.commands[0].command.includes(
+            `--answers-path "${qualityChecklistRotatedRecoveryAnswersCommandPath()}"`
+        ));
     });
 
     it('routes tampered slim-scaffold answers templates through a repair answers path', () => {

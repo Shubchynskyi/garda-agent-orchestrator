@@ -127,6 +127,7 @@ export interface BuildQualityChecklistOptions {
 export const QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE = 'quality-checklist-answers-template';
 const QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_EVENT_SOURCE = 'quality-checklist-answers-template-binding';
 const QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_RECORDED_EVENT = 'QUALITY_CHECKLIST_ANSWERS_TEMPLATE_BINDING_RECORDED';
+const QUALITY_CHECKLIST_REPAIR_DIAGNOSTIC_LIMIT = 8;
 
 export interface QualityChecklistAnswersTemplateAnswer {
     rule_id: string;
@@ -1197,6 +1198,13 @@ function writeQualityChecklistAnswersTemplateBinding(
     appendQualityChecklistAnswersTemplateBindingEvidence({ answersPath, bindingPath, binding, repoRoot });
 }
 
+function buildQualityChecklistRepairCandidatePath(answersPath: string, candidateIndex: number): string {
+    const repairPath = `${answersPath}.repair.json`;
+    if (candidateIndex === 0) return repairPath;
+    if (candidateIndex === 1) return `${repairPath}.recovery.json`;
+    return `${repairPath}.recovery.${candidateIndex}.json`;
+}
+
 function materializeUnsafeRepairTemplate(options: {
     answersPath: string;
     repoRoot: string;
@@ -1205,36 +1213,50 @@ function materializeUnsafeRepairTemplate(options: {
     refreshIfOlderThanUtc?: string | null;
 }): MaterializeQualityChecklistAnswersTemplateResult {
     const originalAnswersPath = normalizePath(options.answersPath);
-    const candidatePaths = [
-        `${options.answersPath}.repair.json`,
-        `${options.answersPath}.repair.json.recovery.json`
-    ];
+    resolveAnswersTemplateWritePath(path.dirname(options.answersPath), options.repoRoot);
     const rejectedCandidates: string[] = [];
-    for (const candidatePath of candidatePaths) {
+    let rejectedCandidateCount = 0;
+    const recordRejectedCandidate = (candidatePath: string, reason: string): void => {
+        rejectedCandidateCount += 1;
+        if (rejectedCandidates.length < QUALITY_CHECKLIST_REPAIR_DIAGNOSTIC_LIMIT) {
+            rejectedCandidates.push(`${normalizePath(candidatePath)} (${reason})`);
+        }
+    };
+    for (let candidateIndex = 0; ; candidateIndex += 1) {
+        const candidatePath = buildQualityChecklistRepairCandidatePath(options.answersPath, candidateIndex);
         let repairPath: string;
+        let assessment: QualityChecklistAnswersTemplateAssessment;
+        let binding: QualityChecklistAnswersTemplateBinding | null;
         try {
             repairPath = resolveAnswersTemplateWritePath(candidatePath, options.repoRoot);
-            const assessment = assessQualityChecklistAnswersTemplateFile({
+            assessment = assessQualityChecklistAnswersTemplateFile({
                 repoRoot: options.repoRoot,
                 taskId: options.template.task_id,
                 preflightPath: options.template.preflight_path,
                 answersPath: repairPath
             });
             if (assessment.status === 'invalid') {
-                rejectedCandidates.push(`${normalizePath(repairPath)} (${assessment.reason})`);
+                recordRejectedCandidate(repairPath, assessment.reason);
                 continue;
             }
-            const binding = assessment.status === 'missing'
+            binding = assessment.status === 'missing'
                 ? null
                 : readQualityChecklistAnswersTemplateBinding(repairPath, options.repoRoot);
             if ((assessment.status === 'current' || assessment.status === 'stale')
                 && !bindingMatchesTemplate(binding, assessment.template!)) {
-                rejectedCandidates.push(
-                    `${normalizePath(repairPath)} (${assessment.reason} Existing binding is missing or does not match this repair candidate.)`
+                recordRejectedCandidate(
+                    repairPath,
+                    `${assessment.reason} Existing binding is missing or does not match this repair candidate.`
                 );
                 continue;
             }
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            recordRejectedCandidate(candidatePath, message);
+            continue;
+        }
 
+        try {
             const refreshThreshold = Date.parse(String(options.refreshIfOlderThanUtc || ''));
             const candidateTimestamp = Date.parse(String(assessment.template?.timestamp_utc || ''));
             const candidateIsNewerThanThreshold = Number.isFinite(refreshThreshold)
@@ -1256,8 +1278,13 @@ function materializeUnsafeRepairTemplate(options: {
             }
 
             const repairAnswersPath = normalizePath(repairPath);
+            const omittedRejectedCandidateCount = rejectedCandidateCount - rejectedCandidates.length;
+            const omittedRejectedCandidateDiagnostic = omittedRejectedCandidateCount > 0
+                ? `; ${omittedRejectedCandidateCount} additional unsafe candidate(s)`
+                : '';
             const rejectedDiagnostic = rejectedCandidates.length > 0
-                ? ` Existing repair candidate preserved: ${rejectedCandidates.join('; ')}.`
+                ? ` Existing repair candidate preserved: ${rejectedCandidates.join('; ')}`
+                    + `${omittedRejectedCandidateDiagnostic}.`
                 : '';
             return {
                 status: 'repair_created',
@@ -1271,13 +1298,12 @@ function materializeUnsafeRepairTemplate(options: {
             };
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
-            rejectedCandidates.push(`${normalizePath(candidatePath)} (${message})`);
+            throw new Error(
+                `Unsafe existing answers template preserved at ${originalAnswersPath}, but repair template ` +
+                `materialization failed at ${normalizePath(repairPath)}: ${message}`
+            );
         }
     }
-    throw new Error(
-        `Unsafe existing answers template preserved at ${originalAnswersPath}, but no safe repair path is available. ` +
-        `Existing repair candidates were preserved: ${rejectedCandidates.join('; ')}.`
-    );
 }
 
 export function materializeQualityChecklistAnswersTemplate(options: {

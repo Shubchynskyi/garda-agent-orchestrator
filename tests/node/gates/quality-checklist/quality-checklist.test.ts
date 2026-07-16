@@ -1074,6 +1074,84 @@ describe('quality-checklist gate', () => {
         }
     });
 
+    it('rotates beyond occupied unsafe recovery candidates without overwriting them', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-repair-rotated-recovery' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const repairPath = `${answersPath}.repair.json`;
+            const recoveryPath = `${repairPath}.recovery.json`;
+            const rotatedRecoveryPath = `${repairPath}.recovery.2.json`;
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+            fs.writeFileSync(repairPath, '{unsafe repair json', 'utf8');
+            fs.writeFileSync(recoveryPath, '{unsafe recovery json', 'utf8');
+
+            const recovered = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const rotatedRecoveryBytes = fs.readFileSync(rotatedRecoveryPath, 'utf8');
+            const repeated = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+
+            assert.equal(recovered.status, 'repair_created');
+            assert.equal(recovered.answers_path.replace(/\\/g, '/'), rotatedRecoveryPath.replace(/\\/g, '/'));
+            assert.match(recovered.warning || '', /existing repair candidate preserved/iu);
+            assert.equal(fs.readFileSync(answersPath, 'utf8'), '{unsafe canonical json');
+            assert.equal(fs.readFileSync(repairPath, 'utf8'), '{unsafe repair json');
+            assert.equal(fs.readFileSync(recoveryPath, 'utf8'), '{unsafe recovery json');
+            assert.equal(fs.readFileSync(rotatedRecoveryPath, 'utf8'), rotatedRecoveryBytes);
+            assert.equal(repeated.answers_path.replace(/\\/g, '/'), rotatedRecoveryPath.replace(/\\/g, '/'));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('stops after a selected repair candidate fails to materialize instead of retrying forever', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-repair-write-failure' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const repairPath = `${answersPath}.repair.json`;
+            const recoveryPath = `${repairPath}.recovery.json`;
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+            fs.mkdirSync(`${repairPath}.binding.json`, { recursive: true });
+
+            assert.throws(
+                () => materializeQualityChecklistAnswersTemplate({
+                    repoRoot: fixture.repoRoot,
+                    taskId: fixture.taskId,
+                    preflightPath,
+                    answersPath
+                }),
+                /repair template materialization failed/iu
+            );
+
+            assert.equal(fs.readFileSync(answersPath, 'utf8'), '{unsafe canonical json');
+            assert.equal(fs.existsSync(recoveryPath), false);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
     it('preserves materialized answers when refreshing a stale preflight binding with the same active rules', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-stale-answers-template' });
         try {
