@@ -15,6 +15,10 @@ import {
     applyReviewerRoutingMetadata
 } from '../../../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
+import {
+    registerProviderInvocationAttestationAdapter,
+    type ProviderInvocationAttestationRequest
+} from '../../../../../../src/core/provider/provider-invocation-attestation';
 
 import {
     createTempRepo,
@@ -35,6 +39,40 @@ const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
 const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
 const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:02.000Z';
 const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:03.000Z';
+
+function registerMatchingTestProviderAdapter(source: string): void {
+    registerProviderInvocationAttestationAdapter({
+        source,
+        attestInvocation(request: Readonly<ProviderInvocationAttestationRequest>) {
+            return {
+                status: 'existing',
+                attestation: {
+                    attestationId: `test:${source}:${request.reviewerLaunchAttemptId}:${request.invocationId}`,
+                    taskId: request.taskId,
+                    reviewType: request.reviewType,
+                    reviewerLaunchAttemptId: request.reviewerLaunchAttemptId,
+                    invocationKind: request.invocationKind,
+                    invocationId: request.invocationId,
+                    reviewerIdentity: request.expectedReviewerIdentity,
+                    launchStartedAtUtc: request.requestedAtUtc,
+                    freshContextMode: request.expectedFreshContextMode,
+                    launchInputMode: request.expectedLaunchInputMode,
+                    launchInputSha256: request.expectedLaunchInputSha256
+                }
+            };
+        }
+    });
+}
+
+for (const source of [
+    'test_provider_controller',
+    'cursor_subagent',
+    'claude_task_tool_launch',
+    'codex_spawn_agent',
+    'copilot_task_tool_launch'
+]) {
+    registerMatchingTestProviderAdapter(source);
+}
 
 // Manual review-context fixtures are used only by CLI routing/receipt tests that
 // do not exercise production review-context construction.

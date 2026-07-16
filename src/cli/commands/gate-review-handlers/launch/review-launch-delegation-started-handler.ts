@@ -27,6 +27,12 @@ import {
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 import { buildCompleteReviewerLaunchCommand } from './reviewer-handoff-support';
+import {
+    authenticateProviderInvocation,
+    PROVIDER_INVOCATION_MAXIMUM_AGE_MS,
+    type ProviderFreshContextMode,
+    type ProviderLaunchInputMode
+} from '../../../../core/provider/provider-invocation-attestation';
 
 export interface ReviewerDelegationStartedHandlerDependencies {
     assertPreparedReviewerLaunchArtifact: typeof import('../index').assertPreparedReviewerLaunchArtifact;
@@ -291,7 +297,34 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         rawSha256: options.launchInputSha256,
         rawArtifactPath: options.launchInputArtifactPath
     });
-    const delegationStartedAtUtc = new Date().toISOString();
+    const invocationAttestedAtUtc = new Date().toISOString();
+    const freshContextMode: ProviderFreshContextMode = options.isolatedContext === true
+        ? 'isolated'
+        : options.freshContext === true
+            ? 'fresh'
+            : 'non_forked';
+    const invocationKind = providerInvocationId ? 'provider' : 'controller';
+    const invocationId = providerInvocationId || controllerInvocationId;
+    const authenticatedInvocation = await authenticateProviderInvocation({
+        taskId,
+        reviewType,
+        reviewerLaunchAttemptId,
+        invocationKind,
+        invocationId,
+        attestationSource,
+        expectedReviewerIdentity: reviewerIdentity,
+        expectedFreshContextMode: freshContextMode,
+        expectedLaunchInputMode: launchInputAttestation.mode as ProviderLaunchInputMode,
+        expectedLaunchInputSha256: launchInputAttestation.sha256,
+        launchPreparedAtUtc: getStringField(preparedArtifact, 'launch_prepared_at_utc', 'launchPreparedAtUtc'),
+        requestedAtUtc: invocationAttestedAtUtc,
+        constraints: {
+            allowNetwork: false,
+            allowPaidOperations: false,
+            maximumLaunchAgeMs: PROVIDER_INVOCATION_MAXIMUM_AGE_MS
+        }
+    });
+    const delegationStartedAtUtc = authenticatedInvocation.launchStartedAtUtc;
     const isPlannedIdentityRebind = isPlannedReviewerIdentity(plannedReviewerIdentity)
         && reviewerIdentity !== plannedReviewerIdentity;
     const startedArtifact: Record<string, unknown> = {
@@ -299,6 +332,9 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         reviewer_identity: reviewerIdentity,
         attestation_state: 'delegation_started',
         attestation_source: attestationSource,
+        provider_invocation_attestation_status: 'authenticated',
+        provider_invocation_attestation_id: authenticatedInvocation.attestationId,
+        provider_invocation_attested_at_utc: invocationAttestedAtUtc,
         launch_input_mode: launchInputAttestation.mode,
         launch_input_sha256: launchInputAttestation.sha256,
         launch_input_attestation_source: 'record-reviewer-delegation-started',
@@ -343,7 +379,6 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     });
     writeReviewArtifactJson(launchArtifactPath, startedArtifact);
     const startedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
-    const invocationId = providerInvocationId || controllerInvocationId;
     const invocationIdLabel = providerInvocationId ? 'ProviderInvocationId' : 'ControllerInvocationId';
     const completeReviewerLaunchCommand = buildCompleteReviewerLaunchCommand({
         repoRoot,
@@ -377,6 +412,9 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
                 reviewer_launch_artifact_sha256: startedLaunchArtifactSha256,
                 reviewer_launch_input_artifact_path: normalizePath(launchInputArtifactPath),
                 reviewer_launch_attestation_source: attestationSource,
+                provider_invocation_attestation_status: 'authenticated',
+                provider_invocation_attestation_id: authenticatedInvocation.attestationId,
+                provider_invocation_attested_at_utc: invocationAttestedAtUtc,
                 launch_tool: getStringField(startedArtifact, 'launch_tool', 'launchTool'),
                 provider_invocation_id: providerInvocationId || null,
                 controller_invocation_id: controllerInvocationId || null,
