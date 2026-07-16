@@ -2310,13 +2310,14 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(!command.includes(`--changed-file "${absoluteDirectory}"`));
     });
 
-    it('preserves symlink directory placeholders in classify-change refresh scope', { skip: process.platform === 'win32' }, () => {
+    it('rejects symlink directory placeholders that resolve outside the repo root', { skip: process.platform === 'win32' }, () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: [] });
-        fs.mkdirSync(path.join(repoRoot, 'outside-generated'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, 'outside-generated', 'hidden.ts'), 'export const hidden = true;\n', 'utf8');
-        fs.symlinkSync(path.join(repoRoot, 'outside-generated'), path.join(repoRoot, 'src', 'linked-generated'), 'dir');
+        const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-outside-'));
+        tempRoots.push(outsideDirectory);
+        fs.writeFileSync(path.join(outsideDirectory, 'hidden.ts'), 'export const hidden = true;\n', 'utf8');
+        fs.symlinkSync(outsideDirectory, path.join(repoRoot, 'src', 'linked-generated'), 'dir');
         const dirtyWorkspaceBaseline = {
             detection_source: 'git_auto',
             include_untracked: true,
@@ -2350,6 +2351,6 @@ describe('gates/next-step preflight routing', () => {
         const command = result.commands[0].command;
 
         assert.equal(result.next_gate, 'classify-change');
-        assert.ok(command.includes('--changed-file "src/linked-generated"'));
+        assert.ok(!command.includes('--changed-file "src/linked-generated"'));
     });
 });
