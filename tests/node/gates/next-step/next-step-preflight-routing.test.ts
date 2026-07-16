@@ -2252,21 +2252,30 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(command.includes('--changed-file "src/generated/new-feature.ts"'));
     });
 
-    it('preserves unsafe directory placeholders in classify-change refresh scope', () => {
+    it('rejects outside-root scope and canonicalizes absolute in-root directory placeholders', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: [] });
         fs.mkdirSync(path.join(repoRoot, 'src', 'generated'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'generated', 'new-feature.ts'),
+            'export const generatedFeature = true;\n',
+            'utf8'
+        );
         const absoluteDirectory = normalizeForTimeline(path.join(repoRoot, 'src', 'generated'));
+        const rootDirectory = normalizeForTimeline(repoRoot);
+        const changedFiles = [
+            '../outside-generated',
+            '.',
+            rootDirectory,
+            absoluteDirectory
+        ];
         const dirtyWorkspaceBaseline = {
             detection_source: 'git_auto',
             include_untracked: true,
-            changed_files: [
-                '../outside-generated',
-                absoluteDirectory
-            ],
-            changed_files_sha256: sha256Text(`../outside-generated\n${absoluteDirectory}`),
-            scope_sha256: sha256Text(`../outside-generated\n${absoluteDirectory}`),
+            changed_files: changedFiles,
+            changed_files_sha256: sha256Text(changedFiles.join('\n')),
+            scope_sha256: sha256Text(changedFiles.join('\n')),
             file_hashes: {}
         };
         writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
@@ -2294,8 +2303,11 @@ describe('gates/next-step preflight routing', () => {
         const command = result.commands[0].command;
 
         assert.equal(result.next_gate, 'classify-change');
-        assert.ok(command.includes('--changed-file "../outside-generated"'));
-        assert.ok(command.includes(`--changed-file "${absoluteDirectory}"`));
+        assert.ok(command.includes('--changed-file "src/generated/new-feature.ts"'));
+        assert.ok(!command.includes('--changed-file "../outside-generated"'));
+        assert.ok(!command.includes('--changed-file "."'));
+        assert.ok(!command.includes(`--changed-file "${rootDirectory}"`));
+        assert.ok(!command.includes(`--changed-file "${absoluteDirectory}"`));
     });
 
     it('preserves symlink directory placeholders in classify-change refresh scope', { skip: process.platform === 'win32' }, () => {

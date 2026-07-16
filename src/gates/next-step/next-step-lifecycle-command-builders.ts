@@ -347,25 +347,22 @@ function normalizeDirtyBaselineCommandPath(repoRoot: string, value: unknown): st
     const resolvedPath = path.resolve(resolvedRoot, rawPath);
     const relativeFromRoot = path.relative(resolvedRoot, resolvedPath);
     if (!relativeFromRoot || relativeFromRoot.startsWith('..') || path.isAbsolute(relativeFromRoot)) {
-        return normalizedRawPath;
+        return null;
     }
     const normalizedRelativePath = normalizePath(relativeFromRoot);
     if (!normalizedRelativePath) {
-        return normalizedRawPath;
+        return null;
     }
     try {
-        if (fs.existsSync(resolvedPath)) {
-            const stat = fs.lstatSync(resolvedPath);
-            if (stat.isDirectory()) {
-                return normalizedRawPath;
-            }
-            if (!isPathRealpathInsideRoot(resolvedPath, repoRoot, { allowMissing: false })) {
-                return null;
-            }
+        if (
+            fs.existsSync(resolvedPath)
+            && !isPathRealpathInsideRoot(resolvedPath, repoRoot, { allowMissing: false })
+        ) {
+            return null;
         }
         return normalizedRelativePath;
     } catch {
-        return normalizedRawPath;
+        return null;
     }
 }
 
