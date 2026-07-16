@@ -985,10 +985,6 @@ function resolveAnswersTemplateBindingPath(answersPath: string, repoRoot: string
     return resolveAnswersTemplateWritePath(`${answersPath}.binding.json`, repoRoot);
 }
 
-function resolveAnswersTemplateRepairPath(answersPath: string, repoRoot: string): string {
-    return resolveAnswersTemplateWritePath(`${answersPath}.repair.json`, repoRoot);
-}
-
 function writeQualityChecklistAnswersTemplateFile(
     answersPath: string,
     repoRoot: string,
@@ -1206,20 +1202,82 @@ function materializeUnsafeRepairTemplate(options: {
     repoRoot: string;
     template: QualityChecklistAnswersTemplate;
     reason: string;
+    refreshIfOlderThanUtc?: string | null;
 }): MaterializeQualityChecklistAnswersTemplateResult {
-    const repairPath = resolveAnswersTemplateRepairPath(options.answersPath, options.repoRoot);
-    writeQualityChecklistAnswersTemplateFile(repairPath, options.repoRoot, options.template);
     const originalAnswersPath = normalizePath(options.answersPath);
-    const repairAnswersPath = normalizePath(repairPath);
-    return {
-        status: 'repair_created',
-        answers_path: repairAnswersPath,
-        original_answers_path: originalAnswersPath,
-        template: options.template,
-        warning:
-            `Unsafe existing answers template preserved at ${originalAnswersPath}; ` +
-            `repair template materialized at ${repairAnswersPath}. Reason: ${options.reason}`
-    };
+    const candidatePaths = [
+        `${options.answersPath}.repair.json`,
+        `${options.answersPath}.repair.json.recovery.json`
+    ];
+    const rejectedCandidates: string[] = [];
+    for (const candidatePath of candidatePaths) {
+        let repairPath: string;
+        try {
+            repairPath = resolveAnswersTemplateWritePath(candidatePath, options.repoRoot);
+            const assessment = assessQualityChecklistAnswersTemplateFile({
+                repoRoot: options.repoRoot,
+                taskId: options.template.task_id,
+                preflightPath: options.template.preflight_path,
+                answersPath: repairPath
+            });
+            if (assessment.status === 'invalid') {
+                rejectedCandidates.push(`${normalizePath(repairPath)} (${assessment.reason})`);
+                continue;
+            }
+            const binding = assessment.status === 'missing'
+                ? null
+                : readQualityChecklistAnswersTemplateBinding(repairPath, options.repoRoot);
+            if ((assessment.status === 'current' || assessment.status === 'stale')
+                && !bindingMatchesTemplate(binding, assessment.template!)) {
+                rejectedCandidates.push(
+                    `${normalizePath(repairPath)} (${assessment.reason} Existing binding is missing or does not match this repair candidate.)`
+                );
+                continue;
+            }
+
+            const refreshThreshold = Date.parse(String(options.refreshIfOlderThanUtc || ''));
+            const candidateTimestamp = Date.parse(String(assessment.template?.timestamp_utc || ''));
+            const candidateIsNewerThanThreshold = Number.isFinite(refreshThreshold)
+                && Number.isFinite(candidateTimestamp)
+                && candidateTimestamp > refreshThreshold;
+            let repairTemplate = options.template;
+            let materialization = 'materialized';
+            if (assessment.status === 'current'
+                && (!Number.isFinite(refreshThreshold) || candidateIsNewerThanThreshold)) {
+                repairTemplate = assessment.template!;
+                materialization = 'retained';
+                writeQualityChecklistAnswersTemplateBinding(repairPath, options.repoRoot, options.template);
+            } else if (assessment.status === 'current' || assessment.status === 'stale') {
+                repairTemplate = mergeReusableAnswersIntoTemplate(options.template, assessment.template!, binding);
+                materialization = 'refreshed';
+                writeQualityChecklistAnswersTemplateFile(repairPath, options.repoRoot, repairTemplate);
+            } else {
+                writeQualityChecklistAnswersTemplateFile(repairPath, options.repoRoot, repairTemplate);
+            }
+
+            const repairAnswersPath = normalizePath(repairPath);
+            const rejectedDiagnostic = rejectedCandidates.length > 0
+                ? ` Existing repair candidate preserved: ${rejectedCandidates.join('; ')}.`
+                : '';
+            return {
+                status: 'repair_created',
+                answers_path: repairAnswersPath,
+                original_answers_path: originalAnswersPath,
+                template: repairTemplate,
+                warning:
+                    `Unsafe existing answers template preserved at ${originalAnswersPath}; ` +
+                    `repair template ${materialization} at ${repairAnswersPath}. Reason: ${options.reason}` +
+                    rejectedDiagnostic
+            };
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            rejectedCandidates.push(`${normalizePath(candidatePath)} (${message})`);
+        }
+    }
+    throw new Error(
+        `Unsafe existing answers template preserved at ${originalAnswersPath}, but no safe repair path is available. ` +
+        `Existing repair candidates were preserved: ${rejectedCandidates.join('; ')}.`
+    );
 }
 
 export function materializeQualityChecklistAnswersTemplate(options: {
@@ -1258,7 +1316,8 @@ export function materializeQualityChecklistAnswersTemplate(options: {
             answersPath,
             repoRoot,
             template: expectedTemplate,
-            reason: assessment.reason
+            reason: assessment.reason,
+            refreshIfOlderThanUtc: options.refreshIfOlderThanUtc
         });
     }
     if (assessment.status === 'stale' && !bindingMatchesTemplate(binding, assessment.template!)) {
@@ -1266,7 +1325,8 @@ export function materializeQualityChecklistAnswersTemplate(options: {
             answersPath,
             repoRoot,
             template: expectedTemplate,
-            reason: `${assessment.reason} Existing binding is missing or does not match the stale answers template.`
+            reason: `${assessment.reason} Existing binding is missing or does not match the stale answers template.`,
+            refreshIfOlderThanUtc: options.refreshIfOlderThanUtc
         });
     }
     const template = assessment.status === 'stale'

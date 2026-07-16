@@ -27,6 +27,10 @@ import {
 import {
     runQualityChecklistCommand
 } from '../../../../src/cli/commands/gate-flows/quality-checklist/quality-checklist-flow';
+import {
+    initializeGitRepo,
+    runGit
+} from '../../cli/commands/gate-test-repo-bootstrap';
 
 type QualityChecklistStatus = 'PASS' | 'WARN' | 'ACTION_REQUIRED' | 'SKIPPED_DISABLED' | 'SKIPPED_CADENCE' | 'CONFIG_ERROR';
 type WorkflowConfig = ReturnType<typeof buildDefaultWorkflowConfig>;
@@ -75,12 +79,44 @@ function qualityChecklistRepairAnswersPath(repoRoot: string, taskId = TASK_ID): 
     return `${qualityChecklistAnswersPath(repoRoot, taskId)}.repair.json`;
 }
 
+function qualityChecklistRecoveryAnswersPath(repoRoot: string, taskId = TASK_ID): string {
+    return `${qualityChecklistRepairAnswersPath(repoRoot, taskId)}.recovery.json`;
+}
+
 function qualityChecklistAnswersCommandPath(taskId = TASK_ID): string {
     return `garda-agent-orchestrator/runtime/tmp/${taskId}-quality-checklist-answers.json`;
 }
 
 function qualityChecklistRepairAnswersCommandPath(taskId = TASK_ID): string {
     return `${qualityChecklistAnswersCommandPath(taskId)}.repair.json`;
+}
+
+function qualityChecklistRecoveryAnswersCommandPath(taskId = TASK_ID): string {
+    return `${qualityChecklistRepairAnswersCommandPath(taskId)}.recovery.json`;
+}
+
+function writeWorkspaceChange(repoRoot: string, relativePath: string): void {
+    const absolutePath = path.join(repoRoot, relativePath);
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+    fs.writeFileSync(absolutePath, `Synthetic workspace change for ${relativePath}.\n`, 'utf8');
+}
+
+function initializeWorkspaceBaseline(repoRoot: string, additionalPaths: readonly string[]): void {
+    fs.writeFileSync(
+        path.join(repoRoot, '.gitignore'),
+        'garda-agent-orchestrator/runtime/\n',
+        'utf8'
+    );
+    for (const relativePath of additionalPaths) {
+        const absolutePath = path.join(repoRoot, relativePath);
+        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        fs.writeFileSync(absolutePath, `Baseline for ${relativePath}.\n`, 'utf8');
+    }
+    initializeGitRepo(repoRoot);
+}
+
+function restoreWorkspaceChanges(repoRoot: string, ...relativePaths: string[]): void {
+    runGit(repoRoot, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...relativePaths]);
 }
 
 function normalizeTestPath(pathValue: string | null | undefined): string | null {
@@ -349,8 +385,6 @@ describe('gates/next-step quality checklist routing', () => {
         fs.writeFileSync(answersPath, '{not valid json', 'utf8');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        const repeated = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
         assert.equal(result.commands.length, 1);
         assert.ok(result.commands[0].command.includes(`--answers-path "${qualityChecklistRepairAnswersCommandPath()}"`));
@@ -358,9 +392,102 @@ describe('gates/next-step quality checklist routing', () => {
         assert.match(result.reason, /Unsafe existing answers template preserved/u);
         assert.match(result.reason, /repair template materialized/u);
         assert.equal(fs.readFileSync(answersPath, 'utf8'), '{not valid json');
-        assert.ok(fs.existsSync(qualityChecklistRepairAnswersPath(repoRoot)));
+        const repairPath = qualityChecklistRepairAnswersPath(repoRoot);
+        assert.ok(fs.existsSync(repairPath));
+        const repairTemplate = JSON.parse(fs.readFileSync(repairPath, 'utf8')) as {
+            answers: Array<Record<string, unknown>>;
+        };
+        repairTemplate.answers = repairTemplate.answers.map((answer) => ({
+            ...answer,
+            status: 'PASS',
+            answer: `Preserved repair answer for ${String(answer.rule_id)}.`
+        }));
+        fs.writeFileSync(repairPath, JSON.stringify(repairTemplate, null, 2) + '\n', 'utf8');
+        const filledRepairBytes = fs.readFileSync(repairPath, 'utf8');
+
+        const repeated = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
         assert.equal(repeated.commands.length, 1);
         assert.ok(repeated.commands[0].command.includes(`--answers-path "${qualityChecklistRepairAnswersCommandPath()}"`));
+        assert.equal(fs.readFileSync(repairPath, 'utf8'), filledRepairBytes);
+        const checklistResult = runQualityChecklistCommand({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
+            answersPath: repairPath,
+            emitMetrics: false
+        });
+        assert.equal(checklistResult.exitCode, 0);
+    });
+
+    it('rebinds filled repair answers after a coherent preflight refresh without an empty-template loop', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        initializeWorkspaceBaseline(repoRoot, ['src/coherent-restart.ts']);
+        writeWorkspaceChange(repoRoot, 'src/app.ts');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const answersPath = qualityChecklistAnswersPath(repoRoot);
+        fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+        fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+
+        resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const repairPath = qualityChecklistRepairAnswersPath(repoRoot);
+        const repairTemplate = JSON.parse(fs.readFileSync(repairPath, 'utf8')) as {
+            preflight_sha256: string;
+            answers: Array<Record<string, unknown>>;
+        };
+        repairTemplate.answers = repairTemplate.answers.map((answer) => ({
+            ...answer,
+            status: 'PASS',
+            answer: `Restart-safe repair answer for ${String(answer.rule_id)}.`
+        }));
+        fs.writeFileSync(repairPath, JSON.stringify(repairTemplate, null, 2) + '\n', 'utf8');
+        writeWorkspaceChange(repoRoot, 'src/coherent-restart.ts');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/app.ts', 'src/coherent-restart.ts']
+        });
+
+        const refreshed = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const reboundBytes = fs.readFileSync(repairPath, 'utf8');
+        const reboundTemplate = JSON.parse(reboundBytes) as {
+            preflight_sha256: string;
+            answers: Array<Record<string, unknown>>;
+        };
+        const repeated = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(refreshed.next_gate, 'quality-checklist', refreshed.reason);
+        assert.ok(refreshed.commands[0].command.includes(`--answers-path "${qualityChecklistRepairAnswersCommandPath()}"`));
+        assert.notEqual(reboundTemplate.preflight_sha256, repairTemplate.preflight_sha256);
+        assert.ok(reboundTemplate.answers.every((answer) => answer.status === 'PASS'));
+        assert.ok(reboundTemplate.answers.every((answer) => String(answer.answer).startsWith('Restart-safe repair answer for ')));
+        assert.equal(fs.readFileSync(repairPath, 'utf8'), reboundBytes);
+        assert.ok(repeated.commands[0].command.includes(`--answers-path "${qualityChecklistRepairAnswersCommandPath()}"`));
+    });
+
+    it('preserves an invalid repair draft and routes repeated navigation to a separate recovery draft', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const answersPath = qualityChecklistAnswersPath(repoRoot);
+        fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+        fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+        resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const repairPath = qualityChecklistRepairAnswersPath(repoRoot);
+        fs.writeFileSync(repairPath, '{invalid repair json', 'utf8');
+
+        const recovered = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const recoveryPath = qualityChecklistRecoveryAnswersPath(repoRoot);
+        const recoveryBytes = fs.readFileSync(recoveryPath, 'utf8');
+        const repeated = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(recovered.next_gate, 'quality-checklist', recovered.reason);
+        assert.ok(recovered.commands[0].command.includes(`--answers-path "${qualityChecklistRecoveryAnswersCommandPath()}"`));
+        assert.match(recovered.reason, /existing repair candidate preserved/iu);
+        assert.equal(fs.readFileSync(repairPath, 'utf8'), '{invalid repair json');
+        assert.equal(fs.readFileSync(recoveryPath, 'utf8'), recoveryBytes);
+        assert.ok(repeated.commands[0].command.includes(`--answers-path "${qualityChecklistRecoveryAnswersCommandPath()}"`));
     });
 
     it('routes tampered slim-scaffold answers templates through a repair answers path', () => {
@@ -415,9 +542,16 @@ describe('gates/next-step quality checklist routing', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
+        initializeWorkspaceBaseline(repoRoot, [
+            'tests/first-test-review-fix.test.ts',
+            'tests/after-review-failure-refresh.test.ts'
+        ]);
+        writeWorkspaceChange(repoRoot, 'src/app.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
         appendReviewFailure(repoRoot, 'test');
+        restoreWorkspaceChanges(repoRoot, 'src/app.ts');
+        writeWorkspaceChange(repoRoot, 'tests/first-test-review-fix.test.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true }, {
             changedFiles: ['tests/first-test-review-fix.test.ts'],
             scopeCategory: 'test-only'
@@ -444,6 +578,7 @@ describe('gates/next-step quality checklist routing', () => {
         }));
         fs.writeFileSync(answersPath, JSON.stringify(template, null, 2) + '\n', 'utf8');
 
+        writeWorkspaceChange(repoRoot, 'tests/after-review-failure-refresh.test.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true }, {
             changedFiles: ['tests/first-test-review-fix.test.ts', 'tests/after-review-failure-refresh.test.ts'],
             scopeCategory: 'test-only'
@@ -581,6 +716,8 @@ describe('gates/next-step quality checklist routing', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
+        initializeWorkspaceBaseline(repoRoot, ['tests/node/gates/quality-checklist/quality-checklist.test.ts']);
+        writeWorkspaceChange(repoRoot, 'tests/node/gates/quality-checklist/quality-checklist.test.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true }, {
             scopeCategory: 'test-only',
             changedFiles: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
@@ -683,11 +820,22 @@ describe('gates/next-step quality checklist routing', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
+        initializeWorkspaceBaseline(repoRoot, [
+            'src/review-fix-1.ts',
+            'src/review-fix-2.ts',
+            'src/review-fix-3.ts'
+        ]);
+        writeWorkspaceChange(repoRoot, 'src/app.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
 
         for (const failureCount of [1, 2, 3]) {
             appendReviewFailure(repoRoot);
+            restoreWorkspaceChanges(
+                repoRoot,
+                failureCount === 1 ? 'src/app.ts' : `src/review-fix-${failureCount - 1}.ts`
+            );
+            writeWorkspaceChange(repoRoot, `src/review-fix-${failureCount}.ts`);
             writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
                 changedFiles: [`src/review-fix-${failureCount}.ts`]
             });
@@ -712,10 +860,14 @@ describe('gates/next-step quality checklist routing', () => {
             }
         });
         seedStartedTask(repoRoot, TASK_ID);
+        initializeWorkspaceBaseline(repoRoot, ['src/review-fix-one.ts', 'src/review-fix-two.ts']);
+        writeWorkspaceChange(repoRoot, 'src/app.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
 
         appendReviewFailure(repoRoot);
+        restoreWorkspaceChanges(repoRoot, 'src/app.ts');
+        writeWorkspaceChange(repoRoot, 'src/review-fix-one.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['src/review-fix-one.ts']
         });
@@ -727,6 +879,8 @@ describe('gates/next-step quality checklist routing', () => {
         assert.match(first.quality_checklist?.visible_summary_line || '', /review_failure_cadence_interval=2/u);
 
         appendReviewFailure(repoRoot);
+        restoreWorkspaceChanges(repoRoot, 'src/review-fix-one.ts');
+        writeWorkspaceChange(repoRoot, 'src/review-fix-two.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['src/review-fix-two.ts']
         });
@@ -741,9 +895,13 @@ describe('gates/next-step quality checklist routing', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
+        initializeWorkspaceBaseline(repoRoot, ['src/canonical-review-fix.ts']);
+        writeWorkspaceChange(repoRoot, 'src/app.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
         appendCanonicalReviewFailure(repoRoot);
+        restoreWorkspaceChanges(repoRoot, 'src/app.ts');
+        writeWorkspaceChange(repoRoot, 'src/canonical-review-fix.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['src/canonical-review-fix.ts']
         });
@@ -759,9 +917,13 @@ describe('gates/next-step quality checklist routing', () => {
             const repoRoot = makeTempRepo();
             writeWorkflowConfig(repoRoot);
             seedStartedTask(repoRoot, TASK_ID);
+            initializeWorkspaceBaseline(repoRoot, [`src/${reviewType}-review-fix.ts`]);
+            writeWorkspaceChange(repoRoot, 'src/app.ts');
             writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, [reviewType]: true });
             writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
             appendReviewFailure(repoRoot, reviewType);
+            restoreWorkspaceChanges(repoRoot, 'src/app.ts');
+            writeWorkspaceChange(repoRoot, `src/${reviewType}-review-fix.ts`);
             writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, [reviewType]: true }, {
                 changedFiles: [`src/${reviewType}-review-fix.ts`]
             });
@@ -871,9 +1033,16 @@ describe('gates/next-step quality checklist routing', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
+        initializeWorkspaceBaseline(repoRoot, [
+            'tests/test-review-fix.test.ts',
+            'tests/second-test-review-fix.test.ts'
+        ]);
+        writeWorkspaceChange(repoRoot, 'src/app.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
         appendReviewFailure(repoRoot, 'test');
+        restoreWorkspaceChanges(repoRoot, 'src/app.ts');
+        writeWorkspaceChange(repoRoot, 'tests/test-review-fix.test.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['tests/test-review-fix.test.ts'],
             scopeCategory: 'test-only'
@@ -883,6 +1052,8 @@ describe('gates/next-step quality checklist routing', () => {
 
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS', { scopeCategory: 'test-only' });
         appendReviewFailure(repoRoot, 'test');
+        restoreWorkspaceChanges(repoRoot, 'tests/test-review-fix.test.ts');
+        writeWorkspaceChange(repoRoot, 'tests/second-test-review-fix.test.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['tests/second-test-review-fix.test.ts'],
             scopeCategory: 'test-only'
@@ -1177,6 +1348,8 @@ describe('gates/next-step quality checklist routing', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
+        initializeWorkspaceBaseline(repoRoot, ['tests/node/gates/quality-checklist/quality-checklist.test.ts']);
+        writeWorkspaceChange(repoRoot, 'tests/node/gates/quality-checklist/quality-checklist.test.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true }, {
             scopeCategory: 'test-only',
             changedFiles: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']

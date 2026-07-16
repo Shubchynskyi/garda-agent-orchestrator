@@ -885,6 +885,195 @@ describe('quality-checklist gate', () => {
         }
     });
 
+    it('preserves filled repair answers across repeated materialization and coherent preflight refresh', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-repair-restart-preservation' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+
+            const first = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const repairPath = `${answersPath}.repair.json`;
+            first.template.answers = first.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Repair answer for ${answer.rule_id}.`,
+                evidence_files: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
+            }));
+            fs.writeFileSync(repairPath, JSON.stringify(first.template, null, 2) + '\n', 'utf8');
+            const filledBytes = fs.readFileSync(repairPath, 'utf8');
+
+            const repeated = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            assert.equal(repeated.status, 'repair_created');
+            assert.equal(repeated.answers_path.replace(/\\/g, '/'), repairPath.replace(/\\/g, '/'));
+            assert.equal(fs.readFileSync(repairPath, 'utf8'), filledBytes);
+
+            const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            preflight.changed_files = ['src/app.ts', 'src/after-coherent-restart.ts'];
+            fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2) + '\n', 'utf8');
+            const rebound = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            assert.equal(rebound.status, 'repair_created');
+            assert.ok(rebound.template.answers.every((answer) => answer.status === 'PASS'));
+            assert.ok(rebound.template.answers.every((answer) => answer.answer.startsWith('Repair answer for ')));
+            const reboundBytes = fs.readFileSync(repairPath, 'utf8');
+            const binding = JSON.parse(fs.readFileSync(`${repairPath}.binding.json`, 'utf8')) as {
+                preflight_sha256: string;
+            };
+            assert.equal(binding.preflight_sha256, rebound.template.preflight_sha256);
+
+            const afterRebind = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            assert.equal(afterRebind.answers_path.replace(/\\/g, '/'), repairPath.replace(/\\/g, '/'));
+            assert.equal(fs.readFileSync(repairPath, 'utf8'), reboundBytes);
+
+            const checklistResult = runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath: repairPath,
+                emitMetrics: false
+            });
+            assert.equal(checklistResult.exitCode, 0);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('preserves unchanged repair answers while blanking changed and new policy rules', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-repair-partial-policy-refresh' });
+        try {
+            const changedRuleId = 'zz_custom_repair_changed_rule';
+            const newRuleId = 'zz_custom_repair_new_rule';
+            const configPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            config.optional_quality_checks.rules.push(buildTestQualityRule(changedRuleId));
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+            const first = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const repairPath = `${answersPath}.repair.json`;
+            first.template.answers = first.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Original repair answer for ${answer.rule_id}.`
+            }));
+            fs.writeFileSync(repairPath, JSON.stringify(first.template, null, 2) + '\n', 'utf8');
+
+            const changedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            const changedRule = changedConfig.optional_quality_checks.rules.find((rule) => rule.id === changedRuleId);
+            assert.ok(changedRule);
+            changedRule.prompt = 'Changed repair-draft prompt requiring a fresh answer.';
+            changedConfig.optional_quality_checks.rules.push(buildTestQualityRule(newRuleId));
+            fs.writeFileSync(configPath, JSON.stringify(changedConfig, null, 2) + '\n', 'utf8');
+
+            const refreshed = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const answersByRuleId = new Map(refreshed.template.answers.map((answer) => [answer.rule_id, answer]));
+
+            assert.equal(refreshed.status, 'repair_created');
+            for (const ruleId of UNIVERSAL_QUALITY_RULE_IDS) {
+                assert.equal(answersByRuleId.get(ruleId)?.status, 'PASS');
+                assert.equal(answersByRuleId.get(ruleId)?.answer, `Original repair answer for ${ruleId}.`);
+            }
+            assert.equal(answersByRuleId.get(changedRuleId)?.status, '');
+            assert.equal(answersByRuleId.get(changedRuleId)?.answer, '');
+            assert.equal(answersByRuleId.get(newRuleId)?.status, '');
+            assert.equal(answersByRuleId.get(newRuleId)?.answer, '');
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('preserves a cross-task repair draft and materializes a separate recovery candidate', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-repair-cross-task-recovery' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+            const first = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const repairPath = `${answersPath}.repair.json`;
+            first.template.task_id = 'T-foreign-repair-draft';
+            const unsafeRepairBytes = JSON.stringify(first.template, null, 2) + '\n';
+            fs.writeFileSync(repairPath, unsafeRepairBytes, 'utf8');
+
+            const recovered = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const recoveryPath = `${repairPath}.recovery.json`;
+            const recoveryBytes = fs.readFileSync(recoveryPath, 'utf8');
+            const repeated = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+
+            assert.equal(recovered.status, 'repair_created');
+            assert.equal(recovered.answers_path.replace(/\\/g, '/'), recoveryPath.replace(/\\/g, '/'));
+            assert.match(recovered.warning || '', /existing repair candidate preserved/iu);
+            assert.equal(fs.readFileSync(repairPath, 'utf8'), unsafeRepairBytes);
+            assert.equal(fs.readFileSync(recoveryPath, 'utf8'), recoveryBytes);
+            assert.equal(repeated.answers_path.replace(/\\/g, '/'), recoveryPath.replace(/\\/g, '/'));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
     it('preserves materialized answers when refreshing a stale preflight binding with the same active rules', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-stale-answers-template' });
         try {
