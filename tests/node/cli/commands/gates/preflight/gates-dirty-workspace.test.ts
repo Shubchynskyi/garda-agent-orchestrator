@@ -8,6 +8,7 @@ import {
 import {
     runCliMainWithHandling
 } from '../../../../../../src/cli/main';
+import { runCliWithCapturedOutput } from '../../gate-test-cli-capture';
 import { computeProtectedSnapshotDigest } from '../../../../../../src/gates/shared/helpers';
 import {
     getReviewsRoot,
@@ -531,7 +532,7 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('classifies a linked clean child from its authenticated split checkpoint scope', { concurrency: false }, () => {
+    it('classifies a linked clean child from its authenticated split checkpoint scope', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const parentTaskId = 'T-901-checkpoint';
         const taskId = 'T-901-checkpoint-1';
@@ -553,6 +554,7 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
             `| ${taskId} | TODO | P1 | workflow | Child | unassigned | 2026-07-12 | default | Child of \`${parentTaskId}\`. Checkpoint: \`${checkpointCommit}\`. Checkpoint files: \`src/app.ts\`. |`
         ].join('\n'), 'utf8');
         seedInitAnswers(repoRoot);
+        let detectionSource = '';
 
         runWithRepoCwd(repoRoot, () => {
             runEnterTaskMode({
@@ -572,8 +574,9 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
             });
             const preflight = JSON.parse(result.outputText) as Record<string, unknown>;
             const scope = preflight.split_checkpoint_scope as Record<string, unknown>;
+            detectionSource = String(preflight.detection_source || '');
             assert.deepEqual(preflight.changed_files, ['src/app.ts']);
-            assert.ok(String(preflight.detection_source || '').startsWith('git_split_checkpoint:'));
+            assert.ok(detectionSource.startsWith('git_split_checkpoint:'));
             assert.equal(scope.parent_task_id, parentTaskId);
             assert.equal(scope.checkpoint_commit, checkpointCommit);
             assert.deepEqual(scope.changed_files, ['src/app.ts']);
@@ -594,6 +597,67 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
             assert.deepEqual(explicitPreflight.changed_files, ['src/app.ts']);
             assert.equal(explicitScope.checkpoint_commit, checkpointCommit);
         });
+
+        const cliResult = await runCliWithCapturedOutput([
+            'gate',
+            'classify-change',
+            '--repo-root', repoRoot,
+            '--task-id', taskId,
+            '--task-intent', 'Review split checkpoint scope through CLI parser',
+            '--detection-source', detectionSource,
+            '--changed-file', 'src/app.ts',
+            '--output-path', path.join(repoRoot, 'cli-explicit-split-preflight.json')
+        ], { cwd: repoRoot });
+        assert.equal(cliResult.exitCode, 0, cliResult.errors.join('\n'));
+        const cliPreflight = JSON.parse(cliResult.logs.join('\n')) as Record<string, unknown>;
+        assert.equal(cliPreflight.detection_source, detectionSource);
+        assert.deepEqual(cliPreflight.changed_files, ['src/app.ts']);
+
+        const unsupportedResult = await runCliWithCapturedOutput([
+            'gate',
+            'classify-change',
+            '--repo-root', repoRoot,
+            '--task-id', taskId,
+            '--detection-source', 'manual_override',
+            '--changed-file', 'src/app.ts'
+        ], { cwd: repoRoot });
+        assert.notEqual(unsupportedResult.exitCode, 0);
+        assert.match(
+            unsupportedResult.errors.join('\n'),
+            /Unsupported classify-change detection source override 'manual_override'/u
+        );
+
+        const mismatchedDetectionSource = detectionSource.replace(
+            checkpointCommit,
+            '0'.repeat(checkpointCommit.length)
+        );
+        const mismatchedRangeResult = await runCliWithCapturedOutput([
+            'gate',
+            'classify-change',
+            '--repo-root', repoRoot,
+            '--task-id', taskId,
+            '--detection-source', mismatchedDetectionSource,
+            '--changed-file', 'src/app.ts'
+        ], { cwd: repoRoot });
+        assert.notEqual(mismatchedRangeResult.exitCode, 0);
+        assert.match(
+            mismatchedRangeResult.errors.join('\n'),
+            /Split checkpoint preflight range does not match the authenticated task checkpoint scope/u
+        );
+
+        const mismatchedFilesResult = await runCliWithCapturedOutput([
+            'gate',
+            'classify-change',
+            '--repo-root', repoRoot,
+            '--task-id', taskId,
+            '--detection-source', detectionSource,
+            '--changed-file', 'src/other.ts'
+        ], { cwd: repoRoot });
+        assert.notEqual(mismatchedFilesResult.exitCode, 0);
+        assert.match(
+            mismatchedFilesResult.errors.join('\n'),
+            /Split checkpoint preflight changed_files do not match the authenticated task checkpoint scope/u
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
