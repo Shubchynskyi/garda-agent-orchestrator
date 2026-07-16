@@ -2,6 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fx from './next-step-review-cycle-fixtures';
 import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
+import {
+    materializeSplitRequiredLatch
+} from '../../../../src/gates/next-step/next-step-split-required-latch';
+import {
+    materializeReviewCycleAutoSplitPrompt,
+    readReviewCycleGuardEvaluation
+} from '../../../../src/gates/next-step/next-step-review-cycle-guard';
 
 const {
     ALL_REVIEW_FLAGS,
@@ -526,7 +533,7 @@ describe('gates/next-step review cycle guard split', () => {
         assert.equal(promptText.includes('create a split checkpoint before child execution'), false);
     });
 
-    it('describes captured and cleaned parent WIP as a suspended manifest without a redundant checkpoint', () => {
+    it('recovers an already-captured parent WIP manifest without creating a redundant checkpoint', () => {
         const repoRoot = makeTempRepo();
         const workflowConfig = buildDefaultWorkflowConfig();
         workflowConfig.full_suite_validation.enabled = true;
@@ -558,12 +565,20 @@ describe('gates/next-step review cycle guard split', () => {
         const promptText = fs.readFileSync(promptPath, 'utf8');
         const latchPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`);
         const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as {
-            wip_capture?: { manifest_path?: string; tracked_files?: string[] };
+            wip_capture?: {
+                status?: string;
+                manifest_path?: string;
+                manifest_sha256?: string;
+                tracked_files?: string[];
+            };
         };
 
         assert.equal(result.status, 'SPLIT_REQUIRED');
         assert.equal(result.review_cycle_block?.auto_split_prompt?.current_state, 'suspended_manifest');
+        assert.equal(result.review_cycle_block?.auto_split_prompt?.wip_capture_status, 'CAPTURED');
+        assert.equal(latch.wip_capture?.status, 'CAPTURED');
         assert.ok(latch.wip_capture?.manifest_path);
+        assert.ok(latch.wip_capture?.manifest_sha256);
         assert.deepEqual(latch.wip_capture?.tracked_files, ['src/app.ts']);
         assert.equal(runGitFixtureCommand(repoRoot, ['status', '--short', '--', 'src/app.ts']).stdout.trim(), '');
         assert.ok(promptText.includes('CurrentState: suspended_manifest'));
@@ -574,6 +589,43 @@ describe('gates/next-step review cycle guard split', () => {
         assert.ok(promptText.includes('The parent implementation is suspended in the manifest and the captured paths were removed from the worktree.'));
         assert.equal(promptText.includes('If the workspace contains parent diff, create a split checkpoint'), false);
         assert.equal(promptText.includes('create a split checkpoint before child execution'), false);
+
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const reviewCycleGuard = readReviewCycleGuardEvaluation(repoRoot, eventsRoot(repoRoot), TASK_ID);
+        const rerunLatch = materializeSplitRequiredLatch({
+            repoRoot,
+            eventsRoot: eventsRoot(repoRoot),
+            reviewsRoot: reviewsRoot(repoRoot),
+            taskId: TASK_ID,
+            guardKind: 'review_cycle',
+            guardReason: 'Review cycle guard recovery rerun.',
+            rawGuardSummary: 'review cycle guard recovery rerun',
+            preflightPath,
+            guardDetails: { action: 'BLOCK_FOR_OPERATOR_DECISION' }
+        });
+        const rerunPrompt = materializeReviewCycleAutoSplitPrompt({
+            repoRoot,
+            reviewsRoot: reviewsRoot(repoRoot),
+            taskId: TASK_ID,
+            evaluation: reviewCycleGuard.evaluation,
+            latestFailedReview: reviewCycleGuard.latestFailedReview,
+            latchResult: rerunLatch,
+            cliPrefix: 'node bin/garda.js',
+            fullSuiteCommand: workflowConfig.full_suite_validation.command
+        });
+        const rerunPromptText = fs.readFileSync(path.join(repoRoot, rerunPrompt.artifact_path), 'utf8');
+
+        assert.equal(rerunLatch.wip_capture?.status, 'ALREADY_CAPTURED');
+        assert.equal(rerunLatch.wip_capture?.manifest_path, latch.wip_capture?.manifest_path);
+        assert.equal(rerunLatch.wip_capture?.manifest_sha256, latch.wip_capture?.manifest_sha256);
+        assert.equal(rerunPrompt.wip_capture_status, 'ALREADY_CAPTURED');
+        assert.equal(rerunPrompt.wip_manifest_path, latch.wip_capture?.manifest_path);
+        assert.equal(rerunPrompt.current_state, 'suspended_manifest');
+        assert.equal(rerunPrompt.state_next_action, 'preview_restore');
+        assert.ok(rerunPrompt.next_action_command.includes('gate restore-split-required-wip'));
+        assert.ok(rerunPrompt.next_action_command.includes('--dry-run'));
+        assert.ok(rerunPromptText.includes(`WipCapture: status=ALREADY_CAPTURED; manifest=${latch.wip_capture?.manifest_path}; captured_files=src/app.ts`));
+        assert.equal(runGitFixtureCommand(repoRoot, ['status', '--short', '--', 'src/app.ts']).stdout.trim(), '');
     });
 
     it('auto-split prompt suggests the next available parent-derived child and follow-up ids', () => {
