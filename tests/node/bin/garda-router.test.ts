@@ -545,6 +545,28 @@ test('loadCliMainModule fails corrupt deployed dist instead of falling back to .
     }
 });
 
+test('loadCliMainModule propagates source-checkout application errors instead of falling back', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-source-application-error-'));
+    try {
+        const distSourceRoot = path.join(tempRoot, 'dist', 'src');
+        const nodeBuildSourceRoot = path.join(tempRoot, '.node-build', 'src');
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
+        writeHealthyRuntimeCandidate(distSourceRoot, 'dist');
+        writeFile(
+            path.join(distSourceRoot, 'cli', 'main.js'),
+            'throw new Error("source runtime application failure");\n'
+        );
+        writeHealthyRuntimeCandidate(nodeBuildSourceRoot, 'node-build');
+
+        assert.throws(
+            () => loadCliMainModule(tempRoot),
+            /source runtime application failure/
+        );
+    } finally {
+        cleanupRouterTempRoot(tempRoot);
+    }
+});
+
 test('loadCliMainModule skips source-checkout dist with missing runtime entrypoint and uses healthy fallback', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-entry-fallback-'));
     try {
