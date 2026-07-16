@@ -218,8 +218,8 @@ function buildPreflightGateHelpEntries(
             ...createGateHelpEntry(
                 'Record the prompt-first decomposition decision for a risky strict task before implementation.',
                 [
-                    `${cliPrefix} gate record-strict-decomposition-decision --task-id "${TASK_ID_PLACEHOLDER}" --decision "<atomic|single-cycle|split-required>" --task-summary "<task summary>" --reason "<why this decision is correct>" --scope-risk "<scope/risk summary>" --expected-review-type "<code|db|security|refactor|api|test|performance|infra|dependency|none>" --atomicity-constraint "<constraint or none>" --repo-root "."`,
-                    `${cliPrefix} gate record-strict-decomposition-decision --task-id "${TASK_ID_PLACEHOLDER}" --decision "split-required" --task-summary "<task summary>" --reason "<why split is required>" --scope-risk "<scope/risk summary>" --expected-review-type "code" --atomicity-constraint "<what must stay together>" --proposed-child-task-id "${TASK_ID_PLACEHOLDER}-1" --repo-root "."`
+                    `${cliPrefix} gate record-strict-decomposition-decision --task-id "${TASK_ID_PLACEHOLDER}" --decision "<atomic|single-cycle>" --task-summary "<task summary>" --reason "<why this decision is correct>" --scope-risk "<scope/risk summary>" --expected-review-type "<code|db|security|refactor|api|test|performance|infra|dependency|none>" --atomicity-constraint "<constraint or none>" --repo-root "."`,
+                    `${cliPrefix} gate record-strict-decomposition-decision --task-id "${TASK_ID_PLACEHOLDER}" --decision "split-required" --task-summary "<task summary>" --reason "<why split is required>" --scope-risk "<scope/risk summary>" --expected-review-type "code" --atomicity-constraint "<what must stay together>" --work-package-contract-path "<root-cause-work-package-contract.json>" --repo-root "."`
                 ],
                 true
             )

@@ -7,6 +7,26 @@ import * as path from 'node:path';
 import { runRecordStrictDecompositionDecisionCommand } from '../../../../../../src/cli/commands/gates';
 
 describe('cli/gates record-strict-decomposition-decision', () => {
+    function writeWorkPackageContract(repoRoot: string): string {
+        const contractPath = path.join(repoRoot, 'runtime', 'tmp', 'T-200-work-package-contract.json');
+        fs.mkdirSync(path.dirname(contractPath), { recursive: true });
+        fs.writeFileSync(contractPath, `${JSON.stringify({
+            schema_version: 1,
+            finding_obligations: [],
+            work_packages: [1, 2].map((ordinal) => ({
+                task_id: `T-200-${ordinal}`,
+                profile: 'strict',
+                root_cause_area: `root-cause-${ordinal}`,
+                objective: `Implement independently executable root-cause package ${ordinal}.`,
+                scope_obligations: [`Preserve bounded parent scope obligation ${ordinal}.`],
+                validation_contract: [`Validate root-cause package ${ordinal} independently.`],
+                finding_obligation_ids: [],
+                required_review_types: ['code']
+            }))
+        }, null, 2)}\n`, 'utf8');
+        return contractPath;
+    }
+
     function baseOptions(repoRoot: string): Parameters<typeof runRecordStrictDecompositionDecisionCommand>[0] {
         return {
             repoRoot,
@@ -41,6 +61,32 @@ describe('cli/gates record-strict-decomposition-decision', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('records split-required work packages from a contained structured contract file', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-strict-decomposition-work-packages-'));
+        const contractPath = writeWorkPackageContract(repoRoot);
+
+        const result = runRecordStrictDecompositionDecisionCommand({
+            ...baseOptions(repoRoot),
+            decision: 'split-required',
+            reason: 'The independent root-cause areas require separate executable child tasks.',
+            workPackageContractPath: contractPath
+        });
+
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.outputLines.includes('WorkPackages: 2'));
+        const artifactPath = path.join(repoRoot, 'runtime', 'reviews', 'T-200-strict-decomposition-decision.json');
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as {
+            proposed_children: Array<{ task_id: string }>;
+            work_package_contract: { work_packages: Array<{ root_cause_area: string }> };
+        };
+        assert.deepEqual(artifact.proposed_children.map((entry) => entry.task_id), ['T-200-1', 'T-200-2']);
+        assert.deepEqual(
+            artifact.work_package_contract.work_packages.map((entry) => entry.root_cause_area),
+            ['root-cause-1', 'root-cause-2']
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('rejects explicit artifact and metrics paths outside the repo root', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-strict-decomposition-cli-contained-'));
         const outsideArtifactPath = path.join(path.dirname(repoRoot), `outside-artifact-${path.basename(repoRoot)}.json`);
@@ -50,6 +96,14 @@ describe('cli/gates record-strict-decomposition-decision', () => {
             () => runRecordStrictDecompositionDecisionCommand({
                 ...baseOptions(repoRoot),
                 artifactPath: outsideArtifactPath
+            }),
+            /inside repo root/
+        );
+        assert.throws(
+            () => runRecordStrictDecompositionDecisionCommand({
+                ...baseOptions(repoRoot),
+                decision: 'split-required',
+                workPackageContractPath: outsideArtifactPath
             }),
             /inside repo root/
         );

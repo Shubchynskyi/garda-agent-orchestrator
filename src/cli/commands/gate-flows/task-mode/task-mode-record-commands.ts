@@ -19,6 +19,10 @@ import {
     buildStrictDecompositionDecisionArtifact,
     resolveStrictDecompositionDecisionArtifactPath
 } from '../../../../gates/task-mode/strict-decomposition-decision';
+import {
+    readStrictDecompositionWorkPackageContractFile,
+    validateStrictDecompositionWorkPackageFindingSources
+} from '../../../../gates/task-mode/strict-decomposition-work-package-contract';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import {
     normalizeOptionalPath,
@@ -90,6 +94,7 @@ export interface RecordStrictDecompositionDecisionCommandOptions {
     expectedReviewTypes?: unknown;
     atomicityConstraints?: unknown;
     proposedChildTaskIds?: unknown;
+    workPackageContractPath?: unknown;
     actor?: unknown;
     artifactPath?: string;
     metricsPath?: string;
@@ -400,8 +405,22 @@ export function runRecordStrictDecompositionDecisionCommand(
         scopeRisk: options.scopeRisk,
         expectedReviewTypes: expandValueList(options.expectedReviewTypes || [], { splitDelimiters: true }),
         atomicityConstraints: expandValueList(options.atomicityConstraints || [], { splitDelimiters: false }),
-        proposedChildTaskIds: expandValueList(options.proposedChildTaskIds || [], { splitDelimiters: true })
+        proposedChildTaskIds: expandValueList(options.proposedChildTaskIds || [], { splitDelimiters: true }),
+        workPackageContract: readStrictDecompositionWorkPackageContractFile(
+            repoRoot,
+            options.workPackageContractPath
+        )
     });
+    if (artifact.work_package_contract) {
+        const sourceViolations = validateStrictDecompositionWorkPackageFindingSources(
+            repoRoot,
+            taskId,
+            artifact.work_package_contract
+        );
+        if (sourceViolations.length > 0) {
+            throw new Error(`WorkPackageContract finding sources are invalid: ${sourceViolations.join(' ')}`);
+        }
+    }
     writeJsonArtifact(artifactPath, artifact);
 
     const metricsPath = options.metricsPath
@@ -417,6 +436,9 @@ export function runRecordStrictDecompositionDecisionCommand(
         expected_review_types: artifact.expected_review_types,
         expected_review_types_declared_none: artifact.expected_review_types_declared_none,
         proposed_child_task_ids: artifact.proposed_children.map((child) => child.task_id),
+        work_package_task_ids: artifact.work_package_contract?.work_packages.map((entry) => entry.task_id) || [],
+        finding_obligation_ids: artifact.work_package_contract?.finding_obligations.map((entry) => entry.obligation_id) || [],
+        work_package_contract_sha256: artifact.work_package_contract_sha256,
         task_summary_sha256: artifact.task_summary_sha256
     }, parseBooleanOption(options.emitMetrics, true));
 
@@ -433,6 +455,9 @@ export function runRecordStrictDecompositionDecisionCommand(
             expected_review_types: artifact.expected_review_types,
             expected_review_types_declared_none: artifact.expected_review_types_declared_none,
             proposed_child_task_ids: artifact.proposed_children.map((child) => child.task_id),
+            work_package_task_ids: artifact.work_package_contract?.work_packages.map((entry) => entry.task_id) || [],
+            finding_obligation_ids: artifact.work_package_contract?.finding_obligations.map((entry) => entry.obligation_id) || [],
+            work_package_contract_sha256: artifact.work_package_contract_sha256,
             task_summary_sha256: artifact.task_summary_sha256
         }
     );
@@ -444,6 +469,8 @@ export function runRecordStrictDecompositionDecisionCommand(
             `Decision: ${artifact.decision}`,
             `ExpectedReviews: ${artifact.expected_review_types_declared_none ? 'none' : artifact.expected_review_types.join(',')}`,
             `ProposedChildren: ${artifact.proposed_children.map((child) => child.task_id).join(',') || 'none'}`,
+            `WorkPackages: ${artifact.work_package_contract?.work_packages.length || 0}`,
+            `FindingObligations: ${artifact.work_package_contract?.finding_obligations.length || 0}`,
             `ArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`
         ],
         exitCode: 0

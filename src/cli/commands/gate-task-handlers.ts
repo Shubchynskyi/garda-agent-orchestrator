@@ -232,6 +232,7 @@ export async function handleRecordStrictDecompositionDecision(gateArgv: string[]
         '--atomicity-constraints': { key: 'atomicityConstraints', type: 'string[]' },
         '--proposed-child-task-id': { key: 'proposedChildTaskIds', type: 'string[]' },
         '--proposed-child-task-ids': { key: 'proposedChildTaskIds', type: 'string[]' },
+        '--work-package-contract-path': { key: 'workPackageContractPath', type: 'string' },
         '--actor': { key: 'actor', type: 'string' },
         '--artifact-path': { key: 'artifactPath', type: 'string' },
         '--metrics-path': { key: 'metricsPath', type: 'string' },

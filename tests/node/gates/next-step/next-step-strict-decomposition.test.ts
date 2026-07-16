@@ -121,6 +121,10 @@ function writeStrictDecompositionDecision(
     } = {}
 ): void {
     const decision = options.decision || 'single-cycle';
+    const expectedReviewTypes = options.expectedReviewTypes || ['code'];
+    const proposedChildTaskIds = decision === 'split-required'
+        ? (options.proposedChildTaskIds || [`${taskId}-1`, `${taskId}-2`])
+        : options.proposedChildTaskIds;
     writeJson(
         path.join(reviewsRoot(repoRoot), `${taskId}-strict-decomposition-decision.json`),
         buildStrictDecompositionDecisionArtifact({
@@ -129,11 +133,25 @@ function writeStrictDecompositionDecision(
             taskSummary: options.taskSummary || 'Seeded next-step task',
             reason: 'This strict task is intentionally bounded for the current lifecycle cycle.',
             scopeRisk: 'The scope is constrained by the test fixture and must keep normal review gates.',
-            expectedReviewTypes: options.expectedReviewTypes || ['code'],
+            expectedReviewTypes,
             atomicityConstraints: ['The navigator decision and its regression expectations must land together.'],
-            proposedChildTaskIds: decision === 'split-required'
-                ? (options.proposedChildTaskIds || [`${taskId}-1`, `${taskId}-2`])
-                : options.proposedChildTaskIds
+            proposedChildTaskIds,
+            workPackageContract: decision === 'split-required'
+                ? {
+                    schema_version: 1,
+                    finding_obligations: [],
+                    work_packages: (proposedChildTaskIds || []).map((childTaskId, index) => ({
+                        task_id: childTaskId,
+                        profile: 'strict',
+                        root_cause_area: `root-cause-${index + 1}`,
+                        objective: `Implement independently executable root-cause package ${index + 1}.`,
+                        scope_obligations: [`Preserve bounded parent scope obligation ${index + 1}.`],
+                        validation_contract: [`Validate root-cause package ${index + 1} independently.`],
+                        finding_obligation_ids: [],
+                        required_review_types: expectedReviewTypes
+                    }))
+                }
+                : undefined
         })
     );
 }
@@ -291,6 +309,10 @@ describe('gates/next-step strict decomposition', () => {
         assert.ok(result.commands[0].command.includes('gate record-strict-decomposition-decision'));
         assert.ok(result.commands[0].command.includes('--task-summary "Seeded next-step task"'));
         assert.ok(result.commands[0].command.includes('--expected-review-type "none"'));
+        assert.ok(result.commands[0].command.includes(
+            '[--work-package-contract-path "<required only for split-required>"]'
+        ));
+        assert.ok(result.reason.includes('when choosing split-required, add --work-package-contract-path'));
         assert.equal(text.includes('gate classify-change'), false);
         assert.equal(text.includes('gate compile-gate'), false);
     });

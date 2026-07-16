@@ -11,6 +11,19 @@ import {
     stringSha256,
     toStringArray
 } from '../shared/helpers';
+import {
+    normalizeStrictDecompositionWorkPackageContract,
+    STRICT_DECOMPOSITION_REVIEW_TYPES,
+    validateStrictDecompositionWorkPackageFindingSources,
+    type StrictDecompositionReviewType,
+    type StrictDecompositionWorkPackageContract
+} from './strict-decomposition-work-package-contract';
+
+export {
+    STRICT_DECOMPOSITION_REVIEW_TYPES,
+    type StrictDecompositionReviewType,
+    type StrictDecompositionWorkPackageContract
+} from './strict-decomposition-work-package-contract';
 
 export const STRICT_DECOMPOSITION_DECISIONS = Object.freeze([
     'atomic',
@@ -19,20 +32,6 @@ export const STRICT_DECOMPOSITION_DECISIONS = Object.freeze([
 ] as const);
 
 export type StrictDecompositionDecision = (typeof STRICT_DECOMPOSITION_DECISIONS)[number];
-
-export const STRICT_DECOMPOSITION_REVIEW_TYPES = Object.freeze([
-    'code',
-    'db',
-    'security',
-    'refactor',
-    'api',
-    'test',
-    'performance',
-    'infra',
-    'dependency'
-] as const);
-
-export type StrictDecompositionReviewType = (typeof STRICT_DECOMPOSITION_REVIEW_TYPES)[number];
 
 export interface StrictDecompositionProposedChild {
     task_id: string;
@@ -55,6 +54,8 @@ export interface StrictDecompositionDecisionArtifact {
     expected_review_types_declared_none: boolean;
     atomicity_constraints: string[];
     proposed_children: StrictDecompositionProposedChild[];
+    work_package_contract: StrictDecompositionWorkPackageContract | null;
+    work_package_contract_sha256: string | null;
 }
 
 export interface BuildStrictDecompositionDecisionArtifactOptions {
@@ -67,6 +68,7 @@ export interface BuildStrictDecompositionDecisionArtifactOptions {
     expectedReviewTypes?: unknown;
     atomicityConstraints?: unknown;
     proposedChildTaskIds?: unknown;
+    workPackageContract?: unknown;
 }
 
 export interface StrictDecompositionDecisionEvidenceResult {
@@ -82,6 +84,10 @@ export interface StrictDecompositionDecisionEvidenceResult {
     task_summary_sha256: string | null;
     expected_review_types: string[];
     proposed_child_task_ids: string[];
+    work_package_task_ids: string[];
+    work_package_root_cause_areas: string[];
+    finding_obligation_ids: string[];
+    work_package_contract_sha256: string | null;
     reason: string | null;
 }
 
@@ -225,7 +231,37 @@ export function buildStrictDecompositionDecisionArtifact(
     const scopeRisk = validateNonEmptyField(options.scopeRisk, 'ScopeRisk');
     const expectedReviews = normalizeExpectedReviewTypes(options.expectedReviewTypes);
     const atomicityConstraints = normalizeAtomicityConstraints(options.atomicityConstraints);
-    const proposedChildren = normalizeProposedChildren(taskId, decision, options.proposedChildTaskIds);
+    const rawProposedChildTaskIds = toStringArray(options.proposedChildTaskIds, { trimValues: true })
+        .flatMap((entry) => String(entry).split(/[\r\n,;]+/))
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    let proposedChildren = rawProposedChildTaskIds.length > 0 || decision !== 'split-required'
+        ? normalizeProposedChildren(taskId, decision, rawProposedChildTaskIds)
+        : [];
+    const workPackageContract = decision === 'split-required'
+        ? normalizeStrictDecompositionWorkPackageContract(
+            taskId,
+            options.workPackageContract,
+            expectedReviews.expected_review_types
+        )
+        : null;
+    if (decision !== 'split-required' && options.workPackageContract != null) {
+        throw new Error('WorkPackageContract is only allowed for decision split-required.');
+    }
+    if (workPackageContract) {
+        const contractTaskIds = workPackageContract.work_packages.map((entry) => entry.task_id);
+        if (proposedChildren.length === 0) {
+            proposedChildren = normalizeProposedChildren(taskId, decision, contractTaskIds);
+        } else if (
+            proposedChildren.length !== contractTaskIds.length
+            || proposedChildren.some((entry) => !contractTaskIds.includes(entry.task_id))
+        ) {
+            throw new Error('ProposedChildTaskId values must exactly match WorkPackageContract work package task ids.');
+        }
+    }
+    const workPackageContractSha256 = workPackageContract
+        ? stringSha256(JSON.stringify(workPackageContract))
+        : null;
 
     return {
         timestamp_utc: new Date().toISOString(),
@@ -242,7 +278,9 @@ export function buildStrictDecompositionDecisionArtifact(
         expected_review_types: expectedReviews.expected_review_types,
         expected_review_types_declared_none: expectedReviews.expected_review_types_declared_none,
         atomicity_constraints: atomicityConstraints,
-        proposed_children: proposedChildren
+        proposed_children: proposedChildren,
+        work_package_contract: workPackageContract,
+        work_package_contract_sha256: workPackageContractSha256
     };
 }
 
@@ -260,6 +298,10 @@ function buildUnknownEvidence(taskId: string | null): StrictDecompositionDecisio
         task_summary_sha256: null,
         expected_review_types: [],
         proposed_child_task_ids: [],
+        work_package_task_ids: [],
+        work_package_root_cause_areas: [],
+        finding_obligation_ids: [],
+        work_package_contract_sha256: null,
         reason: null
     };
 }
@@ -311,6 +353,32 @@ export function getStrictDecompositionDecisionEvidence(
             ))
             .filter(Boolean)
         : [];
+    const rawWorkPackageContract = artifactObject.work_package_contract;
+    if (rawWorkPackageContract && typeof rawWorkPackageContract === 'object' && !Array.isArray(rawWorkPackageContract)) {
+        const contractRecord = rawWorkPackageContract as Record<string, unknown>;
+        result.work_package_task_ids = Array.isArray(contractRecord.work_packages)
+            ? contractRecord.work_packages.map((entry) => (
+                entry && typeof entry === 'object'
+                    ? String((entry as Record<string, unknown>).task_id || '').trim()
+                    : ''
+            )).filter(Boolean)
+            : [];
+        result.work_package_root_cause_areas = Array.isArray(contractRecord.work_packages)
+            ? contractRecord.work_packages.map((entry) => (
+                entry && typeof entry === 'object'
+                    ? String((entry as Record<string, unknown>).root_cause_area || '').trim()
+                    : ''
+            )).filter(Boolean)
+            : [];
+        result.finding_obligation_ids = Array.isArray(contractRecord.finding_obligations)
+            ? contractRecord.finding_obligations.map((entry) => (
+                entry && typeof entry === 'object'
+                    ? String((entry as Record<string, unknown>).obligation_id || '').trim()
+                    : ''
+            )).filter(Boolean)
+            : [];
+    }
+    result.work_package_contract_sha256 = String(artifactObject.work_package_contract_sha256 || '').trim().toLowerCase() || null;
     result.reason = String(artifactObject.reason || '').trim() || null;
 
     if (result.evidence_task_id !== resolvedTaskId) {
@@ -340,7 +408,7 @@ export function getStrictDecompositionDecisionEvidence(
     }
 
     try {
-        buildStrictDecompositionDecisionArtifact({
+        const rebuiltArtifact = buildStrictDecompositionDecisionArtifact({
             taskId: resolvedTaskId,
             decision: artifactObject.decision,
             taskProfile: artifactObject.task_profile,
@@ -357,8 +425,22 @@ export function getStrictDecompositionDecisionEvidence(
                         ? String((entry as Record<string, unknown>).task_id || '')
                         : ''
                 ))
-                : []
+                : [],
+            workPackageContract: artifactObject.work_package_contract
         });
+        if (result.work_package_contract_sha256 !== rebuiltArtifact.work_package_contract_sha256) {
+            throw new Error('WorkPackageContract sha256 is missing or mismatched.');
+        }
+        if (rebuiltArtifact.work_package_contract) {
+            const sourceViolations = validateStrictDecompositionWorkPackageFindingSources(
+                repoRoot,
+                resolvedTaskId,
+                rebuiltArtifact.work_package_contract
+            );
+            if (sourceViolations.length > 0) {
+                throw new Error(sourceViolations.join(' '));
+            }
+        }
     } catch (error) {
         result.evidence_status = error instanceof Error
             ? `EVIDENCE_INVALID: ${error.message}`

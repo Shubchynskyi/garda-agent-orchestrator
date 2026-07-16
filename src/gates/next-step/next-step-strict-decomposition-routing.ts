@@ -358,6 +358,7 @@ function buildStrictDecompositionDecisionCommand(params: {
         parts.push(`--expected-review-type ${quoteCommandValue(reviewType)}`);
     }
     parts.push(`--atomicity-constraint ${quoteCommandValue('<constraint or none>')}`);
+    parts.push(`[--work-package-contract-path ${quoteCommandValue('<required only for split-required>')}]`);
     parts.push('--repo-root "."');
     return parts.join(' ');
 }
@@ -404,7 +405,8 @@ export function resolveStrictDecompositionContinuationRoute(params: {
                 'This strict task is risky or umbrella-shaped, so next-step requires a current strict decomposition decision before ordinary classify, compile, review, full-suite, completion, or implementation continuation. ' +
                 `Evidence status: ${formatNextStepInlineValue(evidence.evidence_status)}. ` +
                 `Risk signals: ${formatNextStepInlineList(params.requirement.riskSignals)}. ` +
-                'Choose atomic, single-cycle, or split-required explicitly; atomic and single-cycle are not review waivers, and later scope-budget or review-cycle split latches still override the decision.',
+                'Choose atomic, single-cycle, or split-required explicitly; when choosing split-required, add --work-package-contract-path with the root-cause contract artifact. ' +
+                'Atomic and single-cycle are not review waivers, and later scope-budget or review-cycle split latches still override the decision.',
             commands: [
                 buildCommand(
                     'Record strict decomposition decision',
@@ -444,6 +446,8 @@ export function resolveStrictDecompositionContinuationRoute(params: {
                 'A current strict decomposition decision says split-required, so ordinary classify, compile, review, full-suite, completion, and implementation continuation are suppressed. ' +
                 `Risk signals: ${formatNextStepInlineList(params.requirement.riskSignals)}. ` +
                 `Proposed child tasks: ${formatNextStepInlineList(evidence.proposed_child_task_ids)}. ` +
+                `Root-cause work packages: ${formatNextStepInlineList(evidence.work_package_root_cause_areas)}. ` +
+                `Preserved finding obligations: ${formatNextStepInlineList(evidence.finding_obligation_ids)}. ` +
                 `Linked child tasks: ${formatNextStepInlineList(splitRoutingState.linkedChildTaskIds)}. ` +
                 `Child routing is not ready: ${formatStrictDecompositionSplitRoutingViolations(splitRoutingState)}. ` +
                 'Create and link parent-derived strict child task rows that match the decision artifact before continuing; later scope-budget or review-cycle split latches remain authoritative.',
