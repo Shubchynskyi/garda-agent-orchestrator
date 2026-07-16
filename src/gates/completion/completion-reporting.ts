@@ -2,7 +2,11 @@ import * as path from 'node:path';
 import { getBundleCliCommand, getSourceCliCommand, resolveBundleName } from '../../core/constants';
 import { isOrchestratorSourceCheckout } from '../shared/helpers';
 import { buildReviewTrustSummaryFromCompatibilityArtifacts } from '../review/review-trust-summary';
-import { resolveRestartCommandChangedFiles } from '../recovery/restart-command-scope';
+import {
+    isRestartWorkflowConfigScopeAuthorized,
+    omitWorkflowConfigChangedFiles,
+    resolveRestartCommandChangedFiles
+} from '../recovery/restart-command-scope';
 
 export function quotePowerShellCliValue(value: string): string {
     return `'${String(value).replace(/'/g, "''")}'`;
@@ -35,10 +39,14 @@ export function buildCoherentCycleRestartCommand(
     if (outputFiltersPath) {
         parts.push(`--output-filters-path ${quotePowerShellCliValue(outputFiltersPath)}`);
     }
+    const includeWorkflowConfigFiles = isRestartWorkflowConfigScopeAuthorized(repoRoot, taskId, taskModePath);
     const changedFiles = options.changedFiles
         ? [...new Set(options.changedFiles.map((entry) => String(entry || '').trim()).filter(Boolean))].sort()
-        : resolveRestartCommandChangedFiles(repoRoot, preflightPath);
-    for (const changedFile of changedFiles) {
+        : resolveRestartCommandChangedFiles(repoRoot, preflightPath, { includeWorkflowConfigFiles });
+    const commandChangedFiles = includeWorkflowConfigFiles
+        ? changedFiles
+        : omitWorkflowConfigChangedFiles(changedFiles);
+    for (const changedFile of commandChangedFiles) {
         parts.push(`--changed-file ${quotePowerShellCliValue(changedFile)}`);
     }
     if (options.requiresOperatorConfirmation === true) {
@@ -75,7 +83,8 @@ export function buildReviewCycleRestartCommand(
     if (outputFiltersPath) {
         parts.push(`--output-filters-path ${quotePowerShellCliValue(outputFiltersPath)}`);
     }
-    for (const changedFile of resolveRestartCommandChangedFiles(repoRoot, preflightPath)) {
+    const includeWorkflowConfigFiles = isRestartWorkflowConfigScopeAuthorized(repoRoot, taskId, taskModePath);
+    for (const changedFile of resolveRestartCommandChangedFiles(repoRoot, preflightPath, { includeWorkflowConfigFiles })) {
         parts.push(`--changed-file ${quotePowerShellCliValue(changedFile)}`);
     }
     return parts.join(' ');

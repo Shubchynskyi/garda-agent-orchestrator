@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 
 import {
+    joinOrchestratorPath,
     normalizePath,
     resolvePathInsideRepo,
     toPlainRecord
@@ -9,6 +10,10 @@ import {
     getWorkflowConfigChangedFiles,
     normalizeWorkflowConfigFileHashes
 } from '../workflow-config/workflow-config-work';
+
+export interface RestartCommandChangedFilesOptions {
+    includeWorkflowConfigFiles?: boolean;
+}
 
 function readJsonRecord(filePath: string): Record<string, unknown> | null {
     try {
@@ -30,6 +35,20 @@ function toNormalizedPathList(value: unknown): string[] {
     )].sort();
 }
 
+export function omitWorkflowConfigChangedFiles(changedFiles: readonly string[]): string[] {
+    const workflowConfigFileSet = new Set(
+        getWorkflowConfigChangedFiles(changedFiles)
+            .map((entry) => normalizePath(entry))
+            .filter(Boolean)
+    );
+    return [...new Set(
+        changedFiles
+            .map((entry) => normalizePath(entry))
+            .filter(Boolean)
+            .filter((entry) => !workflowConfigFileSet.has(entry))
+    )].sort();
+}
+
 function resolvePreflightPath(repoRoot: string, preflightPath: string): string | null {
     try {
         return resolvePathInsideRepo(preflightPath, repoRoot, { enforceInside: true });
@@ -38,9 +57,50 @@ function resolvePreflightPath(repoRoot: string, preflightPath: string): string |
     }
 }
 
+function resolveTaskModePath(repoRoot: string, taskId: string, taskModePath: string | null | undefined): string | null {
+    const trimmedTaskId = String(taskId || '').trim();
+    if (!trimmedTaskId) {
+        return null;
+    }
+    const requestedPath = String(taskModePath || '').trim()
+        || joinOrchestratorPath(repoRoot, `runtime/reviews/${trimmedTaskId}-task-mode.json`);
+    try {
+        return resolvePathInsideRepo(requestedPath, repoRoot, {
+            allowMissing: true,
+            enforceInside: true
+        });
+    } catch {
+        return null;
+    }
+}
+
+export function isRestartWorkflowConfigScopeAuthorized(
+    repoRoot: string,
+    taskId: string,
+    taskModePath: string | null | undefined
+): boolean {
+    const trimmedTaskId = String(taskId || '').trim();
+    const resolvedTaskModePath = resolveTaskModePath(repoRoot, trimmedTaskId, taskModePath);
+    if (!resolvedTaskModePath) {
+        return false;
+    }
+    const taskMode = readJsonRecord(resolvedTaskModePath);
+    if (!taskMode) {
+        return false;
+    }
+    const status = String(taskMode.status || '').trim().toUpperCase();
+    const outcome = String(taskMode.outcome || '').trim().toUpperCase();
+    return String(taskMode.task_id || '').trim() === trimmedTaskId
+        && (status === 'PASSED' || status === 'PASS')
+        && outcome === 'PASS'
+        && taskMode.orchestrator_work === true
+        && taskMode.workflow_config_work === true;
+}
+
 export function resolveRestartCommandChangedFiles(
     repoRoot: string,
-    preflightPath: string
+    preflightPath: string,
+    options: RestartCommandChangedFilesOptions = {}
 ): string[] {
     const resolvedPreflightPath = resolvePreflightPath(repoRoot, preflightPath);
     if (!resolvedPreflightPath) {
@@ -52,11 +112,17 @@ export function resolveRestartCommandChangedFiles(
     }
 
     const triggers = toPlainRecord(preflight.triggers);
-    const workflowConfigFiles = getWorkflowConfigChangedFiles(
-        toNormalizedPathList(triggers?.changed_workflow_config_files)
-    );
+    const preflightChangedFiles = toNormalizedPathList(preflight.changed_files);
+    const workflowConfigFiles = [...new Set([
+        ...getWorkflowConfigChangedFiles(preflightChangedFiles),
+        ...getWorkflowConfigChangedFiles(toNormalizedPathList(triggers?.changed_workflow_config_files))
+    ])].sort();
     if (workflowConfigFiles.length === 0) {
-        return [];
+        return preflightChangedFiles;
+    }
+
+    if (options.includeWorkflowConfigFiles === false) {
+        return omitWorkflowConfigChangedFiles(preflightChangedFiles);
     }
 
     const workflowConfigHashes = normalizeWorkflowConfigFileHashes(triggers?.workflow_config_file_hashes);
@@ -72,7 +138,7 @@ export function resolveRestartCommandChangedFiles(
     }
 
     return [...new Set([
-        ...toNormalizedPathList(preflight.changed_files),
+        ...preflightChangedFiles,
         ...attributedWorkflowConfigFiles
     ])].sort();
 }

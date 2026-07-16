@@ -11,6 +11,20 @@ import {
     formatCompletionGateResult
 } from '../../../../src/gates/completion/completion-reporting';
 
+function writeTaskMode(repoRoot: string, taskId: string, payload: Record<string, unknown> = {}): string {
+    const taskModePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-task-mode.json`);
+    fs.mkdirSync(path.dirname(taskModePath), { recursive: true });
+    fs.writeFileSync(taskModePath, JSON.stringify({
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        orchestrator_work: true,
+        workflow_config_work: true,
+        ...payload
+    }, null, 2) + '\n', 'utf8');
+    return taskModePath;
+}
+
 describe('gates/completion-reporting', () => {
     it('carries attributed workflow-config scope in coherent-cycle restart guidance', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-completion-restart-scope-'));
@@ -26,6 +40,70 @@ describe('gates/completion-reporting', () => {
                     }
                 }
             }, null, 2) + '\n', 'utf8');
+            const taskModePath = writeTaskMode(repoRoot, 'T-123');
+
+            const command = buildCoherentCycleRestartCommand(
+                repoRoot,
+                'T-123',
+                preflightPath,
+                taskModePath,
+                null,
+                null
+            );
+
+            assert.match(command, /gate restart-coherent-cycle/);
+            assert.ok(command.includes("--changed-file 'garda-agent-orchestrator/live/config/workflow-config.json'"), command);
+            assert.ok(command.includes("--changed-file 'src/app.ts'"), command);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('omits attributed workflow-config scope in coherent-cycle restart guidance without workflow-config authorization', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-completion-restart-omit-config-'));
+        try {
+            const preflightPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-123-preflight.json');
+            fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                changed_files: [
+                    'src/app.ts',
+                    'garda-agent-orchestrator/live/config/workflow-config.json'
+                ],
+                triggers: {
+                    changed_workflow_config_files: ['garda-agent-orchestrator/live/config/workflow-config.json'],
+                    workflow_config_file_hashes: {
+                        'garda-agent-orchestrator/live/config/workflow-config.json': 'a'.repeat(64)
+                    }
+                }
+            }, null, 2) + '\n', 'utf8');
+            const taskModePath = writeTaskMode(repoRoot, 'T-123', { workflow_config_work: false });
+
+            const command = buildCoherentCycleRestartCommand(
+                repoRoot,
+                'T-123',
+                preflightPath,
+                taskModePath,
+                null,
+                null
+            );
+
+            assert.match(command, /gate restart-coherent-cycle/);
+            assert.ok(command.includes("--changed-file 'src/app.ts'"), command);
+            assert.ok(!command.includes('garda-agent-orchestrator/live/config/workflow-config.json'), command);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('carries ordinary changed-file scope in coherent-cycle restart guidance when no workflow-config paths exist', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-completion-restart-ordinary-scope-'));
+        try {
+            const preflightPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-123-preflight.json');
+            fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                changed_files: ['src/app.ts'],
+                triggers: {}
+            }, null, 2) + '\n', 'utf8');
 
             const command = buildCoherentCycleRestartCommand(
                 repoRoot,
@@ -37,8 +115,43 @@ describe('gates/completion-reporting', () => {
             );
 
             assert.match(command, /gate restart-coherent-cycle/);
-            assert.ok(command.includes("--changed-file 'garda-agent-orchestrator/live/config/workflow-config.json'"), command);
             assert.ok(command.includes("--changed-file 'src/app.ts'"), command);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('omits attributed workflow-config scope in review-cycle restart guidance without workflow-config authorization', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-completion-review-restart-omit-config-'));
+        try {
+            const preflightPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-123-preflight.json');
+            fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                changed_files: [
+                    'src/app.ts',
+                    'garda-agent-orchestrator/live/config/workflow-config.json'
+                ],
+                triggers: {
+                    changed_workflow_config_files: ['garda-agent-orchestrator/live/config/workflow-config.json'],
+                    workflow_config_file_hashes: {
+                        'garda-agent-orchestrator/live/config/workflow-config.json': 'a'.repeat(64)
+                    }
+                }
+            }, null, 2) + '\n', 'utf8');
+            const taskModePath = writeTaskMode(repoRoot, 'T-123', { workflow_config_work: false });
+
+            const command = buildReviewCycleRestartCommand(
+                repoRoot,
+                'T-123',
+                preflightPath,
+                taskModePath,
+                null,
+                null
+            );
+
+            assert.match(command, /gate restart-review-cycle/);
+            assert.ok(command.includes("--changed-file 'src/app.ts'"), command);
+            assert.ok(!command.includes('garda-agent-orchestrator/live/config/workflow-config.json'), command);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

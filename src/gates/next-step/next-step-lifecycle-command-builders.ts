@@ -44,6 +44,9 @@ import {
     REVIEW_CONTRACTS
 } from '../required-reviews/required-reviews-check';
 import {
+    getWorkflowConfigChangedFiles
+} from '../workflow-config/workflow-config-work';
+import {
     selectTaskEntryRulePackFileNames
 } from '../rule-pack/rule-pack-selection';
 
@@ -270,7 +273,13 @@ export function buildOrchestratorWorkRestartCommand(
             ? dirtyBaselineChangedFiles
             : plannedChangedFiles;
     const mergedPlannedChangedFiles = expandDirectoryPlaceholdersForCommand(repoRoot, restartScopeFiles);
+    const workflowConfigFileSet = includeWorkflowConfigWork
+        ? new Set<string>()
+        : new Set(getWorkflowConfigChangedFiles(mergedPlannedChangedFiles));
     for (const plannedChangedFile of mergedPlannedChangedFiles) {
+        if (workflowConfigFileSet.has(plannedChangedFile)) {
+            continue;
+        }
         parts.push(`--planned-changed-file ${quoteCommandValue(plannedChangedFile)}`);
     }
     parts.push('--repo-root "."');

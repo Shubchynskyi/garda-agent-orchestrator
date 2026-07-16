@@ -3729,7 +3729,12 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                                 taskId,
                                 reviewArtifactPaths: [state.artifactPath],
                                 taskMode
-                            })
+                            }),
+                            {
+                                includeChangedFileScope:
+                                    state.failureKind !== 'missing-focused-validation-evidence'
+                                    && state.failureKind !== 'missing-validation-evidence'
+                            }
                         )
                     ),
                     rerunNavigator: buildCommand(

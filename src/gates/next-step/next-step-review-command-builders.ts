@@ -7,7 +7,11 @@ import {
     quoteCommandValue,
     toRepoDisplayPath
 } from './next-step-command-formatters';
-import { resolveRestartCommandChangedFiles } from '../recovery/restart-command-scope';
+import {
+    isRestartWorkflowConfigScopeAuthorized,
+    omitWorkflowConfigChangedFiles,
+    resolveRestartCommandChangedFiles
+} from '../recovery/restart-command-scope';
 import {
     isSourceCheckoutGeneratedRuntimeArtifactPath
 } from '../shared/generated-runtime-artifacts';
@@ -228,15 +232,23 @@ export function buildRestartReviewCycleCommand(
     taskIntent: string,
     preflightCommandPath: string,
     taskModePath: string | null,
-    additionalChangedFiles: readonly string[] = []
+    additionalChangedFiles: readonly string[] = [],
+    options: {
+        includeChangedFileScope?: boolean;
+    } = {}
 ): string {
     const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
-    const changedFiles = [...new Set([
-        ...resolveRestartCommandChangedFiles(repoRoot, preflightCommandPath),
-        ...additionalChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean)
-    ])]
-        .filter((entry) => !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
-        .sort();
+    const includeWorkflowConfigFiles = isRestartWorkflowConfigScopeAuthorized(repoRoot, taskId, taskModePath);
+    const includeChangedFileScope = options.includeChangedFileScope !== false;
+    const changedFiles = includeChangedFileScope
+        ? [...new Set([
+            ...resolveRestartCommandChangedFiles(repoRoot, preflightCommandPath, { includeWorkflowConfigFiles }),
+            ...additionalChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean)
+        ])]
+            .filter((entry) => includeWorkflowConfigFiles || omitWorkflowConfigChangedFiles([entry]).length > 0)
+            .filter((entry) => !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
+            .sort()
+        : [];
     return [
         `${cliPrefix} gate restart-review-cycle`,
         `--task-id "${taskId}"`,
