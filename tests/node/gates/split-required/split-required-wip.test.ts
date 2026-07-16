@@ -329,6 +329,44 @@ describe('split-required WIP capture and restore', () => {
         assert.equal(readFile(repoRoot, 'src/b.ts'), 'export const child = 2;\n');
     });
 
+    it('dry-runs and restores only selected untracked WIP after descendant commits advance HEAD', () => {
+        const repoRoot = makeRepo();
+        writeFile(repoRoot, 'src/new.ts', 'export const selected = true;\n');
+        writeFile(repoRoot, 'src/other.ts', 'export const unselected = true;\n');
+        const captured = capture(repoRoot, ['src/new.ts', 'src/other.ts']);
+        assert.ok(captured.manifest_path);
+        assert.deepEqual(captured.untracked_files.sort(), ['src/new.ts', 'src/other.ts']);
+        assert.equal(fs.existsSync(path.join(repoRoot, 'src/new.ts')), false);
+        assert.equal(fs.existsSync(path.join(repoRoot, 'src/other.ts')), false);
+
+        writeFile(repoRoot, 'src/child.ts', 'export const child = true;\n');
+        runGit(repoRoot, ['add', 'src/child.ts']);
+        runGit(repoRoot, ['commit', '-m', 'advance child scope']);
+
+        const dryRun = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/new.ts'],
+            dryRun: true
+        });
+        assert.equal(dryRun.status, 'DRY_RUN_OK', dryRun.violations.join('\n'));
+        assert.equal(fs.existsSync(path.join(repoRoot, 'src/new.ts')), false);
+        assert.equal(fs.existsSync(path.join(repoRoot, 'src/other.ts')), false);
+
+        const restored = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/new.ts']
+        });
+        assert.equal(restored.status, 'RESTORED', restored.violations.join('\n'));
+        assert.deepEqual(restored.restored_files, ['src/new.ts']);
+        assert.equal(readFile(repoRoot, 'src/new.ts'), 'export const selected = true;\n');
+        assert.equal(fs.existsSync(path.join(repoRoot, 'src/other.ts')), false);
+        assert.equal(runGit(repoRoot, ['status', '--porcelain=v1']), '?? src/new.ts\n');
+    });
+
     it('blocks advanced restore when an untracked file obstructs a tracked selected path', () => {
         const repoRoot = makeRepo();
         writeFile(repoRoot, 'src/new.ts', 'export const captured = true;\n');
