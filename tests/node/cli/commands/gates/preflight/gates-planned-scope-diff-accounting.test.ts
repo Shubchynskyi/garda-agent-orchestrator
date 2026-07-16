@@ -10,6 +10,19 @@ import { getPreflightContext, getWorkspaceSnapshot } from '../../../../../../src
 import { getCompileScopeDriftViolations } from '../../../../../../src/cli/commands/gate-flows/compile/compile-flow-scope-guards';
 import { buildDomainScopeFingerprints } from '../../../../../../src/gates/scope/domain-scope-fingerprints';
 import { readPreflightWorkspaceReadiness } from '../../../../../../src/gates/next-step/next-step-preflight-workspace-readiness';
+import {
+    createTempRepo as createGateTempRepo,
+    initializeGitRepo
+} from '../../gate-test-repo-bootstrap';
+import {
+    loadTaskEntryRulePack,
+    runClassifyChangeCommand,
+    runEnterTaskMode,
+    runHandshakeForTask,
+    runShellSmokeForTask,
+    seedInitAnswers,
+    seedTaskQueue
+} from '../../gate-test-seed-helpers';
 
 function writeLines(filePath: string, count: number, prefix: string): void {
     const content = Array.from({ length: count }, (_, index) => `${prefix}-${index + 1}`).join('\n');
@@ -34,6 +47,16 @@ function createRepo(): { tempRoot: string; repoRoot: string } {
 function commitAll(repoRoot: string): void {
     runGit(repoRoot, ['add', '--all']);
     runGit(repoRoot, ['commit', '-m', 'baseline']);
+}
+
+function runWithRepoCwd<T>(repoRoot: string, callback: () => T): T {
+    const previousCwd = process.cwd();
+    process.chdir(repoRoot);
+    try {
+        return callback();
+    } finally {
+        process.chdir(previousCwd);
+    }
 }
 
 describe('planned-scope diff accounting', { concurrency: false }, () => {
@@ -213,6 +236,71 @@ describe('planned-scope diff accounting', { concurrency: false }, () => {
             plannedChangedFiles: snapshot.authorized_files
         });
         assert.equal(readiness.ready, true, readiness.reason);
+    });
+
+    it('emits authorized scope and actual diff accounting through classify-change', () => {
+        const commandRepoRoot = createGateTempRepo();
+        const taskId = 'T-979-21-F5-command-contract';
+        try {
+            fs.writeFileSync(
+                path.join(commandRepoRoot, '.gitignore'),
+                'TASK.md\ngarda-agent-orchestrator/runtime/\n',
+                'utf8'
+            );
+            fs.writeFileSync(path.join(commandRepoRoot, 'AGENTS.md'), '# AGENTS.md\n', 'utf8');
+            writeLines(path.join(commandRepoRoot, 'src', 'large-planned.ts'), 2216, 'large');
+            initializeGitRepo(commandRepoRoot);
+            seedTaskQueue(commandRepoRoot, taskId);
+            seedInitAnswers(commandRepoRoot);
+
+            runWithRepoCwd(commandRepoRoot, () => {
+                runEnterTaskMode({
+                    repoRoot: commandRepoRoot,
+                    taskId,
+                    taskSummary: 'Separate planned authorization from actual diff accounting'
+                });
+                loadTaskEntryRulePack(commandRepoRoot, taskId);
+                runHandshakeForTask(commandRepoRoot, taskId);
+                runShellSmokeForTask(commandRepoRoot, taskId);
+            });
+
+            writeLines(path.join(commandRepoRoot, 'src', 'new-task-file.ts'), 69, 'new');
+            const outputPath = path.join(
+                commandRepoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'reviews',
+                `${taskId}-preflight.json`
+            );
+            const result = runWithRepoCwd(commandRepoRoot, () => runClassifyChangeCommand({
+                repoRoot: commandRepoRoot,
+                taskId,
+                taskIntent: 'Separate planned authorization from actual diff accounting',
+                changedFiles: ['src/large-planned.ts', 'src/new-task-file.ts'],
+                outputPath,
+                emitMetrics: false
+            }));
+            const payload = JSON.parse(result.outputText);
+
+            assert.deepEqual(payload.authorized_files, [
+                'src/large-planned.ts',
+                'src/new-task-file.ts'
+            ]);
+            assert.deepEqual(payload.changed_files, ['src/new-task-file.ts']);
+            assert.equal(payload.metrics.authorized_files_count, 2);
+            assert.equal(payload.metrics.changed_files_count, 1);
+            assert.deepEqual(payload.metrics.actual_changed_files, ['src/new-task-file.ts']);
+            assert.equal(payload.metrics.actual_changed_files_count, 1);
+            assert.equal(payload.metrics.changed_lines_total, 69);
+            assert.deepEqual(
+                payload.metrics.domain_scope_fingerprints.domains.implementation.changed_files,
+                ['src/new-task-file.ts']
+            );
+            assert.equal(payload.budget_forecast.changed_files_count, 1);
+            assert.equal(payload.budget_forecast.changed_lines_total, 69);
+        } finally {
+            fs.rmSync(commandRepoRoot, { recursive: true, force: true });
+        }
     });
 
     it('accounts for mixed planned modification, rename, delete, recreate, and untracked states', () => {
