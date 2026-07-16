@@ -182,6 +182,7 @@ export const {
     handleRecordReviewRouting,
     handlePrepareReviewerLaunch,
     handleRecordReviewerDelegationStarted,
+    handleRecordReviewerLaunchFailed,
     handleCompleteReviewerLaunch
 } = reviewRoutingLaunchHandlers;
 

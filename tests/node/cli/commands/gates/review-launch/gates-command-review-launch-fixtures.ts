@@ -565,6 +565,9 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
     const preparedLaunchEventSha256 = String(
         preparedArtifact.prepared_launch_event_sha256 || preparedArtifact.preparedLaunchEventSha256 || ''
     ).trim();
+    const reviewerLaunchAttemptId = String(
+        preparedArtifact.reviewer_launch_attempt_id || preparedArtifact.reviewerLaunchAttemptId || ''
+    ).trim();
     fs.writeFileSync(launchArtifactPath, JSON.stringify({
         ...preparedArtifact,
         evidence_type: 'delegated_reviewer_launch',
@@ -598,6 +601,7 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
             reviewer_identity: reviewerIdentity,
             review_context_sha256: reviewContextSha256,
             routing_event_sha256: routingEventSha256,
+            reviewer_launch_attempt_id: reviewerLaunchAttemptId,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedLaunchEventSha256,
             provider_invocation_id: 'test-invocation-265',
@@ -619,6 +623,7 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
             reviewer_identity: reviewerIdentity,
             review_context_sha256: reviewContextSha256,
             routing_event_sha256: routingEventSha256,
+            reviewer_launch_attempt_id: reviewerLaunchAttemptId,
             reviewer_launch_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
             reviewer_launch_artifact_sha256: completedLaunchArtifactSha256,
             provider_invocation_id: 'test-invocation-265',

@@ -177,6 +177,11 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 'launch_binding_sha256',
                 'launchBindingSha256'
             ).toLowerCase();
+            const reviewerLaunchAttemptId = getArtifactStringField(
+                launchArtifact,
+                'reviewer_launch_attempt_id',
+                'reviewerLaunchAttemptId'
+            );
             if (
                 !/^[0-9a-f]{64}$/.test(preparedLaunchEventSha256)
                 || !/^[0-9a-f]{64}$/.test(launchBindingSha256)
@@ -206,11 +211,19 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 })
                 || String(details.routing_event_sha256 || '').trim().toLowerCase() !== routingEventSha256
                 || String(details.launch_binding_sha256 || '').trim().toLowerCase() !== launchBindingSha256
+                || (
+                    reviewerLaunchAttemptId
+                    && getArtifactStringField(details, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId')
+                        !== reviewerLaunchAttemptId
+                )
             ) {
                 continue;
             }
             const evidenceType = getArtifactStringField(launchArtifact, 'evidence_type', 'artifact_type');
             const attestationState = getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState');
+            const artifactDeclaresProviderFailure = evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+                && PROVIDER_FAILED_ATTESTATION_STATES.has(attestationState)
+                && hasDelegationStartedEvidence(launchArtifact);
             const launchArtifactSha256 = fileSha256(launchArtifactPath);
             let artifactState: DelegatedReviewLaunchArtifactState = 'missing_or_invalid';
             if (evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE && attestationState === 'prepared') {
@@ -221,12 +234,8 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 && hasDelegationStartedEvidence(launchArtifact)
             ) {
                 artifactState = 'delegation_started';
-            } else if (
-                evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
-                && PROVIDER_FAILED_ATTESTATION_STATES.has(attestationState)
-                && hasDelegationStartedEvidence(launchArtifact)
-            ) {
-                artifactState = 'provider_failed';
+            } else if (artifactDeclaresProviderFailure) {
+                artifactState = 'delegation_started';
             } else if (
                 evidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
                 && attestationState === 'launched'
@@ -242,6 +251,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                     routingEventSha256,
                     launchBindingSha256,
                     preparedLaunchEventSha256,
+                    reviewerLaunchAttemptId,
                     providerInvocationId: getArtifactStringField(
                         launchArtifact,
                         'provider_invocation_id',
@@ -280,7 +290,8 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                         launchArtifact,
                         'launch_completed_at_utc',
                         'launchCompletedAtUtc'
-                    )
+                    ),
+                    reviewerLaunchAttemptId
                 })
             ) {
                 artifactState = 'launched';
@@ -298,7 +309,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 'delegation_started_at_utc',
                 'delegationStartedAtUtc'
             );
-            const matchingDelegationStarted = artifactState === 'delegation_started' || artifactState === 'provider_failed'
+            const matchingDelegationStarted = artifactState === 'delegation_started'
                 ? findMatchingReviewerDelegationStartedTelemetry({
                     lines,
                     taskId,
@@ -309,6 +320,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                     routingEventSha256,
                     launchBindingSha256,
                     preparedLaunchEventSha256,
+                    reviewerLaunchAttemptId,
                     providerInvocationId: getArtifactStringField(
                         launchArtifact,
                         'provider_invocation_id',
@@ -319,8 +331,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                     delegationStartedAtUtc
                 })
                 : null;
-            if (
-                artifactState === 'delegation_started'
+            const hasMatchingProviderFailure = artifactState === 'delegation_started'
                 && hasMatchingReviewerProviderFailureTelemetry({
                     lines,
                     taskId,
@@ -337,10 +348,16 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                         'controllerInvocationId'
                     ),
                     delegationStartedAtUtc,
-                    delegationStartedSequence: matchingDelegationStarted?.taskSequence ?? null
-                })
+                    delegationStartedSequence: matchingDelegationStarted?.taskSequence ?? null,
+                    reviewerLaunchAttemptId
+                });
+            if (
+                artifactState === 'delegation_started'
+                && hasMatchingProviderFailure
             ) {
                 artifactState = 'provider_failed';
+            } else if (artifactDeclaresProviderFailure) {
+                continue;
             }
             if (artifactState === 'delegation_started' && reviewOutputPath && !fileExists(reviewOutputPath)) {
                 if (hasControllerResumeAfterSequence(lines, matchingDelegationStarted?.taskSequence ?? null)) {

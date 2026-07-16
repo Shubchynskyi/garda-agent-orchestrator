@@ -10,6 +10,7 @@ export {
     emitReviewerDelegationStartedEventAsync,
     emitReviewerInvocationAttestedEventAsync,
     emitReviewerLaunchCompletedEventAsync,
+    emitReviewerLaunchFailedEventAsync,
     emitReviewerLaunchPreparedEventAsync
 } from '../../../../gate-runtime/lifecycle-events';
 export { writeReviewArtifactJson } from '../../../../gate-runtime/review-artifacts';

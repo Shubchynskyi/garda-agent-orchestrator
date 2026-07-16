@@ -177,6 +177,11 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     });
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const reviewerLaunchAttemptId = getStringField(
+        preparedArtifact,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId'
+    );
     const plannedReviewerIdentity = getStringField(
         preparedArtifact,
         'planned_reviewer_identity',
@@ -321,6 +326,7 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         {
             launchDetails: {
                 reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
+                reviewer_launch_attempt_id: reviewerLaunchAttemptId,
                 reviewer_launch_artifact_sha256: completedLaunchArtifactSha256,
                 reviewer_launch_attestation_source: attestationSource,
                 launch_tool: getStringField(completedArtifact, 'launch_tool', 'launchTool'),

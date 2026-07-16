@@ -392,6 +392,13 @@ function buildReviewGateHelpEntries(
                 true
             )
         },
+        'record-reviewer-launch-failed': {
+            ...createSingleUsageEntry(
+                'Terminally mark the current immutable delegation-started reviewer launch attempt as failed before audited review-cycle recovery. The reviewer identity, invocation id, context, routing, and attempt id must match the current launch artifact exactly.',
+                `${cliPrefix} gate record-reviewer-launch-failed --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --reviewer-launch-artifact-path "${buildBundleRelativePath(bundleName, `runtime/tmp/reviews/${TASK_ID_PLACEHOLDER}/<review-type>/reviewer-launch.json`)}" --provider-invocation-id "<provider-owned invocation id>" --failure-reason "<provider/controller failure reason>" --repo-root "."`,
+                true
+            )
+        },
         'complete-reviewer-launch': {
             ...createSingleUsageEntry(
                 'Complete reviewer launch metadata after the delegated reviewer returns; this records completion/finalization and must not redefine the reviewer start timestamp. For launch_artifact_path mode, reuse the same ReviewerLaunchInputArtifactSha256 passed to record-reviewer-delegation-started. The attestation-source placeholder remains provider-owned and must be replaced with the provider launch result.',

@@ -36,6 +36,7 @@ export function findMatchingReviewerDelegationStartedTelemetry(options: {
     routingEventSha256: string;
     launchBindingSha256: string;
     preparedLaunchEventSha256: string;
+    reviewerLaunchAttemptId?: string;
     providerInvocationId: string;
     delegationStartedAtUtc: string;
 }): MatchingReviewerDelegationStartedTelemetry | null {
@@ -68,6 +69,7 @@ export function findMatchingReviewerDelegationStartedTelemetry(options: {
                 })
                 && String(details.review_context_sha256 || details.reviewContextSha256 || '').trim().toLowerCase() === normalizedReviewContextSha256
                 && String(details.routing_event_sha256 || details.routingEventSha256 || '').trim().toLowerCase() === normalizedRoutingEventSha256
+                && (!options.reviewerLaunchAttemptId || getArtifactStringField(details, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId') === options.reviewerLaunchAttemptId)
                 && detailsProviderInvocationId === options.providerInvocationId
                 && String(details.delegation_started_at_utc || details.delegationStartedAtUtc || '').trim() === options.delegationStartedAtUtc
             ) {
@@ -126,6 +128,7 @@ export function hasMatchingReviewerProviderFailureTelemetry(options: {
     providerInvocationId: string;
     delegationStartedAtUtc: string;
     delegationStartedSequence: number | null;
+    reviewerLaunchAttemptId?: string;
 }): boolean {
     if (options.delegationStartedSequence == null) {
         return false;
@@ -175,6 +178,7 @@ export function hasMatchingReviewerProviderFailureTelemetry(options: {
                 })
                 && String(details.review_context_sha256 || details.reviewContextSha256 || '').trim().toLowerCase() === normalizedReviewContextSha256
                 && String(details.routing_event_sha256 || details.routingEventSha256 || '').trim().toLowerCase() === normalizedRoutingEventSha256
+                && (!options.reviewerLaunchAttemptId || getArtifactStringField(details, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId') === options.reviewerLaunchAttemptId)
                 && detailsProviderInvocationId === options.providerInvocationId
                 && String(details.delegation_started_at_utc || details.delegationStartedAtUtc || '').trim() === options.delegationStartedAtUtc
                 && (outcome === 'FAIL' || outcome === 'ERROR' || Boolean(failureReason))
@@ -200,6 +204,7 @@ export function hasMatchingReviewerLaunchCompletedTelemetry(options: {
     providerInvocationId: string;
     delegationStartedAtUtc: string;
     launchCompletedAtUtc: string;
+    reviewerLaunchAttemptId?: string;
 }): boolean {
     const normalizedReviewContextSha256 = options.reviewContextSha256.toLowerCase();
     const normalizedRoutingEventSha256 = options.routingEventSha256.toLowerCase();
@@ -232,6 +237,7 @@ export function hasMatchingReviewerLaunchCompletedTelemetry(options: {
                 })
                 && String(details.review_context_sha256 || details.reviewContextSha256 || '').trim().toLowerCase() === normalizedReviewContextSha256
                 && String(details.routing_event_sha256 || details.routingEventSha256 || '').trim().toLowerCase() === normalizedRoutingEventSha256
+                && (!options.reviewerLaunchAttemptId || getArtifactStringField(details, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId') === options.reviewerLaunchAttemptId)
                 && String(details.reviewer_launch_artifact_sha256 || details.reviewerLaunchArtifactSha256 || '').trim().toLowerCase() === normalizedLaunchArtifactSha256
                 && detailsProviderInvocationId === options.providerInvocationId
                 && String(details.delegation_started_at_utc || details.delegationStartedAtUtc || '').trim() === options.delegationStartedAtUtc

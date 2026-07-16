@@ -14,12 +14,15 @@ import {
     os,
     path,
     prepareCurrentReviewPhase,
+    prepareReviewerLaunchForTest,
     readTaskTimelineEvents,
+    recordReviewerDelegationStartedForTest,
     recordReviewRoutingViaCli,
     reviewContextScopedDiffFixture,
     runCliMainWithHandling,
     runCliWithCapturedOutput,
     seedInitAnswers,
+    seedRoutedReviewerLaunchFixture,
     seedTaskQueue,
     writePreflight
 } from './gates-command-review-launch-fixtures';
@@ -448,6 +451,52 @@ describe('cli/commands/gates review launch routing', () => {
         const routingEvents = readTaskTimelineEvents(repoRoot, taskId)
             .filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED');
         assert.equal(routingEvents.length, 1);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-routing cannot supersede an immutable delegation-started attempt', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-22-routing-inflight';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath,
+            providerInvocationId: 'test-invocation-routing-inflight'
+        });
+        const contextTextBefore = fs.readFileSync(fixture.reviewContextPath, 'utf8');
+        const routedEventCountBefore = readTaskTimelineEvents(repoRoot, taskId)
+            .filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length;
+
+        const reroute = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', 'agent:unrelated-reviewer'
+        ], { cwd: repoRoot });
+
+        assert.notEqual(reroute.exitCode, 0);
+        assert.ok(
+            reroute.errors.some((line) => line.includes('immutable reviewer launch attempt is already delegation_started')),
+            reroute.errors.join('\n')
+        );
+        assert.equal(fs.readFileSync(fixture.reviewContextPath, 'utf8'), contextTextBefore);
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length,
+            routedEventCountBefore
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

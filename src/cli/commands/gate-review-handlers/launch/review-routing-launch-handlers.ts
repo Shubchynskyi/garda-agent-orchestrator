@@ -22,6 +22,8 @@ import { readDependencyTimelineEvents } from '../result/review-dependency-timeli
 import { createPrepareReviewerLaunchHandler } from './review-launch-prepare-handler';
 import { createCompleteReviewerLaunchHandler } from './review-launch-complete-handler';
 import { createReviewerDelegationStartedHandler } from './review-launch-delegation-started-handler';
+import { createReviewerLaunchFailedHandler } from './review-launch-failed-handler';
+import { isCompletedReviewerLaunchAttemptConsumed } from './reviewer-handoff-support';
 import {
     parseReviewerIdentity,
     resolveReviewerIdentityOption
@@ -90,7 +92,10 @@ export function createReviewRoutingLaunchHandlers(deps: ReviewRoutingLaunchHandl
         assertNoCurrentCycleReviewRecordedBeforeRouting,
         assertReviewContextContractOrThrow,
         assertRoutingCompatibility,
+        getStringField,
+        readJsonObjectIfPresent,
         resolveCanonicalPreflightArtifactPath,
+        resolveReviewerLaunchArtifactPathForWrite,
         toReviewerHandoffAbsolutePath
     } = deps;
 
@@ -140,6 +145,65 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
     const preflightSha256 = fileSha256(preflightPath);
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    const launchArtifactPaths = new Set<string>([
+        resolveReviewerLaunchArtifactPathForWrite({
+            repoRoot,
+            taskId,
+            reviewType,
+            artifactPathValue: undefined
+        })
+    ]);
+    for (const timelineEvent of timelineEvents) {
+        if (
+            timelineEvent.event_type !== 'REVIEWER_LAUNCH_PREPARED'
+            && timelineEvent.event_type !== 'REVIEWER_DELEGATION_STARTED'
+            && timelineEvent.event_type !== 'REVIEWER_LAUNCH_COMPLETED'
+            && timelineEvent.event_type !== 'REVIEWER_LAUNCH_FAILED'
+        ) {
+            continue;
+        }
+        const details = timelineEvent.details;
+        if (getStringField(details || {}, 'review_type', 'reviewType').toLowerCase() !== reviewType) {
+            continue;
+        }
+        const artifactPathValue = getStringField(
+            details || {},
+            'reviewer_launch_artifact_path',
+            'reviewerLaunchArtifactPath'
+        );
+        if (artifactPathValue) {
+            launchArtifactPaths.add(resolveReviewerLaunchArtifactPathForWrite({
+                repoRoot,
+                taskId,
+                reviewType,
+                artifactPathValue
+            }));
+        }
+    }
+    for (const launchArtifactPath of launchArtifactPaths) {
+        const currentLaunchArtifact = readJsonObjectIfPresent(launchArtifactPath);
+        if (!currentLaunchArtifact) {
+            continue;
+        }
+        const launchState = getStringField(currentLaunchArtifact, 'attestation_state', 'attestationState');
+        const completedAttemptIsConsumed = launchState === 'launched'
+            && isCompletedReviewerLaunchAttemptConsumed(timelineEvents, currentLaunchArtifact);
+        if (
+            launchState === 'prepared'
+            || launchState === 'delegation_started'
+            || (launchState === 'launched' && !completedAttemptIsConsumed)
+        ) {
+            const attemptId = getStringField(
+                currentLaunchArtifact,
+                'reviewer_launch_attempt_id',
+                'reviewerLaunchAttemptId'
+            ) || 'legacy-unidentified';
+            throw new Error(
+                `The immutable reviewer launch attempt is already ${launchState} for '${reviewType}' ` +
+                `(attempt '${attemptId}'). Complete the current attempt or record-reviewer-launch-failed before rerouting.`
+            );
+        }
+    }
     assertRequiredUpstreamReviewDependencies({
         taskId,
         preflightPath,
@@ -259,11 +323,13 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
     const handlePrepareReviewerLaunch = createPrepareReviewerLaunchHandler(deps);
     const handleCompleteReviewerLaunch = createCompleteReviewerLaunchHandler(deps);
     const handleRecordReviewerDelegationStarted = createReviewerDelegationStartedHandler(deps);
+    const handleRecordReviewerLaunchFailed = createReviewerLaunchFailedHandler(deps);
 
     return {
         handleRecordReviewRouting,
         handlePrepareReviewerLaunch,
         handleRecordReviewerDelegationStarted,
+        handleRecordReviewerLaunchFailed,
         handleCompleteReviewerLaunch
     };
 }

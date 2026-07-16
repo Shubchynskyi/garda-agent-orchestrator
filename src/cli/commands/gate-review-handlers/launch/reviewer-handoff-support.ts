@@ -20,6 +20,70 @@ import {
     getStringField,
     toReviewerHandoffAbsolutePath
 } from '../support/review-handler-common';
+import { type ReviewDependencyTimelineEvent } from '../../../../gates/review/review-dependencies';
+
+export function isCompletedReviewerLaunchAttemptConsumed(
+    timelineEvents: ReviewDependencyTimelineEvent[],
+    launchArtifact: Record<string, unknown>
+): boolean {
+    const attemptId = getStringField(
+        launchArtifact,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId'
+    ).toLowerCase();
+    const reviewType = getStringField(launchArtifact, 'review_type', 'reviewType').toLowerCase();
+    const reviewerIdentity = getStringField(
+        launchArtifact,
+        'reviewer_identity',
+        'reviewerIdentity'
+    );
+    const reviewContextSha256 = getStringField(
+        launchArtifact,
+        'review_context_sha256',
+        'reviewContextSha256'
+    ).toLowerCase();
+    if (!attemptId || !reviewType || !reviewerIdentity || !reviewContextSha256) {
+        return false;
+    }
+
+    const completionEvent = timelineEvents.find((event) => {
+        if (event.event_type !== 'REVIEWER_LAUNCH_COMPLETED' || !event.details) {
+            return false;
+        }
+        return getStringField(
+            event.details,
+            'reviewer_launch_attempt_id',
+            'reviewerLaunchAttemptId'
+        ).toLowerCase() === attemptId
+            && getStringField(event.details, 'review_type', 'reviewType').toLowerCase() === reviewType
+            && getStringField(event.details, 'reviewer_identity', 'reviewerIdentity') === reviewerIdentity
+            && getStringField(
+                event.details,
+                'review_context_sha256',
+                'reviewContextSha256'
+            ).toLowerCase() === reviewContextSha256;
+    });
+    if (!completionEvent) {
+        return false;
+    }
+
+    return timelineEvents.some((event) => {
+        if (
+            event.sequence <= completionEvent.sequence
+            || event.event_type !== 'REVIEW_RECORDED'
+            || !event.details
+        ) {
+            return false;
+        }
+        return getStringField(event.details, 'review_type', 'reviewType').toLowerCase() === reviewType
+            && getStringField(event.details, 'reviewer_identity', 'reviewerIdentity') === reviewerIdentity
+            && getStringField(
+                event.details,
+                'review_context_sha256',
+                'reviewContextSha256'
+            ).toLowerCase() === reviewContextSha256;
+    });
+}
 
 export interface ReviewerHandoffBindings {
     rolePromptPath: string | null;
@@ -61,6 +125,7 @@ export function buildReviewerCompletenessCheckNotice(executionProvider: unknown)
 
 export interface ReviewerLaunchInputHandoffArtifactOptions extends ReviewerLaunchPromptOptions {
     taskId: string;
+    reviewerLaunchAttemptId: string;
     reviewerExecutionMode: 'delegated_subagent';
     reviewerIdentity: string;
     reviewContextPath: string;
@@ -289,6 +354,7 @@ export function buildReviewerLaunchInputHandoffArtifact(
         artifact_type: 'delegated_reviewer_handoff',
         handoff_role: 'delegated_reviewer',
         task_id: options.taskId,
+        reviewer_launch_attempt_id: options.reviewerLaunchAttemptId,
         review_type: options.reviewType,
         reviewer_execution_mode: options.reviewerExecutionMode,
         reviewer_identity: options.reviewerIdentity,

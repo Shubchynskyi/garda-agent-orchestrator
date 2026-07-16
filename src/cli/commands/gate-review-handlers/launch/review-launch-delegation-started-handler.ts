@@ -206,6 +206,11 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     });
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const reviewerLaunchAttemptId = getStringField(
+        preparedArtifact,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId'
+    );
     const plannedReviewerIdentity = getStringField(
         preparedArtifact,
         'planned_reviewer_identity',
@@ -368,6 +373,7 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         {
             launchDetails: {
                 reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
+                reviewer_launch_attempt_id: reviewerLaunchAttemptId,
                 reviewer_launch_artifact_sha256: startedLaunchArtifactSha256,
                 reviewer_launch_input_artifact_path: normalizePath(launchInputArtifactPath),
                 reviewer_launch_attestation_source: attestationSource,
@@ -406,6 +412,7 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     console.log('');
     console.log(`REVIEWER_DELEGATION_STARTED: ${reviewType}`);
     console.log(`ReviewerIdentity: ${reviewerIdentity}`);
+    console.log(`ReviewerLaunchAttemptId: ${reviewerLaunchAttemptId}`);
     console.log(`LaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
     console.log(`LaunchArtifactSha256: ${startedLaunchArtifactSha256}`);
     console.log(`${invocationIdLabel}: ${invocationId}`);

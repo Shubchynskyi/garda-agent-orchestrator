@@ -128,6 +128,11 @@ export function validateReviewerLaunchArtifact(options: {
     const routingEventSha256 = String(
         artifact.routing_event_sha256 || artifact.routingEventSha256 || ''
     ).trim().toLowerCase();
+    const reviewerLaunchAttemptId = getStringField(
+        artifact,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId'
+    ).toLowerCase();
     const attestationSource = String(
         artifact.attestation_source || artifact.attestationSource || artifact.source || ''
     ).trim().toLowerCase();
@@ -215,6 +220,9 @@ export function validateReviewerLaunchArtifact(options: {
         || artifact.fork_context === false
         || artifact.forkContext === false;
     const violations: string[] = [];
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(reviewerLaunchAttemptId)) {
+        violations.push('reviewer_launch_attempt_id must be an immutable UUID v4');
+    }
     if (schemaVersion !== 1) {
         violations.push('schema_version must be 1');
     }
@@ -396,6 +404,7 @@ export function validateReviewerLaunchArtifact(options: {
             reviewerIdentity: launchBindingReviewerIdentity,
             reviewContextSha256: options.reviewContextSha256,
             routingEventSha256: options.routingEventSha256,
+            reviewerLaunchAttemptId,
             launchBindingSha256: expectedLaunchBindingSha256,
             preparedLaunchEventSha256,
             minSequenceExclusive: options.routingEventSequence
@@ -442,6 +451,7 @@ export function validateReviewerLaunchArtifact(options: {
             reviewerIdentity: launchBindingReviewerIdentity,
             reviewContextSha256: options.reviewContextSha256,
             routingEventSha256: options.routingEventSha256,
+            reviewerLaunchAttemptId,
             launchBindingSha256: expectedLaunchBindingSha256,
             preparedLaunchEventSha256,
             providerInvocationId,
@@ -472,6 +482,7 @@ export function validateReviewerLaunchArtifact(options: {
             reviewerIdentity: launchBindingReviewerIdentity,
             reviewContextSha256: options.reviewContextSha256,
             routingEventSha256: options.routingEventSha256,
+            reviewerLaunchAttemptId,
             reviewerLaunchArtifactSha256,
             providerInvocationId,
             delegationStartedAtUtc,

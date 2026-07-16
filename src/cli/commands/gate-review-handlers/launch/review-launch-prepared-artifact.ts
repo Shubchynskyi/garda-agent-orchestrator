@@ -42,6 +42,7 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
     reviewTreeStateSha256: string | null;
     launchBindingSha256: string;
     reviewerLaunchInputArtifactSha256?: string | null;
+    reviewerLaunchAttemptId: string;
     recordReviewerDelegationStartedCommand?: string | null;
     completeReviewerLaunchCommand?: string | null;
     routingEventSequence: number;
@@ -70,6 +71,7 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
         copyPasteReviewerLaunchPrompt: options.copyPasteReviewerLaunchPrompt,
         copyPasteReviewerLaunchPromptSha256: options.copyPasteReviewerLaunchPromptSha256,
         reviewTreeStateSha256: options.reviewTreeStateSha256,
+        reviewerLaunchAttemptId: options.reviewerLaunchAttemptId,
         launchBindingSha256: options.launchBindingSha256,
         preparedLaunchEventSha256,
         routingEventSequence: options.routingEventSequence,
@@ -83,6 +85,14 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
     }
     if (attestationState !== 'prepared') {
         mismatches.push('attestation_state mismatch');
+    }
+    const reviewerLaunchAttemptId = getStringField(
+        options.artifact,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId'
+    );
+    if (reviewerLaunchAttemptId !== options.reviewerLaunchAttemptId) {
+        mismatches.push('reviewer_launch_attempt_id mismatch');
     }
     if (getStringField(options.artifact, 'attestation_source', 'attestationSource', 'source') !== PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE) {
         mismatches.push('attestation_source mismatch');
@@ -195,6 +205,14 @@ export function assertPreparedReviewerLaunchArtifact(options: {
         })
         : '';
     const violations: string[] = [];
+    const reviewerLaunchAttemptId = getStringField(
+        artifact,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId'
+    );
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(reviewerLaunchAttemptId)) {
+        violations.push('reviewer_launch_attempt_id must be an immutable UUID v4');
+    }
     if (Number(artifact.schema_version) !== 1) {
         violations.push('schema_version must be 1');
     }
@@ -292,6 +310,18 @@ export function assertPreparedReviewerLaunchArtifact(options: {
             ).toLowerCase();
             if (actualInputArtifactSha256 !== options.reviewerLaunchInputArtifactSha256.toLowerCase()) {
                 violations.push('reviewer_launch_input_artifact_sha256 must match the immutable reviewer launch input artifact hash');
+            }
+        }
+        if (fs.existsSync(options.reviewerLaunchInputArtifactPath)) {
+            const launchInputArtifact = readJsonFile(
+                options.reviewerLaunchInputArtifactPath,
+                'Reviewer launch input artifact'
+            );
+            if (
+                getStringField(launchInputArtifact, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId')
+                !== reviewerLaunchAttemptId
+            ) {
+                violations.push('reviewer launch input artifact must bind the same reviewer_launch_attempt_id');
             }
         }
     }

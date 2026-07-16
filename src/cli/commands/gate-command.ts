@@ -21,6 +21,7 @@ import {
     handleRecordReviewRouting,
     handlePrepareReviewerLaunch,
     handleRecordReviewerDelegationStarted,
+    handleRecordReviewerLaunchFailed,
     handleCompleteReviewerLaunch,
     handleRecordReviewInvocation,
     handleRecordReviewReceipt,
@@ -173,6 +174,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handlePrepareReviewerLaunch(gateArgv);
         case 'record-reviewer-delegation-started':
             return handleRecordReviewerDelegationStarted(gateArgv);
+        case 'record-reviewer-launch-failed':
+            return handleRecordReviewerLaunchFailed(gateArgv);
         case 'complete-reviewer-launch':
             return handleCompleteReviewerLaunch(gateArgv);
         case 'record-review-invocation':

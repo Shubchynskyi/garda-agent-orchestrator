@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import {
     buildReviewReceiptReviewerProvenance,
     assertReviewLifecycleGuard,
@@ -33,6 +34,7 @@ import {
 } from '../../shared-command-utils';
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
+import { isCompletedReviewerLaunchAttemptConsumed } from './reviewer-handoff-support';
 type SupersededReviewerLaunchArtifactSnapshot = import('../index').SupersededReviewerLaunchArtifactSnapshot;
 
 export type PrepareReviewerLaunchHandler = (gateArgv: string[]) => Promise<void>;
@@ -236,6 +238,32 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     });
     const launchInputArtifactPath = resolveReviewerLaunchInputArtifactPath(launchArtifactPath);
     const existingArtifact = readJsonObjectIfPresent(launchArtifactPath);
+    const existingAttestationState = existingArtifact
+        ? getStringField(existingArtifact, 'attestation_state', 'attestationState')
+        : '';
+    const existingLaunchAttemptId = existingArtifact
+        ? getStringField(existingArtifact, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId')
+        : '';
+    if (existingAttestationState === 'delegation_started') {
+        throw new Error(
+            `The immutable reviewer launch attempt is already delegation_started for '${reviewType}'. ` +
+            'Complete it or record-reviewer-launch-failed before preparing another attempt.'
+        );
+    }
+    if (
+        existingAttestationState === 'launched'
+        && existingArtifact
+        && !isCompletedReviewerLaunchAttemptConsumed(timelineEvents, existingArtifact)
+    ) {
+        throw new Error(
+            `The immutable reviewer launch attempt is already launched for '${reviewType}'. ` +
+            'Record its invocation/result instead of preparing another attempt.'
+        );
+    }
+    const reviewerLaunchAttemptId = existingAttestationState === 'prepared'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(existingLaunchAttemptId)
+        ? existingLaunchAttemptId.toLowerCase()
+        : randomUUID();
 
     const promptBinding = resolveReviewerPromptArtifactBinding({
         repoRoot,
@@ -267,6 +295,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const reviewOutputAttemptSha256 = stringSha256(JSON.stringify({
         task_id: taskId,
         review_type: reviewType,
+        reviewer_launch_attempt_id: reviewerLaunchAttemptId,
         reviewer_execution_mode: reviewerExecutionMode,
         reviewer_identity: reviewerIdentity,
         review_context_sha256: contextSha256,
@@ -283,7 +312,6 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     let supersededLaunchArtifact: SupersededReviewerLaunchArtifactSnapshot | null = null;
     if (existingArtifact) {
         const existingEvidenceType = getStringField(existingArtifact, 'evidence_type', 'artifact_type');
-        const existingAttestationState = getStringField(existingArtifact, 'attestation_state', 'attestationState');
         const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath, reviewOutputAttemptSha256);
         const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
             repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
@@ -311,6 +339,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
             executionProvider: providerLaunch.provider,
             taskId,
+            reviewerLaunchAttemptId,
             reviewType,
             reviewerExecutionMode,
             reviewerIdentity,
@@ -379,6 +408,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             reviewTreeStateSha256: reviewTreeStateSha256 || null,
             launchBindingSha256,
             reviewerLaunchInputArtifactSha256: expectedLaunchInputArtifactSha256,
+            reviewerLaunchAttemptId,
             recordReviewerDelegationStartedCommand,
             completeReviewerLaunchCommand,
             routingEventSequence: routingEvent.sequence,
@@ -408,6 +438,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`RoutingEventSha256: ${routingEventProvenance.event_sha256}`);
             console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
             console.log(`PreparedLaunchEventSha256: ${getStringField(existingArtifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256')}`);
+            console.log(`ReviewerLaunchAttemptId: ${reviewerLaunchAttemptId}`);
             if (handoffBindings.rolePromptPath) {
                 console.log(`RolePromptPath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)}`);
             }
@@ -442,6 +473,16 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
             console.log(`NextStep: existing reviewer launch metadata is current; ${buildReviewerLaunchNextAction()}`);
             return;
+        }
+        if (
+            existingEvidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+            && existingAttestationState === 'prepared'
+            && existingLaunchAttemptId
+        ) {
+            throw new Error(
+                `Prepared reviewer launch attempt '${existingLaunchAttemptId}' is immutable and no longer matches ` +
+                `the requested '${reviewType}' routing/context. Record-reviewer-launch-failed before creating a new audited attempt.`
+            );
         }
         if (
             existingEvidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
@@ -509,6 +550,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const copyPasteReviewerLaunchPromptSha256 = stringSha256(copyPasteReviewerLaunchPrompt);
     const launchPreparedAtUtc = new Date().toISOString();
     const preservePreparedFields = [
+        'reviewer_launch_attempt_id',
         'review_context_sha256',
         'routing_event_sha256',
         'reviewer_prompt_sha256',
@@ -532,6 +574,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         evidence_type: PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
         attestation_state: 'prepared',
         task_id: taskId,
+        reviewer_launch_attempt_id: reviewerLaunchAttemptId,
         review_type: reviewType,
         reviewer_execution_mode: reviewerExecutionMode,
         reviewer_identity: reviewerIdentity,
@@ -609,6 +652,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         {
             launchDetails: {
                 reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
+                reviewer_launch_attempt_id: reviewerLaunchAttemptId,
                 reviewer_launch_input_artifact_path: normalizePath(launchInputArtifactPath),
                 reviewer_prompt_path: normalizePath(promptPath),
                 reviewer_prompt_sha256: reviewerPromptSha256,
@@ -651,6 +695,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
         executionProvider: providerLaunch.provider,
         taskId,
+        reviewerLaunchAttemptId,
         reviewType,
         reviewerExecutionMode,
         reviewerIdentity,
@@ -759,6 +804,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`RoutingEventSha256: ${routingEventProvenance.event_sha256}`);
     console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
     console.log(`PreparedLaunchEventSha256: ${preparedLaunchEventSha256}`);
+    console.log(`ReviewerLaunchAttemptId: ${reviewerLaunchAttemptId}`);
     if (handoffBindings.rolePromptPath) {
         console.log(`RolePromptPath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)}`);
     }

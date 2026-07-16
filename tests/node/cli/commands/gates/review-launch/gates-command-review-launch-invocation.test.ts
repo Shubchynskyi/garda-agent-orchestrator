@@ -45,6 +45,10 @@ function appendReviewerLaunchCompletedForTest(options: {
     launchCompletedAtUtc?: string;
 }): void {
     const launchCompletedAtUtc = options.launchCompletedAtUtc || TEST_LAUNCH_COMPLETED_AT_UTC;
+    const launchArtifact = JSON.parse(fs.readFileSync(options.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+    const reviewerLaunchAttemptId = String(
+        launchArtifact.reviewer_launch_attempt_id || launchArtifact.reviewerLaunchAttemptId || ''
+    ).trim();
     appendTaskEvent(
         getOrchestratorRoot(options.repoRoot),
         options.taskId,
@@ -59,6 +63,7 @@ function appendReviewerLaunchCompletedForTest(options: {
             reviewer_identity: options.reviewerIdentity,
             review_context_sha256: options.reviewContextSha256,
             routing_event_sha256: options.routingEventSha256,
+            reviewer_launch_attempt_id: reviewerLaunchAttemptId,
             reviewer_launch_artifact_path: options.launchArtifactPath.replace(/\\/g, '/'),
             reviewer_launch_artifact_sha256: fileSha256ForTest(options.launchArtifactPath),
             provider_invocation_id: options.providerInvocationId,

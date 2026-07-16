@@ -161,6 +161,7 @@ export function getReviewerLaunchArtifactMismatchReasons(
         copyPasteReviewerLaunchPrompt?: string | null;
         copyPasteReviewerLaunchPromptSha256?: string | null;
         reviewTreeStateSha256: string | null;
+        reviewerLaunchAttemptId?: string | null;
         launchBindingSha256: string;
         preparedLaunchEventSha256: string;
         routingEventSequence: number;
@@ -262,6 +263,7 @@ export function getReviewerLaunchArtifactMismatchReasons(
             reviewerIdentity: options.reviewerIdentity,
             reviewContextSha256: options.reviewContextSha256,
             routingEventSha256: options.routingEventSha256,
+            reviewerLaunchAttemptId: options.reviewerLaunchAttemptId,
             launchBindingSha256: options.launchBindingSha256,
             preparedLaunchEventSha256: options.preparedLaunchEventSha256,
             minSequenceExclusive: options.routingEventSequence
@@ -281,6 +283,7 @@ export function findMatchingReviewerLaunchPreparedEvent(
         reviewerIdentity: string;
         reviewContextSha256: string;
         routingEventSha256: string;
+        reviewerLaunchAttemptId?: string | null;
         launchBindingSha256: string;
         preparedLaunchEventSha256: string;
         minSequenceExclusive: number;
@@ -290,6 +293,7 @@ export function findMatchingReviewerLaunchPreparedEvent(
     const normalizedTaskId = String(options.taskId || '').trim();
     const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
+    const normalizedReviewerLaunchAttemptId = String(options.reviewerLaunchAttemptId || '').trim().toLowerCase();
     const normalizedLaunchBindingSha256 = String(options.launchBindingSha256 || '').trim().toLowerCase();
     const normalizedPreparedLaunchEventSha256 = String(options.preparedLaunchEventSha256 || '').trim().toLowerCase();
     for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
@@ -305,6 +309,9 @@ export function findMatchingReviewerLaunchPreparedEvent(
         const detailsLaunchBindingSha256 = String(details?.launch_binding_sha256 || details?.launchBindingSha256 || '')
             .trim()
             .toLowerCase();
+        const detailsReviewerLaunchAttemptId = String(
+            details?.reviewer_launch_attempt_id || details?.reviewerLaunchAttemptId || ''
+        ).trim().toLowerCase();
         const detailsReviewerIdentity = String(
             (details?.reviewer_session_id ?? details?.reviewerSessionId ?? details?.reviewer_identity ?? details?.reviewerIdentity) || ''
         ).trim();
@@ -322,6 +329,7 @@ export function findMatchingReviewerLaunchPreparedEvent(
             })
             && detailsReviewContextSha256 === normalizedReviewContextSha256
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
+            && (!normalizedReviewerLaunchAttemptId || detailsReviewerLaunchAttemptId === normalizedReviewerLaunchAttemptId)
             && detailsLaunchBindingSha256 === normalizedLaunchBindingSha256
             && entry.integrity?.event_sha256 === normalizedPreparedLaunchEventSha256
         ) {
@@ -340,6 +348,7 @@ export function findMatchingReviewerDelegationStartedEvent(
         reviewerIdentity: string;
         reviewContextSha256: string;
         routingEventSha256: string;
+        reviewerLaunchAttemptId?: string | null;
         launchBindingSha256: string;
         preparedLaunchEventSha256: string;
         providerInvocationId: string;
@@ -351,6 +360,7 @@ export function findMatchingReviewerDelegationStartedEvent(
     const normalizedTaskId = String(options.taskId || '').trim();
     const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
+    const normalizedReviewerLaunchAttemptId = String(options.reviewerLaunchAttemptId || '').trim().toLowerCase();
     const normalizedProviderInvocationId = String(options.providerInvocationId || '').trim();
     const normalizedDelegationStartedAtUtc = String(options.delegationStartedAtUtc || '').trim();
     for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
@@ -370,6 +380,9 @@ export function findMatchingReviewerDelegationStartedEvent(
                 || details?.controllerInvocationId
                 || ''
         ).trim();
+        const detailsReviewerLaunchAttemptId = String(
+            details?.reviewer_launch_attempt_id || details?.reviewerLaunchAttemptId || ''
+        ).trim().toLowerCase();
         const detailsDelegationStartedAtUtc = String(
             details?.delegation_started_at_utc || details?.delegationStartedAtUtc || ''
         ).trim();
@@ -390,6 +403,7 @@ export function findMatchingReviewerDelegationStartedEvent(
             })
             && detailsReviewContextSha256 === normalizedReviewContextSha256
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
+            && (!normalizedReviewerLaunchAttemptId || detailsReviewerLaunchAttemptId === normalizedReviewerLaunchAttemptId)
             && detailsProviderInvocationId === normalizedProviderInvocationId
             && detailsDelegationStartedAtUtc === normalizedDelegationStartedAtUtc
         ) {
@@ -408,6 +422,7 @@ export function findMatchingReviewerLaunchCompletedEvent(
         reviewerIdentity: string;
         reviewContextSha256: string;
         routingEventSha256: string;
+        reviewerLaunchAttemptId?: string | null;
         reviewerLaunchArtifactSha256: string;
         providerInvocationId: string;
         delegationStartedAtUtc: string;
@@ -419,6 +434,7 @@ export function findMatchingReviewerLaunchCompletedEvent(
     const normalizedTaskId = String(options.taskId || '').trim();
     const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
+    const normalizedReviewerLaunchAttemptId = String(options.reviewerLaunchAttemptId || '').trim().toLowerCase();
     const normalizedReviewerLaunchArtifactSha256 = String(options.reviewerLaunchArtifactSha256 || '').trim().toLowerCase();
     const normalizedProviderInvocationId = String(options.providerInvocationId || '').trim();
     const normalizedDelegationStartedAtUtc = String(options.delegationStartedAtUtc || '').trim();
@@ -435,6 +451,9 @@ export function findMatchingReviewerLaunchCompletedEvent(
             .toLowerCase();
         const detailsReviewerLaunchArtifactSha256 = String(
             details?.reviewer_launch_artifact_sha256 || details?.reviewerLaunchArtifactSha256 || ''
+        ).trim().toLowerCase();
+        const detailsReviewerLaunchAttemptId = String(
+            details?.reviewer_launch_attempt_id || details?.reviewerLaunchAttemptId || ''
         ).trim().toLowerCase();
         const detailsProviderInvocationId = String(
             details?.provider_invocation_id
@@ -466,6 +485,7 @@ export function findMatchingReviewerLaunchCompletedEvent(
             })
             && detailsReviewContextSha256 === normalizedReviewContextSha256
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
+            && (!normalizedReviewerLaunchAttemptId || detailsReviewerLaunchAttemptId === normalizedReviewerLaunchAttemptId)
             && detailsReviewerLaunchArtifactSha256 === normalizedReviewerLaunchArtifactSha256
             && detailsProviderInvocationId === normalizedProviderInvocationId
             && detailsDelegationStartedAtUtc === normalizedDelegationStartedAtUtc

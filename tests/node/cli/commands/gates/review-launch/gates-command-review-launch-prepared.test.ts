@@ -12,6 +12,7 @@ import {
     it,
     path,
     prepareCurrentReviewPhase,
+    recordReviewerDelegationStartedForTest,
     readTaskTimelineEvents,
     runCliMainWithHandling,
     runCliWithCapturedOutput,
@@ -21,6 +22,7 @@ import {
     seedTaskQueue,
     writePreflight
 } from './gates-command-review-launch-fixtures';
+import { isCompletedReviewerLaunchAttemptConsumed } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
 
 const FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE = [
     'STANDBY',
@@ -45,6 +47,42 @@ function assertNoDefaultReviewerReservationGuidance(text: string): void {
         );
     }
 }
+
+describe('completed reviewer launch attempt lifecycle', () => {
+    it('treats a completed attempt as replaceable only after its matching review result is recorded', () => {
+        const attemptId = '2d594f42-616c-4cf4-bcc6-acad476f63c1';
+        const artifact = {
+            reviewer_launch_attempt_id: attemptId,
+            review_type: 'code',
+            reviewer_identity: 'agent:completed-reviewer',
+            review_context_sha256: 'a'.repeat(64)
+        };
+        const completedEvent = {
+            event_type: 'REVIEWER_LAUNCH_COMPLETED',
+            sequence: 3,
+            details: {
+                reviewer_launch_attempt_id: attemptId,
+                review_type: 'code',
+                reviewer_identity: 'agent:completed-reviewer',
+                review_context_sha256: 'a'.repeat(64)
+            },
+            integrity: null
+        };
+        const recordedEvent = {
+            event_type: 'REVIEW_RECORDED',
+            sequence: 5,
+            details: {
+                review_type: 'code',
+                reviewer_identity: 'agent:completed-reviewer',
+                review_context_sha256: 'a'.repeat(64)
+            },
+            integrity: null
+        };
+
+        assert.equal(isCompletedReviewerLaunchAttemptConsumed([completedEvent], artifact), false);
+        assert.equal(isCompletedReviewerLaunchAttemptConsumed([completedEvent, recordedEvent], artifact), true);
+    });
+});
 
 function enableAfterCompileFullSuiteEvidence(repoRoot: string, taskId: string, preflightPath: string): void {
     fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), JSON.stringify({
@@ -122,6 +160,10 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(launchArtifact.schema_version, 1);
         assert.equal(launchArtifact.evidence_type, 'delegated_reviewer_launch_preparation');
         assert.equal(launchArtifact.attestation_state, 'prepared');
+        assert.match(
+            launchArtifact.reviewer_launch_attempt_id,
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+        );
         assert.equal(launchArtifact.task_id, taskId);
         assert.equal(launchArtifact.review_type, 'code');
         assert.equal(launchArtifact.reviewer_identity, fixture.reviewerIdentity);
@@ -215,6 +257,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(launchInputArtifact.handoff_role, 'delegated_reviewer');
         assert.equal(launchInputArtifact.task_id, taskId);
         assert.equal(launchInputArtifact.review_type, 'code');
+        assert.equal(launchInputArtifact.reviewer_launch_attempt_id, launchArtifact.reviewer_launch_attempt_id);
         assert.equal(launchInputArtifact.copy_paste_reviewer_launch_prompt, launchArtifact.copy_paste_reviewer_launch_prompt);
         assert.equal(launchInputArtifact.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes(`PromptTemplatePath: ${fixture.promptTemplatePath.replace(/\\/g, '/')}`));
@@ -259,6 +302,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Do not run Garda workflow/navigation/validation gates such as next-step'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Only read the artifacts named in this handoff and write the completed review JSON to the single ReviewOutputPath'));
         assert.deepEqual(launchArtifact.preserve_prepared_fields, [
+            'reviewer_launch_attempt_id',
             'review_context_sha256',
             'routing_event_sha256',
             'reviewer_prompt_sha256',
@@ -355,7 +399,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('Do not open or summarize the generated review-context markdown')));
         assert.ok(capturedLogs.some((line) => line.includes('RequiredCompletedFields:')));
         assert.ok(capturedLogs.some((line) => line.includes('launch_input_sha256=<ReviewerLaunchInputArtifactSha256 for launch_artifact_path, or CopyPasteReviewerLaunchPromptSha256>')));
-        assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
+        assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: reviewer_launch_attempt_id, review_context_sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));
         assert.ok(capturedLogs.some((line) => line.includes(`--launch-input-artifact-path '${commandLaunchInputArtifactPath}'`)));
         assert.ok(capturedLogs.some((line) => line.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`)));
@@ -825,23 +869,33 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         ], { cwd: repoRoot });
         assert.equal(firstPrepare.exitCode, 0, firstPrepare.errors.join('\n'));
         const firstArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
-        const firstArtifactSha256 = createHash('sha256').update(firstArtifactText, 'utf8').digest('hex');
         const firstArtifact = JSON.parse(firstArtifactText);
+        const firstLaunchAttemptId = String(firstArtifact.reviewer_launch_attempt_id);
         const firstReviewOutputPath = String(firstArtifact.review_output_path);
         const staleReviewOutputText = '# code review Output Template\n\n## Validation Notes\nfirst attempt\n';
         fs.writeFileSync(firstReviewOutputPath, staleReviewOutputText, 'utf8');
 
-        const replacementReviewerIdentity = 'agent:test-reviewer-retry';
-        const reroute = await runCliWithCapturedOutput([
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-first-attempt'
+        });
+        const failedLaunch = await runCliWithCapturedOutput([
             'gate',
-            'record-review-routing',
+            'record-reviewer-launch-failed',
             '--task-id', taskId,
             '--review-type', 'code',
             '--repo-root', repoRoot,
             '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', replacementReviewerIdentity
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-first-attempt',
+            '--failure-reason', 'Provider terminated the delegated reviewer before output was available.'
         ], { cwd: repoRoot });
-        assert.equal(reroute.exitCode, 0, reroute.errors.join('\n'));
+        assert.equal(failedLaunch.exitCode, 0, failedLaunch.errors.join('\n'));
+        const failedArtifactSha256 = fileSha256ForTest(launchArtifactPath);
 
         const secondPrepare = await runCliWithCapturedOutput([
             'gate',
@@ -850,12 +904,13 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             '--review-type', 'code',
             '--repo-root', repoRoot,
             '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', replacementReviewerIdentity,
+            '--reviewer-identity', fixture.reviewerIdentity,
             '--reviewer-launch-artifact-path', launchArtifactPath
         ], { cwd: repoRoot });
         assert.equal(secondPrepare.exitCode, 0, secondPrepare.errors.join('\n'));
 
         const secondArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        assert.notEqual(secondArtifact.reviewer_launch_attempt_id, firstLaunchAttemptId);
         const secondReviewOutputPath = String(secondArtifact.review_output_path);
         assert.match(path.basename(secondReviewOutputPath), /^review-output-[0-9a-f]{16}\.md$/);
         assert.notEqual(secondReviewOutputPath, firstReviewOutputPath);
@@ -863,13 +918,13 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(fs.existsSync(secondReviewOutputPath), false);
         assert.ok(String(secondArtifact.copy_paste_reviewer_launch_prompt).includes(secondReviewOutputPath));
         assert.equal(String(secondArtifact.copy_paste_reviewer_launch_prompt).includes(firstReviewOutputPath), false);
-        assert.equal(secondArtifact.superseded_launch_artifact.artifact_sha256, firstArtifactSha256);
+        assert.equal(secondArtifact.superseded_launch_artifact.artifact_sha256, failedArtifactSha256);
         assert.equal(
             fs.existsSync(String(secondArtifact.superseded_launch_artifact.snapshot_path).replace(/\//g, path.sep)),
             true
         );
         assert.ok(
-            secondArtifact.superseded_launch_artifact.mismatches.includes('reviewer_identity mismatch'),
+            secondArtifact.superseded_launch_artifact.mismatches.includes('attestation_state mismatch'),
             secondArtifact.superseded_launch_artifact.superseded_reason
         );
 
@@ -906,6 +961,8 @@ describe('cli/commands/gates review launch prepared metadata', () => {
 
         assert.equal(await runPrepare(), 0);
         const firstArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
+        const firstArtifact = JSON.parse(firstArtifactText) as Record<string, unknown>;
+        assert.match(String(firstArtifact.reviewer_launch_attempt_id), /^[0-9a-f-]{36}$/);
         const firstArtifactSha256 = createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex');
         const firstPreparedEvents = readTaskTimelineEvents(repoRoot, taskId)
             .filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length;
@@ -947,6 +1004,63 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
         assertNoDefaultReviewerReservationGuidance(capturedLogs.join('\n'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch cannot replace an immutable delegation-started attempt', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-22-prepare-inflight';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        const firstPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(firstPrepare.exitCode, 0, firstPrepare.errors.join('\n'));
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-inflight'
+        });
+        const startedArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
+        const preparedEventCount = readTaskTimelineEvents(repoRoot, taskId)
+            .filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length;
+
+        const repeatedPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(repeatedPrepare.exitCode, 0);
+        assert.ok(
+            repeatedPrepare.errors.some((line) => line.includes('immutable reviewer launch attempt is already delegation_started')),
+            repeatedPrepare.errors.join('\n')
+        );
+        assert.equal(fs.readFileSync(launchArtifactPath, 'utf8'), startedArtifactText);
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length,
+            preparedEventCount
+        );
+        assert.equal(
+            fs.readdirSync(path.dirname(launchArtifactPath)).some((entry) => entry.includes('-superseded-')),
+            false
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1020,6 +1134,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
 
         assert.equal(await runPrepare(), 0);
         const legacyArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        delete legacyArtifact.reviewer_launch_attempt_id;
         delete legacyArtifact.review_output_path;
         delete legacyArtifact.copy_paste_reviewer_launch_prompt;
         fs.writeFileSync(launchArtifactPath, `${JSON.stringify(legacyArtifact, null, 2)}\n`, 'utf8');

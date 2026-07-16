@@ -277,6 +277,78 @@ describe('cli/commands/gates review launch completion', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-reviewer-launch-failed terminally closes the immutable attempt before recovery', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-22-explicit-launch-failure';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+        const preparedArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        const attemptId = String(preparedArtifact.reviewer_launch_attempt_id);
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath,
+            providerInvocationId: 'test-invocation-explicit-failure'
+        });
+
+        const failure = await runCliWithCapturedOutput([
+            'gate',
+            'record-reviewer-launch-failed',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-explicit-failure',
+            '--failure-reason', 'Provider terminated the delegated reviewer before output was available.'
+        ], { cwd: repoRoot });
+
+        assert.equal(failure.exitCode, 0, failure.errors.join('\n'));
+        assert.ok(failure.logs.some((line) => line.includes('REVIEWER_LAUNCH_FAILED: code')));
+        const failedArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(failedArtifact.attestation_state, 'launch_failed');
+        assert.equal(failedArtifact.reviewer_launch_attempt_id, attemptId);
+        assert.equal(failedArtifact.provider_invocation_id, 'test-invocation-explicit-failure');
+        assert.equal(
+            failedArtifact.launch_failure_reason,
+            'Provider terminated the delegated reviewer before output was available.'
+        );
+        assert.equal(Number.isNaN(Date.parse(String(failedArtifact.launch_failed_at_utc))), false);
+        const failureEvent = readTaskTimelineEvents(repoRoot, taskId)
+            .find((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
+        assert.ok(failureEvent);
+        assert.equal((failureEvent.details as Record<string, unknown>).reviewer_launch_attempt_id, attemptId);
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-explicit-failure',
+            '--attestation-source', 'test_provider_controller',
+            ...launchArtifactInputArgsForTest(fixture.launchArtifactPath),
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+        assert.notEqual(complete.exitCode, 0);
+        assert.ok(
+            complete.errors.some((line) => line.includes('attestation_state must be one of: delegation_started')),
+            complete.errors.join('\n')
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-reviewer-delegation-started preserves copy-paste launch mode in completion command', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-693-delegation-copy-paste-command';
