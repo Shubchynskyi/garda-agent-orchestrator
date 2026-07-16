@@ -204,7 +204,7 @@ export function buildRecordReviewResultCommand(
     cliPrefix: string,
     taskId: string,
     reviewType: string,
-    reviewerIdentity: string,
+    reviewerIdentity: string | null | undefined,
     preflightCommandPath: string,
     taskModePath: string | null,
     reviewOutputPath?: string | null
@@ -213,12 +213,13 @@ export function buildRecordReviewResultCommand(
     const reviewOutputSourcePart = hasReviewOutputPath
         ? `--review-output-path "${toRepoDisplayPath(repoRoot, String(reviewOutputPath))}"`
         : '--review-output-stdin';
+    const reviewerIdentityValue = String(reviewerIdentity || '').trim();
     const command = buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-result', [
         `--review-type "${reviewType}"`,
         `--preflight-path "${preflightCommandPath}"`,
         reviewOutputSourcePart,
         '--reviewer-execution-mode "delegated_subagent"',
-        `--reviewer-identity "${reviewerIdentity}"`
+        ...(reviewerIdentityValue ? [`--reviewer-identity ${quoteCommandValue(reviewerIdentityValue)}`] : [])
     ], taskModePath);
     return hasReviewOutputPath
         ? command

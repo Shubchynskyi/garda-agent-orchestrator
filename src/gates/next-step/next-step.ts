@@ -19,6 +19,9 @@ import {
     isResolvedReviewerIdentity
 } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
+    resolveReviewerResultRecoveryIdentity
+} from '../review/security/reviewer-result-recovery-identity';
+import {
     REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
     REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
@@ -3478,6 +3481,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         const currentReviewContextPrepared = state
             ? timelineHasReviewContextPreparedAfterCompile(eventsRoot, taskId, reviewType, state.contextPath)
             : false;
+        const currentReviewerLaunchArtifactEvidence = state
+            ? getCurrentReviewerLaunchArtifactEvidenceForInvocation(repoRoot, eventsRoot, taskId, state)
+            : null;
         const dependencies = reviewLaunchPlan.blocked_review_dependencies;
         const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
         const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`);
@@ -3770,6 +3776,15 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     expectedCoverageContractSha256: focusedRecoveryCoverageContractSha256
                 })
                 : { available: false, reason: null };
+            const reviewerResultRecoveryIdentity = state.failureKind === 'review-validation-rejected'
+                ? resolveReviewerResultRecoveryIdentity({
+                    launchState: currentReviewerLaunchArtifactEvidence?.state || 'missing_or_invalid',
+                    launchReviewerIdentity: currentReviewerLaunchArtifactEvidence?.reviewerIdentity || null,
+                    receiptReviewerIdentity: state.reviewerIdentity,
+                    contextReviewerIdentity: state.contextReviewerIdentity,
+                    receivingGateCanResolveCurrentAttempt: false
+                })
+                : null;
             const failedReviewRoute = resolveFailedReviewRemediationRoute({
                 taskId,
                 reviewType,
@@ -3783,6 +3798,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 reviewerReadinessChain,
                 reviewContextChain,
                 downstreamReviewTypes,
+                reviewerResultRecoveryIdentity,
                 commands: {
                     restartReviewCycle: buildCommand(
                         state.failureKind === 'missing-focused-validation-evidence'
@@ -3854,7 +3870,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             cliPrefix,
                             taskId,
                             reviewType,
-                            state.reviewerIdentity || state.contextReviewerIdentity || `agent:pending:${taskId}-${reviewType}`,
+                            reviewerResultRecoveryIdentity?.ready
+                                ? reviewerResultRecoveryIdentity.reviewerIdentity
+                                : null,
                             preflightCommandPath,
                             taskModePath,
                             null
@@ -3951,12 +3969,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             contextReviewerIdentity.startsWith('agent:')
             && timelineHasDelegatedReviewRoutingAfterCompile(eventsRoot, taskId, reviewType, contextReviewerIdentity)
         );
-        const launchArtifactEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
-            repoRoot,
-            eventsRoot,
-            taskId,
-            state
-        );
+        const launchArtifactEvidence = currentReviewerLaunchArtifactEvidence
+            || getCurrentReviewerLaunchArtifactEvidenceForInvocation(repoRoot, eventsRoot, taskId, state);
         const resolvedLaunchReviewerIdentity = String(launchArtifactEvidence.reviewerIdentity || '').trim();
         const delegatedReviewerIdentity = launchArtifactEvidence.state !== 'prepared'
             && isResolvedReviewerIdentity(resolvedLaunchReviewerIdentity)

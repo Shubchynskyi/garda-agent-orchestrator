@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fx from './next-step-review-reuse-fixtures';
+import {
+    resolveReviewerResultRecoveryIdentity
+} from '../../../../src/gates/review/security/reviewer-result-recovery-identity';
+import {
+    buildRecordReviewResultCommand
+} from '../../../../src/gates/next-step/next-step-review-command-builders';
 const {
     ALL_REVIEW_FLAGS,
     appendEvent,
@@ -22,6 +28,107 @@ const {
     writeReviewEvidence
 } = fx;
 void [assert];
+
+describe('reviewer result recovery identity', () => {
+    it('shell-quotes resolved reviewer identity in the executable recovery command', () => {
+        const command = buildRecordReviewResultCommand(
+            process.cwd(),
+            'node bin/garda.js',
+            'T-NEXT-1',
+            'code',
+            'agent:reviewer"; Write-Output PWNED; "',
+            'runtime/reviews/T-NEXT-1-preflight.json',
+            null
+        );
+
+        assert.ok(command.includes(`--reviewer-identity 'agent:reviewer"; Write-Output PWNED; "'`));
+        assert.equal(command.includes('--reviewer-identity "agent:reviewer";'), false);
+    });
+
+    it('uses the resolved identity from the current validated delegated attempt', () => {
+        const resolution = resolveReviewerResultRecoveryIdentity({
+            launchState: 'launched',
+            launchReviewerIdentity: 'agent:resolved-code-reviewer',
+            receiptReviewerIdentity: null,
+            contextReviewerIdentity: 'agent:pending:T-NEXT-1-code',
+            receivingGateCanResolveCurrentAttempt: false
+        });
+
+        assert.deepEqual(resolution, {
+            ready: true,
+            reviewerIdentity: 'agent:resolved-code-reviewer',
+            identitySource: 'explicit_resolved_attempt'
+        });
+    });
+
+    it('permits omission only when the receiving gate can resolve the current attempt', () => {
+        const resolution = resolveReviewerResultRecoveryIdentity({
+            launchState: 'launched',
+            launchReviewerIdentity: null,
+            receiptReviewerIdentity: null,
+            contextReviewerIdentity: null,
+            receivingGateCanResolveCurrentAttempt: true
+        });
+
+        assert.deepEqual(resolution, {
+            ready: true,
+            reviewerIdentity: null,
+            identitySource: 'receiving_gate_current_attempt'
+        });
+    });
+
+    it('rejects a planned pending identity as reviewer proof', () => {
+        const resolution = resolveReviewerResultRecoveryIdentity({
+            launchState: 'launched',
+            launchReviewerIdentity: 'agent:pending:T-NEXT-1-code',
+            receiptReviewerIdentity: null,
+            contextReviewerIdentity: 'agent:pending:T-NEXT-1-code',
+            receivingGateCanResolveCurrentAttempt: false
+        });
+
+        assert.equal(resolution.ready, false);
+        assert.equal(resolution.reason, 'planned_identity_only');
+    });
+
+    it('rejects receipt or context identity when the current launch identity is still pending', () => {
+        const resolution = resolveReviewerResultRecoveryIdentity({
+            launchState: 'launched',
+            launchReviewerIdentity: 'agent:pending:T-NEXT-1-code',
+            receiptReviewerIdentity: 'agent:stale-code-reviewer',
+            contextReviewerIdentity: 'agent:stale-code-reviewer',
+            receivingGateCanResolveCurrentAttempt: false
+        });
+
+        assert.equal(resolution.ready, false);
+        assert.equal(resolution.reason, 'planned_identity_only');
+    });
+
+    it('rejects resolved identity from a stale delegated attempt', () => {
+        const resolution = resolveReviewerResultRecoveryIdentity({
+            launchState: 'missing_or_invalid',
+            launchReviewerIdentity: 'agent:stale-code-reviewer',
+            receiptReviewerIdentity: null,
+            contextReviewerIdentity: null,
+            receivingGateCanResolveCurrentAttempt: false
+        });
+
+        assert.equal(resolution.ready, false);
+        assert.equal(resolution.reason, 'current_attempt_not_launched');
+    });
+
+    it('rejects conflicting resolved identities instead of selecting one opportunistically', () => {
+        const resolution = resolveReviewerResultRecoveryIdentity({
+            launchState: 'launched',
+            launchReviewerIdentity: 'agent:launch-code-reviewer',
+            receiptReviewerIdentity: 'agent:receipt-code-reviewer',
+            contextReviewerIdentity: 'agent:launch-code-reviewer',
+            receivingGateCanResolveCurrentAttempt: false
+        });
+
+        assert.equal(resolution.ready, false);
+        assert.equal(resolution.reason, 'conflicting_resolved_identities');
+    });
+});
 
 function appendCurrentStrictReuseRecorded(repoRoot: string, taskId: string, reviewType: string): void {
     const root = reviewsRoot(repoRoot);

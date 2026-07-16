@@ -1,4 +1,7 @@
 import { buildBundleRelativePath } from '../../core/constants';
+import type {
+    ReviewerResultRecoveryIdentityResolution
+} from '../review/security/reviewer-result-recovery-identity';
 
 export interface ReviewReuseRoutingCommand {
     label: string;
@@ -95,6 +98,7 @@ export interface FailedReviewRemediationRouteOptions {
     reviewerReadinessChain: string;
     reviewContextChain: string;
     downstreamReviewTypes: readonly string[];
+    reviewerResultRecoveryIdentity: ReviewerResultRecoveryIdentityResolution | null;
     commands: {
         restartReviewCycle: ReviewReuseRoutingCommand;
         rerunNavigator: ReviewReuseRoutingCommand;
@@ -109,6 +113,20 @@ export function resolveFailedReviewRemediationRoute(
     options: FailedReviewRemediationRouteOptions
 ): ReviewReuseRoutingRoute | null {
     if (options.failureKind === 'review-validation-rejected') {
+        if (!options.reviewerResultRecoveryIdentity?.ready) {
+            const identityReason = options.reviewerResultRecoveryIdentity?.reason || 'resolved_identity_missing';
+            return {
+                status: 'BLOCKED',
+                nextGate: 'restart-review-cycle',
+                title: `Recover '${options.reviewType}' reviewer identity before recording corrected findings.`,
+                reason:
+                    `System validation rejected the '${options.reviewType}' review findings report, but the current delegated ` +
+                    `review attempt does not provide one unambiguous resolved reviewer identity (${identityReason}). ` +
+                    'Preserve the rejected output as audit evidence and restart the review cycle so a fresh delegated reviewer launch ' +
+                    're-establishes current identity and provenance before record-review-result is offered again.',
+                commands: [options.commands.restartReviewCycle]
+            };
+        }
         return {
             status: 'BLOCKED',
             nextGate: 'record-review-result',

@@ -1242,8 +1242,38 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /System validation rejected/);
         assert.match(result.reason, /not an implementation defect/);
         assert.ok(result.commands[0].command.includes('gate record-review-result'));
+        assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+        assert.equal(result.commands[0].command.includes('agent:pending'), false);
         assert.ok(!result.commands[0].command.includes('compile-gate'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+    });
+
+    it('restarts the review cycle when rejected findings lack a current resolved reviewer attempt', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'code');
+        fs.rmSync(path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'reviewer-launch.json'
+        ));
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'restart-review-cycle');
+        assert.match(result.title, /Recover 'code' reviewer identity/);
+        assert.match(result.reason, /current_attempt_not_launched/);
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.equal(result.commands[0].command.includes('record-review-result'), false);
+        assert.equal(result.commands[0].command.includes('agent:pending'), false);
     });
 
     it('routes fix_now findings-only review evidence to implementation remediation', () => {
