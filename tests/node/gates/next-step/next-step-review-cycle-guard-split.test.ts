@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fx from './next-step-review-cycle-fixtures';
+import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
 
 const {
     ALL_REVIEW_FLAGS,
@@ -344,8 +345,8 @@ describe('gates/next-step review cycle guard split', () => {
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
             `| ${TASK_ID} | IN_PROGRESS | P1 | workflow/review-cycle | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks \`${TASK_ID}-1\` and \`${TASK_ID}-2\`; do not continue the parent. |`,
-            `| ${TASK_ID}-1 | DONE | P1 | workflow/review-cycle | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |`,
-            `| ${TASK_ID}-2 | TODO | P1 | workflow/review-cycle | Child two | gpt-5.4 | 2026-05-05 | strict | Next. |`,
+            `| ${TASK_ID}-1 | TODO | P1 | workflow/review-cycle-state | Normalize guard state | gpt-5.4 | 2026-05-05 | strict | First logical work package. |`,
+            `| ${TASK_ID}-2 | TODO | P1 | workflow/review-cycle-routing | Route guarded continuation | gpt-5.4 | 2026-05-05 | strict | Second logical work package. |`,
             ''
         ].join('\n'), 'utf8');
         seedStartedTask(repoRoot, TASK_ID);
@@ -378,9 +379,9 @@ describe('gates/next-step review cycle guard split', () => {
         const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
 
         assert.equal(commandResult.exitCode, 0);
-        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.status, 'DECOMPOSED', result.reason);
         assert.equal(result.next_gate, 'child-task');
-        assert.ok(result.commands[0]?.command.includes(`next-step "${TASK_ID}-2"`));
+        assert.ok(result.commands[0]?.command.includes(`next-step "${TASK_ID}-1"`));
         assert.ok(taskMd.includes(`| ${TASK_ID} | DECOMPOSED |`));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
     });
@@ -454,7 +455,8 @@ describe('gates/next-step review cycle guard split', () => {
             }
         );
         seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        initGitRepo(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { changedFiles: [] });
         appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
             review_type: 'code',
             reviewer_identity: 'agent:auto-split-code-0',
@@ -471,7 +473,7 @@ describe('gates/next-step review cycle guard split', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
 
-        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
         assert.equal(result.next_gate, 'split-required-latch');
         assert.equal(result.commands.length, 0);
         assert.equal(result.review_cycle_block?.operator_decision_required, false);
@@ -504,6 +506,70 @@ describe('gates/next-step review cycle guard split', () => {
         assert.equal(fs.existsSync(latchPath), true);
         const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as Record<string, unknown>;
         assert.equal(latch.guard_kind, 'review_cycle');
+        const latchSha256 = fileSha256(latchPath);
+        assert.ok(promptText.includes(`LatchArtifact: path=${normalizeForTimeline(latchPath)}; sha256=${latchSha256}`));
+        assert.ok(promptText.includes('WipCapture: status=CAPTURED; manifest='));
+        assert.ok(promptText.includes('captured_files=none'));
+        assert.ok(promptText.includes('CurrentState: no_diff'));
+        assert.ok(promptText.includes('NextAction: run_validation_lane'));
+        assert.ok(promptText.includes('NextActionCommand: `node bin/garda.js gate run-intermediate-command'));
+        assert.ok(promptText.includes(`WorkPackageContractPath: \`garda-agent-orchestrator/runtime/reviews/${TASK_ID}-work-package-contract.json\``));
+        for (const state of ['no_diff', 'suspended_manifest', 'checkpoint', 'restore', 'validation_lane', 'child_creation']) {
+            assert.ok(promptText.includes(`StateRoute[${state}]:`), `missing state route ${state}`);
+        }
+        assert.match(promptText, /StateRoute\[restore\]:[^\n]*--include-path "<repo\/path>"/u);
+        assert.equal(promptText.includes('If the workspace contains parent diff, create a split checkpoint'), false);
+        assert.equal(promptText.includes('create a split checkpoint before child execution'), false);
+    });
+
+    it('describes captured and cleaned parent WIP as a suspended manifest without a redundant checkpoint', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = true;
+        workflowConfig.full_suite_validation.command = 'npm test -- captured-parent';
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.review_cycle_guard.max_failed_non_test_reviews = 1;
+        workflowConfig.review_cycle_guard.auto_split_enabled = true;
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            workflowConfig
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:auto-split-captured-code-0',
+            review_context_sha256: sha256Text('auto-split-captured-code-context-0')
+        });
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:auto-split-captured-code-1',
+            review_context_sha256: sha256Text('auto-split-captured-code-context-1')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const promptPath = path.join(repoRoot, result.review_cycle_block?.auto_split_prompt?.artifact_path || '');
+        const promptText = fs.readFileSync(promptPath, 'utf8');
+        const latchPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`);
+        const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as {
+            wip_capture?: { manifest_path?: string; tracked_files?: string[] };
+        };
+
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.review_cycle_block?.auto_split_prompt?.current_state, 'suspended_manifest');
+        assert.ok(latch.wip_capture?.manifest_path);
+        assert.deepEqual(latch.wip_capture?.tracked_files, ['src/app.ts']);
+        assert.equal(runGitFixtureCommand(repoRoot, ['status', '--short', '--', 'src/app.ts']).stdout.trim(), '');
+        assert.ok(promptText.includes('CurrentState: suspended_manifest'));
+        assert.ok(promptText.includes('captured_files=src/app.ts'));
+        assert.ok(promptText.includes('NextAction: preview_restore'));
+        assert.ok(promptText.includes('gate restore-split-required-wip'));
+        assert.ok(promptText.includes('--dry-run'));
+        assert.ok(promptText.includes('The parent implementation is suspended in the manifest and the captured paths were removed from the worktree.'));
+        assert.equal(promptText.includes('If the workspace contains parent diff, create a split checkpoint'), false);
+        assert.equal(promptText.includes('create a split checkpoint before child execution'), false);
     });
 
     it('auto-split prompt suggests the next available parent-derived child and follow-up ids', () => {
@@ -556,6 +622,10 @@ describe('gates/next-step review cycle guard split', () => {
         const promptText = fs.readFileSync(promptPath, 'utf8');
 
         assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.review_cycle_block?.auto_split_prompt?.current_state, 'checkpoint');
+        assert.ok(promptText.includes('CurrentState: checkpoint'));
+        assert.ok(promptText.includes('NextAction: inspect_checkpoint_scope'));
+        assert.ok(promptText.includes('NextActionCommand: `git status --short`'));
         assert.ok(promptText.includes(`SuggestedChildTaskIds: \`${TASK_ID}-2\`, \`${TASK_ID}-3\`, \`${TASK_ID}-4\``));
         assert.ok(promptText.includes(`SuggestedReviewerFollowUpTaskId: \`${TASK_ID}-F2\``));
     });

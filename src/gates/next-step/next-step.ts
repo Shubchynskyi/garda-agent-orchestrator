@@ -267,6 +267,7 @@ import {
     buildReviewCycleContinuationCommand,
     buildReviewCycleOperatorBlock,
     buildReviewCycleSplitDecisionCommand,
+    materializeReviewCycleAutoSplitPrompt,
     readReviewCycleGuardEvaluation,
     type NextStepReviewCycleBlock,
     type NextStepReviewCycleLatestFailedReview,
@@ -3154,9 +3155,6 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 );
             }
             const reviewCycleBlock = buildReviewCycleOperatorBlock(
-                repoRoot,
-                reviewsRoot,
-                taskId,
                 reviewCycleGuardEvaluation,
                 latestFailedReviewCycleAttempt
             );
@@ -3203,8 +3201,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             metric: violation.metric,
                             actual: violation.actual,
                             limit: violation.limit
-                        })),
-                        auto_split_prompt: reviewCycleBlock.auto_split_prompt
+                        }))
                     }
                 });
                 if (!isSuccessfulSplitRequiredStatusSync(splitRequiredLatch.status_sync)) {
@@ -3224,6 +3221,16 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         finalReport: null
                     });
                 }
+                reviewCycleBlock.auto_split_prompt = materializeReviewCycleAutoSplitPrompt({
+                    repoRoot,
+                    reviewsRoot,
+                    taskId,
+                    evaluation: reviewCycleGuardEvaluation,
+                    latestFailedReview: latestFailedReviewCycleAttempt,
+                    latchResult: splitRequiredLatch,
+                    cliPrefix,
+                    fullSuiteCommand: fullSuiteConfig.command
+                });
             }
             return buildResult({
                 ...resultBase,

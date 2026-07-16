@@ -4,7 +4,8 @@ export {
 export {
     buildReviewCycleContinuationCommand,
     buildReviewCycleOperatorBlock,
-    buildReviewCycleSplitDecisionCommand
+    buildReviewCycleSplitDecisionCommand,
+    materializeReviewCycleAutoSplitPrompt
 } from './next-step-review-cycle-guard-operator-block';
 export type {
     NextStepReviewCycleAutoSplitPrompt,

@@ -85,7 +85,15 @@ export interface NextStepReviewCycleAutoSplitPrompt {
     kind: 'review_cycle_auto_split_prompt';
     artifact_path: string;
     artifact_sha256: string;
+    current_state: 'no_diff' | 'suspended_manifest' | 'checkpoint';
+    latch_artifact_path: string;
+    latch_artifact_sha256: string;
+    wip_capture_status: 'CAPTURED' | 'ALREADY_CAPTURED' | 'BLOCKED' | 'NOT_CAPTURED';
+    wip_manifest_path: string | null;
+    work_package_contract_path: string;
     next_action: string;
+    state_next_action: 'run_validation_lane' | 'preview_restore' | 'inspect_checkpoint_scope';
+    next_action_command: string;
     instructions: string[];
     constraints: string[];
 }
