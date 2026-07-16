@@ -245,7 +245,7 @@ describe('split-required WIP capture and restore', () => {
         assert.deepEqual(readBuffer(repoRoot, 'assets/blob.bin'), updated);
     });
 
-    it('blocks restore on stale base or overlapping child edits', () => {
+    it('blocks unscoped advanced restore or overlapping child edits', () => {
         const repoRoot = makeRepo();
         writeFile(repoRoot, 'src/a.ts', 'export const a = 2;\n');
         const captured = capture(repoRoot, ['src/a.ts']);
@@ -260,7 +260,7 @@ describe('split-required WIP capture and restore', () => {
             manifestPath: captured.manifest_path
         });
         assert.equal(stale.status, 'BLOCKED');
-        assert.ok(stale.violations.some((violation) => violation.includes('stale base commit')));
+        assert.ok(stale.violations.some((violation) => violation.includes('explicit include-path')));
 
         runGit(repoRoot, ['reset', '--hard', 'HEAD~1']);
         writeFile(repoRoot, 'src/a.ts', 'export const childOverlap = true;\n');
@@ -271,6 +271,211 @@ describe('split-required WIP capture and restore', () => {
         });
         assert.equal(overlap.status, 'BLOCKED');
         assert.ok(overlap.violations.some((violation) => violation.includes('unstaged tracked changes exist')));
+    });
+
+    it('dry-runs and atomically restores selected WIP after descendant commits advance HEAD', () => {
+        const repoRoot = makeRepo();
+        writeFile(repoRoot, 'src/a.ts', [
+            'export const first = 1;',
+            'export const middle = 1;',
+            'export const last = 1;',
+            ''
+        ].join('\n'));
+        runGit(repoRoot, ['add', 'src/a.ts']);
+        runGit(repoRoot, ['commit', '-m', 'expand fixture']);
+        writeFile(repoRoot, 'src/a.ts', [
+            'export const first = 2;',
+            'export const middle = 1;',
+            'export const last = 1;',
+            ''
+        ].join('\n'));
+        const captured = capture(repoRoot, ['src/a.ts']);
+        assert.ok(captured.manifest_path);
+
+        writeFile(repoRoot, 'src/a.ts', [
+            'export const first = 1;',
+            'export const middle = 1;',
+            'export const last = 2;',
+            ''
+        ].join('\n'));
+        writeFile(repoRoot, 'src/b.ts', 'export const child = 2;\n');
+        runGit(repoRoot, ['add', 'src/a.ts', 'src/b.ts']);
+        runGit(repoRoot, ['commit', '-m', 'advance child scope']);
+
+        const dryRun = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/a.ts'],
+            dryRun: true
+        });
+        assert.equal(dryRun.status, 'DRY_RUN_OK', dryRun.violations.join('\n'));
+        assert.equal(readFile(repoRoot, 'src/a.ts').includes('first = 1'), true);
+
+        const restored = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/a.ts']
+        });
+        assert.equal(restored.status, 'RESTORED', restored.violations.join('\n'));
+        assert.deepEqual(restored.restored_files, ['src/a.ts']);
+        assert.equal(readFile(repoRoot, 'src/a.ts'), [
+            'export const first = 2;',
+            'export const middle = 1;',
+            'export const last = 2;',
+            ''
+        ].join('\n'));
+        assert.equal(readFile(repoRoot, 'src/b.ts'), 'export const child = 2;\n');
+    });
+
+    it('treats authorized advanced-restore paths as literals instead of apply patterns', () => {
+        const repoRoot = makeRepo();
+        writeFile(repoRoot, 'src/file[1].ts', 'export const selected = 1;\n');
+        writeFile(repoRoot, 'src/file1.ts', 'export const unselected = 1;\n');
+        runGit(repoRoot, ['add', 'src/file[1].ts', 'src/file1.ts']);
+        runGit(repoRoot, ['commit', '-m', 'add adversarial path fixtures']);
+
+        writeFile(repoRoot, 'src/file[1].ts', 'export const selected = 2;\n');
+        writeFile(repoRoot, 'src/file1.ts', 'export const unselected = 2;\n');
+        runGit(repoRoot, ['add', 'src/file[1].ts', 'src/file1.ts']);
+        const captured = capture(repoRoot, ['src/file[1].ts', 'src/file1.ts']);
+        assert.ok(captured.manifest_path);
+
+        writeFile(repoRoot, 'src/child.ts', 'export const child = true;\n');
+        runGit(repoRoot, ['add', 'src/child.ts']);
+        runGit(repoRoot, ['commit', '-m', 'advance child scope']);
+
+        const restored = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/file[1].ts']
+        });
+        assert.equal(restored.status, 'RESTORED', restored.violations.join('\n'));
+        assert.deepEqual(restored.restored_files, ['src/file[1].ts']);
+        assert.equal(readFile(repoRoot, 'src/file[1].ts'), 'export const selected = 2;\n');
+        assert.equal(readFile(repoRoot, 'src/file1.ts'), 'export const unselected = 1;\n');
+        assert.equal(runGit(repoRoot, ['status', '--porcelain=v1']), 'M  src/file[1].ts\n');
+    });
+
+    it('rejects advanced restore without explicit path authorization or reachable manifest blobs', () => {
+        const repoRoot = makeRepo();
+        writeFile(repoRoot, 'src/a.ts', 'export const a = 2;\n');
+        const captured = capture(repoRoot, ['src/a.ts']);
+        assert.ok(captured.manifest_path);
+        writeFile(repoRoot, 'src/b.ts', 'export const child = 2;\n');
+        runGit(repoRoot, ['add', 'src/b.ts']);
+        runGit(repoRoot, ['commit', '-m', 'advance child scope']);
+
+        const unscoped = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            dryRun: true
+        });
+        assert.equal(unscoped.status, 'BLOCKED');
+        assert.ok(unscoped.violations.some((violation) => violation.includes('explicit include-path')));
+
+        const manifest = JSON.parse(fs.readFileSync(captured.manifest_path, 'utf8')) as {
+            tracked_files: Array<{ head_sha256: string | null }>;
+        };
+        manifest.tracked_files[0].head_sha256 = '0000000000000000000000000000000000000000';
+        fs.writeFileSync(captured.manifest_path, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+        const missingBlob = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/a.ts'],
+            dryRun: true
+        });
+        assert.equal(missingBlob.status, 'BLOCKED');
+        assert.ok(missingBlob.violations.some((violation) => violation.includes('manifest base blob')));
+        assert.equal(readFile(repoRoot, 'src/a.ts'), 'export const a = 1;\n');
+    });
+
+    it('rejects unrelated history and dirty or symbolic-link selected targets without mutation', () => {
+        const unrelatedRepo = makeRepo();
+        writeFile(unrelatedRepo, 'src/a.ts', 'export const a = 2;\n');
+        const unrelatedCapture = capture(unrelatedRepo, ['src/a.ts']);
+        assert.ok(unrelatedCapture.manifest_path);
+        const unrelatedRoot = runGit(unrelatedRepo, ['commit-tree', 'HEAD^{tree}', '-m', 'unrelated root']).trim();
+        runGit(unrelatedRepo, ['update-ref', 'HEAD', unrelatedRoot]);
+        const unrelated = restoreSplitRequiredWip({
+            repoRoot: unrelatedRepo,
+            taskId: TASK_ID,
+            manifestPath: unrelatedCapture.manifest_path,
+            includePaths: ['src/a.ts'],
+            dryRun: true
+        });
+        assert.equal(unrelated.status, 'BLOCKED');
+        assert.ok(unrelated.violations.some((violation) => violation.includes('not an ancestor')));
+
+        const dirtyRepo = makeRepo();
+        writeFile(dirtyRepo, 'src/a.ts', 'export const a = 2;\n');
+        const dirtyCapture = capture(dirtyRepo, ['src/a.ts']);
+        assert.ok(dirtyCapture.manifest_path);
+        writeFile(dirtyRepo, 'src/b.ts', 'export const child = 2;\n');
+        runGit(dirtyRepo, ['add', 'src/b.ts']);
+        runGit(dirtyRepo, ['commit', '-m', 'advance child scope']);
+        writeFile(dirtyRepo, 'src/a.ts', 'export const dirty = true;\n');
+        const dirty = restoreSplitRequiredWip({
+            repoRoot: dirtyRepo,
+            taskId: TASK_ID,
+            manifestPath: dirtyCapture.manifest_path,
+            includePaths: ['src/a.ts']
+        });
+        assert.equal(dirty.status, 'BLOCKED');
+        assert.ok(dirty.violations.some((violation) => violation.includes('selected restore target is dirty')));
+        assert.equal(readFile(dirtyRepo, 'src/a.ts'), 'export const dirty = true;\n');
+
+        const symlinkRepo = makeRepo();
+        writeFile(symlinkRepo, 'src/a.ts', 'export const a = 2;\n');
+        const symlinkCapture = capture(symlinkRepo, ['src/a.ts']);
+        assert.ok(symlinkCapture.manifest_path);
+        const linkBlob = runGit(symlinkRepo, ['hash-object', '-w', '--stdin'],).trim();
+        assert.ok(linkBlob);
+        runGit(symlinkRepo, ['update-index', '--add', '--cacheinfo', `120000,${linkBlob},src/a.ts`]);
+        runGit(symlinkRepo, ['commit', '-m', 'replace target with symlink']);
+        const symlink = restoreSplitRequiredWip({
+            repoRoot: symlinkRepo,
+            taskId: TASK_ID,
+            manifestPath: symlinkCapture.manifest_path,
+            includePaths: ['src/a.ts'],
+            dryRun: true
+        });
+        assert.equal(symlink.status, 'BLOCKED');
+        assert.ok(symlink.violations.some((violation) => violation.includes('symbolic link')));
+    });
+
+    it('leaves every selected path and the index unchanged when three-way restore conflicts', () => {
+        const repoRoot = makeRepo();
+        writeFile(repoRoot, 'src/a.ts', 'export const a = 2;\n');
+        writeFile(repoRoot, 'src/b.ts', 'export const b = 2;\n');
+        const captured = capture(repoRoot, ['src/a.ts', 'src/b.ts']);
+        assert.ok(captured.manifest_path);
+        writeFile(repoRoot, 'src/b.ts', 'export const conflictingChild = true;\n');
+        runGit(repoRoot, ['add', 'src/b.ts']);
+        runGit(repoRoot, ['commit', '-m', 'conflicting child scope']);
+        const beforeTree = {
+            a: readFile(repoRoot, 'src/a.ts'),
+            b: readFile(repoRoot, 'src/b.ts'),
+            status: runGit(repoRoot, ['status', '--porcelain=v1'])
+        };
+
+        const restored = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/a.ts', 'src/b.ts']
+        });
+        assert.equal(restored.status, 'BLOCKED');
+        assert.ok(restored.violations.some((violation) => violation.includes('three-way')));
+        assert.deepEqual({
+            a: readFile(repoRoot, 'src/a.ts'),
+            b: readFile(repoRoot, 'src/b.ts'),
+            status: runGit(repoRoot, ['status', '--porcelain=v1'])
+        }, beforeTree);
     });
 
     it('blocks capture when unrelated untracked files would leak into child scope', () => {
