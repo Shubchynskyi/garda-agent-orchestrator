@@ -65,6 +65,16 @@ async function withAdapter(
     }
 }
 
+async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
+    try {
+        await promise;
+    } catch (error: unknown) {
+        assert.ok(error instanceof Error);
+        return error.message;
+    }
+    assert.fail('Expected promise to reject.');
+}
+
 describe('provider invocation attestation', () => {
     it('accepts authenticated invocation evidence that matches every immutable launch binding', async () => {
         const source = 'fake_existing_23';
@@ -81,10 +91,10 @@ describe('provider invocation attestation', () => {
         it(`fails closed when the adapter returns ${status}`, async () => {
             const source = `fake_${status}_23`;
             await withAdapter(source, { status, diagnostic: `deterministic ${status} fixture` }, async (request) => {
-                await assert.rejects(
-                    authenticateProviderInvocation(request),
-                    new RegExp(`returned '${status}'.*deterministic ${status} fixture`, 'i')
-                );
+                const message = await rejectionMessage(authenticateProviderInvocation(request));
+                assert.match(message, new RegExp(`returned '${status}'`, 'i'));
+                assert.match(message, /Provider\/controller diagnostic: <redacted>/i);
+                assert.doesNotMatch(message, new RegExp(`deterministic ${status} fixture`, 'i'));
             });
         });
     }
@@ -135,12 +145,28 @@ describe('provider invocation attestation', () => {
             }
         });
         try {
-            await assert.rejects(
-                authenticateProviderInvocation(requestFor(source)),
-                /returned 'unavailable_provider'.*controller IPC unavailable/i
-            );
+            const message = await rejectionMessage(authenticateProviderInvocation(requestFor(source)));
+            assert.match(message, /returned 'unavailable_provider'.*<redacted>/i);
+            assert.doesNotMatch(message, /controller IPC unavailable/i);
         } finally {
             unregister();
         }
+    });
+
+    it('does not expose credentials, paths, or provider-private payloads from adapter diagnostics', async () => {
+        const source = 'fake_sensitive_diagnostic_23';
+        const sensitiveDiagnostic = [
+            'Authorization: Bearer provider-secret-token',
+            'C:\\Users\\operator\\private-provider-state.json',
+            'opaque-provider-payload-fragment'
+        ].join(' ');
+        await withAdapter(source, {
+            status: 'not_found',
+            diagnostic: sensitiveDiagnostic
+        }, async (request) => {
+            const message = await rejectionMessage(authenticateProviderInvocation(request));
+            assert.match(message, /returned 'not_found'.*Provider\/controller diagnostic: <redacted>/i);
+            assert.doesNotMatch(message, /provider-secret-token|Users|private-provider-state|opaque-provider-payload/i);
+        });
     });
 });

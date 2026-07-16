@@ -83,7 +83,7 @@ function buildStatusError(
     status: Exclude<ProviderInvocationAttestationResult['status'], 'existing'>,
     diagnostic?: string
 ): Error {
-    const detail = String(diagnostic || '').trim();
+    const hasProviderDiagnostic = String(diagnostic || '').trim().length > 0;
     const remediation = status === 'unavailable_provider'
         ? 'Restore the provider/controller connection and retry the same immutable launch attempt.'
         : status === 'replayed'
@@ -93,7 +93,7 @@ function buildStatusError(
                 : 'Verify the provider invocation id and retry only after the provider/controller can authenticate it.';
     return new Error(
         `Provider invocation attestation '${source}' returned '${status}'.` +
-        (detail ? ` ${detail}` : '') +
+        (hasProviderDiagnostic ? ' Provider/controller diagnostic: <redacted>.' : '') +
         ` ${remediation}`
     );
 }
