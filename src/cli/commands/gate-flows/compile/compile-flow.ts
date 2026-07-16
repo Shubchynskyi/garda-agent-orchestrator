@@ -217,12 +217,13 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             exceptionMessage = rulePackViolations.join(' ');
         }
         const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
+        const preflightAuthorizedFiles = expandValueList(preflightContext.authorized_files, { splitDelimiters: false });
         const preCompileManifestGuard = evaluateCompileProtectedManifestGuard({
             repoRoot,
             taskModeEvidence,
             phaseLabel: 'compile gate',
             preflight: preflightContext.preflight,
-            preflightChangedFiles,
+            preflightChangedFiles: preflightAuthorizedFiles,
             buildRestartCommand: (changedFiles) => buildClassifyChangeOrchestratorWorkRestartCommand({
                 repoRoot,
                 taskId: resolvedTaskId,
@@ -245,7 +246,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 taskModeEvidence,
                 phaseLabel: 'compile gate',
                 baselineFileHashes: workflowConfigBaselineForCompile,
-                preflightChangedFiles
+                preflightChangedFiles: preflightAuthorizedFiles
             });
             workflowConfigBaselineForCompile = workflowConfigGuard.baselineFileHashes;
             if (workflowConfigGuard.violations.length > 0) {
@@ -260,7 +261,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             repoRoot,
             preflightContext.detection_source,
             preflightContext.include_untracked,
-            preflightChangedFiles
+            preflightAuthorizedFiles
         );
         dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(
             repoRoot,

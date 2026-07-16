@@ -209,12 +209,15 @@ describe('gates/workspace-snapshot-cache', () => {
         it('round-trips a valid cache entry', () => {
             const cachePath = path.join(tempDir, 'cache.json');
             const entry: WorkspaceSnapshotCacheEntry = {
-                cache_version: 2,
+                cache_version: 3,
                 fingerprint: 'abc123',
                 snapshot: {
                     detection_source: 'git_auto',
                     use_staged: false,
                     include_untracked: true,
+                    authorized_files: ['file.ts'],
+                    authorized_files_count: 1,
+                    authorized_files_sha256: 'deadbeef',
                     changed_files: ['file.ts'],
                     changed_files_count: 1,
                     ignored_generated_runtime_files: [],
@@ -269,7 +272,7 @@ describe('gates/workspace-snapshot-cache', () => {
         it('returns null for current-version snapshots without changed file stats', () => {
             const cachePath = path.join(tempDir, 'missing-stats.json');
             fs.writeFileSync(cachePath, JSON.stringify({
-                cache_version: 2,
+                cache_version: 3,
                 fingerprint: 'abc123',
                 snapshot: {
                     detection_source: 'git_auto',

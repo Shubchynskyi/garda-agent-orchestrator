@@ -482,7 +482,13 @@ export function buildScopeContentFingerprint(repoRoot: string, source: string, c
 export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, includeUntracked: boolean, explicitChangedFiles: string[]) {
     const source = (detectionSource || 'git_auto').trim().toLowerCase();
     if (parseSplitCheckpointDetectionSource(source)) {
-        return getSplitCheckpointWorkspaceSnapshot(repoRoot, source, explicitChangedFiles);
+        const snapshot = getSplitCheckpointWorkspaceSnapshot(repoRoot, source, explicitChangedFiles);
+        return {
+            ...snapshot,
+            authorized_files: snapshot.changed_files,
+            authorized_files_count: snapshot.changed_files_count,
+            authorized_files_sha256: snapshot.changed_files_sha256
+        };
     }
     const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(source);
     if (source === 'git_staged_only') includeUntracked = false;
@@ -530,52 +536,73 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     const changedFileStats: Record<string, { additions: number; deletions: number; changed_lines: number }> = {};
 
     if (source === 'explicit_changed_files') {
-        const numstatRows: Record<string, { additions: string; deletions: string }> = {};
+        const changedFromDiff: string[] = [];
+        let additionsTotal = 0, deletionsTotal = 0;
         if (normalizedExplicit.length > 0) {
             try {
                 for (const line of gitLines(['diff', '--numstat', '--diff-filter=ACDMRTUXB', 'HEAD', '--', ...normalizedExplicit], 'Failed numstat')) {
                     const parts = line.split('\t');
                     if (parts.length >= 3) {
-                        const key = normalizePath(extractNewPathFromNumstat(parts.slice(2).join('\t')));
-                        if (key) numstatRows[key] = { additions: parts[0], deletions: parts[1] };
+                        const changedPath = normalizePath(extractNewPathFromNumstat(parts.slice(2).join('\t')));
+                        if (!changedPath || isIgnoredWorkspaceSnapshotPath(changedPath)) continue;
+                        const additions = /^\d+$/.test(parts[0]) ? parseInt(parts[0], 10) : 0;
+                        const deletions = /^\d+$/.test(parts[1]) ? parseInt(parts[1], 10) : 0;
+                        changedFromDiff.push(changedPath);
+                        additionsTotal += additions;
+                        deletionsTotal += deletions;
+                        changedFileStats[changedPath] = {
+                            additions,
+                            deletions,
+                            changed_lines: additions + deletions
+                        };
                     }
                 }
             } catch { /* best effort */ }
         }
 
-        let additionsTotal = 0, deletionsTotal = 0;
-        for (const item of normalizedExplicit) {
-            if (numstatRows[item]) {
-                const row = numstatRows[item];
-                const additions = /^\d+$/.test(row.additions) ? parseInt(row.additions, 10) : 0;
-                const deletions = /^\d+$/.test(row.deletions) ? parseInt(row.deletions, 10) : 0;
+        const trackedExplicit = new Set<string>();
+        if (normalizedExplicit.length > 0) {
+            try {
+                for (const item of gitLines(['ls-files', '--cached', '--', ...normalizedExplicit], 'Failed tracked-file lookup.')) {
+                    const normalized = normalizePath(item);
+                    if (normalized) trackedExplicit.add(normalized);
+                }
+            } catch { /* best effort */ }
+        }
+
+        const changedPathSet = new Set(changedFromDiff);
+        if (includeUntracked) {
+            for (const item of normalizedExplicit) {
+                if (changedPathSet.has(item) || trackedExplicit.has(item)) continue;
+                const additions = countWorktreeFileLines(repoRoot, item);
+                if (additions === 0 && getSafeWorktreePathState(repoRoot, item).status !== 'file') continue;
+                changedFromDiff.push(item);
+                changedPathSet.add(item);
                 additionsTotal += additions;
-                deletionsTotal += deletions;
                 changedFileStats[item] = {
                     additions,
-                    deletions,
-                    changed_lines: additions + deletions
+                    deletions: 0,
+                    changed_lines: additions
                 };
-                continue;
             }
-            const additions = countWorktreeFileLines(repoRoot, item);
-            additionsTotal += additions;
-            changedFileStats[item] = {
-                additions,
-                deletions: 0,
-                changed_lines: additions
-            };
         }
+
+        const normalizedChanged = [...new Set(changedFromDiff)].sort();
         const changedLinesTotal = additionsTotal + deletionsTotal;
-        const filesFingerprint = stringSha256(normalizedExplicit.join('\n'));
-        const contentFingerprint = buildScopeContentFingerprint(repoRoot, source, normalizedExplicit);
+        const filesFingerprint = stringSha256(normalizedChanged.join('\n'));
+        const authorizedFilesFingerprint = stringSha256(normalizedExplicit.join('\n'));
+        const contentFingerprint = buildScopeContentFingerprint(repoRoot, source, normalizedChanged);
         const scopeFingerprint = stringSha256(
-            `${source}|false|${includeUntracked}|${normalizedExplicit.length}|${changedLinesTotal}|${filesFingerprint}|${contentFingerprint}`
+            `${source}|false|${includeUntracked}|${normalizedExplicit.length}|${authorizedFilesFingerprint}|` +
+            `${normalizedChanged.length}|${changedLinesTotal}|${filesFingerprint}|${contentFingerprint}`
         );
 
         return {
             detection_source: source, use_staged: false, include_untracked: !!includeUntracked,
-            changed_files: normalizedExplicit, changed_files_count: normalizedExplicit.length,
+            authorized_files: normalizedExplicit,
+            authorized_files_count: normalizedExplicit.length,
+            authorized_files_sha256: authorizedFilesFingerprint,
+            changed_files: normalizedChanged, changed_files_count: normalizedChanged.length,
             ignored_generated_runtime_files: ignoredGeneratedRuntimeFiles,
             ignored_generated_runtime_files_count: ignoredGeneratedRuntimeFiles.length,
             additions_total: additionsTotal, deletions_total: deletionsTotal,
@@ -654,6 +681,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
 
     return {
         detection_source: source, use_staged: useStaged, include_untracked: !!includeUntracked,
+        authorized_files: normalizedChanged,
+        authorized_files_count: normalizedChanged.length,
+        authorized_files_sha256: filesFingerprint,
         changed_files: normalizedChanged, changed_files_count: normalizedChanged.length,
         ignored_generated_runtime_files: [...new Set(ignoredGeneratedRuntimeFiles)].sort(),
         ignored_generated_runtime_files_count: new Set(ignoredGeneratedRuntimeFiles).size,
@@ -726,6 +756,13 @@ export function getPreflightContext(preflightPath: string, taskId: string) {
     const preflightChangedFiles = [...new Set(
         (preflightObject.changed_files || []).map((f: string) => normalizePath(String(f).replace(/\\/g, '/'))).filter(Boolean)
     )].sort();
+    const preflightAuthorizedFiles: string[] = [...new Set<string>(
+        (Array.isArray(preflightObject.authorized_files)
+            ? preflightObject.authorized_files
+            : preflightObject.changed_files || [])
+            .map((f: string) => normalizePath(String(f).replace(/\\/g, '/')))
+            .filter(Boolean)
+    )].sort();
 
     const changedLinesTotal = metrics.changed_lines_total;
     if (typeof changedLinesTotal !== 'number' || changedLinesTotal < 0) {
@@ -750,16 +787,21 @@ export function getPreflightContext(preflightPath: string, taskId: string) {
     const scopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
         ? metrics.scope_content_sha256.trim().toLowerCase()
         : null;
+    const actualChangedFilesSha256 = typeof metrics.actual_changed_files_sha256 === 'string'
+        ? metrics.actual_changed_files_sha256.trim().toLowerCase()
+        : null;
 
     return {
         preflight: preflightObject,
         task_id: taskId,
         detection_source: detectionSource,
         include_untracked: includeUntracked,
+        authorized_files: preflightAuthorizedFiles,
+        authorized_files_count: preflightAuthorizedFiles.length,
         changed_files: preflightChangedFiles,
         changed_files_count: preflightChangedFiles.length,
         changed_lines_total: changedLinesTotal,
-        changed_files_sha256: stringSha256(preflightChangedFiles.join('\n')),
+        changed_files_sha256: actualChangedFilesSha256 || stringSha256(preflightChangedFiles.join('\n')),
         scope_sha256: scopeSha256 || null,
         scope_content_sha256: scopeContentSha256 || null,
         budget_forecast: preflightObject.budget_forecast ?? null

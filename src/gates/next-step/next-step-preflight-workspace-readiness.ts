@@ -145,6 +145,9 @@ export function readPreflightWorkspaceReadiness(
     const changedFiles = Array.isArray(preflight.changed_files)
         ? [...new Set(preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
         : [];
+    const authorizedFiles = Array.isArray(preflight.authorized_files)
+        ? [...new Set(preflight.authorized_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : changedFiles;
     const plannedChangedFiles = Array.isArray(options.plannedChangedFiles)
         ? filterSourceCheckoutGeneratedRuntimeArtifacts(repoRoot, options.plannedChangedFiles)
         : [];
@@ -154,6 +157,15 @@ export function readPreflightWorkspaceReadiness(
     );
     const dirtyWorkspaceBaselineFileHashes = options.dirtyWorkspaceBaselineFileHashes || {};
     const expectedChangedFilesSha256 = stringSha256(changedFiles.join('\n'));
+    const hasActualChangedFiles = Array.isArray(metrics.actual_changed_files);
+    const expectedActualChangedFiles = hasActualChangedFiles
+        ? [...new Set((metrics.actual_changed_files as unknown[])
+            .map((entry) => normalizePath(String(entry || '')))
+            .filter(Boolean))].sort()
+        : changedFiles;
+    const expectedActualChangedFilesSha256 = typeof metrics.actual_changed_files_sha256 === 'string'
+        ? metrics.actual_changed_files_sha256.trim().toLowerCase()
+        : stringSha256(expectedActualChangedFiles.join('\n'));
     const expectedScopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
         ? metrics.scope_content_sha256.trim().toLowerCase()
         : '';
@@ -164,7 +176,7 @@ export function readPreflightWorkspaceReadiness(
         repoRoot,
         detectionSource,
         includeUntracked,
-        changedFiles,
+        authorizedFiles,
         { noCache: true, readOnly: true }
     );
     const currentScopeFiles = Array.isArray(currentScope.changed_files)
@@ -187,17 +199,17 @@ export function readPreflightWorkspaceReadiness(
         ? currentScope.changed_lines_total
         : expectedChangedLinesTotal;
     const violations: string[] = [];
-    if (currentScope.changed_files_sha256 !== expectedComparableChangedFilesSha256) {
-        const expectedSet = new Set(ignoredWorkflowConfigOnlyWorkspaceDelta ? comparableChangedFiles : changedFiles);
+    if (currentScope.changed_files_sha256 !== expectedActualChangedFilesSha256) {
+        const expectedSet = new Set(expectedActualChangedFiles);
         const currentSet = new Set(currentScopeFiles);
         const missingFromPreflight = currentScopeFiles.filter((entry) => !expectedSet.has(entry));
-        const noLongerCurrent = (ignoredWorkflowConfigOnlyWorkspaceDelta ? comparableChangedFiles : changedFiles)
+        const noLongerCurrent = expectedActualChangedFiles
             .filter((entry) => !currentSet.has(entry));
         const ignoredWorkflowConfigNote = ignoredWorkflowConfigOnlyWorkspaceDelta
             ? `; ignored workflow-config-only local baseline files: ${describePathList(ignoredWorkflowConfigPreflightFiles)}`
             : '';
         violations.push(
-            `stale preflight file set ${describePathList(changedFiles)} differs from current workspace snapshot ${describePathList(currentScopeFiles)}` +
+            `stale preflight actual-diff file set ${describePathList(expectedActualChangedFiles)} differs from current workspace snapshot ${describePathList(currentScopeFiles)}` +
             `; missing from preflight: ${describePathList(missingFromPreflight)}` +
             `; no longer current: ${describePathList(noLongerCurrent)}${ignoredWorkflowConfigNote}`
         );
@@ -274,7 +286,7 @@ export function readPreflightWorkspaceReadiness(
             const currentGitSnapshotFiles = currentGitSnapshot.changed_files
                 .map((entry) => normalizePath(entry))
                 .filter((entry) => entry && !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isOrchestratorSourceCheckout(repoRoot)));
-            const preflightSet = new Set(changedFiles);
+            const preflightSet = new Set(authorizedFiles);
             const changedWorkflowConfigFiles = getTriggerPathList(repoRoot, preflight, 'changed_workflow_config_files');
             const uncoveredDirtyBaselineFiles = currentGitSnapshotFiles.filter((entry) => (
                 unchangedProtectedFiles.has(entry) && !preflightSet.has(entry)
@@ -291,8 +303,8 @@ export function readPreflightWorkspaceReadiness(
             }
             const plannedSet = new Set(plannedChangedFiles);
             const preflightUsesOnlyPlannedScope = plannedSet.size > 0
-                && changedFiles.length > 0
-                && changedFiles.every((entry) => (
+                && authorizedFiles.length > 0
+                && authorizedFiles.every((entry) => (
                     plannedSet.has(entry) || isRelatedToPlannedScope(entry, plannedChangedFiles)
                 ));
             const dirtyBaselineSet = new Set([
@@ -337,13 +349,14 @@ export function readPreflightWorkspaceReadiness(
             ));
             currentChangedFiles = [...new Set([
                 ...currentGitChangedFiles,
-                ...comparablePlannedChangedFiles
+                ...(hasActualChangedFiles ? [] : comparablePlannedChangedFiles)
             ])].sort();
             const currentComparableChangedFiles = preflightUsesOnlyPlannedScope
                 ? currentChangedFiles
                 : currentGitChangedFiles;
             if (
-                preflightUsesOnlyPlannedScope
+                !hasActualChangedFiles
+                && preflightUsesOnlyPlannedScope
                 && currentPlannedScopeGitFiles.length === 0
                 && currentRelatedPlannedScopeGitFiles.length === 0
                 && dirtyBaselineSet.size === 0
@@ -351,7 +364,7 @@ export function readPreflightWorkspaceReadiness(
                 return {
                     ready: false,
                     reason:
-                        `Preflight was classified from planned --changed-file hints ${describePathList(changedFiles)}, ` +
+                        `Preflight was classified from planned --changed-file hints ${describePathList(authorizedFiles)}, ` +
                         'but the current git workspace has no materialized diff for that planned scope. ' +
                         'Implement or create the planned files first, then rerun next-step so it can refresh classify-change for the real workspace diff before compile/review.',
                     currentChangedFiles,
@@ -376,10 +389,12 @@ export function readPreflightWorkspaceReadiness(
                 }
             }
             const currentComparableChangedFileSet = new Set(currentComparableChangedFiles);
-            const ignoredWorkflowConfigGitFiles = changedFiles.filter((entry) => (
+            const expectedGitScopeFiles = hasActualChangedFiles ? expectedActualChangedFiles : authorizedFiles;
+            const expectedGitScopeFileSet = new Set(expectedGitScopeFiles);
+            const ignoredWorkflowConfigGitFiles = expectedGitScopeFiles.filter((entry) => (
                 isWorkflowConfigControlPlanePath(entry) && !currentComparableChangedFileSet.has(entry)
             ));
-            const gitComparableChangedFiles = changedFiles.filter((entry) => (
+            const gitComparableChangedFiles = expectedGitScopeFiles.filter((entry) => (
                 !ignoredWorkflowConfigGitFiles.includes(entry)
             ));
             const ignoredWorkflowConfigOnlyGitDelta = ignoredWorkflowConfigGitFiles.length > 0
@@ -387,7 +402,7 @@ export function readPreflightWorkspaceReadiness(
             const currentFileSetHash = stringSha256(currentComparableChangedFiles.join('\n'));
             const expectedGitComparableChangedFilesSha256 = ignoredWorkflowConfigOnlyGitDelta
                 ? stringSha256(gitComparableChangedFiles.join('\n'))
-                : expectedComparableChangedFilesSha256;
+                : stringSha256(expectedGitScopeFiles.join('\n'));
             if (ignoredWorkflowConfigOnlyGitDelta && expectedDomainScopeFingerprints) {
                 const currentDomainScopeFingerprints = buildCurrentDomainScopeFingerprints({
                     repoRoot,
@@ -417,8 +432,8 @@ export function readPreflightWorkspaceReadiness(
             }
             if (currentFileSetHash !== expectedGitComparableChangedFilesSha256) {
                 const currentSet = new Set(currentComparableChangedFiles);
-                const missingFromPreflight = currentComparableChangedFiles.filter((entry) => !preflightSet.has(entry));
-                const noLongerCurrent = (ignoredWorkflowConfigOnlyGitDelta ? gitComparableChangedFiles : changedFiles)
+                const missingFromPreflight = currentComparableChangedFiles.filter((entry) => !expectedGitScopeFileSet.has(entry));
+                const noLongerCurrent = (ignoredWorkflowConfigOnlyGitDelta ? gitComparableChangedFiles : expectedGitScopeFiles)
                     .filter((entry) => !currentSet.has(entry));
                 const ignoredProtectedNote = unchangedProtectedFiles.size > 0
                     ? `; ignored unchanged dirty-baseline files: ${describePathList([...unchangedProtectedFiles])}`
@@ -427,7 +442,7 @@ export function readPreflightWorkspaceReadiness(
                     ? `; ignored workflow-config-only local baseline files: ${describePathList(ignoredWorkflowConfigGitFiles)}`
                     : '';
                 violations.push(
-                    `stale preflight file set ${describePathList(changedFiles)} differs from current git snapshot ${describePathList(currentComparableChangedFiles)}` +
+                    `stale preflight ${hasActualChangedFiles ? 'actual-diff' : 'authorized'} file set ${describePathList(expectedGitScopeFiles)} differs from current git snapshot ${describePathList(currentComparableChangedFiles)}` +
                     `; missing from preflight: ${describePathList(missingFromPreflight)}` +
                     `; no longer current: ${describePathList(noLongerCurrent)}${ignoredProtectedNote}${ignoredWorkflowConfigNote}`
                 );

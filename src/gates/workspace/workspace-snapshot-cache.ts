@@ -6,7 +6,7 @@ import { getWorkspaceSnapshot } from '../compile/compile-gate';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { getSafeWorktreePathState } from './worktree-path-state';
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 const CACHE_RELATIVE_PATH = path.join('runtime', 'cache', 'workspace-snapshot.json');
 
 export type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;

@@ -380,6 +380,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             { noCache: true, readOnly: true }
         )
         : ordinaryWorkspaceSnapshot!;
+    const authorizedFiles = Array.isArray(workspaceSnapshot.authorized_files)
+        ? workspaceSnapshot.authorized_files
+        : workspaceSnapshot.changed_files;
     const renameCount = getClassificationRenameCount(
         repoRoot,
         workspaceSnapshot.detection_source,
@@ -390,7 +393,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
     const isSourceCheckout = gateHelpers.isOrchestratorSourceCheckout(repoRoot);
     const result: ClassifyChangeResult = classifyChange({
-        normalizedFiles: workspaceSnapshot.changed_files,
+        normalizedFiles: authorizedFiles,
         repoRoot,
         isSourceCheckout,
         taskIntent: String(options.taskIntent || ''),
@@ -409,9 +412,17 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         reviewCapabilities,
         reviewExecutionPolicyMode: reviewExecutionPolicy.mode
     });
+    (result as unknown as Record<string, unknown>).authorized_files = authorizedFiles;
+    result.changed_files = workspaceSnapshot.changed_files;
+    (result.metrics as unknown as Record<string, unknown>).authorized_files_count = authorizedFiles.length;
+    (result.metrics as unknown as Record<string, unknown>).authorized_files_sha256 = workspaceSnapshot.authorized_files_sha256;
+    result.metrics.changed_files_count = workspaceSnapshot.changed_files_count;
     result.metrics.changed_files_sha256 = workspaceSnapshot.changed_files_sha256;
     result.metrics.scope_content_sha256 = workspaceSnapshot.scope_content_sha256;
     result.metrics.scope_sha256 = workspaceSnapshot.scope_sha256;
+    (result.metrics as unknown as Record<string, unknown>).actual_changed_files = workspaceSnapshot.changed_files;
+    (result.metrics as unknown as Record<string, unknown>).actual_changed_files_count = workspaceSnapshot.changed_files_count;
+    (result.metrics as unknown as Record<string, unknown>).actual_changed_files_sha256 = workspaceSnapshot.changed_files_sha256;
     result.metrics.domain_scope_fingerprints = buildDomainScopeFingerprints({
         repoRoot,
         detectionSource: workspaceSnapshot.detection_source,
@@ -853,7 +864,10 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         );
 
         const effectiveDepth = riskAwareDepth.effective_depth;
-        const reviewTriggerChangedFilesCount = getReviewTriggerEffectiveMetric(result, 'changed_files_count');
+        const reviewTriggerChangedFilesCount = Math.min(
+            workspaceSnapshot.changed_files_count,
+            getReviewTriggerEffectiveMetric(result, 'changed_files_count')
+        );
         const reviewTriggerChangedLinesTotal = getReviewTriggerEffectiveMetric(result, 'changed_lines_total');
 
         const depthEscalation = resolveDepthEscalation({
