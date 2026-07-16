@@ -132,7 +132,7 @@ function writeStrictDecompositionDecision(
             expectedReviewTypes: options.expectedReviewTypes || ['code'],
             atomicityConstraints: ['The navigator decision and its regression expectations must land together.'],
             proposedChildTaskIds: decision === 'split-required'
-                ? (options.proposedChildTaskIds || [`${taskId}-1`])
+                ? (options.proposedChildTaskIds || [`${taskId}-1`, `${taskId}-2`])
                 : options.proposedChildTaskIds
         })
     );
@@ -460,7 +460,7 @@ describe('gates/next-step strict decomposition', () => {
         writeStrictDecompositionDecision(repoRoot, TASK_ID, {
             decision: 'split-required',
             taskSummary: 'Seeded next-step task',
-            proposedChildTaskIds: [`${TASK_ID}-1`]
+            proposedChildTaskIds: [`${TASK_ID}-1`, `${TASK_ID}-2`]
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -484,8 +484,8 @@ describe('gates/next-step strict decomposition', () => {
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
             `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\` and \`${TASK_ID}-2\`. |`,
-            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | First child | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
-            `| ${TASK_ID}-2 | TODO | P1 | workflow/strict-decomposition-split-routing | Second child | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | Validate split evidence | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-2 | TODO | P1 | workflow/strict-decomposition-split-routing | Route child execution | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
             ''
         ].join('\n'), 'utf8');
         seedStartedTask(repoRoot, TASK_ID);
@@ -518,15 +518,16 @@ describe('gates/next-step strict decomposition', () => {
             '',
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
-            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\`. |`,
-            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | First child | gpt-5.4 | 2026-05-20 | balanced | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\` and \`${TASK_ID}-2\`. |`,
+            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | Validate split evidence | gpt-5.4 | 2026-05-20 | balanced | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-2 | TODO | P1 | workflow/strict-decomposition-split-routing | Route child execution | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
             ''
         ].join('\n'), 'utf8');
         seedStartedTask(repoRoot, TASK_ID);
         writeStrictDecompositionDecision(repoRoot, TASK_ID, {
             decision: 'split-required',
             taskSummary: 'Seeded next-step task',
-            proposedChildTaskIds: [`${TASK_ID}-1`]
+            proposedChildTaskIds: [`${TASK_ID}-1`, `${TASK_ID}-2`]
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -538,6 +539,40 @@ describe('gates/next-step strict decomposition', () => {
         assert.ok(taskMd.includes(`| ${TASK_ID} | TODO |`));
     });
 
+    it('blocks strict split routing for terminal, placeholder, and duplicate-scope proposed children', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\`, \`${TASK_ID}-2\`, \`${TASK_ID}-3\`, and \`${TASK_ID}-4\`. |`,
+            `| ${TASK_ID}-1 | DONE | P1 | workflow/security | Validate trust boundary | gpt-5.4 | 2026-05-20 | strict | Terminal child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-2 | TODO | P1 | workflow/parser | First child | gpt-5.4 | 2026-05-20 | strict | Ordinal placeholder child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-3 | TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-20 | strict | First duplicate scope of ${TASK_ID}. |`,
+            `| ${TASK_ID}-4 | TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-20 | strict | Second duplicate scope of ${TASK_ID}. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'split-required',
+            taskSummary: 'Seeded next-step task',
+            proposedChildTaskIds: [`${TASK_ID}-1`, `${TASK_ID}-2`, `${TASK_ID}-3`, `${TASK_ID}-4`]
+        });
+        const eventPath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+        const beforeEvents = fs.readFileSync(eventPath, 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'strict-decomposition-split-routing');
+        assert.ok(result.reason.includes('terminal child tasks cannot establish a new split'));
+        assert.ok(result.reason.includes('placeholder child tasks are not meaningful work packages'));
+        assert.ok(result.reason.includes('duplicate child work-package scopes'));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | TODO |`));
+        assert.equal(fs.readFileSync(eventPath, 'utf8'), beforeEvents);
+    });
+
     it('blocks strict split-required routing for unexpected linked child tasks', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -546,7 +581,8 @@ describe('gates/next-step strict decomposition', () => {
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
             `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\` and \`${TASK_ID}-extra\`. |`,
-            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | First child | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | Validate split evidence | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-2 | TODO | P1 | workflow/strict-decomposition-split-routing | Route child execution | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
             `| ${TASK_ID}-extra | TODO | P1 | workflow/strict-decomposition-split-routing | Extra child | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
             ''
         ].join('\n'), 'utf8');
@@ -554,7 +590,7 @@ describe('gates/next-step strict decomposition', () => {
         writeStrictDecompositionDecision(repoRoot, TASK_ID, {
             decision: 'split-required',
             taskSummary: 'Seeded next-step task',
-            proposedChildTaskIds: [`${TASK_ID}-1`]
+            proposedChildTaskIds: [`${TASK_ID}-1`, `${TASK_ID}-2`]
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });

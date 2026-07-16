@@ -120,7 +120,8 @@ export function resolvePermanentSplitRequiredLatchRoute(options: {
         reason:
             `A valid split-required latch already exists for ${formatInlineValue(options.taskId)}. ` +
             'The latch is permanent for this task attempt, so later status/config/scope changes cannot make the parent executable again. ' +
-            'Create and link child tasks so the gate can transition the parent to DECOMPOSED, or use an explicit operator task-reset/discard command to clear the latch. ' +
+            'Create and link at least two meaningful, independently scoped, non-terminal child tasks so the gate can transition the parent to DECOMPOSED. ' +
+            'If the work is genuinely unsplittable, use an explicit operator remediation or terminal decision; task-reset/discard remains the only way to clear the latch. ' +
             splitRequiredWipGuidance(options.taskId),
         commands: []
     };
@@ -196,7 +197,8 @@ export function resolveSplitRequiredTaskQueueRoute(options: {
         reason:
             `TASK.md marks ${formatInlineValue(options.taskId)} as SPLIT_REQUIRED. ` +
             'This parent task was blocked by an auto-split guard and cannot continue through classify, compile, review, full-suite, completion, or final closeout gates. ' +
-            'Create and link child tasks so the gate can transition the parent to DECOMPOSED, or use an explicit operator task-reset/discard command to clear the latch. ' +
+            'Create and link at least two meaningful, independently scoped, non-terminal child tasks so the gate can transition the parent to DECOMPOSED. ' +
+            'If the work is genuinely unsplittable, use an explicit operator remediation or terminal decision; task-reset/discard remains the only way to clear the latch. ' +
             splitRequiredWipGuidance(options.taskId),
         commands: []
     };

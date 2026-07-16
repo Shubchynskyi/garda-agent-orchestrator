@@ -1,7 +1,9 @@
 import {
     isTaskQueueBlockedStatus,
     isTaskQueueDecomposedStatus,
-    isTaskQueueDoneStatus
+    isTaskQueueDoneStatus,
+    isTaskQueueTerminalStatus,
+    readTaskQueueStatusToken
 } from '../../core/active-task-state';
 import {
     buildExactTaskIdReferencePattern,
@@ -53,6 +55,21 @@ export interface StrictDecompositionSplitRoutingState {
     nonParentDerivedChildTaskIds: string[];
     unexpectedLinkedChildTaskIds: string[];
     nonStrictChildTaskIds: string[];
+    terminalChildTaskIds: string[];
+    placeholderChildTaskIds: string[];
+    duplicateScopeChildTaskIds: string[];
+    nonExecutableChildTaskIds: string[];
+    childRoute: DecomposedChildRoute | null;
+}
+
+export interface SplitRequiredDecompositionState {
+    ready: boolean;
+    linkedChildTaskIds: string[];
+    missingChildTaskIds: string[];
+    terminalChildTaskIds: string[];
+    placeholderChildTaskIds: string[];
+    duplicateScopeChildTaskIds: string[];
+    nonExecutableChildTaskIds: string[];
     childRoute: DecomposedChildRoute | null;
 }
 
@@ -62,6 +79,11 @@ const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
 const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
 const TASK_QUEUE_TASK_ID_REFERENCE_PATTERN = /(^|[^A-Za-z0-9-])([Tt]-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)(?=$|[^A-Za-z0-9-])/gu;
 export const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
+const PLACEHOLDER_CHILD_ORDINAL_PATTERN = '(?:#?\\d+(?:st|nd|rd|th)?|one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)';
+const PLACEHOLDER_CHILD_TITLE_PATTERN = new RegExp(
+    `^(?:(?:tbd|todo|placeholder)(?:\\b.*)?|child(?:\\s+(?:task\\s+)?${PLACEHOLDER_CHILD_ORDINAL_PATTERN})?|${PLACEHOLDER_CHILD_ORDINAL_PATTERN}\\s+child(?:\\s+task)?)$`,
+    'iu'
+);
 
 function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
     if (!entry) {
@@ -476,10 +498,80 @@ export function resolveDecomposedParentCompletionState(
     };
 }
 
-export function hasLinkedChildTasks(taskEntries: Map<string, TaskQueueEntry>, parentTaskId: string): boolean {
+function normalizeChildScopePart(value: string | null): string {
+    return String(value || '').trim().toLowerCase().replace(/\s+/gu, ' ');
+}
+
+function childSetQuality(taskEntries: Map<string, TaskQueueEntry>, childTaskIds: string[]): Omit<
+    SplitRequiredDecompositionState,
+    'ready' | 'linkedChildTaskIds' | 'missingChildTaskIds' | 'childRoute'
+> {
+    const terminalChildTaskIds: string[] = [];
+    const placeholderChildTaskIds: string[] = [];
+    const nonExecutableChildTaskIds: string[] = [];
+    const scopeOwners = new Map<string, string[]>();
+    for (const childTaskId of childTaskIds) {
+        const child = taskEntries.get(childTaskId);
+        if (!child) {
+            continue;
+        }
+        if (isTaskQueueTerminalStatus(child.status)) {
+            terminalChildTaskIds.push(childTaskId);
+        }
+        const status = readTaskQueueStatusToken(child.status);
+        if (status !== 'TODO' && status !== 'IN_PROGRESS' && status !== 'IN_REVIEW') {
+            nonExecutableChildTaskIds.push(childTaskId);
+        }
+        const area = normalizeChildScopePart(child.area);
+        const title = normalizeChildScopePart(child.title);
+        if (!area || !title || PLACEHOLDER_CHILD_TITLE_PATTERN.test(title)) {
+            placeholderChildTaskIds.push(childTaskId);
+        }
+        const scopeKey = `${area}\0${title}`;
+        const owners = scopeOwners.get(scopeKey) || [];
+        owners.push(childTaskId);
+        scopeOwners.set(scopeKey, owners);
+    }
+    const duplicateScopeChildTaskIds = [...scopeOwners.values()]
+        .filter((owners) => owners.length > 1)
+        .flat()
+        .sort();
+    return {
+        terminalChildTaskIds,
+        placeholderChildTaskIds,
+        duplicateScopeChildTaskIds,
+        nonExecutableChildTaskIds
+    };
+}
+
+export function resolveSplitRequiredDecompositionState(
+    taskEntries: Map<string, TaskQueueEntry>,
+    parentTaskId: string
+): SplitRequiredDecompositionState {
     const parentEntry = taskEntries.get(parentTaskId);
-    return extractExplicitLinkedChildTaskIds(parentEntry?.notes || null, taskEntries.keys())
-        .some((childTaskId) => childTaskId !== parentTaskId && taskEntries.has(childTaskId));
+    const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(parentEntry?.notes || null, taskEntries.keys())
+        .filter((childTaskId) => childTaskId !== parentTaskId);
+    const missingChildTaskIds = linkedChildTaskIds.filter((childTaskId) => !taskEntries.has(childTaskId));
+    const quality = childSetQuality(taskEntries, linkedChildTaskIds);
+    const ready = linkedChildTaskIds.length >= 2
+        && missingChildTaskIds.length === 0
+        && quality.terminalChildTaskIds.length === 0
+        && quality.placeholderChildTaskIds.length === 0
+        && quality.duplicateScopeChildTaskIds.length === 0
+        && quality.nonExecutableChildTaskIds.length === 0;
+    return {
+        ready,
+        linkedChildTaskIds,
+        missingChildTaskIds,
+        ...quality,
+        childRoute: ready
+            ? resolveNextUnfinishedChildRoute(taskEntries, parentTaskId, new Set<string>(), extractExplicitLinkedChildTaskIds)
+            : null
+    };
+}
+
+export function hasLinkedChildTasks(taskEntries: Map<string, TaskQueueEntry>, parentTaskId: string): boolean {
+    return resolveSplitRequiredDecompositionState(taskEntries, parentTaskId).ready;
 }
 
 function isParentDerivedChildTaskId(parentTaskId: string, childTaskId: string): boolean {
@@ -511,13 +603,19 @@ export function resolveStrictDecompositionSplitRoutingState(
             const childEntry = taskEntries.get(childTaskId);
             return childEntry && String(childEntry.profile || '').trim().toLowerCase() !== 'strict';
         });
+    // Strict routing shares the complete child-quality contract with generic split-required routing.
+    const quality = childSetQuality(taskEntries, proposedChildTaskIds);
 
-    const ready = proposedChildTaskIds.length > 0
+    const ready = proposedChildTaskIds.length >= 2
         && missingLinkedChildTaskIds.length === 0
         && missingChildTaskIds.length === 0
         && nonParentDerivedChildTaskIds.length === 0
         && unexpectedLinkedChildTaskIds.length === 0
-        && nonStrictChildTaskIds.length === 0;
+        && nonStrictChildTaskIds.length === 0
+        && quality.terminalChildTaskIds.length === 0
+        && quality.placeholderChildTaskIds.length === 0
+        && quality.duplicateScopeChildTaskIds.length === 0
+        && quality.nonExecutableChildTaskIds.length === 0;
 
     return {
         ready,
@@ -527,6 +625,7 @@ export function resolveStrictDecompositionSplitRoutingState(
         nonParentDerivedChildTaskIds,
         unexpectedLinkedChildTaskIds,
         nonStrictChildTaskIds,
+        ...quality,
         childRoute: ready
             ? resolveNextUnfinishedChildRoute(taskEntries, parentTaskId, new Set<string>(), extractExplicitLinkedChildTaskIds)
             : null
@@ -535,6 +634,9 @@ export function resolveStrictDecompositionSplitRoutingState(
 
 export function formatStrictDecompositionSplitRoutingViolations(state: StrictDecompositionSplitRoutingState): string {
     const violations: string[] = [];
+    if (state.linkedChildTaskIds.length < 2) {
+        violations.push('at least two meaningful child tasks are required');
+    }
     if (state.missingLinkedChildTaskIds.length > 0) {
         violations.push(`missing linked proposed child tasks: ${state.missingLinkedChildTaskIds.join(', ')}`);
     }
@@ -549,6 +651,15 @@ export function formatStrictDecompositionSplitRoutingViolations(state: StrictDec
     }
     if (state.nonStrictChildTaskIds.length > 0) {
         violations.push(`child tasks without strict profile: ${state.nonStrictChildTaskIds.join(', ')}`);
+    }
+    if (state.terminalChildTaskIds.length > 0) {
+        violations.push(`terminal child tasks cannot establish a new split: ${state.terminalChildTaskIds.join(', ')}`);
+    }
+    if (state.placeholderChildTaskIds.length > 0) {
+        violations.push(`placeholder child tasks are not meaningful work packages: ${state.placeholderChildTaskIds.join(', ')}`);
+    }
+    if (state.duplicateScopeChildTaskIds.length > 0) {
+        violations.push(`duplicate child work-package scopes: ${state.duplicateScopeChildTaskIds.join(', ')}`);
     }
     if (violations.length === 0) {
         return 'child routing is not ready';

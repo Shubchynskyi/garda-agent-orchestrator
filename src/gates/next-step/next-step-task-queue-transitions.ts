@@ -13,6 +13,7 @@ import {
 import {
     rollbackDecomposedParentStatusSync,
     syncDecomposedParentsToDone,
+    syncTaskQueueStatusFromStrictDecompositionToDecomposed,
     syncTaskQueueStatusFromSplitRequiredToDecomposed,
     type DecomposedParentBatchStatusSyncResult
 } from './next-step-task-queue-status-sync';
@@ -70,8 +71,13 @@ export function transitionStrictDecompositionParentToDecomposed(params: {
     repoRoot: string;
     eventsRoot: string;
     taskId: string;
+    proposedChildTaskIds: string[];
 }): TaskQueueStatusSyncResult {
-    const syncResult = syncTaskQueueStatusDetailed(params.repoRoot, params.taskId, 'DECOMPOSED');
+    const syncResult = syncTaskQueueStatusFromStrictDecompositionToDecomposed(
+        params.repoRoot,
+        params.taskId,
+        params.proposedChildTaskIds
+    );
     if (syncResult.outcome === 'updated') {
         appendMandatoryTaskEvent(
             getOrchestratorRootFromEventsRoot(params.eventsRoot),

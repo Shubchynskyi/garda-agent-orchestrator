@@ -29,7 +29,9 @@ import {
     SPLIT_REQUIRED_STATUS,
     extractExplicitLinkedChildTaskIds,
     parseTaskQueueEntriesFromContent,
-    resolveDecomposedParentCompletionState
+    resolveDecomposedParentCompletionState,
+    resolveSplitRequiredDecompositionState,
+    resolveStrictDecompositionSplitRoutingState
 } from './next-step-task-queue';
 
 const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
@@ -54,7 +56,10 @@ function fileExists(filePath: string): boolean {
     }
 }
 
-export function syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot: string, taskId: string): TaskQueueStatusSyncResult {
+function syncTaskQueueStatusToDecomposed(repoRoot: string, taskId: string, options: {
+    allowedPreviousStatuses: string[];
+    validate: (taskEntries: ReturnType<typeof parseTaskQueueEntriesFromContent>) => string | null;
+}): TaskQueueStatusSyncResult {
     const taskPath = path.join(repoRoot, 'TASK.md');
     const statusContract = buildTaskQueueStatusContract(taskId);
     if (!fileExists(taskPath)) {
@@ -82,6 +87,32 @@ export function syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot: strin
         }),
         () => {
             const originalContent = fs.readFileSync(taskPath, 'utf8');
+            const taskEntries = parseTaskQueueEntriesFromContent(originalContent);
+            const targetExists = parseCanonicalActiveTaskQueue(originalContent).rows
+                .some((row) => row.taskId === taskId);
+            if (!targetExists) {
+                return {
+                    outcome: 'task_not_found',
+                    task_path: normalizePath(taskPath),
+                    task_id: taskId,
+                    previous_status: null,
+                    next_status: 'DECOMPOSED',
+                    error_message: null,
+                    status_contract: statusContract
+                };
+            }
+            const validationError = options.validate(taskEntries);
+            if (validationError) {
+                return {
+                    outcome: 'write_failed',
+                    task_path: normalizePath(taskPath),
+                    task_id: taskId,
+                    previous_status: taskEntries.get(taskId)?.status || null,
+                    next_status: 'DECOMPOSED',
+                    error_message: validationError,
+                    status_contract: statusContract
+                };
+            }
             const newline = originalContent.includes('\r\n') ? '\r\n' : '\n';
             const lines = originalContent.split(/\r?\n/);
             let previousStatus: string | null = null;
@@ -94,14 +125,14 @@ export function syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot: strin
                 }
                 taskFound = true;
                 previousStatus = readTaskQueueStatusToken(row.status);
-                if (previousStatus !== SPLIT_REQUIRED_STATUS) {
+                if (!previousStatus || !options.allowedPreviousStatuses.includes(previousStatus)) {
                     return {
                         outcome: 'write_failed',
                         task_path: normalizePath(taskPath),
                         task_id: taskId,
                         previous_status: previousStatus,
                         next_status: 'DECOMPOSED',
-                        error_message: `Expected previous status ${SPLIT_REQUIRED_STATUS}; found ${previousStatus || 'unknown'}.`,
+                        error_message: `Expected previous status ${options.allowedPreviousStatuses.join(' or ')}; found ${previousStatus || 'unknown'}.`,
                         status_contract: statusContract
                     };
                 }
@@ -173,6 +204,34 @@ export function syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot: strin
             }
         }
     );
+}
+
+export function syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot: string, taskId: string): TaskQueueStatusSyncResult {
+    return syncTaskQueueStatusToDecomposed(repoRoot, taskId, {
+        allowedPreviousStatuses: [SPLIT_REQUIRED_STATUS],
+        validate: (taskEntries) => {
+            const state = resolveSplitRequiredDecompositionState(taskEntries, taskId);
+            return state.ready
+                ? null
+                : 'The complete child task set is not valid for an atomic split-required transition.';
+        }
+    });
+}
+
+export function syncTaskQueueStatusFromStrictDecompositionToDecomposed(
+    repoRoot: string,
+    taskId: string,
+    proposedChildTaskIds: string[]
+): TaskQueueStatusSyncResult {
+    return syncTaskQueueStatusToDecomposed(repoRoot, taskId, {
+        allowedPreviousStatuses: ['TODO', 'IN_PROGRESS', 'IN_REVIEW'],
+        validate: (taskEntries) => {
+            const state = resolveStrictDecompositionSplitRoutingState(taskEntries, taskId, proposedChildTaskIds);
+            return state.ready
+                ? null
+                : 'The complete strict child task set is not valid for an atomic decomposition transition.';
+        }
+    });
 }
 
 function buildDecomposedParentBatchStatusSyncResult(params: {

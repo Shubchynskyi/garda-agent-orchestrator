@@ -272,7 +272,7 @@ export function writeStrictDecompositionDecision(
             expectedReviewTypes: options.expectedReviewTypes || ['code'],
             atomicityConstraints: ['The navigator decision and its regression expectations must land together.'],
             proposedChildTaskIds: decision === 'split-required'
-                ? (options.proposedChildTaskIds || [`${taskId}-1`])
+                ? (options.proposedChildTaskIds || [`${taskId}-1`, `${taskId}-2`])
                 : options.proposedChildTaskIds
         })
     );

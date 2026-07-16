@@ -43,9 +43,41 @@ describe('gates/strict-decomposition-decision', () => {
                 scopeRisk: 'The change touches review routing, task queue metadata, and lifecycle evidence.',
                 expectedReviewTypes: ['code'],
                 atomicityConstraints: ['Keep artifact schema and recorder validation together.'],
-                proposedChildTaskIds: ['T-101']
+                proposedChildTaskIds: ['T-101', 'T-100-1']
             }),
             /parent-derived/
+        );
+    });
+
+    it('rejects split-required decisions with fewer than two meaningful children', () => {
+        assert.throws(
+            () => buildStrictDecompositionDecisionArtifact({
+                taskId: 'T-100',
+                decision: 'split-required',
+                taskSummary: 'Implement a risky strict workflow change with several review lanes.',
+                reason: 'The scope spans multiple lifecycle contracts and should be split before implementation.',
+                scopeRisk: 'The change touches review routing, task queue metadata, and lifecycle evidence.',
+                expectedReviewTypes: ['code'],
+                atomicityConstraints: ['Keep artifact schema and recorder validation together.'],
+                proposedChildTaskIds: ['T-100-1']
+            }),
+            /at least two/
+        );
+    });
+
+    it('rejects duplicate proposed child identifiers before recording split evidence', () => {
+        assert.throws(
+            () => buildStrictDecompositionDecisionArtifact({
+                taskId: 'T-100',
+                decision: 'split-required',
+                taskSummary: 'Implement a risky strict workflow change with several review lanes.',
+                reason: 'The scope spans multiple lifecycle contracts and should be split before implementation.',
+                scopeRisk: 'The change touches review routing, task queue metadata, and lifecycle evidence.',
+                expectedReviewTypes: ['code'],
+                atomicityConstraints: ['Keep artifact schema and recorder validation together.'],
+                proposedChildTaskIds: ['T-100-1', 'T-100-1']
+            }),
+            /unique/
         );
     });
 
@@ -113,12 +145,15 @@ describe('gates/strict-decomposition-decision', () => {
             scopeRisk: 'The change touches review routing, task queue metadata, and lifecycle evidence.',
             expectedReviewTypes: ['code'],
             atomicityConstraints: ['Keep artifact schema and recorder validation together.'],
-            proposedChildTaskIds: ['T-100-1']
+            proposedChildTaskIds: ['T-100-1', 'T-100-2']
         });
         const artifactPath = resolveStrictDecompositionDecisionArtifactPath(repoRoot, 'T-100');
         writeJsonArtifact(artifactPath, {
             ...artifact,
-            proposed_children: [{ task_id: 'T-100-1', profile: 'balanced' }]
+            proposed_children: [
+                { task_id: 'T-100-1', profile: 'balanced' },
+                { task_id: 'T-100-2', profile: 'strict' }
+            ]
         });
 
         const evidence = getStrictDecompositionDecisionEvidence(repoRoot, 'T-100');

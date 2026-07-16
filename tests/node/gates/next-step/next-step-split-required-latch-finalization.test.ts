@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { syncTaskQueueStatusFromSplitRequiredToDecomposed } from '../../../../src/gates/next-step/next-step-task-queue-status-sync';
 import * as fx from './next-step-review-cycle-fixtures';
 
 const {
@@ -78,12 +79,16 @@ describe('gates/next-step split-required latch finalization', () => {
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
             '| T-652 | SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-653` through `T-654`; do not continue the parent. |',
-            '| T-653 | DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
-            '| T-654 | DONE | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-653 | TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-05 | strict | Parse the bounded child contract. |',
+            '| T-654 | TODO | P1 | workflow/validation | Validate transition boundary | gpt-5.4 | 2026-05-05 | strict | Verify the atomic transition contract. |',
             ''
         ].join('\n'), 'utf8');
         seedSplitRequiredLatchEvidence(repoRoot, 'T-652');
         const decomposedResult = resolveNextStep({ taskId: 'T-652', repoRoot });
+        const decomposedTaskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8')
+            .replace('| T-653 | TODO |', '| T-653 | DONE |')
+            .replace('| T-654 | TODO |', '| T-654 | DONE |');
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), decomposedTaskMd, 'utf8');
         const doneResult = resolveNextStep({ taskId: 'T-652', repoRoot });
         const stableDoneResult = resolveNextStep({ taskId: 'T-652', repoRoot });
         const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
@@ -107,13 +112,17 @@ describe('gates/next-step split-required latch finalization', () => {
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
             '| T-506 | SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-506-1` and `T-506-2`; do not continue the parent. |',
-            '| T-506-1 | DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
-            '| T-506-2 | DONE | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-506-1 | TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-05 | strict | Parse the bounded child contract. |',
+            '| T-506-2 | TODO | P1 | workflow/validation | Validate transition boundary | gpt-5.4 | 2026-05-05 | strict | Verify the atomic transition contract. |',
             ''
         ].join('\n'), 'utf8');
         seedSplitRequiredLatchEvidence(repoRoot, 'T-506');
 
         const decomposedResult = resolveNextStep({ taskId: 'T-506', repoRoot });
+        const decomposedTaskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8')
+            .replace('| T-506-1 | TODO |', '| T-506-1 | DONE |')
+            .replace('| T-506-2 | TODO |', '| T-506-2 | DONE |');
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), decomposedTaskMd, 'utf8');
         const doneResult = resolveNextStep({ taskId: 'T-506', repoRoot });
         const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
         const events = fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-506.jsonl'), 'utf8');
@@ -156,8 +165,8 @@ describe('gates/next-step split-required latch finalization', () => {
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
             '| T-646 | TODO | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-647` through `T-648`; do not continue the parent. |',
-            '| T-647 | DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
-            '| T-648 | TODO | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            '| T-647 | TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-05 | strict | Parse the bounded child contract. |',
+            '| T-648 | TODO | P1 | workflow/validation | Validate transition boundary | gpt-5.4 | 2026-05-05 | strict | Verify the atomic transition contract. |',
             ''
         ].join('\n'), 'utf8');
         seedSplitRequiredLatchEvidence(repoRoot, 'T-646');
@@ -169,7 +178,7 @@ describe('gates/next-step split-required latch finalization', () => {
         assert.equal(result.status, 'DECOMPOSED');
         assert.equal(result.next_gate, 'child-task');
         assert.equal(result.commands.length, 1);
-        assert.ok(result.commands[0].command.includes('next-step "T-648"'));
+        assert.ok(result.commands[0].command.includes('next-step "T-647"'));
         assert.ok(result.reason.includes('stayed permanent after later status/config/scope drift'));
         assert.ok(result.reason.includes('Before entering the selected child task, inspect workflow-config.full_suite_validation.command against that child scope.'));
         assert.ok(result.reason.includes('keep current-child tests covered, exclude suspended siblings, leave an already-suitable command unchanged'));
@@ -231,8 +240,8 @@ describe('gates/next-step split-required latch finalization', () => {
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
             '| T-640 | 🟫 SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-641` through `T-642`; do not continue the parent. |',
-            '| T-641 | 🟩 DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
-            '| T-642 | 🟦 TODO | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            '| T-641 | 🟦 TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-05 | strict | Parse the bounded child contract. |',
+            '| T-642 | 🟦 TODO | P1 | workflow/validation | Validate transition boundary | gpt-5.4 | 2026-05-05 | strict | Verify the atomic transition contract. |',
             ''
         ].join('\n'), 'utf8');
         seedSplitRequiredLatchEvidence(repoRoot, 'T-640');
@@ -243,12 +252,122 @@ describe('gates/next-step split-required latch finalization', () => {
         assert.equal(result.status, 'DECOMPOSED');
         assert.equal(result.next_gate, 'child-task');
         assert.equal(result.commands.length, 1);
-        assert.ok(result.commands[0].command.includes('next-step "T-642"'));
+        assert.ok(result.commands[0].command.includes('next-step "T-641"'));
         assert.ok(result.reason.includes('transitioned the parent from SPLIT_REQUIRED to DECOMPOSED'));
         assert.ok(result.reason.includes('Before entering the selected child task, inspect workflow-config.full_suite_validation.command against that child scope.'));
         assert.ok(result.reason.includes('never retarget during an active child cycle'));
         assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-640 | 🟪 DECOMPOSED |'));
         assert.ok(text.includes('Status: DECOMPOSED'));
+    });
+
+    it('keeps the parent and split evidence unchanged when only one child is linked', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-660 | SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Child tasks: `T-660-1`. |',
+            '| T-660-1 | TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-05 | strict | Parse the bounded child contract. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-660');
+        const beforeEvents = fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-660.jsonl'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-660', repoRoot });
+
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.ok(result.reason.includes('at least two meaningful'));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-660 | SPLIT_REQUIRED |'));
+        assert.equal(fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-660.jsonl'), 'utf8'), beforeEvents);
+    });
+
+    it('keeps the parent and split evidence unchanged when no children are linked', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-661 | SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split is required, but no child work packages are linked. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-661');
+        const beforeTask = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const beforeEvents = fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-661.jsonl'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-661', repoRoot });
+
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.ok(result.reason.includes('at least two meaningful'));
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), beforeTask);
+        assert.equal(fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-661.jsonl'), 'utf8'), beforeEvents);
+    });
+
+    it('revalidates the complete child set inside the status write lock', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(taskPath, [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-665 | SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Child tasks: `T-665-1`. |',
+            '| T-665-1 | TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-05 | strict | Parse the bounded child contract. |',
+            ''
+        ].join('\n'), 'utf8');
+        const beforeTask = fs.readFileSync(taskPath, 'utf8');
+
+        const result = syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot, 'T-665');
+
+        assert.equal(result.outcome, 'write_failed');
+        assert.match(result.error_message ?? '', /complete child task set is not valid/i);
+        assert.equal(fs.readFileSync(taskPath, 'utf8'), beforeTask);
+    });
+
+    it('preserves task-not-found when child validation has no parent row to inspect', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(taskPath, [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-666 | TODO | P1 | workflow | Existing task | gpt-5.4 | 2026-05-05 | strict | Unrelated row. |',
+            ''
+        ].join('\n'), 'utf8');
+        const beforeTask = fs.readFileSync(taskPath, 'utf8');
+
+        const result = syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot, 'T-665');
+
+        assert.equal(result.outcome, 'task_not_found');
+        assert.equal(result.error_message, null);
+        assert.equal(fs.readFileSync(taskPath, 'utf8'), beforeTask);
+    });
+
+    it('rejects placeholder, duplicate-scope, and terminal child rows without partial transition evidence', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-670 | SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Child tasks: `T-670-1`, `T-670-2`, `T-670-3`, and `T-670-4`. |',
+            '| T-670-1 | TODO | P1 | workflow | First child | gpt-5.4 | 2026-05-05 | strict | Placeholder-style ordinal child. |',
+            '| T-670-2 | DONE | P1 | workflow/security | Validate trust boundary | gpt-5.4 | 2026-05-05 | strict | Already terminal. |',
+            '| T-670-3 | TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-05 | strict | First duplicate scope. |',
+            '| T-670-4 | TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-05 | strict | Second duplicate scope. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-670');
+        const beforeEvents = fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-670.jsonl'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-670', repoRoot });
+
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.ok(result.reason.includes('explicit operator'));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-670 | SPLIT_REQUIRED |'));
+        assert.equal(fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-670.jsonl'), 'utf8'), beforeEvents);
     });
 
 });

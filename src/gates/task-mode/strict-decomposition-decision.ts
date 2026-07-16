@@ -159,8 +159,11 @@ function normalizeProposedChildren(taskId: string, decision: StrictDecomposition
         .filter(Boolean);
     const uniqueChildIds = [...new Set(childIds)];
 
-    if (decision === 'split-required' && uniqueChildIds.length === 0) {
-        throw new Error('Decision split-required requires at least one ProposedChildTaskId.');
+    if (decision === 'split-required' && childIds.length !== uniqueChildIds.length) {
+        throw new Error('Decision split-required requires unique ProposedChildTaskId values.');
+    }
+    if (decision === 'split-required' && uniqueChildIds.length < 2) {
+        throw new Error('Decision split-required requires at least two ProposedChildTaskId values.');
     }
 
     return uniqueChildIds.map((childId) => {

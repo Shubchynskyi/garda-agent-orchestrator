@@ -457,7 +457,8 @@ export function resolveStrictDecompositionContinuationRoute(params: {
     const syncResult = transitionStrictDecompositionParentToDecomposed({
         repoRoot: params.repoRoot,
         eventsRoot: params.eventsRoot,
-        taskId: params.taskId
+        taskId: params.taskId,
+        proposedChildTaskIds: evidence.proposed_child_task_ids
     });
     const strictSplitRoute = resolveStrictDecompositionSplitTerminalRoute({
         taskId: params.taskId,
