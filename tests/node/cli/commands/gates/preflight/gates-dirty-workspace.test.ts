@@ -578,6 +578,21 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
             assert.equal(scope.checkpoint_commit, checkpointCommit);
             assert.deepEqual(scope.changed_files, ['src/app.ts']);
             assert.equal((preflight.zero_diff_guard as Record<string, unknown>).status, 'DIFF_PRESENT');
+
+            const explicitResult = runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Review split checkpoint scope',
+                detectionSource: preflight.detection_source,
+                changedFiles: ['src/app.ts'],
+                outputPath: path.join(repoRoot, 'explicit-split-preflight.json'),
+                emitMetrics: false
+            });
+            const explicitPreflight = JSON.parse(explicitResult.outputText) as Record<string, unknown>;
+            const explicitScope = explicitPreflight.split_checkpoint_scope as Record<string, unknown>;
+            assert.equal(explicitPreflight.detection_source, preflight.detection_source);
+            assert.deepEqual(explicitPreflight.changed_files, ['src/app.ts']);
+            assert.equal(explicitScope.checkpoint_commit, checkpointCommit);
         });
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

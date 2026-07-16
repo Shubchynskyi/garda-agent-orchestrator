@@ -426,6 +426,43 @@ function seedDirtyBaselinePreflightFailure(
     });
 }
 
+function seedAuthenticatedSplitCheckpointTask(repoRoot: string): {
+    parentTaskId: string;
+    checkpointCommit: string;
+    detectionSource: string;
+} {
+    const parentTaskId = TASK_ID.split('-').slice(0, -1).join('-');
+    initGitRepo(repoRoot);
+
+    fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const checkpointScope = true;\n', 'utf8');
+    runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+    runGitFixtureCommand(repoRoot, [
+        'commit',
+        '-m',
+        `checkpoint(split): preserve ${parentTaskId} dirty diff before decomposition`
+    ]);
+    const checkpointCommit = runGitFixtureCommand(repoRoot, ['rev-parse', 'HEAD']).stdout.trim();
+    const baseCommit = runGitFixtureCommand(repoRoot, ['rev-parse', `${checkpointCommit}^`]).stdout.trim();
+
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '# TASK.md',
+        '',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        `| ${parentTaskId} | DECOMPOSED | P1 | workflow | Parent checkpoint | gpt-5.4 | 2026-04-25 | balanced | Split checkpoint \`${checkpointCommit}\` preserves parent work. Child tasks: \`${TASK_ID}\`. |`,
+        `| ${TASK_ID} | TODO | P1 | workflow | Child checkpoint | gpt-5.4 | 2026-04-25 | balanced | Child of \`${parentTaskId}\`. Checkpoint: \`${checkpointCommit}\`. Checkpoint files: \`src/app.ts\`. |`,
+        ''
+    ].join('\n'), 'utf8');
+    runGitFixtureCommand(repoRoot, ['add', 'TASK.md']);
+    runGitFixtureCommand(repoRoot, ['commit', '-m', 'test: bind split checkpoint tasks']);
+
+    return {
+        parentTaskId,
+        checkpointCommit,
+        detectionSource: `git_split_checkpoint:${baseCommit}:${checkpointCommit}`
+    };
+}
+
 
 
 
@@ -1983,6 +2020,83 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(command.includes('--changed-file "src/app.ts"'));
         assert.ok(command.includes('--changed-file "TASK.md"'));
         assert.ok(!command.includes('--changed-file "<path>"'));
+    });
+
+    it('refreshes stale preflight with authenticated split-checkpoint detection source and exact files', () => {
+        const repoRoot = makeTempRepo();
+        const checkpoint = seedAuthenticatedSplitCheckpointTask(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: ['src/app.ts'],
+            seedPostPreflight: false
+        });
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
+            restarted: true
+        });
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.match(result.reason, /Preflight evidence is older than the latest TASK_MODE_ENTERED/);
+        assert.ok(command.includes(`--detection-source "${checkpoint.detectionSource}"`), command);
+        assert.ok(command.includes('--changed-file "src/app.ts"'), command);
+        assert.ok(!command.includes('--changed-file "<path>"'), command);
+    });
+
+    it('keeps route-specific refresh scope when split-checkpoint metadata does not match current drift', () => {
+        const repoRoot = makeTempRepo();
+        const checkpoint = seedAuthenticatedSplitCheckpointTask(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: ['src/app.ts'],
+            seedPostPreflight: false
+        });
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
+            restarted: true
+        });
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'extra'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'extra', 'unplanned.ts'), 'export const unplanned = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.ok(command.includes('--changed-file "src/extra/unplanned.ts"'), command);
+        assert.ok(!command.includes(`--detection-source "${checkpoint.detectionSource}"`), command);
+        assert.ok(!command.includes('--changed-file "<path>"'), command);
+    });
+
+    it('recovers dirty-baseline classify failure with authenticated split-checkpoint scope', () => {
+        const repoRoot = makeTempRepo();
+        const checkpoint = seedAuthenticatedSplitCheckpointTask(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        seedDirtyBaselinePreflightFailure(repoRoot, TASK_ID, ['src/app.ts']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.match(result.reason, /authenticated split-checkpoint scope/);
+        assert.ok(command.includes(`--detection-source "${checkpoint.detectionSource}"`), command);
+        assert.ok(command.includes('--changed-file "src/app.ts"'), command);
+        assert.ok(!command.includes('--use-staged'), command);
+        assert.ok(!command.includes('--changed-file "<path>"'), command);
     });
 
     it('uses current git-auto workspace files when refreshing stale unscoped preflight', () => {

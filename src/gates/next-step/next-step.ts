@@ -321,9 +321,11 @@ import {
     getPostPreflightRuleFileNames,
     getPreflightRefreshChangedFiles,
     getStringField,
+    getTaskModeDirtyWorkspaceBaselineCommandChangedFiles,
     getTaskModeDirtyWorkspaceBaselineChangedFiles,
     getTaskModeDirtyWorkspaceBaselineFileHashes,
-    getTaskModePlannedChangedFiles
+    getTaskModePlannedChangedFiles,
+    resolveAuthenticatedSplitCheckpointCommandScope
 } from './next-step-lifecycle-command-builders';
 import {
     isLatestCompletionCurrent,
@@ -1867,6 +1869,10 @@ function getPreflightRefreshCommandChangedFiles(params: {
             ? [...new Set([...taskScopedRefreshChangedFiles, ...currentTaskScopeChangedFiles])].sort()
             : taskScopedChangedFiles;
     }
+    const dirtyBaselineCommandFiles = getTaskModeDirtyWorkspaceBaselineCommandChangedFiles(params.repoRoot, params.taskMode);
+    if (dirtyBaselineCommandFiles.length > 0) {
+        return filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, dirtyBaselineCommandFiles);
+    }
     return filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, getCurrentWorkspaceRefreshChangedFiles(
         params.repoRoot,
         params.preflight,
@@ -1885,6 +1891,51 @@ function filterSourceCheckoutGeneratedRuntimeArtifacts(repoRoot: string, changed
             .map((entry) => normalizePath(entry))
             .filter((entry) => entry && !isSourceCheckoutGeneratedRuntimeArtifactPath(entry, isSourceCheckout))
     )].sort();
+}
+
+function buildAuthenticatedScopeClassifyChangeCommand(params: {
+    repoRoot: string;
+    cliPrefix: string;
+    taskId: string;
+    taskMode: Record<string, unknown> | null;
+    taskModePath: string | null;
+    preflightCommandPath: string;
+    includePlannedScope: boolean;
+    changedFiles?: string[];
+}): string {
+    const splitCheckpointScope = resolveAuthenticatedSplitCheckpointCommandScope(params.repoRoot, params.taskId);
+    const callerChangedFiles = normalizeChangedFileSet(params.changedFiles || []);
+    if (
+        splitCheckpointScope
+        && !splitCheckpointScope.violation
+        && splitCheckpointScope.changedFiles.length > 0
+        && splitCheckpointScope.detectionSource
+    ) {
+        if (
+            callerChangedFiles.length > 0
+            && !sameChangedFileSet(callerChangedFiles, splitCheckpointScope.changedFiles)
+        ) {
+            return buildClassifyChangeCommand(params);
+        }
+        return buildClassifyChangeCommand({
+            ...params,
+            includePlannedScope: false,
+            changedFiles: splitCheckpointScope.changedFiles,
+            detectionSource: splitCheckpointScope.detectionSource
+        });
+    }
+    return buildClassifyChangeCommand(params);
+}
+
+function normalizeChangedFileSet(changedFiles: readonly string[]): string[] {
+    return [...new Set(changedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
+}
+
+function sameChangedFileSet(left: readonly string[], right: readonly string[]): boolean {
+    const normalizedLeft = normalizeChangedFileSet(left);
+    const normalizedRight = normalizeChangedFileSet(right);
+    return normalizedLeft.length === normalizedRight.length
+        && normalizedLeft.every((entry, index) => entry === normalizedRight[index]);
 }
 
 function isDistRuntimeOutputRelatedToPlannedSource(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
@@ -2703,7 +2754,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskMode,
             readNoPreflightCurrentSnapshot()
         );
-        const classifyCommand = buildClassifyChangeCommand({
+        const classifyCommand = buildAuthenticatedScopeClassifyChangeCommand({
             repoRoot,
             cliPrefix,
             taskId,
@@ -2741,7 +2792,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             commands: [
                 buildCommand(
                     'Refresh preflight and optional-skill selection',
-                    buildClassifyChangeCommand({
+                    buildAuthenticatedScopeClassifyChangeCommand({
                         repoRoot,
                         cliPrefix,
                         taskId,
@@ -2749,7 +2800,12 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         taskModePath,
                         preflightCommandPath,
                         includePlannedScope: false,
-                        changedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
+                        changedFiles: getPreflightRefreshCommandChangedFiles({
+                            repoRoot,
+                            taskMode,
+                            preflight,
+                            fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
+                        })
                     })
                 )
             ]
@@ -2762,7 +2818,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         taskEntry?.title || taskId,
         {
             repoRoot,
-            reclassifyCommand: buildClassifyChangeCommand({
+            reclassifyCommand: buildAuthenticatedScopeClassifyChangeCommand({
                 repoRoot,
                 cliPrefix,
                 taskId,
@@ -2770,7 +2826,12 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 taskModePath,
                 preflightCommandPath,
                 includePlannedScope: false,
-                changedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
+                changedFiles: getPreflightRefreshCommandChangedFiles({
+                    repoRoot,
+                    taskMode,
+                    preflight,
+                    fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
+                })
             })
         }
     );
@@ -2854,7 +2915,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
 
     const preGuardRoute = resolveNextStepPreGuardRoute({
         preflightCycleReadiness,
-        preflightCycleRefreshCommand: buildClassifyChangeCommand({
+        preflightCycleRefreshCommand: buildAuthenticatedScopeClassifyChangeCommand({
             repoRoot,
             cliPrefix,
             taskId,
@@ -2862,7 +2923,12 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
-            changedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
+            changedFiles: getPreflightRefreshCommandChangedFiles({
+                repoRoot,
+                taskMode,
+                preflight,
+                fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
+            })
         }),
         protectedControlPlane: {
             touched: preflightTouchesProtectedControlPlane(preflight),
@@ -2875,7 +2941,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         workspaceReadiness: reviewGateAlreadyPassed
             ? effectivePreflightWorkspaceReadiness
             : effectiveStrictPreGuardWorkspaceReadiness,
-        workspaceRefreshCommand: buildClassifyChangeCommand({
+        workspaceRefreshCommand: buildAuthenticatedScopeClassifyChangeCommand({
             repoRoot,
             cliPrefix,
             taskId,
@@ -3287,7 +3353,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         ready: compileReadiness.ready,
         reason: compileReadiness.reason,
         recoveryGate: compileReadiness.recoveryGate,
-        refreshPreflightCommand: buildClassifyChangeCommand({
+        refreshPreflightCommand: buildAuthenticatedScopeClassifyChangeCommand({
             repoRoot,
             cliPrefix,
             taskId,

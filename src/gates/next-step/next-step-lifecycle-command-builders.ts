@@ -6,6 +6,7 @@ import {
     selectRulePackFiles
 } from '../review-context/review-context-token-economy';
 import {
+    isPathRealpathInsideRoot,
     normalizePath
 } from '../shared/helpers';
 import {
@@ -49,6 +50,15 @@ import {
 import {
     selectTaskEntryRulePackFileNames
 } from '../rule-pack/rule-pack-selection';
+import {
+    resolveSplitCheckpointTaskScope
+} from '../split-required/split-checkpoint-scope';
+
+export interface AuthenticatedSplitCheckpointCommandScope {
+    detectionSource: string;
+    changedFiles: string[];
+    violation: string | null;
+}
 
 function resolveDefaultDepthFromTaskQueue(repoRoot: string, taskEntry: TaskQueueEntry | null): string {
     try {
@@ -307,6 +317,58 @@ export function getTaskModeDirtyWorkspaceBaselineChangedFiles(
     return normalizeWorkspaceRelativePaths(repoRoot, changedFiles);
 }
 
+export function getTaskModeDirtyWorkspaceBaselineCommandChangedFiles(
+    repoRoot: string,
+    taskMode: Record<string, unknown> | null
+): string[] {
+    if (taskMode?.orchestrator_work !== true) {
+        return [];
+    }
+    const dirtyWorkspaceBaseline = taskMode.dirty_workspace_baseline;
+    if (!dirtyWorkspaceBaseline || typeof dirtyWorkspaceBaseline !== 'object' || Array.isArray(dirtyWorkspaceBaseline)) {
+        return [];
+    }
+    const changedFiles = (dirtyWorkspaceBaseline as Record<string, unknown>).changed_files;
+    return Array.isArray(changedFiles)
+        ? [...new Set(changedFiles
+            .map((entry) => normalizeDirtyBaselineCommandPath(repoRoot, entry))
+            .filter((entry): entry is string => !!entry))]
+            .sort()
+        : [];
+}
+
+function normalizeDirtyBaselineCommandPath(repoRoot: string, value: unknown): string | null {
+    const rawPath = String(value || '').trim();
+    const normalizedRawPath = normalizePath(rawPath);
+    if (!normalizedRawPath) {
+        return null;
+    }
+    const resolvedRoot = path.resolve(repoRoot);
+    const resolvedPath = path.resolve(resolvedRoot, rawPath);
+    const relativeFromRoot = path.relative(resolvedRoot, resolvedPath);
+    if (!relativeFromRoot || relativeFromRoot.startsWith('..') || path.isAbsolute(relativeFromRoot)) {
+        return normalizedRawPath;
+    }
+    const normalizedRelativePath = normalizePath(relativeFromRoot);
+    if (!normalizedRelativePath) {
+        return normalizedRawPath;
+    }
+    try {
+        if (fs.existsSync(resolvedPath)) {
+            const stat = fs.lstatSync(resolvedPath);
+            if (stat.isDirectory()) {
+                return normalizedRawPath;
+            }
+            if (!isPathRealpathInsideRoot(resolvedPath, repoRoot, { allowMissing: false })) {
+                return null;
+            }
+        }
+        return normalizedRelativePath;
+    } catch {
+        return normalizedRawPath;
+    }
+}
+
 export function getTaskModeDirtyWorkspaceBaselineFileHashes(
     repoRoot: string,
     taskMode: Record<string, unknown> | null
@@ -335,16 +397,17 @@ export function getTaskModeDirtyWorkspaceBaselineFileHashes(
 
 function getTaskModeClassifyChangedFiles(repoRoot: string, taskMode: Record<string, unknown> | null): string[] {
     const plannedChangedFiles = getTaskModePlannedChangedFiles(taskMode);
+    const dirtyBaselineCommandFiles = getTaskModeDirtyWorkspaceBaselineCommandChangedFiles(repoRoot, taskMode);
     if (taskMode?.workflow_config_work === true) {
         return [...new Set([
             ...plannedChangedFiles,
-            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode)
+            ...dirtyBaselineCommandFiles
         ])].sort();
     }
     if (plannedChangedFiles.length > 0) {
         return [...new Set(plannedChangedFiles)].sort();
     }
-    return [...new Set(getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode))].sort();
+    return [...new Set(dirtyBaselineCommandFiles)].sort();
 }
 
 export function getPreflightRefreshChangedFiles(
@@ -352,7 +415,14 @@ export function getPreflightRefreshChangedFiles(
     taskMode: Record<string, unknown> | null,
     preflight: Record<string, unknown> | null
 ): string[] {
-    const plannedChangedFiles = getTaskModeClassifyChangedFiles(repoRoot, taskMode);
+    const plannedChangedFiles = taskMode?.workflow_config_work === true
+        ? [...new Set([
+            ...getTaskModePlannedChangedFiles(taskMode),
+            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode)
+        ])].sort()
+        : getTaskModePlannedChangedFiles(taskMode).length > 0
+            ? getTaskModePlannedChangedFiles(taskMode)
+            : getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode);
     const detectionSource = String(preflight?.detection_source || '').trim().toLowerCase();
     const explicitPreflightChangedFiles = detectionSource === 'explicit_changed_files'
         ? getPreflightChangedFiles(preflight)
@@ -369,6 +439,28 @@ export function getPreflightRefreshChangedFiles(
     return [];
 }
 
+export function resolveAuthenticatedSplitCheckpointCommandScope(
+    repoRoot: string,
+    taskId: string
+): AuthenticatedSplitCheckpointCommandScope | null {
+    const resolution = resolveSplitCheckpointTaskScope(repoRoot, taskId);
+    if (resolution.scope) {
+        return {
+            detectionSource: resolution.scope.detection_source,
+            changedFiles: [...resolution.scope.changed_files],
+            violation: null
+        };
+    }
+    if (resolution.violation) {
+        return {
+            detectionSource: '',
+            changedFiles: [],
+            violation: resolution.violation
+        };
+    }
+    return null;
+}
+
 export function buildClassifyChangeCommand(params: {
     repoRoot: string;
     cliPrefix: string;
@@ -378,6 +470,7 @@ export function buildClassifyChangeCommand(params: {
     preflightCommandPath: string;
     includePlannedScope: boolean;
     changedFiles?: string[];
+    detectionSource?: string | null;
 }): string {
     const parts = [
         `${params.cliPrefix} gate classify-change`,
@@ -388,6 +481,10 @@ export function buildClassifyChangeCommand(params: {
         ? getTaskModeClassifyChangedFiles(params.repoRoot, params.taskMode)
         : []);
     const expandedChangedFiles = expandDirectoryPlaceholdersForCommand(params.repoRoot, changedFiles);
+    const detectionSource = String(params.detectionSource || '').trim();
+    if (detectionSource) {
+        parts.push(`--detection-source ${quoteCommandValue(detectionSource)}`);
+    }
     for (const changedFile of expandedChangedFiles) {
         parts.push(`--changed-file ${quoteCommandValue(changedFile)}`);
     }

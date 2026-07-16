@@ -37,7 +37,11 @@ import {
     writeOptionalSkillSelectionArtifact
 } from '../../../../runtime/optional-skill-selection';
 import { getWorkspaceSnapshotCached } from '../../../../gates/workspace/workspace-snapshot-cache';
-import { resolveSplitCheckpointTaskScope } from '../../../../gates/split-required/split-checkpoint-scope';
+import {
+    parseSplitCheckpointDetectionSource,
+    resolveAuthenticatedSplitCheckpointPreflightScope,
+    resolveSplitCheckpointTaskScope
+} from '../../../../gates/split-required/split-checkpoint-scope';
 import { buildDomainScopeFingerprints } from '../../../../gates/scope/domain-scope-fingerprints';
 import { loadIsolationModeConfig } from '../../../../gates/isolation/isolation-mode';
 import { resolveIsolatedOrchestratorRoot, resolveGateExecutionPath } from '../../../../gates/isolation/isolation-sandbox';
@@ -278,6 +282,7 @@ function readApprovedTaskPlanScopeFiles(
 export interface ClassifyChangeCommandOptions {
     repoRoot?: string;
     changedFiles?: unknown;
+    detectionSource?: unknown;
     includeUntracked?: unknown;
     useStaged?: boolean;
     taskIntent?: unknown;
@@ -325,33 +330,56 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     const explicitChangedFilesProvided = options.changedFiles !== undefined;
     const explicitChangedFiles = expandValueList(options.changedFiles, { splitDelimiters: true });
     const includeUntracked = parseBooleanOption(options.includeUntracked, options.useStaged ? false : true);
-    const detectionSource = explicitChangedFilesProvided
+    const requestedDetectionSource = String(options.detectionSource || '').trim().toLowerCase();
+    const requestedSplitCheckpointRange = parseSplitCheckpointDetectionSource(requestedDetectionSource);
+    if (requestedDetectionSource && !requestedSplitCheckpointRange) {
+        throw new Error(`Unsupported classify-change detection source override '${requestedDetectionSource}'.`);
+    }
+    const detectionSource = requestedSplitCheckpointRange
+        ? requestedDetectionSource
+        : explicitChangedFilesProvided
         ? 'explicit_changed_files'
         : (options.useStaged ? (includeUntracked ? 'git_staged_plus_untracked' : 'git_staged_only') : 'git_auto');
-    const ordinaryWorkspaceSnapshot = getWorkspaceSnapshotCached(
-        repoRoot,
-        detectionSource,
-        includeUntracked,
-        explicitChangedFiles
-    );
+    const ordinaryWorkspaceSnapshot = requestedSplitCheckpointRange
+        ? null
+        : getWorkspaceSnapshotCached(
+            repoRoot,
+            detectionSource,
+            includeUntracked,
+            explicitChangedFiles
+        );
     const splitCheckpointResolution = resolvedTaskId
-        && !explicitChangedFilesProvided
-        && options.useStaged !== true
-        && ordinaryWorkspaceSnapshot.changed_files.length === 0
+        && (requestedSplitCheckpointRange
+            || (!explicitChangedFilesProvided
+                && options.useStaged !== true
+                && ordinaryWorkspaceSnapshot?.changed_files.length === 0))
         ? resolveSplitCheckpointTaskScope(repoRoot, resolvedTaskId)
         : { scope: null, violation: null };
     if (splitCheckpointResolution.violation) {
         throw new Error(splitCheckpointResolution.violation);
+    }
+    if (requestedSplitCheckpointRange && !splitCheckpointResolution.scope) {
+        throw new Error(
+            'Split checkpoint detection source override requires authenticated split checkpoint scope for this task.'
+        );
+    }
+    if (requestedSplitCheckpointRange) {
+        resolveAuthenticatedSplitCheckpointPreflightScope(
+            repoRoot,
+            resolvedTaskId,
+            requestedDetectionSource,
+            explicitChangedFiles
+        );
     }
     const workspaceSnapshot = splitCheckpointResolution.scope
         ? getWorkspaceSnapshotCached(
             repoRoot,
             splitCheckpointResolution.scope.detection_source,
             false,
-            splitCheckpointResolution.scope.changed_files,
+            requestedSplitCheckpointRange ? explicitChangedFiles : splitCheckpointResolution.scope.changed_files,
             { noCache: true, readOnly: true }
         )
-        : ordinaryWorkspaceSnapshot;
+        : ordinaryWorkspaceSnapshot!;
     const renameCount = getClassificationRenameCount(
         repoRoot,
         workspaceSnapshot.detection_source,

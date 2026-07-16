@@ -44,6 +44,7 @@ import {
     buildClassifyChangeCommand,
     buildOrchestratorWorkRestartCommand,
     getTaskModePlannedChangedFiles,
+    resolveAuthenticatedSplitCheckpointCommandScope,
     readCurrentStagedChangedFiles
 } from './next-step-lifecycle-command-builders';
 import {
@@ -214,6 +215,46 @@ function buildDirtyBaselineFailedPreflightRecovery(input: {
     latestPreflightFailure: NonNullable<ReturnType<typeof findLatestTimelineEvent>>;
     errorText: string;
 }): FailedGateRecovery {
+    const splitCheckpointScope = resolveAuthenticatedSplitCheckpointCommandScope(input.repoRoot, input.taskId);
+    if (splitCheckpointScope?.violation) {
+        const candidateFiles = [
+            ...normalizeEventPathList(input.latestPreflightFailure.details?.pre_task_modified_files),
+            ...normalizeEventPathList(input.latestPreflightFailure.details?.current_workspace_changed_files)
+        ];
+        return {
+            nextGate: 'manual-scope-selection',
+            title: 'Choose explicit preflight scope after split-checkpoint authentication failed.',
+            reason:
+                `Latest PREFLIGHT_FAILED event (seq ${input.latestPreflightFailure.sequence}) reports dirty pre-task files, ` +
+                `but the split-checkpoint task scope is not authenticated: ${splitCheckpointScope.violation} ` +
+                'Do not recover with an inferred dirty workspace scope. Restart task mode with a corrected task checkpoint, ' +
+                'or choose an explicit bounded operator scope after inspecting ownership. ' +
+                `Candidate dirty paths needing operator/user scope selection: ${formatPathList([...new Set(candidateFiles)].sort())}.`
+        };
+    }
+    if (splitCheckpointScope) {
+        return {
+            nextGate: 'classify-change',
+            title: 'Recover failed classify-change with authenticated split-checkpoint scope.',
+            reason:
+                `Latest PREFLIGHT_FAILED event (seq ${input.latestPreflightFailure.sequence}) reports dirty pre-task files. ` +
+                `The task has an authenticated split-checkpoint scope ${formatPathList(splitCheckpointScope.changedFiles)}, ` +
+                'so recovery can use the checkpoint detection source and exact --changed-file arguments instead of repeating the failed unscoped command.',
+            label: 'Classify authenticated split-checkpoint scope',
+            command: buildClassifyChangeCommand({
+                repoRoot: input.repoRoot,
+                cliPrefix: input.cliPrefix,
+                taskId: input.taskId,
+                taskMode: input.taskMode,
+                taskModePath: input.taskModePath,
+                preflightCommandPath: input.preflightCommandPath,
+                includePlannedScope: false,
+                changedFiles: splitCheckpointScope.changedFiles,
+                detectionSource: splitCheckpointScope.detectionSource
+            })
+        };
+    }
+
     const stagedFiles = readCurrentStagedChangedFiles(input.repoRoot) || [];
     if (stagedFiles.length > 0) {
         return {

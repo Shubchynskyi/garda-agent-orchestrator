@@ -54,6 +54,7 @@ export async function handleClassifyChange(gateArgv: string[]): Promise<void> {
         '--repo-root': { key: 'repoRoot', type: 'string' },
         '--changed-file': { key: 'changedFiles', type: 'string[]' },
         '--changed-files': { key: 'changedFiles', type: 'string[]' },
+        '--detection-source': { key: 'detectionSource', type: 'string' },
         '--use-staged': { key: 'useStaged', type: 'boolean' },
         '--include-untracked': { key: 'includeUntracked', type: 'boolean' },
         '--task-id': { key: 'taskId', type: 'string' },
