@@ -35,7 +35,8 @@ import {
     hasApiReviewIntent,
     hasPerformanceReviewIntent,
     hasRefactorIntent,
-    hasSecurityReviewIntent
+    classifySecurityReviewIntent,
+    type SecurityReviewIntentReason
 } from './classify-change-intent';
 import { detectPathTriggers } from './classify-change-path-detection';
 import { buildRequiredReviews } from './classify-change-required-reviews';
@@ -117,6 +118,7 @@ export interface ClassifyChangeTriggers {
     infra: boolean;
     dependency: boolean;
     security_intent: boolean;
+    security_intent_reasons: SecurityReviewIntentReason[];
     refactor: boolean;
     refactor_intent: boolean;
     refactor_heuristic: boolean;
@@ -301,7 +303,10 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
     const testOnlyDomainReviewSuppressed = scopeClassification.category === 'test-only';
     const runtimeIntentReviewEligible = pathTriggers.runtimeCodeChanged && !testOnlyDomainReviewSuppressed;
 
-    const securityIntentTriggered = runtimeIntentReviewEligible && hasSecurityReviewIntent(taskIntent);
+    const securityIntentClassification = runtimeIntentReviewEligible
+        ? classifySecurityReviewIntent(taskIntent)
+        : { triggered: false, reasons: [] };
+    const securityIntentTriggered = securityIntentClassification.triggered;
     const apiIntentTriggered = runtimeIntentReviewEligible && hasApiReviewIntent(taskIntent);
     const performanceIntentTriggered = runtimeIntentReviewEligible && hasPerformanceReviewIntent(taskIntent);
     const securityTriggered = pathTriggers.securityTriggered || securityIntentTriggered;
@@ -418,6 +423,7 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
             infra: pathTriggers.infraTriggered,
             dependency: pathTriggers.dependencyTriggered,
             security_intent: securityIntentTriggered,
+            security_intent_reasons: securityIntentClassification.reasons,
             refactor: refactorTriggered,
             refactor_intent: refactorIntentTriggered,
             refactor_heuristic: refactorHeuristicTriggered,
