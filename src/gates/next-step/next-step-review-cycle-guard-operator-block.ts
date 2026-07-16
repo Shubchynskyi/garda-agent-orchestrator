@@ -217,13 +217,7 @@ function buildReviewCycleAutoSplitStateProjection(params: {
         : capturedFileCount > 0
             ? 'suspended_manifest'
             : 'no_diff';
-    const validationLaneCommand = [
-        `${params.cliPrefix} gate run-intermediate-command`,
-        `--task-id "${params.taskId}"`,
-        '--command-source "validation"',
-        `--command ${quoteCommandValue(params.fullSuiteCommand)}`,
-        '--repo-root "."'
-    ].join(' ');
+    const validationLaneCommand = params.fullSuiteCommand;
     const manifestPath = capture?.manifest_path;
     const restorePreviewCommand = manifestPath
         ? `${params.cliPrefix} gate restore-split-required-wip --task-id "${params.taskId}" --manifest-path "${manifestPath}" --dry-run --repo-root "."`

@@ -176,6 +176,7 @@ export function makeTempRepo(): string {
             '2. Allocate child ids from {{SUGGESTED_CHILD_TASK_IDS}}.',
             '3. Before entering any ordinary child task, inspect the configured `workflow-config.full_suite_validation.command` against that child scope.',
             '4. If retargeting is necessary, keep current-child tests covered, exclude suspended sibling tests, and leave an already-suitable command unchanged.',
+            '5. The validation lane runs that configured command directly; do not wrap it in `run-intermediate-command`.',
             '',
             '## Constraints',
             '- Do not mark the parent DONE merely because child tasks were created.',

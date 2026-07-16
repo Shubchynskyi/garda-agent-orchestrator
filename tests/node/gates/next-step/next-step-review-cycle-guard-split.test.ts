@@ -430,12 +430,13 @@ describe('gates/next-step review cycle guard split', () => {
 
     it('latches split-required and materializes auto-split prompt when review cycle auto split is enabled', () => {
         const repoRoot = makeTempRepo();
+        const fullSuiteCommand = 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/next-step/next-step-review-cycle-guard-split.test.ts';
         writeJson(
             path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
             {
                 full_suite_validation: {
                     enabled: false,
-                    command: 'npm test',
+                    command: fullSuiteCommand,
                     timeout_ms: 600000,
                     green_summary_max_lines: 5,
                     red_failure_chunk_lines: 50,
@@ -512,7 +513,10 @@ describe('gates/next-step review cycle guard split', () => {
         assert.ok(promptText.includes('captured_files=none'));
         assert.ok(promptText.includes('CurrentState: no_diff'));
         assert.ok(promptText.includes('NextAction: run_validation_lane'));
-        assert.ok(promptText.includes('NextActionCommand: `node bin/garda.js gate run-intermediate-command'));
+        assert.ok(promptText.includes(`NextActionCommand: \`${fullSuiteCommand}\``));
+        assert.ok(promptText.includes(`StateRoute[validation_lane]: next_action=run_validation_lane; command=\`${fullSuiteCommand}\``));
+        assert.equal(promptText.includes('gate run-intermediate-command'), false);
+        assert.ok(promptText.includes('do not wrap it in `run-intermediate-command`'));
         assert.ok(promptText.includes(`WorkPackageContractPath: \`garda-agent-orchestrator/runtime/reviews/${TASK_ID}-work-package-contract.json\``));
         for (const state of ['no_diff', 'suspended_manifest', 'checkpoint', 'restore', 'validation_lane', 'child_creation']) {
             assert.ok(promptText.includes(`StateRoute[${state}]:`), `missing state route ${state}`);
