@@ -1246,6 +1246,27 @@ describe('gates/next-step protected recovery', () => {
         assert.deepEqual(readiness.currentChangedFiles, [workflowConfigRelativePath, 'src/app.ts']);
     });
 
+    it('marks ignored workflow-config preflight stale when the recorded hash baseline is missing', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...workflowConfigRelativePath.split('/')), '{"validation":"baseline"}\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [workflowConfigRelativePath, 'src/app.ts'],
+            includeDomainScopeFingerprints: true
+        });
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.triggers = { workflow_config_file_hashes: {} };
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight);
+
+        assert.equal(readiness.ready, false);
+        assert.match(readiness.reason, /missing workflow_config_file_hashes baseline/);
+        assert.match(readiness.reason, new RegExp(workflowConfigRelativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    });
+
     it('marks preflight readiness stale when non-config content drifts while ignored workflow-config baseline is absent from git snapshot', () => {
         const repoRoot = makeTempRepo();
         const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
@@ -1264,6 +1285,41 @@ describe('gates/next-step protected recovery', () => {
 
         assert.equal(readiness.ready, false);
         assert.match(readiness.reason, /non-config domain scope differs/);
+        assert.match(readiness.reason, /implementation domain scope_content_sha256/);
+        assert.deepEqual(readiness.currentChangedFiles, ['src/app.ts']);
+    });
+
+    it('reports exact non-config domain drift for git-auto ignored workflow-config preflights', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const changedFiles = [workflowConfigRelativePath, 'src/app.ts'];
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, ...workflowConfigRelativePath.split('/')), '{"validation":"baseline"}\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        const preflightBeforeDrift = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const metrics = preflightBeforeDrift.metrics as Record<string, unknown>;
+        const domainScopeFingerprints = buildDomainScopeFingerprints({
+            repoRoot,
+            detectionSource: 'git_auto',
+            includeUntracked: true,
+            changedFiles
+        });
+        preflightBeforeDrift.detection_source = 'git_auto';
+        metrics.domain_scope_fingerprints = domainScopeFingerprints;
+        writeJson(preflightPath, preflightBeforeDrift);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 3;\n', 'utf8');
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight);
+
+        assert.equal(readiness.ready, false);
+        assert.match(readiness.reason, /implementation domain scope_content_sha256/);
+        assert.match(readiness.reason, /while ignored workflow-config local baseline is absent from git snapshot/);
         assert.deepEqual(readiness.currentChangedFiles, ['src/app.ts']);
     });
 

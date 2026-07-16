@@ -2,6 +2,7 @@ import * as path from 'node:path';
 
 import {
     normalizeDomainScopeFingerprints,
+    type DomainScopeFingerprintEntry,
     type DomainScopeFingerprints
 } from '../scope/domain-scope-fingerprints';
 import {
@@ -215,7 +216,23 @@ export function readPreflightWorkspaceReadiness(
             `preflight scope_content_sha256=${expectedScopeContentSha256} differs from current scope_content_sha256=${currentScope.scope_content_sha256}`
         );
     }
-    if (ignoredWorkflowConfigOnlyWorkspaceDelta && expectedScopeContentSha256) {
+    if (ignoredWorkflowConfigOnlyWorkspaceDelta && expectedDomainScopeFingerprints) {
+        const currentDomainScopeFingerprints = buildCurrentDomainScopeFingerprints({
+            repoRoot,
+            detectionSource,
+            includeUntracked,
+            changedFiles: currentScope.changed_files
+        });
+        const domainViolations = getComparableNonConfigDomainViolations(
+            expectedDomainScopeFingerprints,
+            currentDomainScopeFingerprints
+        );
+        violations.push(...domainViolations.map((violation) => (
+            `preflight non-config domain scope differs: ${violation} ` +
+            'while ignored workflow-config local baseline is absent from git snapshot'
+        )));
+    }
+    if (ignoredWorkflowConfigOnlyWorkspaceDelta && expectedScopeContentSha256 && !expectedDomainScopeFingerprints) {
         const currentFullScopeContentSha256 = buildScopeContentFingerprint(repoRoot, detectionSource, changedFiles);
         if (currentFullScopeContentSha256 !== expectedScopeContentSha256) {
             violations.push(
@@ -224,26 +241,16 @@ export function readPreflightWorkspaceReadiness(
             );
         }
     }
-    if (ignoredWorkflowConfigOnlyWorkspaceDelta && expectedDomainScopeFingerprints) {
-        const currentDomainScopeFingerprints = buildCurrentDomainScopeFingerprints({
+    if (ignoredWorkflowConfigOnlyWorkspaceDelta) {
+        const hashViolations = getWorkflowConfigHashViolations(
             repoRoot,
-            detectionSource,
-            includeUntracked,
-            changedFiles: currentScope.changed_files
-        });
-        if (!comparableNonConfigDomainsMatch(expectedDomainScopeFingerprints, currentDomainScopeFingerprints)) {
-            violations.push(
-                'preflight non-config domain scope differs from current workspace while ignored workflow-config local baseline is absent from git snapshot'
-            );
-        }
-    }
-    if (
-        ignoredWorkflowConfigOnlyWorkspaceDelta
-        && !workflowConfigFilesMatchPreflightHashes(repoRoot, ignoredWorkflowConfigPreflightFiles, workflowConfigFileHashes)
-    ) {
-        violations.push(
-            'preflight workflow-config content differs from current workspace while ignored workflow-config local baseline is absent from git snapshot'
+            ignoredWorkflowConfigPreflightFiles,
+            workflowConfigFileHashes
         );
+        violations.push(...hashViolations.map((violation) => (
+            `preflight workflow-config hash baseline differs: ${violation} ` +
+            'while ignored workflow-config local baseline is absent from git snapshot'
+        )));
     }
     const expectedScopeSha256 = typeof metrics.scope_sha256 === 'string'
         ? metrics.scope_sha256.trim().toLowerCase()
@@ -388,19 +395,25 @@ export function readPreflightWorkspaceReadiness(
                     includeUntracked,
                     changedFiles: currentComparableChangedFiles
                 });
-                if (!comparableNonConfigDomainsMatch(expectedDomainScopeFingerprints, currentDomainScopeFingerprints)) {
-                    violations.push(
-                        'preflight non-config domain scope differs from current git snapshot while ignored workflow-config local baseline is absent from git snapshot'
-                    );
-                }
-            }
-            if (
-                ignoredWorkflowConfigOnlyGitDelta
-                && !workflowConfigFilesMatchPreflightHashes(repoRoot, ignoredWorkflowConfigGitFiles, workflowConfigFileHashes)
-            ) {
-                violations.push(
-                    'preflight workflow-config content differs from current git snapshot while ignored workflow-config local baseline is absent from git snapshot'
+                const domainViolations = getComparableNonConfigDomainViolations(
+                    expectedDomainScopeFingerprints,
+                    currentDomainScopeFingerprints
                 );
+                violations.push(...domainViolations.map((violation) => (
+                    `preflight non-config domain scope differs: ${violation} ` +
+                    'while ignored workflow-config local baseline is absent from git snapshot'
+                )));
+            }
+            if (ignoredWorkflowConfigOnlyGitDelta) {
+                const hashViolations = getWorkflowConfigHashViolations(
+                    repoRoot,
+                    ignoredWorkflowConfigGitFiles,
+                    workflowConfigFileHashes
+                );
+                violations.push(...hashViolations.map((violation) => (
+                    `preflight workflow-config hash baseline differs: ${violation} ` +
+                    'while ignored workflow-config local baseline is absent from git snapshot'
+                )));
             }
             if (currentFileSetHash !== expectedGitComparableChangedFilesSha256) {
                 const currentSet = new Set(currentComparableChangedFiles);
@@ -507,62 +520,93 @@ function getPreflightTriggers(preflight: Record<string, unknown> | null): Record
     return isPlainRecord(preflight?.triggers) ? preflight.triggers : {};
 }
 
-function comparableNonConfigDomainsMatch(
+function formatDomainValue(value: string | null): string {
+    return value || 'null';
+}
+
+function getDomainScopeEntryViolations(
+    domainName: 'implementation' | 'test' | 'docs',
+    expected: DomainScopeFingerprintEntry,
+    current: DomainScopeFingerprintEntry
+): string[] {
+    const violations: string[] = [];
+    for (const fieldName of ['changed_files_sha256', 'scope_content_sha256', 'scope_sha256'] as const) {
+        if (expected[fieldName] !== current[fieldName]) {
+            violations.push(
+                `${domainName} domain ${fieldName} expected=${formatDomainValue(expected[fieldName])}` +
+                ` current=${formatDomainValue(current[fieldName])}` +
+                ` expected_files=${describePathList(expected.changed_files)}` +
+                ` current_files=${describePathList(current.changed_files)}`
+            );
+        }
+    }
+    return violations;
+}
+
+function getComparableNonConfigDomainViolations(
     expected: DomainScopeFingerprints,
     current: DomainScopeFingerprints
-): boolean {
+): string[] {
+    const violations: string[] = [];
     for (const domainName of ['implementation', 'test', 'docs'] as const) {
         const expectedDomain = expected.domains[domainName];
         const currentDomain = current.domains[domainName];
-        if (
-            expectedDomain.changed_files_sha256 !== currentDomain.changed_files_sha256
-            || expectedDomain.scope_content_sha256 !== currentDomain.scope_content_sha256
-            || expectedDomain.scope_sha256 !== currentDomain.scope_sha256
-        ) {
-            return false;
-        }
+        violations.push(...getDomainScopeEntryViolations(domainName, expectedDomain, currentDomain));
     }
-    return true;
+    return violations;
 }
 
-function getWorkflowConfigFileHashes(repoRoot: string, preflight: Record<string, unknown>): Record<string, string> {
+type WorkflowConfigFileHashes = Record<string, string | null>;
+
+function getWorkflowConfigFileHashes(repoRoot: string, preflight: Record<string, unknown>): WorkflowConfigFileHashes {
     const triggers = getPreflightTriggers(preflight);
     const rawHashes = isPlainRecord(triggers.workflow_config_file_hashes)
         ? triggers.workflow_config_file_hashes
         : {};
-    const hashes: Record<string, string> = {};
+    const hashes: WorkflowConfigFileHashes = {};
     for (const [rawPath, rawHash] of Object.entries(rawHashes)) {
         const normalizedPath = normalizeWorkspaceRelativePath(repoRoot, rawPath);
         if (!normalizedPath) {
             continue;
         }
-        const normalizedHash = typeof rawHash === 'string'
-            ? rawHash.trim().toLowerCase()
-            : '';
-        if (normalizedHash) {
-            hashes[normalizedPath] = normalizedHash;
-        }
+        hashes[normalizedPath] = typeof rawHash === 'string'
+            ? rawHash.trim().toLowerCase() || null
+            : null;
     }
     return hashes;
 }
 
-function workflowConfigFilesMatchPreflightHashes(
+function getWorkflowConfigHashViolations(
     repoRoot: string,
     workflowConfigFiles: readonly string[],
-    workflowConfigFileHashes: Record<string, string>
-): boolean {
-    return workflowConfigFiles.every((entry) => {
+    workflowConfigFileHashes: WorkflowConfigFileHashes
+): string[] {
+    const violations: string[] = [];
+    for (const entry of workflowConfigFiles) {
         const normalizedPath = normalizeWorkspaceRelativePath(repoRoot, entry);
         if (!normalizedPath) {
-            return false;
+            violations.push(`invalid workflow-config path '${entry}'`);
+            continue;
         }
-        const expectedHash = workflowConfigFileHashes[normalizedPath];
+        const hasBaseline = Object.prototype.hasOwnProperty.call(workflowConfigFileHashes, normalizedPath);
+        const expectedHash = hasBaseline ? workflowConfigFileHashes[normalizedPath] : null;
         if (!expectedHash) {
-            return false;
+            violations.push(`missing workflow_config_file_hashes baseline for ${normalizedPath}`);
+            continue;
         }
         const currentHash = fileSha256(path.resolve(repoRoot, normalizedPath));
-        return !!currentHash && currentHash.trim().toLowerCase() === expectedHash;
-    });
+        if (!currentHash) {
+            violations.push(`current workflow-config file ${normalizedPath} is missing or unreadable`);
+            continue;
+        }
+        const normalizedCurrentHash = currentHash.trim().toLowerCase();
+        if (normalizedCurrentHash !== expectedHash) {
+            violations.push(
+                `workflow-config ${normalizedPath} sha256 expected=${expectedHash} current=${normalizedCurrentHash}`
+            );
+        }
+    }
+    return violations;
 }
 
 function getTriggerPathList(repoRoot: string, preflight: Record<string, unknown>, fieldName: string): string[] {
