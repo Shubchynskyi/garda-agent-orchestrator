@@ -46,6 +46,39 @@ function createGardaPackageRoot(
     }
 }
 
+function writeUiLanguagePack(runtimeRoot: string, languageId: string, text: Record<string, string>): void {
+    writeFile(path.join(runtimeRoot, 'reports', 'ui', 'lang-packs', `garda-ui-${languageId}.json`), JSON.stringify({
+        language: {
+            id: languageId,
+            label: languageId.toUpperCase(),
+            nativeLabel: languageId.toUpperCase()
+        },
+        LOCAL_UI_TEXT: text
+    }, null, 2) + '\n');
+}
+
+function writeHealthyRuntimeCandidate(runtimeRoot: string, runtimeId = 'runtime'): void {
+    writeFile(path.join(runtimeRoot, 'index.js'), 'module.exports = {};\n');
+    writeFile(
+        path.join(runtimeRoot, 'cli', 'main.js'),
+        [
+            `exports.runtimeId = ${JSON.stringify(runtimeId)};`,
+            'exports.runCliMainWithHandling = async function () {};'
+        ].join('\n') + '\n'
+    );
+    writeFile(path.join(runtimeRoot, 'cli', 'runtime-main.js'), 'module.exports = {};\n');
+    writeFile(path.join(runtimeRoot, 'cli', 'commands', 'command-dispatch.js'), 'module.exports = {};\n');
+    writeFile(path.join(runtimeRoot, 'cli', 'commands', 'cli-help-output.js'), 'module.exports = {};\n');
+    writeFile(path.join(runtimeRoot, 'reports', 'ui', 'ui-i18n.js'), 'module.exports = {};\n');
+    writeFile(path.join(runtimeRoot, 'reports', 'ui', 'ui-language-pack-loader.js'), 'module.exports = {};\n');
+    const text = {
+        appTitle: 'Garda UI',
+        tasksTab: 'Tasks'
+    };
+    writeUiLanguagePack(runtimeRoot, 'de', text);
+    writeUiLanguagePack(runtimeRoot, 'ru', text);
+}
+
 function waitForChildExit(child: childProcess.ChildProcess): Promise<void> {
     if (child.exitCode !== null || child.signalCode !== null) {
         if (child.exitCode === 0) {
@@ -512,6 +545,118 @@ test('loadCliMainModule fails corrupt deployed dist instead of falling back to .
     }
 });
 
+test('loadCliMainModule skips source-checkout dist with missing runtime entrypoint and uses healthy fallback', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-entry-fallback-'));
+    try {
+        const distSourceRoot = path.join(tempRoot, 'dist', 'src');
+        const nodeBuildSourceRoot = path.join(tempRoot, '.node-build', 'src');
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
+        writeFile(path.join(distSourceRoot, 'index.js'), 'module.exports = {};\n');
+        writeHealthyRuntimeCandidate(nodeBuildSourceRoot, 'node-build');
+
+        const module = loadCliMainModule(tempRoot) as typeof loadCliMainModule extends (...args: never[]) => infer R
+            ? R & { runtimeId?: string }
+            : never;
+        assert.equal(module.runtimeId, 'node-build');
+    } finally {
+        cleanupRouterTempRoot(tempRoot);
+    }
+});
+
+test('loadCliMainModule skips source-checkout runtime with missing UI language packs', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-langpacks-missing-'));
+    try {
+        const distSourceRoot = path.join(tempRoot, 'dist', 'src');
+        const nodeBuildSourceRoot = path.join(tempRoot, '.node-build', 'src');
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
+        writeHealthyRuntimeCandidate(distSourceRoot, 'dist');
+        fs.rmSync(path.join(distSourceRoot, 'reports', 'ui', 'lang-packs'), { recursive: true, force: true });
+        writeHealthyRuntimeCandidate(nodeBuildSourceRoot, 'node-build');
+
+        const module = loadCliMainModule(tempRoot) as ReturnType<typeof loadCliMainModule> & { runtimeId?: string };
+        assert.equal(module.runtimeId, 'node-build');
+    } finally {
+        cleanupRouterTempRoot(tempRoot);
+    }
+});
+
+test('loadCliMainModule skips source-checkout runtime with inconsistent UI language packs', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-langpacks-inconsistent-'));
+    try {
+        const distSourceRoot = path.join(tempRoot, 'dist', 'src');
+        const nodeBuildSourceRoot = path.join(tempRoot, '.node-build', 'src');
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
+        writeHealthyRuntimeCandidate(distSourceRoot, 'dist');
+        writeUiLanguagePack(distSourceRoot, 'ru', {
+            appTitle: 'Garda UI'
+        });
+        writeHealthyRuntimeCandidate(nodeBuildSourceRoot, 'node-build');
+
+        const module = loadCliMainModule(tempRoot) as ReturnType<typeof loadCliMainModule> & { runtimeId?: string };
+        assert.equal(module.runtimeId, 'node-build');
+    } finally {
+        cleanupRouterTempRoot(tempRoot);
+    }
+});
+
+test('loadCliMainModule skips source-checkout candidate with manifest-listed missing files', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-manifest-missing-'));
+    try {
+        const distSourceRoot = path.join(tempRoot, 'dist', 'src');
+        const nodeBuildSourceRoot = path.join(tempRoot, '.node-build', 'src');
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
+        writeHealthyRuntimeCandidate(distSourceRoot, 'dist');
+        writeFile(path.join(tempRoot, 'dist', 'publish-runtime-manifest.json'), JSON.stringify({
+            files: [
+                'src/index.js',
+                'src/cli/main.js',
+                'src/cli/runtime-main.js',
+                'src/cli/missing-runtime-module.js'
+            ]
+        }, null, 2) + '\n');
+        writeHealthyRuntimeCandidate(nodeBuildSourceRoot, 'node-build');
+
+        const module = loadCliMainModule(tempRoot) as ReturnType<typeof loadCliMainModule> & { runtimeId?: string };
+        assert.equal(module.runtimeId, 'node-build');
+    } finally {
+        cleanupRouterTempRoot(tempRoot);
+    }
+});
+
+test('loadCliMainModule prints bounded source-checkout remediation when runtime is completely missing', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-missing-remediation-'));
+    const originalExit = process.exit;
+    const originalConsoleError = console.error;
+    let exitCode: number | string | null | undefined;
+    const diagnostics: string[] = [];
+
+    try {
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
+        process.exit = ((code?: number | string | null | undefined): never => {
+            exitCode = code;
+            throw new Error('process.exit intercepted');
+        }) as typeof process.exit;
+        console.error = (message?: unknown, ...optionalParams: unknown[]): void => {
+            diagnostics.push([message, ...optionalParams].map(String).join(' '));
+        };
+
+        assert.throws(
+            () => loadCliMainModule(tempRoot),
+            /process\.exit intercepted/
+        );
+
+        const output = diagnostics.join('\n');
+        assert.equal(exitCode, 1);
+        assert.match(output, /runtime bootstrap failed/i);
+        assert.match(output, /npm run build/);
+        assert.doesNotMatch(output, /\n\s+at /);
+    } finally {
+        process.exit = originalExit;
+        console.error = originalConsoleError;
+        cleanupRouterTempRoot(tempRoot);
+    }
+});
+
 test('loadCliMainModule waits for source checkout dist build lock before loading runtime', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-dist-lock-'));
     const previousTimeout = process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS;
@@ -522,7 +667,7 @@ test('loadCliMainModule waits for source checkout dist build lock before loading
     try {
         process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS = '5000';
         createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
-        writeFile(path.join(distSourceRoot, 'index.js'), 'module.exports = {};\n');
+        writeHealthyRuntimeCandidate(distSourceRoot, 'dist');
         writeFile(path.join(distSourceRoot, 'cli', 'main.js'), 'module.exports = require("./late-module");\n');
         fs.mkdirSync(distLockPath, { recursive: true });
 
@@ -566,16 +711,12 @@ test('loadCliMainModule enforces one runtime lock timeout budget per candidate',
     try {
         process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS = '120';
         createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
-        writeFile(path.join(distSourceRoot, 'index.js'), 'module.exports = {};\n');
+        writeHealthyRuntimeCandidate(distSourceRoot, 'dist');
         writeFile(
             path.join(distSourceRoot, 'cli', 'main.js'),
             'require("./missing-during-refresh");\n'
         );
-        writeFile(path.join(nodeBuildSourceRoot, 'index.js'), 'module.exports = {};\n');
-        writeFile(
-            path.join(nodeBuildSourceRoot, 'cli', 'main.js'),
-            'exports.runCliMainWithHandling = async function () {};\n'
-        );
+        writeHealthyRuntimeCandidate(nodeBuildSourceRoot, 'node-build');
         fs.mkdirSync(nodeBuildLockPath, { recursive: true });
 
         const startedAt = Date.now();
