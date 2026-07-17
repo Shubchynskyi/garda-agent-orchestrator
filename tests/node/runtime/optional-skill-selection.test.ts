@@ -1732,7 +1732,7 @@ test('getOptionalSkillSelectionGateViolations rejects selected optional skill lo
     }
 });
 
-test('getOptionalSkillSelectionGateViolations accepts optional skill load after first activation despite late duplicate activation', () => {
+test('getOptionalSkillSelectionGateViolations retains the newest duplicate activation', () => {
     const bundleRoot = makeBundleRoot();
     try {
         seedOptionalSkillWorkspace(bundleRoot);
@@ -1792,11 +1792,11 @@ test('getOptionalSkillSelectionGateViolations accepts optional skill load after 
         );
         assert.equal(
             activationIndex.get('node-backend'),
-            Date.parse(new Date(artifactTimestampMs + 500).toISOString())
+            Date.parse(new Date(artifactTimestampMs + 1500).toISOString())
         );
-        assert.deepEqual(getOptionalSkillSelectionGateViolations(bundleRoot, 'T-149', {
+        assert.ok(getOptionalSkillSelectionGateViolations(bundleRoot, 'T-149', {
             taskEventsPath: eventsPath
-        }), []);
+        }).some((entry) => entry.includes('before optional skill activation completed')));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -1982,6 +1982,154 @@ test('activated optional skill reference loads require sequence order after acti
     }
 });
 
+test('optional skill decisions prefer task sequence over skewed timestamps', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        const fingerprint = artifact.payload.selection_fingerprint_sha256
+            || computeOptionalSkillSelectionFingerprint(artifact.payload);
+        const timelinePath = path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl');
+        const timelineEvidence = {
+            timelinePath,
+            exists: true,
+            invalidJson: false,
+            eventTypes: new Set(['TASK_MODE_ENTERED', 'PREFLIGHT_CLASSIFIED', 'SKILL_SELECTED', 'SKILL_DECLINED']),
+            latestTaskModeEnteredTimestampUtc: '2026-01-01T00:00:00.000Z',
+            latestTaskModeEnteredTaskSequence: 1,
+            latestCycleBoundaryTimestampUtc: '2026-01-01T00:00:10.000Z',
+            latestCycleBoundaryTaskSequence: 2,
+            optionalSkillActivations: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:30.000Z',
+                    eventSequence: 3,
+                    selectionFingerprintSha256: fingerprint
+                },
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:20.000Z',
+                    eventSequence: 4,
+                    selectionFingerprintSha256: fingerprint
+                }
+            ],
+            optionalSkillDeclines: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:50.000Z',
+                    eventSequence: 5,
+                    selectionFingerprintSha256: fingerprint,
+                    reason: 'first'
+                },
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:40.000Z',
+                    eventSequence: 6,
+                    selectionFingerprintSha256: fingerprint,
+                    reason: 'second'
+                }
+            ],
+            optionalSkillReferenceLoads: []
+        };
+
+        assert.equal(
+            buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence).get('node-backend'),
+            Date.parse('2026-01-01T00:00:20.000Z')
+        );
+        assert.equal(
+            buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, timelineEvidence).get('node-backend'),
+            Date.parse('2026-01-01T00:00:40.000Z')
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('coherent restart evidence is task-bound, fingerprint-bound, and sequence-ordered', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        const fingerprint = artifact.payload.selection_fingerprint_sha256
+            || computeOptionalSkillSelectionFingerprint(artifact.payload);
+        const artifactTimestampMs = Date.parse(artifact.payload.timestamp_utc);
+        const eventsPath = path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl');
+        const referencePath = path.join(bundleRoot, 'live', 'skills', 'node-backend', 'references', 'checklist.md');
+        fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
+        const eventLine = (
+            offsetMs: number,
+            eventType: string,
+            taskSequence: number,
+            details?: Record<string, unknown>,
+            taskId = 'T-149'
+        ) => JSON.stringify({
+            task_id: taskId,
+            timestamp_utc: new Date(artifactTimestampMs + offsetMs).toISOString(),
+            event_type: eventType,
+            ...(details ? { details } : {}),
+            integrity: { task_sequence: taskSequence }
+        });
+        const initialEvents = [
+            eventLine(10_000, 'PREFLIGHT_CLASSIFIED', 1),
+            eventLine(20_000, 'COHERENT_CYCLE_RESTARTED', 99, {
+                optional_skill_activation_rebound_skill_ids: ['node-backend'],
+                optional_skill_activation_rebind_fingerprint_sha256: fingerprint
+            }, 'T-OTHER'),
+            eventLine(1_000, 'COHERENT_CYCLE_RESTARTED', 2, {
+                optional_skill_activation_rebound_skill_ids: ['node-backend'],
+                optional_skill_activation_rebind_fingerprint_sha256: fingerprint,
+                optional_skill_decline_rebound_skill_ids: ['node-backend'],
+                optional_skill_decline_rebind_fingerprint_sha256: fingerprint
+            }),
+            eventLine(-1_000, 'SKILL_REFERENCE_LOADED', 3, {
+                skill_id: 'node-backend',
+                reference_path: referencePath,
+                trigger_reason: 'optional_task_skill'
+            })
+        ];
+        fs.writeFileSync(eventsPath, initialEvents.join('\n') + '\n', 'utf8');
+
+        const reboundTimelineEvidence = readOptionalSkillSelectionTimelineEvidence(bundleRoot, 'T-149', eventsPath);
+        assert.equal(reboundTimelineEvidence.latestCoherentCycleRestartedTaskSequence, 2);
+        assert.equal(buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, reboundTimelineEvidence).has('node-backend'), true);
+        assert.equal(buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, reboundTimelineEvidence).has('node-backend'), true);
+        assert.equal(
+            getActivatedCurrentCycleOptionalSkillReferenceLoads(artifact.payload, reboundTimelineEvidence).length,
+            1
+        );
+
+        fs.appendFileSync(eventsPath,
+            eventLine(2_000, 'COHERENT_CYCLE_RESTARTED', 4, {
+                optional_skill_activation_rebound_skill_ids: ['node-backend'],
+                optional_skill_activation_rebind_fingerprint_sha256: '0'.repeat(64),
+                optional_skill_decline_rebound_skill_ids: ['node-backend']
+            }) + '\n',
+            'utf8'
+        );
+
+        const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(bundleRoot, 'T-149', eventsPath);
+        assert.equal(timelineEvidence.latestCoherentCycleRestartedTaskSequence, 4);
+        assert.equal(buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence).has('node-backend'), false);
+        assert.equal(buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, timelineEvidence).has('node-backend'), false);
+        assert.equal(
+            getActivatedCurrentCycleOptionalSkillReferenceLoads(artifact.payload, timelineEvidence).length,
+            0
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('getOptionalSkillSelectionGateViolations ignores prior-cycle optional skill loads after a new preflight restart in the same task-mode session', () => {
     const bundleRoot = makeBundleRoot();
     try {
@@ -2041,7 +2189,8 @@ test('getOptionalSkillSelectionGateViolations ignores prior-cycle optional skill
                 event_type: 'SKILL_SELECTED',
                 details: {
                     skill_id: 'node-backend',
-                    trigger_reason: 'optional_skill_selection'
+                    trigger_reason: 'optional_skill_selection',
+                    optional_skill_selection_fingerprint_sha256: artifact.payload.selection_fingerprint_sha256
                 }
             })
         ].join('\n') + '\n', 'utf8');

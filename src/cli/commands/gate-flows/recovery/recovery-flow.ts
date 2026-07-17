@@ -356,7 +356,11 @@ function getLatestDeclineReasonsBySkill(
     payload: OptionalSkillSelectionArtifact,
     timelineEvidence: ReturnType<typeof readOptionalSkillSelectionTimelineEvidence>
 ): Map<string, string | null> {
-    const declineReasons = new Map<string, { timestampMs: number; reason: string | null }>();
+    const declineReasons = new Map<string, {
+        timestampMs: number;
+        eventSequence: number | null;
+        reason: string | null;
+    }>();
     for (const decline of getCurrentCycleOptionalSkillDeclines(payload, timelineEvidence)) {
         const skillId = String(decline.skillId || '').trim();
         const timestampMs = Date.parse(String(decline.timestampUtc || '').trim());
@@ -364,9 +368,16 @@ function getLatestDeclineReasonsBySkill(
             continue;
         }
         const previous = declineReasons.get(skillId);
-        if (!previous || timestampMs >= previous.timestampMs) {
+        const eventSequence = decline.eventSequence ?? null;
+        const isNewer = !previous || (
+            eventSequence !== null && previous.eventSequence !== null
+                ? eventSequence >= previous.eventSequence
+                : timestampMs >= previous.timestampMs
+        );
+        if (isNewer) {
             declineReasons.set(skillId, {
                 timestampMs,
+                eventSequence,
                 reason: decline.reason || null
             });
         }

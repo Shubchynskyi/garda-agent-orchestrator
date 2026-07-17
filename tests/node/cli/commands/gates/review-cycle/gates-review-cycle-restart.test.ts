@@ -243,6 +243,15 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), [
+            'const a = 1;',
+            'const b = 2;',
+            'console.log(a + b);',
+            'export const value = 1;',
+            'export const enabled = true;',
+            'export const label = "restart";'
+        ].join('\n') + '\n', 'utf8');
         const preflightPath = writePreflight(repoRoot, taskId, {
             metrics: { changed_lines_total: 3, changed_files_count: 1 },
             changed_files: ['src/app.ts'],
@@ -332,7 +341,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(firstReviewResult.exitCode, 0);
+        assert.equal(firstReviewResult.exitCode, 0, firstReviewResult.outputLines.join('\n'));
 
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),

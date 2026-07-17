@@ -36,6 +36,16 @@ function readTaskEventSequence(event: Record<string, unknown>): number | null {
     return Number.isFinite(value) ? value : null;
 }
 
+function compareOptionalSkillPoints(
+    left: OptionalSkillActivationPoint,
+    right: OptionalSkillActivationPoint
+): number {
+    if (left.eventSequence !== null && right.eventSequence !== null) {
+        return left.eventSequence - right.eventSequence;
+    }
+    return left.timestampMs - right.timestampMs;
+}
+
 function selectLatestTimelinePoint(current: TimelinePoint, next: TimelinePoint): TimelinePoint {
     if (next.taskSequence !== null && current.taskSequence !== null) {
         return next.taskSequence >= current.taskSequence ? next : current;
@@ -122,6 +132,10 @@ export function readOptionalSkillSelectionTimelineEvidence(
             invalidJson = true;
             break;
         }
+        const eventTaskId = String(parsedLine.task_id || '').trim();
+        if (eventTaskId && eventTaskId !== taskId) {
+            continue;
+        }
         const eventType = String(parsedLine.event_type || '').trim().toUpperCase();
         const eventTimestampUtc = String(parsedLine.timestamp_utc || '').trim() || null;
         const taskSequence = readTaskEventSequence(parsedLine);
@@ -150,21 +164,42 @@ export function readOptionalSkillSelectionTimelineEvidence(
             const selectionFingerprintSha256 = normalizeSha256Fingerprint(
                 detailRecord.optional_skill_activation_rebind_fingerprint_sha256
             );
-            if (!selectionFingerprintSha256) {
-                continue;
-            }
-            for (const reboundSkillId of reboundSkillIds) {
-                const skillId = String(reboundSkillId || '').trim();
-                if (!skillId) {
-                    continue;
+            if (selectionFingerprintSha256) {
+                for (const reboundSkillId of reboundSkillIds) {
+                    const skillId = String(reboundSkillId || '').trim();
+                    if (!skillId) {
+                        continue;
+                    }
+                    optionalSkillActivations.push({
+                        skillId,
+                        triggerReason: 'coherent_cycle_restart_rebind',
+                        timestampUtc: eventTimestampUtc,
+                        eventSequence: taskSequence,
+                        selectionFingerprintSha256
+                    });
                 }
-                optionalSkillActivations.push({
-                    skillId,
-                    triggerReason: 'coherent_cycle_restart_rebind',
-                    timestampUtc: eventTimestampUtc,
-                    eventSequence: taskSequence,
-                    selectionFingerprintSha256
-                });
+            }
+            const reboundDeclineSkillIds = Array.isArray(detailRecord.optional_skill_decline_rebound_skill_ids)
+                ? detailRecord.optional_skill_decline_rebound_skill_ids
+                : [];
+            const declineSelectionFingerprintSha256 = normalizeSha256Fingerprint(
+                detailRecord.optional_skill_decline_rebind_fingerprint_sha256
+            );
+            if (declineSelectionFingerprintSha256) {
+                for (const reboundSkillId of reboundDeclineSkillIds) {
+                    const skillId = String(reboundSkillId || '').trim();
+                    if (!skillId) {
+                        continue;
+                    }
+                    optionalSkillDeclines.push({
+                        skillId,
+                        triggerReason: 'coherent_cycle_restart_rebind',
+                        timestampUtc: eventTimestampUtc,
+                        eventSequence: taskSequence,
+                        selectionFingerprintSha256: declineSelectionFingerprintSha256,
+                        reason: null
+                    });
+                }
             }
         }
         if (eventType === 'SKILL_SELECTED' && details && typeof details === 'object' && !Array.isArray(details)) {
@@ -285,21 +320,19 @@ function isCurrentCycleOptionalSkillDecision(
     if (entry.triggerReason === 'coherent_cycle_restart_rebind') {
         return Boolean(
             selectionFingerprintSha256
-            && entrySelectionFingerprintSha256
-            && entrySelectionFingerprintSha256 === selectionFingerprintSha256
+            && normalizeSha256Fingerprint(entrySelectionFingerprintSha256) === selectionFingerprintSha256
         );
     }
     if (
         selectionFingerprintSha256
         && entrySelectionFingerprintSha256
-            && entrySelectionFingerprintSha256 !== selectionFingerprintSha256
+        && entrySelectionFingerprintSha256 !== selectionFingerprintSha256
     ) {
         return false;
     }
     if (taskModeLowerBoundTimestampMs !== null && eventTimestampMs < taskModeLowerBoundTimestampMs) {
         return Boolean(
             selectionFingerprintSha256
-            && entrySelectionFingerprintSha256
             && entrySelectionFingerprintSha256 === selectionFingerprintSha256
         );
     }
@@ -308,7 +341,6 @@ function isCurrentCycleOptionalSkillDecision(
     }
     return Boolean(
         selectionFingerprintSha256
-        && entrySelectionFingerprintSha256
         && entrySelectionFingerprintSha256 === selectionFingerprintSha256
     );
 }
@@ -382,7 +414,7 @@ function buildCurrentCycleOptionalSkillActivationPointIndex(
             eventSequence: activation.eventSequence ?? null
         };
         const previous = activationIndex.get(skillId);
-        if (!previous || didActivationOccurBeforeCycleBoundary(activationPoint, previous)) {
+        if (!previous || compareOptionalSkillPoints(activationPoint, previous) > 0) {
             activationIndex.set(skillId, activationPoint);
         }
     }
@@ -393,17 +425,25 @@ export function buildCurrentCycleOptionalSkillDeclineIndex(
     payload: OptionalSkillSelectionArtifact,
     timelineEvidence: OptionalSkillSelectionTimelineEvidence
 ): Map<string, number> {
-    const declineIndex = new Map<string, number>();
+    const declinePointIndex = new Map<string, OptionalSkillActivationPoint>();
     for (const decline of getCurrentCycleOptionalSkillDeclines(payload, timelineEvidence)) {
         const skillId = String(decline.skillId || '').trim();
         const timestampMs = toTimestampMs(decline.timestampUtc);
         if (!skillId || timestampMs === null) {
             continue;
         }
-        const previousTimestampMs = declineIndex.get(skillId);
-        if (previousTimestampMs === undefined || timestampMs > previousTimestampMs) {
-            declineIndex.set(skillId, timestampMs);
+        const declinePoint = {
+            timestampMs,
+            eventSequence: decline.eventSequence ?? null
+        };
+        const previous = declinePointIndex.get(skillId);
+        if (!previous || compareOptionalSkillPoints(declinePoint, previous) > 0) {
+            declinePointIndex.set(skillId, declinePoint);
         }
+    }
+    const declineIndex = new Map<string, number>();
+    for (const [skillId, decline] of declinePointIndex) {
+        declineIndex.set(skillId, decline.timestampMs);
     }
     return declineIndex;
 }
@@ -451,10 +491,7 @@ function selectLatestOptionalSkillPoint(
     if (!next) {
         return current;
     }
-    if (current.eventSequence !== null && next.eventSequence !== null) {
-        return next.eventSequence >= current.eventSequence ? next : current;
-    }
-    return next.timestampMs >= current.timestampMs ? next : current;
+    return compareOptionalSkillPoints(next, current) >= 0 ? next : current;
 }
 
 function didActivationOccurBeforeCycleBoundary(
@@ -552,10 +589,7 @@ export function buildFreshCurrentCycleOptionalSkillActivationPointIndex(
             activationIndex.set(skillId, activationPoint);
             continue;
         }
-        const isNewer = eventSequence !== null && previous.eventSequence !== null
-            ? eventSequence > previous.eventSequence
-            : timestampMs > previous.timestampMs;
-        if (isNewer) {
+        if (compareOptionalSkillPoints(activationPoint, previous) > 0) {
             activationIndex.set(skillId, activationPoint);
         }
     }
@@ -584,10 +618,7 @@ export function buildFreshCurrentCycleOptionalSkillDeclinePointIndex(
             declineIndex.set(skillId, declinePoint);
             continue;
         }
-        const isNewer = eventSequence !== null && previous.eventSequence !== null
-            ? eventSequence > previous.eventSequence
-            : timestampMs > previous.timestampMs;
-        if (isNewer) {
+        if (compareOptionalSkillPoints(declinePoint, previous) > 0) {
             declineIndex.set(skillId, declinePoint);
         }
     }
@@ -622,10 +653,7 @@ export function buildMandatoryCurrentCycleOptionalSkillActivationIndex(
             activationIndex.set(skillId, activationPoint);
             continue;
         }
-        const isNewer = activationPoint.eventSequence !== null && previous.eventSequence !== null
-            ? activationPoint.eventSequence > previous.eventSequence
-            : activationPoint.timestampMs > previous.timestampMs;
-        if (isNewer) {
+        if (compareOptionalSkillPoints(activationPoint, previous) > 0) {
             activationIndex.set(skillId, activationPoint);
         }
     }
