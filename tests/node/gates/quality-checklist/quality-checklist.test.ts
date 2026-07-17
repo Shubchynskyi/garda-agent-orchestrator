@@ -1014,6 +1014,62 @@ describe('quality-checklist gate', () => {
         }
     });
 
+    it('normalizes an authenticated bare answers array at the canonical answers path', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-canonical-bare-answers-reuse' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const first = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const submittedAnswers = first.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Submitted canonical answer for ${answer.rule_id}.`
+            }));
+            fs.writeFileSync(answersPath, JSON.stringify(submittedAnswers, null, 2) + '\n', 'utf8');
+
+            const repeated = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const persistedTemplate = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as {
+                event_source: string;
+                answers: Array<{ status: string; answer: string }>;
+            };
+
+            assert.equal(repeated.status, 'refreshed');
+            assert.equal(repeated.answers_path.replace(/\\/g, '/'), answersPath.replace(/\\/g, '/'));
+            assert.equal(fs.existsSync(`${answersPath}.repair.json`), false);
+            assert.match(repeated.warning || '', /normalized to the bound template at the existing path/iu);
+            assert.equal(persistedTemplate.event_source, 'quality-checklist-answers-template');
+            assert.ok(persistedTemplate.answers.every((answer) => answer.status === 'PASS'));
+            assert.ok(persistedTemplate.answers.every((answer) => answer.answer.startsWith('Submitted canonical answer for ')));
+
+            const checklistResult = runQualityChecklistCommand({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath,
+                emitMetrics: false
+            });
+            assert.equal(checklistResult.exitCode, 0);
+            assert.ok(checklistResult.outputLines.includes('QUALITY_CHECKLIST_PASSED'));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
     it('keeps an unauthenticated bare answers array fail-closed', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-unbound-bare-answers' });
         try {
