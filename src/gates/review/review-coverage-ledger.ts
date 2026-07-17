@@ -9,6 +9,10 @@ import {
 } from '../completion/completion-verdict-markdown';
 import { normalizePath } from '../shared/helpers';
 import { parseSplitCheckpointDetectionSource } from '../split-required/split-checkpoint-scope';
+import {
+    formatReviewEvidenceDomainViolation,
+    normalizeReviewEvidenceDomainPaths
+} from './review-evidence-domain';
 
 export type ReviewCoverageObligationKind = 'file' | 'boundary' | 'category';
 
@@ -584,7 +588,9 @@ export function validateReviewCoverageLedger(
     unknownObligationIds.forEach((id) => violations.push(`Coverage obligation '${id}' is not part of the current contract.`));
     omittedObligationIds.forEach((id) => violations.push(`Coverage obligation '${id}' is omitted.`));
 
-    const changedFiles = contract.obligations.filter((entry) => entry.kind === 'file').map((entry) => entry.target);
+    const changedFiles = normalizeReviewEvidenceDomainPaths(
+        contract.obligations.filter((entry) => entry.kind === 'file').map((entry) => entry.target)
+    );
     const getChangedFileLineCount = createChangedFileLineCountResolver(options);
     const ledgerFindingIds = new Set<string>();
     for (const entry of parsed.entries) {
@@ -599,9 +605,12 @@ export function validateReviewCoverageLedger(
         for (const evidence of entry.evidence) {
             const location = parseReviewEvidenceLocation(evidence.location);
             if (!location || !changedFiles.includes(location.filePath)) {
-                violations.push(
-                    `Coverage obligation '${entry.id}' evidence location '${evidence.location}' is not a current changed-file path:line.`
-                );
+                violations.push(formatReviewEvidenceDomainViolation({
+                    subject: `Coverage obligation '${entry.id}' evidence`,
+                    location: evidence.location,
+                    reviewType: contract.review_type,
+                    admissiblePaths: changedFiles
+                }));
             } else if (obligation.kind === 'file' && location.filePath === obligation.target) {
                 hasTargetFileEvidence = true;
             }
@@ -623,7 +632,10 @@ export function validateReviewCoverageLedger(
             }
         }
         if (!hasTargetFileEvidence) {
-            violations.push(`File coverage obligation '${entry.id}' must cite its own target '${obligation.target}:line'.`);
+            violations.push(
+                `File coverage obligation '${entry.id}' must cite its own target '${obligation.target}:line'; `
+                + 'a different admissible review-domain path cannot satisfy a FILE-* obligation.'
+            );
         }
         const invalidFindingIds = entry.finding_ids.filter((id) => !FINDING_ID_PATTERN.test(id));
         invalidFindingIds.forEach((id) => violations.push(`Coverage obligation '${entry.id}' has invalid finding id '${id}'.`));

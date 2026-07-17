@@ -243,10 +243,13 @@ test('validateReviewFindingsReport rejects non-concrete JSON coverage evidence l
 
     assert.equal(result.valid, false);
     assert.ok(result.violations.some((entry) => entry.includes(
-        "coverage_ledger.entries[0].evidence[0].location '<changed-file>:<line>' must be a current changed-file path:line"
+        "coverage_ledger.entries[0].evidence[0].location '<changed-file>:<line>' is outside the code review evidence domain"
     )));
     assert.ok(result.violations.some((entry) => entry.includes(
-        "coverage_ledger.entries[1].evidence[0].location 'tests/example.test.ts:20' must be a current changed-file path:line"
+        "expected path:line from one of: src/example.ts"
+    )));
+    assert.ok(result.violations.some((entry) => entry.includes(
+        'Supporting artifacts may inform observations but are not admissible location evidence'
     )));
 });
 
@@ -273,13 +276,13 @@ test('validateReviewFindingsReport rejects non-concrete evidence locations outsi
 
     assert.equal(result.valid, false);
     assert.ok(result.violations.some((entry) => entry.includes(
-        "validation_notes[0].evidence[0].location '<changed-file>:<line>' must be a current changed-file path:line"
+        "validation_notes[0].evidence[0].location '<changed-file>:<line>' is outside the code review evidence domain"
     )));
     assert.ok(result.violations.some((entry) => entry.includes(
-        "findings.medium[0].evidence[0].location 'tests/example.test.ts:20' must be a current changed-file path:line"
+        "findings.medium[0].evidence[0].location 'tests/example.test.ts:20' is outside the code review evidence domain"
     )));
     assert.ok(result.violations.some((entry) => entry.includes(
-        "residual_risks[0].evidence[0].location 'src/other.ts:10' must be a current changed-file path:line"
+        "residual_risks[0].evidence[0].location 'src/other.ts:10' is outside the code review evidence domain"
     )));
 });
 

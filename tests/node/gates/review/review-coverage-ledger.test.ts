@@ -121,6 +121,34 @@ test('validateReviewCoverageLedger rejects missing, duplicate, generic, and unkn
     assert.ok(result.violations.some((entry) => entry.includes('generic evidence')));
 });
 
+test('validateReviewCoverageLedger explains the review evidence domain and file-target rule', () => {
+    const contract = buildReviewCoverageContract({
+        reviewType: 'test',
+        changedFiles: ['src/example.ts', 'tests/example.test.ts'],
+        categoryIds: []
+    });
+    const lines = contract.obligations.map((obligation, index) => ledgerLine(
+        obligation.id,
+        index === 0
+            ? 'tests/example.test.ts:1'
+            : 'garda-agent-orchestrator/runtime/reviews/T-979-full-suite-validation.json:1',
+        `Concrete ${obligation.kind} evidence covers evidence-domain validation ${index + 1}`
+    ));
+
+    const result = validateReviewCoverageLedger(buildReviewOutput(lines), contract);
+
+    assert.equal(result.status, 'FAIL');
+    assert.ok(result.violations.some((entry) => entry.includes(
+        "is outside the test review evidence domain; expected path:line from one of: src/example.ts, tests/example.test.ts"
+    )));
+    assert.ok(result.violations.some((entry) => entry.includes(
+        'Supporting artifacts may inform observations but are not admissible location evidence'
+    )));
+    assert.ok(result.violations.some((entry) => entry.includes(
+        "File coverage obligation 'FILE-001' must cite its own target 'src/example.ts:line'"
+    )));
+});
+
 test('validateReviewCoverageLedger rejects mixed valid and malformed evidence members', () => {
     const contract = buildReviewCoverageContract({
         reviewType: 'code',

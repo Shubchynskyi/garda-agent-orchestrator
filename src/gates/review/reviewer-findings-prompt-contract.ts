@@ -4,6 +4,9 @@ import {
 import type {
     ReviewCoverageContract
 } from './review-coverage-ledger';
+import {
+    buildReviewEvidenceDomainContractLines
+} from './review-evidence-domain';
 
 export interface ReviewerFindingsPromptContractOptions {
     taskId: string;
@@ -73,6 +76,9 @@ export function buildReviewerFindingsOutputTemplateJson(options: ReviewerFinding
 
 export function buildReviewerFindingsPromptContractMarkdown(options: ReviewerFindingsPromptContractOptions): string {
     const reviewLabel = `${normalizePlaceholder(options.reviewType, '<review-type>')} review`;
+    const evidenceDomainPaths = options.coverageContract.obligations
+        .filter((entry) => entry.kind === 'file')
+        .map((entry) => entry.target);
     return [
         `# ${reviewLabel} Findings-Only Output Contract`,
         '',
@@ -82,6 +88,7 @@ export function buildReviewerFindingsPromptContractMarkdown(options: ReviewerFin
         'Continue through every in-scope file, behavior boundary, test, and applicable checklist or rule category, then return every distinct evidence-supported issue in the same JSON object.',
         'Deduplicate issues that share one root cause. Do not invent, pad, or split findings to reach a count.',
         'Fill every coverage_ledger.entries item with concrete path:line evidence. Use an empty finding_ids array only when that obligation exposed no issue.',
+        ...buildReviewEvidenceDomainContractLines(options.reviewType, evidenceDomainPaths),
         'For each active finding, use exactly one F-### id, include concrete evidence, and reference every related coverage obligation id.',
         'Active finding object shape: {"id":"F-001","title":"<short defect title>","description":"<observed defect impact only>","evidence":[{"location":"<changed-file>:<line>","observation":"<concrete observation>"}],"coverage_obligation_ids":["<obligation-id>"]}.',
         'Use findings.critical, findings.high, findings.medium, and findings.low for active defects by severity.',

@@ -3,6 +3,10 @@ import {
     formatReviewEvidenceLineCountSource,
     parseReviewEvidenceLocation
 } from './review-coverage-ledger';
+import {
+    formatReviewEvidenceDomainViolation,
+    normalizeReviewEvidenceDomainPaths
+} from './review-evidence-domain';
 
 export const REVIEW_FINDINGS_SCHEMA_VERSION = 1 as const;
 
@@ -455,6 +459,8 @@ function validateEvidenceLocations(
     evidenceItems: readonly ReviewFindingsEvidence[],
     subject: string,
     changedFiles: ReadonlySet<string>,
+    reviewType: string,
+    admissiblePaths: readonly string[],
     getChangedFileLineCount: ((filePath: string) => { count: number; source: 'current' | 'head' | 'bound-snapshot' } | null) | null,
     violations: string[]
 ): void {
@@ -462,9 +468,12 @@ function validateEvidenceLocations(
         const evidenceSubject = `${subject}.evidence[${evidenceIndex}]`;
         const location = parseReviewEvidenceLocation(evidence.location);
         if (!location || !changedFiles.has(location.filePath)) {
-            violations.push(
-                `${evidenceSubject}.location '${evidence.location}' must be a current changed-file path:line.`
-            );
+            violations.push(formatReviewEvidenceDomainViolation({
+                subject: evidenceSubject,
+                location: evidence.location,
+                reviewType,
+                admissiblePaths
+            }));
             continue;
         }
         if (getChangedFileLineCount) {
@@ -491,17 +500,15 @@ function validateConcreteReviewEvidenceLocations(
         residualRisks: readonly ReviewResidualRisk[];
     },
     expectedChangedFilePaths: readonly string[] | undefined,
+    expectedReviewType: string,
     lineValidationOptions: { repoRoot?: string; evidenceSnapshotCommit?: string },
     violations: string[]
 ): void {
     if (!expectedChangedFilePaths) {
         return;
     }
-    const changedFiles = new Set(
-        expectedChangedFilePaths
-            .map((entry) => entry.trim().replace(/\\/g, '/'))
-            .filter(Boolean)
-    );
+    const admissiblePaths = normalizeReviewEvidenceDomainPaths(expectedChangedFilePaths);
+    const changedFiles = new Set(admissiblePaths);
     if (changedFiles.size === 0) {
         return;
     }
@@ -510,7 +517,15 @@ function validateConcreteReviewEvidenceLocations(
         : null;
 
     for (const [noteIndex, note] of reportParts.validationNotes.entries()) {
-        validateEvidenceLocations(note.evidence, `validation_notes[${noteIndex}]`, changedFiles, getChangedFileLineCount, violations);
+        validateEvidenceLocations(
+            note.evidence,
+            `validation_notes[${noteIndex}]`,
+            changedFiles,
+            expectedReviewType,
+            admissiblePaths,
+            getChangedFileLineCount,
+            violations
+        );
     }
     if (reportParts.coverageLedger) {
         for (const [entryIndex, entry] of reportParts.coverageLedger.entries.entries()) {
@@ -518,6 +533,8 @@ function validateConcreteReviewEvidenceLocations(
                 entry.evidence,
                 `coverage_ledger.entries[${entryIndex}]`,
                 changedFiles,
+                expectedReviewType,
+                admissiblePaths,
                 getChangedFileLineCount,
                 violations
             );
@@ -530,6 +547,8 @@ function validateConcreteReviewEvidenceLocations(
                     finding.evidence,
                     `findings.${severity}[${findingIndex}]`,
                     changedFiles,
+                    expectedReviewType,
+                    admissiblePaths,
                     getChangedFileLineCount,
                     violations
                 );
@@ -537,7 +556,15 @@ function validateConcreteReviewEvidenceLocations(
         }
     }
     for (const [riskIndex, risk] of reportParts.residualRisks.entries()) {
-        validateEvidenceLocations(risk.evidence, `residual_risks[${riskIndex}]`, changedFiles, getChangedFileLineCount, violations);
+        validateEvidenceLocations(
+            risk.evidence,
+            `residual_risks[${riskIndex}]`,
+            changedFiles,
+            expectedReviewType,
+            admissiblePaths,
+            getChangedFileLineCount,
+            violations
+        );
     }
 }
 
@@ -757,6 +784,7 @@ export function validateReviewFindingsReport(
     validateConcreteReviewEvidenceLocations(
         { validationNotes, coverageLedger, findings, residualRisks },
         options.expectedChangedFilePaths,
+        expectedReviewType,
         {
             repoRoot: options.repoRoot,
             evidenceSnapshotCommit: options.evidenceSnapshotCommit

@@ -74,6 +74,11 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptContract.includes('Complete the entire assigned review scope before returning'));
             assert.ok(promptContract.includes('Finding an issue does not end the review'));
             assert.ok(promptContract.includes('Fill every coverage_ledger.entries item with concrete path:line evidence'));
+            assert.ok(promptContract.includes('Evidence location domain for code review'));
+            assert.ok(promptContract.includes('src/app.ts'));
+            assert.ok(promptContract.includes('tests/app.test.ts'));
+            assert.ok(promptContract.includes('Supporting artifacts may inform observations but are not admissible location evidence'));
+            assert.ok(promptContract.includes('Every FILE-* coverage obligation must cite its own target path:line'));
             assert.ok(promptContract.includes('Active finding object shape: {"id":"F-001"'));
             assert.ok(promptContract.includes('Do not choose downstream disposition'));
             assert.equal(/REVIEW PASSED|REVIEW FAILED|## Verdict/u.test(promptContract), false);
