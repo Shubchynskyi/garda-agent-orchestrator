@@ -36,12 +36,18 @@ function readTaskEventSequence(event: Record<string, unknown>): number | null {
     return Number.isFinite(value) ? value : null;
 }
 
-function compareOptionalSkillPoints(
+export function compareOptionalSkillEvidencePoints(
     left: OptionalSkillActivationPoint,
     right: OptionalSkillActivationPoint
 ): number {
     if (left.eventSequence !== null && right.eventSequence !== null) {
         return left.eventSequence - right.eventSequence;
+    }
+    if (left.eventSequence !== null) {
+        return 1;
+    }
+    if (right.eventSequence !== null) {
+        return -1;
     }
     return left.timestampMs - right.timestampMs;
 }
@@ -414,7 +420,7 @@ function buildCurrentCycleOptionalSkillActivationPointIndex(
             eventSequence: activation.eventSequence ?? null
         };
         const previous = activationIndex.get(skillId);
-        if (!previous || compareOptionalSkillPoints(activationPoint, previous) > 0) {
+        if (!previous || compareOptionalSkillEvidencePoints(activationPoint, previous) > 0) {
             activationIndex.set(skillId, activationPoint);
         }
     }
@@ -437,7 +443,7 @@ export function buildCurrentCycleOptionalSkillDeclineIndex(
             eventSequence: decline.eventSequence ?? null
         };
         const previous = declinePointIndex.get(skillId);
-        if (!previous || compareOptionalSkillPoints(declinePoint, previous) > 0) {
+        if (!previous || compareOptionalSkillEvidencePoints(declinePoint, previous) > 0) {
             declinePointIndex.set(skillId, declinePoint);
         }
     }
@@ -491,17 +497,14 @@ function selectLatestOptionalSkillPoint(
     if (!next) {
         return current;
     }
-    return compareOptionalSkillPoints(next, current) >= 0 ? next : current;
+    return compareOptionalSkillEvidencePoints(next, current) >= 0 ? next : current;
 }
 
 function didActivationOccurBeforeCycleBoundary(
     activation: OptionalSkillActivationPoint,
     cycleBoundary: OptionalSkillActivationPoint
 ): boolean {
-    if (activation.eventSequence !== null && cycleBoundary.eventSequence !== null) {
-        return activation.eventSequence < cycleBoundary.eventSequence;
-    }
-    return activation.timestampMs < cycleBoundary.timestampMs;
+    return compareOptionalSkillEvidencePoints(activation, cycleBoundary) < 0;
 }
 
 export function getCurrentImplementationStartPoint(
@@ -512,59 +515,35 @@ export function getCurrentImplementationStartPoint(
     if (implementationTimestampMs === null) {
         return null;
     }
-    const implementationSequence = timelineEvidence.latestImplementationStartedTaskSequence ?? null;
-    const cycleBoundarySequence = timelineEvidence.latestCycleBoundaryTaskSequence ?? null;
-    const coherentRestartTimestampMs = toTimestampMs(timelineEvidence.latestCoherentCycleRestartedTimestampUtc || null);
-    const coherentRestartSequence = timelineEvidence.latestCoherentCycleRestartedTaskSequence ?? null;
-    if (
-        implementationSequence !== null
-        && coherentRestartSequence !== null
-        && implementationSequence < coherentRestartSequence
-    ) {
-        return null;
-    }
-    if (
-        (implementationSequence === null || coherentRestartSequence === null)
-        && coherentRestartTimestampMs !== null
-        && implementationTimestampMs < coherentRestartTimestampMs
-    ) {
-        return null;
-    }
-    if (
-        implementationSequence !== null
-        && cycleBoundarySequence !== null
-        && implementationSequence < cycleBoundarySequence
-    ) {
-        return null;
-    }
-
-    const cycleBoundaryTimestampMs = toTimestampMs(
-        timelineEvidence.latestCycleBoundaryTimestampUtc
-        || timelineEvidence.latestTaskModeEnteredTimestampUtc
-        || payload.timestamp_utc
-    );
-    if (
-        (implementationSequence === null || cycleBoundarySequence === null)
-        && cycleBoundaryTimestampMs !== null
-        && implementationTimestampMs < cycleBoundaryTimestampMs
-    ) {
-        return null;
-    }
-
-    return {
+    const implementationPoint = {
         timestampMs: implementationTimestampMs,
-        eventSequence: implementationSequence
+        eventSequence: timelineEvidence.latestImplementationStartedTaskSequence ?? null
     };
+    const coherentRestart = getLatestCoherentCycleRestartPoint(timelineEvidence);
+    if (
+        coherentRestart
+        && compareOptionalSkillEvidencePoints(implementationPoint, coherentRestart) < 0
+    ) {
+        return null;
+    }
+    const cycleBoundary = getCurrentCycleBoundaryPoint(payload, timelineEvidence);
+    if (
+        cycleBoundary
+        && compareOptionalSkillEvidencePoints(implementationPoint, cycleBoundary) < 0
+    ) {
+        return null;
+    }
+    return implementationPoint;
 }
 
 export function didActivationOccurAfterImplementationStart(
     activation: OptionalSkillActivationPoint,
     implementationStart: OptionalSkillActivationPoint
 ): boolean {
-    if (activation.eventSequence !== null && implementationStart.eventSequence !== null) {
-        return activation.eventSequence >= implementationStart.eventSequence;
+    if (activation.eventSequence === null && implementationStart.eventSequence === null) {
+        return activation.timestampMs > implementationStart.timestampMs;
     }
-    return activation.timestampMs > implementationStart.timestampMs;
+    return compareOptionalSkillEvidencePoints(activation, implementationStart) >= 0;
 }
 
 export function buildFreshCurrentCycleOptionalSkillActivationPointIndex(
@@ -589,7 +568,7 @@ export function buildFreshCurrentCycleOptionalSkillActivationPointIndex(
             activationIndex.set(skillId, activationPoint);
             continue;
         }
-        if (compareOptionalSkillPoints(activationPoint, previous) > 0) {
+        if (compareOptionalSkillEvidencePoints(activationPoint, previous) > 0) {
             activationIndex.set(skillId, activationPoint);
         }
     }
@@ -618,7 +597,7 @@ export function buildFreshCurrentCycleOptionalSkillDeclinePointIndex(
             declineIndex.set(skillId, declinePoint);
             continue;
         }
-        if (compareOptionalSkillPoints(declinePoint, previous) > 0) {
+        if (compareOptionalSkillEvidencePoints(declinePoint, previous) > 0) {
             declineIndex.set(skillId, declinePoint);
         }
     }
@@ -653,7 +632,7 @@ export function buildMandatoryCurrentCycleOptionalSkillActivationIndex(
             activationIndex.set(skillId, activationPoint);
             continue;
         }
-        if (compareOptionalSkillPoints(activationPoint, previous) > 0) {
+        if (compareOptionalSkillEvidencePoints(activationPoint, previous) > 0) {
             activationIndex.set(skillId, activationPoint);
         }
     }

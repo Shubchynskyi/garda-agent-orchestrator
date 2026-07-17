@@ -38,6 +38,7 @@ import {
     buildCurrentCycleOptionalSkillDeclineIndex,
     buildFreshCurrentCycleOptionalSkillDeclinePointIndex,
     buildMandatoryCurrentCycleOptionalSkillActivationIndex,
+    compareOptionalSkillEvidencePoints,
     computeOptionalSkillSelectionFingerprint,
     getCurrentCycleOptionalSkillDeclines,
     isMandatoryOptionalSkillSelectionPolicyMode,
@@ -369,11 +370,10 @@ function getLatestDeclineReasonsBySkill(
         }
         const previous = declineReasons.get(skillId);
         const eventSequence = decline.eventSequence ?? null;
-        const isNewer = !previous || (
-            eventSequence !== null && previous.eventSequence !== null
-                ? eventSequence >= previous.eventSequence
-                : timestampMs >= previous.timestampMs
-        );
+        const isNewer = !previous || compareOptionalSkillEvidencePoints(
+            { timestampMs, eventSequence },
+            previous
+        ) >= 0;
         if (isNewer) {
             declineReasons.set(skillId, {
                 timestampMs,

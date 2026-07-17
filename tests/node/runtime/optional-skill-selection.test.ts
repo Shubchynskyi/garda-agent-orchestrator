@@ -9,7 +9,10 @@ import {
     buildOptionalSkillSelectionArtifact,
     buildCurrentCycleOptionalSkillActivationIndex,
     buildCurrentCycleOptionalSkillDeclineIndex,
+    buildFreshCurrentCycleOptionalSkillActivationPointIndex,
+    buildFreshCurrentCycleOptionalSkillDeclinePointIndex,
     buildMandatoryCurrentCycleOptionalSkillActivationIndex,
+    compareOptionalSkillEvidencePoints,
     computeOptionalSkillSelectionFingerprint,
     computeOptionalSkillTaskTextSha256,
     getActivatedCurrentCycleOptionalSkillReferenceLoads,
@@ -1982,7 +1985,7 @@ test('activated optional skill reference loads require sequence order after acti
     }
 });
 
-test('optional skill decisions prefer task sequence over skewed timestamps', () => {
+test('optional skill decisions prefer sequenced evidence over skewed timestamps', () => {
     const bundleRoot = makeBundleRoot();
     try {
         seedOptionalSkillWorkspace(bundleRoot);
@@ -2016,6 +2019,13 @@ test('optional skill decisions prefer task sequence over skewed timestamps', () 
                     timestampUtc: '2026-01-01T00:00:20.000Z',
                     eventSequence: 4,
                     selectionFingerprintSha256: fingerprint
+                },
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:01:00.000Z',
+                    eventSequence: null,
+                    selectionFingerprintSha256: fingerprint
                 }
             ],
             optionalSkillDeclines: [
@@ -2034,6 +2044,14 @@ test('optional skill decisions prefer task sequence over skewed timestamps', () 
                     eventSequence: 6,
                     selectionFingerprintSha256: fingerprint,
                     reason: 'second'
+                },
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:01:10.000Z',
+                    eventSequence: null,
+                    selectionFingerprintSha256: fingerprint,
+                    reason: 'legacy-later-timestamp'
                 }
             ],
             optionalSkillReferenceLoads: []
@@ -2047,6 +2065,28 @@ test('optional skill decisions prefer task sequence over skewed timestamps', () 
             buildCurrentCycleOptionalSkillDeclineIndex(artifact.payload, timelineEvidence).get('node-backend'),
             Date.parse('2026-01-01T00:00:40.000Z')
         );
+        assert.equal(
+            buildFreshCurrentCycleOptionalSkillActivationPointIndex(
+                artifact.payload,
+                timelineEvidence
+            ).get('node-backend')?.eventSequence,
+            4
+        );
+        assert.equal(
+            buildFreshCurrentCycleOptionalSkillDeclinePointIndex(
+                artifact.payload,
+                timelineEvidence
+            ).get('node-backend')?.eventSequence,
+            6
+        );
+        assert.ok(compareOptionalSkillEvidencePoints(
+            { timestampMs: 1, eventSequence: 7 },
+            { timestampMs: 100, eventSequence: null }
+        ) > 0);
+        assert.ok(compareOptionalSkillEvidencePoints(
+            { timestampMs: 100, eventSequence: null },
+            { timestampMs: 1, eventSequence: 7 }
+        ) < 0);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
