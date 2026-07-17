@@ -371,6 +371,7 @@ export function findMatchingReviewerDelegationStartedEvent(
     const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
     const normalizedReviewerLaunchAttemptId = String(options.reviewerLaunchAttemptId || '').trim().toLowerCase();
+    const normalizedLaunchBindingSha256 = String(options.launchBindingSha256 || '').trim().toLowerCase();
     const normalizedProviderInvocationId = String(options.providerInvocationId || '').trim();
     const normalizedProviderInvocationAttestationId = String(options.providerInvocationAttestationId || '').trim();
     const normalizedProviderInvocationAttestationSource = normalizeReviewerLaunchAttestationSource(
@@ -386,6 +387,9 @@ export function findMatchingReviewerDelegationStartedEvent(
             .trim()
             .toLowerCase();
         const detailsRoutingEventSha256 = String(details?.routing_event_sha256 || details?.routingEventSha256 || '')
+            .trim()
+            .toLowerCase();
+        const detailsLaunchBindingSha256 = String(details?.launch_binding_sha256 || details?.launchBindingSha256 || '')
             .trim()
             .toLowerCase();
         const detailsProviderInvocationId = String(
@@ -419,6 +423,7 @@ export function findMatchingReviewerDelegationStartedEvent(
             && detailsReviewContextSha256 === normalizedReviewContextSha256
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
             && (!normalizedReviewerLaunchAttemptId || detailsReviewerLaunchAttemptId === normalizedReviewerLaunchAttemptId)
+            && detailsLaunchBindingSha256 === normalizedLaunchBindingSha256
             && detailsProviderInvocationId === normalizedProviderInvocationId
             && String(details?.provider_invocation_attestation_status || '').trim().toLowerCase() === 'authenticated'
             && String(details?.provider_invocation_attestation_id || '').trim() === normalizedProviderInvocationAttestationId
