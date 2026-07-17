@@ -964,6 +964,90 @@ describe('quality-checklist gate', () => {
         }
     });
 
+    it('reuses an authenticated bare answers array at the existing repair path', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-repair-bare-answers-reuse' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+
+            const first = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const repairPath = `${answersPath}.repair.json`;
+            const recoveryPath = `${repairPath}.recovery.json`;
+            const submittedAnswers = first.template.answers.map((answer) => ({
+                ...answer,
+                status: 'PASS',
+                answer: `Submitted repair answer for ${answer.rule_id}.`
+            }));
+            fs.writeFileSync(repairPath, JSON.stringify(submittedAnswers, null, 2) + '\n', 'utf8');
+
+            const repeated = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+            const persistedTemplate = JSON.parse(fs.readFileSync(repairPath, 'utf8')) as {
+                event_source: string;
+                answers: Array<{ status: string; answer: string }>;
+            };
+
+            assert.equal(repeated.status, 'repair_created');
+            assert.equal(repeated.answers_path.replace(/\\/g, '/'), repairPath.replace(/\\/g, '/'));
+            assert.equal(fs.existsSync(recoveryPath), false);
+            assert.equal(persistedTemplate.event_source, 'quality-checklist-answers-template');
+            assert.ok(persistedTemplate.answers.every((answer) => answer.status === 'PASS'));
+            assert.ok(persistedTemplate.answers.every((answer) => answer.answer.startsWith('Submitted repair answer for ')));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('keeps an unauthenticated bare answers array fail-closed', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-unbound-bare-answers' });
+        try {
+            const preflightPath = writeGateFixturePreflight(fixture);
+            const answersPath = path.join(
+                fixture.orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${fixture.taskId}-quality-checklist-answers.json`
+            );
+            const unboundAnswers = UNIVERSAL_QUALITY_RULE_IDS.map((ruleId) => ({
+                rule_id: ruleId,
+                status: 'PASS',
+                answer: `Unbound answer for ${ruleId}.`
+            }));
+            fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+            fs.writeFileSync(answersPath, JSON.stringify(unboundAnswers, null, 2) + '\n', 'utf8');
+            const originalBytes = fs.readFileSync(answersPath, 'utf8');
+
+            const result = materializeQualityChecklistAnswersTemplate({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answersPath
+            });
+
+            assert.equal(result.status, 'repair_created');
+            assert.equal(result.answers_path.replace(/\\/g, '/'), `${answersPath}.repair.json`.replace(/\\/g, '/'));
+            assert.equal(fs.readFileSync(answersPath, 'utf8'), originalBytes);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
     it('preserves unchanged repair answers while blanking changed and new policy rules', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-repair-partial-policy-refresh' });
         try {

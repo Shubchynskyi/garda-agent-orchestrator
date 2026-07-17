@@ -428,6 +428,40 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(checklistResult.exitCode, 0);
     });
 
+    it('keeps routing to an authenticated repair path after answers are submitted as a bare array', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const answersPath = qualityChecklistAnswersPath(repoRoot);
+        fs.mkdirSync(path.dirname(answersPath), { recursive: true });
+        fs.writeFileSync(answersPath, '{unsafe canonical json', 'utf8');
+
+        resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const repairPath = qualityChecklistRepairAnswersPath(repoRoot);
+        const repairTemplate = JSON.parse(fs.readFileSync(repairPath, 'utf8')) as {
+            answers: Array<Record<string, unknown>>;
+        };
+        const submittedAnswers = repairTemplate.answers.map((answer) => ({
+            ...answer,
+            status: 'PASS',
+            answer: `Submitted repair answer for ${String(answer.rule_id)}.`
+        }));
+        fs.writeFileSync(repairPath, JSON.stringify(submittedAnswers, null, 2) + '\n', 'utf8');
+
+        const repeated = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(repeated.next_gate, 'quality-checklist', repeated.reason);
+        assert.ok(repeated.commands[0].command.includes(`--answers-path "${qualityChecklistRepairAnswersCommandPath()}"`));
+        assert.equal(fs.existsSync(qualityChecklistRecoveryAnswersPath(repoRoot)), false);
+        const normalizedTemplate = JSON.parse(fs.readFileSync(repairPath, 'utf8')) as {
+            event_source: string;
+            answers: Array<Record<string, unknown>>;
+        };
+        assert.equal(normalizedTemplate.event_source, 'quality-checklist-answers-template');
+        assert.ok(normalizedTemplate.answers.every((answer) => answer.status === 'PASS'));
+    });
+
     it('rebinds filled repair answers after a coherent preflight refresh without an empty-template loop', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);

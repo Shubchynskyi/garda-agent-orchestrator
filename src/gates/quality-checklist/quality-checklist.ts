@@ -1186,6 +1186,49 @@ function readQualityChecklistAnswersTemplateBinding(
     }
 }
 
+function readAuthenticatedBareAnswersTemplate(options: {
+    answersPath: string;
+    repoRoot: string;
+    expectedTemplate: QualityChecklistAnswersTemplate;
+}): { template: QualityChecklistAnswersTemplate; binding: QualityChecklistAnswersTemplateBinding } | null {
+    const answersPath = resolveAnswersTemplateWritePath(options.answersPath, options.repoRoot);
+    try {
+        const parsed = JSON.parse(fs.readFileSync(answersPath, 'utf8')) as unknown;
+        const activeRuleIds = templateRuleIds(parsed);
+        const binding = readQualityChecklistAnswersTemplateBinding(answersPath, options.repoRoot);
+        if (!Array.isArray(parsed)
+            || !activeRuleIds
+            || !binding
+            || binding.task_id !== options.expectedTemplate.task_id
+            || binding.checklist_id !== options.expectedTemplate.checklist_id
+            || !activeRuleIdsMatch(activeRuleIds, binding.active_rule_ids)) {
+            return null;
+        }
+        const answers = parsed.map(normalizeReusableTemplateAnswer);
+        if (answers.some((answer) => answer === null)) {
+            return null;
+        }
+        const template: QualityChecklistAnswersTemplate = {
+            schema_version: 1,
+            timestamp_utc: options.expectedTemplate.timestamp_utc,
+            event_source: QUALITY_CHECKLIST_ANSWERS_TEMPLATE_EVENT_SOURCE,
+            task_id: binding.task_id,
+            checklist_id: binding.checklist_id,
+            preflight_path: binding.preflight_path,
+            preflight_sha256: binding.preflight_sha256,
+            workflow_config_path: binding.workflow_config_path,
+            workflow_config_sha256: binding.workflow_config_sha256,
+            effective_policy_sha256: binding.effective_policy_sha256,
+            active_rule_ids: [...binding.active_rule_ids],
+            active_rule_fingerprints: { ...binding.active_rule_fingerprints },
+            answers: answers as QualityChecklistAnswersTemplateAnswer[]
+        };
+        return bindingMatchesTemplate(binding, template) ? { template, binding } : null;
+    } catch {
+        return null;
+    }
+}
+
 function writeQualityChecklistAnswersTemplateBinding(
     answersPath: string,
     repoRoot: string,
@@ -1236,12 +1279,26 @@ function materializeUnsafeRepairTemplate(options: {
                 answersPath: repairPath
             });
             if (assessment.status === 'invalid') {
-                recordRejectedCandidate(repairPath, assessment.reason);
-                continue;
+                const authenticatedBareAnswers = readAuthenticatedBareAnswersTemplate({
+                    answersPath: repairPath,
+                    repoRoot: options.repoRoot,
+                    expectedTemplate: options.template
+                });
+                if (!authenticatedBareAnswers) {
+                    recordRejectedCandidate(repairPath, assessment.reason);
+                    continue;
+                }
+                assessment = {
+                    status: 'stale',
+                    reason: 'Authenticated bare quality-checklist answers require template normalization.',
+                    template: authenticatedBareAnswers.template
+                };
+                binding = authenticatedBareAnswers.binding;
+            } else {
+                binding = assessment.status === 'missing'
+                    ? null
+                    : readQualityChecklistAnswersTemplateBinding(repairPath, options.repoRoot);
             }
-            binding = assessment.status === 'missing'
-                ? null
-                : readQualityChecklistAnswersTemplateBinding(repairPath, options.repoRoot);
             if ((assessment.status === 'current' || assessment.status === 'stale')
                 && !bindingMatchesTemplate(binding, assessment.template!)) {
                 recordRejectedCandidate(
@@ -1338,6 +1395,25 @@ export function materializeQualityChecklistAnswersTemplate(options: {
 
     const binding = readQualityChecklistAnswersTemplateBinding(answersPath, repoRoot);
     if (assessment.status === 'invalid') {
+        const authenticatedBareAnswers = readAuthenticatedBareAnswersTemplate({
+            answersPath,
+            repoRoot,
+            expectedTemplate
+        });
+        if (authenticatedBareAnswers) {
+            const template = mergeReusableAnswersIntoTemplate(
+                expectedTemplate,
+                authenticatedBareAnswers.template,
+                authenticatedBareAnswers.binding
+            );
+            writeQualityChecklistAnswersTemplateFile(answersPath, repoRoot, template);
+            return {
+                status: 'refreshed',
+                answers_path: normalizePath(answersPath),
+                template,
+                warning: 'Authenticated bare quality-checklist answers normalized to the bound template at the existing path.'
+            };
+        }
         return materializeUnsafeRepairTemplate({
             answersPath,
             repoRoot,
