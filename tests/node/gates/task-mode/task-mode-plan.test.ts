@@ -18,6 +18,7 @@ import {formatCompletionGateResult} from '../../../../src/gates/completion';
 import {
     computeTaskProfilePolicySnapshotHash,
     summarizeTaskProfilePolicySnapshot,
+    validateTaskProfilePolicySnapshot,
     type TaskProfilePolicySnapshot
 } from '../../../../src/policy/task-profile-policy-snapshot';
 
@@ -1379,7 +1380,7 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
                         findings: {
                             critical: 'fix_now',
                             high: 'fix_now',
-                            medium: 'create_follow_up',
+                            medium: 'fix_now',
                             low: 'create_follow_up'
                         },
                         residual_risk: 'create_follow_up'
@@ -2066,12 +2067,18 @@ test('runEnterTaskModeCommand fails closed when profile policy snapshot finding,
         const artifactPath = path.join(reviewsDir, 'T-100-task-mode.json');
         const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
         const snapshot = artifact.profile_policy_snapshot as TaskProfilePolicySnapshot;
+        snapshot.review_finding_policy.findings.high = 'create_follow_up';
+        snapshot.finding_policy.active_findings.high = 'create_follow_up';
+        snapshot.snapshot_hash = computeTaskProfilePolicySnapshotHash(snapshot);
+        const historicalPresetValidation = validateTaskProfilePolicySnapshot(snapshot);
+        assert.equal(historicalPresetValidation.status, 'PASS');
+
         snapshot.finding_policy.active_findings.low = 'allow_without_resolution' as 'block_until_resolved';
         snapshot.finding_policy.residual_risks = 'allow_without_justification' as 'block_unless_deferred_with_justification';
         snapshot.finding_policy.deferred_findings = 'allow_without_justification' as 'allowed_only_with_justification';
         (snapshot.review_finding_policy.findings as unknown as Record<string, string>).critical = 'ignore';
-        snapshot.review_finding_policy.findings.high = 'ignore';
-        snapshot.review_finding_policy.residual_risk = 'ignore';
+        snapshot.review_finding_policy.findings.high = 'defer_silently' as 'ignore';
+        snapshot.review_finding_policy.residual_risk = 'defer_silently' as 'ignore';
         snapshot.remediation_policy.failed_review_requires_rework = false as true;
         snapshot.remediation_policy.review_restarts_retain_profile_snapshot = false as true;
         snapshot.remediation_policy.remediation_restarts_retain_profile_snapshot = false as true;

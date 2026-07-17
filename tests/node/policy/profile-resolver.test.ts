@@ -65,7 +65,7 @@ function makeTempBundle(configs: {
                     findings: {
                         critical: 'fix_now',
                         high: 'fix_now',
-                        medium: 'create_follow_up',
+                        medium: 'fix_now',
                         low: 'create_follow_up'
                     },
                     residual_risk: 'create_follow_up'
@@ -263,7 +263,7 @@ test('shipped template profiles and review capabilities use profile-driven revie
         findings: {
             critical: 'fix_now',
             high: 'fix_now',
-            medium: 'create_follow_up',
+            medium: 'fix_now',
             low: 'create_follow_up'
         },
         residual_risk: 'create_follow_up'
@@ -587,7 +587,7 @@ test('resolveEffectivePolicy: balanced profile with defaults', () => {
         assert.equal(policy.review_finding_policy.policy_id, 'balanced');
         assert.equal(policy.review_finding_policy.findings.critical, 'fix_now');
         assert.equal(policy.review_finding_policy.findings.high, 'fix_now');
-        assert.equal(policy.review_finding_policy.findings.medium, 'create_follow_up');
+        assert.equal(policy.review_finding_policy.findings.medium, 'fix_now');
         assert.equal(policy.review_finding_policy.findings.low, 'create_follow_up');
         assert.equal(policy.review_finding_policy.residual_risk, 'create_follow_up');
         assert.equal(policy.review_finding_policy_diagnostics.length, 1);

@@ -347,7 +347,7 @@ const REVIEW_FINDING_POLICY_PRESETS = {
         findings: {
             critical: 'fix_now',
             high: 'fix_now',
-            medium: 'create_follow_up',
+            medium: 'fix_now',
             low: 'create_follow_up'
         },
         residual_risk: 'create_follow_up'

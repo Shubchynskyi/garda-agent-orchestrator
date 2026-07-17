@@ -848,6 +848,11 @@ test('validateProfilesConfig validates template profiles.json', () => {
     assert.ok(builtIn.strict);
     assert.ok(builtIn['docs-only']);
     assert.equal(Object.keys(builtIn).length, 4);
+    const balancedFindingPolicy = builtIn.balanced.review_finding_policy as Record<string, unknown>;
+    assert.equal(
+        (balancedFindingPolicy.findings as Record<string, unknown>).medium,
+        'fix_now'
+    );
 
     const user = normalized.user_profiles as Record<string, unknown>;
     assert.equal(Object.keys(user).length, 0);
@@ -939,6 +944,42 @@ test('validateProfilesConfig rejects review_finding_policy that weakens critical
             user_profiles: {}
         });
     }, /critical is immutable and must be fix_now/);
+});
+
+test('validateProfilesConfig rejects unknown finding-policy keys and actions', () => {
+    const withUnknownPolicyKey = structuredClone(readTemplateConfig('profiles'));
+    const unknownPolicy = (
+        withUnknownPolicyKey.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_finding_policy as Record<string, unknown>;
+    unknownPolicy.unexpected = true;
+    assert.throws(
+        () => validateProfilesConfig(withUnknownPolicyKey),
+        /unexpected is not allowed/
+    );
+
+    const withUnknownFindingKey = structuredClone(readTemplateConfig('profiles'));
+    const unknownFindings = (
+        (
+            withUnknownFindingKey.built_in_profiles as Record<string, Record<string, unknown>>
+        ).balanced.review_finding_policy as Record<string, unknown>
+    ).findings as Record<string, unknown>;
+    unknownFindings.informational = 'ignore';
+    assert.throws(
+        () => validateProfilesConfig(withUnknownFindingKey),
+        /informational is not allowed/
+    );
+
+    const withUnknownAction = structuredClone(readTemplateConfig('profiles'));
+    const actionFindings = (
+        (
+            withUnknownAction.built_in_profiles as Record<string, Record<string, unknown>>
+        ).balanced.review_finding_policy as Record<string, unknown>
+    ).findings as Record<string, unknown>;
+    actionFindings.low = 'defer_silently';
+    assert.throws(
+        () => validateProfilesConfig(withUnknownAction),
+        /must be one of: fix_now, create_follow_up, ignore/
+    );
 });
 
 test('validateProfilesConfig rejects named review_finding_policy preset mismatches', () => {

@@ -35,7 +35,7 @@ function createTempBundleWithProfiles(profiles?: Record<string, unknown>): strin
                     findings: {
                         critical: 'fix_now',
                         high: 'fix_now',
-                        medium: 'create_follow_up',
+                        medium: 'fix_now',
                         low: 'create_follow_up'
                     },
                     residual_risk: 'create_follow_up'
@@ -225,6 +225,7 @@ test('profile create adds a user profile', () => {
     assert.equal(data.user_profiles['my-custom'].description, 'A custom test profile');
     assert.equal(data.user_profiles['my-custom'].review_finding_policy.policy_id, 'balanced');
     assert.equal(data.user_profiles['my-custom'].review_finding_policy.findings.critical, 'fix_now');
+    assert.equal(data.user_profiles['my-custom'].review_finding_policy.findings.medium, 'fix_now');
     assert.equal(data.user_profiles['my-custom'].review_finding_policy.residual_risk, 'create_follow_up');
 });
 

@@ -519,6 +519,8 @@ function mapReviewFindingActionToResidualRiskDisposition(
 export function buildTaskProfileFindingPolicySnapshot(
     reviewFindingPolicy: ReviewFindingPolicy
 ): TaskProfileFindingPolicySnapshot {
+    // The action matrix is snapshot-owned once its hash is recorded. A named preset
+    // may evolve for future tasks without retroactively invalidating active tasks.
     return {
         schema_version: DEFAULT_FINDING_POLICY.schema_version,
         policy_id: DEFAULT_FINDING_POLICY.policy_id,
@@ -574,27 +576,12 @@ function parseReviewFindingPolicySnapshot(value: unknown): ReviewFindingPolicy |
         }
         findings[severity] = value.findings[severity];
     }
-    const policy: ReviewFindingPolicy = {
+    return {
         schema_version: 1,
         policy_id: value.policy_id as ReviewFindingPolicy['policy_id'],
         findings,
         residual_risk: value.residual_risk
     };
-    if (policy.policy_id !== 'custom') {
-        const preset = REVIEW_FINDING_POLICY_PRESETS[policy.policy_id as keyof typeof REVIEW_FINDING_POLICY_PRESETS];
-        if (!preset) {
-            return null;
-        }
-        for (const severity of ACTIVE_FINDING_SEVERITY_KEYS) {
-            if (policy.findings[severity] !== preset.findings[severity]) {
-                return null;
-            }
-        }
-        if (policy.residual_risk !== preset.residual_risk) {
-            return null;
-        }
-    }
-    return policy;
 }
 
 function validateFindingPolicySnapshot(
@@ -778,26 +765,8 @@ function validateReviewFindingPolicySnapshot(value: unknown, violations: string[
             `Task profile policy snapshot review_finding_policy.residual_risk must be one of ${REVIEW_FINDING_POLICY_ACTIONS.join(', ')}.`
         );
     }
-    if (
-        typeof value.policy_id === 'string'
-        && value.policy_id !== 'custom'
-        && Object.hasOwn(REVIEW_FINDING_POLICY_PRESETS, value.policy_id)
-        && isPlainRecord(value.findings)
-    ) {
-        const preset = REVIEW_FINDING_POLICY_PRESETS[value.policy_id as keyof typeof REVIEW_FINDING_POLICY_PRESETS];
-        for (const severity of ACTIVE_FINDING_SEVERITY_KEYS) {
-            if (value.findings[severity] !== preset.findings[severity]) {
-                violations.push(
-                    `Task profile policy snapshot review_finding_policy.findings.${severity} must match ${value.policy_id} preset.`
-                );
-            }
-        }
-        if (value.residual_risk !== preset.residual_risk) {
-            violations.push(
-                `Task profile policy snapshot review_finding_policy.residual_risk must match ${value.policy_id} preset.`
-            );
-        }
-    }
+    // Do not compare a snapshot-owned matrix with today's named preset. The profile
+    // config validator enforces current presets before a new snapshot is created.
 }
 
 function isLegacyStrictReviewFindingPolicySnapshot(value: Record<string, unknown>): boolean {
