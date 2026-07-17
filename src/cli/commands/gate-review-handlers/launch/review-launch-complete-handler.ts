@@ -277,20 +277,28 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
             'record-reviewer-delegation-started.'
         );
     }
-    if (providerInvocationId && artifactProviderInvocationId && providerInvocationId !== artifactProviderInvocationId) {
-        throw new Error('ProviderInvocationId must match the recorded reviewer delegation start artifact.');
-    }
-    if (controllerInvocationId && artifactControllerInvocationId && controllerInvocationId !== artifactControllerInvocationId) {
-        throw new Error('ControllerInvocationId must match the recorded reviewer delegation start artifact.');
-    }
-    const effectiveProviderInvocationId = providerInvocationId || artifactProviderInvocationId;
-    const effectiveControllerInvocationId = controllerInvocationId || artifactControllerInvocationId;
-    if (!effectiveProviderInvocationId && !effectiveControllerInvocationId) {
+    if (!artifactProviderInvocationId && !artifactControllerInvocationId) {
         throw new Error(
             'ProviderInvocationId or ControllerInvocationId is required. ' +
             'Run record-reviewer-delegation-started immediately after launching the delegated reviewer.'
         );
     }
+    if (artifactProviderInvocationId && artifactControllerInvocationId) {
+        throw new Error(
+            'Reviewer delegation start artifact must contain exactly one provider or controller invocation identity.'
+        );
+    }
+    if (
+        (providerInvocationId || controllerInvocationId)
+        && (
+            providerInvocationId !== artifactProviderInvocationId
+            || controllerInvocationId !== artifactControllerInvocationId
+        )
+    ) {
+        throw new Error('Invocation identity must exactly match the recorded reviewer delegation start artifact.');
+    }
+    const effectiveProviderInvocationId = artifactProviderInvocationId;
+    const effectiveControllerInvocationId = artifactControllerInvocationId;
     const delegationStartedAtUtc = getStringField(
         preparedArtifact,
         'delegation_started_at_utc',

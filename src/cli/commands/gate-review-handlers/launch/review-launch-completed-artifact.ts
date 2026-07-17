@@ -137,16 +137,22 @@ export function validateReviewerLaunchArtifact(options: {
         artifact.attestation_source || artifact.attestationSource || artifact.source || ''
     ).trim().toLowerCase();
     const launchTool = String(artifact.launch_tool || artifact.launchTool || '').trim();
-    const providerInvocationId = getStringField(
+    const artifactProviderInvocationId = getStringField(
         artifact,
         'provider_invocation_id',
-        'providerInvocationId',
+        'providerInvocationId'
+    );
+    const artifactControllerInvocationId = getStringField(
+        artifact,
         'controller_invocation_id',
         'controllerInvocationId'
     );
-    const providerInvocationKind = getStringField(artifact, 'controller_invocation_id', 'controllerInvocationId')
+    const providerInvocationKind = artifactControllerInvocationId
         ? 'controller'
         : 'provider';
+    const providerInvocationId = providerInvocationKind === 'controller'
+        ? artifactControllerInvocationId
+        : artifactProviderInvocationId;
     const providerInvocationAttestationStatus = getStringField(
         artifact,
         'provider_invocation_attestation_status',
@@ -443,6 +449,9 @@ export function validateReviewerLaunchArtifact(options: {
     }
     if (!providerInvocationId) {
         violations.push('provider_invocation_id or controller_invocation_id is required');
+    }
+    if (artifactProviderInvocationId && artifactControllerInvocationId) {
+        violations.push('exactly one of provider_invocation_id or controller_invocation_id is required');
     }
     if (providerInvocationAttestationStatus !== 'authenticated') {
         violations.push("provider_invocation_attestation_status must be 'authenticated'");
