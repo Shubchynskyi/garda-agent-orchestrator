@@ -64,6 +64,19 @@ function buildStrictReuseFixture(reviewType = 'code') {
     const historicalReviewRecordedSha = '8'.repeat(64);
     const currentReviewRecordedSha = '9'.repeat(64);
     const reviewerIdentity = 'agent:strict-reviewer';
+    const providerInvocation = {
+        schema_version: 1,
+        attestation_status: 'authenticated',
+        attestation_id: 'attestation:strict-reuse',
+        attestation_source: 'codex.spawn_agent',
+        invocation_kind: 'provider',
+        invocation_id: 'provider-run-reused',
+        reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
+        launch_binding_sha256: 'f'.repeat(64),
+        launch_input_mode: 'launch_artifact_path',
+        launch_input_sha256: '0'.repeat(64),
+        authenticated_at_utc: '2026-05-17T20:00:03.000Z'
+    };
     const reviewerProvenance = {
         schema_version: 1,
         attestation_type: 'reviewer_invocation_attestation',
@@ -77,7 +90,8 @@ function buildStrictReuseFixture(reviewType = 'code') {
         reviewer_identity: reviewerIdentity,
         review_context_sha256: sourceContextSha,
         review_tree_state_sha256: sourceTreeStateSha,
-        routing_event_sha256: routingEventSha
+        routing_event_sha256: routingEventSha,
+        provider_invocation: providerInvocation
     };
 
     const baseReceipt = {
@@ -139,7 +153,16 @@ function buildStrictReuseFixture(reviewType = 'code') {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: sourceContextSha,
             review_tree_state_sha256: sourceTreeStateSha,
-            routing_event_sha256: routingEventSha
+            routing_event_sha256: routingEventSha,
+            provider_invocation_attestation_status: providerInvocation.attestation_status,
+            provider_invocation_attestation_id: providerInvocation.attestation_id,
+            provider_invocation_attestation_source: providerInvocation.attestation_source,
+            provider_invocation_id: providerInvocation.invocation_id,
+            reviewer_launch_attempt_id: providerInvocation.reviewer_launch_attempt_id,
+            launch_binding_sha256: providerInvocation.launch_binding_sha256,
+            launch_input_mode: providerInvocation.launch_input_mode,
+            launch_input_sha256: providerInvocation.launch_input_sha256,
+            provider_invocation_attested_at_utc: providerInvocation.authenticated_at_utc
         }
     };
     const historicalReviewRecordedEvent = {

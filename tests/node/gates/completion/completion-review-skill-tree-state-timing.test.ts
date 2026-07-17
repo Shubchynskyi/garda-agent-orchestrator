@@ -527,8 +527,23 @@ describe('gates/completion — stage and evidence validation', () => {
                     invocation_attested_at_utc: '2026-05-17T21:00:03.000Z',
 
                     provider_invocation_id: 'provider-run-completion',
+                    reviewer_launch_attestation_source: 'codex.spawn_agent',
 
-                    reviewer_launch_attestation_source: 'codex.spawn_agent'
+                    provider_invocation_attestation_status: 'authenticated',
+
+                    provider_invocation_attestation_id: 'attestation:completion-timing',
+
+                    provider_invocation_attestation_source: 'codex.spawn_agent',
+
+                    reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
+
+                    launch_binding_sha256: '6'.repeat(64),
+
+                    launch_input_mode: 'launch_artifact_path',
+
+                    launch_input_sha256: '7'.repeat(64),
+
+                    provider_invocation_attested_at_utc: '2026-05-17T21:00:03.000Z'
 
                 }, {
 
@@ -646,7 +661,33 @@ describe('gates/completion — stage and evidence validation', () => {
 
                                 launch_completed_at_utc: '2026-05-17T21:00:02.000Z',
 
-                                invocation_attested_at_utc: '2026-05-17T21:00:03.000Z'
+                                invocation_attested_at_utc: '2026-05-17T21:00:03.000Z',
+
+                                provider_invocation: {
+
+                                    schema_version: 1,
+
+                                    attestation_status: 'authenticated',
+
+                                    attestation_id: 'attestation:completion-timing',
+
+                                    attestation_source: 'codex.spawn_agent',
+
+                                    invocation_kind: 'provider',
+
+                                    invocation_id: 'provider-run-completion',
+
+                                    reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
+
+                                    launch_binding_sha256: '6'.repeat(64),
+
+                                    launch_input_mode: 'launch_artifact_path',
+
+                                    launch_input_sha256: '7'.repeat(64),
+
+                                    authenticated_at_utc: '2026-05-17T21:00:03.000Z'
+
+                                }
 
                             },
 

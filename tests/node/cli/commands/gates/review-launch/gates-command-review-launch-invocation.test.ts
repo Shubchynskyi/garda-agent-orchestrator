@@ -49,6 +49,12 @@ function appendReviewerLaunchCompletedForTest(options: {
     const reviewerLaunchAttemptId = String(
         launchArtifact.reviewer_launch_attempt_id || launchArtifact.reviewerLaunchAttemptId || ''
     ).trim();
+    const providerInvocationAttestationId = String(
+        launchArtifact.provider_invocation_attestation_id || ''
+    ).trim();
+    const providerInvocationAttestedAtUtc = String(
+        launchArtifact.provider_invocation_attested_at_utc || ''
+    ).trim();
     appendTaskEvent(
         getOrchestratorRoot(options.repoRoot),
         options.taskId,
@@ -66,7 +72,15 @@ function appendReviewerLaunchCompletedForTest(options: {
             reviewer_launch_attempt_id: reviewerLaunchAttemptId,
             reviewer_launch_artifact_path: options.launchArtifactPath.replace(/\\/g, '/'),
             reviewer_launch_artifact_sha256: fileSha256ForTest(options.launchArtifactPath),
+            reviewer_launch_attestation_source: String(launchArtifact.attestation_source || '').trim(),
+            provider_invocation_attestation_source: String(launchArtifact.attestation_source || '').trim(),
+            provider_invocation_attestation_status: 'authenticated',
+            provider_invocation_attestation_id: providerInvocationAttestationId,
+            provider_invocation_attested_at_utc: providerInvocationAttestedAtUtc,
             provider_invocation_id: options.providerInvocationId,
+            launch_binding_sha256: String(launchArtifact.launch_binding_sha256 || '').trim(),
+            launch_input_mode: String(launchArtifact.launch_input_mode || '').trim(),
+            launch_input_sha256: String(launchArtifact.launch_input_sha256 || '').trim(),
             delegation_started_at_utc: options.delegationStartedAtUtc,
             launched_at_utc: options.delegationStartedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc
@@ -213,6 +227,13 @@ describe('cli/commands/gates review launch invocation', () => {
         assert.equal(invocationDetails?.canonical_source_of_truth, 'Antigravity');
         assert.equal(invocationDetails?.reviewer_launch_tool, 'test-subagent-spawn');
         assert.equal(invocationDetails?.provider_invocation_id, 'test-invocation-123');
+        assert.equal(invocationDetails?.provider_invocation_attestation_status, 'authenticated');
+        assert.equal(
+            invocationDetails?.provider_invocation_attestation_id,
+            preparedLaunchArtifact.provider_invocation_attestation_id
+        );
+        assert.equal(invocationDetails?.reviewer_launch_attempt_id, preparedLaunchArtifact.reviewer_launch_attempt_id);
+        assert.equal(invocationDetails?.launch_binding_sha256, preparedLaunchArtifact.launch_binding_sha256);
         assert.equal(invocationDetails?.launch_input_mode, 'launch_artifact_path');
         assert.equal(invocationDetails?.launch_input_sha256, launchInputArtifact.sha256);
 

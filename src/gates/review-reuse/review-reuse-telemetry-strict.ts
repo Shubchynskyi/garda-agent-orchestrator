@@ -3,7 +3,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     buildReviewVerdictTokenSet,
-    extractReviewVerdictSectionTokenMatch
+    extractReviewVerdictSectionTokenMatch,
+    normalizeAuthenticatedProviderInvocationProvenance,
+    providerInvocationProvenanceMatchesEventDetails
 } from '../../gate-runtime/review-context';
 import {
     normalizeReviewFindingsValidationReceiptReference,
@@ -150,6 +152,9 @@ function validateStrictReusedReviewInput(input: StrictReusedReviewEvidenceValida
         return 'strict reused review evidence is missing preserved reviewer_provenance';
     }
     const provenanceReviewContextSha256 = normalizeLowerString(provenance.review_context_sha256);
+    const providerInvocationProvenance = normalizeAuthenticatedProviderInvocationProvenance(
+        provenance.provider_invocation
+    );
     if (
         normalizeLowerString(provenance.attestation_type) !== 'reviewer_invocation_attestation'
         || normalizeEventType(provenance.controller_event_type) !== 'REVIEWER_INVOCATION_ATTESTED'
@@ -162,6 +167,7 @@ function validateStrictReusedReviewInput(input: StrictReusedReviewEvidenceValida
         || !isSha256(provenance.routing_event_sha256)
         || !isSha256(provenance.event_sha256)
         || !Number.isInteger(normalizeEventSequence(provenance.task_sequence))
+        || !providerInvocationProvenance
     ) {
         return 'strict reused review evidence reviewer_provenance does not bind to the historical delegated invocation';
     }
@@ -426,6 +432,15 @@ function findStrictHistoricalReviewerInvocationEvent(input: StrictReusedReviewEv
     const expectedEventSha256 = normalizeLowerString(provenance.event_sha256);
     const expectedPrevEventSha256 = normalizeLowerString(provenance.prev_event_sha256) || null;
     const expectedInvocationContextSha256 = normalizeLowerString(provenance.review_context_sha256);
+    const providerInvocationProvenance = normalizeAuthenticatedProviderInvocationProvenance(
+        provenance.provider_invocation
+    );
+    if (!providerInvocationProvenance) {
+        return {
+            valid: false,
+            reason: 'historical REVIEWER_INVOCATION_ATTESTED telemetry is missing authenticated provider invocation provenance'
+        };
+    }
     for (let index = input.events.length - 1; index >= 0; index -= 1) {
         const event = input.events[index];
         if (normalizeEventType(event.event_type) !== 'REVIEWER_INVOCATION_ATTESTED') {
@@ -475,6 +490,7 @@ function findStrictHistoricalReviewerInvocationEvent(input: StrictReusedReviewEv
                 !== normalizeLowerString(input.reusedFromReviewTreeStateSha256)
             || normalizeLowerString(details.routing_event_sha256 ?? details.routingEventSha256)
                 !== normalizeLowerString(provenance.routing_event_sha256)
+            || !providerInvocationProvenanceMatchesEventDetails(providerInvocationProvenance, details)
         ) {
             continue;
         }

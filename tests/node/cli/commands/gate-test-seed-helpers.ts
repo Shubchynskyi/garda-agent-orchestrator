@@ -134,11 +134,16 @@ function seedCompletedReviewerLaunchFixture(options: {
     launchInputSha256: string;
     copyPastePromptSha256: string;
     providerInvocationId: string;
+    providerInvocationAttestationId: string;
+    reviewerLaunchAttemptId: string;
+    launchBindingSha256: string;
     launchTool: string;
     attestationSource: string;
 } {
     const launchInputEvidence = buildFixtureLaunchInputEvidence(options.taskId, options.reviewKey);
     const providerInvocationId = buildTestProviderInvocationId(options.taskId, options.reviewKey, options.reviewerIdentity);
+    const reviewerLaunchAttemptId = '11111111-1111-4111-8111-111111111111';
+    const providerInvocationAttestationId = `test-attestation:${providerInvocationId}`;
     const launchTool = 'test-subagent-spawn';
     const attestationSource = 'test-subagent-spawn';
     const launchArtifactPath = resolveDefaultReviewScratchPath(
@@ -196,6 +201,11 @@ function seedCompletedReviewerLaunchFixture(options: {
         prepared_launch_event_sha256: String(preparedEvent?.integrity?.event_sha256 || '').trim(),
         launch_tool: launchTool,
         provider_invocation_id: providerInvocationId,
+        provider_invocation_attestation_status: 'authenticated',
+        provider_invocation_attestation_id: providerInvocationAttestationId,
+        provider_invocation_attestation_source: attestationSource,
+        provider_invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC,
+        reviewer_launch_attempt_id: reviewerLaunchAttemptId,
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
         delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
@@ -212,6 +222,9 @@ function seedCompletedReviewerLaunchFixture(options: {
         launchInputSha256: launchInputEvidence.launch_input_sha256,
         copyPastePromptSha256: launchInputEvidence.copy_paste_reviewer_launch_prompt_sha256,
         providerInvocationId,
+        providerInvocationAttestationId,
+        reviewerLaunchAttemptId,
+        launchBindingSha256,
         launchTool,
         attestationSource
     };
@@ -1144,8 +1157,14 @@ export function writeReceiptBackedReviewArtifact(
         reviewer_launch_artifact_path: path.normalize(launchEvidence.launchArtifactPath).replace(/\\/g, '/'),
         reviewer_launch_artifact_sha256: launchEvidence.launchArtifactSha256,
         reviewer_launch_attestation_source: launchEvidence.attestationSource,
+        provider_invocation_attestation_source: launchEvidence.attestationSource,
+        provider_invocation_attestation_status: 'authenticated',
+        provider_invocation_attestation_id: launchEvidence.providerInvocationAttestationId,
+        provider_invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC,
         reviewer_launch_tool: launchEvidence.launchTool,
         provider_invocation_id: launchEvidence.providerInvocationId,
+        reviewer_launch_attempt_id: launchEvidence.reviewerLaunchAttemptId,
+        launch_binding_sha256: launchEvidence.launchBindingSha256,
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
         delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,

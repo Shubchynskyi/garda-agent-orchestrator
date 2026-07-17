@@ -1,7 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileSha256 } from '../shared/helpers';
-import { normalizeReviewReceiptReviewerProvenance } from '../../gate-runtime/review-context';
+import {
+    normalizeReviewReceiptReviewerProvenance,
+    providerInvocationProvenanceMatchesEventDetails
+} from '../../gate-runtime/review-context';
 import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
 import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
@@ -171,6 +174,9 @@ function findFreshReviewerInvocationTelemetryIssue(options: {
     if (!provenance || provenance.attestation_type !== 'reviewer_invocation_attestation') {
         return `${options.reviewType}: missing matching REVIEWER_INVOCATION_ATTESTED telemetry`;
     }
+    if (!provenance.provider_invocation) {
+        return `${options.reviewType}: reviewer invocation provenance is missing authenticated provider invocation binding`;
+    }
     const provenanceReviewContextSha256 = String(provenance.review_context_sha256 || '').trim().toLowerCase();
     if (
         provenance.task_id !== options.taskId
@@ -189,7 +195,7 @@ function findFreshReviewerInvocationTelemetryIssue(options: {
         if (taskSequence == null || taskSequence <= (options.latestCompileTaskSequence ?? 0) || (options.latestReviewRecordedTaskSequence != null && taskSequence >= options.latestReviewRecordedTaskSequence)) { continue; }
         const details = isPlainRecord(event.details) ? event.details : {};
         const eventReviewTreeStateSha256 = normalizeSha256Text(details.review_tree_state_sha256 ?? details.reviewTreeStateSha256);
-        if (taskSequence === provenance.task_sequence && normalizeSha256Text(integrity.event_sha256) === provenance.event_sha256 && (integrity.prev_event_sha256 == null ? null : normalizeSha256Text(integrity.prev_event_sha256)) === provenance.prev_event_sha256 && String(details.task_id ?? details.taskId ?? '').trim() === options.taskId && String(details.review_type ?? details.reviewType ?? '').trim().toLowerCase() === options.reviewType && String(details.reviewer_execution_mode ?? details.reviewerExecutionMode ?? '').trim() === options.reviewerExecutionMode && String(details.reviewer_identity ?? details.reviewerIdentity ?? details.reviewer_session_id ?? details.reviewerSessionId ?? '').trim() === options.reviewerIdentity && normalizeSha256Text(details.review_context_sha256 ?? details.reviewContextSha256) === provenanceReviewContextSha256 && (!options.reviewTreeStateSha256 || eventReviewTreeStateSha256 === options.reviewTreeStateSha256) && normalizeSha256Text(details.routing_event_sha256 ?? details.routingEventSha256) === provenance.routing_event_sha256) { return null; }
+        if (taskSequence === provenance.task_sequence && normalizeSha256Text(integrity.event_sha256) === provenance.event_sha256 && (integrity.prev_event_sha256 == null ? null : normalizeSha256Text(integrity.prev_event_sha256)) === provenance.prev_event_sha256 && String(details.task_id ?? details.taskId ?? '').trim() === options.taskId && String(details.review_type ?? details.reviewType ?? '').trim().toLowerCase() === options.reviewType && String(details.reviewer_execution_mode ?? details.reviewerExecutionMode ?? '').trim() === options.reviewerExecutionMode && String(details.reviewer_identity ?? details.reviewerIdentity ?? details.reviewer_session_id ?? details.reviewerSessionId ?? '').trim() === options.reviewerIdentity && normalizeSha256Text(details.review_context_sha256 ?? details.reviewContextSha256) === provenanceReviewContextSha256 && (!options.reviewTreeStateSha256 || eventReviewTreeStateSha256 === options.reviewTreeStateSha256) && normalizeSha256Text(details.routing_event_sha256 ?? details.routingEventSha256) === provenance.routing_event_sha256 && providerInvocationProvenanceMatchesEventDetails(provenance.provider_invocation, details)) { return null; }
     }
     return `${options.reviewType}: missing matching REVIEWER_INVOCATION_ATTESTED telemetry`;
 }
@@ -269,6 +275,9 @@ function collectReviewIntegrityIssues(options: {
         if (!provenance || provenance.attestation_type !== 'reviewer_invocation_attestation') {
             issues.push(`${reviewType}: missing independent reviewer invocation provenance`);
         } else {
+            if (!provenance.provider_invocation) {
+                issues.push(`${reviewType}: reviewer invocation provenance omits authenticated provider binding`);
+            }
             const provenanceTaskId = provenance.task_id;
             const provenanceReviewType = provenance.review_type;
             const provenanceExecutionMode = provenance.reviewer_execution_mode;

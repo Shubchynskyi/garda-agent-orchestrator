@@ -52,6 +52,36 @@ function passedReviewAuthorshipAttestation(...reviewTypes: string[]): Record<str
     };
 }
 
+function providerInvocationEventDetails(taskId: string, reviewType: string): Record<string, unknown> {
+    return {
+        provider_invocation_attestation_status: 'authenticated',
+        provider_invocation_attestation_id: `attestation:${taskId}:${reviewType}`,
+        provider_invocation_attestation_source: 'codex.spawn_agent',
+        provider_invocation_id: `provider:${taskId}:${reviewType}`,
+        reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
+        launch_binding_sha256: 'e'.repeat(64),
+        launch_input_mode: 'launch_artifact_path',
+        launch_input_sha256: 'f'.repeat(64),
+        provider_invocation_attested_at_utc: '2026-04-29T00:00:43.000Z'
+    };
+}
+
+function providerInvocationProvenance(taskId: string, reviewType: string): Record<string, unknown> {
+    return {
+        schema_version: 1,
+        attestation_status: 'authenticated',
+        attestation_id: `attestation:${taskId}:${reviewType}`,
+        attestation_source: 'codex.spawn_agent',
+        invocation_kind: 'provider',
+        invocation_id: `provider:${taskId}:${reviewType}`,
+        reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
+        launch_binding_sha256: 'e'.repeat(64),
+        launch_input_mode: 'launch_artifact_path',
+        launch_input_sha256: 'f'.repeat(64),
+        authenticated_at_utc: '2026-04-29T00:00:43.000Z'
+    };
+}
+
 
 describe('gates/task-audit-summary', () => {
     let tmpDir: string;
@@ -286,12 +316,12 @@ describe('gates/task-audit-summary', () => {
                     writeIntegrityEventSequence(eventsDir, TASK_ID, ['TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'PREFLIGHT_CLASSIFIED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED'].map((event_type) => ({ event_type })));
                     const invocationEvent = appendIntegrityEvent(eventsDir, TASK_ID, {
                         event_type: 'REVIEWER_INVOCATION_ATTESTED',
-                        details: { task_id: TASK_ID, review_type: 'code', reviewer_execution_mode: 'delegated_subagent', reviewer_identity: reviewerIdentity, review_context_sha256: fixture.reviewContextSha256, routing_event_sha256: 'd'.repeat(64) }
+                        details: { task_id: TASK_ID, review_type: 'code', reviewer_execution_mode: 'delegated_subagent', reviewer_identity: reviewerIdentity, review_context_sha256: fixture.reviewContextSha256, routing_event_sha256: 'd'.repeat(64), ...providerInvocationEventDetails(TASK_ID, 'code') }
                     });
                     const receiptPath = path.join(reviewsDir, `${TASK_ID}-code-receipt.json`);
                     const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
                     const integrity = invocationEvent.integrity as Record<string, unknown>;
-                    receipt.reviewer_provenance = { schema_version: 1, attestation_type: 'reviewer_invocation_attestation', controller_event_type: 'REVIEWER_INVOCATION_ATTESTED', task_sequence: integrity.task_sequence, prev_event_sha256: integrity.prev_event_sha256, event_sha256: integrity.event_sha256, task_id: TASK_ID, review_type: 'code', reviewer_execution_mode: 'delegated_subagent', reviewer_identity: reviewerIdentity, review_context_sha256: fixture.reviewContextSha256, routing_event_sha256: 'd'.repeat(64) };
+                    receipt.reviewer_provenance = { schema_version: 1, attestation_type: 'reviewer_invocation_attestation', controller_event_type: 'REVIEWER_INVOCATION_ATTESTED', task_sequence: integrity.task_sequence, prev_event_sha256: integrity.prev_event_sha256, event_sha256: integrity.event_sha256, task_id: TASK_ID, review_type: 'code', reviewer_execution_mode: 'delegated_subagent', reviewer_identity: reviewerIdentity, review_context_sha256: fixture.reviewContextSha256, routing_event_sha256: 'd'.repeat(64), provider_invocation: providerInvocationProvenance(TASK_ID, 'code') };
                     writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', receipt);
                     appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_RECORDED', details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code') });
                     ['REVIEW_GATE_PASSED', 'DOC_IMPACT_ASSESSED', 'COMPLETION_GATE_PASSED'].forEach((event_type) => appendIntegrityEvent(eventsDir, TASK_ID, { event_type }));
@@ -354,7 +384,8 @@ describe('gates/task-audit-summary', () => {
                             reviewer_identity: resolvedReviewerIdentity,
                             reviewer_session_id: resolvedReviewerIdentity,
                             review_context_sha256: fixture.reviewContextSha256,
-                            routing_event_sha256: routingIntegrity.event_sha256
+                            routing_event_sha256: routingIntegrity.event_sha256,
+                            ...providerInvocationEventDetails(TASK_ID, 'code')
                         }
                     });
                     const receiptPath = path.join(reviewsDir, `${TASK_ID}-code-receipt.json`);
@@ -372,7 +403,8 @@ describe('gates/task-audit-summary', () => {
                         reviewer_execution_mode: 'delegated_subagent',
                         reviewer_identity: resolvedReviewerIdentity,
                         review_context_sha256: fixture.reviewContextSha256,
-                        routing_event_sha256: routingIntegrity.event_sha256
+                        routing_event_sha256: routingIntegrity.event_sha256,
+                        provider_invocation: providerInvocationProvenance(TASK_ID, 'code')
                     };
                     writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', receipt);
                     appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_RECORDED', details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code') });
@@ -428,7 +460,8 @@ describe('gates/task-audit-summary', () => {
                             reviewer_execution_mode: 'delegated_subagent',
                             reviewer_identity: reviewerIdentity,
                             review_context_sha256: fixture.reviewContextSha256,
-                            routing_event_sha256: 'd'.repeat(64)
+                            routing_event_sha256: 'd'.repeat(64),
+                            ...providerInvocationEventDetails(TASK_ID, 'code')
                         }
                     });
                     const receiptPath = path.join(reviewsDir, `${TASK_ID}-code-receipt.json`);
@@ -446,7 +479,8 @@ describe('gates/task-audit-summary', () => {
                         reviewer_execution_mode: 'delegated_subagent',
                         reviewer_identity: reviewerIdentity,
                         review_context_sha256: fixture.reviewContextSha256,
-                        routing_event_sha256: 'd'.repeat(64)
+                        routing_event_sha256: 'd'.repeat(64),
+                        provider_invocation: providerInvocationProvenance(TASK_ID, 'code')
                     };
                     writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', receipt);
                     appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_RECORDED', details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code') });
@@ -706,7 +740,8 @@ describe('gates/task-audit-summary', () => {
                             reviewer_identity: reviewerIdentity,
                             review_context_sha256: sourceContextSha256,
                             review_tree_state_sha256: sourceTreeStateSha256,
-                            routing_event_sha256: routingEventSha256
+                            routing_event_sha256: routingEventSha256,
+                            ...providerInvocationEventDetails(TASK_ID, reviewType)
                         }
                     });
                     const invocationIntegrity = invocationEvent.integrity as Record<string, unknown>;
@@ -723,7 +758,8 @@ describe('gates/task-audit-summary', () => {
                         reviewer_identity: reviewerIdentity,
                         review_context_sha256: sourceContextSha256,
                         review_tree_state_sha256: sourceTreeStateSha256,
-                        routing_event_sha256: routingEventSha256
+                        routing_event_sha256: routingEventSha256,
+                        provider_invocation: providerInvocationProvenance(TASK_ID, reviewType)
                     };
                     const baseReceipt = {
                         schema_version: 2,

@@ -189,7 +189,10 @@ export function buildReviewTrustSummary(
             && normalizedProvenance == null;
         const invalidIndependentProvenance =
             normalizedTrustLevel === 'INDEPENDENT_AUDITED'
-            && normalizedProvenance?.attestation_type !== REVIEW_EVIDENCE_REQUIRED_PROVENANCE_ATTESTATION_TYPE;
+            && (
+                normalizedProvenance?.attestation_type !== REVIEW_EVIDENCE_REQUIRED_PROVENANCE_ATTESTATION_TYPE
+                || !normalizedProvenance.provider_invocation
+            );
         const invalidDelegatedIdentity =
             normalizedExecutionMode === 'DELEGATED_SUBAGENT'
             && (!normalizedReviewerIdentity || !normalizedReviewerIdentity.startsWith(REVIEW_EVIDENCE_AGENT_IDENTITY_PREFIX));

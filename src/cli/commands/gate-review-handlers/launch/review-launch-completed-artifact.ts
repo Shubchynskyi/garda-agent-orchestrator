@@ -144,6 +144,24 @@ export function validateReviewerLaunchArtifact(options: {
         'controller_invocation_id',
         'controllerInvocationId'
     );
+    const providerInvocationKind = getStringField(artifact, 'controller_invocation_id', 'controllerInvocationId')
+        ? 'controller'
+        : 'provider';
+    const providerInvocationAttestationStatus = getStringField(
+        artifact,
+        'provider_invocation_attestation_status',
+        'providerInvocationAttestationStatus'
+    ).toLowerCase();
+    const providerInvocationAttestationId = getStringField(
+        artifact,
+        'provider_invocation_attestation_id',
+        'providerInvocationAttestationId'
+    );
+    const providerInvocationAttestedAtUtc = getStringField(
+        artifact,
+        'provider_invocation_attested_at_utc',
+        'providerInvocationAttestedAtUtc'
+    );
     const launchPreparedAtUtc = getStringField(artifact, 'launch_prepared_at_utc', 'launchPreparedAtUtc') || null;
     const delegationStartedAtUtc = getStringField(
         artifact,
@@ -426,6 +444,15 @@ export function validateReviewerLaunchArtifact(options: {
     if (!providerInvocationId) {
         violations.push('provider_invocation_id or controller_invocation_id is required');
     }
+    if (providerInvocationAttestationStatus !== 'authenticated') {
+        violations.push("provider_invocation_attestation_status must be 'authenticated'");
+    }
+    if (!providerInvocationAttestationId) {
+        violations.push('provider_invocation_attestation_id is required');
+    }
+    if (!providerInvocationAttestedAtUtc || !isValidUtcIso8601Timestamp(providerInvocationAttestedAtUtc)) {
+        violations.push('provider_invocation_attested_at_utc must be a valid UTC ISO-8601 timestamp');
+    }
     if (!delegationStartedAtUtc) {
         violations.push('delegation_started_at_utc is required');
     } else if (!isValidUtcIso8601Timestamp(delegationStartedAtUtc)) {
@@ -455,6 +482,11 @@ export function validateReviewerLaunchArtifact(options: {
             launchBindingSha256: expectedLaunchBindingSha256,
             preparedLaunchEventSha256,
             providerInvocationId,
+            providerInvocationAttestationId,
+            providerInvocationAttestationSource: attestationSource,
+            providerInvocationAttestedAtUtc,
+            launchInputMode: launchInputMode as NonNullable<typeof launchInputMode>,
+            launchInputSha256,
             delegationStartedAtUtc,
             minSequenceExclusive: options.routingEventSequence
         })
@@ -485,6 +517,12 @@ export function validateReviewerLaunchArtifact(options: {
             reviewerLaunchAttemptId,
             reviewerLaunchArtifactSha256,
             providerInvocationId,
+            providerInvocationAttestationId,
+            providerInvocationAttestationSource: attestationSource,
+            providerInvocationAttestedAtUtc,
+            launchBindingSha256: expectedLaunchBindingSha256,
+            launchInputMode: launchInputMode as NonNullable<typeof launchInputMode>,
+            launchInputSha256,
             delegationStartedAtUtc,
             launchCompletedAtUtc,
             minSequenceExclusive: options.routingEventSequence
@@ -505,8 +543,13 @@ export function validateReviewerLaunchArtifact(options: {
         artifactPath,
         artifactSha256: reviewerLaunchArtifactSha256,
         attestationSource,
+        providerInvocationAttestationId,
+        providerInvocationAttestedAtUtc,
+        providerInvocationKind,
         launchTool,
         providerInvocationId,
+        reviewerLaunchAttemptId,
+        launchBindingSha256: expectedLaunchBindingSha256,
         launchPreparedAtUtc,
         delegationStartedAtUtc,
         launchedAtUtc,

@@ -244,6 +244,95 @@ test('readReviewArtifactState reports missing review artifacts without route dec
     ]);
 });
 
+test('readReviewArtifactState preserves authenticated provider invocation provenance for reuse validation', () => {
+    const reviewsRoot = tempRoot('garda-next-step-review-provider-provenance-readers-');
+    const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
+    const providerInvocation = {
+        schema_version: 1,
+        attestation_status: 'authenticated',
+        attestation_id: 'provider-attestation-1',
+        attestation_source: 'multi_agent_v1.spawn_agent',
+        invocation_kind: 'provider',
+        invocation_id: 'provider-invocation-1',
+        reviewer_launch_attempt_id: '12345678-1234-4123-8123-123456789abc',
+        launch_binding_sha256: '1'.repeat(64),
+        launch_input_mode: 'launch_artifact_path',
+        launch_input_sha256: '2'.repeat(64),
+        authenticated_at_utc: '2026-07-16T23:00:01.000Z'
+    };
+    writeFindingsReviewPackage({
+        reviewsRoot,
+        taskId: 'T-100',
+        reviewType: 'code',
+        preflightPath,
+        report: {
+            schema_version: 1,
+            task_id: 'T-100',
+            review_type: 'code',
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'provider provenance',
+                note: 'Verified that the artifact reader preserves the authenticated provider invocation binding.',
+                evidence: [{
+                    location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                    observation: 'The nested provider invocation mapping was inspected.'
+                }]
+            }],
+            coverage_ledger: {
+                entries: [{
+                    obligation_id: 'FILE-001',
+                    evidence: [{
+                        location: 'src/gates/next-step/next-step-review-artifact-readers.ts:250',
+                        observation: 'Provider invocation provenance mapping was inspected.'
+                    }],
+                    finding_ids: []
+                }]
+            },
+            findings: { critical: [], high: [], medium: [], low: [] },
+            residual_risks: [],
+            reviewer_notes: []
+        }
+    });
+    const receiptPath = path.join(reviewsRoot, 'T-100-code-receipt.json');
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    const provenanceEventSha256 = '3'.repeat(64);
+    receipt.reviewer_provenance = {
+        schema_version: 1,
+        attestation_type: 'reviewer_invocation_attestation',
+        controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+        task_sequence: 12,
+        prev_event_sha256: '4'.repeat(64),
+        event_sha256: provenanceEventSha256,
+        task_id: 'T-100',
+        review_type: 'code',
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: 'agent:T-100-code',
+        review_context_sha256: receipt.review_context_sha256,
+        review_tree_state_sha256: TREE_STATE_SHA256,
+        routing_event_sha256: '5'.repeat(64),
+        provider_invocation: providerInvocation,
+        launch_prepared_at_utc: '2026-07-16T23:00:00.000Z',
+        delegation_started_at_utc: '2026-07-16T23:00:01.000Z',
+        launched_at_utc: '2026-07-16T23:00:01.000Z',
+        launch_completed_at_utc: '2026-07-16T23:00:02.000Z',
+        invocation_attested_at_utc: '2026-07-16T23:00:03.000Z'
+    };
+    (receipt.review_output_contract as Record<string, unknown>).reviewer_provenance_event_sha256 = provenanceEventSha256;
+    writeJson(receiptPath, receipt);
+
+    const state = readReviewArtifactState(
+        reviewsRoot,
+        'T-100',
+        'code',
+        preflightPath,
+        null,
+        findingsPreflightPayload()
+    );
+
+    assert.deepEqual(state.reviewerProvenance?.provider_invocation, providerInvocation);
+    assert.equal(state.reviewerProvenance?.delegation_started_at_utc, '2026-07-16T23:00:01.000Z');
+});
+
 test('readReviewArtifactState derives pass state from findings JSON artifacts without legacy pass token', () => {
     const reviewsRoot = tempRoot('garda-next-step-review-json-readers-');
     const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');

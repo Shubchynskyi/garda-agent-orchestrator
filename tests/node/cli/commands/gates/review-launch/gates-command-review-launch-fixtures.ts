@@ -345,6 +345,15 @@ function attestReviewerInvocationForTest(options: {
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedIntegrity.event_sha256,
+        provider_invocation_attestation_status: 'authenticated',
+        provider_invocation_attestation_id: `test:fixture:${options.taskId}:${options.reviewType}`,
+        provider_invocation_attestation_source: 'test_provider_controller',
+        provider_invocation_id: `fixture:${options.taskId}:${options.reviewType}`,
+        reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
+        launch_binding_sha256: 'a'.repeat(64),
+        launch_input_mode: 'launch_artifact_path',
+        launch_input_sha256: 'b'.repeat(64),
+        provider_invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC,
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
         delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
@@ -606,6 +615,7 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
     const reviewerLaunchAttemptId = String(
         preparedArtifact.reviewer_launch_attempt_id || preparedArtifact.reviewerLaunchAttemptId || ''
     ).trim();
+    const providerInvocationAttestationId = `test:test_provider_controller:${reviewerLaunchAttemptId}:test-invocation-265`;
     fs.writeFileSync(launchArtifactPath, JSON.stringify({
         ...preparedArtifact,
         evidence_type: 'delegated_reviewer_launch',
@@ -613,6 +623,9 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
         attestation_source: 'test_provider_controller',
         launch_tool: 'test-subagent-spawn',
         provider_invocation_id: 'test-invocation-265',
+        provider_invocation_attestation_status: 'authenticated',
+        provider_invocation_attestation_id: providerInvocationAttestationId,
+        provider_invocation_attested_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_input_mode: 'launch_artifact_path',
         launch_input_artifact_path: launchInputArtifact.normalizedPath,
         launch_input_sha256: launchInputArtifact.sha256,
@@ -642,7 +655,14 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
             reviewer_launch_attempt_id: reviewerLaunchAttemptId,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedLaunchEventSha256,
+            reviewer_launch_attestation_source: 'test_provider_controller',
+            provider_invocation_attestation_source: 'test_provider_controller',
+            provider_invocation_attestation_status: 'authenticated',
+            provider_invocation_attestation_id: providerInvocationAttestationId,
+            provider_invocation_attested_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
             provider_invocation_id: 'test-invocation-265',
+            launch_input_mode: launchInputArtifact.sha256 ? 'launch_artifact_path' : null,
+            launch_input_sha256: launchInputArtifact.sha256,
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
             launched_at_utc: '2026-04-28T00:00:00.000Z'
         }
@@ -664,7 +684,15 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
             reviewer_launch_attempt_id: reviewerLaunchAttemptId,
             reviewer_launch_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
             reviewer_launch_artifact_sha256: completedLaunchArtifactSha256,
+            reviewer_launch_attestation_source: 'test_provider_controller',
+            provider_invocation_attestation_source: 'test_provider_controller',
+            provider_invocation_attestation_status: 'authenticated',
+            provider_invocation_attestation_id: providerInvocationAttestationId,
+            provider_invocation_attested_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
             provider_invocation_id: 'test-invocation-265',
+            launch_binding_sha256: launchBindingSha256,
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_sha256: launchInputArtifact.sha256,
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
             launched_at_utc: '2026-04-28T00:00:00.000Z',
             launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC

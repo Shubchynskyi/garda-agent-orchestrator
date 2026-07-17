@@ -3,7 +3,8 @@ import * as fs from 'node:fs';
 import {
     normalizeCompatibilityReviewerExecutionMode,
     normalizeReviewProvenanceUtcTimestamp,
-    normalizeReviewReceiptReviewerProvenance
+    normalizeReviewReceiptReviewerProvenance,
+    providerInvocationProvenanceMatchesEventDetails
 } from '../../gate-runtime/review-context';
 import { buildPlannedReviewerIdentity } from '../../gate-runtime/review/reviewer-identity-contract';
 import { type ReviewDependencyTimelineEvent } from '../review/review-dependencies';
@@ -258,6 +259,9 @@ export function findMatchingInvocationAttestationEvent(
     if (options.reviewerProvenance.attestation_type !== 'reviewer_invocation_attestation') {
         return null;
     }
+    if (!options.reviewerProvenance.provider_invocation) {
+        return null;
+    }
     const normalizedReviewType = String(options.reviewType || '').trim().toLowerCase();
     const normalizedTaskId = String(options.taskId || '').trim();
     const provenanceReviewContextSha256 = String(options.reviewerProvenance.review_context_sha256 || '').trim().toLowerCase();
@@ -307,6 +311,10 @@ export function findMatchingInvocationAttestationEvent(
             && (entry.integrity.prev_event_sha256 == null
                 ? null
                 : String(entry.integrity.prev_event_sha256).trim().toLowerCase() || null) === options.reviewerProvenance.prev_event_sha256
+            && providerInvocationProvenanceMatchesEventDetails(
+                options.reviewerProvenance.provider_invocation,
+                details
+            )
             && timestampProvenanceMatchesEventDetails(
                 details,
                 options.reviewerProvenance.launch_prepared_at_utc,

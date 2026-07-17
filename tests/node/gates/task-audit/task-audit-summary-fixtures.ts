@@ -30,6 +30,7 @@ import {
 } from '../../../../src/gates/project-memory-impact';
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../../src/core/project-memory';
+import { buildReviewCoverageContract } from '../../../../src/gates/review/review-coverage-ledger';
 import { initGitRepo as initGitFixtureRepo } from '../git-fixtures';
 
 export {
@@ -203,6 +204,7 @@ export function buildReviewRecordedTelemetryDetails(
     return {
         task_id: taskId,
         review_type: reviewType,
+        preflight_sha256: receipt.preflight_sha256,
         reused_existing_review: receipt.reused_existing_review === true,
         receipt_path: receiptPath,
         receipt_sha256: receiptSha256,
@@ -352,6 +354,19 @@ export function makeReviewerInvocationProvenance(
         reviewer_identity: reviewerIdentity,
         review_context_sha256: reviewContextSha256,
         routing_event_sha256: 'd'.repeat(64),
+        provider_invocation: {
+            schema_version: 1,
+            attestation_status: 'authenticated',
+            attestation_id: `attestation:${taskId}:${reviewType}`,
+            attestation_source: 'codex.spawn_agent',
+            invocation_kind: 'provider',
+            invocation_id: `provider:${taskId}:${reviewType}`,
+            reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
+            launch_binding_sha256: 'e'.repeat(64),
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_sha256: 'f'.repeat(64),
+            authenticated_at_utc: '2026-04-29T00:00:43.000Z'
+        },
         launch_prepared_at_utc: '2026-04-29T00:00:06.000Z',
         delegation_started_at_utc: '2026-04-29T00:00:07.000Z',
         launched_at_utc: '2026-04-29T00:00:07.000Z',
@@ -480,10 +495,18 @@ export function writeCurrentIndependentReviewFixture(options: {
     const passToken = options.passToken || 'REVIEW PASSED';
     const reviewerIdentity = options.reviewerIdentity || 'agent:code-reviewer';
     const reviewContent = options.reviewContent || `# ${reviewType} Review\n${passToken}`;
+    const preflightPath = path.join(options.reviewsDir, `${options.taskId}-preflight.json`);
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    const coverageContract = buildReviewCoverageContract({ reviewType, changedFiles });
     writeArtifact(options.reviewsDir, options.taskId, `-${reviewType}.md`, reviewContent);
     writeArtifact(options.reviewsDir, options.taskId, `-${reviewType}-review-context.json`, {
+        schema_version: 3,
         task_id: options.taskId,
         review_type: reviewType,
+        coverage_contract: coverageContract,
         ...(options.routing === null
             ? {}
             : { reviewer_routing: options.routing || makeDelegatedRouting(reviewerIdentity) })
@@ -504,6 +527,16 @@ export function writeCurrentIndependentReviewFixture(options: {
         reviewer_fallback_reason: null,
         reviewer_provenance: provenance,
         trust_level: 'INDEPENDENT_AUDITED',
+        review_coverage: {
+            status: 'PASS',
+            contract_sha256: coverageContract.contract_sha256,
+            obligation_count: coverageContract.obligation_count,
+            completed_obligation_count: coverageContract.obligation_count,
+            omitted_obligation_ids: [],
+            duplicate_obligation_ids: [],
+            unknown_obligation_ids: [],
+            finding_ids: []
+        },
         recorded_at_utc: '2026-04-29T00:01:00.000Z',
         review_result_recorded_at_utc: '2026-04-29T00:01:00.000Z',
         ...(options.receiptOverrides || {})

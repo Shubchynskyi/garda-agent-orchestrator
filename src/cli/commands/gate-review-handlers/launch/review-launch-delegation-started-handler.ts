@@ -412,9 +412,15 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
                 reviewer_launch_artifact_sha256: startedLaunchArtifactSha256,
                 reviewer_launch_input_artifact_path: normalizePath(launchInputArtifactPath),
                 reviewer_launch_attestation_source: attestationSource,
+                provider_invocation_attestation_source: attestationSource,
                 provider_invocation_attestation_status: 'authenticated',
                 provider_invocation_attestation_id: authenticatedInvocation.attestationId,
                 provider_invocation_attested_at_utc: invocationAttestedAtUtc,
+                launch_binding_sha256: getStringField(
+                    startedArtifact,
+                    'launch_binding_sha256',
+                    'launchBindingSha256'
+                ).toLowerCase(),
                 launch_tool: getStringField(startedArtifact, 'launch_tool', 'launchTool'),
                 provider_invocation_id: providerInvocationId || null,
                 controller_invocation_id: controllerInvocationId || null,
