@@ -4,7 +4,6 @@ import {
     extractReviewVerdictSectionTokenMatch,
     normalizeReviewerExecutionMode,
     normalizeReviewReceiptReviewerProvenance,
-    providerInvocationProvenanceMatchesEventDetails,
     type ReviewReceipt
 } from '../../gate-runtime/review-context';
 import * as gateHelpers from '../shared/helpers';
@@ -495,12 +494,6 @@ export function validateHistoricalReviewReuseCandidate(options: {
     if (reviewerExecutionMode !== 'delegated_subagent' || !reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
         return { accepted: false, reason: 'prior review receipt is not delegated-subagent evidence with historical provenance' };
     }
-    if (
-        historicalReviewerProvenance.attestation_type !== 'reviewer_invocation_attestation'
-        || !historicalReviewerProvenance.provider_invocation
-    ) {
-        return { accepted: false, reason: 'prior review provenance is missing authenticated provider invocation binding' };
-    }
     const expectedInvocationContextSha256 = historicalProvenanceContextSha256;
     if (!expectedInvocationContextSha256) {
         return { accepted: false, reason: 'prior review provenance is missing the delegated invocation review-context hash' };
@@ -602,7 +595,6 @@ export function validateHistoricalReviewReuseCandidate(options: {
         };
     }
 
-    const providerInvocationProvenance = historicalReviewerProvenance.provider_invocation;
     const historicalInvocationEvent = options.timelineEvents.find((entry) => (
         entry.sequence < options.latestCompilePassSequence
         && entry.event_type === 'REVIEWER_INVOCATION_ATTESTED'
@@ -622,10 +614,6 @@ export function validateHistoricalReviewReuseCandidate(options: {
         && String(entry.details?.review_context_sha256 || entry.details?.reviewContextSha256 || '').trim().toLowerCase() === expectedInvocationContextSha256
         && String(entry.details?.review_tree_state_sha256 || entry.details?.reviewTreeStateSha256 || '').trim().toLowerCase() === expectedReviewTreeStateSha256
         && String(entry.details?.routing_event_sha256 || entry.details?.routingEventSha256 || '').trim().toLowerCase() === historicalReviewerProvenance.routing_event_sha256
-        && providerInvocationProvenanceMatchesEventDetails(
-            providerInvocationProvenance,
-            entry.details
-        )
     ));
     if (!historicalInvocationEvent) {
         return {

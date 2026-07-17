@@ -243,62 +243,20 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     const preparedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
     const artifactProviderInvocationId = getStringField(preparedArtifact, 'provider_invocation_id', 'providerInvocationId');
     const artifactControllerInvocationId = getStringField(preparedArtifact, 'controller_invocation_id', 'controllerInvocationId');
-    const artifactAttestationSource = normalizeReviewerLaunchAttestationSource(
-        getStringField(preparedArtifact, 'attestation_source', 'attestationSource')
-    );
-    const providerInvocationAttestationStatus = getStringField(
-        preparedArtifact,
-        'provider_invocation_attestation_status',
-        'providerInvocationAttestationStatus'
-    ).toLowerCase();
-    const providerInvocationAttestationId = getStringField(
-        preparedArtifact,
-        'provider_invocation_attestation_id',
-        'providerInvocationAttestationId'
-    );
-    const providerInvocationAttestedAtUtc = getStringField(
-        preparedArtifact,
-        'provider_invocation_attested_at_utc',
-        'providerInvocationAttestedAtUtc'
-    );
-    const launchBindingSha256 = getStringField(
-        preparedArtifact,
-        'launch_binding_sha256',
-        'launchBindingSha256'
-    ).toLowerCase();
-    if (artifactAttestationSource !== attestationSource) {
-        throw new Error('AttestationSource must match the authenticated reviewer delegation start artifact.');
+    if (providerInvocationId && artifactProviderInvocationId && providerInvocationId !== artifactProviderInvocationId) {
+        throw new Error('ProviderInvocationId must match the recorded reviewer delegation start artifact.');
     }
-    if (providerInvocationAttestationStatus !== 'authenticated'
-        || !providerInvocationAttestationId
-        || !providerInvocationAttestedAtUtc) {
-        throw new Error(
-            'Reviewer launch completion requires authenticated provider invocation provenance from ' +
-            'record-reviewer-delegation-started.'
-        );
+    if (controllerInvocationId && artifactControllerInvocationId && controllerInvocationId !== artifactControllerInvocationId) {
+        throw new Error('ControllerInvocationId must match the recorded reviewer delegation start artifact.');
     }
-    if (!artifactProviderInvocationId && !artifactControllerInvocationId) {
+    const effectiveProviderInvocationId = providerInvocationId || artifactProviderInvocationId;
+    const effectiveControllerInvocationId = controllerInvocationId || artifactControllerInvocationId;
+    if (!effectiveProviderInvocationId && !effectiveControllerInvocationId) {
         throw new Error(
             'ProviderInvocationId or ControllerInvocationId is required. ' +
             'Run record-reviewer-delegation-started immediately after launching the delegated reviewer.'
         );
     }
-    if (artifactProviderInvocationId && artifactControllerInvocationId) {
-        throw new Error(
-            'Reviewer delegation start artifact must contain exactly one provider or controller invocation identity.'
-        );
-    }
-    if (
-        (providerInvocationId || controllerInvocationId)
-        && (
-            providerInvocationId !== artifactProviderInvocationId
-            || controllerInvocationId !== artifactControllerInvocationId
-        )
-    ) {
-        throw new Error('Invocation identity must exactly match the recorded reviewer delegation start artifact.');
-    }
-    const effectiveProviderInvocationId = artifactProviderInvocationId;
-    const effectiveControllerInvocationId = artifactControllerInvocationId;
     const delegationStartedAtUtc = getStringField(
         preparedArtifact,
         'delegation_started_at_utc',
@@ -371,11 +329,6 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
                 reviewer_launch_attempt_id: reviewerLaunchAttemptId,
                 reviewer_launch_artifact_sha256: completedLaunchArtifactSha256,
                 reviewer_launch_attestation_source: attestationSource,
-                provider_invocation_attestation_source: attestationSource,
-                provider_invocation_attestation_status: providerInvocationAttestationStatus,
-                provider_invocation_attestation_id: providerInvocationAttestationId,
-                provider_invocation_attested_at_utc: providerInvocationAttestedAtUtc,
-                launch_binding_sha256: launchBindingSha256,
                 launch_tool: getStringField(completedArtifact, 'launch_tool', 'launchTool'),
                 provider_invocation_id: effectiveProviderInvocationId || null,
                 controller_invocation_id: effectiveControllerInvocationId || null,

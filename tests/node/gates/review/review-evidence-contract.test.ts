@@ -15,8 +15,6 @@ const treeStateSha256 = 'c'.repeat(64);
 const routingEventSha256 = 'd'.repeat(64);
 const invocationEventSha256 = 'e'.repeat(64);
 const previousEventSha256 = 'f'.repeat(64);
-const launchBindingSha256 = '1'.repeat(64);
-const launchInputSha256 = '2'.repeat(64);
 
 function buildReceipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -41,20 +39,7 @@ function buildReceipt(overrides: Record<string, unknown> = {}): Record<string, u
             reviewer_identity: 'agent:reviewer-1',
             review_context_sha256: contextSha256,
             review_tree_state_sha256: treeStateSha256,
-            routing_event_sha256: routingEventSha256,
-            provider_invocation: {
-                schema_version: 1,
-                attestation_status: 'authenticated',
-                attestation_id: 'provider-attestation-1',
-                attestation_source: 'codex_spawn_agent',
-                invocation_kind: 'provider',
-                invocation_id: 'provider-invocation-1',
-                reviewer_launch_attempt_id: '12345678-1234-4123-8123-123456789abc',
-                launch_binding_sha256: launchBindingSha256,
-                launch_input_mode: 'launch_artifact_path',
-                launch_input_sha256: launchInputSha256,
-                authenticated_at_utc: '2026-07-16T22:00:00.000Z'
-            }
+            routing_event_sha256: routingEventSha256
         },
         trust_level: REVIEW_EVIDENCE_REQUIRED_TRUST_LEVEL,
         ...overrides
@@ -131,34 +116,4 @@ test('validateReviewReceiptEvidenceContract rejects stale context and tree-state
 
     assert.ok(result.violations.includes('review context hash does not match the receipt'));
     assert.ok(result.violations.includes('review receipt review_tree_state_sha256 does not match the review context tree_state'));
-});
-
-test('validateReviewReceiptEvidenceContract rejects invocation provenance without provider authentication binding', () => {
-    const provenance = buildReceipt().reviewer_provenance as Record<string, unknown>;
-    const result = validate(buildReceipt({
-        reviewer_provenance: {
-            ...provenance,
-            provider_invocation: null
-        }
-    }));
-
-    assert.ok(result.violations.includes(
-        'review receipt reviewer_provenance is missing authenticated provider invocation binding'
-    ));
-});
-
-test('validateReviewReceiptEvidenceContract rejects malformed provider authentication binding', () => {
-    const provenance = buildReceipt().reviewer_provenance as Record<string, unknown>;
-    const providerInvocation = provenance.provider_invocation as Record<string, unknown>;
-    const result = validate(buildReceipt({
-        reviewer_provenance: {
-            ...provenance,
-            provider_invocation: {
-                ...providerInvocation,
-                attestation_status: 'not_found'
-            }
-        }
-    }));
-
-    assert.ok(result.violations.includes('review receipt reviewer_provenance is invalid'));
 });

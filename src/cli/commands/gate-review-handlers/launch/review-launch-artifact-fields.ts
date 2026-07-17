@@ -14,13 +14,8 @@ export interface ReviewerLaunchArtifactValidationResult {
     artifactPath: string;
     artifactSha256: string;
     attestationSource: string;
-    providerInvocationAttestationId: string;
-    providerInvocationAttestedAtUtc: string;
-    providerInvocationKind: 'provider' | 'controller';
     launchTool: string;
     providerInvocationId: string;
-    reviewerLaunchAttemptId: string;
-    launchBindingSha256: string;
     launchPreparedAtUtc: string | null;
     delegationStartedAtUtc: string | null;
     launchedAtUtc: string;
@@ -357,11 +352,6 @@ export function findMatchingReviewerDelegationStartedEvent(
         launchBindingSha256: string;
         preparedLaunchEventSha256: string;
         providerInvocationId: string;
-        providerInvocationAttestationId: string;
-        providerInvocationAttestationSource: string;
-        providerInvocationAttestedAtUtc: string;
-        launchInputMode: ReviewerLaunchInputMode;
-        launchInputSha256: string;
         delegationStartedAtUtc: string;
         minSequenceExclusive: number;
     }
@@ -371,13 +361,7 @@ export function findMatchingReviewerDelegationStartedEvent(
     const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
     const normalizedReviewerLaunchAttemptId = String(options.reviewerLaunchAttemptId || '').trim().toLowerCase();
-    const normalizedLaunchBindingSha256 = String(options.launchBindingSha256 || '').trim().toLowerCase();
     const normalizedProviderInvocationId = String(options.providerInvocationId || '').trim();
-    const normalizedProviderInvocationAttestationId = String(options.providerInvocationAttestationId || '').trim();
-    const normalizedProviderInvocationAttestationSource = normalizeReviewerLaunchAttestationSource(
-        options.providerInvocationAttestationSource
-    );
-    const normalizedProviderInvocationAttestedAtUtc = String(options.providerInvocationAttestedAtUtc || '').trim();
     const normalizedDelegationStartedAtUtc = String(options.delegationStartedAtUtc || '').trim();
     for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
         const entry = timelineEvents[index];
@@ -387,9 +371,6 @@ export function findMatchingReviewerDelegationStartedEvent(
             .trim()
             .toLowerCase();
         const detailsRoutingEventSha256 = String(details?.routing_event_sha256 || details?.routingEventSha256 || '')
-            .trim()
-            .toLowerCase();
-        const detailsLaunchBindingSha256 = String(details?.launch_binding_sha256 || details?.launchBindingSha256 || '')
             .trim()
             .toLowerCase();
         const detailsProviderInvocationId = String(
@@ -423,16 +404,7 @@ export function findMatchingReviewerDelegationStartedEvent(
             && detailsReviewContextSha256 === normalizedReviewContextSha256
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
             && (!normalizedReviewerLaunchAttemptId || detailsReviewerLaunchAttemptId === normalizedReviewerLaunchAttemptId)
-            && detailsLaunchBindingSha256 === normalizedLaunchBindingSha256
             && detailsProviderInvocationId === normalizedProviderInvocationId
-            && String(details?.provider_invocation_attestation_status || '').trim().toLowerCase() === 'authenticated'
-            && String(details?.provider_invocation_attestation_id || '').trim() === normalizedProviderInvocationAttestationId
-            && normalizeReviewerLaunchAttestationSource(
-                details?.provider_invocation_attestation_source ?? details?.reviewer_launch_attestation_source
-            ) === normalizedProviderInvocationAttestationSource
-            && String(details?.provider_invocation_attested_at_utc || '').trim() === normalizedProviderInvocationAttestedAtUtc
-            && normalizeReviewerLaunchInputMode(details?.launch_input_mode) === options.launchInputMode
-            && String(details?.launch_input_sha256 || '').trim().toLowerCase() === options.launchInputSha256
             && detailsDelegationStartedAtUtc === normalizedDelegationStartedAtUtc
         ) {
             return entry;
@@ -453,12 +425,6 @@ export function findMatchingReviewerLaunchCompletedEvent(
         reviewerLaunchAttemptId?: string | null;
         reviewerLaunchArtifactSha256: string;
         providerInvocationId: string;
-        providerInvocationAttestationId: string;
-        providerInvocationAttestationSource: string;
-        providerInvocationAttestedAtUtc: string;
-        launchBindingSha256: string;
-        launchInputMode: ReviewerLaunchInputMode;
-        launchInputSha256: string;
         delegationStartedAtUtc: string;
         launchCompletedAtUtc: string;
         minSequenceExclusive: number;
@@ -471,12 +437,6 @@ export function findMatchingReviewerLaunchCompletedEvent(
     const normalizedReviewerLaunchAttemptId = String(options.reviewerLaunchAttemptId || '').trim().toLowerCase();
     const normalizedReviewerLaunchArtifactSha256 = String(options.reviewerLaunchArtifactSha256 || '').trim().toLowerCase();
     const normalizedProviderInvocationId = String(options.providerInvocationId || '').trim();
-    const normalizedProviderInvocationAttestationId = String(options.providerInvocationAttestationId || '').trim();
-    const normalizedProviderInvocationAttestationSource = normalizeReviewerLaunchAttestationSource(
-        options.providerInvocationAttestationSource
-    );
-    const normalizedProviderInvocationAttestedAtUtc = String(options.providerInvocationAttestedAtUtc || '').trim();
-    const normalizedLaunchBindingSha256 = String(options.launchBindingSha256 || '').trim().toLowerCase();
     const normalizedDelegationStartedAtUtc = String(options.delegationStartedAtUtc || '').trim();
     const normalizedLaunchCompletedAtUtc = String(options.launchCompletedAtUtc || '').trim();
     for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
@@ -528,15 +488,6 @@ export function findMatchingReviewerLaunchCompletedEvent(
             && (!normalizedReviewerLaunchAttemptId || detailsReviewerLaunchAttemptId === normalizedReviewerLaunchAttemptId)
             && detailsReviewerLaunchArtifactSha256 === normalizedReviewerLaunchArtifactSha256
             && detailsProviderInvocationId === normalizedProviderInvocationId
-            && String(details?.provider_invocation_attestation_status || '').trim().toLowerCase() === 'authenticated'
-            && String(details?.provider_invocation_attestation_id || '').trim() === normalizedProviderInvocationAttestationId
-            && normalizeReviewerLaunchAttestationSource(
-                details?.provider_invocation_attestation_source ?? details?.reviewer_launch_attestation_source
-            ) === normalizedProviderInvocationAttestationSource
-            && String(details?.provider_invocation_attested_at_utc || '').trim() === normalizedProviderInvocationAttestedAtUtc
-            && String(details?.launch_binding_sha256 || '').trim().toLowerCase() === normalizedLaunchBindingSha256
-            && normalizeReviewerLaunchInputMode(details?.launch_input_mode) === options.launchInputMode
-            && String(details?.launch_input_sha256 || '').trim().toLowerCase() === options.launchInputSha256
             && detailsDelegationStartedAtUtc === normalizedDelegationStartedAtUtc
             && detailsLaunchCompletedAtUtc === normalizedLaunchCompletedAtUtc
         ) {

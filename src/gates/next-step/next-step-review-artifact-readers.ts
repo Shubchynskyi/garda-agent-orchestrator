@@ -4,12 +4,8 @@ import { createHash } from 'node:crypto';
 
 import {
     buildReviewVerdictTokenSet,
-    formatReviewVerdictTokenList,
-    normalizeAuthenticatedProviderInvocationProvenance
+    formatReviewVerdictTokenList
 } from '../../gate-runtime/review-context';
-import type {
-    AuthenticatedProviderInvocationProvenance
-} from '../../gate-runtime/review/review-receipt-provenance';
 import {
     safeReadJson
 } from '../task-audit/task-audit-summary-collectors';
@@ -146,9 +142,7 @@ export interface ReviewArtifactState {
         review_context_sha256?: string;
         review_tree_state_sha256?: string | null;
         routing_event_sha256?: string;
-        provider_invocation?: AuthenticatedProviderInvocationProvenance | null;
         launch_prepared_at_utc?: string | null;
-        delegation_started_at_utc?: string | null;
         launched_at_utc?: string | null;
         launch_completed_at_utc?: string | null;
         invocation_attested_at_utc?: string | null;
@@ -844,11 +838,7 @@ export function readReviewArtifactState(
                 review_context_sha256: 'review_context_sha256' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.review_context_sha256 : undefined,
                 review_tree_state_sha256: 'review_tree_state_sha256' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.review_tree_state_sha256 : undefined,
                 routing_event_sha256: 'routing_event_sha256' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.routing_event_sha256 : undefined,
-                provider_invocation: 'provider_invocation' in evidenceFields.reviewerProvenance
-                    ? normalizeAuthenticatedProviderInvocationProvenance(evidenceFields.reviewerProvenance.provider_invocation)
-                    : undefined,
                 launch_prepared_at_utc: 'launch_prepared_at_utc' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.launch_prepared_at_utc : undefined,
-                delegation_started_at_utc: 'delegation_started_at_utc' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.delegation_started_at_utc : undefined,
                 launched_at_utc: 'launched_at_utc' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.launched_at_utc : undefined,
                 launch_completed_at_utc: 'launch_completed_at_utc' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.launch_completed_at_utc : undefined,
                 invocation_attested_at_utc: 'invocation_attested_at_utc' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.invocation_attested_at_utc : undefined

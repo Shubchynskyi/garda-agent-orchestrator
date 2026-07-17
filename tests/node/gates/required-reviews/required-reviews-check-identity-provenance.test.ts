@@ -934,16 +934,7 @@ describe('gates/required-reviews-check', () => {
                             reviewer_identity: 'agent:code-reviewer',
                             review_context_sha256: originalContextSha,
                             review_tree_state_sha256: originalTreeStateSha,
-                            routing_event_sha256: routingEventSha,
-                            provider_invocation_attestation_status: 'authenticated',
-                            provider_invocation_attestation_id: 'attestation:required-identity',
-                            provider_invocation_attestation_source: 'codex.spawn_agent',
-                            provider_invocation_id: 'provider-run-required-identity',
-                            reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
-                            launch_binding_sha256: 'b'.repeat(64),
-                            launch_input_mode: 'launch_artifact_path',
-                            launch_input_sha256: 'c'.repeat(64),
-                            provider_invocation_attested_at_utc: '2026-04-28T00:00:00.000Z'
+                            routing_event_sha256: routingEventSha
                         },
                         integrity: {
                             schema_version: 1,
@@ -1030,20 +1021,7 @@ describe('gates/required-reviews-check', () => {
                             reviewer_identity: 'agent:code-reviewer',
                             review_context_sha256: originalContextSha,
                             review_tree_state_sha256: originalTreeStateSha,
-                            routing_event_sha256: routingEventSha,
-                            provider_invocation: {
-                                schema_version: 1,
-                                attestation_status: 'authenticated',
-                                attestation_id: 'attestation:required-identity',
-                                attestation_source: 'codex.spawn_agent',
-                                invocation_kind: 'provider',
-                                invocation_id: 'provider-run-required-identity',
-                                reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
-                                launch_binding_sha256: 'b'.repeat(64),
-                                launch_input_mode: 'launch_artifact_path',
-                                launch_input_sha256: 'c'.repeat(64),
-                                authenticated_at_utc: '2026-04-28T00:00:00.000Z'
-                            }
+                            routing_event_sha256: routingEventSha
                         },
                         trust_level: 'INDEPENDENT_AUDITED',
                         reused_existing_review: true,

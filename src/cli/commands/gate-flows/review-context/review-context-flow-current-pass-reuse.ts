@@ -6,8 +6,6 @@ import {
     extractReviewVerdictSectionTokenMatch,
     normalizeReviewReceiptReviewerProvenance,
     normalizeReviewerExecutionMode,
-    providerInvocationProvenanceMatchesEventDetails,
-    type AuthenticatedProviderInvocationProvenance,
     type ReviewReceipt
 } from '../../../../gate-runtime/review-context';
 import {
@@ -228,7 +226,6 @@ function findMatchingInvocationAttestation(options: {
     reviewTreeStateSha256: string | null;
     reviewerExecutionMode: string | null;
     reviewerIdentity: string | null;
-    providerInvocationProvenance: AuthenticatedProviderInvocationProvenance;
 }): ReviewDependencyTimelineEvent | null {
     for (const entry of options.timelineEvents) {
         if (
@@ -248,7 +245,6 @@ function findMatchingInvocationAttestation(options: {
             && normalizeOptionalSha256(details.review_tree_state_sha256 ?? details.reviewTreeStateSha256) === options.reviewTreeStateSha256
             && String(details.reviewer_execution_mode ?? details.reviewerExecutionMode ?? '').trim() === options.reviewerExecutionMode
             && String(details.reviewer_identity ?? details.reviewerIdentity ?? details.reviewer_session_id ?? '').trim() === options.reviewerIdentity
-            && providerInvocationProvenanceMatchesEventDetails(options.providerInvocationProvenance, details)
         ) {
             return entry;
         }
@@ -503,8 +499,6 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
         }
     } else {
         const invocationEvent = reviewerProvenance?.controller_event_type === 'REVIEWER_INVOCATION_ATTESTED'
-            && reviewerProvenance.attestation_type === 'reviewer_invocation_attestation'
-            && reviewerProvenance.provider_invocation
             ? findMatchingInvocationAttestation({
                 timelineEvents,
                 latestCompilePassSequence,
@@ -514,8 +508,7 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
                 reviewContextSha256,
                 reviewTreeStateSha256,
                 reviewerExecutionMode,
-                reviewerIdentity,
-                providerInvocationProvenance: reviewerProvenance.provider_invocation
+                reviewerIdentity
             })
             : null;
         if (

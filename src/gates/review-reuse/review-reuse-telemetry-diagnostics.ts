@@ -2,7 +2,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileSha256, joinOrchestratorPath, normalizePath } from '../shared/helpers';
-import { normalizeAuthenticatedProviderInvocationProvenance } from '../../gate-runtime/review-context';
 import {
     type HistoricalReviewRecordedRuntimeReviewPathValidation,
     type HistoricalReviewRecordedSnapshotValidation
@@ -333,12 +332,5 @@ export function reviewerProvenanceMatches(actual: unknown, expected: Record<stri
     }
     const actualTaskSequence = normalizeEventSequence(actualRecord.task_sequence);
     const expectedTaskSequence = normalizeEventSequence(expected.task_sequence);
-    const actualProviderInvocation = normalizeAuthenticatedProviderInvocationProvenance(
-        actualRecord.provider_invocation
-    );
-    const expectedProviderInvocation = normalizeAuthenticatedProviderInvocationProvenance(
-        expected.provider_invocation
-    );
-    return actualTaskSequence === expectedTaskSequence
-        && JSON.stringify(actualProviderInvocation) === JSON.stringify(expectedProviderInvocation);
+    return actualTaskSequence === expectedTaskSequence;
 }

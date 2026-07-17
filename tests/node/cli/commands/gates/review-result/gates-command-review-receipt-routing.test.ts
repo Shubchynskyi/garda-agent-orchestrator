@@ -527,13 +527,6 @@ describe('gates command review receipt - routing', () => {
         assert.equal(receipt.reviewer_execution_mode, 'delegated_subagent');
         assert.equal(receipt.reviewer_identity, `agent:${taskId}-reviewer`);
         assert.equal(receipt.reviewer_fallback_reason, null);
-        assert.equal(receipt.reviewer_provenance?.provider_invocation?.attestation_status, 'authenticated');
-        assert.equal(receipt.reviewer_provenance?.provider_invocation?.attestation_source, 'test-subagent-spawn');
-        assert.match(receipt.reviewer_provenance?.provider_invocation?.invocation_id || '', /^test-/);
-        assert.equal(
-            receipt.reviewer_provenance?.provider_invocation?.reviewer_launch_attempt_id,
-            '12345678-1234-4123-8123-123456789abc'
-        );
         assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

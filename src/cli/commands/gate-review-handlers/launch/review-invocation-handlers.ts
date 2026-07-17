@@ -250,16 +250,8 @@ export function createReviewInvocationHandlers(deps: ReviewInvocationHandlerDepe
                     routed_to: runtimeIdentity.routed_to,
                     provider_bridge: runtimeIdentity.provider_bridge,
                     reviewer_launch_attestation_source: launchArtifact.attestationSource,
-                    provider_invocation_attestation_source: launchArtifact.attestationSource,
-                    provider_invocation_attestation_status: 'authenticated',
-                    provider_invocation_attestation_id: launchArtifact.providerInvocationAttestationId,
-                    provider_invocation_attested_at_utc: launchArtifact.providerInvocationAttestedAtUtc,
                     reviewer_launch_tool: launchArtifact.launchTool,
-                    ...(launchArtifact.providerInvocationKind === 'controller'
-                        ? { controller_invocation_id: launchArtifact.providerInvocationId }
-                        : { provider_invocation_id: launchArtifact.providerInvocationId }),
-                    reviewer_launch_attempt_id: launchArtifact.reviewerLaunchAttemptId,
-                    launch_binding_sha256: launchArtifact.launchBindingSha256,
+                    provider_invocation_id: launchArtifact.providerInvocationId,
                     launch_input_mode: launchArtifact.launchInputMode,
                     launch_input_sha256: launchArtifact.launchInputSha256,
                     copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copyPasteReviewerLaunchPromptSha256,

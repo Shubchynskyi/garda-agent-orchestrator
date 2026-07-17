@@ -13,20 +13,7 @@ const mockProvenance = {
     reviewer_execution_mode: 'delegated_subagent',
     reviewer_identity: 'agent:Gemini',
     review_context_sha256: 'b'.repeat(64),
-    routing_event_sha256: 'c'.repeat(64),
-    provider_invocation: {
-        schema_version: 1,
-        attestation_status: 'authenticated',
-        attestation_id: 'attestation:visibility',
-        attestation_source: 'codex.spawn_agent',
-        invocation_kind: 'provider',
-        invocation_id: 'provider-run-visibility',
-        reviewer_launch_attempt_id: '11111111-1111-4111-8111-111111111111',
-        launch_binding_sha256: 'd'.repeat(64),
-        launch_input_mode: 'launch_artifact_path',
-        launch_input_sha256: 'e'.repeat(64),
-        authenticated_at_utc: '2026-05-17T20:00:03.000Z'
-    }
+    routing_event_sha256: 'c'.repeat(64)
 };
 
 describe('Review Trust Summary Visibility (T-071)', () => {

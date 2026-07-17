@@ -181,11 +181,6 @@ export function validateReviewReceiptEvidenceContract(options: {
         violations.push('review receipt reviewer_provenance is incomplete');
     } else if (fields.reviewerProvenance.controller_event_type !== REVIEW_EVIDENCE_REQUIRED_PROVENANCE_EVENT_TYPE) {
         violations.push('review receipt reviewer_provenance must reference REVIEWER_INVOCATION_ATTESTED telemetry');
-    } else if (
-        fields.reviewerProvenance.attestation_type !== REVIEW_EVIDENCE_REQUIRED_PROVENANCE_ATTESTATION_TYPE
-        || !fields.reviewerProvenance.provider_invocation
-    ) {
-        violations.push('review receipt reviewer_provenance is missing authenticated provider invocation binding');
     } else if (!fields.reviewerProvenance.review_context_sha256) {
         violations.push('review receipt reviewer_provenance is missing review_context_sha256');
     } else if (

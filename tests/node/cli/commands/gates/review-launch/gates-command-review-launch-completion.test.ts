@@ -21,66 +21,9 @@ import {
     buildRecordReviewResultCommand
 } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
 import { stringSha256 } from '../../../../../../src/cli/commands/gate-review-handlers/launch/review-launch-input-attestation';
-import { findMatchingReviewerDelegationStartedEvent } from '../../../../../../src/cli/commands/gate-review-handlers/launch/review-launch-artifact-fields';
 import { GARDA_NO_DELEGATE_ENV } from '../../../../../../src/core/review-delegation-policy';
 
 describe('cli/commands/gates review launch completion', () => {
-    it('delegation-start telemetry matches only the immutable launch binding', () => {
-        const launchBindingSha256 = 'a'.repeat(64);
-        const event = {
-            event_type: 'REVIEWER_DELEGATION_STARTED',
-            sequence: 12,
-            details: {
-                task_id: 'T-979-24-F1',
-                review_type: 'security',
-                reviewer_execution_mode: 'delegated_subagent',
-                reviewer_session_id: 'agent:test-reviewer',
-                review_context_sha256: 'b'.repeat(64),
-                routing_event_sha256: 'c'.repeat(64),
-                reviewer_launch_attempt_id: 'attempt-1',
-                launch_binding_sha256: launchBindingSha256,
-                provider_invocation_id: 'provider-invocation-1',
-                provider_invocation_attestation_status: 'authenticated',
-                provider_invocation_attestation_id: 'attestation-1',
-                provider_invocation_attestation_source: 'multi_agent_v1.spawn_agent',
-                provider_invocation_attested_at_utc: '2026-07-17T00:00:00.000Z',
-                launch_input_mode: 'launch_artifact_path',
-                launch_input_sha256: 'd'.repeat(64),
-                delegation_started_at_utc: '2026-07-17T00:00:01.000Z'
-            }
-        };
-        const options = {
-            taskId: 'T-979-24-F1',
-            reviewType: 'security',
-            reviewerExecutionMode: 'delegated_subagent' as const,
-            reviewerIdentity: 'agent:test-reviewer',
-            reviewContextSha256: 'b'.repeat(64),
-            routingEventSha256: 'c'.repeat(64),
-            reviewerLaunchAttemptId: 'attempt-1',
-            launchBindingSha256,
-            preparedLaunchEventSha256: 'e'.repeat(64),
-            providerInvocationId: 'provider-invocation-1',
-            providerInvocationAttestationId: 'attestation-1',
-            providerInvocationAttestationSource: 'multi_agent_v1.spawn_agent',
-            providerInvocationAttestedAtUtc: '2026-07-17T00:00:00.000Z',
-            launchInputMode: 'launch_artifact_path' as const,
-            launchInputSha256: 'd'.repeat(64),
-            delegationStartedAtUtc: '2026-07-17T00:00:01.000Z',
-            minSequenceExclusive: 10
-        };
-        const matchingEvents = [event] as unknown as Parameters<typeof findMatchingReviewerDelegationStartedEvent>[0];
-        const mismatchedEvents = [{
-            ...event,
-            details: {
-                ...event.details,
-                launch_binding_sha256: 'f'.repeat(64)
-            }
-        }] as unknown as Parameters<typeof findMatchingReviewerDelegationStartedEvent>[0];
-
-        assert.equal(findMatchingReviewerDelegationStartedEvent(matchingEvents, options), matchingEvents[0]);
-        assert.equal(findMatchingReviewerDelegationStartedEvent(mismatchedEvents, options), null);
-    });
-
     it('record-review-result handoff command single-quotes shell-substitution metacharacters', () => {
         const command = buildRecordReviewResultCommand({
             repoRoot: 'D:/repo',
@@ -1315,77 +1258,6 @@ describe('cli/commands/gates review launch completion', () => {
         assert.equal(artifact.attestation_state, 'prepared', 'Artifact should remain in prepared state after failed complete');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
-    });
-
-    it('complete-reviewer-launch rejects an invocation kind that differs from delegation start', async () => {
-        const scenarios = [
-            {
-                suffix: 'provider-to-controller',
-                startedInvocation: { providerInvocationId: 'provider-invocation-979' },
-                completionArgs: ['--controller-invocation-id', 'controller-invocation-979']
-            },
-            {
-                suffix: 'controller-to-provider',
-                startedInvocation: { controllerInvocationId: 'controller-invocation-979' },
-                completionArgs: ['--provider-invocation-id', 'provider-invocation-979']
-            }
-        ] as const;
-
-        for (const scenario of scenarios) {
-            const repoRoot = createTempRepo();
-            const taskId = `T-979-24-F2-${scenario.suffix}`;
-            const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-
-            try {
-                await prepareReviewerLaunchForTest({
-                    repoRoot,
-                    taskId,
-                    reviewerIdentity: fixture.reviewerIdentity,
-                    launchArtifactPath: fixture.launchArtifactPath
-                });
-                await recordReviewerDelegationStartedForTest({
-                    repoRoot,
-                    taskId,
-                    reviewerIdentity: fixture.reviewerIdentity,
-                    launchArtifactPath: fixture.launchArtifactPath,
-                    ...scenario.startedInvocation,
-                    attestationSource: 'test_provider_controller'
-                });
-
-                const complete = await runCliWithCapturedOutput([
-                    'gate',
-                    'complete-reviewer-launch',
-                    '--task-id', taskId,
-                    '--review-type', 'code',
-                    '--repo-root', repoRoot,
-                    '--reviewer-execution-mode', 'delegated_subagent',
-                    '--reviewer-identity', fixture.reviewerIdentity,
-                    '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
-                    ...scenario.completionArgs,
-                    '--attestation-source', 'test_provider_controller',
-                    ...launchArtifactInputArgsForTest(fixture.launchArtifactPath),
-                    '--fork-context', 'false'
-                ], { cwd: repoRoot });
-
-                assert.notEqual(complete.exitCode, 0);
-                assert.ok(
-                    complete.errors.some((line) => line.includes(
-                        'Invocation identity must exactly match the recorded reviewer delegation start artifact.'
-                    )),
-                    complete.errors.join('\n')
-                );
-                const launchArtifact = JSON.parse(
-                    fs.readFileSync(fixture.launchArtifactPath, 'utf8')
-                ) as Record<string, unknown>;
-                assert.equal(launchArtifact.attestation_state, 'delegation_started');
-                assert.equal(
-                    Boolean(launchArtifact.provider_invocation_id) && Boolean(launchArtifact.controller_invocation_id),
-                    false
-                );
-            } finally {
-                fs.rmSync(repoRoot, { recursive: true, force: true });
-            }
-        }
     });
 
     it('complete-reviewer-launch rejects forbidden attestation source', async () => {
