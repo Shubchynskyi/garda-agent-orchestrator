@@ -3514,6 +3514,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             && currentReviewRecordedEvidenceCurrent
             && state.reviewFindingsDisposition.counts_by_action.create_follow_up > 0
             && !state.reviewFindingsFollowUpSatisfied
+            && state.reviewFollowUpMaterializationMode !== 'grouped_by_parent'
         ) {
             const dispositionArtifactPath = state.reviewFindingsDispositionArtifactPath
                 || path.join(reviewsRoot, `${taskId}-${reviewType}-findings-disposition.json`);
@@ -4448,6 +4449,50 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             state ? reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state) : false
         ];
     }));
+    // Grouped follow-ups intentionally remain non-blocking while required review lanes are
+    // still running: the materializer needs the complete lane set before it can create the
+    // cycle-wide child. Route to materialization only after every required lane has current,
+    // independently attested review evidence, and always before required-review closeout.
+    const allRequiredReviewLanesSatisfied = Object.values(reviewAuthorshipAttestationDefaults).every(Boolean);
+    const groupedFollowUpState = allRequiredReviewLanesSatisfied
+        ? reviewStates.find((state) => (
+            state.reviewFollowUpMaterializationMode === 'grouped_by_parent'
+            && state.ready
+            && state.reviewFindingsDisposition
+            && state.reviewFindingsDisposition.counts_by_action.create_follow_up > 0
+            && !state.reviewFindingsFollowUpSatisfied
+        ))
+        : null;
+    if (groupedFollowUpState) {
+        const reviewType = groupedFollowUpState.reviewType;
+        const groupedDisposition = groupedFollowUpState.reviewFindingsDisposition;
+        if (!groupedDisposition) {
+            throw new Error(`Grouped follow-up state '${reviewType}' is missing disposition evidence.`);
+        }
+        const dispositionArtifactPath = groupedFollowUpState.reviewFindingsDispositionArtifactPath
+            || path.join(reviewsRoot, `${taskId}-${reviewType}-findings-disposition.json`);
+        const followUpArtifactPath = groupedFollowUpState.reviewFindingsFollowUpArtifactPath
+            || dispositionArtifactPath.replace(/-findings-disposition\.json$/u, '-findings-follow-ups.json');
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'materialize-review-follow-up-tasks',
+            title: `Add '${reviewType}' deferred items to the grouped follow-up task.`,
+            reason:
+                `All currently required review lanes are complete. Add ${groupedDisposition.counts_by_action.create_follow_up} ` +
+                `'${reviewType}' deferred item(s) to the snapshot-bound grouped child before required-review closeout.`,
+            commands: [buildCommand(
+                'Update grouped review follow-up task',
+                `${cliPrefix} gate materialize-review-follow-up-tasks ` +
+                `--task-id "${taskId}" ` +
+                `--review-type "${reviewType}" ` +
+                `--disposition-artifact-path "${toRepoDisplayPath(repoRoot, dispositionArtifactPath)}" ` +
+                `--receipt-path "${toRepoDisplayPath(repoRoot, groupedFollowUpState.receiptPath)}" ` +
+                `--artifact-path "${toRepoDisplayPath(repoRoot, followUpArtifactPath)}" ` +
+                '--repo-root "."'
+            )]
+        });
+    }
     const postReviewCloseoutRoute = resolvePostReviewCloseoutRouteFromState({
         requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
         zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),

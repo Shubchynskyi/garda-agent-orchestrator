@@ -786,7 +786,7 @@ const REVIEW_FINDING_POLICY_SCHEMA: Record<string, unknown> = Object.freeze({
         reviewFindingPolicyPresetVariant('balanced', {
             critical: 'fix_now',
             high: 'fix_now',
-            medium: 'create_follow_up',
+            medium: 'fix_now',
             low: 'create_follow_up'
         }, 'create_follow_up'),
         reviewFindingPolicyPresetVariant('strict', {
@@ -824,6 +824,16 @@ const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
             additionalProperties: REVIEW_POLICY_VALUE
         },
         review_finding_policy: REVIEW_FINDING_POLICY_SCHEMA,
+        review_follow_up_policy: {
+            type: 'object',
+            description: 'Deferred finding task materialization mode.',
+            properties: {
+                schema_version: { type: 'integer', const: 1 },
+                materialization_mode: { type: 'string', enum: ['per_finding', 'grouped_by_parent'] }
+            },
+            required: ['schema_version', 'materialization_mode'],
+            additionalProperties: false
+        },
         token_economy: {
             type: 'object',
             description: 'Token economy overrides.',

@@ -15,6 +15,7 @@ import {
     loadProfilesData,
     loadReviewCapabilities,
     mergeReviewPolicy,
+    DEFAULT_REVIEW_FOLLOW_UP_POLICY,
     REVIEW_FINDING_POLICY_PRESETS,
     resolveConfigPaths,
     type EffectivePolicy,
@@ -24,6 +25,7 @@ import {
     type ProfileReviewPolicy,
     type ProfileSkills,
     type ReviewFindingPolicy,
+    type ReviewFollowUpPolicy,
     type ReviewCapabilities,
     type TokenEconomyConfig
 } from './profile-resolver';
@@ -82,6 +84,8 @@ export interface TaskProfilePolicySnapshot {
     review_execution_policy: TaskProfilePolicySnapshotReviewExecutionPolicy;
     review_finding_policy: ReviewFindingPolicy;
     review_finding_policy_diagnostics: string[];
+    review_follow_up_policy?: ReviewFollowUpPolicy;
+    review_follow_up_policy_diagnostics?: string[];
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
     token_economy: TokenEconomyConfig;
@@ -119,6 +123,8 @@ export interface TaskProfilePolicySnapshotSummary {
     review_execution_policy: TaskProfilePolicySnapshotReviewExecutionPolicy;
     review_finding_policy: ReviewFindingPolicy;
     review_finding_policy_diagnostics: string[];
+    review_follow_up_policy: ReviewFollowUpPolicy;
+    review_follow_up_policy_diagnostics: string[];
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
     config_hash: string;
@@ -179,6 +185,7 @@ const REVIEW_FINDING_POLICY_KEYS = [
 
 const REVIEW_FINDING_POLICY_IDS = ['soft', 'balanced', 'strict', 'custom'] as const;
 const REVIEW_FINDING_POLICY_ACTIONS = ['fix_now', 'create_follow_up', 'ignore'] as const;
+const REVIEW_FOLLOW_UP_MATERIALIZATION_MODES = ['per_finding', 'grouped_by_parent'] as const;
 const ACTIVE_FINDING_DISPOSITIONS = ['block_until_resolved', 'create_follow_up', 'ignore'] as const;
 const RESIDUAL_RISK_DISPOSITIONS = ['block_unless_deferred_with_justification', 'create_follow_up', 'ignore'] as const;
 
@@ -799,6 +806,32 @@ function resolveSnapshotReviewFindingPolicyDiagnostics(snapshot: TaskProfilePoli
     return [...snapshot.review_finding_policy_diagnostics];
 }
 
+function resolveSnapshotReviewFollowUpPolicy(snapshot: TaskProfilePolicySnapshot): ReviewFollowUpPolicy {
+    const policy = snapshot.review_follow_up_policy;
+    if (!policy) {
+        return { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY };
+    }
+    return { ...policy };
+}
+
+function resolveSnapshotReviewFollowUpPolicyDiagnostics(snapshot: TaskProfilePolicySnapshot): string[] {
+    return snapshot.review_follow_up_policy_diagnostics
+        ? [...snapshot.review_follow_up_policy_diagnostics]
+        : ['Legacy task profile policy snapshot missing review_follow_up_policy; defaulted compatibly to per_finding.'];
+}
+
+function validateReviewFollowUpPolicySnapshot(value: unknown, violations: string[]): void {
+    if (!isPlainRecord(value)) {
+        violations.push('Task profile policy snapshot review_follow_up_policy must be a JSON object.');
+        return;
+    }
+    validateExactKeys(value, ['schema_version', 'materialization_mode'], 'review_follow_up_policy', violations);
+    validateLiteral(value.schema_version, 1, 'review_follow_up_policy.schema_version', violations);
+    if (!REVIEW_FOLLOW_UP_MATERIALIZATION_MODES.includes(value.materialization_mode as typeof REVIEW_FOLLOW_UP_MATERIALIZATION_MODES[number])) {
+        violations.push('Task profile policy snapshot review_follow_up_policy.materialization_mode must be one of per_finding, grouped_by_parent.');
+    }
+}
+
 function resolveSnapshotFindingPolicy(snapshot: TaskProfilePolicySnapshot): TaskProfileFindingPolicySnapshot {
     if (isLegacyStrictReviewFindingPolicySnapshot(snapshot as unknown as Record<string, unknown>)) {
         return buildTaskProfileFindingPolicySnapshot(REVIEW_FINDING_POLICY_PRESETS.strict);
@@ -870,6 +903,8 @@ export function buildTaskProfilePolicySnapshot(
             findings: { ...resolvedProfile.effective_policy.review_finding_policy.findings }
         },
         review_finding_policy_diagnostics: [...resolvedProfile.effective_policy.review_finding_policy_diagnostics],
+        review_follow_up_policy: { ...resolvedProfile.effective_policy.review_follow_up_policy },
+        review_follow_up_policy_diagnostics: [...resolvedProfile.effective_policy.review_follow_up_policy_diagnostics],
         finding_policy: buildTaskProfileFindingPolicySnapshot(resolvedProfile.effective_policy.review_finding_policy),
         remediation_policy: { ...DEFAULT_REMEDIATION_POLICY },
         token_economy: resolvedProfile.effective_policy.token_economy,
@@ -930,6 +965,10 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
         validateReviewFindingPolicySnapshot(value.review_finding_policy, violations);
         validateStringArray(value.review_finding_policy_diagnostics, 'review_finding_policy_diagnostics', violations);
         validateFindingPolicySnapshot(value.finding_policy, parseReviewFindingPolicySnapshot(value.review_finding_policy), violations);
+    }
+    if (value.review_follow_up_policy !== undefined || value.review_follow_up_policy_diagnostics !== undefined) {
+        validateReviewFollowUpPolicySnapshot(value.review_follow_up_policy, violations);
+        validateStringArray(value.review_follow_up_policy_diagnostics, 'review_follow_up_policy_diagnostics', violations);
     }
     validateRemediationPolicySnapshot(value.remediation_policy, violations);
     if (!isPlainRecord(value.config_hashes)) {
@@ -1012,6 +1051,8 @@ export function resolveTaskProfileSelectionFromSnapshot(
             review_policy: reviewPolicy,
             review_finding_policy: reviewFindingPolicy,
             review_finding_policy_diagnostics: resolveSnapshotReviewFindingPolicyDiagnostics(snapshot),
+            review_follow_up_policy: resolveSnapshotReviewFollowUpPolicy(snapshot),
+            review_follow_up_policy_diagnostics: resolveSnapshotReviewFollowUpPolicyDiagnostics(snapshot),
             token_economy: snapshot.token_economy,
             skills: snapshot.skills,
             installed_packs: snapshot.installed_packs,
@@ -1046,6 +1087,8 @@ export function summarizeTaskProfilePolicySnapshot(
         review_execution_policy: snapshot.review_execution_policy,
         review_finding_policy: resolveSnapshotReviewFindingPolicy(snapshot),
         review_finding_policy_diagnostics: resolveSnapshotReviewFindingPolicyDiagnostics(snapshot),
+        review_follow_up_policy: resolveSnapshotReviewFollowUpPolicy(snapshot),
+        review_follow_up_policy_diagnostics: resolveSnapshotReviewFollowUpPolicyDiagnostics(snapshot),
         finding_policy: resolveSnapshotFindingPolicy(snapshot),
         remediation_policy: snapshot.remediation_policy,
         config_hash: snapshot.config_hash,

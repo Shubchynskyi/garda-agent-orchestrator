@@ -9,8 +9,15 @@ import {
     materializeReviewFindingsFollowUpTasks
 } from '../../../../src/gates/review/review-findings-follow-up-tasks';
 import {
+    followUpArtifactMatchesCurrentTaskQueue
+} from '../../../../src/gates/next-step/next-step-review-artifact-readers';
+import {
     parseCanonicalActiveTaskQueue
 } from '../../../../src/core/task-md-table';
+import {
+    appendEvent,
+    seedCompletedReviewerLaunchAndInvocation
+} from '../next-step/next-step-full-suite-fixtures';
 
 const TASK_ID = 'T-REVIEW-FOLLOWUP';
 const REVIEW_TYPE = 'code';
@@ -85,25 +92,84 @@ function seedReviewArtifacts(repoRoot: string, options: {
     title?: string;
     description?: string;
     dispositionSourceValidationSha256?: string;
+    includeFixNowFinding?: boolean;
+    includeGroupedAttestation?: boolean;
     validationStatus?: 'accepted' | 'rejected';
+    reviewType?: string;
+    followUpSeverity?: 'critical' | 'high' | 'medium' | 'low';
 } = {}): SeededReviewArtifacts {
+    const reviewType = options.reviewType || REVIEW_TYPE;
+    const followUpSeverity = options.followUpSeverity || 'medium';
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
-    const reviewArtifactPath = path.join(reviewsRoot, `${TASK_ID}-${REVIEW_TYPE}.md`);
-    const validationArtifactPath = path.join(reviewsRoot, `${TASK_ID}-${REVIEW_TYPE}-findings-validation.json`);
-    const dispositionArtifactPath = path.join(reviewsRoot, `${TASK_ID}-${REVIEW_TYPE}-findings-disposition.json`);
-    const receiptPath = path.join(reviewsRoot, `${TASK_ID}-${REVIEW_TYPE}-receipt.json`);
+    const reviewArtifactPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}.md`);
+    const validationArtifactPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}-findings-validation.json`);
+    const dispositionArtifactPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}-findings-disposition.json`);
+    const receiptPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}-receipt.json`);
+    const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+    const compileGatePath = path.join(reviewsRoot, `${TASK_ID}-compile-gate.json`);
     fs.mkdirSync(reviewsRoot, { recursive: true });
     fs.writeFileSync(reviewArtifactPath, 'review output\n', 'utf8');
+    const preflightSha256 = fs.existsSync(preflightPath) ? fileSha256(preflightPath) : null;
+    const compileGate = fs.existsSync(compileGatePath) ? readJson(compileGatePath) : null;
+    const taskEventsPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${TASK_ID}.jsonl`);
+    const compileTimelineTimestamp = fs.existsSync(taskEventsPath)
+        ? fs.readFileSync(taskEventsPath, 'utf8')
+            .split(/\r?\n/u)
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as Record<string, unknown>)
+            .filter((event) => event.event_type === 'COMPILE_GATE_PASSED')
+            .at(-1)?.timestamp_utc
+        : null;
+    const compileGateTimestamp = String(compileTimelineTimestamp || compileGate?.timestamp_utc || '').trim() || null;
+    const reviewContextPath = path.join(reviewsRoot, `${TASK_ID}-${reviewType}-review-context.json`);
+    let reviewContextSha256: string | null = null;
+    if (preflightSha256 && compileGateTimestamp) {
+        const reviewTreeStateSha256 = sha256JsonPayload({ task_id: TASK_ID, review_type: reviewType });
+        writeJson(reviewContextPath, {
+            task_id: TASK_ID,
+            review_type: reviewType,
+            preflight_path: normalizeForArtifact(preflightPath),
+            preflight_sha256: preflightSha256,
+            tree_state: {
+                tree_state_sha256: reviewTreeStateSha256
+            },
+            reviewer_routing: {
+                actual_execution_mode: 'delegated_subagent',
+                reviewer_session_id: `agent:${reviewType}-reviewer`
+            },
+            full_suite_validation: {
+                cycle_binding_valid: true,
+                matches_current_preflight: true,
+                matches_current_compile_gate: true,
+                compile_gate_timestamp_utc: compileGateTimestamp,
+                cycle_binding: {
+                    preflight_sha256: preflightSha256,
+                    compile_gate_timestamp: compileGateTimestamp
+                }
+            }
+        });
+        reviewContextSha256 = fileSha256(reviewContextPath);
+    }
 
     const findingsBySeverity = emptyFindingsBySeverity();
-    findingsBySeverity.medium.push({
+    findingsBySeverity[followUpSeverity].push({
         id: 'F-001',
-        severity: 'medium',
+        severity: followUpSeverity,
         title: options.title || 'Persist follow-up evidence',
         description: options.description || 'The review found a deferred workflow issue that needs a backlog task.',
         evidence_locations: ['src/gates/review/example.ts:10', 'tests/node/gates/review/example.test.ts:20'],
         coverage_obligation_ids: ['C-001']
     });
+    if (options.includeFixNowFinding) {
+        findingsBySeverity.high.push({
+            id: 'F-002',
+            severity: 'high',
+            title: 'Fix blocking evidence first',
+            description: 'The review also found a blocking issue that must be fixed in the current task.',
+            evidence_locations: ['src/gates/review/blocking-example.ts:30'],
+            coverage_obligation_ids: ['C-002']
+        });
+    }
     const validationResult = {
         status: options.validationStatus || 'accepted',
         accepted: true,
@@ -111,7 +177,7 @@ function seedReviewArtifacts(repoRoot: string, options: {
         violations: [],
         coverage_status: null,
         normalized_inventory: {
-            finding_count: 1,
+            finding_count: options.includeFixNowFinding ? 2 : 1,
             residual_risk_count: 0,
             findings_by_severity: findingsBySeverity,
             residual_risks: []
@@ -132,12 +198,12 @@ function seedReviewArtifacts(repoRoot: string, options: {
                 review_artifact_sha256: fileSha256(reviewArtifactPath)
             },
             context: {
-                review_context_path: null,
-                review_context_sha256: null
+                review_context_path: reviewContextSha256 ? normalizeForArtifact(reviewContextPath) : null,
+                review_context_sha256: reviewContextSha256
             },
             scope: {
-                preflight_path: null,
-                preflight_sha256: null,
+                preflight_path: preflightSha256 ? normalizeForArtifact(preflightPath) : null,
+                preflight_sha256: preflightSha256,
                 scope_sha256: null,
                 review_scope_sha256: null,
                 code_scope_sha256: null
@@ -152,7 +218,7 @@ function seedReviewArtifacts(repoRoot: string, options: {
         schema_version: 1,
         artifact_type: 'review_findings_validation',
         task_id: TASK_ID,
-        review_type: REVIEW_TYPE,
+        review_type: reviewType,
         validation_result: validationResult,
         validation_result_sha256: sha256JsonPayload(validationResult)
     };
@@ -161,25 +227,25 @@ function seedReviewArtifacts(repoRoot: string, options: {
 
     const dispositionResult = {
         findings: {
-            critical: { action: 'fix_now', ids: [] },
-            high: { action: 'fix_now', ids: [] },
-            medium: { action: 'create_follow_up', ids: ['F-001'] },
-            low: { action: 'ignore', ids: [] }
+            critical: { action: followUpSeverity === 'critical' ? 'create_follow_up' : 'fix_now', ids: followUpSeverity === 'critical' ? ['F-001'] : [] },
+            high: { action: followUpSeverity === 'high' ? 'create_follow_up' : 'fix_now', ids: [...(followUpSeverity === 'high' ? ['F-001'] : []), ...(options.includeFixNowFinding ? ['F-002'] : [])] },
+            medium: { action: 'create_follow_up', ids: followUpSeverity === 'medium' ? ['F-001'] : [] },
+            low: { action: followUpSeverity === 'low' ? 'create_follow_up' : 'ignore', ids: followUpSeverity === 'low' ? ['F-001'] : [] }
         },
         residual_risks: { action: 'ignore', ids: [] },
         counts_by_action: {
-            fix_now: 0,
+            fix_now: options.includeFixNowFinding ? 1 : 0,
             create_follow_up: 1,
             ignore: 0
         },
-        blocking_count: 0,
-        verdict: 'follow_up_required'
+        blocking_count: options.includeFixNowFinding ? 1 : 0,
+        verdict: options.includeFixNowFinding ? 'fix_required' : 'follow_up_required'
     };
     const dispositionArtifact = {
         schema_version: 1,
         artifact_type: 'review_findings_disposition',
         task_id: TASK_ID,
-        review_type: REVIEW_TYPE,
+        review_type: reviewType,
         derivation_source: 'garda_locked_policy_evaluation',
         source_validation: {
             artifact_path: normalizeForArtifact(validationArtifactPath),
@@ -196,10 +262,10 @@ function seedReviewArtifacts(repoRoot: string, options: {
                 schema_version: 1,
                 policy_id: 'test_policy',
                 findings: {
-                    critical: 'fix_now',
-                    high: 'fix_now',
+                    critical: followUpSeverity === 'critical' ? 'create_follow_up' : 'fix_now',
+                    high: followUpSeverity === 'high' ? 'create_follow_up' : 'fix_now',
                     medium: 'create_follow_up',
-                    low: 'ignore'
+                    low: followUpSeverity === 'low' ? 'create_follow_up' : 'ignore'
                 },
                 residual_risk: 'ignore'
             }
@@ -210,21 +276,34 @@ function seedReviewArtifacts(repoRoot: string, options: {
             {
                 id: 'F-001',
                 kind: 'finding',
-                severity: 'medium',
+                severity: followUpSeverity,
                 action: 'create_follow_up',
-                source_rule: 'review_finding_policy.findings.medium',
+                source_rule: `review_finding_policy.findings.${followUpSeverity}`,
                 policy_source: 'preflight_profile_policy_snapshot',
                 blocking: false,
                 materialization_status: 'pending_follow_up_materialization',
                 audit_status: 'retained_in_disposition_artifact'
-            }
+            },
+            ...(options.includeFixNowFinding
+                ? [{
+                    id: 'F-002',
+                    kind: 'finding',
+                    severity: 'high',
+                    action: 'fix_now',
+                    source_rule: 'review_finding_policy.findings.high',
+                    policy_source: 'preflight_profile_policy_snapshot',
+                    blocking: true,
+                    materialization_status: 'requires_fix_now',
+                    audit_status: 'retained_in_disposition_artifact'
+                }]
+                : [])
         ],
         summary: {
-            item_count: 1,
-            fix_now_count: 0,
+            item_count: options.includeFixNowFinding ? 2 : 1,
+            fix_now_count: options.includeFixNowFinding ? 1 : 0,
             follow_up_pending_count: 1,
             ignored_count: 0,
-            blocking_count: 0,
+            blocking_count: options.includeFixNowFinding ? 1 : 0,
             non_blocking_count: 1
         }
     };
@@ -234,7 +313,9 @@ function seedReviewArtifacts(repoRoot: string, options: {
     const receipt = {
         schema_version: 2,
         task_id: TASK_ID,
-        review_type: REVIEW_TYPE,
+        review_type: reviewType,
+        preflight_sha256: preflightSha256,
+        review_context_sha256: reviewContextSha256,
         review_findings_validation: {
             artifact_path: normalizeForArtifact(validationArtifactPath),
             artifact_sha256: validationArtifactSha256,
@@ -252,7 +333,7 @@ function seedReviewArtifacts(repoRoot: string, options: {
             snapshot_sha256: null,
             disposition_result_sha256: dispositionArtifact.disposition_result_sha256,
             follow_up_pending_count: 1,
-            blocking_count: 0
+            blocking_count: options.includeFixNowFinding ? 1 : 0
         },
         review_output_contract: {
             schema_version: 1,
@@ -265,6 +346,51 @@ function seedReviewArtifacts(repoRoot: string, options: {
         }
     };
     writeJson(receiptPath, receipt);
+
+    const groupedPolicy = isGroupedFollowUpPolicy(preflightPath);
+    if (groupedPolicy && reviewContextSha256 && options.includeGroupedAttestation !== false) {
+        const reviewerIdentity = `agent:${reviewType}-reviewer`;
+        seedCompletedReviewerLaunchAndInvocation(repoRoot, TASK_ID, reviewType, reviewerIdentity);
+        const taskEventsPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `${TASK_ID}.jsonl`
+        );
+        const invocationEvent = fs.readFileSync(taskEventsPath, 'utf8')
+            .split(/\r?\n/u)
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as Record<string, unknown>)
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        assert.ok(invocationEvent);
+        const invocationIntegrity = invocationEvent.integrity as Record<string, unknown>;
+        const invocationDetails = invocationEvent.details as Record<string, unknown>;
+        const reviewContext = readJson(reviewContextPath);
+        const treeState = reviewContext.tree_state as Record<string, unknown>;
+        Object.assign(receipt, {
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: reviewerIdentity,
+            review_tree_state_sha256: treeState.tree_state_sha256,
+            reviewer_provenance: {
+                schema_version: 1,
+                attestation_type: 'reviewer_invocation_attestation',
+                controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                task_sequence: invocationIntegrity.task_sequence,
+                prev_event_sha256: invocationIntegrity.prev_event_sha256,
+                event_sha256: invocationIntegrity.event_sha256,
+                task_id: TASK_ID,
+                review_type: reviewType,
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: reviewerIdentity,
+                review_context_sha256: fileSha256(reviewContextPath),
+                review_tree_state_sha256: treeState.tree_state_sha256,
+                routing_event_sha256: invocationDetails.routing_event_sha256
+            }
+        });
+        writeJson(receiptPath, receipt);
+    }
 
     return {
         reviewArtifactPath,
@@ -279,12 +405,58 @@ function seedReviewArtifacts(repoRoot: string, options: {
     };
 }
 
+function isGroupedFollowUpPolicy(preflightPath: string): boolean {
+    if (!fs.existsSync(preflightPath)) {
+        return false;
+    }
+    const preflight = readJson(preflightPath);
+    const snapshot = preflight.profile_policy_snapshot as Record<string, unknown> | undefined;
+    const policy = snapshot?.review_follow_up_policy as Record<string, unknown> | undefined;
+    return policy?.materialization_mode === 'grouped_by_parent';
+}
+
 function taskRows(repoRoot: string) {
     return parseCanonicalActiveTaskQueue(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8')).rows;
 }
 
 function rowFor(repoRoot: string, taskId: string) {
     return taskRows(repoRoot).find((row) => row.taskId === taskId) || null;
+}
+
+function seedGroupedPreflight(
+    repoRoot: string,
+    compileTimestamp = '2026-07-17T12:30:00.000Z',
+    artifactTimestamp = compileTimestamp
+): void {
+    const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+    writeJson(
+        preflightPath,
+        {
+            task_id: TASK_ID,
+            profile_policy_snapshot: {
+                schema_version: 1,
+                lock_timestamp_utc: '2026-07-17T12:00:00.000Z',
+                snapshot_hash: 'a'.repeat(64),
+                review_follow_up_policy: {
+                    schema_version: 1,
+                    materialization_mode: 'grouped_by_parent'
+                }
+            }
+        }
+    );
+    writeJson(path.join(reviewsRoot, `${TASK_ID}-compile-gate.json`), {
+        task_id: TASK_ID,
+        status: 'PASSED',
+        timestamp_utc: artifactTimestamp,
+        preflight_path: normalizeForArtifact(preflightPath),
+        preflight_hash_sha256: fileSha256(preflightPath)
+    });
+    fs.mkdirSync(
+        path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events'),
+        { recursive: true }
+    );
+    appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_PASSED', 'PASS', {}, compileTimestamp);
 }
 
 describe('review findings follow-up task materialization', () => {
@@ -310,6 +482,7 @@ describe('review findings follow-up task materialization', () => {
         const childRow = rowFor(repoRoot, `${TASK_ID}-F1`);
         assert.ok(childRow);
         assert.equal(childRow.status, 'TODO');
+        assert.equal(childRow.priority, 'P2');
         assert.equal(rowFor(repoRoot, TASK_ID)?.status, 'IN_PROGRESS');
         assert.match(childRow.notes, /validation_sha256=/u);
         assert.match(childRow.notes, /validation_result_sha256=/u);
@@ -338,6 +511,371 @@ describe('review findings follow-up task materialization', () => {
         assert.deepEqual(rerun.created_task_ids, []);
         assert.deepEqual(rerun.reused_task_ids, [`${TASK_ID}-F1`]);
         assert.equal(taskRows(repoRoot).filter((row) => row.taskId.startsWith(`${TASK_ID}-F`)).length, 1);
+    });
+
+    it('groups deferred items into one snapshot-bound pending child and reruns idempotently', () => {
+        const repoRoot = makeRepo();
+        seedGroupedPreflight(repoRoot);
+        const artifacts = seedReviewArtifacts(repoRoot);
+
+        const materialized = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        assert.deepEqual(materialized.created_task_ids, [`${TASK_ID}-F1`]);
+        const childRow = rowFor(repoRoot, `${TASK_ID}-F1`);
+        assert.ok(childRow);
+        assert.equal(childRow.status, 'TODO');
+        assert.match(childRow.notes, /review_follow_up_group_fingerprint=[0-9a-f]{64}/u);
+        assert.match(childRow.notes, /review_follow_up_snapshot_sha256=a{64}/u);
+        assert.match(childRow.notes, /review_follow_up_lane_binding=code:1:[0-9a-f]{64}:[0-9a-f]{64}\./u);
+        assert.ok(childRow.notes.includes(
+            `review_follow_up_lane_artifact=code:\`${normalizeForArtifact(path.relative(repoRoot, materialized.artifact_path))}\`.`
+        ));
+
+        const artifact = readJson(materialized.artifact_path);
+        assert.equal((artifact.materialization_policy as Record<string, unknown>).mode, 'grouped_by_parent');
+        assert.equal((artifact.summary as Record<string, unknown>).created_task_count, 1);
+
+        const dispositionArtifact = readJson(artifacts.dispositionArtifactPath);
+        const matchesCurrentQueue = () => followUpArtifactMatchesCurrentTaskQueue({
+            artifact: readJson(materialized.artifact_path),
+            dispositionArtifact,
+            dispositionArtifactSha256: artifacts.dispositionArtifactSha256,
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            expectedFollowUpCount: 1,
+            materializationMode: 'grouped_by_parent',
+            followUpArtifactPath: materialized.artifact_path
+        });
+        assert.equal(matchesCurrentQueue(), true);
+
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const currentTaskText = fs.readFileSync(taskPath, 'utf8');
+        fs.writeFileSync(
+            taskPath,
+            currentTaskText.replace(
+                /review_follow_up_group_fingerprint=[0-9a-f]{64}/u,
+                `review_follow_up_group_fingerprint=${'0'.repeat(64)}`
+            ),
+            'utf8'
+        );
+        assert.equal(matchesCurrentQueue(), false);
+        fs.writeFileSync(taskPath, currentTaskText, 'utf8');
+
+        const rerun = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+        assert.equal(rerun.status, 'ALREADY_MATERIALIZED', rerun.output_lines.join('\n'));
+        assert.deepEqual(rerun.reused_task_ids, [`${TASK_ID}-F1`]);
+        assert.equal(taskRows(repoRoot).filter((row) => row.taskId.startsWith(`${TASK_ID}-F`)).length, 1);
+
+        const testArtifacts = seedReviewArtifacts(repoRoot, {
+            reviewType: 'test',
+            title: 'Deferred high-severity test-lane risk',
+            followUpSeverity: 'high'
+        });
+        const secondLane = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'test',
+            dispositionArtifactPath: testArtifacts.dispositionArtifactPath
+        });
+        assert.equal(secondLane.status, 'ALREADY_MATERIALIZED', secondLane.output_lines.join('\n'));
+        assert.deepEqual(secondLane.reused_task_ids, [`${TASK_ID}-F1`]);
+        const updatedChild = rowFor(repoRoot, `${TASK_ID}-F1`);
+        assert.ok(updatedChild);
+        assert.equal(updatedChild.priority, 'P1');
+        assert.match(updatedChild.notes, /review_follow_up_lane_binding=code:1:[0-9a-f]{64}:[0-9a-f]{64}\./u);
+        assert.match(updatedChild.notes, /review_follow_up_lane_binding=test:1:[0-9a-f]{64}:[0-9a-f]{64}\./u);
+        assert.equal((updatedChild.notes.match(/review_follow_up_lane_binding=/gu) || []).length, 2);
+        assert.ok(updatedChild.notes.includes(
+            `review_follow_up_lane_artifact=code:\`${normalizeForArtifact(path.relative(repoRoot, materialized.artifact_path))}\`.`
+        ));
+        assert.ok(updatedChild.notes.includes(
+            `review_follow_up_lane_artifact=test:\`${normalizeForArtifact(path.relative(repoRoot, secondLane.artifact_path))}\`.`
+        ));
+        assert.equal((updatedChild.notes.match(/review_follow_up_lane_artifact=/gu) || []).length, 2);
+        assert.equal(taskRows(repoRoot).filter((row) => row.taskId.startsWith(`${TASK_ID}-F`)).length, 1);
+
+        seedGroupedPreflight(repoRoot, '2026-07-17T13:30:00.000Z');
+        const staleCycle = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+        assert.equal(staleCycle.status, 'BLOCKED');
+        assert.ok(
+            staleCycle.violations.some((violation) => violation.includes('compile gate timestamp mismatch')),
+            staleCycle.violations.join('\n')
+        );
+        const nextCycleArtifacts = seedReviewArtifacts(repoRoot);
+        const nextCycle = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: nextCycleArtifacts.dispositionArtifactPath
+        });
+        assert.equal(nextCycle.status, 'MATERIALIZED', nextCycle.output_lines.join('\n'));
+        assert.deepEqual(nextCycle.created_task_ids, [`${TASK_ID}-F2`]);
+        assert.equal(taskRows(repoRoot).filter((row) => row.taskId.startsWith(`${TASK_ID}-F`)).length, 2);
+    });
+
+    it('keeps TASK notes bounded while preserving all grouped item evidence in the artifact', () => {
+        const repoRoot = makeRepo();
+        seedGroupedPreflight(repoRoot);
+        const artifacts = seedReviewArtifacts(repoRoot);
+        const itemCount = 30;
+        const itemIds = Array.from({ length: itemCount }, (_, index) => `F-${String(index + 1).padStart(3, '0')}`);
+        const validation = readJson(artifacts.validationArtifactPath);
+        const validationResult = validation.validation_result as Record<string, unknown>;
+        const inventory = validationResult.normalized_inventory as Record<string, unknown>;
+        const findingsBySeverity = inventory.findings_by_severity as Record<string, unknown>;
+        findingsBySeverity.medium = itemIds.map((id, index) => ({
+            id,
+            severity: 'medium',
+            title: `Grouped deferred finding ${index + 1}`,
+            description: `Grouped deferred finding ${index + 1} must retain its source metadata.`,
+            evidence_locations: [`src/gates/review/grouped-evidence-${index + 1}.ts:10`],
+            coverage_obligation_ids: [`C-${String(index + 1).padStart(3, '0')}`]
+        }));
+        inventory.finding_count = itemCount;
+        validationResult.evidence_diagnostics = {
+            validation_note_evidence_locations: [],
+            coverage_evidence_locations: [],
+            finding_evidence_locations: itemIds.map((_, index) => `src/gates/review/grouped-evidence-${index + 1}.ts:10`),
+            residual_risk_evidence_locations: [],
+            total_evidence_locations: itemCount
+        };
+        validation.validation_result_sha256 = sha256JsonPayload(validation.validation_result);
+        writeJson(artifacts.validationArtifactPath, validation);
+        const validationArtifactSha256 = fileSha256(artifacts.validationArtifactPath);
+
+        const disposition = readJson(artifacts.dispositionArtifactPath);
+        const sourceValidation = disposition.source_validation as Record<string, unknown>;
+        sourceValidation.artifact_sha256 = validationArtifactSha256;
+        sourceValidation.validation_result_sha256 = validation.validation_result_sha256;
+        disposition.disposition_result = {
+            findings: {
+                critical: { action: 'fix_now', ids: [] },
+                high: { action: 'fix_now', ids: [] },
+                medium: { action: 'create_follow_up', ids: itemIds },
+                low: { action: 'ignore', ids: [] }
+            },
+            residual_risks: { action: 'ignore', ids: [] },
+            counts_by_action: { fix_now: 0, create_follow_up: itemCount, ignore: 0 },
+            blocking_count: 0,
+            verdict: 'follow_up_required'
+        };
+        disposition.disposition_result_sha256 = sha256JsonPayload(disposition.disposition_result);
+        disposition.items = itemIds.map((id) => ({
+            id,
+            kind: 'finding',
+            severity: 'medium',
+            action: 'create_follow_up',
+            source_rule: 'review_finding_policy.findings.medium',
+            policy_source: 'preflight_profile_policy_snapshot',
+            blocking: false,
+            materialization_status: 'pending_follow_up_materialization',
+            audit_status: 'retained_in_disposition_artifact'
+        }));
+        disposition.summary = {
+            item_count: itemCount,
+            fix_now_count: 0,
+            follow_up_pending_count: itemCount,
+            ignored_count: 0,
+            blocking_count: 0,
+            non_blocking_count: itemCount
+        };
+        writeJson(artifacts.dispositionArtifactPath, disposition);
+        const dispositionArtifactSha256 = fileSha256(artifacts.dispositionArtifactPath);
+
+        const receipt = readJson(artifacts.receiptPath);
+        const receiptValidation = receipt.review_findings_validation as Record<string, unknown>;
+        receiptValidation.artifact_sha256 = validationArtifactSha256;
+        receiptValidation.validation_result_sha256 = validation.validation_result_sha256;
+        const receiptDisposition = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+        receiptDisposition.artifact_sha256 = dispositionArtifactSha256;
+        receiptDisposition.disposition_result_sha256 = disposition.disposition_result_sha256;
+        receiptDisposition.follow_up_pending_count = itemCount;
+        const receiptContract = receipt.review_output_contract as Record<string, unknown>;
+        receiptContract.validation_artifact_sha256 = validationArtifactSha256;
+        receiptContract.validation_result_sha256 = validation.validation_result_sha256;
+        receiptContract.disposition_artifact_sha256 = dispositionArtifactSha256;
+        receiptContract.disposition_result_sha256 = disposition.disposition_result_sha256;
+        writeJson(artifacts.receiptPath, receipt);
+
+        const materialized = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        const childRow = rowFor(repoRoot, `${TASK_ID}-F1`);
+        assert.ok(childRow);
+        assert.ok(childRow.notes.length < 1000, childRow.notes);
+        assert.match(childRow.notes, /review_follow_up_lane_binding=code:30:[0-9a-f]{64}:[0-9a-f]{64}\./u);
+        assert.match(childRow.notes, /review_follow_up_lane_artifact=code:`[^`]+`\./u);
+        assert.doesNotMatch(childRow.notes, /Grouped deferred finding 30/u);
+        assert.doesNotMatch(childRow.notes, /grouped-evidence-30/u);
+
+        const followUpArtifact = readJson(materialized.artifact_path);
+        const materializedItems = followUpArtifact.items as Array<Record<string, unknown>>;
+        assert.equal(materializedItems.length, itemCount);
+        assert.equal(materializedItems[29].source_item_id, 'F-030');
+        assert.deepEqual(materializedItems[29].evidence_locations, ['src/gates/review/grouped-evidence-30.ts:10']);
+        assert.equal((followUpArtifact.source_validation as Record<string, unknown>).artifact_sha256, validationArtifactSha256);
+        assert.equal((followUpArtifact.source_disposition as Record<string, unknown>).artifact_sha256, dispositionArtifactSha256);
+        assert.equal((followUpArtifact.source_receipt as Record<string, unknown>).receipt_sha256, fileSha256(artifacts.receiptPath));
+    });
+
+    it('uses the canonical compile timeline timestamp when the artifact timestamp differs', () => {
+        const repoRoot = makeRepo();
+        const timelineTimestamp = '2026-07-17T12:30:00.000Z';
+        seedGroupedPreflight(repoRoot, timelineTimestamp, '2026-07-17T12:30:00.999Z');
+        const artifacts = seedReviewArtifacts(repoRoot);
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(result.status, 'MATERIALIZED', result.violations.join('\n'));
+        const artifact = readJson(result.artifact_path);
+        assert.equal(
+            (artifact.materialization_policy as Record<string, unknown>).compile_gate_timestamp,
+            timelineTimestamp
+        );
+    });
+
+    it('blocks explicit grouped mode when its current compile-cycle binding is missing', () => {
+        const repoRoot = makeRepo();
+        seedGroupedPreflight(repoRoot);
+        const artifacts = seedReviewArtifacts(repoRoot);
+        fs.rmSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${TASK_ID}-compile-gate.json`),
+            { force: true }
+        );
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.ok(
+            result.violations.some((violation) => violation.includes('current materialization cycle is incomplete')),
+            result.violations.join('\n')
+        );
+        assert.equal(taskRows(repoRoot).some((row) => row.taskId === `${TASK_ID}-F1`), false);
+        const artifact = readJson(result.artifact_path);
+        assert.equal((artifact.materialization_policy as Record<string, unknown>).mode, 'grouped_by_parent');
+    });
+
+    it('blocks grouped materialization until every current required review lane is complete', () => {
+        const repoRoot = makeRepo();
+        seedGroupedPreflight(repoRoot);
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const preflight = readJson(preflightPath);
+        preflight.required_reviews = { code: true, test: true };
+        writeJson(preflightPath, preflight);
+        const compileGatePath = path.join(reviewsRoot, `${TASK_ID}-compile-gate.json`);
+        const compileGate = readJson(compileGatePath);
+        compileGate.preflight_hash_sha256 = fileSha256(preflightPath);
+        writeJson(compileGatePath, compileGate);
+        const artifacts = seedReviewArtifacts(repoRoot);
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.ok(
+            result.violations.some((violation) => violation.includes("required review lane 'test' is not complete")),
+            result.violations.join('\n')
+        );
+        assert.equal(taskRows(repoRoot).some((row) => row.taskId === `${TASK_ID}-F1`), false);
+    });
+
+    it('blocks direct grouped materialization when ready review artifacts lack independent attestation', () => {
+        const repoRoot = makeRepo();
+        seedGroupedPreflight(repoRoot);
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const preflight = readJson(preflightPath);
+        preflight.required_reviews = { code: true };
+        writeJson(preflightPath, preflight);
+        const compileGatePath = path.join(reviewsRoot, `${TASK_ID}-compile-gate.json`);
+        const compileGate = readJson(compileGatePath);
+        compileGate.preflight_hash_sha256 = fileSha256(preflightPath);
+        writeJson(compileGatePath, compileGate);
+        const artifacts = seedReviewArtifacts(repoRoot, { includeGroupedAttestation: false });
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.ok(
+            result.violations.some((violation) => (
+                violation.includes("required review lane 'code'")
+                && violation.includes('independently attested evidence')
+            )),
+            result.violations.join('\n')
+        );
+        assert.equal(taskRows(repoRoot).some((row) => row.taskId === `${TASK_ID}-F1`), false);
+    });
+
+    it('blocks grouped materialization for a lane outside current required_reviews', () => {
+        const repoRoot = makeRepo();
+        seedGroupedPreflight(repoRoot);
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const preflight = readJson(preflightPath);
+        preflight.required_reviews = { code: true };
+        writeJson(preflightPath, preflight);
+        const compileGatePath = path.join(reviewsRoot, `${TASK_ID}-compile-gate.json`);
+        const compileGate = readJson(compileGatePath);
+        compileGate.preflight_hash_sha256 = fileSha256(preflightPath);
+        writeJson(compileGatePath, compileGate);
+        seedReviewArtifacts(repoRoot);
+        const testArtifacts = seedReviewArtifacts(repoRoot, { reviewType: 'test' });
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'test',
+            dispositionArtifactPath: testArtifacts.dispositionArtifactPath
+        });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.ok(
+            result.violations.some((violation) => violation.includes("lane 'test' is not configured in current required_reviews")),
+            result.violations.join('\n')
+        );
+        assert.equal(taskRows(repoRoot).some((row) => row.taskId === `${TASK_ID}-F1`), false);
     });
 
     it('preserves fix_now disposition items as blocked without creating follow-up tasks', () => {
@@ -411,6 +949,34 @@ describe('review findings follow-up task materialization', () => {
         assert.equal(summary.follow_up_obligation_count, 0);
         assert.equal(summary.blocked_task_count, 1);
         assert.equal(summary.not_required_count, 0);
+    });
+
+    it('blocks mixed fix_now and follow-up dispositions before mutating TASK.md', () => {
+        const repoRoot = makeRepo();
+        const artifacts = seedReviewArtifacts(repoRoot, { includeFixNowFinding: true });
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const taskBefore = fs.readFileSync(taskPath, 'utf8');
+
+        const result = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+
+        assert.equal(result.status, 'BLOCKED', result.output_lines.join('\n'));
+        assert.deepEqual(result.created_task_ids, []);
+        assert.deepEqual(result.reused_task_ids, []);
+        assert.equal(fs.readFileSync(taskPath, 'utf8'), taskBefore);
+        assert.equal(taskRows(repoRoot).some((row) => row.taskId === `${TASK_ID}-F1`), false);
+        const artifact = readJson(result.artifact_path);
+        const artifactItems = artifact.items as Array<Record<string, unknown>>;
+        const followUpItem = artifactItems.find((item) => item.source_item_id === 'F-001');
+        const fixNowItem = artifactItems.find((item) => item.source_item_id === 'F-002');
+        assert.equal(followUpItem?.materialization_status, 'blocked');
+        assert.equal(followUpItem?.task_id, null);
+        assert.equal(fixNowItem?.materialization_status, 'requires_fix_now');
+        assert.equal(fixNowItem?.task_id, null);
     });
 
     it('records ignore-only disposition items as not required without creating follow-up tasks', () => {

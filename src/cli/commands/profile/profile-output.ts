@@ -60,6 +60,7 @@ export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string
         lines.push(`Depth: ${entry.depth}`);
         lines.push(`ReviewPolicy: ${formatReviewPolicy(entry.review_policy)}`);
         lines.push(`ReviewFindingPolicy: ${formatReviewFindingPolicy(entry.review_finding_policy)}`);
+        lines.push(`ReviewFollowUpPolicy: ${formatReviewFollowUpPolicy(entry.review_follow_up_policy)}`);
         lines.push(`TokenEconomy: ${formatTokenEconomy(entry.token_economy)}`);
         lines.push(`Skills: ${formatSkills(entry.skills)}`);
         lines.push('Why: Active profile settings are used by default.');
@@ -152,6 +153,10 @@ function formatReviewFindingPolicy(policy: ProfileEntry['review_finding_policy']
         `low=${policy.findings.low}`,
         `residual_risk=${policy.residual_risk}`
     ].join(', ');
+}
+
+function formatReviewFollowUpPolicy(policy: ProfileEntry['review_follow_up_policy']): string {
+    return policy ? `materialization_mode=${policy.materialization_mode}` : 'legacy_missing=per_finding';
 }
 
 function formatTokenEconomy(economy: Record<string, boolean>): string {

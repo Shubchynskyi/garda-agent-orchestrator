@@ -27,6 +27,10 @@
         },
         "residual_risk": "create_follow_up"
       },
+      "review_follow_up_policy": {
+        "schema_version": 1,
+        "materialization_mode": "grouped_by_parent"
+      },
       "token_economy": {
         "enabled": true,
         "strip_examples": true,
@@ -62,6 +66,10 @@
           "low": "ignore"
         },
         "residual_risk": "ignore"
+      },
+      "review_follow_up_policy": {
+        "schema_version": 1,
+        "materialization_mode": "per_finding"
       },
       "token_economy": {
         "enabled": true,
@@ -99,6 +107,10 @@
         },
         "residual_risk": "fix_now"
       },
+      "review_follow_up_policy": {
+        "schema_version": 1,
+        "materialization_mode": "per_finding"
+      },
       "token_economy": {
         "enabled": true,
         "strip_examples": false,
@@ -134,6 +146,10 @@
           "low": "ignore"
         },
         "residual_risk": "ignore"
+      },
+      "review_follow_up_policy": {
+        "schema_version": 1,
+        "materialization_mode": "per_finding"
       },
       "token_economy": {
         "enabled": true,

@@ -324,6 +324,10 @@ function writePreflight(
             };
             residual_risk: 'fix_now' | 'create_follow_up' | 'ignore';
         };
+        reviewFollowUpPolicy?: {
+            schema_version: 1;
+            materialization_mode: 'per_finding' | 'grouped_by_parent';
+        };
         changedFiles?: string[];
         includeDomainScopeFingerprints?: boolean;
     } = {}
@@ -354,10 +358,15 @@ function writePreflight(
         },
         required_reviews: requiredReviews,
         changed_files: changedFiles,
-        ...(options.reviewFindingPolicy
+        ...(options.reviewFindingPolicy || options.reviewFollowUpPolicy
             ? {
                 profile_policy_snapshot: {
-                    review_finding_policy: options.reviewFindingPolicy
+                    ...(options.reviewFindingPolicy
+                        ? { review_finding_policy: options.reviewFindingPolicy }
+                        : {}),
+                    ...(options.reviewFollowUpPolicy
+                        ? { review_follow_up_policy: options.reviewFollowUpPolicy }
+                        : {})
                 }
             }
             : {}),
@@ -1369,6 +1378,51 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
     });
 
+    it('defers grouped follow-up materialization until every required review lane is satisfied', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
+            reviewFindingPolicy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            },
+            reviewFollowUpPolicy: {
+                schema_version: 1,
+                materialization_mode: 'grouped_by_parent'
+            }
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const beforeFinalLane = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(beforeFinalLane.next_gate, 'materialize-review-follow-up-tasks');
+        assert.equal(
+            beforeFinalLane.next_gate,
+            'build-review-context',
+            `${beforeFinalLane.next_gate}: ${beforeFinalLane.title} :: ${beforeFinalLane.reason}`
+        );
+        assert.equal(beforeFinalLane.review.next_review_type, 'security');
+
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        const afterFinalLane = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(afterFinalLane.status, 'BLOCKED');
+        assert.equal(
+            afterFinalLane.next_gate,
+            'materialize-review-follow-up-tasks',
+            `${afterFinalLane.next_gate}: ${afterFinalLane.title} :: ${afterFinalLane.reason}`
+        );
+        assert.match(afterFinalLane.reason, /All currently required review lanes are complete/);
+    });
+
     it('continues to downstream reviews after valid materialized follow-up tasks satisfy accepted dispositions', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -2104,6 +2158,7 @@ describe('gates/next-step', () => {
         const focusedFinding = `[garda:evidence-only:missing-focused-validation] test=${requiredTestPath}; action=run-and-record-focused-test`;
         seedStartedTask(repoRoot, TASK_ID);
         seedRunnableFocusedIntermediateCommand(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'focused-remediation.ts'), 'export const focusedRemediation = true;\n', 'utf8');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['src/focused-remediation.ts']
         });
@@ -2423,6 +2478,9 @@ describe('gates/next-step', () => {
     it('fails closed when a focused-evidence marker contains an additional implementation defect', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
+        const focusedTestPath = path.join(repoRoot, 'tests', 'node', 'gates', 'focused-evidence.test.ts');
+        fs.mkdirSync(path.dirname(focusedTestPath), { recursive: true });
+        fs.writeFileSync(focusedTestPath, 'export {};\n', 'utf8');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['tests/node/gates/focused-evidence.test.ts']
         });

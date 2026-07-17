@@ -229,10 +229,23 @@ Profiles can define how findings reported by delegated reviewers are handled ind
 Built-in presets:
 
 - `soft`: critical findings are fixed now; high findings create follow-up work; medium, low, and residual-risk entries are ignored.
-- `balanced`: critical and high findings are fixed now; medium, low, and residual-risk entries create follow-up work.
+- `balanced`: critical, high, and medium findings are fixed now; low and residual-risk entries create follow-up work.
 - `strict`: every finding severity and residual-risk entry is fixed now.
 
 For backward compatibility, legacy profiles without `review_finding_policy` remain loadable. At runtime they resolve fail-closed to the `strict` preset and emit diagnostics so the missing field is visible in profile output and task evidence.
+
+Profiles also control how non-blocking `create_follow_up` items become backlog work:
+
+```json
+{
+  "review_follow_up_policy": {
+    "schema_version": 1,
+    "materialization_mode": "grouped_by_parent"
+  }
+}
+```
+
+`per_finding` preserves the legacy one-child-per-item behavior. `grouped_by_parent` waits until all required review lanes finish, then creates one snapshot- and cycle-bound pending child and appends each validated deferred item with its source lane, severity, evidence, receipt, validation, disposition, and deterministic fingerprints. It never groups `fix_now` work and refuses to mutate a child that is no longer `TODO`. Legacy profiles and snapshots default compatibly to `per_finding`; changing a profile affects future task snapshots only.
 
 ## Skill Packs
 

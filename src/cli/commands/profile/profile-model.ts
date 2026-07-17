@@ -2,6 +2,8 @@ import { getAllProfileNames, getProfileEntry } from './profile-data';
 import { ProfileEntry, ProfilesData } from './profile-types';
 import {
     resolveReviewFindingPolicy,
+    resolveReviewFollowUpPolicy,
+    DEFAULT_REVIEW_FOLLOW_UP_POLICY,
     REVIEW_FINDING_POLICY_PRESETS
 } from '../../../policy/profile-resolver';
 
@@ -60,6 +62,10 @@ export function validateProfilesIntegrity(data: ProfilesData): string[] {
         if (hasBlockingDiagnostic) {
             issues.push(...findingPolicyResolution.diagnostics);
         }
+        const followUpResolution = resolveReviewFollowUpPolicy(entry.review_follow_up_policy, name);
+        if (followUpResolution.diagnostics.some((diagnostic) => /invalid|malformed/u.test(diagnostic))) {
+            issues.push(...followUpResolution.diagnostics);
+        }
     }
     return issues;
 }
@@ -108,6 +114,10 @@ export function buildDefaultProfileEntry(description: string, depth: number): Pr
             ...REVIEW_FINDING_POLICY_PRESETS.balanced,
             findings: { ...REVIEW_FINDING_POLICY_PRESETS.balanced.findings }
         },
+        review_follow_up_policy: {
+            ...DEFAULT_REVIEW_FOLLOW_UP_POLICY,
+            materialization_mode: 'grouped_by_parent'
+        },
         token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
         skills: { auto_suggest: true }
     };
@@ -136,6 +146,9 @@ export function buildPromptReadyProfileEntry(entry: ProfileEntry): ProfileEntry 
             ...entry.review_finding_policy,
             findings: { ...entry.review_finding_policy.findings }
         };
+    }
+    if (entry.review_follow_up_policy) {
+        prepared.review_follow_up_policy = { ...entry.review_follow_up_policy };
     }
     return prepared;
 }

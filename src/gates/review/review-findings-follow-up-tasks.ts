@@ -28,6 +28,9 @@ import {
     joinOrchestratorPath,
     normalizePath
 } from '../shared/helpers';
+import { readReviewArtifactState } from '../next-step/next-step-review-artifact-readers';
+import { reviewStateHasSatisfiedEvidence } from '../next-step/next-step-review-evidence';
+import { readCurrentCompileGateEvidence } from '../review-context/review-context-validation-evidence';
 import {
     REVIEW_FINDINGS_DISPOSITION_ARTIFACT_SCHEMA_VERSION,
     REVIEW_FINDINGS_DISPOSITION_ARTIFACT_TYPE,
@@ -40,6 +43,7 @@ import {
     type NormalizedReviewResidualRiskInventoryEntry,
     type ReviewFindingsValidationArtifact
 } from './review-findings-validation-artifact';
+import type { ReviewFollowUpMaterializationMode } from '../../policy/profile-resolver';
 export const REVIEW_FINDINGS_FOLLOW_UP_TASKS_ARTIFACT_TYPE = 'review_findings_follow_up_tasks';
 export const REVIEW_FINDINGS_FOLLOW_UP_TASKS_ARTIFACT_SCHEMA_VERSION = 1;
 
@@ -87,6 +91,16 @@ interface FollowUpObligation {
     fingerprint: string;
 }
 
+export interface FollowUpMaterializationContext {
+    mode: ReviewFollowUpMaterializationMode;
+    snapshot_hash: string | null;
+    cycle_id: string | null;
+    preflight_sha256: string | null;
+    compile_gate_timestamp: string | null;
+    group_fingerprint: string | null;
+    diagnostics: string[];
+}
+
 interface MaterializedTaskReference {
     task_id: string;
     fingerprint: string;
@@ -132,6 +146,7 @@ export interface ReviewFindingsFollowUpTasksArtifact {
     review_type: string;
     status: ReviewFollowUpMaterializationStatus;
     created_at_utc: string;
+    materialization_policy: FollowUpMaterializationContext;
     source_disposition: {
         artifact_path: string;
         artifact_sha256: string | null;
@@ -194,6 +209,91 @@ function sha256JsonPayload(value: unknown): string {
 function normalizeHash(value: unknown): string | null {
     const normalized = String(value || '').trim().toLowerCase();
     return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
+function resolveFollowUpMaterializationContext(
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string
+): FollowUpMaterializationContext {
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    const fallback: FollowUpMaterializationContext = {
+        mode: 'per_finding',
+        snapshot_hash: null,
+        cycle_id: null,
+        preflight_sha256: null,
+        compile_gate_timestamp: null,
+        group_fingerprint: null,
+        diagnostics: ['Legacy or missing profile snapshot review_follow_up_policy defaulted to per_finding.']
+    };
+    const read = readJsonFile(preflightPath, 'Preflight artifact');
+    const snapshot = read.value && isPlainRecord(read.value.profile_policy_snapshot)
+        ? read.value.profile_policy_snapshot
+        : null;
+    const policy = snapshot && isPlainRecord(snapshot.review_follow_up_policy)
+        ? snapshot.review_follow_up_policy
+        : null;
+    const mode = policy?.schema_version === 1
+        && (policy.materialization_mode === 'per_finding' || policy.materialization_mode === 'grouped_by_parent')
+        ? policy.materialization_mode
+        : null;
+    if (!mode) {
+        return fallback;
+    }
+    const snapshotHash = normalizeHash(snapshot?.snapshot_hash);
+    const compileGatePath = path.join(reviewsRoot, `${taskId}-compile-gate.json`);
+    const compileRead = readJsonFile(compileGatePath, 'Compile gate artifact');
+    const compileGate = compileRead.value && isPlainRecord(compileRead.value)
+        ? compileRead.value
+        : null;
+    const compileGateEvidence = readCurrentCompileGateEvidence(repoRoot, taskId);
+    const canonicalCompileTimestamp = compileGateEvidence.timeline_timestamp_utc
+        || compileGateEvidence.artifact_timestamp_utc;
+    const compileTimestamp = compileGate?.status === 'PASSED'
+        && normalizeText(compileGate.task_id) === taskId
+        ? normalizeText(canonicalCompileTimestamp)
+        : '';
+    const compilePreflightSha256 = normalizeHash(compileGate?.preflight_hash_sha256);
+    const currentPreflightSha256 = fs.existsSync(preflightPath) ? fileSha256(preflightPath) : null;
+    const cycleId = compileTimestamp
+        && compilePreflightSha256
+        && compilePreflightSha256 === currentPreflightSha256
+        ? sha256JsonPayload({
+            schema_version: 1,
+            preflight_sha256: compilePreflightSha256,
+            compile_gate_timestamp: compileTimestamp
+        })
+        : null;
+    if (mode === 'grouped_by_parent' && (!snapshotHash || !cycleId)) {
+        return {
+            mode,
+            snapshot_hash: snapshotHash,
+            cycle_id: null,
+            preflight_sha256: compilePreflightSha256,
+            compile_gate_timestamp: compileTimestamp || null,
+            group_fingerprint: null,
+            diagnostics: [
+                'Grouped follow-up policy requires snapshot_hash and a current preflight-bound compile cycle; materialization is blocked.'
+            ]
+        };
+    }
+    return {
+        mode,
+        snapshot_hash: snapshotHash,
+        cycle_id: cycleId,
+        preflight_sha256: compilePreflightSha256,
+        compile_gate_timestamp: compileTimestamp || null,
+        group_fingerprint: mode === 'grouped_by_parent'
+            ? sha256JsonPayload({
+                schema_version: 1,
+                parent_task_id: taskId,
+                snapshot_hash: snapshotHash,
+                cycle_id: cycleId,
+                materialization_mode: mode
+            })
+            : null,
+        diagnostics: []
+    };
 }
 
 function normalizeText(value: unknown): string {
@@ -970,6 +1070,110 @@ function buildTaskNotes(params: {
     ].join(' '), 'Review follow-up task.', 1200);
 }
 
+function extractGroupedFingerprint(notes: string): string | null {
+    return normalizeHash(String(notes || '').match(/review_follow_up_group_fingerprint=([0-9a-f]{64})/iu)?.[1] || null);
+}
+
+interface GroupedLaneBinding {
+    reviewType: string;
+    itemCount: number;
+    itemFingerprintsSha256: string;
+    sourceBindingSha256: string;
+    artifactPath: string | null;
+}
+
+function buildGroupedSourceBindingSha256(params: {
+    reviewType: string;
+    validationArtifactSha256: string;
+    validationResultSha256: string;
+    dispositionArtifactSha256: string;
+    dispositionResultSha256: string;
+    receiptSha256: string;
+}): string {
+    return sha256JsonPayload({
+        schema_version: 1,
+        review_type: params.reviewType,
+        validation_artifact_sha256: params.validationArtifactSha256,
+        validation_result_sha256: params.validationResultSha256,
+        receipt_sha256: params.receiptSha256,
+        disposition_artifact_sha256: params.dispositionArtifactSha256,
+        disposition_result_sha256: params.dispositionResultSha256
+    });
+}
+
+function extractGroupedLaneBindings(notes: string): Map<string, GroupedLaneBinding> {
+    const bindings = new Map<string, GroupedLaneBinding>();
+    const artifactPaths = new Map<string, string>();
+    const artifactMatcher = /review_follow_up_lane_artifact=([a-z0-9_-]+):`([^`\r\n]+)`\./giu;
+    for (const match of String(notes || '').matchAll(artifactMatcher)) {
+        artifactPaths.set(match[1].toLowerCase(), normalizePath(match[2]));
+    }
+    const matcher = /review_follow_up_lane_binding=([a-z0-9_-]+):([0-9]+):([0-9a-f]{64}):([0-9a-f]{64})\./giu;
+    for (const match of String(notes || '').matchAll(matcher)) {
+        const itemCount = Number.parseInt(match[2], 10);
+        const itemFingerprintsSha256 = normalizeHash(match[3]);
+        const sourceBindingSha256 = normalizeHash(match[4]);
+        if (Number.isSafeInteger(itemCount) && itemCount >= 0 && itemFingerprintsSha256 && sourceBindingSha256) {
+            bindings.set(match[1].toLowerCase(), {
+                reviewType: match[1].toLowerCase(),
+                itemCount,
+                itemFingerprintsSha256,
+                sourceBindingSha256,
+                artifactPath: artifactPaths.get(match[1].toLowerCase()) || null
+            });
+        }
+    }
+    return bindings;
+}
+
+function buildGroupedTaskNotes(params: {
+    parentTaskId: string;
+    context: FollowUpMaterializationContext;
+    reviewType: string;
+    obligations: readonly FollowUpObligation[];
+    validationArtifactSha256: string;
+    validationResultSha256: string;
+    dispositionArtifactSha256: string;
+    dispositionResultSha256: string;
+    receiptSha256: string;
+    artifactPath: string;
+    existingNotes?: string;
+}): string {
+    const bindings = extractGroupedLaneBindings(normalizeText(params.existingNotes));
+    const reviewType = params.reviewType.toLowerCase();
+    const itemFingerprints = [...new Set(params.obligations.map((obligation) => obligation.fingerprint))].sort();
+    bindings.set(reviewType, {
+        reviewType,
+        itemCount: itemFingerprints.length,
+        itemFingerprintsSha256: sha256JsonPayload(itemFingerprints),
+        sourceBindingSha256: buildGroupedSourceBindingSha256(params),
+        artifactPath: normalizePath(params.artifactPath)
+    });
+    const base = [
+        `Child of \`${params.parentTaskId}\`.`,
+        'Grouped deferred review findings and residual risks for one task-owned review cycle.',
+        `review_follow_up_group_fingerprint=${params.context.group_fingerprint}.`,
+        `review_follow_up_snapshot_sha256=${params.context.snapshot_hash}.`,
+        `review_follow_up_cycle=${params.context.cycle_id}.`
+    ].join(' ');
+    const laneBindings = [...bindings.values()]
+        .sort((left, right) => left.reviewType.localeCompare(right.reviewType))
+        .flatMap((binding) => [
+            `review_follow_up_lane_binding=${binding.reviewType}:${binding.itemCount}:` +
+            `${binding.itemFingerprintsSha256}:${binding.sourceBindingSha256}.`,
+            ...(binding.artifactPath
+                ? [`review_follow_up_lane_artifact=${binding.reviewType}:\`${binding.artifactPath}\`.`]
+                : [])
+        ]);
+    // Full per-item evidence remains in the hash-bound follow-up artifact. TASK.md
+    // stores one fixed-size digest per review lane, so queue navigation cost is
+    // bounded by the configured lane set instead of the number of findings.
+    return sanitizeTaskCell([
+        base,
+        ...laneBindings
+    ].join(' '), 'Grouped review follow-up task.', 4096);
+}
+
 function extractExistingFingerprint(notes: string): string | null {
     return normalizeHash(String(notes || '').match(/review_follow_up_fingerprint=([0-9a-f]{64})/iu)?.[1] || null);
 }
@@ -1012,6 +1216,7 @@ function materializeTaskQueueRows(params: {
     dispositionArtifactSha256: string;
     dispositionResultSha256: string;
     receiptSha256: string;
+    materializationContext: FollowUpMaterializationContext;
 }): TaskQueueMaterializationResult {
     const taskPath = path.join(params.repoRoot, 'TASK.md');
     if (params.obligations.length === 0) {
@@ -1074,6 +1279,155 @@ function materializeTaskQueueRows(params: {
                     blocked_fingerprints: params.obligations.map((obligation) => obligation.fingerprint),
                     error_message: null,
                     rollback_content: null
+                };
+            }
+
+            if (params.materializationContext.mode === 'grouped_by_parent') {
+                const groupFingerprint = params.materializationContext.group_fingerprint;
+                if (!groupFingerprint) {
+                    return {
+                        outcome: 'write_failed',
+                        task_path: normalizePath(taskPath),
+                        created: [],
+                        reused: [],
+                        blocked_fingerprints: params.obligations.map((obligation) => obligation.fingerprint),
+                        error_message: 'Grouped materialization context is missing its deterministic group fingerprint.',
+                        rollback_content: null
+                    };
+                }
+                const groupedRow = parsed.rows.find((row) => (
+                    isParentFollowUpTaskId(params.parentTaskId, row.taskId)
+                    && extractGroupedFingerprint(row.notes) === groupFingerprint
+                ));
+                if (groupedRow) {
+                    if (!/TODO/iu.test(groupedRow.status)) {
+                        return {
+                            outcome: 'write_failed',
+                            task_path: normalizePath(taskPath),
+                            created: [],
+                            reused: [],
+                            blocked_fingerprints: params.obligations.map((obligation) => obligation.fingerprint),
+                            error_message: `Grouped follow-up task '${groupedRow.taskId}' is no longer pending and must not be mutated.`,
+                            rollback_content: null
+                        };
+                    }
+                    const nextNotes = buildGroupedTaskNotes({
+                        parentTaskId: params.parentTaskId,
+                        context: params.materializationContext,
+                        reviewType: params.reviewType,
+                        obligations: params.obligations,
+                        validationArtifactSha256: params.validationArtifactSha256,
+                        validationResultSha256: params.validationResultSha256,
+                        dispositionArtifactSha256: params.dispositionArtifactSha256,
+                        dispositionResultSha256: params.dispositionResultSha256,
+                        receiptSha256: params.receiptSha256,
+                        artifactPath: normalizePath(path.relative(params.repoRoot, params.artifactPath)),
+                        existingNotes: groupedRow.notes
+                    });
+                    const highestPriority = [
+                        groupedRow.priority,
+                        ...params.obligations.map((obligation) => (
+                            priorityForSeverity(obligation.disposition_item.severity, parentRow.priority)
+                        ))
+                    ].sort()[0] || parentRow.priority;
+                    const priorityUpdatedLine = replaceTaskMdTableCell(
+                        groupedRow.rawLine,
+                        2,
+                        ` ${highestPriority} `
+                    );
+                    const updatedLine = priorityUpdatedLine
+                        ? replaceTaskMdTableCell(priorityUpdatedLine, 8, ` ${nextNotes} `)
+                        : null;
+                    if (!updatedLine) {
+                        return {
+                            outcome: 'write_failed',
+                            task_path: normalizePath(taskPath),
+                            created: [],
+                            reused: [],
+                            blocked_fingerprints: params.obligations.map((obligation) => obligation.fingerprint),
+                            error_message: 'Failed to update grouped TASK.md follow-up priority and notes.',
+                            rollback_content: null
+                        };
+                    }
+                    lines[groupedRow.lineIndex] = updatedLine;
+                    const nextContent = formatActiveTaskQueueTable(lines.join(newline));
+                    if (nextContent !== original) {
+                        fs.writeFileSync(taskPath, nextContent, 'utf8');
+                    }
+                    return {
+                        outcome: nextContent === original ? 'already_materialized' : 'updated',
+                        task_path: normalizePath(taskPath),
+                        created: [],
+                        reused: params.obligations.map((obligation) => ({
+                            task_id: groupedRow.taskId,
+                            fingerprint: obligation.fingerprint
+                        })),
+                        blocked_fingerprints: [],
+                        error_message: null,
+                        rollback_content: nextContent !== original ? original : null
+                    };
+                }
+
+                const [groupedTaskId] = allocateParentDerivedTaskIds({
+                    parentTaskId: params.parentTaskId,
+                    existingTaskIds: parsed.rows.map((row) => row.taskId),
+                    kind: 'followup',
+                    count: 1
+                });
+                const highestPriority = params.obligations
+                    .map((obligation) => priorityForSeverity(obligation.disposition_item.severity, parentRow.priority))
+                    .sort()[0] || parentRow.priority;
+                const groupedNotes = buildGroupedTaskNotes({
+                    parentTaskId: params.parentTaskId,
+                    context: params.materializationContext,
+                    reviewType: params.reviewType,
+                    obligations: params.obligations,
+                    validationArtifactSha256: params.validationArtifactSha256,
+                    validationResultSha256: params.validationResultSha256,
+                    dispositionArtifactSha256: params.dispositionArtifactSha256,
+                    dispositionResultSha256: params.dispositionResultSha256,
+                    receiptSha256: params.receiptSha256,
+                    artifactPath: normalizePath(path.relative(params.repoRoot, params.artifactPath))
+                });
+                const groupedTaskLine = `| ${[
+                    groupedTaskId,
+                    'TODO',
+                    highestPriority,
+                    sanitizeTaskCell(parentRow.area, 'workflow/review-follow-up-tasks', 80),
+                    'Address grouped deferred review findings and residual risks',
+                    sanitizeTaskCell(parentRow.owner, 'gpt-5.5', 80),
+                    nowIso().slice(0, 10),
+                    sanitizeTaskCell(parentRow.profile, 'balanced', 40),
+                    groupedNotes
+                ].join(' | ')} |`;
+                const nextParentNotes = appendParentFollowUpNote(parentRow.notes, [groupedTaskId], params.artifactPath);
+                const updatedParentLine = replaceTaskMdTableCell(parentRow.rawLine, 8, ` ${nextParentNotes} `);
+                if (!updatedParentLine) {
+                    return {
+                        outcome: 'write_failed',
+                        task_path: normalizePath(taskPath),
+                        created: [],
+                        reused: [],
+                        blocked_fingerprints: params.obligations.map((obligation) => obligation.fingerprint),
+                        error_message: 'Failed to replace TASK.md parent notes cell.',
+                        rollback_content: null
+                    };
+                }
+                lines[parentRow.lineIndex] = updatedParentLine;
+                lines.splice(findInsertionLineIndex(parentRow, parsed.rows) + 1, 0, groupedTaskLine);
+                const nextContent = formatActiveTaskQueueTable(lines.join(newline));
+                fs.writeFileSync(taskPath, nextContent, 'utf8');
+                return {
+                    outcome: 'updated',
+                    task_path: normalizePath(taskPath),
+                    created: params.obligations.map((obligation) => ({
+                        task_id: groupedTaskId,
+                        fingerprint: obligation.fingerprint
+                    })),
+                    reused: [],
+                    blocked_fingerprints: [],
+                    error_message: null,
+                    rollback_content: original
                 };
             }
 
@@ -1233,6 +1587,7 @@ function toValidationStatus(artifact: ReviewFindingsValidationArtifact | null): 
 }
 
 function buildArtifact(params: {
+    repoRoot: string;
     taskId: string;
     reviewType: string;
     status: ReviewFollowUpMaterializationStatus;
@@ -1248,8 +1603,14 @@ function buildArtifact(params: {
     items: readonly ReviewFindingsFollowUpTaskMaterializationItem[];
     violations: readonly string[];
 }): ReviewFindingsFollowUpTasksArtifact {
-    const createdTaskCount = params.items.filter((item) => item.materialization_status === 'created').length;
-    const reusedTaskCount = params.items.filter((item) => item.materialization_status === 'already_materialized').length;
+    const createdTaskCount = new Set(params.items
+        .filter((item) => item.materialization_status === 'created')
+        .map((item) => item.task_id)
+        .filter(Boolean)).size;
+    const reusedTaskCount = new Set(params.items
+        .filter((item) => item.materialization_status === 'already_materialized')
+        .map((item) => item.task_id)
+        .filter(Boolean)).size;
     const blockedTaskCount = params.items.filter((item) => (
         item.materialization_status === 'blocked'
         || item.materialization_status === 'requires_fix_now'
@@ -1262,6 +1623,11 @@ function buildArtifact(params: {
         review_type: params.reviewType,
         status: params.status,
         created_at_utc: nowIso(),
+        materialization_policy: resolveFollowUpMaterializationContext(
+            params.repoRoot,
+            path.dirname(params.dispositionArtifactPath),
+            params.taskId
+        ),
         source_disposition: {
             artifact_path: normalizePath(params.dispositionArtifactPath),
             artifact_sha256: params.dispositionArtifactSha256,
@@ -1418,6 +1784,164 @@ function validateReceiptEvidence(params: {
     return { receiptSha256, violations };
 }
 
+function validateGroupedSourceCycleEvidence(params: {
+    repoRoot: string;
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+    materializationContext: FollowUpMaterializationContext;
+    validationArtifact: ReviewFindingsValidationArtifact;
+    receipt: Record<string, unknown> | null;
+}): string[] {
+    if (params.materializationContext.mode !== 'grouped_by_parent') {
+        return [];
+    }
+    const violations: string[] = [];
+    const expectedPreflightSha256 = params.materializationContext.preflight_sha256;
+    const expectedCompileTimestamp = params.materializationContext.compile_gate_timestamp;
+    if (!expectedPreflightSha256 || !expectedCompileTimestamp) {
+        return ['Grouped follow-up source evidence cannot be bound because the current materialization cycle is incomplete.'];
+    }
+
+    validateHashField(
+        violations,
+        'Review findings validation preflight_sha256',
+        params.validationArtifact.validation_result.bindings.scope.preflight_sha256,
+        expectedPreflightSha256
+    );
+    validateHashField(
+        violations,
+        'Review receipt preflight_sha256',
+        params.receipt?.preflight_sha256,
+        expectedPreflightSha256
+    );
+
+    const contextBinding = params.validationArtifact.validation_result.bindings.context;
+    const contextPathText = normalizeText(contextBinding.review_context_path);
+    const expectedContextSha256 = normalizeHash(contextBinding.review_context_sha256);
+    if (!contextPathText || !expectedContextSha256) {
+        violations.push('Grouped follow-up source validation is missing its review context path or sha256 binding.');
+        return violations;
+    }
+
+    let contextPath: string;
+    try {
+        contextPath = resolveInputPathInsideRepo(params.repoRoot, contextPathText, 'ReviewContextPath');
+    } catch (error: unknown) {
+        violations.push(error instanceof Error ? error.message : String(error));
+        return violations;
+    }
+    const normalizedReviewsRoot = `${normalizePath(path.resolve(params.reviewsRoot)).replace(/\/$/u, '')}/`;
+    if (!normalizePath(contextPath).startsWith(normalizedReviewsRoot)) {
+        violations.push(`ReviewContextPath must stay inside the reviews root: ${normalizedReviewsRoot}`);
+        return violations;
+    }
+    const contextRead = readJsonFile(contextPath, 'Review context artifact');
+    violations.push(...contextRead.violations);
+    validateHashField(
+        violations,
+        'Review context artifact sha256',
+        fileSha256(contextPath),
+        expectedContextSha256
+    );
+    validateHashField(
+        violations,
+        'Review receipt review_context_sha256',
+        params.receipt?.review_context_sha256,
+        expectedContextSha256
+    );
+    if (!contextRead.value) {
+        return violations;
+    }
+    if (normalizeText(contextRead.value.task_id) !== params.taskId) {
+        violations.push('Review context task_id does not match the grouped follow-up parent task.');
+    }
+    if (normalizeText(contextRead.value.review_type) !== params.reviewType) {
+        violations.push('Review context review_type does not match the grouped follow-up source lane.');
+    }
+    const fullSuite = isPlainRecord(contextRead.value.full_suite_validation)
+        ? contextRead.value.full_suite_validation
+        : null;
+    const cycleBinding = fullSuite && isPlainRecord(fullSuite.cycle_binding)
+        ? fullSuite.cycle_binding
+        : null;
+    if (!fullSuite || fullSuite.cycle_binding_valid !== true || fullSuite.matches_current_preflight !== true
+        || fullSuite.matches_current_compile_gate !== true) {
+        violations.push('Review context full-suite evidence is not valid for the current preflight and compile cycle.');
+    }
+    validateHashField(
+        violations,
+        'Review context full-suite preflight_sha256',
+        cycleBinding?.preflight_sha256,
+        expectedPreflightSha256
+    );
+    const contextCompileTimestamp = normalizeText(
+        fullSuite?.compile_gate_timestamp_utc || cycleBinding?.compile_gate_timestamp
+    );
+    if (contextCompileTimestamp !== expectedCompileTimestamp) {
+        violations.push(
+            `Review context compile gate timestamp mismatch: expected ${expectedCompileTimestamp}, ` +
+            `found ${contextCompileTimestamp || 'missing'}.`
+        );
+    }
+    return violations;
+}
+
+function validateGroupedRequiredReviewCompletion(params: {
+    repoRoot: string;
+    reviewsRoot: string;
+    taskId: string;
+    reviewType: string;
+    materializationContext: FollowUpMaterializationContext;
+}): string[] {
+    if (params.materializationContext.mode !== 'grouped_by_parent') {
+        return [];
+    }
+    const preflightPath = path.join(params.reviewsRoot, `${params.taskId}-preflight.json`);
+    const preflightRead = readJsonFile(preflightPath, 'Preflight artifact');
+    if (!preflightRead.value) {
+        return [...preflightRead.violations, 'Grouped follow-up materialization requires the current preflight artifact.'];
+    }
+    const preflightSha256 = fileSha256(preflightPath);
+    const eventsRoot = joinOrchestratorPath(params.repoRoot, path.join('runtime', 'task-events'));
+    const requiredReviews = isPlainRecord(preflightRead.value.required_reviews)
+        ? preflightRead.value.required_reviews
+        : {};
+    const reviewReadinessViolations: string[] = [];
+    const configuredRequiredReviewTypes = Object.keys(requiredReviews)
+        .filter((key) => requiredReviews[key] === true)
+        .sort();
+    if (configuredRequiredReviewTypes.length > 0 && requiredReviews[params.reviewType] !== true) {
+        reviewReadinessViolations.push(
+            `Grouped follow-up review lane '${params.reviewType}' is not configured in current required_reviews.`
+        );
+    }
+    for (const reviewType of configuredRequiredReviewTypes) {
+        const state = readReviewArtifactState(
+            params.reviewsRoot,
+            params.taskId,
+            reviewType,
+            preflightPath,
+            preflightSha256,
+            preflightRead.value,
+            params.repoRoot
+        );
+        if (!state.ready || !reviewStateHasSatisfiedEvidence(
+            params.repoRoot,
+            eventsRoot,
+            params.taskId,
+            state
+        )) {
+            reviewReadinessViolations.push(
+                `Grouped follow-up required review lane '${reviewType}' is not complete with independently ` +
+                'attested evidence for the current cycle: ' +
+                `${state.violations.join(' ') || state.failureReason || 'review evidence is not ready'}.`
+            );
+        }
+    }
+    return reviewReadinessViolations;
+}
+
 function buildBlockedResult(params: {
     repoRoot: string;
     taskId: string;
@@ -1437,6 +1961,7 @@ function buildBlockedResult(params: {
 }): ReviewFindingsFollowUpTaskMaterializationResult {
     const violations = [...params.violations];
     const artifact = buildArtifact({
+        repoRoot: params.repoRoot,
         taskId: params.taskId,
         reviewType: params.reviewType,
         status: 'BLOCKED',
@@ -1637,6 +2162,25 @@ export function materializeReviewFindingsFollowUpTasks(
         dispositionArtifactSha256,
         dispositionResultSha256: disposition.disposition_result_sha256
     });
+    const materializationContext = resolveFollowUpMaterializationContext(repoRoot, reviewsRoot, taskId);
+    const groupedSourceCycleViolations = validationArtifact
+        ? validateGroupedSourceCycleEvidence({
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            reviewType,
+            materializationContext,
+            validationArtifact,
+            receipt: receiptRead.value
+        })
+        : [];
+    const groupedRequiredReviewViolations = validateGroupedRequiredReviewCompletion({
+        repoRoot,
+        reviewsRoot,
+        taskId,
+        reviewType,
+        materializationContext
+    });
     const validationInventoryViolations = validationArtifact
         ? validateValidationInventoryShape(validationArtifact)
         : [];
@@ -1644,7 +2188,9 @@ export function materializeReviewFindingsFollowUpTasks(
         ...validationResult.violations,
         ...validationInventoryViolations,
         ...receiptRead.violations,
-        ...receiptValidation.violations
+        ...receiptValidation.violations,
+        ...groupedSourceCycleViolations,
+        ...groupedRequiredReviewViolations
     ];
     if (validationArtifact && validationArtifact.validation_result.status !== 'accepted') {
         sourceViolations.push(
@@ -1702,18 +2248,30 @@ export function materializeReviewFindingsFollowUpTasks(
         });
     }
 
-    const queueResult = materializeTaskQueueRows({
-        repoRoot,
-        parentTaskId: taskId,
-        reviewType,
-        artifactPath,
-        obligations: built.obligations,
-        validationArtifactSha256: validationResult.artifact_sha256,
-        validationResultSha256: validationArtifact.validation_result_sha256,
-        dispositionArtifactSha256,
-        dispositionResultSha256: disposition.disposition_result_sha256,
-        receiptSha256: receiptValidation.receiptSha256
-    });
+    const hasFixNowItems = hasFixNowMaterializationItems(built.items);
+    const queueResult: TaskQueueMaterializationResult = hasFixNowItems
+        ? {
+            outcome: 'not_required',
+            task_path: normalizePath(path.join(repoRoot, 'TASK.md')),
+            created: [],
+            reused: [],
+            blocked_fingerprints: built.obligations.map((obligation) => obligation.fingerprint),
+            error_message: null,
+            rollback_content: null
+        }
+        : materializeTaskQueueRows({
+            repoRoot,
+            parentTaskId: taskId,
+            reviewType,
+            artifactPath,
+            obligations: built.obligations,
+            validationArtifactSha256: validationResult.artifact_sha256,
+            validationResultSha256: validationArtifact.validation_result_sha256,
+            dispositionArtifactSha256,
+            dispositionResultSha256: disposition.disposition_result_sha256,
+            receiptSha256: receiptValidation.receiptSha256,
+            materializationContext
+        });
     const queueViolations = ['task_file_missing', 'task_not_found', 'write_failed'].includes(queueResult.outcome)
         ? [`TASK.md follow-up task materialization failed: ${queueResult.outcome}${queueResult.error_message ? ` (${queueResult.error_message})` : ''}.`]
         : [];
@@ -1742,13 +2300,13 @@ export function materializeReviewFindingsFollowUpTasks(
         });
     }
 
-    const hasFixNowItems = hasFixNowMaterializationItems(items);
     const status: ReviewFollowUpMaterializationStatus = hasFixNowItems
         ? 'BLOCKED'
         : (queueResult.outcome === 'not_required'
             ? 'NOT_REQUIRED'
             : (queueResult.created.length > 0 ? 'MATERIALIZED' : 'ALREADY_MATERIALIZED'));
     const artifact = buildArtifact({
+        repoRoot,
         taskId,
         reviewType,
         status,
@@ -1823,8 +2381,8 @@ export function materializeReviewFindingsFollowUpTasks(
         task_id: taskId,
         review_type: reviewType,
         artifact_path: normalizePath(artifactPath),
-        created_task_ids: queueResult.created.map((item) => item.task_id),
-        reused_task_ids: queueResult.reused.map((item) => item.task_id),
+        created_task_ids: [...new Set(queueResult.created.map((item) => item.task_id))],
+        reused_task_ids: [...new Set(queueResult.reused.map((item) => item.task_id))],
         violations: [],
         output_lines: formatOutput({
             repoRoot,

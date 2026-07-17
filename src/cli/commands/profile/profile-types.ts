@@ -1,4 +1,4 @@
-import type { ReviewFindingPolicy } from '../../../policy/profile-resolver';
+import type { ReviewFindingPolicy, ReviewFollowUpPolicy } from '../../../policy/profile-resolver';
 
 export type ParsedOptionsRecord = Record<string, string | boolean | string[] | undefined>;
 
@@ -9,6 +9,7 @@ export interface ProfileEntry {
     depth: number;
     review_policy: Record<string, boolean | 'auto'>;
     review_finding_policy?: ReviewFindingPolicy;
+    review_follow_up_policy?: ReviewFollowUpPolicy;
     token_economy: Record<string, boolean>;
     skills: Record<string, boolean>;
 }

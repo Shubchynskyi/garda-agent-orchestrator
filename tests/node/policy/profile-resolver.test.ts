@@ -70,6 +70,10 @@ function makeTempBundle(configs: {
                     },
                     residual_risk: 'create_follow_up'
                 },
+                review_follow_up_policy: {
+                    schema_version: 1,
+                    materialization_mode: 'grouped_by_parent'
+                },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
                 skills: { auto_suggest: true }
             },
@@ -592,6 +596,8 @@ test('resolveEffectivePolicy: balanced profile with defaults', () => {
         assert.equal(policy.review_finding_policy.residual_risk, 'create_follow_up');
         assert.equal(policy.review_finding_policy_diagnostics.length, 1);
         assert.match(policy.review_finding_policy_diagnostics[0], /resolved/i);
+        assert.equal(policy.review_follow_up_policy.materialization_mode, 'grouped_by_parent');
+        assert.match(policy.review_follow_up_policy_diagnostics.join('\n'), /resolved/i);
         assert.equal(policy.token_economy.enabled, true);
         assert.equal(policy.safety_floors_applied.length, 0);
     } finally {
@@ -627,6 +633,8 @@ test('resolveEffectivePolicy: legacy profile without review_finding_policy resol
         assert.equal(policy.review_finding_policy.residual_risk, 'fix_now');
         assert.match(policy.review_finding_policy_diagnostics.join('\n'), /missing review_finding_policy/i);
         assert.match(policy.review_finding_policy_diagnostics.join('\n'), /fail-closed to strict/i);
+        assert.equal(policy.review_follow_up_policy.materialization_mode, 'per_finding');
+        assert.match(policy.review_follow_up_policy_diagnostics.join('\n'), /defaulted compatibly/i);
     } finally {
         cleanUp(bundleRoot);
     }

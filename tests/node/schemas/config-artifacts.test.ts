@@ -853,6 +853,10 @@ test('validateProfilesConfig validates template profiles.json', () => {
         (balancedFindingPolicy.findings as Record<string, unknown>).medium,
         'fix_now'
     );
+    assert.equal(
+        (builtIn.balanced.review_follow_up_policy as Record<string, unknown>).materialization_mode,
+        'grouped_by_parent'
+    );
 
     const user = normalized.user_profiles as Record<string, unknown>;
     assert.equal(Object.keys(user).length, 0);
@@ -914,6 +918,26 @@ test('validateProfilesConfig allows legacy profiles without review_finding_polic
 
     const builtIn = normalized.built_in_profiles as Record<string, Record<string, unknown>>;
     assert.equal(builtIn.legacy.review_finding_policy, undefined);
+    assert.equal(builtIn.legacy.review_follow_up_policy, undefined);
+});
+
+test('validateProfilesConfig rejects unknown grouped follow-up modes and keys', () => {
+    const invalidMode = structuredClone(readTemplateConfig('profiles'));
+    const policy = (
+        invalidMode.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_follow_up_policy as Record<string, unknown>;
+    policy.materialization_mode = 'group_across_tasks';
+    assert.throws(
+        () => validateProfilesConfig(invalidMode),
+        /must be one of: per_finding, grouped_by_parent/
+    );
+
+    const unknownKey = structuredClone(readTemplateConfig('profiles'));
+    const unknownPolicy = (
+        unknownKey.built_in_profiles as Record<string, Record<string, unknown>>
+    ).balanced.review_follow_up_policy as Record<string, unknown>;
+    unknownPolicy.cross_cycle = true;
+    assert.throws(() => validateProfilesConfig(unknownKey), /cross_cycle is not allowed/);
 });
 
 test('validateProfilesConfig rejects review_finding_policy that weakens critical finding disposition', () => {

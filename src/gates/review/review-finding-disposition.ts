@@ -101,20 +101,9 @@ function parseReviewFindingPolicy(value: unknown): ReviewFindingPolicy | null {
         findings,
         residual_risk: value.residual_risk
     };
-    if (policy.policy_id !== 'custom') {
-        const preset = REVIEW_FINDING_POLICY_PRESETS[policy.policy_id as keyof typeof REVIEW_FINDING_POLICY_PRESETS];
-        if (!preset) {
-            return null;
-        }
-        for (const severity of REVIEW_FINDING_SEVERITIES) {
-            if (policy.findings[severity] !== preset.findings[severity]) {
-                return null;
-            }
-        }
-        if (policy.residual_risk !== preset.residual_risk) {
-            return null;
-        }
-    }
+    // A locked preflight snapshot or receipt owns its action matrix. Named presets
+    // are validated when a new profile is stored; comparing historical evidence
+    // with today's preset would mutate active-task semantics retroactively.
     return policy;
 }
 

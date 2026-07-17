@@ -48,11 +48,24 @@ export interface ReviewFindingPolicyResolution {
     diagnostics: string[];
 }
 
+export type ReviewFollowUpMaterializationMode = 'per_finding' | 'grouped_by_parent';
+
+export interface ReviewFollowUpPolicy {
+    schema_version: 1;
+    materialization_mode: ReviewFollowUpMaterializationMode;
+}
+
+export interface ReviewFollowUpPolicyResolution {
+    policy: ReviewFollowUpPolicy;
+    diagnostics: string[];
+}
+
 export interface ProfileEntry {
     description: string;
     depth: number;
     review_policy: ProfileReviewPolicy;
     review_finding_policy?: ReviewFindingPolicy;
+    review_follow_up_policy?: ReviewFollowUpPolicy;
     token_economy: ProfileTokenEconomy;
     skills: ProfileSkills;
 }
@@ -110,6 +123,8 @@ export interface EffectivePolicy {
     review_policy: EffectiveReviewPolicy;
     review_finding_policy: ReviewFindingPolicy;
     review_finding_policy_diagnostics: string[];
+    review_follow_up_policy: ReviewFollowUpPolicy;
+    review_follow_up_policy_diagnostics: string[];
     token_economy: TokenEconomyConfig;
     skills: ProfileSkills;
     installed_packs: string[];
@@ -191,6 +206,15 @@ const REVIEW_FINDING_POLICY_IDS = new Set<ReviewFindingPolicyId>([
     'custom'
 ]);
 const REVIEW_FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
+const REVIEW_FOLLOW_UP_MATERIALIZATION_MODES = new Set<ReviewFollowUpMaterializationMode>([
+    'per_finding',
+    'grouped_by_parent'
+]);
+
+export const DEFAULT_REVIEW_FOLLOW_UP_POLICY: Readonly<ReviewFollowUpPolicy> = Object.freeze({
+    schema_version: 1,
+    materialization_mode: 'per_finding'
+});
 
 export const REVIEW_FINDING_POLICY_PRESETS: Readonly<Record<'soft' | 'balanced' | 'strict', ReviewFindingPolicy>> = Object.freeze({
     soft: Object.freeze({
@@ -490,6 +514,42 @@ export function resolveReviewFindingPolicy(
 
     diagnostics.push(`Profile '${profileName}' review_finding_policy resolved: ${formatReviewFindingPolicy(policy)}.`);
     return { policy, diagnostics };
+}
+
+export function resolveReviewFollowUpPolicy(
+    policyInput: unknown,
+    profileName: string
+): ReviewFollowUpPolicyResolution {
+    const legacyDefault = { ...DEFAULT_REVIEW_FOLLOW_UP_POLICY };
+    if (policyInput === undefined) {
+        return {
+            policy: legacyDefault,
+            diagnostics: [`Profile '${profileName}' is missing review_follow_up_policy; defaulted compatibly to per_finding.`]
+        };
+    }
+    if (!isPlainRecord(policyInput)) {
+        return {
+            policy: legacyDefault,
+            diagnostics: [`Profile '${profileName}' has invalid review_follow_up_policy; defaulted to per_finding.`]
+        };
+    }
+    const allowedKeys = new Set(['schema_version', 'materialization_mode']);
+    const mode = policyInput.materialization_mode;
+    if (
+        policyInput.schema_version !== 1
+        || typeof mode !== 'string'
+        || !REVIEW_FOLLOW_UP_MATERIALIZATION_MODES.has(mode as ReviewFollowUpMaterializationMode)
+        || Object.keys(policyInput).some((key) => !allowedKeys.has(key))
+    ) {
+        return {
+            policy: legacyDefault,
+            diagnostics: [`Profile '${profileName}' has malformed review_follow_up_policy; defaulted to per_finding.`]
+        };
+    }
+    return {
+        policy: { schema_version: 1, materialization_mode: mode as ReviewFollowUpMaterializationMode },
+        diagnostics: [`Profile '${profileName}' review_follow_up_policy resolved: materialization_mode=${mode}.`]
+    };
 }
 
 export function loadProfilesData(profilesPath: string): ProfilesData {
@@ -921,6 +981,10 @@ export function resolveEffectivePolicy(
         entry.review_finding_policy,
         profileName
     );
+    const reviewFollowUpPolicyResolution = resolveReviewFollowUpPolicy(
+        entry.review_follow_up_policy,
+        profileName
+    );
 
     const tokenEconomy = mergeTokenEconomy(entry.token_economy, tokenEconomyConfig);
 
@@ -960,6 +1024,8 @@ export function resolveEffectivePolicy(
         review_policy: reviewPolicy,
         review_finding_policy: reviewFindingPolicyResolution.policy,
         review_finding_policy_diagnostics: reviewFindingPolicyResolution.diagnostics,
+        review_follow_up_policy: reviewFollowUpPolicyResolution.policy,
+        review_follow_up_policy_diagnostics: reviewFollowUpPolicyResolution.diagnostics,
         token_economy: tokenEconomy,
         skills,
         installed_packs,
@@ -1002,6 +1068,16 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
     if (policy.review_finding_policy_diagnostics.length > 0) {
         lines.push('  diagnostics:');
         for (const diagnostic of policy.review_finding_policy_diagnostics) {
+            lines.push(`    - ${diagnostic}`);
+        }
+    }
+    lines.push('');
+
+    lines.push('ReviewFollowUpPolicy:');
+    lines.push(`  materialization_mode: ${policy.review_follow_up_policy.materialization_mode}`);
+    if (policy.review_follow_up_policy_diagnostics.length > 0) {
+        lines.push('  diagnostics:');
+        for (const diagnostic of policy.review_follow_up_policy_diagnostics) {
             lines.push(`    - ${diagnostic}`);
         }
     }

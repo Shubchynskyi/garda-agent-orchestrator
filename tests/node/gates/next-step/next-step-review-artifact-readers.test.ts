@@ -426,7 +426,7 @@ test('readReviewArtifactState treats fix_now findings JSON artifacts as failed e
     assert.ok(state.violations.some((violation) => violation.includes('validation artifact contains fix_now findings')));
 });
 
-test('readReviewArtifactState treats balanced medium findings JSON artifacts as non-blocking pass', () => {
+test('readReviewArtifactState preserves historical locked balanced medium follow-up semantics', () => {
     const reviewsRoot = tempRoot('garda-next-step-review-json-balanced-readers-');
     const preflightPath = path.join(reviewsRoot, 'T-100-preflight.json');
     writeFindingsReviewPackage({
@@ -463,8 +463,8 @@ test('readReviewArtifactState treats balanced medium findings JSON artifacts as 
                 medium: [
                     {
                         id: 'F-001',
-                        title: 'Follow-up-only finding',
-                        description: 'The balanced policy should route this medium finding to a follow-up instead of failed review state.',
+                        title: 'Historical follow-up-only finding',
+                        description: 'The locked historical balanced snapshot routes this medium finding to a follow-up.',
                         evidence: [
                             {
                                 location: 'src/gates/next-step/next-step-review-artifact-readers.ts:140',

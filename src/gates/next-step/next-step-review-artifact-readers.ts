@@ -70,6 +70,7 @@ import {
     detectStaleValidationEvidenceFailureReason
 } from './next-step-review-artifact-failure-detection';
 import { isPlainRecord } from '../../core/records';
+import type { ReviewFollowUpMaterializationMode } from '../../policy/profile-resolver';
 
 const REVIEW_VERDICT_PASS_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(REVIEW_CONTRACTS));
 const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(
@@ -110,6 +111,7 @@ export interface ReviewArtifactState {
     reviewFindingsDispositionArtifactSha256: string | null;
     reviewFindingsFollowUpArtifactPath: string | null;
     reviewFindingsFollowUpSatisfied: boolean;
+    reviewFollowUpMaterializationMode?: ReviewFollowUpMaterializationMode;
     domainScopeCurrent: boolean;
     ready: boolean;
     violations: string[];
@@ -187,6 +189,57 @@ function extractReviewFollowUpFingerprint(notes: string): string | null {
     return normalizeSha256(String(notes || '').match(/review_follow_up_fingerprint=([0-9a-f]{64})/iu)?.[1] || null);
 }
 
+function extractGroupedReviewFollowUpFingerprint(notes: string): string | null {
+    return normalizeSha256(
+        String(notes || '').match(/review_follow_up_group_fingerprint=([0-9a-f]{64})/iu)?.[1] || null
+    );
+}
+
+interface GroupedReviewFollowUpLaneBinding {
+    itemCount: number;
+    itemFingerprintsSha256: string;
+    sourceBindingSha256: string;
+    artifactPath: string | null;
+}
+
+function extractGroupedReviewFollowUpLaneBindings(notes: string): Map<string, GroupedReviewFollowUpLaneBinding> {
+    const bindings = new Map<string, GroupedReviewFollowUpLaneBinding>();
+    const artifactPaths = new Map<string, string>();
+    const artifactMatcher = /review_follow_up_lane_artifact=([a-z0-9_-]+):`([^`\r\n]+)`\./giu;
+    for (const match of String(notes || '').matchAll(artifactMatcher)) {
+        artifactPaths.set(match[1].toLowerCase(), normalizePath(match[2]));
+    }
+    const matcher = /review_follow_up_lane_binding=([a-z0-9_-]+):([0-9]+):([0-9a-f]{64}):([0-9a-f]{64})\./giu;
+    for (const match of String(notes || '').matchAll(matcher)) {
+        const itemCount = Number.parseInt(match[2], 10);
+        const itemFingerprintsSha256 = normalizeSha256(match[3]);
+        const sourceBindingSha256 = normalizeSha256(match[4]);
+        if (Number.isSafeInteger(itemCount) && itemCount >= 0 && itemFingerprintsSha256 && sourceBindingSha256) {
+            bindings.set(match[1].toLowerCase(), {
+                itemCount,
+                itemFingerprintsSha256,
+                sourceBindingSha256,
+                artifactPath: artifactPaths.get(match[1].toLowerCase()) || null
+            });
+        }
+    }
+    return bindings;
+}
+
+function resolveReviewFollowUpMaterializationMode(
+    preflightPayload: Record<string, unknown> | null
+): ReviewFollowUpMaterializationMode {
+    const snapshot = isPlainRecord(preflightPayload?.profile_policy_snapshot)
+        ? preflightPayload.profile_policy_snapshot
+        : null;
+    const policy = isPlainRecord(snapshot?.review_follow_up_policy)
+        ? snapshot.review_follow_up_policy
+        : null;
+    return policy?.schema_version === 1 && policy.materialization_mode === 'grouped_by_parent'
+        ? 'grouped_by_parent'
+        : 'per_finding';
+}
+
 function isParentFollowUpTaskId(parentTaskId: string, taskId: string): boolean {
     const prefix = `${parentTaskId}-F`;
     if (!taskId.startsWith(prefix)) {
@@ -195,7 +248,16 @@ function isParentFollowUpTaskId(parentTaskId: string, taskId: string): boolean {
     return /^[1-9][0-9]*$/u.test(taskId.slice(prefix.length));
 }
 
-function readTaskQueueFollowUpFingerprintIndex(repoRoot: string, parentTaskId: string): Map<string, string> | null {
+interface TaskQueueFollowUpFingerprintIndex {
+    groupedByTask: Map<string, Map<string, GroupedReviewFollowUpLaneBinding>>;
+    groupedFingerprintByTask: Map<string, string>;
+    perFindingByTask: Map<string, string>;
+}
+
+function readTaskQueueFollowUpFingerprintIndex(
+    repoRoot: string,
+    parentTaskId: string
+): TaskQueueFollowUpFingerprintIndex | null {
     const taskPath = path.join(repoRoot, 'TASK.md');
     if (!fileExists(taskPath)) {
         return null;
@@ -204,17 +266,27 @@ function readTaskQueueFollowUpFingerprintIndex(repoRoot: string, parentTaskId: s
     if (!parsed.found) {
         return null;
     }
-    const index = new Map<string, string>();
+    const groupedByTask = new Map<string, Map<string, GroupedReviewFollowUpLaneBinding>>();
+    const groupedFingerprintByTask = new Map<string, string>();
+    const perFindingByTask = new Map<string, string>();
     for (const row of parsed.rows) {
         if (!isParentFollowUpTaskId(parentTaskId, row.taskId)) {
             continue;
         }
         const fingerprint = extractReviewFollowUpFingerprint(row.notes);
         if (fingerprint) {
-            index.set(row.taskId, fingerprint);
+            perFindingByTask.set(row.taskId, fingerprint);
+        }
+        const groupedBindings = extractGroupedReviewFollowUpLaneBindings(row.notes);
+        if (groupedBindings.size > 0) {
+            groupedByTask.set(row.taskId, groupedBindings);
+            const groupedFingerprint = extractGroupedReviewFollowUpFingerprint(row.notes);
+            if (groupedFingerprint) {
+                groupedFingerprintByTask.set(row.taskId, groupedFingerprint);
+            }
         }
     }
-    return index;
+    return { groupedByTask, groupedFingerprintByTask, perFindingByTask };
 }
 
 function taskQueueHasFollowUpFingerprint(
@@ -227,6 +299,60 @@ function taskQueueHasFollowUpFingerprint(
         isParentFollowUpTaskId(parentTaskId, taskId)
         && taskQueueFollowUpFingerprints.get(taskId) === fingerprint
     );
+}
+
+function taskQueueHasGroupedFollowUpBinding(
+    taskQueueGroupedFollowUpBindings: ReadonlyMap<string, ReadonlyMap<string, GroupedReviewFollowUpLaneBinding>>,
+    taskQueueGroupedFollowUpFingerprints: ReadonlyMap<string, string>,
+    parentTaskId: string,
+    taskId: string,
+    groupFingerprint: string,
+    reviewType: string,
+    itemFingerprints: readonly string[],
+    sourceBindingSha256: string,
+    artifactPath: string
+): boolean {
+    const binding = taskQueueGroupedFollowUpBindings.get(taskId)?.get(reviewType.toLowerCase());
+    return (
+        isParentFollowUpTaskId(parentTaskId, taskId)
+        && taskQueueGroupedFollowUpFingerprints.get(taskId) === groupFingerprint
+        && binding?.itemCount === itemFingerprints.length
+        && binding.itemFingerprintsSha256 === sha256JsonPayload([...itemFingerprints].sort())
+        && binding.sourceBindingSha256 === sourceBindingSha256
+        && binding.artifactPath === normalizePath(artifactPath)
+    );
+}
+
+function buildGroupedReviewFollowUpSourceBindingSha256(
+    artifact: Record<string, unknown>,
+    reviewType: string
+): string | null {
+    const sourceDisposition = isPlainRecord(artifact.source_disposition) ? artifact.source_disposition : null;
+    const sourceValidation = isPlainRecord(artifact.source_validation) ? artifact.source_validation : null;
+    const sourceReceipt = isPlainRecord(artifact.source_receipt) ? artifact.source_receipt : null;
+    const validationArtifactSha256 = normalizeSha256(sourceValidation?.artifact_sha256);
+    const validationResultSha256 = normalizeSha256(sourceValidation?.validation_result_sha256);
+    const receiptSha256 = normalizeSha256(sourceReceipt?.receipt_sha256);
+    const dispositionArtifactSha256 = normalizeSha256(sourceDisposition?.artifact_sha256);
+    const dispositionResultSha256 = normalizeSha256(sourceDisposition?.disposition_result_sha256);
+    if (
+        !validationArtifactSha256
+        || !validationResultSha256
+        || !receiptSha256
+        || !dispositionArtifactSha256
+        || !dispositionResultSha256
+    ) {
+        return null;
+    }
+    return sha256JsonPayload({
+        schema_version: 1,
+        review_type: reviewType,
+        validation_artifact_sha256: validationArtifactSha256,
+        validation_result_sha256: validationResultSha256,
+        receipt_sha256: receiptSha256,
+        disposition_artifact_sha256: dispositionArtifactSha256,
+        disposition_result_sha256: dispositionResultSha256
+    });
 }
 
 function dispositionFollowUpItemKey(item: Record<string, unknown>): string | null {
@@ -333,7 +459,7 @@ function buildExpectedDispositionFollowUpFingerprintIndex(params: {
     return expected;
 }
 
-function followUpArtifactMatchesCurrentTaskQueue(params: {
+export function followUpArtifactMatchesCurrentTaskQueue(params: {
     artifact: Record<string, unknown>;
     dispositionArtifact: Record<string, unknown>;
     dispositionArtifactSha256: string;
@@ -341,6 +467,8 @@ function followUpArtifactMatchesCurrentTaskQueue(params: {
     taskId: string;
     reviewType: string;
     expectedFollowUpCount: number;
+    materializationMode: ReviewFollowUpMaterializationMode;
+    followUpArtifactPath: string;
 }): boolean {
     if (!params.repoRoot) {
         return false;
@@ -356,6 +484,12 @@ function followUpArtifactMatchesCurrentTaskQueue(params: {
         isPlainRecord(item) && item.action === 'create_follow_up'
     ));
     const summary = isPlainRecord(params.artifact.summary) ? params.artifact.summary : null;
+    const materializationPolicy = isPlainRecord(params.artifact.materialization_policy)
+        ? params.artifact.materialization_policy
+        : null;
+    if ((materializationPolicy?.mode || 'per_finding') !== params.materializationMode) {
+        return false;
+    }
     const summaryFollowUpCount = typeof summary?.follow_up_obligation_count === 'number'
         ? summary.follow_up_obligation_count
         : null;
@@ -378,14 +512,14 @@ function followUpArtifactMatchesCurrentTaskQueue(params: {
     if (!expectedFingerprints || expectedFingerprints.size !== params.expectedFollowUpCount) {
         return false;
     }
-    const taskQueueFollowUpFingerprints = readTaskQueueFollowUpFingerprintIndex(params.repoRoot, params.taskId);
-    if (!taskQueueFollowUpFingerprints) {
+    const taskQueueFollowUpFingerprintIndex = readTaskQueueFollowUpFingerprintIndex(params.repoRoot, params.taskId);
+    if (!taskQueueFollowUpFingerprintIndex) {
         return false;
     }
     const sourceItemKeys = new Set<string>();
     const taskIds = new Set<string>();
     const fingerprints = new Set<string>();
-    return followUpItems.every((item) => {
+    const itemsMatch = followUpItems.every((item) => {
         const taskId = typeof item.task_id === 'string' ? item.task_id.trim() : '';
         const fingerprint = normalizeSha256(item.fingerprint);
         const sourceItemKey = followUpArtifactItemKey(item);
@@ -398,7 +532,7 @@ function followUpArtifactMatchesCurrentTaskQueue(params: {
             || !fingerprint
             || !sourceItemKey
             || sourceItemKeys.has(sourceItemKey)
-            || taskIds.has(taskId)
+            || (params.materializationMode === 'per_finding' && taskIds.has(taskId))
             || fingerprints.has(fingerprint)
         ) {
             return false;
@@ -409,9 +543,42 @@ function followUpArtifactMatchesCurrentTaskQueue(params: {
         return (
             ['created', 'already_materialized'].includes(materializationStatus)
             && fingerprint === expectedFingerprint
-            && taskQueueHasFollowUpFingerprint(taskQueueFollowUpFingerprints, params.taskId, taskId, fingerprint as string)
+            && (params.materializationMode === 'grouped_by_parent'
+                ? true
+                : taskQueueHasFollowUpFingerprint(
+                    taskQueueFollowUpFingerprintIndex.perFindingByTask,
+                    params.taskId,
+                    taskId,
+                    fingerprint as string
+                ))
         );
-    }) && sourceItemKeys.size === expectedFingerprints.size;
+    });
+    if (!itemsMatch || sourceItemKeys.size !== expectedFingerprints.size) {
+        return false;
+    }
+    if (params.materializationMode !== 'grouped_by_parent') {
+        return true;
+    }
+    const [groupedTaskId] = [...taskIds];
+    const groupFingerprint = normalizeSha256(materializationPolicy?.group_fingerprint);
+    const sourceBindingSha256 = buildGroupedReviewFollowUpSourceBindingSha256(params.artifact, params.reviewType);
+    return (
+        taskIds.size === 1
+        && Boolean(groupedTaskId)
+        && Boolean(groupFingerprint)
+        && Boolean(sourceBindingSha256)
+        && taskQueueHasGroupedFollowUpBinding(
+            taskQueueFollowUpFingerprintIndex.groupedByTask,
+            taskQueueFollowUpFingerprintIndex.groupedFingerprintByTask,
+            params.taskId,
+            groupedTaskId,
+            groupFingerprint as string,
+            params.reviewType,
+            [...fingerprints],
+            sourceBindingSha256 as string,
+            normalizePath(path.relative(params.repoRoot, params.followUpArtifactPath))
+        )
+    );
 }
 
 export function readReviewArtifactState(
@@ -465,6 +632,7 @@ export function readReviewArtifactState(
     let reviewFindingsDispositionArtifactSha256: string | null = null;
     let reviewFindingsFollowUpArtifactPath: string | null = null;
     let reviewFindingsFollowUpSatisfied = false;
+    const reviewFollowUpMaterializationMode = resolveReviewFollowUpMaterializationMode(preflightPayload);
     let domainScopeCurrent = false;
     let reviewResultRecordedAtUtc: string | null = null;
     let recordedAtUtc: string | null = null;
@@ -814,7 +982,9 @@ export function readReviewArtifactState(
                                 repoRoot,
                                 taskId,
                                 reviewType,
-                                expectedFollowUpCount: reviewFindingsDisposition.counts_by_action.create_follow_up
+                                expectedFollowUpCount: reviewFindingsDisposition.counts_by_action.create_follow_up,
+                                materializationMode: reviewFollowUpMaterializationMode,
+                                followUpArtifactPath: reviewFindingsFollowUpArtifactPath
                             })
                         );
                     }
@@ -907,6 +1077,7 @@ export function readReviewArtifactState(
         reviewFindingsDispositionArtifactSha256,
         reviewFindingsFollowUpArtifactPath,
         reviewFindingsFollowUpSatisfied,
+        reviewFollowUpMaterializationMode,
         domainScopeCurrent,
         ready: effectiveViolations.length === 0,
         violations: effectiveViolations,

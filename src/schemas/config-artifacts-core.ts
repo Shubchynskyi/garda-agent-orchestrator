@@ -413,9 +413,23 @@ function validateReviewFindingPolicy(input: unknown, fieldName: string): Record<
     return normalized;
 }
 
+function validateReviewFollowUpPolicy(input: unknown, fieldName: string): Record<string, unknown> {
+    const raw = ensurePlainObject(input, fieldName);
+    const knownKeys = ['schema_version', 'materialization_mode'] as const;
+    assertNoUnknownKeys(raw, knownKeys, fieldName);
+    const mode = normalizeNonEmptyString(raw.materialization_mode, `${fieldName}.materialization_mode`);
+    if (mode !== 'per_finding' && mode !== 'grouped_by_parent') {
+        throw new Error(`${fieldName}.materialization_mode must be one of: per_finding, grouped_by_parent.`);
+    }
+    return {
+        schema_version: normalizeInteger(raw.schema_version, `${fieldName}.schema_version`, { minimum: 1, maximum: 1 }),
+        materialization_mode: mode
+    };
+}
+
 function validateProfileEntry(input: unknown, profilePath: string): Record<string, unknown> {
     const raw = ensurePlainObject(input, profilePath);
-    const knownKeys = new Set(['description', 'depth', 'review_policy', 'review_finding_policy', 'token_economy', 'skills']);
+    const knownKeys = new Set(['description', 'depth', 'review_policy', 'review_finding_policy', 'review_follow_up_policy', 'token_economy', 'skills']);
     const normalized = cloneUnknownProperties(raw, knownKeys);
 
     normalized.description = normalizeNonEmptyString(raw.description, `${profilePath}.description`);
@@ -432,6 +446,12 @@ function validateProfileEntry(input: unknown, profilePath: string): Record<strin
         normalized.review_finding_policy = validateReviewFindingPolicy(
             raw.review_finding_policy,
             `${profilePath}.review_finding_policy`
+        );
+    }
+    if (raw.review_follow_up_policy !== undefined) {
+        normalized.review_follow_up_policy = validateReviewFollowUpPolicy(
+            raw.review_follow_up_policy,
+            `${profilePath}.review_follow_up_policy`
         );
     }
 

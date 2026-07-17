@@ -198,6 +198,7 @@ export function reviewStateHasSatisfiedEvidence(
         state.reviewFindingsDisposition
         && state.reviewFindingsDisposition.counts_by_action.create_follow_up > 0
         && !state.reviewFindingsFollowUpSatisfied
+        && state.reviewFollowUpMaterializationMode !== 'grouped_by_parent'
     ) {
         return false;
     }
