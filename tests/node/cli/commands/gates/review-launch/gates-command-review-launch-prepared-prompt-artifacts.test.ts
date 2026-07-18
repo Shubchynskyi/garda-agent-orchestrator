@@ -17,12 +17,12 @@ import {
     type ReviewerLaunchPromptOptions
 } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
 
-function buildPromptOptions(executionProvider: string): ReviewerLaunchPromptOptions {
+function buildPromptOptions(executionProvider: string, reviewType = 'code'): ReviewerLaunchPromptOptions {
     return {
         repoRoot: 'D:/repo',
         executionProvider,
         taskId: 'T-provider-notice',
-        reviewType: 'code',
+        reviewType,
         reviewContextSha256: '1'.repeat(64),
         reviewTreeStateSha256: '2'.repeat(64),
         rolePromptPath: 'D:/repo/role-prompt.md',
@@ -70,6 +70,35 @@ describe('cli/commands/gates review launch prepared prompt artifacts', () => {
         assert.ok(prompt.includes('record-review-result'));
         assert.ok(prompt.includes('Do not launch another reviewer or subagent'));
         assert.ok(prompt.includes('Only read the artifacts named in this handoff and write the completed review JSON to the single ReviewOutputPath'));
+        assert.ok(prompt.includes('Missing prior focused execution evidence is not by itself a finding or residual risk'));
+        assert.ok(prompt.includes('execute the smallest safe relevant local test or validation command yourself for exactly one relevant repository test or validation target'));
+        assert.ok(prompt.includes('command_outcome (`passed`, `failed`, `unavailable`, or `prohibited`)'));
+        assert.ok(prompt.includes(
+            '[garda:evidence-only:missing-focused-validation] test=<exact-repository-relative-test-path>; action=run-and-record-focused-test'
+        ));
+        assert.ok(prompt.includes(
+            '[garda:evidence-only:missing-focused-validation] target=<exact-repository-relative-validation-path>; action=run-and-record-focused-validation'
+        ));
+        assert.ok(prompt.includes('Reviewer terminal contract: inspect only the authenticated scope'));
+        assert.ok(prompt.includes('After writing or returning that one object, stop immediately'));
+        assert.equal(prompt.includes('prefer `gate run-intermediate-command`'), false);
+    });
+
+    it('applies the same focused self-validation and terminal contract to built-in and custom lanes', () => {
+        for (const reviewType of ['code', 'api', 'performance', 'security', 'test', 'custom-compliance']) {
+            const prompt = buildCopyPasteReviewerLaunchPrompt(buildPromptOptions('Codex', reviewType));
+            assert.ok(prompt.includes(`You are the delegated ${reviewType} reviewer`), reviewType);
+            assert.ok(prompt.includes('Missing prior focused execution evidence is not by itself a finding or residual risk'), reviewType);
+            assert.ok(prompt.includes('If the focused command passes, do not report missing prior execution'), reviewType);
+            assert.ok(prompt.includes(
+                '[garda:evidence-only:missing-focused-validation] target=<exact-repository-relative-validation-path>; action=run-and-record-focused-validation'
+            ), reviewType);
+            assert.ok(prompt.includes('Never invoke Garda navigation, gate, launch, invocation, result, receipt, TASK.md, or project-memory commands'), reviewType);
+            assert.ok(prompt.includes('Never launch a reviewer, subagent, or descendant agent'), reviewType);
+            assert.ok(prompt.includes('write exactly one review JSON object to ReviewOutputPath'), reviewType);
+            assert.equal(prompt.includes('Launch a fresh delegated reviewer'), false, reviewType);
+            assert.equal(prompt.includes('prepare-reviewer-launch, then launch'), false, reviewType);
+        }
     });
 
     it('prepare-reviewer-launch injects the executor-specific notice exactly once', async () => {

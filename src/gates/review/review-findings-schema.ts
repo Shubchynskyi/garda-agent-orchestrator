@@ -1,3 +1,6 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import {
     createChangedFileLineCountResolver,
     formatReviewEvidenceLineCountSource,
@@ -7,6 +10,12 @@ import {
     formatReviewEvidenceDomainViolation,
     normalizeReviewEvidenceDomainPaths
 } from './review-evidence-domain';
+import {
+    REVIEWER_FOCUSED_SELF_VALIDATION_TOPIC,
+    REVIEWER_MISSING_FOCUSED_TEST_ACTION,
+    REVIEWER_MISSING_FOCUSED_VALIDATION_ACTION,
+    REVIEWER_MISSING_FOCUSED_VALIDATION_MARKER
+} from './reviewer-execution-contract';
 
 export const REVIEW_FINDINGS_SCHEMA_VERSION = 1 as const;
 
@@ -43,7 +52,16 @@ const REPORT_KEYS = new Set([
     'residual_risks',
     'reviewer_notes'
 ]);
-const VALIDATION_NOTE_KEYS = new Set(['id', 'topic', 'note', 'evidence']);
+const VALIDATION_NOTE_KEYS = new Set([
+    'id',
+    'topic',
+    'note',
+    'evidence',
+    'command',
+    'command_outcome',
+    'diagnostics',
+    'finding_ids'
+]);
 const COVERAGE_LEDGER_KEYS = new Set(['coverage_contract_sha256', 'entries']);
 const COVERAGE_ENTRY_KEYS = new Set(['obligation_id', 'evidence', 'finding_ids']);
 const FINDINGS_KEYS = new Set(['critical', 'high', 'medium', 'low']);
@@ -52,6 +70,7 @@ const RESIDUAL_RISK_KEYS = new Set(['id', 'description', 'evidence']);
 const EVIDENCE_KEYS = new Set(['location', 'observation']);
 
 export type ReviewFindingsSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type ReviewFocusedCommandOutcome = 'passed' | 'failed' | 'unavailable' | 'prohibited';
 
 export interface ReviewFindingsEvidence {
     location: string;
@@ -63,6 +82,10 @@ export interface ReviewFindingsValidationNote {
     topic: string;
     note: string;
     evidence: ReviewFindingsEvidence[];
+    command?: string;
+    command_outcome?: ReviewFocusedCommandOutcome;
+    diagnostics?: string;
+    finding_ids?: string[];
 }
 
 export interface ReviewFindingsCoverageLedgerEntry {
@@ -185,6 +208,14 @@ export const reviewFindingsReportJsonSchema = {
                     type: 'array',
                     minItems: 1,
                     items: { $ref: '#/definitions/evidence' }
+                },
+                command: { type: 'string', minLength: 1 },
+                command_outcome: { enum: ['passed', 'failed', 'unavailable', 'prohibited'] },
+                diagnostics: { type: 'string', minLength: 1 },
+                finding_ids: {
+                    type: 'array',
+                    items: { type: 'string', pattern: '^F-\\d{3}$' },
+                    uniqueItems: true
                 }
             }
         },
@@ -367,7 +398,183 @@ function parseStringArray(value: unknown, subject: string, violations: string[])
     return entries;
 }
 
-function parseValidationNotes(value: unknown, violations: string[]): ReviewFindingsValidationNote[] {
+interface ParsedValidationNoteFields {
+    subject: string;
+    id: string | null;
+    topic: string | null;
+    note: string | null;
+    evidence: ReviewFindingsEvidence[];
+    command: string | null;
+    commandOutcome: string | null;
+    diagnostics: string | null;
+    findingIds: string[];
+    isFocusedSelfValidation: boolean;
+    hasFocusedCommandFields: boolean;
+    requiresFocusedCommandFields: boolean;
+}
+
+function readValidationNoteFields(
+    entry: Record<string, unknown>,
+    subject: string,
+    violations: string[]
+): ParsedValidationNoteFields {
+    pushUnknownKeyViolations(subject, entry, VALIDATION_NOTE_KEYS, violations);
+    const topic = normalizeString(entry.topic);
+    const command = normalizeString(entry.command);
+    const commandOutcome = normalizeString(entry.command_outcome)?.toLowerCase() || null;
+    const diagnostics = normalizeString(entry.diagnostics);
+    const findingIds = entry.finding_ids === undefined
+        ? []
+        : parseStringArray(entry.finding_ids, `${subject}.finding_ids`, violations);
+    const isFocusedSelfValidation = topic?.toLowerCase() === REVIEWER_FOCUSED_SELF_VALIDATION_TOPIC;
+    const hasFocusedCommandFields = command !== null
+        || commandOutcome !== null
+        || diagnostics !== null
+        || entry.finding_ids !== undefined;
+    return {
+        subject,
+        id: normalizeString(entry.id),
+        topic,
+        note: normalizeString(entry.note),
+        evidence: parseEvidenceArray(entry.evidence, subject, violations),
+        command,
+        commandOutcome,
+        diagnostics,
+        findingIds,
+        isFocusedSelfValidation,
+        hasFocusedCommandFields,
+        requiresFocusedCommandFields: isFocusedSelfValidation || hasFocusedCommandFields
+    };
+}
+
+function validateValidationNoteIdentity(fields: ParsedValidationNoteFields, violations: string[]): void {
+    if (!fields.id || !REVIEW_VALIDATION_NOTE_ID_PATTERN.test(fields.id)) {
+        violations.push(`${fields.subject}.id must match N-###.`);
+    }
+    if (!fields.topic) {
+        violations.push(`${fields.subject}.topic is required.`);
+    }
+    if (!fields.note) {
+        violations.push(`${fields.subject}.note is required.`);
+    }
+}
+
+function validateFocusedValidationNoteMetadata(
+    fields: ParsedValidationNoteFields,
+    violations: string[]
+): void {
+    if (fields.hasFocusedCommandFields && !fields.isFocusedSelfValidation) {
+        violations.push(
+            `${fields.subject}.topic must be '${REVIEWER_FOCUSED_SELF_VALIDATION_TOPIC}' when focused command evidence is recorded.`
+        );
+    }
+    if (!fields.command) {
+        violations.push(`${fields.subject}.command is required when focused command evidence is recorded.`);
+    }
+    if (!fields.commandOutcome || !['passed', 'failed', 'unavailable', 'prohibited'].includes(fields.commandOutcome)) {
+        violations.push(`${fields.subject}.command_outcome must be passed, failed, unavailable, or prohibited.`);
+    }
+    if (!fields.diagnostics) {
+        violations.push(`${fields.subject}.diagnostics is required when focused command evidence is recorded.`);
+    } else if (!isActionableFocusedDiagnostics(fields.diagnostics)) {
+        violations.push(
+            `${fields.subject}.diagnostics must contain concrete, actionable command result detail rather than a placeholder.`
+        );
+    }
+}
+
+function validateFocusedValidationNoteFindingLinks(
+    fields: ParsedValidationNoteFields,
+    violations: string[]
+): void {
+    const invalidFindingId = fields.findingIds.find((findingId) => (
+        !REVIEW_FINDINGS_ID_PATTERN.test(findingId) || findingId === 'F-000'
+    ));
+    if (invalidFindingId) {
+        violations.push(`${fields.subject}.finding_ids may contain only ordinary F-### finding ids, excluding F-000.`);
+    }
+    if (fields.commandOutcome === 'failed' && fields.findingIds.length === 0) {
+        violations.push(
+            `${fields.subject} requires an ordinary severity finding when a focused command fails; `
+            + 'finding_ids must link that failure to at least one ordinary finding.'
+        );
+    }
+    if (fields.commandOutcome && fields.commandOutcome !== 'failed' && fields.findingIds.length > 0) {
+        violations.push(`${fields.subject}.finding_ids is allowed only when command_outcome is failed.`);
+    }
+}
+
+function validateFocusedValidationNoteCommand(
+    fields: ParsedValidationNoteFields,
+    violations: string[],
+    repoRoot?: string
+): void {
+    if (!fields.command) {
+        return;
+    }
+    const unsafeCommandReason = getUnsafeFocusedCommandReason(fields.command);
+    if (unsafeCommandReason) {
+        violations.push(`Reviewer focused self-validation must not ${unsafeCommandReason}.`);
+    }
+    const commandTargets = getFocusedCommandTargetTokens(fields.command, repoRoot);
+    if (!focusedCommandExecutesValidation(fields.command, repoRoot)) {
+        violations.push(
+            'Reviewer focused self-validation must execute a focused test or validation command rather than only inspect or print a prospective target.'
+        );
+    } else if (!focusedEvidenceNamesTarget(fields.evidence, commandTargets[0])) {
+        violations.push(
+            'Reviewer focused self-validation authenticated changed-file evidence must name the exact focused command target and why it is relevant.'
+        );
+    }
+}
+
+function validateFocusedValidationNote(
+    fields: ParsedValidationNoteFields,
+    violations: string[],
+    repoRoot?: string
+): void {
+    if (!fields.requiresFocusedCommandFields) {
+        return;
+    }
+    validateFocusedValidationNoteMetadata(fields, violations);
+    validateFocusedValidationNoteFindingLinks(fields, violations);
+    validateFocusedValidationNoteCommand(fields, violations, repoRoot);
+}
+
+function buildValidationNote(fields: ParsedValidationNoteFields): ReviewFindingsValidationNote | null {
+    if (
+        !fields.id
+        || !fields.topic
+        || !fields.note
+        || fields.evidence.length === 0
+        || (fields.requiresFocusedCommandFields
+            && (!fields.command || !fields.commandOutcome || !fields.diagnostics))
+    ) {
+        return null;
+    }
+    const baseNote = {
+        id: fields.id,
+        topic: fields.topic,
+        note: fields.note,
+        evidence: fields.evidence
+    };
+    if (!fields.requiresFocusedCommandFields) {
+        return baseNote;
+    }
+    return {
+        ...baseNote,
+        command: fields.command as string,
+        command_outcome: fields.commandOutcome as ReviewFocusedCommandOutcome,
+        diagnostics: fields.diagnostics as string,
+        ...(fields.findingIds.length > 0 ? { finding_ids: fields.findingIds } : {})
+    };
+}
+
+function parseValidationNotes(
+    value: unknown,
+    violations: string[],
+    repoRoot?: string
+): ReviewFindingsValidationNote[] {
     if (!Array.isArray(value)) {
         violations.push('validation_notes must be an array.');
         return [];
@@ -380,25 +587,15 @@ function parseValidationNotes(value: unknown, violations: string[]): ReviewFindi
             violations.push(`${subject} must be an object.`);
             return;
         }
-        pushUnknownKeyViolations(subject, entry, VALIDATION_NOTE_KEYS, violations);
-        const id = normalizeString(entry.id);
-        const topic = normalizeString(entry.topic);
-        const note = normalizeString(entry.note);
-        const evidence = parseEvidenceArray(entry.evidence, subject, violations);
-        if (!id || !REVIEW_VALIDATION_NOTE_ID_PATTERN.test(id)) {
-            violations.push(`${subject}.id must match N-###.`);
+        const fields = readValidationNoteFields(entry, subject, violations);
+        validateValidationNoteIdentity(fields, violations);
+        validateFocusedValidationNote(fields, violations, repoRoot);
+        if (fields.id && REVIEW_VALIDATION_NOTE_ID_PATTERN.test(fields.id)) {
+            ids.push(fields.id);
         }
-        if (!topic) {
-            violations.push(`${subject}.topic is required.`);
-        }
-        if (!note) {
-            violations.push(`${subject}.note is required.`);
-        }
-        if (id && REVIEW_VALIDATION_NOTE_ID_PATTERN.test(id)) {
-            ids.push(id);
-        }
-        if (id && topic && note && evidence.length > 0) {
-            notes.push({ id, topic, note, evidence });
+        const note = buildValidationNote(fields);
+        if (note) {
+            notes.push(note);
         }
     });
     pushDuplicateViolations('validation note', ids, violations);
@@ -406,6 +603,758 @@ function parseValidationNotes(value: unknown, violations: string[]): ReviewFindi
         violations.push('validation_notes must contain at least one validation note.');
     }
     return notes;
+}
+
+function escapeFocusedPatternLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+const MISSING_FOCUSED_TARGET_CAPTURE_PATTERN =
+    '([^\\s;\\r\\n](?:[^;\\r\\n]*[^\\s;\\r\\n])?)';
+const MISSING_FOCUSED_VALIDATION_MARKER_PATTERN = new RegExp(
+    `^${escapeFocusedPatternLiteral(REVIEWER_MISSING_FOCUSED_VALIDATION_MARKER)}\\s+`
+    + `(?:test=${MISSING_FOCUSED_TARGET_CAPTURE_PATTERN};\\s*`
+    + `action=${escapeFocusedPatternLiteral(REVIEWER_MISSING_FOCUSED_TEST_ACTION)}`
+    + `|target=${MISSING_FOCUSED_TARGET_CAPTURE_PATTERN};\\s*`
+    + `action=${escapeFocusedPatternLiteral(REVIEWER_MISSING_FOCUSED_VALIDATION_ACTION)})$`,
+    'u'
+);
+const MISSING_FOCUSED_VALIDATION_CLAIM_PATTERN =
+    /\b(?:missing|absent|no)\s+(?:prior\s+)?focused\s+(?:(?:test|check|validation)\s+)?(?:execution|run|evidence)\b|\bfocused\s+(?:test|check|validation|execution)(?:\s+(?:execution|run|evidence))?\b.{0,48}\b(?:missing|absent|unavailable|prohibited|not\s+(?:run|executed))\b|\b(?:could\s+not|cannot|can't|unable\s+to)\s+(?:run|execute)\b.{0,48}\bfocused\s+(?:test|check|validation)\b/iu;
+const REVIEWER_UNSAFE_FOCUSED_COMMAND_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
+    {
+        pattern: /^\s*(?:(?:curl|wget|ssh|scp|sftp|ftp|telnet|nc|netcat|invoke-webrequest|invoke-restmethod|iwr|irm)\b|git\s+(?:clone|fetch|pull|push)\b|(?:npm|pnpm|yarn|bun)\s+(?:install|add|update|publish)\b|pip\s+install\b)/iu,
+        reason: 'access network services or install/publish dependencies'
+    },
+    {
+        pattern: /^\s*(?:(?:rm|del|erase|cp|mv|tee|touch|mkdir|md|set-content|add-content|out-file|new-item|remove-item|copy-item|move-item|apply_patch)\b|git\s+(?:add|commit|checkout|switch|reset|restore|clean|stash)\b|sed\s+-i\b)|\brequire\([^)]*(?:node:)?fs[^)]*\)\s*\.\s*(?:promises\s*\.\s*)?(?:writefile|writefilesync|appendfile|appendfilesync|mkdir|mkdirsync|unlink|unlinksync|rm|rmsync|rename|renamesync)\b|(?<![=<>-])>{1,2}(?![=&])/iu,
+        reason: 'mutate source, control, or handoff artifacts'
+    },
+    {
+        pattern: /(?:^|\s)(?:--fix|--write|--update|--update-snapshot|--update-snapshots|--updatesnapshot|--snapshot-update|--accept|--bless|--rewrite|--overwrite)(?:=|\s|$)|(?:^|\s)-(?:u|w)(?=\s|$)/iu,
+        reason: 'use validation-runner flags that may mutate source files or snapshots'
+    },
+    {
+        pattern: /^\s*(?:(?:npx|bunx)\b|(?:npm|pnpm|yarn|bun)\s+(?:exec|dlx|x)\b)/iu,
+        reason: 'use package-execution wrappers that may fetch dependencies implicitly'
+    },
+    {
+        pattern: /(?:^|[/\\])\.\.(?:[/\\]|$)|(?:^|[\s"'=])[a-z]:|(?:^|[\s"'=])\/(?!\/)/iu,
+        reason: 'escape authenticated repository scope with absolute or traversal paths'
+    },
+    {
+        pattern: /^\s*(?:(?:node|deno|bun|python(?:3)?|ruby|perl|php)\s+(?:-e|-c|-p|--eval|--print)\b|(?:powershell|pwsh)\s+(?:-command|-encodedcommand)\b|(?:bash|sh|zsh|cmd)\s+(?:-c|\/c)\b)/iu,
+        reason: 'run inline interpreter code with unauditable side effects'
+    },
+    {
+        pattern: /\$\(|`/u,
+        reason: 'run shell command substitutions inside a focused validation attempt'
+    },
+    {
+        pattern: /\$[a-z_{]|%[a-z_][a-z0-9_]*%|\{[^}]*\}|\[[^\]]*\]|(?:^|\s)~(?:[/\\]|\s|$)/iu,
+        reason: 'use shell variable, brace, bracket, or home expansions inside a focused validation attempt'
+    },
+    {
+        pattern: /[<>^]|(?:^|\s)[@!+]\(|![a-z_][a-z0-9_]*!|(?:^|\s)@[a-z0-9_./\\-]+/iu,
+        reason: 'use shell redirection, process expansion, escaping, or response-file expansion inside a focused validation attempt'
+    },
+    {
+        pattern: /^\s*(?:(?:npm(?:\.cmd|\.exe)?|pnpm|yarn|bun)(?:\s+--?[^\s]+)*\s+(?:run\s+)?(?:build|test|check|lint)(?:\s+--?[^\s]+)*|(?:mvnw?|gradlew?|dotnet)\s+(?:build|test)|pytest)\s*$/iu,
+        reason: 'run a broad build, full suite, or gate-owned validation command'
+    },
+    {
+        pattern: /^\s*node(?:\.exe)?\s+(?:--test|scripts[/\\]node-foundation[/\\]build-scripts\.cjs\s+test\.js)\s*$/iu,
+        reason: 'run a broad build, full suite, or gate-owned validation command'
+    },
+    {
+        pattern: /^\s*(?:(?:nohup|start|start-process|start-job|systemctl|service)\b|docker(?:\s+compose)?\s+up\b)|&\s*$/iu,
+        reason: 'start background processes or services'
+    },
+    {
+        pattern: /[\r\n;]|&&?|\|\|?/u,
+        reason: 'chain or pipe multiple commands in one focused validation attempt'
+    }
+];
+const REVIEWER_MUTATING_FOCUSED_OPTION_NAMES = new Set([
+    '--accept', '--bless', '--fix', '--overwrite', '--rewrite', '--snapshot-update', '--update',
+    '--update-snapshot', '--update-snapshots', '--updatesnapshot', '--write', '-u', '-w'
+]);
+const REVIEWER_OUTPUT_FOCUSED_OPTION_NAMES = new Set([
+    '--coverage', '--coverage-directory', '--coveragedirectory', '--emitdeclarationonly', '--junitxml',
+    '--output', '--output-file', '--outputfile', '--reporter-output', '--test-reporter-destination', '-o'
+]);
+const REVIEWER_INTERACTIVE_FOCUSED_OPTION_NAMES = new Set([
+    '--debug', '--inspect', '--inspect-brk', '--open', '--serve', '--ui', '--watch', '--watch-all', '--watchall'
+]);
+const REVIEWER_SAFE_FOCUSED_OPTION_NAMES = new Set([
+    '--', '--bail', '--color', '--filter', '--grep', '--match', '--maxworkers', '--no-cache', '--no-color',
+    '--no-warnings', '--noemit', '--pattern', '--pretty', '--run', '--runinband', '--silent', '--test',
+    '--test-name-pattern', '--test-only', '--testnamepattern', '--threads', '--verbose', '-g', '-k', '-m', '-p', '-t'
+]);
+
+function focusedCommandTokenBasename(token: string): string {
+    return token.replace(/\\/gu, '/').split('/').pop()?.toLowerCase() || '';
+}
+
+function reviewerCommandInvokesGarda(command: string): boolean {
+    const tokens = getFocusedCommandTokens(command);
+    const firstToken = tokens[0] || '';
+    const firstBasename = focusedCommandTokenBasename(firstToken);
+    if (/^garda(?:\.cmd|\.exe)?$/u.test(firstBasename) || firstBasename === 'garda.js') {
+        return true;
+    }
+    if (/^node(?:\.exe)?$/u.test(firstBasename)) {
+        const scriptIndex = findNextFocusedCommandToken(tokens, 1);
+        const runtimeOptions = scriptIndex < 0 ? [] : tokens.slice(1, scriptIndex);
+        return scriptIndex >= 0
+            && !runtimeOptions.some(isFocusedExecutionSignalToken)
+            && focusedCommandTokenBasename(tokens[scriptIndex]) === 'garda.js';
+    }
+    if (!/^(?:npx|bunx|npm(?:\.cmd|\.exe)?|pnpm|yarn|bun)$/u.test(firstBasename)) {
+        return false;
+    }
+    let packageTargetIndex = findNextFocusedCommandToken(tokens, 1);
+    if (packageTargetIndex >= 0 && /^(?:exec|dlx|x)$/iu.test(tokens[packageTargetIndex])) {
+        packageTargetIndex = findNextFocusedCommandToken(tokens, packageTargetIndex + 1);
+    }
+    return packageTargetIndex >= 0
+        && /^garda(?:\.cmd|\.exe)?$/u.test(focusedCommandTokenBasename(tokens[packageTargetIndex]));
+}
+
+function getUnsafeFocusedCommandReason(command: string): string | null {
+    if (reviewerCommandInvokesGarda(command)) {
+        return 'invoke Garda navigation, gate, or result commands';
+    }
+    return REVIEWER_UNSAFE_FOCUSED_COMMAND_PATTERNS.find(({ pattern }) => pattern.test(command))?.reason
+        || getUnsafeFocusedCommandTokenReason(command)
+        || null;
+}
+
+function normalizeFocusedTargetPath(value: string): string {
+    return value.replace(/\\/gu, '/').replace(/^(?:\.\/)+/u, '');
+}
+
+const REVIEWER_FOCUSED_EXECUTION_SIGNAL_PATTERN =
+    /(?:^|[\s/\\._:-])(?:test|spec|check|lint|validat|verif|audit|bench)[a-z0-9]*(?=$|[\s/\\._:=#-])|(?:^|[\s/\\._:-])(?:vitest|jest|mocha|ava|tap|pytest|rspec|phpunit|playwright|cypress|spectral|ajv|eslint|tsc|hyperfine)(?=$|[\s/\\._:=#-])/iu;
+const REVIEWER_DIRECTLY_EXECUTABLE_TARGET_PATTERN = /\.(?:[cm]?[jt]sx?|py|rb|php|sh|ps1)$/iu;
+const REVIEWER_GENERIC_FOCUSED_COMMAND_TOKEN_PATTERN =
+    /^(?:node(?:\.exe)?|deno|bun|python(?:3)?|pytest|ruby|perl|php|tsx|ts-node|npx|npm(?:\.cmd|\.exe)?|pnpm|yarn|mvnw?|gradlew?|dotnet|go|cargo|make|just|java|openssl|spectral|ajv|eslint|tsc|vitest|jest|mocha|ava|tap|rspec|phpunit|playwright|cypress|hyperfine|powershell|pwsh|bash|sh|zsh|run|exec|test|tests|spec|check|lint|validate|validation|verify|audit|bench|build)$/iu;
+const REVIEWER_DIRECT_VALIDATION_RUNNER_PATTERN =
+    /^(?:pytest|spectral|ajv|eslint|tsc|vitest|jest|mocha|ava|tap|rspec|phpunit|playwright|cypress|hyperfine)$/iu;
+const REVIEWER_DIRECT_VALIDATION_RUNNER_SUBCOMMANDS: Readonly<Record<string, readonly string[]>> = {
+    ajv: ['validate'],
+    cypress: ['run'],
+    playwright: ['test'],
+    spectral: ['lint'],
+    vitest: ['run']
+};
+const REVIEWER_GENERIC_RUNTIME_PATTERN =
+    /^(?:node(?:\.exe)?|deno|python(?:3)?|ruby|perl|php|tsx|ts-node|java|powershell|pwsh|bash|sh|zsh)$/iu;
+const REVIEWER_PACKAGE_MANAGER_PATTERN = /^(?:npm(?:\.cmd|\.exe)?|pnpm|yarn|bun)$/iu;
+const REVIEWER_PACKAGE_EXEC_WRAPPER_PATTERN = /^(?:npx|bunx)$/iu;
+const REVIEWER_BUILD_OR_VALIDATION_TOOL_PATTERN = /^(?:mvnw?|gradlew?|dotnet|go|cargo|make|just|openssl)$/iu;
+const REVIEWER_NODE_FOUNDATION_TEST_WRAPPER_PATTERN = /^scripts\/node-foundation\/build-scripts\.cjs$/iu;
+const REVIEWER_DIRECT_TEST_TARGET_PATTERN =
+    /^(?:tests?\/.*|(?:.*\/)?[^/]+\.(?:test|spec)\.(?:c|m)?[jt]sx?)$/iu;
+const REVIEWER_FOCUSED_FILE_TARGET_PATTERN =
+    /(?:^|\/)[^/]+\.[a-z0-9][a-z0-9._-]*(?:(?:::|#).*)?$/iu;
+const REVIEWER_EXTENSIONLESS_FILE_TARGET_PATTERN =
+    /(?:^|\/)(?:Brewfile|Dockerfile|Gemfile|Jenkinsfile|Justfile|LICENSE|Makefile|NOTICE|Procfile|Rakefile|Vagrantfile)$/iu;
+const REVIEWER_NON_ACTIONABLE_DIAGNOSTICS_PATTERN =
+    /^(?:n\/?a|none|null|unknown|tbd|todo|not applicable|unavailable|prohibited|blocked|failed|failure|error|-)\.?$/iu;
+const REVIEWER_GENERIC_DIAGNOSTICS_SENTENCE_PATTERN =
+    /^(?:(?:the|a)\s+)?(?:focused\s+)?(?:command|check|test|validation|attempt|execution|runner|runtime|target)(?:\s+(?:command|check|test|validation|attempt|execution|runner|runtime|result|outcome|target))?\s+(?:(?:is|was|has been)\s+)?(?:unavailable|prohibited|blocked|failed|passed|errored|an? error)\.?$/iu;
+const REVIEWER_FOCUSED_OPTION_WITH_VALUE_PATTERN =
+    /^(?:-k|-m|-t|-g|--grep|--filter|--test-name-pattern|--testnamepattern|--config|--project|--selectprojects|--testpathignorepatterns|--testpathpattern|--include|--exclude|--match|--pattern)$/iu;
+const REVIEWER_FOCUSED_OPTION_WITH_SCALAR_VALUE_PATTERN =
+    /^(?:--bail|--color|--maxworkers|--pretty|--threads|--verbose)$/iu;
+const REVIEWER_FOCUSED_SCALAR_OPTION_VALUE_PATTERN = /^(?:false|true|\d+)$/iu;
+const REVIEWER_GENERIC_DIAGNOSTICS_WORDS = new Set([
+    'a', 'an', 'attempt', 'be', 'been', 'blocked', 'can', 'check', 'command', 'could', 'error', 'errored',
+    'execute', 'executed', 'execution', 'failed', 'failure', 'focused', 'had', 'has', 'have', 'is', 'not',
+    'outcome', 'passed', 'prohibited', 'result', 'run', 'runner', 'runtime', 'target', 'test', 'the', 'unknown',
+    'unavailable', 'validation', 'was', 'were'
+]);
+const REVIEWER_CONCRETE_DIAGNOSTIC_COUNT_PATTERN =
+    /\b\d+\s+(?:assertions?|cases?|checks?|errors?|failures?|tests?)\b/iu;
+
+function getFocusedCommandTokens(command: string): string[] {
+    return (command.match(/"[^"]*"|'[^']*'|[^\s]+/gu) || [])
+        .map((token) => normalizeFocusedTargetPath(token.replace(/^["']|["']$/gu, '')))
+        .filter(Boolean);
+}
+
+function normalizeFocusedOptionName(token: string): string {
+    return token.toLowerCase().split('=', 1)[0];
+}
+
+function hasInlineInterpreterOption(firstToken: string, tokens: readonly string[]): boolean {
+    if (/^(?:node(?:\.exe)?|deno|bun|python(?:3)?|ruby|perl|php)$/iu.test(firstToken)) {
+        return tokens.slice(1).some((token) => /^(?:-e|-c|-p|--eval|--print)(?:$|=|[^a-z0-9-])/iu.test(token));
+    }
+    if (/^(?:powershell|pwsh)$/iu.test(firstToken)) {
+        return tokens.slice(1).some((token) => /^(?:-command|-encodedcommand)(?:$|=)/iu.test(token));
+    }
+    if (/^(?:bash|sh|zsh|cmd(?:\.exe)?)$/iu.test(firstToken)) {
+        return tokens.slice(1).some((token) => /^(?:-c|\/c)$/iu.test(token));
+    }
+    return false;
+}
+
+function getUnsafeFocusedCommandTokenReason(command: string): string | null {
+    const tokens = getFocusedCommandTokens(command);
+    const firstToken = tokens[0] || '';
+    const optionNames = tokens.filter((token) => token.startsWith('-')).map(normalizeFocusedOptionName);
+    if (REVIEWER_PACKAGE_EXEC_WRAPPER_PATTERN.test(firstToken)) {
+        return 'use package-execution wrappers that may fetch dependencies implicitly';
+    }
+    if (
+        REVIEWER_PACKAGE_MANAGER_PATTERN.test(firstToken)
+        && tokens.slice(1).some((token) => /^(?:exec|dlx|x)$/iu.test(token))
+    ) {
+        return 'use package-execution wrappers that may fetch dependencies implicitly';
+    }
+    if (hasInlineInterpreterOption(firstToken, tokens)) {
+        return 'run inline interpreter code with unauditable side effects';
+    }
+    if (optionNames.some((option) => REVIEWER_MUTATING_FOCUSED_OPTION_NAMES.has(option))) {
+        return 'use validation-runner flags that may mutate source files or snapshots';
+    }
+    if (optionNames.some((option) => REVIEWER_OUTPUT_FOCUSED_OPTION_NAMES.has(option))) {
+        return 'use validation-runner flags that may write output artifacts';
+    }
+    if (optionNames.some((option) => REVIEWER_INTERACTIVE_FOCUSED_OPTION_NAMES.has(option))) {
+        return 'use interactive, watching, serving, or debugger validation-runner flags';
+    }
+    if (/^tsc$/iu.test(firstToken) && !optionNames.includes('--noemit')) {
+        return 'run TypeScript compilation without --noEmit, which may write output artifacts';
+    }
+    if (optionNames.some((option) => !REVIEWER_SAFE_FOCUSED_OPTION_NAMES.has(option))) {
+        return 'use unrecognized validation-runner options whose side effects are not authenticated';
+    }
+    return null;
+}
+
+function findNextFocusedCommandToken(tokens: readonly string[], startIndex: number): number {
+    for (let index = startIndex; index < tokens.length; index += 1) {
+        if (tokens[index] !== '--' && !tokens[index].startsWith('-')) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+function isFocusedExecutionSignalToken(token: string): boolean {
+    return REVIEWER_FOCUSED_EXECUTION_SIGNAL_PATTERN.test(token);
+}
+
+function isActionableFocusedDiagnostics(diagnostics: string): boolean {
+    const normalized = diagnostics.trim();
+    const words = (normalized.match(/[a-z0-9]+/giu) || []).map((word) => word.toLowerCase());
+    const detailWords = words.filter((word) => (
+        !REVIEWER_GENERIC_DIAGNOSTICS_WORDS.has(word)
+        && !/^\d+$/u.test(word)
+    ));
+    const hasConcreteCount = REVIEWER_CONCRETE_DIAGNOSTIC_COUNT_PATTERN.test(normalized);
+    return normalized.length >= 12
+        && words.length >= 3
+        && (detailWords.length >= 2 || hasConcreteCount)
+        && !REVIEWER_NON_ACTIONABLE_DIAGNOSTICS_PATTERN.test(normalized)
+        && !REVIEWER_GENERIC_DIAGNOSTICS_SENTENCE_PATTERN.test(normalized);
+}
+
+function focusedCommandHasValidationRunner(command: string): boolean {
+    const tokens = getFocusedCommandTokens(command);
+    const firstToken = tokens[0] || '';
+    if (REVIEWER_DIRECT_VALIDATION_RUNNER_PATTERN.test(firstToken)) {
+        return true;
+    }
+    if (REVIEWER_GENERIC_RUNTIME_PATTERN.test(firstToken)) {
+        if (tokens.slice(1).some((token) => token.startsWith('-') && isFocusedExecutionSignalToken(token))) {
+            return true;
+        }
+        const moduleFlagIndex = tokens.findIndex((token, index) => index > 0 && token === '-m');
+        if (moduleFlagIndex >= 0 && REVIEWER_DIRECT_VALIDATION_RUNNER_PATTERN.test(tokens[moduleFlagIndex + 1] || '')) {
+            return true;
+        }
+        const runnerIndex = findNextFocusedCommandToken(tokens, 1);
+        if (
+            runnerIndex >= 0
+            && REVIEWER_NODE_FOUNDATION_TEST_WRAPPER_PATTERN.test(tokens[runnerIndex])
+        ) {
+            const wrapperCommandIndex = findNextFocusedCommandToken(tokens, runnerIndex + 1);
+            return wrapperCommandIndex >= 0 && isFocusedExecutionSignalToken(tokens[wrapperCommandIndex]);
+        }
+        return runnerIndex >= 0 && isFocusedExecutionSignalToken(tokens[runnerIndex]);
+    }
+    if (REVIEWER_PACKAGE_MANAGER_PATTERN.test(firstToken) || REVIEWER_PACKAGE_EXEC_WRAPPER_PATTERN.test(firstToken)) {
+        let runnerIndex = findNextFocusedCommandToken(tokens, 1);
+        if (runnerIndex < 0) {
+            return false;
+        }
+        if (/^(?:run|exec|dlx|x)$/iu.test(tokens[runnerIndex])) {
+            runnerIndex = findNextFocusedCommandToken(tokens, runnerIndex + 1);
+        }
+        return runnerIndex >= 0 && (
+            REVIEWER_DIRECT_VALIDATION_RUNNER_PATTERN.test(tokens[runnerIndex])
+            || isFocusedExecutionSignalToken(tokens[runnerIndex])
+        );
+    }
+    if (REVIEWER_BUILD_OR_VALIDATION_TOOL_PATTERN.test(firstToken)) {
+        const runnerIndex = findNextFocusedCommandToken(tokens, 1);
+        return runnerIndex >= 0 && isFocusedExecutionSignalToken(tokens[runnerIndex]);
+    }
+    return /(?:^|\/)\.?[^/]*[a-z0-9][^/]*$/iu.test(firstToken)
+        && firstToken.includes('/')
+        && isFocusedExecutionSignalToken(firstToken);
+}
+
+function isPathInsideFocusedRepository(repoRoot: string, candidatePath: string): boolean {
+    const relativePath = path.relative(repoRoot, candidatePath);
+    return relativePath !== '..'
+        && !relativePath.startsWith(`..${path.sep}`)
+        && !path.isAbsolute(relativePath);
+}
+
+function isExistingFocusedTargetFile(token: string, repoRoot?: string): boolean {
+    if (!repoRoot) {
+        return false;
+    }
+    try {
+        const realRepoRoot = fs.realpathSync(repoRoot);
+        const candidatePath = path.resolve(realRepoRoot, token);
+        if (!isPathInsideFocusedRepository(realRepoRoot, candidatePath)) {
+            return false;
+        }
+        const candidateStats = fs.lstatSync(candidatePath);
+        return candidateStats.isFile()
+            && !candidateStats.isSymbolicLink()
+            && isPathInsideFocusedRepository(realRepoRoot, fs.realpathSync(candidatePath));
+    } catch {
+        return false;
+    }
+}
+
+function isConcreteFocusedTargetToken(token: string, repoRoot?: string): boolean {
+    if (
+        !token
+        || token === '.'
+        || token === '...'
+        || token === '--'
+        || token.startsWith('-')
+        || /[*?\[\]{}$%]/u.test(token)
+        || token.startsWith('~')
+        || token.startsWith('@')
+        || REVIEWER_GENERIC_FOCUSED_COMMAND_TOKEN_PATTERN.test(token)
+    ) {
+        return false;
+    }
+    if (!isSafeRepositoryRelativeFocusedTarget(token)) {
+        return false;
+    }
+    if (repoRoot) {
+        return isExistingFocusedTargetFile(token, repoRoot);
+    }
+    return REVIEWER_FOCUSED_FILE_TARGET_PATTERN.test(token)
+        || REVIEWER_EXTENSIONLESS_FILE_TARGET_PATTERN.test(token);
+}
+
+function isDirectValidationRunnerSubcommand(runner: string, token: string): boolean {
+    return (REVIEWER_DIRECT_VALIDATION_RUNNER_SUBCOMMANDS[runner.toLowerCase()] || [])
+        .includes(token.toLowerCase());
+}
+
+function consumeGenericRuntimeTokens(tokens: readonly string[], consumedIndexes: Set<number>): void {
+    consumedIndexes.add(0);
+    const moduleFlagIndex = tokens.findIndex((token, index) => index > 0 && token === '-m');
+    if (moduleFlagIndex >= 0 && REVIEWER_DIRECT_VALIDATION_RUNNER_PATTERN.test(tokens[moduleFlagIndex + 1] || '')) {
+        consumedIndexes.add(moduleFlagIndex);
+        consumedIndexes.add(moduleFlagIndex + 1);
+        return;
+    }
+    if (tokens.slice(1).some((token) => token.startsWith('-') && isFocusedExecutionSignalToken(token))) {
+        return;
+    }
+    const runnerIndex = findNextFocusedCommandToken(tokens, 1);
+    if (runnerIndex < 0) {
+        return;
+    }
+    if (!REVIEWER_NODE_FOUNDATION_TEST_WRAPPER_PATTERN.test(tokens[runnerIndex])) {
+        if (!REVIEWER_DIRECT_TEST_TARGET_PATTERN.test(tokens[runnerIndex])) {
+            consumedIndexes.add(runnerIndex);
+        }
+        return;
+    }
+    consumedIndexes.add(runnerIndex);
+    const wrapperCommandIndex = findNextFocusedCommandToken(tokens, runnerIndex + 1);
+    if (wrapperCommandIndex >= 0) {
+        consumedIndexes.add(wrapperCommandIndex);
+    }
+}
+
+function consumePackageManagerTokens(tokens: readonly string[], consumedIndexes: Set<number>): void {
+    consumedIndexes.add(0);
+    let runnerIndex = findNextFocusedCommandToken(tokens, 1);
+    if (runnerIndex >= 0 && /^(?:run|exec|dlx|x)$/iu.test(tokens[runnerIndex])) {
+        consumedIndexes.add(runnerIndex);
+        runnerIndex = findNextFocusedCommandToken(tokens, runnerIndex + 1);
+    }
+    if (runnerIndex >= 0) {
+        consumedIndexes.add(runnerIndex);
+    }
+}
+
+function getFocusedRunnerTokenIndexes(tokens: readonly string[]): Set<number> {
+    const consumedIndexes = new Set<number>();
+    const firstToken = tokens[0] || '';
+    if (REVIEWER_DIRECT_VALIDATION_RUNNER_PATTERN.test(firstToken)) {
+        consumedIndexes.add(0);
+        if (isDirectValidationRunnerSubcommand(firstToken, tokens[1] || '')) {
+            consumedIndexes.add(1);
+        }
+    } else if (REVIEWER_GENERIC_RUNTIME_PATTERN.test(firstToken)) {
+        consumeGenericRuntimeTokens(tokens, consumedIndexes);
+    } else if (REVIEWER_PACKAGE_MANAGER_PATTERN.test(firstToken) || REVIEWER_PACKAGE_EXEC_WRAPPER_PATTERN.test(firstToken)) {
+        consumePackageManagerTokens(tokens, consumedIndexes);
+    } else if (REVIEWER_BUILD_OR_VALIDATION_TOOL_PATTERN.test(firstToken)) {
+        consumedIndexes.add(0);
+        const runnerIndex = findNextFocusedCommandToken(tokens, 1);
+        if (runnerIndex >= 0) {
+            consumedIndexes.add(runnerIndex);
+        }
+    } else if (!REVIEWER_DIRECT_TEST_TARGET_PATTERN.test(firstToken)) {
+        consumedIndexes.add(0);
+    }
+    return consumedIndexes;
+}
+
+function consumeFocusedOptionValues(tokens: readonly string[], consumedIndexes: Set<number>): void {
+    tokens.forEach((token, index) => {
+        if (
+            REVIEWER_FOCUSED_OPTION_WITH_VALUE_PATTERN.test(token)
+            && !token.includes('=')
+            && index + 1 < tokens.length
+        ) {
+            consumedIndexes.add(index);
+            consumedIndexes.add(index + 1);
+            return;
+        }
+        if (
+            REVIEWER_FOCUSED_OPTION_WITH_SCALAR_VALUE_PATTERN.test(token)
+            && !token.includes('=')
+            && REVIEWER_FOCUSED_SCALAR_OPTION_VALUE_PATTERN.test(tokens[index + 1] || '')
+        ) {
+            consumedIndexes.add(index);
+            consumedIndexes.add(index + 1);
+        }
+    });
+}
+
+interface FocusedCommandTargetParseResult {
+    targets: string[];
+    invalidPositionalTokens: string[];
+}
+
+function parseFocusedCommandTargets(command: string, repoRoot?: string): FocusedCommandTargetParseResult {
+    const tokens = getFocusedCommandTokens(command);
+    const consumedIndexes = getFocusedRunnerTokenIndexes(tokens);
+    consumeFocusedOptionValues(tokens, consumedIndexes);
+    const positionalTokens = tokens.filter((token, index) => (
+        !consumedIndexes.has(index) && token !== '--' && !token.startsWith('-')
+    ));
+    return {
+        targets: positionalTokens
+            .filter((token) => isConcreteFocusedTargetToken(token, repoRoot))
+            .map(normalizeFocusedTargetPath),
+        invalidPositionalTokens: positionalTokens.filter((token) => !isConcreteFocusedTargetToken(token, repoRoot))
+    };
+}
+
+function getFocusedCommandTargetTokens(command: string, repoRoot?: string): string[] {
+    return parseFocusedCommandTargets(command, repoRoot).targets;
+}
+
+function focusedCommandHasConcreteTarget(command: string, repoRoot?: string): boolean {
+    const parsedTargets = parseFocusedCommandTargets(command, repoRoot);
+    return parsedTargets.targets.length === 1 && parsedTargets.invalidPositionalTokens.length === 0;
+}
+
+function focusedCommandExecutesValidation(command: string, repoRoot?: string): boolean {
+    const normalizedCommand = command.replace(/\\/gu, '/');
+    return focusedCommandHasValidationRunner(normalizedCommand)
+        && focusedCommandHasConcreteTarget(normalizedCommand, repoRoot);
+}
+
+function focusedCommandExecutesMarkerTarget(command: string, markerTarget: string, repoRoot?: string): boolean {
+    const normalizedTarget = normalizeFocusedTargetPath(markerTarget);
+    const parsedTargets = parseFocusedCommandTargets(command, repoRoot);
+    if (
+        parsedTargets.targets.length !== 1
+        || parsedTargets.invalidPositionalTokens.length > 0
+        || parsedTargets.targets[0] !== normalizedTarget
+    ) {
+        return false;
+    }
+    const normalizedCommand = command.replace(/\\/gu, '/');
+    const escapedTarget = normalizedTarget.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    const commandWithoutTarget = normalizedCommand.replace(
+        new RegExp(`(?:\\./)?${escapedTarget}`, 'gu'),
+        ' '
+    );
+    if (
+        focusedCommandHasValidationRunner(commandWithoutTarget)
+    ) {
+        return true;
+    }
+    if (
+        !REVIEWER_DIRECTLY_EXECUTABLE_TARGET_PATTERN.test(normalizedTarget)
+        || !REVIEWER_DIRECT_TEST_TARGET_PATTERN.test(normalizedTarget)
+    ) {
+        return false;
+    }
+    return new RegExp(
+        `^\\s*(?:(?:node(?:\\.exe)?|deno|bun|python(?:3)?|ruby|perl|php|tsx|ts-node)(?:\\s+--?[a-z0-9][^\\s]*)*\\s+)?["']?(?:\\./)?${escapedTarget}["']?(?:\\s|$)`,
+        'u'
+    ).test(normalizedCommand);
+}
+
+function focusedEvidenceNamesTarget(
+    evidence: readonly ReviewFindingsEvidence[],
+    markerTarget: string
+): boolean {
+    const normalizedTarget = normalizeFocusedTargetPath(markerTarget);
+    const escapedTarget = normalizedTarget.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    const exactTargetPattern = new RegExp(
+        `(?<![a-z0-9._/\\-])${escapedTarget}(?![a-z0-9_/\\-]|\\.[a-z0-9])`,
+        'u'
+    );
+    return evidence.map((entry) => entry.observation)
+        .some((entry) => exactTargetPattern.test(entry.replace(/\\/gu, '/')));
+}
+
+function focusedAttemptBindsTargetToEvidence(note: ReviewFindingsValidationNote, markerTarget: string): boolean {
+    return focusedEvidenceNamesTarget(note.evidence, markerTarget);
+}
+
+function isSafeRepositoryRelativeFocusedTarget(markerTarget: string): boolean {
+    const normalizedTarget = markerTarget.replace(/\\/gu, '/');
+    if (normalizedTarget.startsWith('/') || /^[a-z]:/iu.test(normalizedTarget)) {
+        return false;
+    }
+    const segments = normalizedTarget.split('/');
+    return segments.length > 0 && segments.every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+}
+
+function validateFailedFocusedFindingLinks(
+    validationNotes: readonly ReviewFindingsValidationNote[],
+    allFindings: readonly ReviewFinding[],
+    violations: string[]
+): void {
+    const ordinaryFindingsById = new Map<string, ReviewFinding>(allFindings
+        .filter((finding) => finding.id !== 'F-000')
+        .map((finding): [string, ReviewFinding] => [finding.id, finding]));
+    for (const note of validationNotes.filter((entry) => entry.command_outcome === 'failed')) {
+        for (const findingId of note.finding_ids || []) {
+            const finding = ordinaryFindingsById.get(findingId);
+            if (!finding) {
+                violations.push(`A failed focused-self-validation command references unknown ordinary finding id '${findingId}'.`);
+                continue;
+            }
+            const noteEvidenceLocations = new Set(note.evidence.map((entry) => (
+                normalizeFocusedTargetPath(entry.location)
+            )));
+            if (!finding.evidence.some((entry) => noteEvidenceLocations.has(
+                normalizeFocusedTargetPath(entry.location)
+            ))) {
+                violations.push(
+                    `A failed focused-self-validation command and linked ordinary finding '${findingId}' `
+                    + 'must share at least one exact changed-file evidence location.'
+                );
+            }
+        }
+    }
+}
+
+function getMissingFocusedValidationMarkerTargets(finding: ReviewFinding): string[] {
+    return [finding.title, finding.description]
+        .map((value) => MISSING_FOCUSED_VALIDATION_MARKER_PATTERN.exec(value))
+        .filter((match): match is RegExpExecArray => Boolean(match))
+        .map((match) => match[1] || match[2]);
+}
+
+function containsMissingFocusedValidationClaim(value: string): boolean {
+    return MISSING_FOCUSED_VALIDATION_MARKER_PATTERN.test(value)
+        || MISSING_FOCUSED_VALIDATION_CLAIM_PATTERN.test(value);
+}
+
+function validateMissingFocusedValidationClaimChannels(
+    allFindings: readonly ReviewFinding[],
+    residualRisks: readonly ReviewResidualRisk[],
+    violations: string[]
+): void {
+    for (const finding of allFindings.filter((entry) => entry.id !== 'F-000')) {
+        const hasCanonicalMarker = getMissingFocusedValidationMarkerTargets(finding).length > 0;
+        if (!hasCanonicalMarker && (
+            containsMissingFocusedValidationClaim(finding.title)
+            || containsMissingFocusedValidationClaim(finding.description)
+        )) {
+            violations.push(
+                `Finding '${finding.id}' must not report missing focused execution through an ordinary noncanonical finding; `
+                + 'use F-000 with the exact canonical marker only after an unavailable or prohibited real attempt.'
+            );
+        }
+    }
+    for (const risk of residualRisks) {
+        if (containsMissingFocusedValidationClaim(risk.description)) {
+            violations.push(
+                `Residual risk '${risk.id}' must not report missing focused execution; `
+                + 'passed attempts produce no risk, failed attempts produce ordinary findings, and unavailable or prohibited attempts use canonical F-000.'
+            );
+        }
+    }
+}
+
+function validateMissingFocusedMarkerOwnership(
+    allFindings: readonly ReviewFinding[],
+    violations: string[]
+): ReviewFinding[] {
+    const markerFindings = allFindings.filter((finding) => (
+        getMissingFocusedValidationMarkerTargets(finding).length > 0
+    ));
+    for (const finding of markerFindings) {
+        if (finding.id !== 'F-000') {
+            violations.push('The missing-focused-validation marker is reserved for finding id F-000.');
+        }
+    }
+    const evidenceOnlyFindings = allFindings.filter((finding) => finding.id === 'F-000');
+    for (const finding of evidenceOnlyFindings) {
+        const markerTargets = getMissingFocusedValidationMarkerTargets(finding);
+        if (markerTargets.length === 0) {
+            violations.push('Finding id F-000 is reserved for the exact canonical missing-focused-validation marker.');
+        }
+        if (new Set(markerTargets).size > 1) {
+            violations.push('Finding id F-000 title and description must not declare different missing-focused-validation targets.');
+        }
+    }
+    return evidenceOnlyFindings;
+}
+
+function getFocusedAttemptNotes(
+    validationNotes: readonly ReviewFindingsValidationNote[]
+): ReviewFindingsValidationNote[] {
+    return validationNotes.filter((note) => (
+        note.topic.trim().toLowerCase() === REVIEWER_FOCUSED_SELF_VALIDATION_TOPIC
+        && Boolean(note.command)
+        && Boolean(note.command_outcome)
+        && Boolean(note.diagnostics)
+    ));
+}
+
+interface FocusedTargetAttempts {
+    commandTargetAttempts: ReviewFindingsValidationNote[];
+    authenticatedTargetAttempts: ReviewFindingsValidationNote[];
+}
+
+function getFocusedTargetAttempts(
+    attemptNotes: readonly ReviewFindingsValidationNote[],
+    markerTarget: string,
+    repoRoot?: string
+): FocusedTargetAttempts {
+    const commandTargetAttempts = attemptNotes.filter((note) => (
+        Boolean(note.command)
+        && focusedCommandExecutesMarkerTarget(note.command as string, markerTarget, repoRoot)
+    ));
+    return {
+        commandTargetAttempts,
+        authenticatedTargetAttempts: commandTargetAttempts.filter((note) => (
+            isActionableFocusedDiagnostics(note.diagnostics as string)
+            && focusedAttemptBindsTargetToEvidence(note, markerTarget)
+        ))
+    };
+}
+
+function validateFocusedTargetAttemptOutcome(
+    attempts: FocusedTargetAttempts,
+    violations: string[]
+): void {
+    if (attempts.commandTargetAttempts.some((note) => (
+        note.command_outcome === 'passed' || note.command_outcome === 'failed'
+    ))) {
+        violations.push(
+            'F-000 missing-focused-validation is valid only when the target command outcome is unavailable or prohibited; ' +
+            'it is invalid when any matching passed or failed attempt exists, because passed produces no finding and failed must be an ordinary severity finding.'
+        );
+        return;
+    }
+    if (
+        attempts.authenticatedTargetAttempts.length > 0
+        && !attempts.authenticatedTargetAttempts.some((note) => (
+            note.command_outcome === 'unavailable' || note.command_outcome === 'prohibited'
+        ))
+    ) {
+        violations.push(
+            'F-000 missing-focused-validation is valid only when the target command outcome is unavailable or prohibited; passed produces no finding and failed must be an ordinary severity finding.'
+        );
+    }
+}
+
+function validateEvidenceOnlyFocusedTarget(
+    markerTarget: string,
+    attemptNotes: readonly ReviewFindingsValidationNote[],
+    violations: string[],
+    repoRoot?: string
+): void {
+    if (!isSafeRepositoryRelativeFocusedTarget(markerTarget)) {
+        violations.push(
+            `F-000 missing-focused-validation target '${markerTarget}' must be a repository-relative path without dot segments.`
+        );
+        return;
+    }
+    const attempts = getFocusedTargetAttempts(attemptNotes, markerTarget, repoRoot);
+    if (attempts.authenticatedTargetAttempts.length === 0) {
+        violations.push(
+            `F-000 missing-focused-validation requires the exact attempted command to execute target '${markerTarget}' through a focused test or validation runner and authenticated validation-note evidence to name that target's relevance.`
+        );
+    }
+    validateFocusedTargetAttemptOutcome(attempts, violations);
+}
+
+function validateEvidenceOnlyFocusedFinding(
+    finding: ReviewFinding,
+    attemptNotes: readonly ReviewFindingsValidationNote[],
+    violations: string[],
+    repoRoot?: string
+): void {
+    const markerTargets = [...new Set(getMissingFocusedValidationMarkerTargets(finding))];
+    for (const markerTarget of markerTargets) {
+        validateEvidenceOnlyFocusedTarget(markerTarget, attemptNotes, violations, repoRoot);
+    }
+}
+
+function validateMissingFocusedValidationPostAttemptEvidence(
+    validationNotes: readonly ReviewFindingsValidationNote[],
+    findings: ReviewFindingsBySeverity | null,
+    residualRisks: readonly ReviewResidualRisk[],
+    violations: string[],
+    repoRoot?: string
+): void {
+    const allFindings = getAllFindings(findings);
+    validateFailedFocusedFindingLinks(validationNotes, allFindings, violations);
+    validateMissingFocusedValidationClaimChannels(allFindings, residualRisks, violations);
+    const evidenceOnlyFindings = validateMissingFocusedMarkerOwnership(allFindings, violations);
+    if (evidenceOnlyFindings.length === 0) {
+        return;
+    }
+    const attemptNotes = getFocusedAttemptNotes(validationNotes);
+    if (attemptNotes.length === 0) {
+        violations.push(
+            'F-000 missing-focused-validation requires a focused-self-validation validation note with exact command, command_outcome, and actionable diagnostics from a real attempt.'
+        );
+        return;
+    }
+    for (const finding of evidenceOnlyFindings) {
+        validateEvidenceOnlyFocusedFinding(finding, attemptNotes, violations, repoRoot);
+    }
 }
 
 function parseCoverageLedger(value: unknown, violations: string[]): ReviewFindingsCoverageLedger | null {
@@ -776,11 +1725,18 @@ export function validateReviewFindingsReport(
         violations.push('tree_state_sha256 does not match the current review tree state.');
     }
 
-    const validationNotes = parseValidationNotes(value.validation_notes, violations);
+    const validationNotes = parseValidationNotes(value.validation_notes, violations, options.repoRoot);
     const coverageLedger = parseCoverageLedger(value.coverage_ledger, violations);
     const findings = parseFindings(value.findings, violations);
     const residualRisks = parseResidualRisks(value.residual_risks, violations);
     const reviewerNotes = parseReviewerNotes(value.reviewer_notes, violations);
+    validateMissingFocusedValidationPostAttemptEvidence(
+        validationNotes,
+        findings,
+        residualRisks,
+        violations,
+        options.repoRoot
+    );
     validateConcreteReviewEvidenceLocations(
         { validationNotes, coverageLedger, findings, residualRisks },
         options.expectedChangedFilePaths,

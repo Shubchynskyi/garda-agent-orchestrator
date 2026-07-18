@@ -536,7 +536,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
                 artifact_sha256: evidenceManifestArtifact.evidenceManifestSha256
             },
             instructions: [
-                'Launch the delegated reviewer with the role prompt artifact, prompt template artifact, reviewer prompt/context artifact, output template artifact, and evidence manifest artifact.',
+                'These artifacts define the already-launched reviewer handoff; read them in the required order and do not launch or continue another agent.',
                 'The role prompt artifact binds the selected reviewer role and selected skill id/path/hash.',
                 'The prompt template artifact is the reviewer instruction source for the selected review type.',
                 'The reviewer must return exactly one findings-only JSON object that satisfies the generated output template and coverage contract.',

@@ -63,6 +63,50 @@ function validReport(): Record<string, unknown> {
     };
 }
 
+function missingFocusedValidationReport(): Record<string, unknown> {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'Prior focused execution for tests/node/example.test.ts was absent, so the reviewer attempted that smallest local check.',
+        command: 'node --test tests/node/example.test.ts',
+        command_outcome: 'unavailable',
+        diagnostics: 'The test runtime is not installed in the isolated reviewer environment.',
+        evidence: [evidence(
+            'src/example.ts:10',
+            'The changed parser branch is covered by tests/node/example.test.ts, which motivated the focused attempt.'
+        )]
+    }];
+    report.findings = {
+        critical: [],
+        high: [],
+        medium: [{
+            id: 'F-000',
+            title: '[garda:evidence-only:missing-focused-validation] test=tests/node/example.test.ts; action=run-and-record-focused-test',
+            description: 'The focused command could not execute because the isolated environment lacks the test runtime.',
+            evidence: [evidence()],
+            coverage_obligation_ids: ['FILE-001']
+        }],
+        low: []
+    };
+    report.coverage_ledger = {
+        coverage_contract_sha256: CONTRACT_HASH,
+        entries: [
+            {
+                obligation_id: 'FILE-001',
+                evidence: [evidence()],
+                finding_ids: ['F-000']
+            },
+            {
+                obligation_id: 'CATEGORY-SCHEMA',
+                evidence: [evidence('src/example.ts:20', 'Concrete schema category validation was inspected')],
+                finding_ids: []
+            }
+        ]
+    };
+    return report;
+}
+
 const validationOptions = {
     expectedTaskId: 'T-979-1',
     expectedReviewType: 'code',
@@ -203,6 +247,910 @@ test('validateReviewFindingsReport accepts empty findings only with complete cov
     assert.equal(result.report?.task_id, 'T-979-1');
     assert.deepEqual(result.report?.findings.high, []);
     assert.deepEqual(result.violations, []);
+});
+
+test('validateReviewFindingsReport accepts F-000 only with post-attempt focused command evidence', () => {
+    const result = validateReviewFindingsReport(missingFocusedValidationReport(), validationOptions);
+
+    assert.equal(result.valid, true, result.violations.join('\n'));
+    assert.equal(result.report?.validation_notes[0]?.command, 'node --test tests/node/example.test.ts');
+    assert.equal(result.report?.validation_notes[0]?.command_outcome, 'unavailable');
+});
+
+test('validateReviewFindingsReport accepts a non-test focused validation target', () => {
+    const report = missingFocusedValidationReport();
+    const finding = (report.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+    finding.title = '[garda:evidence-only:missing-focused-validation] target=api/openapi.yaml; action=run-and-record-focused-validation';
+    const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+    note.note = 'Prior focused validation for api/openapi.yaml was absent, so the reviewer attempted that smallest local check.';
+    note.command = 'node tools/validate-contract.js api/openapi.yaml';
+    note.evidence = [evidence(
+        'src/example.ts:10',
+        'The changed contract parser consumes api/openapi.yaml, which motivated the focused validation.'
+    )];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, true, result.violations.join('\n'));
+});
+
+test('validateReviewFindingsReport accepts known extensionless focused validation targets', () => {
+    for (const target of ['Dockerfile', 'build/Makefile']) {
+        const report = missingFocusedValidationReport();
+        const finding = (report.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+        finding.title = `[garda:evidence-only:missing-focused-validation] target=${target}; action=run-and-record-focused-validation`;
+        const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+        note.note = `Prior focused validation for ${target} was absent, so the reviewer attempted that smallest local check.`;
+        note.command = `node tools/validate-dockerfile.js ${target}`;
+        note.evidence = [evidence(
+            'src/example.ts:10',
+            `The changed configuration parser consumes ${target}, which motivated the focused validation.`
+        )];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, true, `${target}\n${result.violations.join('\n')}`);
+    }
+});
+
+test('validateReviewFindingsReport accepts existing custom extensionless and spaced focused targets', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-focused-targets-'));
+    try {
+        fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.config'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'example.ts'),
+            Array.from({ length: 25 }, (_, index) => `// line ${index + 1}`).join('\n') + '\n',
+            'utf8'
+        );
+        fs.writeFileSync(path.join(repoRoot, 'CODEOWNERS'), '* @reviewers\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.config', 'review rules'), 'strict\n', 'utf8');
+
+        for (const { target, command } of [
+            { target: 'CODEOWNERS', command: 'npm run validate:compliance -- CODEOWNERS' },
+            { target: '.config/review rules', command: 'node tools/validate-contract.js ".config/review rules"' }
+        ]) {
+            const report = missingFocusedValidationReport();
+            const finding = (report.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+            finding.title = `[garda:evidence-only:missing-focused-validation] target=${target}; action=run-and-record-focused-validation`;
+            const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+            note.note = `The reviewer attempted the smallest custom validation for ${target}.`;
+            note.command = command;
+            note.evidence = [evidence(
+                'src/example.ts:10',
+                `The changed ownership parser consumes ${target}, which motivated the focused validation.`
+            )];
+
+            const result = validateReviewFindingsReport(report, { ...validationOptions, repoRoot });
+
+            assert.equal(result.valid, true, `${target}\n${result.violations.join('\n')}`);
+        }
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('validateReviewFindingsReport accepts equivalent focused target path spellings', () => {
+    const prefixedCommand = missingFocusedValidationReport();
+    (prefixedCommand.validation_notes as Array<Record<string, unknown>>)[0].command =
+        'node --test ./tests\\node\\example.test.ts';
+    const prefixedResult = validateReviewFindingsReport(prefixedCommand, validationOptions);
+    assert.equal(prefixedResult.valid, true, prefixedResult.violations.join('\n'));
+
+    const backslashMarker = missingFocusedValidationReport();
+    const finding = (backslashMarker.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+    finding.title = '[garda:evidence-only:missing-focused-validation] target=tests\\node\\example.test.ts; action=run-and-record-focused-validation';
+    const backslashResult = validateReviewFindingsReport(backslashMarker, validationOptions);
+    assert.equal(backslashResult.valid, true, backslashResult.violations.join('\n'));
+});
+
+test('validateReviewFindingsReport keeps focused target matching case-sensitive', () => {
+    const report = missingFocusedValidationReport();
+    const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+    note.command = 'node --test tests/node/Example.test.ts';
+    note.evidence = [evidence(
+        'src/example.ts:10',
+        'The changed parser branch is covered by tests/node/Example.test.ts.'
+    )];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes("target 'tests/node/example.test.ts'")));
+});
+
+test('validateReviewFindingsReport keeps the canonical F-000 marker case-sensitive', () => {
+    const report = missingFocusedValidationReport();
+    const finding = (report.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+    finding.title = '[GARDA:evidence-only:missing-focused-validation] target=tests/node/example.test.ts; action=run-and-record-focused-validation';
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes('exact canonical missing-focused-validation marker')));
+});
+
+test('validateReviewFindingsReport rejects focused commands with unrelated additional targets', () => {
+    for (const command of [
+        'node --test tests/node/example.test.ts tests/node/other.test.ts',
+        'node tools/validate-contract.js api/openapi.yaml api/other.yaml',
+        'node --test tests/node/example.test.ts tests/node/*.test.ts',
+        'node --test tests/node/example.test.ts not-a-target',
+        'node --test tests/node/example.test.ts tests/../outside.test.ts',
+        'node --test tests/node/example.test.ts C:outside.test.ts'
+    ]) {
+        const report = validReport();
+        report.validation_notes = [{
+            id: 'N-001',
+            topic: 'focused-self-validation',
+            note: 'The reviewer claimed to run one exact focused target.',
+            command,
+            command_outcome: 'passed',
+            diagnostics: 'The command returned zero for multiple repository targets.',
+            evidence: [evidence()]
+        }];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, command);
+        assert.ok(
+            result.violations.some((entry) => entry.includes('must execute a focused test or validation command')),
+            command
+        );
+    }
+});
+
+test('validateReviewFindingsReport accepts one focused target with selector option values', () => {
+    for (const command of [
+        'pytest -k parser tests/example_test.py',
+        'node --test --test-name-pattern parser tests/node/example.test.ts'
+    ]) {
+        const report = validReport();
+        report.validation_notes = [{
+            id: 'N-001',
+            topic: 'focused-self-validation',
+            note: 'The reviewer ran one exact focused target with a selector.',
+            command,
+            command_outcome: 'passed',
+            diagnostics: 'The focused parser selection completed with twelve passing assertions.',
+            evidence: [evidence(
+                'src/example.ts:10',
+                `The changed parser branch is covered by ${command.startsWith('pytest')
+                    ? 'tests/example_test.py'
+                    : 'tests/node/example.test.ts'}.`
+            )]
+        }];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, true, `${command}\n${result.violations.join('\n')}`);
+    }
+});
+
+test('validateReviewFindingsReport accepts direct validation runner subcommands', () => {
+    for (const { command, target } of [
+        { command: 'spectral lint api/openapi.yaml', target: 'api/openapi.yaml' },
+        { command: 'ajv validate api/schema.json', target: 'api/schema.json' },
+        { command: 'vitest run tests/node/example.test.ts', target: 'tests/node/example.test.ts' },
+        { command: 'playwright test tests/e2e/example.spec.ts', target: 'tests/e2e/example.spec.ts' },
+        { command: 'cypress run tests/e2e/example.spec.ts', target: 'tests/e2e/example.spec.ts' }
+    ]) {
+        const report = validReport();
+        report.validation_notes = [{
+            id: 'N-001',
+            topic: 'focused-self-validation',
+            note: 'The reviewer ran one direct validation runner subcommand.',
+            command,
+            command_outcome: 'passed',
+            diagnostics: 'The focused runner completed twelve checks successfully.',
+            evidence: [evidence(
+                'src/example.ts:10',
+                `The changed parser consumes ${target}, which motivated the focused validation.`
+            )]
+        }];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, true, `${command}\n${result.violations.join('\n')}`);
+    }
+});
+
+test('validateReviewFindingsReport rejects nonexistent and directory targets when repo context is available', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-focused-invalid-targets-'));
+    try {
+        fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'tests', 'directory.test.ts'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'example.ts'),
+            Array.from({ length: 25 }, (_, index) => `// line ${index + 1}`).join('\n') + '\n',
+            'utf8'
+        );
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'real.test.ts'), '// test\n', 'utf8');
+
+        for (const target of [
+            'tests/missing.test.ts',
+            'tests/directory.test.ts',
+            'tests/real.test.ts::case'
+        ]) {
+            const report = validReport();
+            report.validation_notes = [{
+                id: 'N-001',
+                topic: 'focused-self-validation',
+                note: 'The reviewer claimed a real focused target.',
+                command: `node --test ${target}`,
+                command_outcome: 'passed',
+                diagnostics: 'The focused runner reported one passing test.',
+                evidence: [evidence(
+                    'src/example.ts:10',
+                    `The changed parser was claimed to be covered by ${target}.`
+                )]
+            }];
+
+            const result = validateReviewFindingsReport(report, { ...validationOptions, repoRoot });
+
+            assert.equal(result.valid, false, target);
+            assert.ok(result.violations.some((entry) => entry.includes(
+                'must execute a focused test or validation command'
+            )), target);
+        }
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('validateReviewFindingsReport accepts safe no-emit TypeScript validation', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The reviewer type-checked one changed TypeScript target.',
+        command: 'tsc --noEmit --pretty false src/example.ts',
+        command_outcome: 'passed',
+        diagnostics: '12 checks passed',
+        evidence: [evidence(
+            'src/example.ts:10',
+            'The changed declaration in src/example.ts motivated the no-emit type check.'
+        )]
+    }];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, true, result.violations.join('\n'));
+});
+
+test('validateReviewFindingsReport rejects F-000 when the command only prints the marker target', () => {
+    for (const command of ['echo tests/node/example.test.ts', 'echo --test tests/node/example.test.ts']) {
+        const report = missingFocusedValidationReport();
+        const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+        note.command = command;
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, command);
+        assert.ok(
+            result.violations.some((entry) => entry.includes("execute target 'tests/node/example.test.ts' through a focused test or validation runner")),
+            command
+        );
+    }
+});
+
+test('validateReviewFindingsReport rejects passed focused notes without a validation execution', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The reviewer claimed to run the focused target.',
+        command: 'echo --test tests/node/example.test.ts',
+        command_outcome: 'passed',
+        diagnostics: 'The command returned zero without executing the test.',
+        evidence: [evidence()]
+    }];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes('must execute a focused test or validation command')));
+});
+
+test('validateReviewFindingsReport rejects non-validation runners with validation-looking targets', () => {
+    for (const command of [
+        'test -f tests/node/example.test.ts',
+        'node scripts/print-file.js tests/node/example.test.ts'
+    ]) {
+        const report = validReport();
+        report.validation_notes = [{
+            id: 'N-001',
+            topic: 'focused-self-validation',
+            note: 'The reviewer claimed that inspecting the target executed its validation.',
+            command,
+            command_outcome: 'passed',
+            diagnostics: 'No focused test or validation runner executed the target.',
+            evidence: [evidence()]
+        }];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, command);
+        assert.ok(
+            result.violations.some((entry) => entry.includes('must execute a focused test or validation command')),
+            command
+        );
+    }
+});
+
+test('validateReviewFindingsReport rejects focused notes without a concrete file target', () => {
+    for (const command of [
+        'npm --silent test',
+        'npm test -- --runInBand',
+        'node --test',
+        'node tools/validate-contract.js',
+        'node --test tests/node'
+    ]) {
+        const report = validReport();
+        report.validation_notes = [{
+            id: 'N-001',
+            topic: 'focused-self-validation',
+            note: 'The reviewer claimed to run a focused target.',
+            command,
+            command_outcome: 'passed',
+            diagnostics: 'The command returned zero without naming a concrete target.',
+            evidence: [evidence()]
+        }];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, command);
+        assert.ok(
+            result.violations.some((entry) => (
+                entry.includes('broad build, full suite')
+                || entry.includes('must execute a focused test or validation command')
+            )),
+            command
+        );
+    }
+});
+
+test('validateReviewFindingsReport rejects command evidence hidden under another topic', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'schema-shape',
+        note: 'The reviewer attached failed command metadata to an unrelated topic.',
+        command: 'echo --test tests/node/example.test.ts',
+        command_outcome: 'failed',
+        diagnostics: 'The command did not execute the named test.',
+        finding_ids: ['F-999'],
+        evidence: [evidence()]
+    }];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes("topic must be 'focused-self-validation'")));
+    assert.ok(result.violations.some((entry) => entry.includes('must execute a focused test or validation command')));
+    assert.ok(result.violations.some((entry) => entry.includes("references unknown ordinary finding id 'F-999'")));
+});
+
+test('validateReviewFindingsReport rejects F-000 without a real focused attempt record', () => {
+    const report = missingFocusedValidationReport();
+    report.validation_notes = validReport().validation_notes;
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes('requires a focused-self-validation validation note')));
+});
+
+test('validateReviewFindingsReport rejects focused-self-validation notes without complete command evidence', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The reviewer considered a narrow focused check.',
+        evidence: [evidence()]
+    }];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes('.command is required')));
+    assert.ok(result.violations.some((entry) => entry.includes('.command_outcome must be')));
+    assert.ok(result.violations.some((entry) => entry.includes('.diagnostics is required')));
+});
+
+test('validateReviewFindingsReport rejects standalone finding_ids on ordinary validation notes', () => {
+    const report = validReport();
+    (report.validation_notes as Array<Record<string, unknown>>)[0].finding_ids = ['F-001'];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes("topic must be 'focused-self-validation'")));
+    assert.ok(result.violations.some((entry) => entry.includes('.command is required')));
+    assert.ok(result.violations.some((entry) => entry.includes('.command_outcome must be')));
+    assert.ok(result.violations.some((entry) => entry.includes('.diagnostics is required')));
+});
+
+test('validateReviewFindingsReport rejects placeholder focused-command diagnostics', () => {
+    for (const diagnostics of [
+        'n/a',
+        'unknown',
+        '-',
+        'The command failed.',
+        'The command was unavailable.',
+        'The focused target was prohibited.',
+        'The command could not run.'
+    ]) {
+        const report = missingFocusedValidationReport();
+        (report.validation_notes as Array<Record<string, unknown>>)[0].diagnostics = diagnostics;
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, diagnostics);
+        assert.ok(
+            result.violations.some((entry) => entry.includes('concrete, actionable command result detail rather than a placeholder')),
+            diagnostics
+        );
+    }
+});
+
+test('validateReviewFindingsReport rejects noncanonical F-000 findings even with attempt evidence', () => {
+    const report = missingFocusedValidationReport();
+    const finding = (report.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+    finding.title = 'Focused validation was unavailable';
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes('F-000 is reserved for the exact canonical')));
+});
+
+test('validateReviewFindingsReport rejects missing-focused-execution claims in ordinary findings and residual risks', () => {
+    const ordinaryFindingReport = validReport();
+    (ordinaryFindingReport.findings as Record<string, Array<Record<string, unknown>>>).high = [{
+        id: 'F-001',
+        title: 'Focused validation was unavailable',
+        description: 'No prior focused execution evidence exists for the changed parser.',
+        evidence: [evidence()],
+        coverage_obligation_ids: ['FILE-001']
+    }];
+    const ledger = ordinaryFindingReport.coverage_ledger as { entries: Array<Record<string, unknown>> };
+    ledger.entries[0].finding_ids = ['F-001'];
+
+    const ordinaryResult = validateReviewFindingsReport(ordinaryFindingReport, validationOptions);
+
+    assert.equal(ordinaryResult.valid, false);
+    assert.ok(ordinaryResult.violations.some((entry) => entry.includes('ordinary noncanonical finding')));
+
+    const residualRiskReport = validReport();
+    residualRiskReport.residual_risks = [{
+        id: 'R-001',
+        description: 'Prior focused execution evidence was absent for the changed parser.',
+        evidence: [evidence()]
+    }];
+
+    const residualResult = validateReviewFindingsReport(residualRiskReport, validationOptions);
+
+    assert.equal(residualResult.valid, false);
+    assert.ok(residualResult.violations.some((entry) => entry.includes("Residual risk 'R-001' must not report")));
+});
+
+test('validateReviewFindingsReport rejects conflicting F-000 marker targets across title and description', () => {
+    const sameTargetReport = missingFocusedValidationReport();
+    const sameTargetFinding = (sameTargetReport.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+    sameTargetFinding.description = sameTargetFinding.title;
+    const sameTargetResult = validateReviewFindingsReport(sameTargetReport, validationOptions);
+    assert.equal(sameTargetResult.valid, true, sameTargetResult.violations.join('\n'));
+
+    const conflictingReport = missingFocusedValidationReport();
+    const conflictingFinding = (conflictingReport.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+    conflictingFinding.description =
+        '[garda:evidence-only:missing-focused-validation] target=api/openapi.yaml; action=run-and-record-focused-validation';
+
+    const conflictingResult = validateReviewFindingsReport(conflictingReport, validationOptions);
+
+    assert.equal(conflictingResult.valid, false);
+    assert.ok(conflictingResult.violations.some((entry) => entry.includes('must not declare different')));
+    assert.ok(conflictingResult.violations.some((entry) => entry.includes("target 'api/openapi.yaml'")));
+});
+
+test('validateReviewFindingsReport rejects F-000 after a passing command or a Garda command', () => {
+    const passed = missingFocusedValidationReport();
+    (passed.validation_notes as Array<Record<string, unknown>>)[0].command_outcome = 'passed';
+    const passedResult = validateReviewFindingsReport(passed, validationOptions);
+    assert.equal(passedResult.valid, false);
+    assert.ok(passedResult.violations.some((entry) => entry.includes('valid only when the target command outcome is unavailable or prohibited')));
+
+    const garda = missingFocusedValidationReport();
+    (garda.validation_notes as Array<Record<string, unknown>>)[0].command = 'node bin/garda.js gate run-intermediate-command';
+    const gardaResult = validateReviewFindingsReport(garda, validationOptions);
+    assert.equal(gardaResult.valid, false);
+    assert.ok(gardaResult.violations.some((entry) => entry.includes('must not invoke Garda')));
+});
+
+test('validateReviewFindingsReport rejects F-000 when any matching attempt passed or failed', () => {
+    for (const conflictingOutcome of ['passed', 'failed'] as const) {
+        const report = missingFocusedValidationReport();
+        const unavailableAttempt = (report.validation_notes as Array<Record<string, unknown>>)[0];
+        report.validation_notes = [
+            unavailableAttempt,
+            {
+                ...unavailableAttempt,
+                id: 'N-002',
+                note: 'The reviewer ran the matching focused command.',
+                command_outcome: conflictingOutcome,
+                diagnostics: conflictingOutcome === 'passed'
+                    ? 'The focused target passed.'
+                    : 'The focused target exposed an assertion failure.',
+                finding_ids: conflictingOutcome === 'failed' ? ['F-001'] : undefined,
+                evidence: [evidence('src/example.ts:10', 'The matching command result was recorded.')]
+            }
+        ];
+        if (conflictingOutcome === 'failed') {
+            (report.findings as Record<string, Array<Record<string, unknown>>>).high = [{
+                id: 'F-001',
+                title: 'Focused test exposed an implementation defect',
+                description: 'The focused target assertion failed.',
+                evidence: [evidence()],
+                coverage_obligation_ids: ['FILE-001']
+            }];
+            const ledger = report.coverage_ledger as { entries: Array<Record<string, unknown>> };
+            ledger.entries[0].finding_ids = ['F-000', 'F-001'];
+        }
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, conflictingOutcome);
+        assert.ok(result.violations.some((entry) => entry.includes('matching passed or failed attempt')), conflictingOutcome);
+    }
+});
+
+test('validateReviewFindingsReport rejects F-000 for failed checks and mismatched marker targets', () => {
+    const failed = missingFocusedValidationReport();
+    (failed.validation_notes as Array<Record<string, unknown>>)[0].command_outcome = 'failed';
+    (failed.validation_notes as Array<Record<string, unknown>>)[0].diagnostics = 'The target test assertion failed.';
+    const failedResult = validateReviewFindingsReport(failed, validationOptions);
+    assert.equal(failedResult.valid, false);
+    assert.ok(failedResult.violations.some((entry) => entry.includes('failed must be an ordinary severity finding')));
+
+    const mismatched = missingFocusedValidationReport();
+    (mismatched.validation_notes as Array<Record<string, unknown>>)[0].command = 'node --test tests/node/other.test.ts';
+    const mismatchedResult = validateReviewFindingsReport(mismatched, validationOptions);
+    assert.equal(mismatchedResult.valid, false);
+    assert.ok(mismatchedResult.violations.some((entry) => entry.includes("target 'tests/node/example.test.ts'")));
+});
+
+test('validateReviewFindingsReport requires failed focused checks to produce a linked ordinary finding', () => {
+    const withoutFinding = validReport();
+    withoutFinding.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The focused test for src/example.ts failed.',
+        command: 'node --test tests/node/example.test.ts',
+        command_outcome: 'failed',
+        diagnostics: 'The changed parser assertion failed after returning an unexpected token.',
+        finding_ids: [],
+        evidence: [evidence(
+            'src/example.ts:10',
+            'The changed parser branch is covered by tests/node/example.test.ts.'
+        )]
+    }];
+    const invalidResult = validateReviewFindingsReport(withoutFinding, validationOptions);
+    assert.equal(invalidResult.valid, false);
+    assert.ok(invalidResult.violations.some((entry) => entry.includes('requires an ordinary severity finding')));
+
+    const withFinding = cloneReport(withoutFinding);
+    (withFinding.validation_notes as Array<Record<string, unknown>>)[0].finding_ids = ['F-001'];
+    (withFinding.findings as Record<string, Array<Record<string, unknown>>>).high = [{
+        id: 'F-001',
+        title: 'Focused test exposed an implementation defect',
+        description: 'The changed implementation fails its focused assertion.',
+        evidence: [evidence()],
+        coverage_obligation_ids: ['FILE-001']
+    }];
+    const ledger = withFinding.coverage_ledger as { entries: Array<Record<string, unknown>> };
+    ledger.entries[0].finding_ids = ['F-001'];
+
+    const validResult = validateReviewFindingsReport(withFinding, validationOptions);
+    assert.equal(validResult.valid, true, validResult.violations.join('\n'));
+});
+
+test('validateReviewFindingsReport rejects failed focused checks linked to an unknown finding id', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The focused test failed.',
+        command: 'node --test tests/node/example.test.ts',
+        command_outcome: 'failed',
+        diagnostics: 'The changed parser assertion failed after returning an unexpected token.',
+        finding_ids: ['F-999'],
+        evidence: [evidence()]
+    }];
+    (report.findings as Record<string, Array<Record<string, unknown>>>).high = [{
+        id: 'F-001',
+        title: 'Unrelated defect in the same file',
+        description: 'A separate behavior is incorrect.',
+        evidence: [evidence()],
+        coverage_obligation_ids: ['FILE-001']
+    }];
+    const ledger = report.coverage_ledger as { entries: Array<Record<string, unknown>> };
+    ledger.entries[0].finding_ids = ['F-001'];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes("references unknown ordinary finding id 'F-999'")));
+});
+
+test('validateReviewFindingsReport rejects failed focused checks linked to unrelated evidence', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The focused test for the changed parser failed.',
+        command: 'node --test tests/node/example.test.ts',
+        command_outcome: 'failed',
+        diagnostics: 'The changed parser assertion failed.',
+        finding_ids: ['F-001'],
+        evidence: [evidence('src/example.ts:10', 'This parser branch motivated the focused test.')]
+    }];
+    (report.findings as Record<string, Array<Record<string, unknown>>>).high = [{
+        id: 'F-001',
+        title: 'Unrelated defect elsewhere in the same file',
+        description: 'A separate branch has an unrelated defect.',
+        evidence: [evidence('src/example.ts:20', 'This evidence does not identify the failed parser branch.')],
+        coverage_obligation_ids: ['FILE-001']
+    }];
+    const ledger = report.coverage_ledger as { entries: Array<Record<string, unknown>> };
+    ledger.entries[0].finding_ids = ['F-001'];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes('must share at least one exact changed-file evidence location')));
+});
+
+test('validateReviewFindingsReport compares failed focused finding evidence locations case-sensitively', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The focused test for the changed parser failed.',
+        command: 'node --test tests/node/example.test.ts',
+        command_outcome: 'failed',
+        diagnostics: 'The changed parser assertion failed after returning an unexpected token.',
+        finding_ids: ['F-001'],
+        evidence: [evidence(
+            'src/Example.ts:10',
+            'The changed parser branch is covered by tests/node/example.test.ts.'
+        )]
+    }];
+    (report.findings as Record<string, Array<Record<string, unknown>>>).high = [{
+        id: 'F-001',
+        title: 'Focused test exposed an implementation defect',
+        description: 'The changed implementation fails its focused assertion.',
+        evidence: [evidence('src/example.ts:10', 'The exact failed parser branch was inspected.')],
+        coverage_obligation_ids: ['FILE-001']
+    }];
+    const ledger = report.coverage_ledger as { entries: Array<Record<string, unknown>> };
+    ledger.entries[0].finding_ids = ['F-001'];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes(
+        'must share at least one exact changed-file evidence location'
+    )));
+});
+
+test('validateReviewFindingsReport rejects Garda focused commands without an F-000 finding', () => {
+    for (const command of [
+        'node bin/garda.js gate run-intermediate-command',
+        'node garda-agent-orchestrator/bin/garda.js next-step T-979-48',
+        'node C:\\repo\\bin\\garda.js gate compile-gate',
+        'node "C:\\repo path\\bin\\garda.js" gate compile-gate',
+        'npx garda gate compile-gate',
+        'pnpm exec garda gate compile-gate',
+        'yarn garda next-step T-979-48',
+        'bunx garda gate compile-gate',
+        'garda status'
+    ]) {
+        const report = validReport();
+        report.validation_notes = [{
+            id: 'N-001',
+            topic: 'focused-self-validation',
+            note: 'The reviewer attempted a narrow check.',
+            command,
+            command_outcome: 'passed',
+            diagnostics: 'The command passed.',
+            evidence: [evidence()]
+        }];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, command);
+        assert.ok(result.violations.some((entry) => entry.includes('must not invoke Garda')), command);
+    }
+});
+
+test('validateReviewFindingsReport permits safe targets whose path segments look like blocked commands', () => {
+    for (const target of [
+        'service/config.yaml',
+        'curl/config.yaml',
+        'touch/config.yaml',
+        'git/clone.yaml'
+    ]) {
+        const report = validReport();
+        report.validation_notes = [{
+            id: 'N-001',
+            topic: 'focused-self-validation',
+            note: 'The reviewer ran one safe local contract validation.',
+            command: `node tools/validate-contract.js ${target}`,
+            command_outcome: 'passed',
+            diagnostics: 'The focused contract validator completed twelve checks successfully.',
+            evidence: [evidence(
+                'src/example.ts:10',
+                `The changed parser consumes ${target}, which motivated the focused validation.`
+            )]
+        }];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, true, `${target}\n${result.violations.join('\n')}`);
+    }
+});
+
+test('validateReviewFindingsReport rejects unsafe network, mutation, and background focused commands', () => {
+    const unsafeCommands = [
+        ['curl https://example.test/health', 'network services'],
+        ['node -e "require(\'fs\').writeFileSync(\'src/example.ts\',\'x\')"', 'mutate source'],
+        ['node -e "require(\'fs\').promises.writeFile(\'src/example.ts\',\'x\')"', 'mutate source'],
+        ['node -p "1 + 1"', 'inline interpreter'],
+        ['node scripts/check.js "require(\'node:fs\').mkdirSync(\'reviewer-created\')"', 'mutate source'],
+        ['Set-Content src/example.ts x', 'mutate source'],
+        ['touch src/example.ts', 'mutate source'],
+        ['node --test tests/node/example.test.ts $(curl https://example.test/data)', 'shell command substitutions'],
+        ['node --test tests/node/example.test.ts `touch reviewer-created`', 'shell command substitutions'],
+        ['node --test tests/node/{example,other}.test.ts', 'shell variable, brace, bracket, or home expansions'],
+        ['node --test tests/node/[eo]xample.test.ts', 'shell variable, brace, bracket, or home expansions'],
+        ['node --test $TEST_TARGET', 'shell variable, brace, bracket, or home expansions'],
+        ['node --test <(curl https://example.test/data)', 'shell redirection, process expansion, escaping, or response-file expansion'],
+        ['node --test @tests/node/focused-targets.txt', 'shell redirection, process expansion, escaping, or response-file expansion'],
+        ['node --test !TEST_TARGET!', 'shell redirection, process expansion, escaping, or response-file expansion'],
+        ['eslint --fix src/example.ts', 'validation-runner flags that may mutate source files or snapshots'],
+        ['prettier --write src/example.ts', 'validation-runner flags that may mutate source files or snapshots'],
+        ['jest -u tests/node/example.test.ts', 'validation-runner flags that may mutate source files or snapshots'],
+        ['npx vitest tests/node/example.test.ts', 'package-execution wrappers that may fetch dependencies implicitly'],
+        ['bunx vitest tests/node/example.test.ts', 'package-execution wrappers that may fetch dependencies implicitly'],
+        ['pnpm dlx vitest tests/node/example.test.ts', 'package-execution wrappers that may fetch dependencies implicitly'],
+        ['npm --silent exec vitest tests/node/example.test.ts', 'package-execution wrappers that may fetch dependencies implicitly'],
+        ['node --no-warnings -e "fetch(\'https://example.test/data\')" tests/node/example.test.ts', 'inline interpreter'],
+        ['node --test --test-reporter-destination=src/core/templates.ts tests/node/example.test.ts', 'write output artifacts'],
+        ['node --test --watch tests/node/example.test.ts', 'interactive, watching, serving, or debugger'],
+        ['node --inspect --test tests/node/example.test.ts', 'interactive, watching, serving, or debugger'],
+        ['node --test --cache-location=src/core/templates.ts tests/node/example.test.ts', 'unrecognized validation-runner options'],
+        ['node --test tests/../outside.test.ts', 'escape authenticated repository scope'],
+        ['node --test C:outside.test.ts', 'escape authenticated repository scope'],
+        ['tsc src/example.ts', 'without --noEmit'],
+        ['start node scripts/check.js tests/node/example.test.ts', 'background processes'],
+        ['node server.js &', 'background processes'],
+        ['npm test', 'broad build'],
+        ['npm --silent test', 'broad build'],
+        ['node --test tests/node/example.test.ts; npm test', 'chain or pipe'],
+        ['node --test', 'broad build'],
+        ['node scripts/node-foundation/build-scripts.cjs test.js', 'broad build']
+    ] as const;
+    for (const [command, expectedViolation] of unsafeCommands) {
+        const report = validReport();
+        report.validation_notes = [{
+            id: 'N-001',
+            topic: 'focused-self-validation',
+            note: 'The reviewer attempted a narrow check.',
+            command,
+            command_outcome: 'unavailable',
+            diagnostics: 'The command was blocked.',
+            evidence: [evidence()]
+        }];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, command);
+        assert.ok(result.violations.some((entry) => entry.includes(expectedViolation)), command);
+    }
+});
+
+test('validateReviewFindingsReport requires every focused target to be named by authenticated evidence', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The reviewer ran tests/node/example.test.ts.',
+        command: 'node --test tests/node/example.test.ts',
+        command_outcome: 'passed',
+        diagnostics: 'The parser-focused assertions completed without any reported failures.',
+        evidence: [evidence('src/example.ts:10', 'The changed parser branch motivated a focused check.')]
+    }];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => (
+        entry.includes('authenticated changed-file evidence must name the exact focused command target')
+    )));
+});
+
+test('validateReviewFindingsReport rejects traversal in focused marker targets and commands', () => {
+    const report = missingFocusedValidationReport();
+    const finding = (report.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+    finding.title = '[garda:evidence-only:missing-focused-validation] target=api/../../outside.yaml; action=run-and-record-focused-validation';
+    const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+    note.note = 'The reviewer attempted api/../../outside.yaml.';
+    note.command = 'node tools/validate-contract.js api/../../outside.yaml';
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes('repository-relative path without dot segments')));
+});
+
+test('validateReviewFindingsReport rejects F-000 without an authenticated evidence-to-target binding', () => {
+    for (const observation of [
+        'The changed parser branch motivated a local check.',
+        'The changed parser branch is covered by tests/node/example.test.ts.backup.',
+        'The changed parser branch is covered by Tests/node/example.test.ts.'
+    ]) {
+        const report = missingFocusedValidationReport();
+        const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+        note.note = 'The reviewer attempted tests/node/example.test.ts as a local check.';
+        note.diagnostics = 'The isolated runtime cannot execute tests/node/example.test.ts because the loader is absent.';
+        note.evidence = [evidence('src/example.ts:10', observation)];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, observation);
+        assert.ok(
+            result.violations.some((entry) => entry.includes("name that target's relevance")),
+            observation
+        );
+    }
+});
+
+test('validateReviewFindingsReport permits focused test paths whose names include next-step', () => {
+    const report = missingFocusedValidationReport();
+    const finding = (report.findings as Record<string, Array<Record<string, unknown>>>).medium[0];
+    finding.title = '[garda:evidence-only:missing-focused-validation] test=tests/node/gates/next-step/example.test.ts; action=run-and-record-focused-test';
+    const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+    note.note = 'Prior focused execution for tests/node/gates/next-step/example.test.ts was absent, so the reviewer attempted that smallest local check.';
+    note.command = 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/next-step/example.test.ts';
+    note.evidence = [evidence(
+        'src/example.ts:10',
+        'The changed next-step parser is covered by tests/node/gates/next-step/example.test.ts.'
+    )];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, true, result.violations.join('\n'));
+});
+
+test('validateReviewFindingsReport permits a focused test file named garda.js without invoking Garda', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The reviewer ran the focused Garda-name collision regression.',
+        command: 'node --test tests/garda.js',
+        command_outcome: 'passed',
+        diagnostics: 'The focused name-collision test completed twelve assertions successfully.',
+        evidence: [evidence(
+            'src/example.ts:10',
+            'The changed parser is covered by tests/garda.js without invoking the Garda CLI.'
+        )]
+    }];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, true, result.violations.join('\n'));
 });
 
 test('validateReviewFindingsReport rejects empty validation notes', () => {

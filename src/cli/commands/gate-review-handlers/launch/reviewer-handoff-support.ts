@@ -1,5 +1,9 @@
 import * as path from 'node:path';
 import { buildExhaustiveReviewContractLines } from '../../../../gates/review-context/review-context-artifacts';
+import {
+    buildReviewerFocusedSelfValidationContractLines,
+    buildReviewerTerminalContractLines
+} from '../../../../gates/review/reviewer-execution-contract';
 
 import {
     getBundleCliCommand,
@@ -311,6 +315,7 @@ export function buildCopyPasteReviewerLaunchPrompt(options: ReviewerLaunchPrompt
         buildReviewerCompletenessCheckNotice(options.executionProvider),
         `Repository: ${options.repoRoot}`,
         'Reviewer-only boundary: you are not the main orchestrating agent for TASK.md.',
+        ...buildReviewerTerminalContractLines(),
         'Do not run Garda workflow/navigation/validation gates such as next-step, classify-change, compile-gate, full-suite-validation, build-review-context, record-review-routing, prepare-reviewer-launch, record-reviewer-delegation-started, complete-reviewer-launch, record-review-invocation, or record-review-result.',
         'Do not launch another reviewer or subagent, and do not modify reviewer launch/control artifacts, task events, preflight artifacts, review context artifacts, receipts, TASK.md, or project memory.',
         'Only read the artifacts named in this handoff and write the completed review JSON to the single ReviewOutputPath when file writing is available.'
@@ -338,8 +343,9 @@ export function buildCopyPasteReviewerLaunchPrompt(options: ReviewerLaunchPrompt
         'Return exactly one JSON object; do not wrap it in Markdown fences and do not append prose outside the JSON object.',
         'Do not include review verdict, PASS/FAIL, status, downstream disposition, profile strictness, or remediation policy fields.',
         ...buildExhaustiveReviewContractLines(),
+        ...buildReviewerFocusedSelfValidationContractLines(),
         `Write the final review report to ReviewOutputPath when file writing is available, or return the filled report in your final response: ${options.reviewOutputPath}`,
-        'Do not replace the required JSON object with a summary sentence.'
+        'Do not replace the required JSON object with a summary sentence. After writing or returning that one object, stop immediately.'
     );
     return lines.join('\n');
 }
@@ -388,11 +394,13 @@ export function buildReviewerLaunchInputHandoffArtifact(
         reviewer_only_instructions: [
             'Act as the delegated reviewer named by this artifact.',
             'You are not the main orchestrating agent for TASK.md.',
+            ...buildReviewerTerminalContractLines().map((line) => line.replace(/^- /u, '')),
             'Do not launch another reviewer or subagent.',
             'Do not run Garda workflow/navigation/validation gates such as next-step, classify-change, compile-gate, full-suite-validation, build-review-context, record-review-routing, prepare-reviewer-launch, record-reviewer-delegation-started, complete-reviewer-launch, record-review-invocation, or record-review-result.',
             'Do not modify reviewer launch/control artifacts, task events, preflight artifacts, review context artifacts, receipts, TASK.md, or project memory.',
             'Only read the artifacts named in this handoff.',
-            'Write the completed review report to review_output_path when file writing is available, or return it in the final response.'
+            ...buildReviewerFocusedSelfValidationContractLines().map((line) => line.replace(/^- /u, '')),
+            'Write the completed review report to review_output_path when file writing is available, or return it in the final response, then stop immediately.'
         ],
         local_trust_boundary: options.localTrustBoundary
     };

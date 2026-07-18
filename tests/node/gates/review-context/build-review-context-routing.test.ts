@@ -263,12 +263,13 @@ import {
             assert.ok(promptArtifactText.includes('- Matches current preflight: true'));
             assert.ok(promptArtifactText.includes('- Matches current compile gate: true'));
             assert.ok(promptArtifactText.includes('- Cycle binding valid: true'));
-            assert.ok(promptArtifactText.includes('do not rerun full tests unless investigating a concrete finding'));
-            assert.ok(promptArtifactText.includes('gate run-intermediate-command'));
-            assert.ok(promptArtifactText.includes('bounded task-owned manual-validation logs'));
-            assert.ok(promptArtifactText.includes('Missing focused execution evidence for changed tests is not by itself a defect'));
-            assert.ok(promptArtifactText.includes('run the smallest relevant focused test command before returning findings'));
-            assert.ok(promptArtifactText.includes('Record the command and result in the JSON validation_notes array'));
+            assert.ok(promptArtifactText.includes('do not rerun full tests.'));
+            assert.ok(promptArtifactText.includes('follow the focused-self-validation contract in this handoff'));
+            assert.ok(promptArtifactText.includes('never invoke Garda or write task-owned validation logs'));
+            assert.equal(promptArtifactText.includes('gate run-intermediate-command'), false);
+            assert.ok(promptArtifactText.includes('Missing prior focused execution evidence is not by itself a finding or residual risk'));
+            assert.ok(promptArtifactText.includes('execute the smallest safe relevant local test or validation command yourself'));
+            assert.ok(promptArtifactText.includes('Record the exact attempted command, command_outcome'));
             assert.ok(!promptArtifactText.includes('## Commands Run'));
             assert.ok(promptArtifactText.includes('- # pass 91'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1010,9 +1011,9 @@ import {
             assert.ok(promptArtifactText.includes('- Required before this review: yes'));
             assert.ok(promptArtifactText.includes('- Placement: after_compile_before_reviews'));
             assert.ok(promptArtifactText.includes('- Duration: 1m 30s (90000 ms)'));
-            assert.ok(promptArtifactText.includes('do not rerun full tests unless investigating a concrete finding'));
-            assert.ok(promptArtifactText.includes('gate run-intermediate-command'));
-            assert.ok(promptArtifactText.includes('redundant full-suite rerun'));
+            assert.ok(promptArtifactText.includes('do not rerun full tests.'));
+            assert.ok(promptArtifactText.includes('follow the focused-self-validation contract in this handoff'));
+            assert.equal(promptArtifactText.includes('gate run-intermediate-command'), false);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
@@ -1098,8 +1099,8 @@ import {
 
             const promptArtifactText = fs.readFileSync(outputPath.replace(/\.json$/, '.md'), 'utf8');
             assert.ok(promptArtifactText.includes('current review-ready full-suite evidence already covers this review'));
-            assert.ok(promptArtifactText.includes('gate run-intermediate-command'));
-            assert.ok(promptArtifactText.includes('redundant full-suite rerun'));
+            assert.ok(promptArtifactText.includes('follow the focused-self-validation contract in this handoff'));
+            assert.equal(promptArtifactText.includes('gate run-intermediate-command'), false);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
@@ -1957,7 +1958,8 @@ import {
             assert.ok(promptArtifactText.includes('- Required before this review: no'));
             assert.ok(promptArtifactText.includes('- Placement: before_completion'));
             assert.ok(promptArtifactText.includes('completion still enforces full-suite validation later'));
-            assert.ok(promptArtifactText.includes('If a concrete finding needs a command, use scoped compact commands only.'));
+            assert.ok(promptArtifactText.includes('follow the focused-self-validation contract in this handoff'));
+            assert.ok(promptArtifactText.includes('never invoke Garda or write task-owned validation logs'));
             assert.ok(!promptArtifactText.includes('Full-suite validation evidence artifact is missing.'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
@@ -2014,7 +2016,8 @@ import {
             assert.ok(promptArtifactText.includes('- Required before this review: no'));
             assert.ok(promptArtifactText.includes('before_test_review placement reserves full-suite evidence for the test review'));
             assert.ok(promptArtifactText.includes('must not demand pre-review full-suite evidence or run it manually'));
-            assert.ok(promptArtifactText.includes('If a concrete finding needs a command, use scoped compact commands only.'));
+            assert.ok(promptArtifactText.includes('follow the focused-self-validation contract in this handoff'));
+            assert.ok(promptArtifactText.includes('never invoke Garda or write task-owned validation logs'));
             assert.ok(!promptArtifactText.includes('Full-suite validation evidence artifact is missing.'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });

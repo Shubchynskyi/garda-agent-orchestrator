@@ -593,6 +593,10 @@ export function buildFullSuiteValidationEvidence(options: {
     }
 }
 
+const REVIEWER_FOCUSED_VALIDATION_REMINDER =
+    'If the narrow missing-focused-execution exception applies, follow the focused-self-validation contract in this handoff ' +
+    'with one direct safe local target command; never invoke Garda or write task-owned validation logs.';
+
 export function buildFullSuiteValidationEvidenceMarkdown(evidence: ReviewContextFullSuiteValidationEvidence): string[] {
     const lines = [
         '## Full-Suite Validation Evidence',
@@ -623,21 +627,30 @@ export function buildFullSuiteValidationEvidenceMarkdown(evidence: ReviewContext
         && (evidence.status === 'PASSED' || evidence.status === 'WARNED')
         && evidence.cycle_binding_valid === true
     ) {
-        lines.push('- Reviewer instruction: current review-ready full-suite evidence already covers this review; do not rerun full tests unless investigating a concrete finding; for that one concrete finding, use scoped compact commands (`gate run-intermediate-command` when eligible or bounded task-owned manual-validation logs) instead of a redundant full-suite rerun.');
+        lines.push(
+            '- Reviewer instruction: current review-ready full-suite evidence already covers this review; do not rerun full tests. ' +
+            REVIEWER_FOCUSED_VALIDATION_REMINDER
+        );
     }
     if (
         evidence.enabled === true
         && evidence.required_for_review === false
         && evidence.placement === 'before_test_review'
     ) {
-        lines.push(`- Reviewer note: before_test_review placement reserves full-suite evidence for the test review; this ${evidence.review_type} review must not demand pre-review full-suite evidence or run it manually. If a concrete finding needs a command, use scoped compact commands only.`);
+        lines.push(
+            `- Reviewer note: before_test_review placement reserves full-suite evidence for the test review; this ${evidence.review_type} ` +
+            `review must not demand pre-review full-suite evidence or run it manually. ${REVIEWER_FOCUSED_VALIDATION_REMINDER}`
+        );
     }
     if (
         evidence.enabled === true
         && evidence.required_for_review === false
         && evidence.placement === 'before_completion'
     ) {
-        lines.push('- Reviewer note: before_completion placement does not require pre-review full-suite evidence; do not demand or run a suite rerun for this review because completion still enforces full-suite validation later. If a concrete finding needs a command, use scoped compact commands only.');
+        lines.push(
+            '- Reviewer note: before_completion placement does not require pre-review full-suite evidence; do not demand or run a suite rerun ' +
+            `for this review because completion still enforces full-suite validation later. ${REVIEWER_FOCUSED_VALIDATION_REMINDER}`
+        );
     }
     if (evidence.mismatch_reason) {
         lines.push(`- Mismatch reason: ${evidence.mismatch_reason}`);

@@ -7,11 +7,27 @@ import * as path from 'node:path';
 import {
     buildEffectiveMessageTemplate,
     ensureMessageTemplateUserOverride,
+    getMessageTemplateDefinition,
     listTemplateTokens,
     replaceTemplateTokens,
     resetMessageTemplateUserOverride,
     validateEffectiveMessageTemplates
 } from '../../../src/core/templates';
+
+test('built-in reviewer prompt supports focused test and validation commands', () => {
+    const definition = getMessageTemplateDefinition('reviewer-prompt');
+
+    assert.ok(definition.builtinContent.includes('focused test or validation execution'));
+    assert.ok(definition.builtinContent.includes('focused test or validation command yourself'));
+    assert.ok(definition.builtinContent.includes('failed command must link finding_ids'));
+    assert.ok(definition.builtinContent.includes('share at least one exact changed-file evidence location'));
+    assert.ok(definition.builtinContent.includes(
+        '[garda:evidence-only:missing-focused-validation] test=<exact-repository-relative-test-path>; action=run-and-record-focused-test'
+    ));
+    assert.ok(definition.builtinContent.includes(
+        '[garda:evidence-only:missing-focused-validation] target=<exact-repository-relative-validation-path>; action=run-and-record-focused-validation'
+    ));
+});
 
 test('listTemplateTokens returns unique placeholders in encounter order', () => {
     assert.deepEqual(
