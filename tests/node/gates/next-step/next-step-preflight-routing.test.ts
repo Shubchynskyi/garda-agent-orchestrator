@@ -1807,6 +1807,55 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(!command.includes('docs/older-task.md'));
     });
 
+    it('keeps unchanged same-domain baseline files out of planned preflight refresh scope', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        const unrelatedBaselinePath = 'src/older-task.ts';
+        fs.writeFileSync(path.join(repoRoot, ...unrelatedBaselinePath.split('/')), 'export const olderTask = true;\n', 'utf8');
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        const dirtyWorkspaceBaseline = {
+            detection_source: baselineSnapshot.detection_source,
+            include_untracked: baselineSnapshot.include_untracked,
+            changed_files: baselineSnapshot.changed_files,
+            changed_files_sha256: baselineSnapshot.changed_files_sha256,
+            scope_sha256: baselineSnapshot.scope_sha256,
+            file_hashes: Object.fromEntries(
+                baselineSnapshot.changed_files.map((changedFile) => [
+                    changedFile,
+                    fileSha256(path.join(repoRoot, changedFile))
+                ])
+            )
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh planned scope without same-domain baseline files',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            dirtyWorkspaceBaseline,
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const currentTask = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "src/app.ts"'), command);
+        assert.ok(!command.includes(unrelatedBaselinePath), command);
+    });
+
     it('does not widen planned refresh through stale explicit preflight files', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
@@ -2097,6 +2146,36 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(command.includes('--changed-file "src/app.ts"'), command);
         assert.ok(!command.includes('--use-staged'), command);
         assert.ok(!command.includes('--changed-file "<path>"'), command);
+    });
+
+    it('keeps protected preflight recovery on authenticated split-checkpoint scope when unrelated files are dirty', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
+        writeJson(workflowConfigPath, workflowConfig);
+        seedAuthenticatedSplitCheckpointTask(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        const unrelatedPath = 'template/skills/unrelated/SKILL.md';
+        fs.mkdirSync(path.join(repoRoot, 'template', 'skills', 'unrelated'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, ...unrelatedPath.split('/')), '# unrelated user change\n', 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error:
+                'Preflight scope touches protected orchestrator control-plane files without task-mode --orchestrator-work: src/app.ts. ' +
+                'Restart with enter-task-mode --orchestrator-work before preflight classification.'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.ok(command.includes('--orchestrator-work'), command);
+        assert.ok(command.includes('--planned-changed-file "src/app.ts"'), command);
+        assert.ok(!command.includes(unrelatedPath), command);
+        assert.equal((command.match(/--planned-changed-file /gu) || []).length, 1, command);
     });
 
     it('uses current git-auto workspace files when refreshing stale unscoped preflight', () => {

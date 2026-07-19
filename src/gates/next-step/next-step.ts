@@ -1863,7 +1863,7 @@ function getPreflightRefreshCommandChangedFiles(params: {
         const currentTaskScopeChangedFiles = currentChangedFiles.filter((changedFile) => (
             plannedSet.has(changedFile)
                 || (dirtyBaselineSet.has(changedFile) && !unchangedDirtyBaselineSet.has(changedFile))
-                || isRelatedToPlannedScope(changedFile, plannedChangedFiles)
+                || (!unchangedDirtyBaselineSet.has(changedFile) && isRelatedToPlannedScope(changedFile, plannedChangedFiles))
         ));
         const currentChangedSet = new Set(currentChangedFiles);
         const taskScopedRefreshChangedFiles = taskScopedChangedFiles.filter((changedFile) => (

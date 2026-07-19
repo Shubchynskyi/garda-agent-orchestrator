@@ -520,10 +520,25 @@ export function readFailedGateRecovery(
             command: buildGardaSelfGuardPolicyChangeCommand(cliPrefix)
         };
     }
-    const currentWorkspace = readCurrentGitWorkspaceSnapshot(repoRoot, true);
-    const currentChangedFiles = Array.isArray(currentWorkspace?.changed_files)
-        ? filterProtectedRestartScopeGeneratedRuntimeArtifacts(repoRoot, currentWorkspace.changed_files)
-        : [];
+    const splitCheckpointScope = resolveAuthenticatedSplitCheckpointCommandScope(repoRoot, taskId);
+    if (splitCheckpointScope?.violation) {
+        return {
+            nextGate: 'manual-scope-selection',
+            title: 'Choose protected recovery scope after split-checkpoint authentication failed.',
+            reason:
+                `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected recovery signal, ` +
+                `but the split-checkpoint task scope is not authenticated: ${splitCheckpointScope.violation} ` +
+                'Do not recover with the full current workspace scope.'
+        };
+    }
+    const currentWorkspace = splitCheckpointScope
+        ? null
+        : readCurrentGitWorkspaceSnapshot(repoRoot, true);
+    const currentChangedFiles = splitCheckpointScope
+        ? splitCheckpointScope.changedFiles
+        : Array.isArray(currentWorkspace?.changed_files)
+            ? filterProtectedRestartScopeGeneratedRuntimeArtifacts(repoRoot, currentWorkspace.changed_files)
+            : [];
 
     return {
         nextGate: 'enter-task-mode',
