@@ -172,6 +172,12 @@ function hasDirtyBaselineRecoverySignal(
         && normalized.includes('--changed-file');
 }
 
+function hasProtectedBaselineDriftRecoverySignal(message: string): boolean {
+    const normalized = String(message || '').toLowerCase();
+    return normalized.includes('protected pre-existing workspace edits changed outside task scope')
+        && normalized.includes('restart task mode');
+}
+
 function normalizeEventPathList(value: unknown): string[] {
     return [...new Set((Array.isArray(value) ? value : [])
         .map((entry) => normalizePath(entry))
@@ -448,8 +454,50 @@ export function readFailedGateRecovery(
     const hasProtectedRecoverySignal = hasProtectedOrchestratorWorkRecoverySignal(errorText);
     const hasWorkflowConfigRecoverySignal = hasWorkflowConfigWorkRecoverySignal(errorText);
     const hasDirtyBaselineSignal = hasDirtyBaselineRecoverySignal(latestPreflightFailure, errorText);
-    if (!hasProtectedRecoverySignal && !hasWorkflowConfigRecoverySignal && !hasDirtyBaselineSignal) {
+    const hasProtectedBaselineDriftSignal = hasProtectedBaselineDriftRecoverySignal(errorText);
+    if (!hasProtectedRecoverySignal && !hasWorkflowConfigRecoverySignal && !hasDirtyBaselineSignal && !hasProtectedBaselineDriftSignal) {
         return null;
+    }
+    if (hasProtectedBaselineDriftSignal) {
+        const plannedChangedFiles = getTaskModePlannedChangedFiles(taskMode);
+        if (plannedChangedFiles.length === 0) {
+            return {
+                nextGate: 'manual-scope-selection',
+                title: 'Choose explicit scope before restarting task mode.',
+                reason:
+                    `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) reports protected pre-existing baseline drift, ` +
+                    'but task-mode has no planned changed files. Do not restart from the full current workspace scope.'
+            };
+        }
+        if (isGardaSelfGuardDenyAgentEntry(repoRoot)) {
+            return {
+                nextGate: 'operator-maintenance',
+                title: 'Garda self-guard blocks agent-owned protected baseline recovery.',
+                reason:
+                    `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) reports protected pre-existing baseline drift. ` +
+                    formatGardaSelfGuardProtectedControlPlaneGuidance(),
+                label: 'Operator policy change',
+                command: buildGardaSelfGuardPolicyChangeCommand(cliPrefix)
+            };
+        }
+        const workflowConfigRecovery = taskMode?.workflow_config_work === true;
+        return {
+            nextGate: 'enter-task-mode',
+            title: 'Restart task mode after protected baseline drift.',
+            reason:
+                `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) reports protected pre-existing baseline drift. ` +
+                `Restart task mode with the existing planned scope ${formatPathList(plannedChangedFiles)} so baseline evidence is refreshed ` +
+                'without including other dirty workspace files, after fresh operator approval.',
+            label: 'Restart task mode with planned scope',
+            command: buildOrchestratorWorkRestartCommand(
+                repoRoot,
+                cliPrefix,
+                taskId,
+                taskMode,
+                plannedChangedFiles,
+                workflowConfigRecovery
+            )
+        };
     }
     if (hasDirtyBaselineSignal && !hasProtectedRecoverySignal && !hasWorkflowConfigRecoverySignal) {
         const currentProtectedScope = readCurrentProtectedScopeBeforePreflight(

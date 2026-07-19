@@ -2178,6 +2178,55 @@ describe('gates/next-step preflight routing', () => {
         assert.equal((command.match(/--planned-changed-file /gu) || []).length, 1, command);
     });
 
+    it('restarts task mode with planned scope after protected pre-existing baseline drift', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
+        writeJson(workflowConfigPath, workflowConfig);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Recover protected baseline drift',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: ['src/app.ts'],
+            dirtyWorkspaceBaseline: {
+                detection_source: 'git_auto',
+                include_untracked: true,
+                changed_files: ['src/older-task.ts'],
+                changed_files_sha256: sha256Text('src/older-task.ts'),
+                scope_sha256: sha256Text('src/older-task.ts'),
+                file_hashes: {}
+            }
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error:
+                'Protected pre-existing workspace edits changed outside task scope: src/older-task.ts. ' +
+                'These files no longer match the task-mode baseline. Clean/stash the local baseline drift or restart task mode with the intended files in scope before continuing.'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.match(result.reason, /existing planned scope/iu);
+        assert.ok(command.includes('--orchestrator-work'), command);
+        assert.ok(command.includes('--planned-changed-file "src/app.ts"'), command);
+        assert.ok(!command.includes('src/older-task.ts'), command);
+        assert.equal((command.match(/--planned-changed-file /gu) || []).length, 1, command);
+    });
+
     it('uses current git-auto workspace files when refreshing stale unscoped preflight', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
