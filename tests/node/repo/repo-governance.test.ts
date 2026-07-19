@@ -35,6 +35,28 @@ function readGeneratedRepoFile(relativePath: string): string {
     return fs.readFileSync(filePath, 'utf8');
 }
 
+test('reviewer skills keep generated handoffs reviewer-only', () => {
+    const reviewerSkillFiles = [
+        'template/skills/code-review/SKILL.md',
+        'template/skills/db-review/SKILL.md',
+        'template/skills/dependency-review/SKILL.md',
+        'template/skills/refactor-review/SKILL.md',
+        'template/skills/security-review/SKILL.md',
+        'template/skill-packs/devops-k8s/skills/devops-k8s/SKILL.md',
+        'template/skill-packs/quality-architecture/skills/api-contract-review/SKILL.md',
+        'template/skill-packs/quality-architecture/skills/performance-review/SKILL.md',
+        'template/skill-packs/quality-architecture/skills/testing-strategy/SKILL.md'
+    ];
+    for (const relativePath of reviewerSkillFiles) {
+        const content = readRepoFile(relativePath);
+        assert.ok(content.includes('role-prompt, prompt-template, reviewer-prompt'), relativePath);
+        assert.ok(content.includes('sole instruction and output-format authority'), relativePath);
+        assert.ok(content.includes('Never modify source files, control artifacts, or task state'), relativePath);
+        assert.ok(content.includes('never launch another agent'), relativePath);
+        assert.ok(content.includes('only permitted write is the exact `ReviewOutputPath`'), relativePath);
+    }
+});
+
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-
+import { sha256RedactedJsonPayload } from '../../core/redaction';
 import type { ReviewFindingDispositionAction, ReviewFindingPolicy } from '../../policy/profile-resolver';
 import { normalizePath } from '../shared/helpers';
 import type {
@@ -82,12 +81,6 @@ export interface BuildReviewFindingsDispositionArtifactOptions {
     validationArtifactPath?: string | null;
     validationArtifactSha256: string;
     policyResolution: LockedReviewFindingPolicyResolution;
-}
-
-function sha256JsonPayload(value: unknown): string {
-    return createHash('sha256')
-        .update(`${JSON.stringify(value, null, 2)}\n`)
-        .digest('hex');
 }
 
 function clonePolicy(policy: ReviewFindingPolicy): ReviewFindingPolicy {
@@ -213,7 +206,7 @@ export function buildReviewFindingsDispositionArtifact(
             review_finding_policy: clonePolicy(options.policyResolution.policy)
         },
         disposition_result: dispositionResult,
-        disposition_result_sha256: sha256JsonPayload(dispositionResult),
+        disposition_result_sha256: sha256RedactedJsonPayload(dispositionResult),
         items,
         summary: summarizeItems(items)
     };

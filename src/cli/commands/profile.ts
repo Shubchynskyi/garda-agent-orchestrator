@@ -8,3 +8,12 @@ export {
     buildProfileValidateOutput
 } from './profile/profile-output';
 export type { ProfileEntry, ProfileValidateResult, ProfilesData } from './profile/profile-types';
+export {
+    buildProfileFindingPolicyPlan,
+    buildProfileFindingPolicyProjection,
+    hashReviewFindingPolicy
+} from './profile/profile-finding-policy';
+export {
+    formatProfileFindingPolicyCommandOutput,
+    runProfileFindingPolicyCommand
+} from './profile/profile-finding-policy-mutation';

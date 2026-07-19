@@ -234,6 +234,27 @@ Built-in presets:
 
 For backward compatibility, legacy profiles without `review_finding_policy` remain loadable. At runtime they resolve fail-closed to the `strict` preset and emit diagnostics so the missing field is visible in profile output and task evidence.
 
+Use the guarded profile-policy CLI instead of editing the policy object directly. Preview normalizes the candidate through the same `profiles.json` schema used by persistence and returns the normalized policy hash, the contextual plan hash, and the current config hash. `policy_sha256` identifies only the normalized policy content; `plan_sha256` binds the target profile, operation, source profile, normalized policy, and proposed config hash so the plan cannot be replayed against another profile:
+
+```bash
+garda profile policy preview balanced --preset strict --json
+```
+
+Apply must repeat the same policy input, bind it to all three preview hashes, and carry fresh operator confirmation:
+
+```bash
+garda profile policy apply balanced --preset strict \
+  --expected-policy-sha256 "<policy_sha256-from-preview>" \
+  --expected-plan-sha256 "<plan_sha256-from-preview>" \
+  --expected-config-sha256 "<before_config_sha256-from-preview>" \
+  --operator-confirmed yes \
+  --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+```
+
+Use `--copy-from <profile>` to copy the source profile's effective policy or `--reset` to restore a built-in profile from the shipped definition. User-profile reset deterministically uses the shipped `balanced` policy and fails closed when that shipped baseline is unavailable. A legacy profile preview reports the fail-closed migration, and applying the unchanged preview materializes the explicit `strict` policy. Apply serializes all profile-config writers and rechecks the preview hash while holding the write lock. Changed mutations use an fsynced write-ahead audit transaction (`PREPARED` followed by `COMMITTED` or `ABORTED`); every CLI or UI profile writer removes a dead-owner lock and recovers an interrupted transaction from the current config hash before computing its mutation. Bounded hash-only evidence in `runtime/profile-finding-policy-audit.jsonl` stores the active-task count and full-list SHA-256 without raw task identifiers, distinguishes discovery failure from a verified empty result, and affects future task snapshots only; already-entered tasks retain their locked profile policy.
+
+For `--preset custom`, provide all five actions: `--critical fix_now`, `--high <action>`, `--medium <action>`, `--low <action>`, and `--residual-risk <action>`. Profile writers wait for a short bounded lock window before reporting contention, while active-task discovery is performed outside the serialized config-write section. Interactive profile creation also rejects a commit if `profiles.json` changed while prompts were open, preventing inheritance from a stale source snapshot.
+
 Profiles also control how non-blocking `create_follow_up` items become backlog work:
 
 ```json

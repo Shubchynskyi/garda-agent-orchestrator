@@ -313,7 +313,9 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
     console.log('');
     console.log(
         `REVIEW_ROUTING_RECORDED: ${reviewType} ` +
-        `(Context: ${toReviewerHandoffAbsolutePath(repoRoot, contextPath)}, Sha256: ${routingUpdate.contextSha256 || 'n/a'})`
+        `(Context: ${toReviewerHandoffAbsolutePath(repoRoot, contextPath)}, ` +
+        `Sha256: ${routingUpdate.contextSha256 || 'n/a'}, ` +
+        `RoutedReviewContextSha256: ${routingUpdate.contextSha256 || 'n/a'})`
     );
 }
 

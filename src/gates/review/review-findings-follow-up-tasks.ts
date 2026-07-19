@@ -7,6 +7,7 @@ import {
     getSourceCliCommand,
     resolveBundleNameForTarget
 } from '../../core/constants';
+import { sha256RedactedJsonPayload } from '../../core/redaction';
 import { isPlainRecord } from '../../core/records';
 import {
     assertCanonicalTaskId,
@@ -596,7 +597,7 @@ function validateDispositionArtifactShape(params: {
     if (!normalizeHash(sourceValidation.validation_result_sha256)) {
         violations.push('Review findings disposition artifact source_validation.validation_result_sha256 is missing or invalid.');
     }
-    const actualDispositionResultSha256 = sha256JsonPayload(artifact.disposition_result);
+    const actualDispositionResultSha256 = sha256RedactedJsonPayload(artifact.disposition_result);
     if (artifact.disposition_result_sha256 !== actualDispositionResultSha256) {
         violations.push(
             `Review findings disposition artifact '${normalizePath(artifactPath)}' disposition_result_sha256 mismatch: ` +

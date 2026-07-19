@@ -23,6 +23,7 @@ import {
     writePreflight
 } from './gates-command-review-launch-fixtures';
 import { isCompletedReviewerLaunchAttemptConsumed } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
+import { buildReviewerTerminalContractLines } from '../../../../../../src/gates/review/reviewer-execution-contract';
 
 const FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE = [
     'STANDBY',
@@ -297,6 +298,10 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(
             Array.isArray(launchInputArtifact.reviewer_only_instructions)
                 && launchInputArtifact.reviewer_only_instructions.some((instruction: unknown) => String(instruction).includes('Do not modify reviewer launch/control artifacts'))
+        );
+        assert.deepEqual(
+            (launchInputArtifact.reviewer_only_instructions as string[]).slice(-buildReviewerTerminalContractLines().length),
+            buildReviewerTerminalContractLines().map((line) => line.replace(/^- /u, ''))
         );
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Reviewer-only boundary: you are not the main orchestrating agent for TASK.md.'));
         assert.ok(launchInputArtifact.copy_paste_reviewer_launch_prompt.includes('Do not run Garda workflow/navigation/validation gates such as next-step'));

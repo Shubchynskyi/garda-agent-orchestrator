@@ -1318,7 +1318,7 @@ describe('gates command review result - normalization', () => {
                 high: [{
                     id: 'F-001',
                     title: 'Example verdict-free JSON finding',
-                    description: 'The reviewer reported an active finding without emitting a legacy verdict token.',
+                    description: 'The reviewer reported an active finding at src/gates/review-context/review-context-token-economy.ts:54 without emitting a legacy verdict token.',
                     evidence: [{
                         location: `${defaultFile}:1`,
                         observation: 'The finding is bound to a changed file and line for JSON ingestion coverage.'
@@ -1329,7 +1329,10 @@ describe('gates command review result - normalization', () => {
                 low: []
             },
             residual_risks: [],
-            reviewer_notes: ['No legacy verdict token is present in this JSON output.']
+            reviewer_notes: [
+                'No legacy verdict token is present in this JSON output.',
+                'Sanitize API_TOKEN=fixture-secret before durable persistence.'
+            ]
         }, null, 2)}\n`, 'utf8');
 
         const result = await runCliWithCapturedOutput([
@@ -1347,7 +1350,9 @@ describe('gates command review result - normalization', () => {
         assert.ok(result.logs.some((line) => line.includes('VerdictToken: REVIEW FAILED')), result.logs.join('\n'));
         const artifact = fs.readFileSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`), 'utf8');
         assert.equal(/REVIEW PASSED|REVIEW FAILED|## Verdict/u.test(artifact), false);
-        const receipt = JSON.parse(fs.readFileSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`), 'utf8'));
+        assert.doesNotMatch(artifact, /fixture-secret/);
+        const receiptPath = path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.deepEqual(receipt.review_coverage.finding_ids, ['F-001']);
         assert.equal(receipt.review_output_format, 'findings_json');
         assert.equal(receipt.review_output_schema_version, 1);
@@ -1369,6 +1374,16 @@ describe('gates command review result - normalization', () => {
         assert.equal(validationArtifact.artifact_type, 'review_findings_validation');
         assert.equal(validationArtifact.validation_result.status, 'accepted');
         assert.equal(validationArtifact.validation_result.normalized_inventory.finding_count, 1);
+        assert.match(
+            validationArtifact.validation_result.normalized_inventory.findings_by_severity.high[0].description,
+            /review-context-token-economy\.ts:54/
+        );
+        assert.equal(
+            validationArtifact.validation_result_sha256,
+            createHash('sha256')
+                .update(`${JSON.stringify(validationArtifact.validation_result, null, 2)}\n`)
+                .digest('hex')
+        );
         assert.equal(
             createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex'),
             receipt.review_findings_validation.artifact_sha256
@@ -1407,12 +1422,32 @@ describe('gates command review result - normalization', () => {
         );
         assert.equal(receipt.review_findings_report.findings.high.length, 1);
         assert.equal(receipt.review_findings_report.findings.high[0].id, 'F-001');
+        assert.match(
+            receipt.review_findings_report.findings.high[0].description,
+            /review-context-token-economy\.ts:54/
+        );
+        assert.equal(receipt.review_findings_report.reviewer_notes[1], 'Sanitize API_TOKEN=<redacted> before durable persistence.');
+        assert.doesNotMatch(fs.readFileSync(String(receipt.review_output_path), 'utf8'), /fixture-secret/);
+        assert.equal(
+            receipt.review_findings_report_sha256,
+            createHash('sha256')
+                .update(`${JSON.stringify(receipt.review_findings_report, null, 2)}\n`)
+                .digest('hex')
+        );
         assert.deepEqual(receipt.review_findings_summary.finding_ids_by_severity.high, ['F-001']);
         assert.equal(receipt.review_findings_summary.active_finding_count, 1);
         const recordedEvents = readTaskTimelineEvents(repoRoot, taskId)
             .filter((event) => event.event_type === 'REVIEW_RECORDED');
         assert.equal(recordedEvents.length, 1);
         const recordedDetails = recordedEvents[0].details as Record<string, unknown>;
+        const receiptFileSha256 = createHash('sha256').update(fs.readFileSync(receiptPath)).digest('hex');
+        assert.equal(recordedDetails.receipt_sha256, receiptFileSha256);
+        const receiptSnapshotPath = String(recordedDetails.receipt_snapshot_path || '');
+        assert.equal(fs.existsSync(receiptSnapshotPath), true);
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(receiptSnapshotPath)).digest('hex'),
+            receiptFileSha256
+        );
         assert.equal(Object.prototype.hasOwnProperty.call(recordedDetails, 'review_findings_report'), false);
         assert.equal(recordedDetails.review_findings_report_sha256, receipt.review_findings_report_sha256);
         assert.deepEqual(recordedDetails.review_findings_summary, receipt.review_findings_summary);
@@ -1420,6 +1455,7 @@ describe('gates command review result - normalization', () => {
             recordedDetails.review_findings_report_telemetry_policy,
             'omitted_full_payload_receipt_only'
         );
+        assert.equal(fs.existsSync(outputPath), false);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 

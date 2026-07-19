@@ -304,6 +304,7 @@ export function buildGeneratedReviewContextCommandResult(options: {
     const outputKV: Record<string, unknown> = {
         reviewContextPath: options.outputPath,
         reviewContextSha256,
+        reviewContextSha256Stage: 'generated_pre_routing',
         outputPath: options.outputPath,
         ruleContextArtifactPath: options.ruleContextArtifactPath,
         handoffInstruction: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
@@ -312,11 +313,14 @@ export function buildGeneratedReviewContextCommandResult(options: {
         reviewReuseDecision: options.reviewReuseResult.reused ? 'accepted' : 'rejected',
         reviewReuseReason: options.reviewReuseResult.reason,
         currentPassReviewEvidence: options.currentPassReviewEvidenceAccepted ? true : 'rejected',
-        currentPassReviewEvidenceReason: options.currentPassReviewEvidenceReason
+        currentPassReviewEvidenceReason:
+            'Prior review-context reuse candidate rejected before the ReviewContextSha256 shown above was generated: '
+            + options.currentPassReviewEvidenceReason
     };
     const orderedKeys = [
         'reviewContextPath',
         'reviewContextSha256',
+        'reviewContextSha256Stage',
         'outputPath',
         'ruleContextArtifactPath',
         'handoffInstruction',

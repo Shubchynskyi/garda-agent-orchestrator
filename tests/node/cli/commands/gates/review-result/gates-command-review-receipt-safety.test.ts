@@ -29,7 +29,10 @@ import {
     manualReviewContextBindingFixture,
     reviewContextScopedDiffFixture,
     recordReviewRoutingViaCli,
-    attestReviewerInvocationForTest} from './gates-command-review-result-fixtures';
+    attestReviewerInvocationForTest,
+    buildNoFindingsJsonReviewReport,
+    seedPromptBoundReviewFixture
+} from './gates-command-review-result-fixtures';
 
 describe('gates command review receipt - safety', () => {
 
@@ -792,49 +795,37 @@ describe('gates command review receipt - safety', () => {
     it('record-review-result rolls back artifact and routing metadata when review-recorded telemetry cannot be persisted', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-routing-lock';
-        seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
-        const preflightPath = writePreflight(repoRoot, taskId);
-        const reviewsRoot = getReviewsRoot(repoRoot);
-        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const fixture = await seedPromptBoundReviewFixture({
+            repoRoot,
+            taskId,
+            provider: 'Codex',
+            reviewerIdentity: 'agent:code-reviewer'
+        });
+        const preflightPath = fixture.preflightPath;
+        const reviewsRoot = fixture.reviewsRoot;
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const existingRawOutput = '# Previous Review Output\n\n## Verdict\nREVIEW PASSED\n';
         fs.writeFileSync(rawReviewOutputPath, existingRawOutput, 'utf8');
-        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
-        fs.writeFileSync(reviewContextPath, JSON.stringify({
-            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
-            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
-            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
-                capability_level: 'delegation_capable'
-            })
-        }, null, 2) + '\n', 'utf8');
+        const reviewContextPath = fixture.reviewContextPath;
 
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
-        fs.writeFileSync(reviewOutputPath, [
-            '# Review',
-            '',
-            'Validated rollback semantics when routing telemetry cannot be appended.',
-            '',
-            '## Findings by Severity',
-            'none',
-            '',
-            '## Residual Risks',
-            'none',
-            '',
-            '## Verdict',
-            'REVIEW PASSED'
-        ].join('\n'), 'utf8');
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Delegated review routed by controller before materialization.', {
-            review_type: 'code',
-            reviewer_execution_mode: 'delegated_subagent',
-            reviewer_session_id: 'agent:code-reviewer',
-            delegation_used: true
+        fs.writeFileSync(
+            reviewOutputPath,
+            `${JSON.stringify(buildNoFindingsJsonReviewReport(reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath,
+            reviewerIdentity: 'agent:code-reviewer'
         });
+        const reviewContextBeforeRecord = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
 
         const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
         fs.mkdirSync(taskEventsRoot, { recursive: true });
@@ -874,9 +865,16 @@ describe('gates command review receipt - safety', () => {
         assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
         assert.equal(fs.readFileSync(rawReviewOutputPath, 'utf8'), existingRawOutput);
+        assert.equal(fs.existsSync(reviewOutputPath), true);
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
-        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
-        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
+        assert.equal(
+            reviewContext.reviewer_routing.actual_execution_mode,
+            reviewContextBeforeRecord.reviewer_routing.actual_execution_mode
+        );
+        assert.equal(
+            reviewContext.reviewer_routing.reviewer_session_id,
+            reviewContextBeforeRecord.reviewer_routing.reviewer_session_id
+        );
         const timelinePath = path.join(taskEventsRoot, `${taskId}.jsonl`);
         const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
         assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), true);

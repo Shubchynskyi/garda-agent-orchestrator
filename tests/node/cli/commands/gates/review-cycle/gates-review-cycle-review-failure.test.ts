@@ -160,7 +160,11 @@ describe('cli/commands/gates – review-cycle review failure suite', () => {
         assert.equal(fs.existsSync(expectedReviewContextPath), true);
         assert.equal(buildResult.outputLines.includes(`ReviewContextPath: ${expectedReviewContextDisplayPath}`), true);
         assert.equal(buildResult.outputLines.includes(`ReviewContextSha256: ${expectedReviewContextSha256}`), true);
+        assert.equal(buildResult.outputLines.includes('ReviewContextSha256Stage: generated_pre_routing'), true);
         assert.equal(buildResult.outputLines.includes(`OutputPath: ${expectedReviewContextDisplayPath}`), true);
+        assert.ok(buildResult.outputLines.some((line) => line.startsWith(
+            'CurrentPassReviewEvidenceReason: Prior review-context reuse candidate rejected before the ReviewContextSha256 shown above was generated:'
+        )));
         assert.ok(buildResult.outputLines.some((line) => /^TokenEconomyActive: (True|False)$/.test(line)));
         const reviewContext = JSON.parse(fs.readFileSync(expectedReviewContextPath, 'utf8')) as Record<string, unknown>;
         assert.equal(reviewContext.stale, undefined);

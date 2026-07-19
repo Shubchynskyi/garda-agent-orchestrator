@@ -125,19 +125,23 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
         ])
     }),
     profile: Object.freeze({
-        summary: 'List, switch, create, delete, and validate workspace profiles.',
+        summary: 'List, switch, create, delete, validate, and guard workspace profile policies.',
         usage: Object.freeze([
             `${PRIMARY_CLI_NAME} profile [current|list|validate] [--target-root PATH] [--bundle-root PATH] [--json]`,
             `${PRIMARY_CLI_NAME} profile use <name>`,
             `${PRIMARY_CLI_NAME} profile create <name> [--description TEXT] [--depth 1|2|3] [--copy-from <existing>]`,
-            `${PRIMARY_CLI_NAME} profile delete <name>`
+            `${PRIMARY_CLI_NAME} profile delete <name>`,
+            `${PRIMARY_CLI_NAME} profile policy preview <name> [--preset soft|balanced|strict|custom | --copy-from <source> | --reset] [--critical fix_now] [--high ACTION] [--medium ACTION] [--low ACTION] [--residual-risk ACTION] [--json]`,
+            `${PRIMARY_CLI_NAME} profile policy apply <name> <same policy options as preview> --expected-policy-sha256 <sha256> --expected-plan-sha256 <sha256> --expected-config-sha256 <sha256> --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} profile`,
-            `${PRIMARY_CLI_NAME} profile use balanced`
+            `${PRIMARY_CLI_NAME} profile use balanced`,
+            `${PRIMARY_CLI_NAME} profile policy preview balanced --preset strict --json`
         ]),
         hints: Object.freeze([
-            'Default mode: profile with no subcommand behaves like profile current.'
+            'Default mode: profile with no subcommand behaves like profile current.',
+            'Profile policy apply changes future task snapshots only and requires hashes from a fresh preview plus operator confirmation.'
         ])
     }),
     workflow: Object.freeze({
@@ -642,7 +646,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  review-capabilities  Show, enable, and disable repo-local optional review capabilities.',
             '  templates     Show, validate, and manage user-owned message template overrides.',
             '  workflow      Show and set repo-local workflow config.',
-            '  profile       List, use, create, delete, and validate workspace profiles.',
+            '  profile       List, use, create, delete, validate, and manage finding policy for workspace profiles.',
             '  diff-managed  Show managed vs user-owned block ownership across workspace files.',
             '  gate          Run an agent gate or helper command.'
         ],

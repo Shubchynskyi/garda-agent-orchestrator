@@ -209,6 +209,12 @@ function isSensitiveKey(key: string): boolean {
     return true;
 }
 
+function isSourceLocationAssignment(key: string, separator: string, value: string): boolean {
+    return separator.trim() === ':'
+        && /\.[a-z0-9]+$/iu.test(key)
+        && /^\d+(?::\d+)?$/u.test(value);
+}
+
 /**
  * Redact secret-looking values from free-form text while preserving enough
  * surrounding syntax for diagnostics to remain useful.
@@ -237,6 +243,9 @@ export function redactSecretText(text: string): string {
         })
         .replace(ASSIGNMENT_UNQUOTED_FIELD_PATTERN, (match, key: string, separator: string, value: string) => {
             if (splitKeyParts(key).includes('authorization') && /^(Bearer|Basic)$/i.test(value)) {
+                return match;
+            }
+            if (isSourceLocationAssignment(key, separator, value)) {
                 return match;
             }
             return isSensitiveKey(key) ? `${key}${separator}<redacted>` : match;
@@ -273,6 +282,16 @@ export function redactSensitiveData(value: unknown, keyHint?: string): unknown {
         result[key] = redactSensitiveData(entry, key);
     }
     return result;
+}
+
+export function serializeRedactedJson(value: unknown): string {
+    return redactSecretText(`${JSON.stringify(redactSensitiveData(value), null, 2)}\n`);
+}
+
+export function sha256RedactedJsonPayload(value: unknown): string {
+    return crypto.createHash('sha256')
+        .update(serializeRedactedJson(value))
+        .digest('hex');
 }
 
 function splitRedactedTextLines(text: string): string[] {

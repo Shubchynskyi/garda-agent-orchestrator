@@ -331,6 +331,20 @@ test('applyReviewerRoutingMetadata updates review-context routing fields and ret
     assert.equal(updated.reviewer_routing.fallback_reason, null);
     assert.equal(result.contextSha256, stringSha256(fs.readFileSync(contextPath, 'utf8')));
 
+    const repeated = applyReviewerRoutingMetadata(contextPath, {
+        actualExecutionMode: 'delegated_subagent',
+        reviewerSessionId: 'agent:reviewer-1',
+        fallbackReason: null
+    });
+    assert.equal(repeated.contextSha256, result.contextSha256);
+
+    const changedIdentity = applyReviewerRoutingMetadata(contextPath, {
+        actualExecutionMode: 'delegated_subagent',
+        reviewerSessionId: 'agent:reviewer-2',
+        fallbackReason: null
+    });
+    assert.notEqual(changedIdentity.contextSha256, result.contextSha256);
+
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
 

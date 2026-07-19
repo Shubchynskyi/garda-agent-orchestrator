@@ -1,11 +1,12 @@
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
+import { sha256RedactedJsonPayload } from '../../core/redaction';
 import {
     buildReviewReceipt,
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
 } from '../../gate-runtime/review-context';
 import {
+    assertReviewArtifactFileSha256,
     writeReviewArtifactsWithRollback
 } from '../../gate-runtime/review-artifacts';
 import {
@@ -99,12 +100,6 @@ interface ReusedReviewFindingsDispositionEvidence {
     snapshotPath: string;
     artifactSha256: string;
     payload: ReviewFindingsDispositionArtifact;
-}
-
-function sha256JsonPayload(value: unknown): string {
-    return createHash('sha256')
-        .update(`${JSON.stringify(value, null, 2)}\n`)
-        .digest('hex');
 }
 
 function normalizeSha256(value: unknown): string | null {
@@ -289,9 +284,7 @@ async function persistReusedReviewEvidence(
     refreshedReceipt: ReviewReceipt,
     findingsValidationEvidence: ReusedReviewFindingsValidationEvidence | null = null
 ): Promise<{ materialized: boolean; reason: string | null }> {
-    const receiptPayloadSha256 = createHash('sha256')
-        .update(`${JSON.stringify(refreshedReceipt, null, 2)}\n`)
-        .digest('hex');
+    const receiptPayloadSha256 = sha256RedactedJsonPayload(refreshedReceipt);
     const receiptSnapshotPath = options.artifactPath.replace(/\.md$/, `-receipt-${receiptPayloadSha256}.json`);
     const artifactSnapshotPath = options.artifactPath.replace(
         /\.md$/,
@@ -346,6 +339,40 @@ async function persistReusedReviewEvidence(
                 ]
                 : [])
         ], async () => {
+            assertReviewArtifactFileSha256(
+                options.artifactPath,
+                options.historicalReviewArtifactSha256,
+                'Reused review artifact'
+            );
+            assertReviewArtifactFileSha256(
+                artifactSnapshotPath,
+                options.historicalReviewArtifactSha256,
+                'Reused review artifact snapshot'
+            );
+            assertReviewArtifactFileSha256(options.receiptPath, receiptPayloadSha256, 'Reused review receipt');
+            assertReviewArtifactFileSha256(receiptSnapshotPath, receiptPayloadSha256, 'Reused review receipt snapshot');
+            if (findingsValidationEvidence) {
+                assertReviewArtifactFileSha256(
+                    findingsValidationEvidence.artifactPath,
+                    findingsValidationEvidence.artifactSha256,
+                    'Reused review findings validation artifact'
+                );
+                assertReviewArtifactFileSha256(
+                    findingsValidationEvidence.snapshotPath,
+                    findingsValidationEvidence.artifactSha256,
+                    'Reused review findings validation snapshot'
+                );
+                assertReviewArtifactFileSha256(
+                    findingsValidationEvidence.dispositionEvidence.artifactPath,
+                    findingsValidationEvidence.dispositionEvidence.artifactSha256,
+                    'Reused review findings disposition artifact'
+                );
+                assertReviewArtifactFileSha256(
+                    findingsValidationEvidence.dispositionEvidence.snapshotPath,
+                    findingsValidationEvidence.dispositionEvidence.artifactSha256,
+                    'Reused review findings disposition snapshot'
+                );
+            }
             const recordedEvent = await emitReviewRecordedEventAsync(
                 orchestratorRoot,
                 options.taskId,
@@ -389,7 +416,7 @@ function buildReusedReviewFindingsDispositionEvidence(options: {
         validationArtifactSha256: options.validationArtifactSha256,
         policyResolution: options.policyResolution
     });
-    const artifactSha256 = sha256JsonPayload(payload);
+    const artifactSha256 = sha256RedactedJsonPayload(payload);
     return {
         artifactPath,
         snapshotPath: getReviewFindingsDispositionArtifactSnapshotPath(artifactPath, artifactSha256),
@@ -488,7 +515,7 @@ function buildReusedReviewFindingsValidationEvidence(
         reviewTreeStateSha256: options.expectedReviewTreeStateSha256,
         coverageContract: sourceCoverageContract
     });
-    const artifactSha256 = sha256JsonPayload(payload);
+    const artifactSha256 = sha256RedactedJsonPayload(payload);
     const dispositionEvidence = buildReusedReviewFindingsDispositionEvidence({
         taskId: options.taskId,
         reviewType: options.reviewType,
@@ -521,7 +548,7 @@ function attachReusedReviewFindingsReceiptEvidence(
         return;
     }
     const receiptRecord = refreshedReceipt as unknown as Record<string, unknown>;
-    const reportSha256 = sha256JsonPayload(report);
+    const reportSha256 = sha256RedactedJsonPayload(report);
     receiptRecord.review_output_sha256 = evidence.rawOutputSha256;
     receiptRecord.review_output_format = 'findings_json';
     receiptRecord.review_output_schema_version = report.schema_version;

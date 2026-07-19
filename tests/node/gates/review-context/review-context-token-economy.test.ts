@@ -76,14 +76,14 @@ describe('review-context-token-economy helpers', () => {
 
         assert.equal(decision.tokenEconomyActive, true);
         assert.deepEqual(decision.selectedRuleFiles, selectRulePackFiles('refactor', 1));
-        assert.deepEqual(decision.omittedRuleFiles, ['30-code-style.md', '35-strict-coding-rules.md', '50-structure-and-docs.md']);
-        assert.equal(decision.rulePackOmissionReason, 'deferred_by_depth');
+        assert.deepEqual(decision.omittedRuleFiles, []);
+        assert.equal(decision.rulePackOmissionReason, 'none');
         assert.equal(decision.stripExamplesApplied, true);
         assert.equal(decision.stripCodeBlocksApplied, true);
         assert.deepEqual(decision.tokenEconomyFlags.enabled_depths, [1, 2]);
         assert.deepEqual(
             decision.omittedSections.map((section) => section.section),
-            ['rule_pack', 'examples', 'code_blocks']
+            ['examples', 'code_blocks']
         );
         assert.equal(decision.tokenEconomyOmissionReason, 'token_economy_compaction');
         assert.ok(decision.selectedRulePaths.every((rulePath) => rulePath.includes('/live/docs/agent-rules/')));
@@ -110,6 +110,15 @@ describe('review-context-token-economy helpers', () => {
             decision.omittedSections.map((section) => section.section),
             ['examples', 'code_blocks']
         );
+    });
+
+    it('never passes repository rule files to reviewers', () => {
+        for (const reviewType of ['code', 'db', 'security', 'refactor', 'custom']) {
+            for (const depth of [1, 2, 3]) {
+                const selected = selectRulePackFiles(reviewType, depth);
+                assert.deepEqual(selected, [], `${reviewType}/depth${depth}`);
+            }
+        }
     });
 
     it('selects compact TASK_ENTRY files only for shallow low-risk depth', () => {

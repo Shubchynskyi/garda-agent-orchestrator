@@ -541,6 +541,8 @@ describe('cli/commands/gates review launch routing', () => {
         assert.ok(routingOutput.includes(`  Command: node garda-agent-orchestrator/bin/garda.js next-step "${taskId}" --repo-root "."`));
         assert.equal(routing.logs.some((line) => line.startsWith('NextAction:')), false);
         assert.ok(routing.logs.some((line) => line.includes('REVIEW_ROUTING_RECORDED: code')));
+        const routedReviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
+        assert.ok(routingOutput.includes(`RoutedReviewContextSha256: ${routedReviewContextSha256}`));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:replacement-code-reviewer');
         const events = readTaskTimelineEvents(repoRoot, taskId);

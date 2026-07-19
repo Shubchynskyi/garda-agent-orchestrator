@@ -48,35 +48,14 @@ export interface ReviewContextTokenEconomyDecision {
 }
 
 /**
- * Rule pack configuration by review type.
- * Matches Python get_rule_pack.
+ * Reviewer handoffs intentionally exclude repository rule files. The selected
+ * review skill and generated handoff artifacts are the only instruction sources.
  */
-export function getRulePack(reviewType: string): ReviewRulePack {
-    if (reviewType === 'code') {
-        return {
-            full: ['00-core.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '70-security.md', '80-task-workflow.md'],
-            depth1: ['00-core.md', '80-task-workflow.md'],
-            depth2: ['00-core.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '70-security.md', '80-task-workflow.md']
-        };
-    }
-    if (reviewType === 'db' || reviewType === 'security') {
-        return {
-            full: ['00-core.md', '35-strict-coding-rules.md', '70-security.md', '80-task-workflow.md'],
-            depth1: ['00-core.md', '80-task-workflow.md'],
-            depth2: ['00-core.md', '35-strict-coding-rules.md', '70-security.md', '80-task-workflow.md']
-        };
-    }
-    if (reviewType === 'refactor') {
-        return {
-            full: ['00-core.md', '30-code-style.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '80-task-workflow.md'],
-            depth1: ['00-core.md', '80-task-workflow.md'],
-            depth2: ['00-core.md', '30-code-style.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '80-task-workflow.md']
-        };
-    }
+export function getRulePack(_reviewType: string): ReviewRulePack {
     return {
-        full: ['00-core.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '70-security.md', '80-task-workflow.md'],
-        depth1: ['00-core.md', '80-task-workflow.md'],
-        depth2: ['00-core.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '70-security.md', '80-task-workflow.md']
+        full: [],
+        depth1: [],
+        depth2: []
     };
 }
 
@@ -150,13 +129,6 @@ export function resolveReviewContextTokenEconomyDecision(options: {
     const stripCodeBlocksApplied = tokenEconomyActive && stripCodeBlocksFlag;
 
     const omittedSections: TokenEconomyOmittedSection[] = [];
-    if (tokenEconomyActive && options.depth === 1) {
-        omittedSections.push({
-            section: 'rule_pack',
-            reason: 'deferred_by_depth',
-            details: 'Only minimal reviewer rule context is selected at depth=1.'
-        });
-    }
     if (tokenEconomyActive && stripExamplesFlag) {
         omittedSections.push({
             section: 'examples',

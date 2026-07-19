@@ -16,6 +16,7 @@ import {
     buildCopyPasteReviewerLaunchPrompt,
     type ReviewerLaunchPromptOptions
 } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
+import { buildReviewerTerminalContractLines } from '../../../../../../src/gates/review/reviewer-execution-contract';
 
 function buildPromptOptions(executionProvider: string, reviewType = 'code'): ReviewerLaunchPromptOptions {
     return {
@@ -81,6 +82,11 @@ describe('cli/commands/gates review launch prepared prompt artifacts', () => {
         ));
         assert.ok(prompt.includes('Reviewer terminal contract: inspect only the authenticated scope'));
         assert.ok(prompt.includes('After writing or returning that one object, stop immediately'));
+        assert.ok(prompt.trimEnd().endsWith(buildReviewerTerminalContractLines().join('\n')));
+        assert.ok(
+            prompt.lastIndexOf('Reviewer terminal contract:')
+                > prompt.lastIndexOf('Write the final review report to ReviewOutputPath')
+        );
         assert.equal(prompt.includes('prefer `gate run-intermediate-command`'), false);
     });
 
@@ -96,6 +102,7 @@ describe('cli/commands/gates review launch prepared prompt artifacts', () => {
             assert.ok(prompt.includes('Never invoke Garda navigation, gate, launch, invocation, result, receipt, TASK.md, or project-memory commands'), reviewType);
             assert.ok(prompt.includes('Never launch a reviewer, subagent, or descendant agent'), reviewType);
             assert.ok(prompt.includes('write exactly one review JSON object to ReviewOutputPath'), reviewType);
+            assert.ok(prompt.trimEnd().endsWith(buildReviewerTerminalContractLines().join('\n')), reviewType);
             assert.equal(prompt.includes('Launch a fresh delegated reviewer'), false, reviewType);
             assert.equal(prompt.includes('prepare-reviewer-launch, then launch'), false, reviewType);
         }

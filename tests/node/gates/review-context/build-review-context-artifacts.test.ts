@@ -33,6 +33,7 @@ import {
     buildReviewerFindingsOutputTemplateJson,
     buildReviewerFindingsPromptContractMarkdown
 } from '../../../../src/gates/review/reviewer-findings-prompt-contract';
+import { buildReviewerTerminalContractLines } from '../../../../src/gates/review/reviewer-execution-contract';
 
 type SubprocessModule = typeof import('../../../../src/core/process/subprocess');
 
@@ -231,6 +232,8 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 promptArtifact.match(/Reviewer terminal contract: inspect only the authenticated scope/gu)?.length,
                 1
             );
+            assert.ok(promptArtifact.trimEnd().endsWith(buildReviewerTerminalContractLines().join('\n')));
+            assert.deepEqual(result.rule_pack.selected_rule_files, []);
             assert.ok(promptArtifact.includes('write exactly one review JSON object to ReviewOutputPath'));
             assert.equal(promptArtifact.includes('gate run-intermediate-command'), false);
             assert.ok(promptArtifact.includes('Prompt template artifact:'));
@@ -258,6 +261,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(rolePromptText.includes('2. PromptTemplatePath:'));
             assert.ok(rolePromptText.includes('3. ReviewerPromptPath:'));
             assert.ok(rolePromptText.includes('Fill the output template as one JSON object'));
+            assert.ok(rolePromptText.trimEnd().endsWith(buildReviewerTerminalContractLines().join('\n')));
             assert.equal(result.reviewer_handoff.role_prompt.artifact_sha256, sha256Text(rolePromptText));
             assert.equal(fs.existsSync(result.reviewer_handoff.prompt_template.artifact_path), true);
             assert.equal(fs.existsSync(result.reviewer_handoff.output_template.artifact_path), true);
@@ -286,6 +290,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 promptTemplateText.match(/Reviewer terminal contract: inspect only the authenticated scope/gu)?.length,
                 1
             );
+            assert.ok(promptTemplateText.trimEnd().endsWith(buildReviewerTerminalContractLines().join('\n')));
             assert.equal(promptTemplateText.includes('gate run-intermediate-command'), false);
             assert.ok(promptTemplateText.includes('Return exactly one JSON object'));
             assert.ok(promptTemplateText.includes('Do not add review verdict, pass/fail, status, downstream disposition'));
@@ -745,7 +750,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 repoRoot
             });
             const cachedPromptArtifact = fs.readFileSync(cachedResult.rule_context.artifact_path, 'utf8');
-            assert.equal(cachedResult.task_scope.diff.cached, true);
+            assert.equal(Object.hasOwn(cachedResult.task_scope.diff, 'cached'), false);
             assert.ok(cachedPromptArtifact.includes('+export const staged = true;'));
 
             fs.writeFileSync(path.join(repoRoot, 'src', 'staged.md'), '```ts\nexport const dirty = true;\n```\n', 'utf8');

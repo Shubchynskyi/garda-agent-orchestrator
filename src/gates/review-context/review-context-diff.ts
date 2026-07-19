@@ -498,7 +498,7 @@ function readCachedGitDiffSummary(cachePath: string, cacheKey: string): GitDiffS
             return null;
         }
         const document = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as Record<string, unknown>;
-        if (document.schema_version !== 1 || document.cache_key !== cacheKey) {
+        if (document.schema_version !== 2 || document.cache_key !== cacheKey) {
             return null;
         }
         return normalizeCachedGitDiffSummary(document.summary, cachePath);
@@ -510,10 +510,9 @@ function readCachedGitDiffSummary(cachePath: string, cacheKey: string): GitDiffS
 function writeCachedGitDiffSummary(cachePath: string, cacheKey: string, preflightSha256: string | null, summary: GitDiffSummary): void {
     try {
         writeArtifactFileAtomically(cachePath, JSON.stringify({
-            schema_version: 1,
+            schema_version: 2,
             cache_key: cacheKey,
             preflight_sha256: preflightSha256,
-            generated_at_utc: new Date().toISOString(),
             summary: {
                 stat: summary.stat,
                 diff: summary.diff,

@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { PassThrough } from 'node:stream';
 
 import {
     handleProfile,
@@ -11,9 +14,12 @@ import {
     buildProfileUseOutput,
     buildProfileCreateOutput,
     buildProfileDeleteOutput,
-    buildProfileValidateOutput
+    buildProfileValidateOutput,
+    hashReviewFindingPolicy
 } from '../../../../src/cli/commands/profile';
 import type { ProfileEntry } from '../../../../src/cli/commands/profile/profile-types';
+import { handleUiProfileRequest } from '../../../../src/reports/ui/actions/profile-actions';
+import { buildHelpText } from '../../../../src/cli/commands/cli-help-output';
 
 const PACKAGE_JSON = { name: 'test-pkg', version: '1.0.0' };
 
@@ -116,6 +122,59 @@ function captureConsole(fn: () => unknown): { lines: string[]; result: unknown }
     }
 }
 
+function captureJsonProfileCommand(argv: string[]): Record<string, unknown> {
+    const { lines } = captureConsole(() => handleProfile(argv, PACKAGE_JSON));
+    return JSON.parse(lines.join('\n')) as Record<string, unknown>;
+}
+
+function freshOperatorConfirmationArgs(): string[] {
+    return [
+        '--operator-confirmed', 'yes',
+        '--operator-confirmed-at-utc', new Date().toISOString()
+    ];
+}
+
+async function invokeUiProfileRequest(
+    repoRoot: string,
+    actionToken: string,
+    payload: Record<string, unknown>
+): Promise<{ status: number; json: () => Promise<Record<string, unknown>> }> {
+    const localPort = 43821;
+    const requestStream = new PassThrough();
+    const request = requestStream as unknown as http.IncomingMessage;
+    Object.assign(request, {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            origin: `http://127.0.0.1:${localPort}`,
+            'x-garda-action-token': actionToken
+        }
+    });
+    Object.defineProperty(request, 'socket', { value: { localPort } });
+    let status = 0;
+    let responseBody = '';
+    const response = {
+        writeHead(statusCode: number): void {
+            status = statusCode;
+        },
+        end(chunk?: string): void {
+            responseBody += chunk || '';
+        }
+    } as unknown as http.ServerResponse;
+    const handling = handleUiProfileRequest(request, response, repoRoot, {
+        actionsEnabled: true,
+        actionToken,
+        trustedOriginHost: '127.0.0.1',
+        actionRunner: async () => ({ exit_code: 0, signal: null, stdout: '', stderr: '' })
+    });
+    requestStream.end(JSON.stringify(payload));
+    await handling;
+    return {
+        status,
+        json: async () => JSON.parse(responseBody) as Record<string, unknown>
+    };
+}
+
 async function captureConsoleAsync(fn: () => Promise<unknown>): Promise<{ lines: string[]; result: unknown }> {
     const originalLog = console.log;
     const lines: string[] = [];
@@ -149,6 +208,41 @@ test('profile command without subcommand shows current profile', () => {
     assert.ok(output.includes('Action: current'));
     assert.ok(output.includes('ActiveProfile: balanced'));
     assert.ok(output.includes('Tip: run "profile list" to inspect all available profiles.'));
+});
+
+test('profile help documents guarded finding-policy preview and apply flow', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const { lines } = captureConsole(() => handleProfile(['--help', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const output = lines.join('\n');
+    assert.match(output, /profile policy preview <name>/u);
+    assert.match(output, /profile policy apply <name>/u);
+    assert.match(output, /--expected-policy-sha256/u);
+    assert.match(output, /--expected-plan-sha256/u);
+    assert.match(output, /--critical fix_now/u);
+    assert.match(output, /--residual-risk ACTION/u);
+    assert.match(output, /future task snapshots only/u);
+
+    for (const argv of [['policy', '--help'], ['policy', 'preview', '--help']]) {
+        const nested = captureConsole(() => handleProfile(argv, PACKAGE_JSON)).lines.join('\n');
+        assert.match(nested, /profile policy preview <name>/u);
+    }
+    assert.match(buildHelpText(PACKAGE_JSON), /profile\s+.*finding policy/iu);
+});
+
+test('profile policy rejects unrelated explicit target and bundle roots', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const unrelatedTargetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-profile-target-'));
+
+    assert.throws(
+        () => handleProfile([
+            'policy', 'preview', 'balanced',
+            '--preset', 'strict',
+            '--target-root', unrelatedTargetRoot,
+            '--bundle-root', bundleRoot,
+            '--json'
+        ], PACKAGE_JSON),
+        /target-root.*parent.*bundle-root/iu
+    );
 });
 
 test('profile list --json returns valid JSON', () => {
@@ -300,6 +394,7 @@ test('profile create rejects invalid depth', () => {
 
 test('profile create without a name starts full interactive prompts when TTY is available', async () => {
     const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
     const cliHelpersPath = require.resolve('../../../../src/cli/commands/cli-helpers');
     const cliHelpers = require(cliHelpersPath);
     const originals = {
@@ -310,6 +405,11 @@ test('profile create without a name starts full interactive prompts when TTY is 
 
     cliHelpers.supportsInteractivePrompts = () => true;
     cliHelpers.promptTextInput = async (title: string) => {
+        assert.equal(
+            fs.existsSync(`${profilesPath}.garda-write.lock`),
+            false,
+            'interactive prompts must not hold the shared profiles writer lock'
+        );
         if (title === 'Enter profile name') return 'guided-profile';
         if (title === 'Enter profile description (defaults from profile \'strict\')') return 'Interactive guided profile';
         throw new Error(`Unexpected promptTextInput title: ${title}`);
@@ -385,6 +485,47 @@ test('profile create without a name rejects when interactive prompts are unavail
         );
     } finally {
         cliHelpers.supportsInteractivePrompts = originalSupportsInteractivePrompts;
+    }
+});
+
+test('interactive profile creation rejects a source snapshot changed while prompts are open', async () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const cliHelpers = require(require.resolve('../../../../src/cli/commands/cli-helpers'));
+    const originals = {
+        supportsInteractivePrompts: cliHelpers.supportsInteractivePrompts,
+        promptTextInput: cliHelpers.promptTextInput,
+        promptSingleSelect: cliHelpers.promptSingleSelect
+    };
+    cliHelpers.supportsInteractivePrompts = () => true;
+    cliHelpers.promptTextInput = async (title: string) => {
+        if (title === 'Enter profile name') return 'stale-source-copy';
+        if (title.includes('Enter profile description')) {
+            const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+            data.built_in_profiles.strict.description = 'Changed while prompting';
+            fs.writeFileSync(profilesPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+            return 'Copy from the original strict profile';
+        }
+        throw new Error(`Unexpected promptTextInput title: ${title}`);
+    };
+    cliHelpers.promptSingleSelect = async (config: { title: string }) => {
+        if (config.title.startsWith('Select profile depth')) return '2';
+        if (config.title.startsWith('Customize ')) return 'false';
+        throw new Error(`Unexpected promptSingleSelect title: ${config.title}`);
+    };
+    try {
+        await assert.rejects(
+            () => Promise.resolve(handleProfile([
+                'create', '--copy-from', 'strict', '--bundle-root', bundleRoot
+            ], PACKAGE_JSON)),
+            /profiles config changed.*restart profile creation/iu
+        );
+        const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+        assert.equal(data.user_profiles['stale-source-copy'], undefined);
+    } finally {
+        cliHelpers.supportsInteractivePrompts = originals.supportsInteractivePrompts;
+        cliHelpers.promptTextInput = originals.promptTextInput;
+        cliHelpers.promptSingleSelect = originals.promptSingleSelect;
     }
 });
 
@@ -478,6 +619,1179 @@ test('ProfileEntry critical finding action type is fixed to fix_now', () => {
     // @ts-expect-error critical finding disposition is schema-locked to fix_now.
     const disallowedCriticalAction: CriticalAction = 'ignore';
     assert.equal(disallowedCriticalAction, 'ignore');
+});
+
+test('profile policy preview and apply share normalized hashes and write bounded future-task audit evidence', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced',
+        '--preset', 'soft',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+
+    assert.equal(preview.status, 'PREVIEW');
+    assert.equal(preview.operation, 'set');
+    assert.match(String(preview.policy_sha256), /^[a-f0-9]{64}$/u);
+    assert.equal(
+        preview.policy_sha256,
+        createHash('sha256').update(JSON.stringify(preview.policy), 'utf8').digest('hex'),
+        'policy_sha256 must identify only the normalized policy content'
+    );
+    assert.match(String(preview.plan_sha256), /^[a-f0-9]{64}$/u);
+    assert.match(String(preview.before_config_sha256), /^[a-f0-9]{64}$/u);
+    assert.equal((preview.policy as { policy_id: string }).policy_id, 'soft');
+    assert.equal((preview.task_effect as { scope: string }).scope, 'future_tasks_only');
+
+    const applied = captureJsonProfileCommand([
+        'policy', 'apply', 'balanced',
+        '--preset', 'soft',
+        '--expected-policy-sha256', String(preview.policy_sha256),
+        '--expected-plan-sha256', String(preview.plan_sha256),
+        '--expected-config-sha256', String(preview.before_config_sha256),
+        '--bundle-root', bundleRoot,
+        '--json',
+        ...freshOperatorConfirmationArgs()
+    ]);
+
+    assert.equal(applied.status, 'APPLIED');
+    assert.equal(applied.policy_sha256, preview.policy_sha256);
+    assert.equal((applied.policy as { policy_id: string }).policy_id, 'soft');
+    assert.equal((applied.task_effect as { active_task_snapshots_changed: boolean }).active_task_snapshots_changed, false);
+    const data = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'profiles.json'), 'utf8'));
+    assert.equal(data.built_in_profiles.balanced.review_finding_policy.policy_id, 'soft');
+
+    const auditPath = String(applied.audit_path);
+    const auditLines = fs.readFileSync(auditPath, 'utf8').trim().split(/\r?\n/u);
+    assert.equal(auditLines.length, 2);
+    const auditRecords = auditLines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    const preparedAudit = auditRecords.find((record) => record.transaction_state === 'PREPARED');
+    assert.equal(preparedAudit?.status, 'PREPARED');
+    assert.equal(preparedAudit?.intended_status, 'APPLIED');
+    const audit = auditRecords.find((record) => record.transaction_state === 'COMMITTED');
+    assert.ok(audit, 'changed apply must finish its durable audit transaction');
+    assert.equal(audit.event_source, 'profile-finding-policy-mutation');
+    assert.equal(audit.target_profile, 'balanced');
+    assert.equal(audit.policy_sha256, preview.policy_sha256);
+    assert.equal(audit.affects_active_task_snapshots, false);
+    assert.equal(audit.affects_future_tasks_only, true);
+    assert.equal(audit.active_task_discovery_status, 'resolved');
+    assert.equal(audit.active_task_discovery_error, null);
+    assert.ok(JSON.stringify(audit).length < 2048, 'audit payload must remain bounded');
+});
+
+test('profile policy preview rejects apply-only binding and confirmation flags', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    for (const [flag, value] of [
+        ['--expected-policy-sha256', 'invalid'],
+        ['--expected-plan-sha256', 'invalid'],
+        ['--expected-config-sha256', 'invalid'],
+        ['--operator-confirmed', 'yes'],
+        ['--operator-confirmed-at-utc', 'not-a-timestamp']
+    ]) {
+        assert.throws(
+            () => handleProfile([
+                'policy', 'preview', 'balanced', '--preset', 'soft',
+                flag, value, '--bundle-root', bundleRoot
+            ], PACKAGE_JSON),
+            /preview does not accept apply-only options/iu
+        );
+    }
+});
+
+test('profile policy audit discovers tasks from the workspace owning an explicit bundle root', () => {
+    const stagedBundleRoot = createTempBundleWithProfiles();
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-profile-workspace-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    fs.renameSync(stagedBundleRoot, bundleRoot);
+    fs.writeFileSync(path.join(workspaceRoot, 'TASK.md'), [
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        '| T-777 | 🟨 IN_PROGRESS | P1 | test | Local task | test | 2026-07-18 | balanced | local |'
+    ].join('\n'), 'utf8');
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced',
+        '--preset', 'soft',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+
+    const applied = captureJsonProfileCommand([
+        'policy', 'apply', 'balanced',
+        '--preset', 'soft',
+        '--expected-policy-sha256', String(preview.policy_sha256),
+        '--expected-plan-sha256', String(preview.plan_sha256),
+        '--expected-config-sha256', String(preview.before_config_sha256),
+        '--bundle-root', bundleRoot,
+        '--json',
+        ...freshOperatorConfirmationArgs()
+    ]);
+
+    const auditRecords = fs.readFileSync(String(applied.audit_path), 'utf8')
+        .trim()
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line) as {
+            transaction_state: string;
+            active_task_count: number;
+            active_task_ids_sha256: string;
+        });
+    const committed = auditRecords.find((record) => record.transaction_state === 'COMMITTED');
+    assert.equal(committed?.active_task_count, 1);
+    assert.equal(
+        committed?.active_task_ids_sha256,
+        createHash('sha256').update(JSON.stringify(['T-777']), 'utf8').digest('hex')
+    );
+});
+
+test('profile policy apply serializes config writers and fails before config write when audit preparation fails', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced',
+        '--preset', 'soft',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+    const before = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    const auditPath = path.join(bundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl');
+    fs.mkdirSync(auditPath, { recursive: true });
+
+    assert.throws(
+        () => handleProfile([
+            'policy', 'apply', 'balanced',
+            '--preset', 'soft',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot,
+            ...freshOperatorConfirmationArgs()
+        ], PACKAGE_JSON),
+        /audit recovery failed|audit.*failed/iu
+    );
+    assert.deepEqual(JSON.parse(fs.readFileSync(profilesPath, 'utf8')), before);
+    assert.equal(fs.existsSync(`${profilesPath}.garda-write.lock`), false);
+
+    fs.rmSync(auditPath, { recursive: true });
+    fs.writeFileSync(`${profilesPath}.garda-write.lock`, 'contended', 'utf8');
+    assert.throws(
+        () => handleProfile([
+            'policy', 'apply', 'balanced',
+            '--preset', 'soft',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot,
+            ...freshOperatorConfirmationArgs()
+        ], PACKAGE_JSON),
+        /profiles config lock/iu
+    );
+    assert.deepEqual(JSON.parse(fs.readFileSync(profilesPath, 'utf8')), before);
+});
+
+test('profile policy apply rejects linked audit and lock artifacts without changing their targets', () => {
+    const applyPreview = (bundleRoot: string, preview: Record<string, unknown>): void => {
+        handleProfile([
+            'policy', 'apply', 'balanced', '--preset', 'soft',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot,
+            ...freshOperatorConfirmationArgs()
+        ], PACKAGE_JSON);
+    };
+    const createPreview = (bundleRoot: string): Record<string, unknown> => captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft', '--bundle-root', bundleRoot, '--json'
+    ]);
+
+    const linkedAuditBundleRoot = createTempBundleWithProfiles();
+    const linkedAuditPath = path.join(linkedAuditBundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl');
+    const auditVictim = path.join(path.dirname(linkedAuditBundleRoot), `audit-victim-${randomUUID()}.txt`);
+    fs.mkdirSync(path.dirname(linkedAuditPath), { recursive: true });
+    fs.writeFileSync(auditVictim, 'audit-victim', 'utf8');
+    fs.linkSync(auditVictim, linkedAuditPath);
+    assert.throws(
+        () => applyPreview(linkedAuditBundleRoot, createPreview(linkedAuditBundleRoot)),
+        /audit recovery failed|additional hard links/iu
+    );
+    assert.equal(fs.readFileSync(auditVictim, 'utf8'), 'audit-victim');
+
+    const linkedLockBundleRoot = createTempBundleWithProfiles();
+    const linkedProfilesPath = path.join(linkedLockBundleRoot, 'live', 'config', 'profiles.json');
+    const lockVictim = path.join(path.dirname(linkedLockBundleRoot), `lock-victim-${randomUUID()}.txt`);
+    fs.writeFileSync(lockVictim, 'lock-victim', 'utf8');
+    fs.linkSync(lockVictim, `${linkedProfilesPath}.garda-write.lock`);
+    assert.throws(
+        () => applyPreview(linkedLockBundleRoot, createPreview(linkedLockBundleRoot)),
+        /profiles config lock/iu
+    );
+    assert.equal(fs.readFileSync(lockVictim, 'utf8'), 'lock-victim');
+});
+
+test('profile policy apply rejects a runtime directory link that leaves the bundle', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft', '--bundle-root', bundleRoot, '--json'
+    ]);
+    const runtimePath = path.join(bundleRoot, 'runtime');
+    const externalRuntime = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-external-runtime-'));
+    fs.rmSync(runtimePath, { recursive: true, force: true });
+    fs.symlinkSync(externalRuntime, runtimePath, process.platform === 'win32' ? 'junction' : 'dir');
+
+    assert.throws(
+        () => handleProfile([
+            'policy', 'apply', 'balanced', '--preset', 'soft',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot,
+            ...freshOperatorConfirmationArgs()
+        ], PACKAGE_JSON),
+        /audit preparation failed|audit directory/iu
+    );
+    assert.equal(fs.existsSync(path.join(externalRuntime, 'profile-finding-policy-audit.jsonl')), false);
+});
+
+test('profile writers reject a linked config directory that leaves the bundle', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const configPath = path.join(bundleRoot, 'live', 'config');
+    const externalConfig = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-external-config-'));
+    const externalProfilesPath = path.join(externalConfig, 'profiles.json');
+    fs.copyFileSync(path.join(configPath, 'profiles.json'), externalProfilesPath);
+    const externalLockPath = `${externalProfilesPath}.garda-write.lock`;
+    const externalLockContents = JSON.stringify({ pid: 2_147_483_647, released: true });
+    fs.writeFileSync(externalLockPath, externalLockContents, 'utf8');
+    fs.rmSync(configPath, { recursive: true, force: true });
+    fs.symlinkSync(externalConfig, configPath, process.platform === 'win32' ? 'junction' : 'dir');
+
+    assert.throws(
+        () => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON),
+        /config directory/iu
+    );
+    assert.equal(JSON.parse(fs.readFileSync(externalProfilesPath, 'utf8')).active_profile, 'balanced');
+    assert.equal(fs.readFileSync(externalLockPath, 'utf8'), externalLockContents);
+});
+
+test('profile policy planning rejects a linked profiles config file', (t) => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const externalProfilesPath = path.join(os.tmpdir(), `gao-external-profiles-${randomUUID()}.json`);
+    const externalContents = fs.readFileSync(profilesPath, 'utf8');
+    fs.writeFileSync(externalProfilesPath, externalContents, 'utf8');
+    fs.unlinkSync(profilesPath);
+    try {
+        fs.symlinkSync(externalProfilesPath, profilesPath, 'file');
+    } catch (error: unknown) {
+        if (String((error as NodeJS.ErrnoException).code || '').toUpperCase() === 'EPERM') {
+            t.skip('File symlink creation is unavailable in this Windows environment.');
+            return;
+        }
+        throw error;
+    }
+
+    assert.throws(
+        () => handleProfile([
+            'policy', 'preview', 'balanced', '--preset', 'soft', '--bundle-root', bundleRoot
+        ], PACKAGE_JSON),
+        /profiles config must be a regular file/iu
+    );
+    assert.equal(fs.readFileSync(externalProfilesPath, 'utf8'), externalContents);
+});
+
+test('profile policy apply recovers a prepared audit after a simulated process interruption', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const initialPreview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced',
+        '--preset', 'soft',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+    const auditPath = path.join(bundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl');
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    const historicalRecords = Array.from({ length: 2500 }, (_, index) => JSON.stringify({
+        schema_version: 1,
+        event_source: 'profile-finding-policy-mutation',
+        transaction_id: `historical-${index}`,
+        transaction_state: 'COMMITTED'
+    })).join('\n');
+    fs.writeFileSync(auditPath, `${historicalRecords}\n${JSON.stringify({
+        schema_version: 1,
+        event_source: 'profile-finding-policy-mutation',
+        timestamp_utc: new Date().toISOString(),
+        transaction_id: 'simulated-crash',
+        transaction_state: 'PREPARED',
+        intended_status: 'APPLIED',
+        status: 'APPLIED',
+        before_config_sha256: initialPreview.before_config_sha256,
+        after_config_sha256: initialPreview.after_config_sha256
+    })}`, 'utf8');
+    const interruptedConfig = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    interruptedConfig.built_in_profiles.balanced.review_finding_policy = initialPreview.policy;
+    fs.writeFileSync(profilesPath, `${JSON.stringify(interruptedConfig, null, 2)}\n`, 'utf8');
+
+    captureConsole(() => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON));
+
+    const records = fs.readFileSync(auditPath, 'utf8')
+        .trim()
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const recovered = records.find((record) => (
+        record.transaction_id === 'simulated-crash'
+        && record.transaction_state === 'COMMITTED'
+    ));
+    assert.equal(recovered?.recovered, true);
+    assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'fast');
+});
+
+test('profile policy audit covers no-change, aborted write, and aborted recovery terminals', () => {
+    const noChangeBundleRoot = createTempBundleWithProfiles();
+    const noChangePreview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'balanced',
+        '--bundle-root', noChangeBundleRoot, '--json'
+    ]);
+    assert.equal(noChangePreview.changed, false);
+    const noChange = captureJsonProfileCommand([
+        'policy', 'apply', 'balanced', '--preset', 'balanced',
+        '--expected-policy-sha256', String(noChangePreview.policy_sha256),
+        '--expected-plan-sha256', String(noChangePreview.plan_sha256),
+        '--expected-config-sha256', String(noChangePreview.before_config_sha256),
+        '--bundle-root', noChangeBundleRoot, '--json',
+        ...freshOperatorConfirmationArgs()
+    ]);
+    assert.equal(noChange.status, 'NO_CHANGE');
+    const noChangeRecords = fs.readFileSync(String(noChange.audit_path), 'utf8')
+        .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    assert.equal(noChangeRecords.length, 1);
+    assert.equal(noChangeRecords[0].transaction_state, 'COMMITTED');
+    assert.equal(noChangeRecords[0].status, 'NO_CHANGE');
+
+    const failedWriteBundleRoot = createTempBundleWithProfiles();
+    const failedWriteProfilesPath = path.join(failedWriteBundleRoot, 'live', 'config', 'profiles.json');
+    const failedWritePreview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft',
+        '--bundle-root', failedWriteBundleRoot, '--json'
+    ]);
+    const filesystemModule = require(require.resolve('../../../../src/core/filesystem'));
+    const originalWriteTextFileAtomically = filesystemModule.writeTextFileAtomically;
+    filesystemModule.writeTextFileAtomically = (filePath: string, ...args: unknown[]) => {
+        if (path.resolve(filePath) === path.resolve(failedWriteProfilesPath)) {
+            throw new Error('simulated profiles config write failure');
+        }
+        return originalWriteTextFileAtomically(filePath, ...args);
+    };
+    try {
+        assert.throws(
+            () => handleProfile([
+                'policy', 'apply', 'balanced', '--preset', 'soft',
+                '--expected-policy-sha256', String(failedWritePreview.policy_sha256),
+                '--expected-plan-sha256', String(failedWritePreview.plan_sha256),
+                '--expected-config-sha256', String(failedWritePreview.before_config_sha256),
+                '--bundle-root', failedWriteBundleRoot,
+                ...freshOperatorConfirmationArgs()
+            ], PACKAGE_JSON),
+            /simulated profiles config write failure/u
+        );
+    } finally {
+        filesystemModule.writeTextFileAtomically = originalWriteTextFileAtomically;
+    }
+    const failedWriteAuditPath = path.join(failedWriteBundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl');
+    const failedWriteRecords = fs.readFileSync(failedWriteAuditPath, 'utf8')
+        .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    assert.deepEqual(failedWriteRecords.map((record) => record.transaction_state), ['PREPARED', 'ABORTED']);
+
+    const committedErrorBundleRoot = createTempBundleWithProfiles();
+    const committedErrorProfilesPath = path.join(committedErrorBundleRoot, 'live', 'config', 'profiles.json');
+    const committedErrorPreview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft',
+        '--bundle-root', committedErrorBundleRoot, '--json'
+    ]);
+    filesystemModule.writeTextFileAtomically = (filePath: string, content: string, options: unknown) => {
+        originalWriteTextFileAtomically(filePath, content, options);
+        if (path.resolve(filePath) === path.resolve(committedErrorProfilesPath)) {
+            throw new Error(`simulated post-commit finalization failure ${'x'.repeat(5_000)}`);
+        }
+    };
+    try {
+        assert.throws(
+            () => handleProfile([
+                'policy', 'apply', 'balanced', '--preset', 'soft',
+                '--expected-policy-sha256', String(committedErrorPreview.policy_sha256),
+                '--expected-plan-sha256', String(committedErrorPreview.plan_sha256),
+                '--expected-config-sha256', String(committedErrorPreview.before_config_sha256),
+                '--bundle-root', committedErrorBundleRoot,
+                ...freshOperatorConfirmationArgs()
+            ], PACKAGE_JSON),
+            /config committed.*post-commit finalization failure/iu
+        );
+    } finally {
+        filesystemModule.writeTextFileAtomically = originalWriteTextFileAtomically;
+    }
+    assert.equal(
+        JSON.parse(fs.readFileSync(committedErrorProfilesPath, 'utf8'))
+            .built_in_profiles.balanced.review_finding_policy.policy_id,
+        'soft'
+    );
+    const committedErrorLines = fs.readFileSync(
+        path.join(committedErrorBundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl'),
+        'utf8'
+    ).trim().split(/\r?\n/u);
+    assert.ok(committedErrorLines.every((line) => Buffer.byteLength(`${line}\n`, 'utf8') <= 2_048));
+    const committedErrorRecords = committedErrorLines.map((line) => JSON.parse(line));
+    assert.deepEqual(
+        committedErrorRecords.map((record) => record.transaction_state),
+        ['PREPARED', 'COMMITTED']
+    );
+    assert.equal(committedErrorRecords.at(-1)?.committed_after_write_error, true);
+    assert.ok(String(committedErrorRecords.at(-1)?.write_error).length <= 256);
+
+    const recoveryBundleRoot = createTempBundleWithProfiles();
+    const recoveryPreview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft',
+        '--bundle-root', recoveryBundleRoot, '--json'
+    ]);
+    const recoveryAuditPath = path.join(recoveryBundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl');
+    fs.mkdirSync(path.dirname(recoveryAuditPath), { recursive: true });
+    fs.writeFileSync(recoveryAuditPath, `${JSON.stringify({
+        schema_version: 1,
+        event_source: 'profile-finding-policy-mutation',
+        transaction_id: 'simulated-abort',
+        transaction_state: 'PREPARED',
+        intended_status: 'APPLIED',
+        status: 'APPLIED',
+        before_config_sha256: recoveryPreview.before_config_sha256,
+        after_config_sha256: recoveryPreview.after_config_sha256
+    })}\n`, 'utf8');
+    captureConsole(() => handleProfile(['use', 'fast', '--bundle-root', recoveryBundleRoot], PACKAGE_JSON));
+    const recoveryRecords = fs.readFileSync(recoveryAuditPath, 'utf8')
+        .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    const recoveredAbort = recoveryRecords.find((record) => (
+        record.transaction_id === 'simulated-abort' && record.transaction_state === 'ABORTED'
+    ));
+    assert.equal(recoveredAbort?.recovered, true);
+});
+
+test('UI profile writer rebuilds its plan under the shared lock before persisting', async () => {
+    const stagedBundleRoot = createTempBundleWithProfiles();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-profile-ui-lock-'));
+    const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    fs.renameSync(stagedBundleRoot, bundleRoot);
+    const targetProfilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const profileDataModule = require(require.resolve('../../../../src/cli/commands/profile/profile-data'));
+    const originalWithProfilesDataLock = profileDataModule.withProfilesDataLock;
+    profileDataModule.withProfilesDataLock = (lockedProfilesPath: string, operation: () => unknown) => {
+        const data = JSON.parse(fs.readFileSync(lockedProfilesPath, 'utf8'));
+        data.user_profiles['ui-race'] = {
+            ...data.built_in_profiles.balanced,
+            description: 'competing-writer'
+        };
+        fs.writeFileSync(lockedProfilesPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+        return originalWithProfilesDataLock(lockedProfilesPath, operation);
+    };
+    try {
+        const response = await invokeUiProfileRequest(repoRoot, 'profile-test-token', {
+            operation: 'create',
+            mode: 'execute',
+            profile_name: 'ui-race',
+            copy_from: 'balanced',
+            confirmation: 'APPLY PROFILE CHANGE'
+        });
+        assert.equal(response.status, 500);
+        const payload = await response.json();
+        assert.equal(payload.status, 'failed_to_apply');
+        assert.match(String(payload.error), /already exists/iu);
+        assert.equal(
+            JSON.parse(fs.readFileSync(targetProfilesPath, 'utf8')).user_profiles['ui-race'].description,
+            'competing-writer'
+        );
+    } finally {
+        profileDataModule.withProfilesDataLock = originalWithProfilesDataLock;
+    }
+});
+
+test('UI profile writer recovers a pending policy audit before changing profiles', async () => {
+    const stagedBundleRoot = createTempBundleWithProfiles();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-profile-ui-recovery-'));
+    const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    fs.renameSync(stagedBundleRoot, bundleRoot);
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft',
+        '--bundle-root', bundleRoot, '--json'
+    ]);
+    const auditPath = path.join(bundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl');
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    fs.writeFileSync(auditPath, `${JSON.stringify({
+        schema_version: 1,
+        event_source: 'profile-finding-policy-mutation',
+        transaction_id: 'ui-recovery',
+        transaction_state: 'PREPARED',
+        intended_status: 'APPLIED',
+        status: 'APPLIED',
+        before_config_sha256: preview.before_config_sha256,
+        after_config_sha256: preview.after_config_sha256
+    })}\n`, 'utf8');
+
+    const response = await invokeUiProfileRequest(repoRoot, 'profile-test-token', {
+        operation: 'create',
+        mode: 'execute',
+        profile_name: 'after-recovery',
+        copy_from: 'balanced',
+        confirmation: 'APPLY PROFILE CHANGE'
+    });
+
+    assert.equal(response.status, 200);
+    const recoveryRecords = fs.readFileSync(auditPath, 'utf8')
+        .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    const recoveredAbort = recoveryRecords.find((record) => (
+        record.transaction_id === 'ui-recovery' && record.transaction_state === 'ABORTED'
+    ));
+    assert.equal(recoveredAbort?.recovered, true);
+    const profiles = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'profiles.json'), 'utf8'));
+    assert.ok(profiles.user_profiles['after-recovery']);
+});
+
+test('UI profile writer reports executed when only post-commit lock release fails', async () => {
+    const stagedBundleRoot = createTempBundleWithProfiles();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-profile-ui-release-'));
+    const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    fs.renameSync(stagedBundleRoot, bundleRoot);
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const cleanupPath = `${profilesPath}.garda-write.lock.dead-owner-cleanup`;
+    fs.writeFileSync(cleanupPath, JSON.stringify({
+        pid: process.pid,
+        created_at_utc: new Date().toISOString()
+    }), 'utf8');
+    const fsModule = require('node:fs');
+    const originalFtruncateSync = fsModule.ftruncateSync;
+    fsModule.ftruncateSync = () => { throw new Error('injected UI post-commit release failure'); };
+    try {
+        const response = await invokeUiProfileRequest(repoRoot, 'profile-test-token', {
+            operation: 'create',
+            mode: 'execute',
+            profile_name: 'committed-ui-profile',
+            copy_from: 'balanced',
+            confirmation: 'APPLY PROFILE CHANGE'
+        });
+        assert.equal(response.status, 200);
+        const payload = await response.json();
+        assert.equal(payload.status, 'executed');
+        assert.match(String(payload.warning), /release failure/iu);
+        assert.ok(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).user_profiles['committed-ui-profile']);
+    } finally {
+        fsModule.ftruncateSync = originalFtruncateSync;
+        fs.rmSync(`${profilesPath}.garda-write.lock`, { force: true });
+        fs.rmSync(cleanupPath, { force: true });
+    }
+});
+
+test('profile use, create, and delete acquire the shared lock before reading profiles', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const lockPath = `${profilesPath}.garda-write.lock`;
+    fs.writeFileSync(profilesPath, '{invalid-json', 'utf8');
+
+    for (const argv of [
+        ['use', 'fast', '--bundle-root', bundleRoot],
+        ['create', 'locked-profile', '--bundle-root', bundleRoot],
+        ['delete', 'locked-profile', '--bundle-root', bundleRoot]
+    ]) {
+        fs.writeFileSync(lockPath, 'contended', 'utf8');
+        assert.throws(
+            () => handleProfile(argv, PACKAGE_JSON),
+            /profiles config lock/iu,
+            `${argv[0]} must acquire the shared lock before reading profiles.json`
+        );
+        fs.rmSync(lockPath, { force: true });
+    }
+});
+
+test('profiles writer publishes owner and cleanup locks without hard-link crash windows', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const fsModule = require('node:fs');
+    const originalLinkSync = fsModule.linkSync;
+    let linkCalls = 0;
+    fsModule.linkSync = () => {
+        linkCalls += 1;
+        throw new Error('profiles locking must not publish through hard links');
+    };
+    try {
+        captureConsole(() => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON));
+        assert.equal(linkCalls, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'profiles.json'), 'utf8')).active_profile,
+            'fast'
+        );
+    } finally {
+        fsModule.linkSync = originalLinkSync;
+    }
+});
+
+test('dead-owner cleanup recovers a stale cleanup guard', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const lockPath = `${profilesPath}.garda-write.lock`;
+    const cleanupPath = `${lockPath}.dead-owner-cleanup`;
+    const deadOwner = JSON.stringify({ pid: 2_147_483_647, created_at_utc: new Date(0).toISOString() });
+    fs.writeFileSync(lockPath, deadOwner, 'utf8');
+    fs.writeFileSync(cleanupPath, deadOwner, 'utf8');
+
+    captureConsole(() => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON));
+
+    assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'fast');
+    assert.equal(fs.existsSync(lockPath), false);
+    assert.equal(fs.existsSync(cleanupPath), false);
+});
+
+test('dead-owner cleanup release failure is surfaced and remains recoverable', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const lockPath = `${profilesPath}.garda-write.lock`;
+    const cleanupPath = `${lockPath}.dead-owner-cleanup`;
+    fs.writeFileSync(lockPath, JSON.stringify({
+        pid: 2_147_483_647,
+        created_at_utc: new Date(0).toISOString()
+    }), 'utf8');
+    const fsModule = require('node:fs');
+    const originalUnlinkSync = fsModule.unlinkSync;
+    let failureInjected = false;
+    fsModule.unlinkSync = (targetPath: fs.PathLike) => {
+        if (!failureInjected && path.resolve(String(targetPath)) === path.resolve(cleanupPath)) {
+            failureInjected = true;
+            throw new Error('injected cleanup release failure');
+        }
+        return originalUnlinkSync(targetPath);
+    };
+    try {
+        assert.throws(
+            () => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON),
+            /release profiles dead-owner cleanup guard.*injected cleanup release failure/iu
+        );
+        assert.equal(failureInjected, true);
+        assert.equal(JSON.parse(fs.readFileSync(cleanupPath, 'utf8')).released, true);
+        assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'balanced');
+
+        captureConsole(() => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON));
+        assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'fast');
+        assert.equal(fs.existsSync(lockPath), false);
+        assert.equal(fs.existsSync(cleanupPath), false);
+    } finally {
+        fsModule.unlinkSync = originalUnlinkSync;
+        fs.rmSync(lockPath, { force: true });
+        fs.rmSync(cleanupPath, { force: true });
+    }
+});
+
+test('dead-owner cleanup recovers crash-partial lock metadata', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const lockPath = `${profilesPath}.garda-write.lock`;
+    const cleanupPath = `${lockPath}.dead-owner-cleanup`;
+    fs.writeFileSync(lockPath, '{partial', 'utf8');
+    fs.writeFileSync(cleanupPath, '{partial', 'utf8');
+    fs.utimesSync(lockPath, new Date(0), new Date(0));
+    fs.utimesSync(cleanupPath, new Date(0), new Date(0));
+
+    captureConsole(() => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON));
+
+    assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'fast');
+    assert.equal(fs.existsSync(lockPath), false);
+    assert.equal(fs.existsSync(cleanupPath), false);
+});
+
+test('dead-owner cleanup recovers aged valid JSON with malformed owner shapes', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const lockPath = `${profilesPath}.garda-write.lock`;
+    const cleanupPath = `${lockPath}.dead-owner-cleanup`;
+    fs.writeFileSync(lockPath, '{}', 'utf8');
+    fs.writeFileSync(cleanupPath, 'null', 'utf8');
+    fs.utimesSync(lockPath, new Date(0), new Date(0));
+    fs.utimesSync(cleanupPath, new Date(0), new Date(0));
+
+    captureConsole(() => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON));
+
+    assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'fast');
+    assert.equal(fs.existsSync(lockPath), false);
+    assert.equal(fs.existsSync(cleanupPath), false);
+});
+
+test('dead-owner cleanup never removes a replacement live profiles lock', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const lockPath = `${profilesPath}.garda-write.lock`;
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 2_147_483_647, created_at_utc: new Date(0).toISOString() }), 'utf8');
+    const fsModule = require('node:fs');
+    const originalLstatSync = fsModule.lstatSync;
+    let replacementInjected = false;
+    fsModule.lstatSync = (targetPath: fs.PathLike) => {
+        if (!replacementInjected && path.resolve(String(targetPath)) === path.resolve(lockPath)) {
+            replacementInjected = true;
+            fs.unlinkSync(lockPath);
+            fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, created_at_utc: new Date().toISOString() }), 'utf8');
+        }
+        return originalLstatSync(targetPath);
+    };
+    try {
+        assert.throws(
+            () => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON),
+            /profiles config lock/iu
+        );
+        assert.equal(replacementInjected, true);
+        assert.equal(JSON.parse(fs.readFileSync(lockPath, 'utf8')).pid, process.pid);
+    } finally {
+        fsModule.lstatSync = originalLstatSync;
+        fs.rmSync(lockPath, { force: true });
+        fs.rmSync(`${lockPath}.dead-owner-cleanup`, { force: true });
+    }
+});
+
+test('profiles lock acquisition rejects a replacement owner lock without removing it', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const lockPath = `${profilesPath}.garda-write.lock`;
+    const fsModule = require('node:fs');
+    const originalLstatSync = fsModule.lstatSync;
+    let replacementInjected = false;
+    fsModule.lstatSync = (targetPath: fs.PathLike) => {
+        if (!replacementInjected && path.resolve(String(targetPath)) === path.resolve(lockPath)) {
+            replacementInjected = true;
+            fs.unlinkSync(lockPath);
+            fs.writeFileSync(lockPath, JSON.stringify({
+                pid: process.pid,
+                created_at_utc: new Date().toISOString(),
+                replacement: true
+            }), 'utf8');
+        }
+        return originalLstatSync(targetPath);
+    };
+    try {
+        assert.throws(
+            () => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON),
+            /profiles config lock/iu
+        );
+        assert.equal(replacementInjected, true);
+        assert.equal(JSON.parse(fs.readFileSync(lockPath, 'utf8')).replacement, true);
+        assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'balanced');
+    } finally {
+        fsModule.lstatSync = originalLstatSync;
+        fs.rmSync(lockPath, { force: true });
+        fs.rmSync(`${lockPath}.dead-owner-cleanup`, { force: true });
+    }
+});
+
+test('profiles lock release remains recoverable when a live cleanup guard is contended', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const lockPath = `${profilesPath}.garda-write.lock`;
+    const cleanupPath = `${lockPath}.dead-owner-cleanup`;
+    fs.writeFileSync(cleanupPath, JSON.stringify({
+        pid: process.pid,
+        created_at_utc: new Date().toISOString()
+    }), 'utf8');
+
+    captureConsole(() => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON));
+
+    assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'fast');
+    assert.equal(JSON.parse(fs.readFileSync(lockPath, 'utf8')).released, true);
+    fs.unlinkSync(cleanupPath);
+
+    captureConsole(() => handleProfile(['use', 'balanced', '--bundle-root', bundleRoot], PACKAGE_JSON));
+
+    assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'balanced');
+    assert.equal(fs.existsSync(lockPath), false);
+    assert.equal(fs.existsSync(cleanupPath), false);
+});
+
+test('profiles lock release reports tombstone persistence failures', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const lockPath = `${profilesPath}.garda-write.lock`;
+    const cleanupPath = `${lockPath}.dead-owner-cleanup`;
+    fs.writeFileSync(cleanupPath, JSON.stringify({
+        pid: process.pid,
+        created_at_utc: new Date().toISOString()
+    }), 'utf8');
+    const fsModule = require('node:fs');
+    const originalFtruncateSync = fsModule.ftruncateSync;
+    fsModule.ftruncateSync = () => { throw new Error('injected tombstone failure'); };
+    try {
+        assert.throws(
+            () => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON),
+            /Could not release profiles config lock.*injected tombstone failure/iu
+        );
+        assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'fast');
+    } finally {
+        fsModule.ftruncateSync = originalFtruncateSync;
+        fs.rmSync(lockPath, { force: true });
+        fs.rmSync(cleanupPath, { force: true });
+    }
+});
+
+test('profile policy reports success when only post-commit lock release fails', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const cleanupPath = `${profilesPath}.garda-write.lock.dead-owner-cleanup`;
+    fs.writeFileSync(cleanupPath, JSON.stringify({
+        pid: process.pid,
+        created_at_utc: new Date().toISOString()
+    }), 'utf8');
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft', '--bundle-root', bundleRoot, '--json'
+    ]);
+    const fsModule = require('node:fs');
+    const originalFtruncateSync = fsModule.ftruncateSync;
+    fsModule.ftruncateSync = () => { throw new Error('injected post-commit release failure'); };
+    try {
+        const applied = captureJsonProfileCommand([
+            'policy', 'apply', 'balanced', '--preset', 'soft',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot, '--json',
+            ...freshOperatorConfirmationArgs()
+        ]);
+        assert.equal(applied.status, 'APPLIED');
+        assert.match((applied.diagnostics as string[]).at(-1) || '', /committed.*lock release failed/iu);
+        assert.equal(
+            JSON.parse(fs.readFileSync(profilesPath, 'utf8')).built_in_profiles.balanced.review_finding_policy.policy_id,
+            'soft'
+        );
+    } finally {
+        fsModule.ftruncateSync = originalFtruncateSync;
+        fs.rmSync(`${profilesPath}.garda-write.lock`, { force: true });
+        fs.rmSync(cleanupPath, { force: true });
+    }
+});
+
+test('profiles lock release never removes a replacement cleanup guard', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const cleanupPath = `${profilesPath}.garda-write.lock.dead-owner-cleanup`;
+    const fsModule = require('node:fs');
+    const originalLstatSync = fsModule.lstatSync;
+    let cleanupLstatCalls = 0;
+    fsModule.lstatSync = (targetPath: fs.PathLike) => {
+        if (path.resolve(String(targetPath)) === path.resolve(cleanupPath)) {
+            cleanupLstatCalls += 1;
+            if (cleanupLstatCalls === 2) {
+                fs.unlinkSync(cleanupPath);
+                fs.writeFileSync(cleanupPath, JSON.stringify({ replacement: true }), 'utf8');
+            }
+        }
+        return originalLstatSync(targetPath);
+    };
+    try {
+        assert.throws(
+            () => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON),
+            /cleanup lock path changed|release profiles config lock/iu
+        );
+        assert.equal(JSON.parse(fs.readFileSync(cleanupPath, 'utf8')).replacement, true);
+        assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'fast');
+    } finally {
+        fsModule.lstatSync = originalLstatSync;
+        fs.rmSync(`${profilesPath}.garda-write.lock`, { force: true });
+        fs.rmSync(cleanupPath, { force: true });
+    }
+});
+
+test('profile policy rejects safety weakening and stale preview hashes before write', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const before = fs.readFileSync(profilesPath, 'utf8');
+
+    assert.throws(
+        () => handleProfile([
+            'policy', 'preview', 'balanced',
+            '--preset', 'custom',
+            '--critical', 'ignore',
+            '--high', 'fix_now',
+            '--medium', 'fix_now',
+            '--low', 'create_follow_up',
+            '--residual-risk', 'create_follow_up',
+            '--bundle-root', bundleRoot,
+            '--json'
+        ], PACKAGE_JSON),
+        /critical.*immutable|critical.*fix_now/iu
+    );
+    assert.equal(fs.readFileSync(profilesPath, 'utf8'), before);
+
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced',
+        '--preset', 'strict',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+    assert.equal(
+        preview.policy_sha256,
+        hashReviewFindingPolicy(preview.policy as Parameters<typeof hashReviewFindingPolicy>[0])
+    );
+    assert.throws(
+        () => handleProfile([
+            'policy', 'apply', 'fast',
+            '--preset', 'strict',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot,
+            ...freshOperatorConfirmationArgs()
+        ], PACKAGE_JSON),
+        /Policy (?:input|plan) changed/iu
+    );
+    assert.equal(fs.readFileSync(profilesPath, 'utf8'), before);
+    assert.throws(
+        () => handleProfile([
+            'policy', 'apply', 'balanced',
+            '--preset', 'strict',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot
+        ], PACKAGE_JSON),
+        /requires explicit operator confirmation/iu
+    );
+    assert.equal(fs.readFileSync(profilesPath, 'utf8'), before);
+    const changed = JSON.parse(before);
+    changed.active_profile = 'fast';
+    fs.writeFileSync(profilesPath, `${JSON.stringify(changed, null, 2)}\n`, 'utf8');
+    const staleBeforeApply = fs.readFileSync(profilesPath, 'utf8');
+
+    assert.throws(
+        () => handleProfile([
+            'policy', 'apply', 'balanced',
+            '--preset', 'strict',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot,
+            ...freshOperatorConfirmationArgs()
+        ], PACKAGE_JSON),
+        /config.*changed|stale.*preview/iu
+    );
+    assert.equal(fs.readFileSync(profilesPath, 'utf8'), staleBeforeApply);
+});
+
+test('profile policy reserves terminal audit capacity before committing config', () => {
+    const stagedBundleRoot = createTempBundleWithProfiles();
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-profile-audit-budget-'));
+    const longParent = path.join(workspaceRoot, 'x'.repeat(180));
+    const bundleRoot = path.join(longParent, 'garda-agent-orchestrator');
+    fs.mkdirSync(longParent, { recursive: true });
+    fs.renameSync(stagedBundleRoot, bundleRoot);
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const before = fs.readFileSync(profilesPath, 'utf8');
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft', '--bundle-root', bundleRoot, '--json'
+    ]);
+
+    assert.throws(
+        () => handleProfile([
+            'policy', 'apply', 'balanced',
+            '--preset', 'soft',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot,
+            '--json',
+            ...freshOperatorConfirmationArgs()
+        ], PACKAGE_JSON),
+        /audit preparation failed.*exceeds 2048 bytes/iu
+    );
+    assert.equal(fs.readFileSync(profilesPath, 'utf8'), before);
+    assert.equal(fs.existsSync(path.join(bundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl')), false);
+});
+
+test('profile policy copy and reset produce deterministic normalized policies', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const shippedProfilesPath = path.join(bundleRoot, 'template', 'config', 'profiles.json');
+    fs.mkdirSync(path.dirname(shippedProfilesPath), { recursive: true });
+    fs.copyFileSync(profilesPath, shippedProfilesPath);
+    captureConsole(() => handleProfile([
+        'create', 'copy-target',
+        '--bundle-root', bundleRoot,
+        '--copy-from', 'balanced'
+    ], PACKAGE_JSON));
+
+    const copyPreview = captureJsonProfileCommand([
+        'policy', 'preview', 'copy-target',
+        '--copy-from', 'strict',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+    assert.equal(copyPreview.operation, 'copy');
+    assert.equal((copyPreview.policy as { policy_id: string }).policy_id, 'strict');
+    const copied = captureJsonProfileCommand([
+        'policy', 'apply', 'copy-target',
+        '--copy-from', 'strict',
+        '--expected-policy-sha256', String(copyPreview.policy_sha256),
+        '--expected-plan-sha256', String(copyPreview.plan_sha256),
+        '--expected-config-sha256', String(copyPreview.before_config_sha256),
+        '--bundle-root', bundleRoot,
+        '--json',
+        ...freshOperatorConfirmationArgs()
+    ]);
+    assert.equal(copied.policy_sha256, copyPreview.policy_sha256);
+
+    const mutated = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    mutated.built_in_profiles.balanced.review_finding_policy = mutated.built_in_profiles.strict.review_finding_policy;
+    fs.writeFileSync(profilesPath, `${JSON.stringify(mutated, null, 2)}\n`, 'utf8');
+    const resetPreview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced',
+        '--reset',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+    assert.equal(resetPreview.operation, 'reset');
+    assert.equal((resetPreview.policy as { policy_id: string }).policy_id, 'balanced');
+    const repeatedResetPreview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced',
+        '--reset',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+    assert.equal(repeatedResetPreview.policy_sha256, resetPreview.policy_sha256);
+    const reset = captureJsonProfileCommand([
+        'policy', 'apply', 'balanced',
+        '--reset',
+        '--expected-policy-sha256', String(resetPreview.policy_sha256),
+        '--expected-plan-sha256', String(resetPreview.plan_sha256),
+        '--expected-config-sha256', String(resetPreview.before_config_sha256),
+        '--bundle-root', bundleRoot,
+        '--json',
+        ...freshOperatorConfirmationArgs()
+    ]);
+    assert.equal(reset.policy_sha256, resetPreview.policy_sha256);
+    assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).built_in_profiles.balanced.review_finding_policy.policy_id, 'balanced');
+
+    fs.unlinkSync(shippedProfilesPath);
+    assert.throws(
+        () => handleProfile([
+            'policy', 'preview', 'copy-target',
+            '--reset',
+            '--bundle-root', bundleRoot,
+            '--json'
+        ], PACKAGE_JSON),
+        /shipped profile.*balanced.*not found/iu
+    );
+});
+
+test('non-reset profile policy operations ignore a malformed optional reset baseline', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const shippedProfilesPath = path.join(bundleRoot, 'template', 'config', 'profiles.json');
+    fs.mkdirSync(path.dirname(shippedProfilesPath), { recursive: true });
+    fs.writeFileSync(shippedProfilesPath, '{malformed', 'utf8');
+
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced',
+        '--preset', 'soft',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+    assert.equal(preview.operation, 'set');
+    assert.throws(
+        () => handleProfile([
+            'policy', 'preview', 'balanced', '--reset', '--bundle-root', bundleRoot, '--json'
+        ], PACKAGE_JSON),
+        /JSON|property name/iu
+    );
+});
+
+test('profile policy reports and materializes legacy migration without changing active task snapshots', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.user_profiles.legacy = {
+        description: 'Legacy policy profile',
+        depth: 2,
+        review_policy: { code: true },
+        token_economy: { enabled: true },
+        skills: { auto_suggest: true }
+    };
+    fs.writeFileSync(profilesPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'legacy',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+    const migration = preview.migration as { required: boolean; reason: string };
+    assert.equal(preview.operation, 'migrate');
+    assert.equal(migration.required, true);
+    assert.match(migration.reason, /missing review_finding_policy/iu);
+    assert.equal((preview.policy as { policy_id: string }).policy_id, 'strict');
+
+    const applied = captureJsonProfileCommand([
+        'policy', 'apply', 'legacy',
+        '--expected-policy-sha256', String(preview.policy_sha256),
+        '--expected-plan-sha256', String(preview.plan_sha256),
+        '--expected-config-sha256', String(preview.before_config_sha256),
+        '--bundle-root', bundleRoot,
+        '--json',
+        ...freshOperatorConfirmationArgs()
+    ]);
+    assert.equal((applied.migration as { required: boolean }).required, false);
+    const updated = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    assert.equal(updated.user_profiles.legacy.review_finding_policy.policy_id, 'strict');
+});
+
+test('profile policy copy reports legacy source migration diagnostics', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.user_profiles.legacy_source = {
+        description: 'Legacy copy source',
+        depth: 2,
+        review_policy: { code: true },
+        token_economy: { enabled: true },
+        skills: { auto_suggest: true }
+    };
+    data.user_profiles.copy_target = {
+        ...data.built_in_profiles.balanced,
+        description: 'Copy target'
+    };
+    fs.writeFileSync(profilesPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'copy_target', '--copy-from', 'legacy_source',
+        '--bundle-root', bundleRoot, '--json'
+    ]);
+    assert.equal(preview.operation, 'copy');
+    assert.equal((preview.policy as { policy_id: string }).policy_id, 'strict');
+    assert.match((preview.diagnostics as string[]).join(' '), /legacy_source.*missing review_finding_policy/iu);
+});
+
+test('profile policy text output includes migration reason and diagnostics', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.user_profiles.legacy_text = {
+        description: 'Legacy text output profile',
+        depth: 2,
+        review_policy: { code: true },
+        token_economy: { enabled: true },
+        skills: { auto_suggest: true }
+    };
+    fs.writeFileSync(profilesPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+
+    const { lines } = captureConsole(() => handleProfile([
+        'policy', 'preview', 'legacy_text', '--bundle-root', bundleRoot
+    ], PACKAGE_JSON));
+    const output = lines.join('\n');
+    assert.match(output, /MigrationReason: .*missing review_finding_policy/iu);
+    assert.match(output, /Diagnostics: .*strict/iu);
+});
+
+test('profile policy accepts equivalent Windows roots with different casing', () => {
+    if (process.platform !== 'win32') return;
+    const bundleRoot = createTempBundleWithProfiles();
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced',
+        '--preset', 'soft',
+        '--target-root', path.dirname(bundleRoot).toUpperCase(),
+        '--bundle-root', bundleRoot,
+        '--json'
+    ]);
+    assert.equal(preview.operation, 'set');
 });
 
 test('profile validate --json returns valid JSON', () => {

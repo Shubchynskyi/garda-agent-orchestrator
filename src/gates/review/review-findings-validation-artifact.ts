@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 
+import { sha256RedactedJsonPayload } from '../../core/redaction';
 import { fileSha256 } from '../../gate-runtime/hash';
 import { normalizePath } from '../shared/helpers';
 import type { ReviewCoverageContract, ReviewCoverageValidationSummary } from './review-coverage-ledger';
@@ -182,12 +182,6 @@ export interface ReviewFindingsValidationReceiptCheckOptions {
 
 export interface ReviewFindingsValidationReceiptCheckResult extends ReviewFindingsValidationArtifactCheckResult {
     reference: ReviewFindingsValidationReceiptReference | null;
-}
-
-function sha256JsonPayload(value: unknown): string {
-    return createHash('sha256')
-        .update(`${JSON.stringify(value, null, 2)}\n`)
-        .digest('hex');
 }
 
 function normalizeHash(value: unknown): string | null {
@@ -372,7 +366,7 @@ export function buildReviewFindingsValidationArtifact(
         task_id: options.taskId,
         review_type: options.reviewType,
         validation_result: validationResult,
-        validation_result_sha256: sha256JsonPayload(validationResult)
+        validation_result_sha256: sha256RedactedJsonPayload(validationResult)
     };
 }
 
@@ -497,7 +491,7 @@ export function validateReviewFindingsValidationArtifact(
             `expected ${options.expectedReviewType}, found ${artifact.review_type || 'missing'}.`
         );
     }
-    const actualValidationResultSha256 = sha256JsonPayload(artifact.validation_result);
+    const actualValidationResultSha256 = sha256RedactedJsonPayload(artifact.validation_result);
     if (artifact.validation_result_sha256 !== actualValidationResultSha256) {
         violations.push(
             `Review findings validation artifact '${artifactPath}' validation_result_sha256 mismatch: ` +

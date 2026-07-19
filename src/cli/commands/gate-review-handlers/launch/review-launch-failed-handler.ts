@@ -78,10 +78,6 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
             explicitPath: options.reviewContextPath ? String(options.reviewContextPath) : '',
             repoRoot
         });
-        const contextSha256 = fileSha256(contextPath);
-        if (!contextSha256) {
-            throw new Error(`Reviewer launch failure requires a hashable review-context artifact: ${normalizePath(contextPath)}.`);
-        }
         const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
             repoRoot,
             taskId,
@@ -111,8 +107,18 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
         if (getStringField(artifact, 'reviewer_identity', 'reviewerIdentity') !== reviewerIdentity) {
             throw new Error('Reviewer launch artifact identity does not match failed-launch recovery input.');
         }
-        if (getStringField(artifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase() !== contextSha256) {
-            throw new Error('Reviewer launch artifact review context does not match the current context.');
+        const artifactContextPath = getStringField(artifact, 'review_context_path', 'reviewContextPath');
+        const comparablePath = (value: string): string => {
+            const absolutePath = path.isAbsolute(value) ? value : path.resolve(repoRoot, value);
+            const normalizedPath = normalizePath(path.resolve(absolutePath));
+            return process.platform === 'win32' ? normalizedPath.toLowerCase() : normalizedPath;
+        };
+        if (!artifactContextPath || comparablePath(artifactContextPath) !== comparablePath(contextPath)) {
+            throw new Error('Reviewer launch artifact review context path does not match the requested canonical context.');
+        }
+        const launchContextSha256 = getStringField(artifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(launchContextSha256)) {
+            throw new Error('Reviewer launch artifact is missing a valid immutable review_context_sha256.');
         }
         const reviewerLaunchAttemptId = getStringField(
             artifact,
@@ -144,7 +150,7 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
             reviewType,
             reviewerExecutionMode,
             reviewerIdentity,
-            contextSha256,
+            launchContextSha256,
             getStringField(artifact, 'routing_event_sha256', 'routingEventSha256'),
             {
                 launchDetails: {

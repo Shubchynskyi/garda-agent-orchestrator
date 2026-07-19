@@ -61,6 +61,7 @@ import {
     buildFocusedIntermediateValidationEvidence
 } from './review-context-focused-intermediate-evidence';
 import { buildReviewCoverageContract } from '../review/review-coverage-ledger';
+import { buildReviewerTerminalContractLines } from '../review/reviewer-execution-contract';
 import { resolveReviewCoverageChangedFiles } from './review-coverage-scope';
 import {
     buildRuleContextSectionsCacheKey,
@@ -434,7 +435,11 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         });
         options.ruleContextSectionsCache?.set(ruleContextSectionsCacheKey, ruleContextSections);
     }
-    const promptArtifactText = `${taskScopeMarkdown}\n\n${ruleContextSections.artifact_text}`;
+    const promptArtifactText = [
+        taskScopeMarkdown,
+        ruleContextSections.artifact_text,
+        buildReviewerTerminalContractLines().join('\n')
+    ].join('\n\n');
     const handoffArtifacts = buildReviewContextHandoffArtifacts({
         reviewType,
         selectedSkill,
@@ -574,7 +579,6 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
                 command_status: gitDiff.command_status,
                 error: gitDiff.error,
                 cache_path: gitDiff.cache_path,
-                cached: gitDiff.cached,
                 diff_sha256: stringSha256(gitDiff.diff || '') || null
             }
         },

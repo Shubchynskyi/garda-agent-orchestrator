@@ -14,31 +14,26 @@ import {
 
 describe('gates/build-review-context core contracts', () => {
     describe('getRulePack', () => {
-        it('returns code review pack with full/depth1/depth2', () => {
+        it('keeps code reviewers on generated handoff instructions only', () => {
             const pack = getRulePack('code');
-            assert.ok(pack.full.length > 0);
-            assert.ok(pack.depth1.length > 0);
-            assert.ok(pack.depth2.length > 0);
-            assert.ok(pack.full.includes('00-core.md'));
-            assert.ok(pack.full.includes('80-task-workflow.md'));
+            assert.deepEqual(pack, { full: [], depth1: [], depth2: [] });
         });
 
-        it('returns db/security review pack', () => {
+        it('keeps db/security reviewers on generated handoff instructions only', () => {
             const pack = getRulePack('db');
-            assert.ok(pack.full.includes('70-security.md'));
             const secPack = getRulePack('security');
             assert.deepEqual(pack, secPack);
+            assert.deepEqual(pack, { full: [], depth1: [], depth2: [] });
         });
 
-        it('returns refactor review pack', () => {
+        it('keeps refactor reviewers on generated handoff instructions only', () => {
             const pack = getRulePack('refactor');
-            assert.ok(pack.full.includes('30-code-style.md'));
-            assert.ok(!pack.full.includes('70-security.md'));
+            assert.deepEqual(pack, { full: [], depth1: [], depth2: [] });
         });
 
-        it('returns default pack for unknown type', () => {
+        it('keeps custom reviewers on generated handoff instructions only', () => {
             const pack = getRulePack('unknown');
-            assert.ok(pack.full.length > 0);
+            assert.deepEqual(pack, { full: [], depth1: [], depth2: [] });
         });
 
         it('depth1 is always a subset of full', () => {
@@ -46,6 +41,15 @@ describe('gates/build-review-context core contracts', () => {
                 const pack = getRulePack(type);
                 for (const file of pack.depth1) {
                     assert.ok(pack.full.includes(file), `depth1 file ${file} not in full for ${type}`);
+                }
+            }
+        });
+
+        it('keeps all repository rule files out of every reviewer pack', () => {
+            for (const type of ['code', 'db', 'security', 'refactor', 'unknown']) {
+                const pack = getRulePack(type);
+                for (const selected of [pack.full, pack.depth1, pack.depth2]) {
+                    assert.deepEqual(selected, [], type);
                 }
             }
         });

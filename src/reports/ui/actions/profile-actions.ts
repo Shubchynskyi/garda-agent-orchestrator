@@ -10,12 +10,15 @@ import {
     validateProfilesIntegrity
 } from '../../../cli/commands/profile/profile-model';
 import {
+    getCompletedProfilesOperationResult,
     getProfileEntry,
     isBuiltInProfile,
     readProfilesData,
     resolveProfilesPath,
-    writeProfilesData
+    withProfilesDataLock,
+    writeProfilesDataUnlocked
 } from '../../../cli/commands/profile/profile-data';
+import { recoverPendingProfileFindingPolicyAudits } from '../../../cli/commands/profile/profile-finding-policy-mutation';
 import type { ProfileEntry, ProfilesData } from '../../../cli/commands/profile/profile-types';
 import { joinOrchestratorPath } from '../../../gates/shared/helpers';
 import { buildProfilesTab } from '../../report-data-contract';
@@ -379,16 +382,33 @@ export async function handleUiProfileRequest(
     }
 
     try {
-        writeProfilesData(profilesPath(repoRoot), plan.apply());
+        const bundleRoot = resolveBundleRoot(repoRoot);
+        const targetProfilesPath = resolveProfilesPath(bundleRoot);
+        let lockReleaseWarning: string | null = null;
+        try {
+            plan = withProfilesDataLock(targetProfilesPath, () => {
+                recoverPendingProfileFindingPolicyAudits(bundleRoot, readProfilesData(targetProfilesPath));
+                const lockedPlan = buildProfileActionPlan(repoRoot, payload);
+                writeProfilesDataUnlocked(targetProfilesPath, lockedPlan.apply());
+                return lockedPlan;
+            });
+        } catch (error: unknown) {
+            const completed = getCompletedProfilesOperationResult<ProfileActionPlan>(error);
+            if (!completed) throw error;
+            plan = completed.result;
+            lockReleaseWarning = error instanceof Error ? error.message : String(error);
+        }
         const auditPath = appendUiActionAudit(repoRoot, {
             timestamp_utc: timestampUtc,
             action_id: `profile:${plan.operation}:${plan.profileName}`,
             mode,
             status: 'executed',
-            command: plan.command
+            command: plan.command,
+            ...(lockReleaseWarning ? { warning: lockReleaseWarning } : {})
         });
         sendJson(response, 200, buildProfileResponsePayload(plan, mode, 'executed', {
-            audit_path: auditPath
+            audit_path: auditPath,
+            ...(lockReleaseWarning ? { warning: lockReleaseWarning } : {})
         }));
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

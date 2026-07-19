@@ -78,7 +78,7 @@ function addBalancedLowFindingToReusableCodeReview(repoRoot: string, taskId: str
         {
             id: 'F-001',
             title: 'Accepted low follow-up finding',
-            description: 'A low severity reviewer finding should be retained as non-blocking under balanced review finding policy.',
+            description: 'A low severity reviewer finding at src/gates/review-context/review-context-token-economy.ts:54 should be retained as non-blocking under balanced review finding policy.',
             evidence: [
                 {
                     location: 'src/app.ts:1',
@@ -494,6 +494,15 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         assert.equal(reusedDisposition.verdict, 'pass_with_follow_up_or_ignored_findings');
         assert.equal(reusedDisposition.blocking_count, 0);
         assert.equal(((reusedDisposition.findings as Record<string, Record<string, unknown>>).low).action, 'create_follow_up');
+        const refreshedReport = refreshedReceipt.review_findings_report as Record<string, unknown>;
+        assert.equal(refreshedReceipt.review_findings_report_sha256, sha256Json(refreshedReport));
+        const refreshedFindings = refreshedReport.findings as Record<string, Array<Record<string, unknown>>>;
+        assert.match(String(refreshedFindings.low[0].description), /review-context-token-economy\.ts:54/);
+        const refreshedValidationReference = refreshedReceipt.review_findings_validation as Record<string, unknown>;
+        assert.equal(
+            sha256Text(fs.readFileSync(String(refreshedValidationReference.artifact_path), 'utf8')),
+            refreshedValidationReference.artifact_sha256
+        );
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         const reusedCoverage = refreshedReceipt.review_coverage as Record<string, unknown>;
         assert.equal(reusedCoverage.status, 'PASS');
@@ -521,6 +530,16 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         });
         assert.equal(reviewGateResult.exitCode, 0, reviewGateResult.outputLines.join('\n'));
         const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latestReviewRecorded = [...events].reverse().find((event) => (
+            event.event_type === 'REVIEW_RECORDED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '') === 'code'
+            && (event.details as Record<string, unknown> | undefined)?.reused_existing_review === true
+        ));
+        const latestReviewRecordedDetails = latestReviewRecorded?.details as Record<string, unknown> | undefined;
+        assert.equal(
+            sha256Text(fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')),
+            latestReviewRecordedDetails?.receipt_sha256
+        );
         let latestCompileSequence = -1;
         for (let index = events.length - 1; index >= 0; index -= 1) {
             if (events[index].event_type === 'COMPILE_GATE_PASSED') {

@@ -219,8 +219,8 @@ function buildReviewerRolePromptMarkdown(options: {
         `- Coverage obligation count: ${options.coverageContract.obligation_count}`,
         ...buildExhaustiveReviewContractLines(),
         ...buildReviewerFocusedSelfValidationContractLines(),
-        ...buildReviewerTerminalContractLines(),
         ...testReviewStrictNote,
+        ...buildReviewerTerminalContractLines(),
         ''
     ].join('\n');
 }
@@ -286,6 +286,7 @@ function buildReviewerPromptTemplateMarkdown(options: {
         '- findings.critical, findings.high, findings.medium, and findings.low contain only active defects discovered by the reviewer.',
         '- residual_risks contains only concrete evidence-bound risks that remain after review.',
         '- validation_notes and reviewer_notes must not contain hidden findings or disposition decisions.',
+        ...buildReviewerTerminalContractLines(),
         ''
     ].join('\n');
 }

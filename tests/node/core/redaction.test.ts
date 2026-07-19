@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import * as os from 'node:os';
 
 import {
@@ -9,6 +10,8 @@ import {
     redactDiagnosticText,
     redactSecretText,
     redactSensitiveData,
+    serializeRedactedJson,
+    sha256RedactedJsonPayload,
     createRedactionContext,
     _resetCachedValues
 } from '../../../src/core/redaction';
@@ -251,6 +254,45 @@ test('redactSecretText preserves token telemetry assignments and JSON fields', (
     assert.match(result, /TOKEN=<redacted>/);
     assert.match(result, /ACCESS_TOKEN=<redacted>/);
     assert.match(result, /"apiToken": "<redacted>"/);
+});
+
+test('redactSecretText preserves source coordinates without weakening secret assignment redaction', () => {
+    const text = [
+        'src/gates/review-context/review-context-token-economy.ts:54',
+        'src/auth-handler.ts:21:7',
+        'src/password-reset.ts:9',
+        'API_TOKEN=54',
+        'ACCESS_TOKEN:54',
+        'config.api_token:54',
+        'src/token.ts:not-a-line-secret'
+    ].join('\n');
+
+    const result = redactSecretText(text);
+
+    assert.match(result, /review-context-token-economy\.ts:54/);
+    assert.match(result, /auth-handler\.ts:21:7/);
+    assert.match(result, /password-reset\.ts:9/);
+    assert.match(result, /API_TOKEN=<redacted>/);
+    assert.match(result, /ACCESS_TOKEN:<redacted>/);
+    assert.match(result, /config\.api_token:<redacted>/);
+    assert.match(result, /src\/token\.ts:<redacted>/);
+});
+
+test('redacted JSON hashing matches the canonical persisted representation', () => {
+    const payload = {
+        location: 'src/gates/review-context/review-context-token-economy.ts:54',
+        note: 'API_TOKEN=fixture-secret'
+    };
+
+    const serialized = serializeRedactedJson(payload);
+
+    assert.match(serialized, /review-context-token-economy\.ts:54/);
+    assert.doesNotMatch(serialized, /fixture-secret/);
+    assert.equal(serializeRedactedJson(JSON.parse(serialized)), serialized);
+    assert.equal(
+        sha256RedactedJsonPayload(payload),
+        createHash('sha256').update(serialized).digest('hex')
+    );
 });
 
 test('redactSecretText masks quoted env assignments with spaces and multiline values', () => {

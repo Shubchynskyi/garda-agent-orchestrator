@@ -2,7 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { writeFileAtomically } from '../../core/filesystem';
-import { redactSecretText, redactSensitiveData } from '../../core/redaction';
+import { redactSecretText, serializeRedactedJson } from '../../core/redaction';
+import { fileSha256 } from '../hash';
 import {
     acquireFilesystemLock,
     acquireFilesystemLockAsync,
@@ -383,6 +384,27 @@ export function writeArtifactFileAtomically(filePath: string, content: string): 
     return writeFileAtomically(filePath, content, { encoding: 'utf8' });
 }
 
+export function assertReviewArtifactFileSha256(
+    artifactPath: string,
+    expectedSha256: string | null | undefined,
+    subject: string
+): void {
+    const normalizedExpected = String(expectedSha256 || '').trim().toLowerCase();
+    if (!normalizedExpected) {
+        return;
+    }
+    if (!/^[0-9a-f]{64}$/u.test(normalizedExpected)) {
+        throw new Error(`${subject} expected sha256 is invalid: '${normalizedExpected}'.`);
+    }
+    const actualSha256 = fileSha256(artifactPath);
+    if (actualSha256 !== normalizedExpected) {
+        throw new Error(
+            `${subject} sha256 mismatch after persistence: expected ${normalizedExpected}, ` +
+            `found ${actualSha256 || 'missing'} at '${artifactPath.replace(/\\/g, '/')}'.`
+        );
+    }
+}
+
 export function withReviewArtifactLock<T>(
     artifactPath: string,
     callback: () => T,
@@ -573,7 +595,7 @@ export function writeReviewArtifactJson(
     payload: unknown,
     options: ReviewArtifactLockOptions = {}
 ): ReviewArtifactWriteResult {
-    return writeReviewArtifactText(artifactPath, `${JSON.stringify(redactSensitiveData(payload), null, 2)}\n`, options);
+    return writeReviewArtifactText(artifactPath, serializeRedactedJson(payload), options);
 }
 
 export type ReviewArtifactTransactionalWrite =
@@ -644,7 +666,7 @@ function restoreReviewArtifactFromRollbackStateUnlocked(
 
 function getReviewArtifactTransactionEntryContent(entry: ReviewArtifactTransactionalWrite): string {
     if (entry.contentType === 'json') {
-        return `${JSON.stringify(redactSensitiveData(entry.payload), null, 2)}\n`;
+        return serializeRedactedJson(entry.payload);
     }
     return redactSecretText(entry.content);
 }

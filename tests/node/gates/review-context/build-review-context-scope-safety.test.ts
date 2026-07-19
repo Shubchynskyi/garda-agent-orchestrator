@@ -187,7 +187,7 @@ describe('gates/build-review-context scope safety and diff bounds', () => {
             const secondPromptArtifact = fs.readFileSync(secondResult.rule_context.artifact_path, 'utf8');
             assert.ok(secondPromptArtifact.includes('+export const cached = "bravo";'));
             assert.equal(secondPromptArtifact.includes('+export const cached = "alpha";'), false);
-            assert.equal(secondResult.task_scope.diff.cached, false);
+            assert.equal(Object.hasOwn(secondResult.task_scope.diff, 'cached'), false);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
@@ -237,26 +237,36 @@ describe('gates/build-review-context scope safety and diff bounds', () => {
             };
             fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2), 'utf8');
 
-            const firstResult = buildReviewContext({
+            const codeScopedDiffPath = path.join(reviewsRoot, 'T-901-staged-trust-cache-code-scoped.json');
+            const codeReviewContextPath = path.join(reviewsRoot, 'T-901-staged-trust-cache-code-review-context.json');
+            const buildCodeReviewContext = () => buildReviewContext({
                 reviewType: 'code',
                 depth: 2,
                 preflightPath,
                 tokenEconomyConfigPath: tokenConfigPath,
-                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-code-scoped.json'),
-                outputPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-code-review-context.json'),
+                scopedDiffMetadataPath: codeScopedDiffPath,
+                outputPath: codeReviewContextPath,
                 repoRoot
             });
-            assert.equal(firstResult.task_scope.diff.cached, false);
-            const cachedResult = buildReviewContext({
-                reviewType: 'code',
-                depth: 2,
-                preflightPath,
-                tokenEconomyConfigPath: tokenConfigPath,
-                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-code-scoped-2.json'),
-                outputPath: path.join(reviewsRoot, 'T-901-staged-trust-cache-code-review-context-2.json'),
-                repoRoot
-            });
-            assert.equal(cachedResult.task_scope.diff.cached, true);
+            const firstResult = buildCodeReviewContext();
+            const firstContextText = fs.readFileSync(codeReviewContextPath, 'utf8');
+            const diffCachePath = String(firstResult.task_scope.diff.cache_path);
+            const firstCacheText = fs.readFileSync(diffCachePath, 'utf8');
+            const firstCache = JSON.parse(firstCacheText) as Record<string, unknown>;
+            assert.equal(firstCache.schema_version, 2);
+            assert.equal(Object.hasOwn(firstCache, 'generated_at_utc'), false);
+            assert.equal(Object.hasOwn(firstResult.task_scope.diff, 'cached'), false);
+
+            const cachedResult = buildCodeReviewContext();
+            assert.equal(fs.readFileSync(codeReviewContextPath, 'utf8'), firstContextText);
+            assert.equal(fs.readFileSync(diffCachePath, 'utf8'), firstCacheText);
+            assert.equal(Object.hasOwn(cachedResult.task_scope.diff, 'cached'), false);
+
+            fs.rmSync(diffCachePath, { force: true });
+            const regeneratedResult = buildCodeReviewContext();
+            assert.equal(fs.readFileSync(codeReviewContextPath, 'utf8'), firstContextText);
+            assert.equal(fs.readFileSync(diffCachePath, 'utf8'), firstCacheText);
+            assert.equal(Object.hasOwn(regeneratedResult.task_scope.diff, 'cached'), false);
 
             fs.writeFileSync(preflightPath, JSON.stringify({
                 ...preflight,
@@ -277,7 +287,7 @@ describe('gates/build-review-context scope safety and diff bounds', () => {
                 repoRoot
             });
 
-            assert.equal(refreshedResult.task_scope.diff.cached, false);
+            assert.equal(Object.hasOwn(refreshedResult.task_scope.diff, 'cached'), false);
             assert.equal(
                 JSON.parse(fs.readFileSync(preflightPath, 'utf8')).triggers.dirty_workspace_staged_baseline_trust_status,
                 'FAIL'
@@ -620,7 +630,7 @@ describe('gates/build-review-context scope safety and diff bounds', () => {
             const securityPromptArtifact = fs.readFileSync(securityResult.rule_context.artifact_path, 'utf8');
             assert.ok(securityPromptArtifact.includes('[diff excerpt truncated at 20000 chars'));
             assert.ok(securityPromptArtifact.includes('full bounded scoped diff cache'));
-            assert.equal(securityResult.task_scope.diff.cached, true);
+            assert.equal(Object.hasOwn(securityResult.task_scope.diff, 'cached'), false);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 });

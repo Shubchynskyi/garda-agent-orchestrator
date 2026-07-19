@@ -4,8 +4,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
+import { sha256RedactedJsonPayload } from '../../../src/core/redaction';
+import { fileSha256 } from '../../../src/gate-runtime/hash';
 
 import {
+    assertReviewArtifactFileSha256,
     cleanupStaleReviewArtifactLocks,
     getReviewArtifactLockPath,
     getReviewArtifactTransactionLockPath,
@@ -133,16 +136,29 @@ test('writeReviewArtifactJson redacts secret values before persisting artifacts'
     const artifactPath = path.join(tempDir, 'T-001-security.json');
 
     try {
-        writeReviewArtifactJson(artifactPath, {
+        const payload = {
             task_id: 'T-001',
             auth_token: 'tok-live-value',
-            command_output: 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456'
-        });
+            command_output: 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456',
+            location: 'src/gates/review-context/review-context-token-economy.ts:54'
+        };
+        writeReviewArtifactJson(artifactPath, payload);
 
         const artifactText = fs.readFileSync(artifactPath, 'utf8');
         assert.doesNotMatch(artifactText, /tok-live-value/);
         assert.doesNotMatch(artifactText, /abcdefghijklmnopqrstuvwxyz123456/);
         assert.match(artifactText, /<redacted>/);
+        assert.match(artifactText, /review-context-token-economy\.ts:54/);
+        assert.equal(fileSha256(artifactPath), sha256RedactedJsonPayload(payload));
+        assert.doesNotThrow(() => assertReviewArtifactFileSha256(
+            artifactPath,
+            sha256RedactedJsonPayload(payload),
+            'Test review artifact'
+        ));
+        assert.throws(
+            () => assertReviewArtifactFileSha256(artifactPath, '0'.repeat(64), 'Test review artifact'),
+            /sha256 mismatch after persistence/
+        );
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

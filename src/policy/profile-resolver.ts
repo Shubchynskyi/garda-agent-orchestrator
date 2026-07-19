@@ -375,9 +375,20 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isReviewFindingDispositionAction(value: unknown): value is ReviewFindingDispositionAction {
+export function isReviewFindingDispositionAction(value: unknown): value is ReviewFindingDispositionAction {
     return typeof value === 'string'
         && REVIEW_FINDING_POLICY_ACTIONS.has(value as ReviewFindingDispositionAction);
+}
+
+export function isReviewFindingPolicyId(value: unknown): value is ReviewFindingPolicyId {
+    return typeof value === 'string'
+        && REVIEW_FINDING_POLICY_IDS.has(value as ReviewFindingPolicyId);
+}
+
+export function isCriticalReviewFindingDispositionAction(
+    value: unknown
+): value is CriticalReviewFindingDispositionAction {
+    return value === 'fix_now';
 }
 
 function formatReviewFindingPolicy(policy: ReviewFindingPolicy): string {
@@ -433,8 +444,7 @@ export function resolveReviewFindingPolicy(
     const policyId = policyInput.policy_id;
     if (
         policyInput.schema_version !== REVIEW_FINDING_POLICY_SCHEMA_VERSION
-        || typeof policyId !== 'string'
-        || !REVIEW_FINDING_POLICY_IDS.has(policyId as ReviewFindingPolicyId)
+        || !isReviewFindingPolicyId(policyId)
         || unknownKeys.length > 0
         || !isPlainRecord(policyInput.findings)
     ) {
@@ -473,7 +483,7 @@ export function resolveReviewFindingPolicy(
             };
         }
         if (severity === 'critical') {
-            if (action !== 'fix_now') {
+            if (!isCriticalReviewFindingDispositionAction(action)) {
                 return {
                     policy: strictPolicy,
                     diagnostics: [

@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { sha256RedactedJsonPayload } from '../../../../core/redaction';
 import {
     buildReviewReceipt,
     buildReviewReceiptReviewerInvocationProvenance,
@@ -22,6 +22,7 @@ import {
     isPlannedReviewerIdentity
 } from '../../../../gate-runtime/review/reviewer-identity-contract';
 import {
+    assertReviewArtifactFileSha256,
     writeReviewArtifactsWithRollback
 } from '../../../../gate-runtime/review-artifacts';
 import {
@@ -120,12 +121,6 @@ import {
     type ReviewFindingsValidationArtifact
 } from '../../../../gates/review/review-findings-validation-artifact';
 
-function sha256JsonPayload(value: unknown): string {
-    return createHash('sha256')
-        .update(`${JSON.stringify(value, null, 2)}\n`)
-        .digest('hex');
-}
-
 function summarizeReviewFindingsReport(report: ReviewFindingsReport): Record<string, unknown> {
     const findingIdsBySeverity = {
         critical: report.findings.critical.map((finding) => finding.id),
@@ -220,7 +215,7 @@ function buildReviewFindingsValidationEvidence(options: {
         reviewTreeStateSha256: options.reviewTreeStateSha256 || null,
         coverageContract: options.coverageContract || null
     });
-    const artifactSha256 = sha256JsonPayload(payload);
+    const artifactSha256 = sha256RedactedJsonPayload(payload);
     return {
         artifactPath,
         snapshotPath: getReviewFindingsValidationArtifactSnapshotPath(artifactPath, artifactSha256),
@@ -245,7 +240,7 @@ function buildReviewFindingsDispositionEvidence(options: {
         validationArtifactSha256: options.validationEvidence.artifactSha256,
         policyResolution: options.policyResolution
     });
-    const artifactSha256 = sha256JsonPayload(payload);
+    const artifactSha256 = sha256RedactedJsonPayload(payload);
     return {
         artifactPath,
         snapshotPath: getReviewFindingsDispositionArtifactSnapshotPath(artifactPath, artifactSha256),
@@ -266,7 +261,18 @@ async function writeRejectedReviewFindingsValidationEvidence(evidence: ReviewFin
             contentType: 'json',
             payload: evidence.payload
         }
-    ], async () => undefined);
+    ], async () => {
+        assertReviewArtifactFileSha256(
+            evidence.artifactPath,
+            evidence.artifactSha256,
+            'Review findings validation artifact'
+        );
+        assertReviewArtifactFileSha256(
+            evidence.snapshotPath,
+            evidence.artifactSha256,
+            'Review findings validation snapshot'
+        );
+    });
 }
 
 function summarizeReviewFindingsValidationEvidence(evidence: ReviewFindingsValidationEvidence): Record<string, unknown> {
@@ -309,6 +315,7 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     rawReviewOutputPath?: string | null;
     rawReviewOutputSourcePath?: string | null;
     rawReviewOutputContent?: string | null;
+    rawReviewOutputSha256?: string | null;
     receipt: Record<string, unknown>;
     receiptPayloadSha256: string;
     artifactSha256: string | null;
@@ -381,6 +388,41 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
         }
     ];
     await writeReviewArtifactsWithRollback(writes, async () => {
+        assertReviewArtifactFileSha256(receiptPath, options.receiptPayloadSha256, 'Review receipt');
+        assertReviewArtifactFileSha256(receiptSnapshotPath, options.receiptPayloadSha256, 'Review receipt snapshot');
+        assertReviewArtifactFileSha256(options.artifactPath, options.artifactSha256, 'Review artifact');
+        assertReviewArtifactFileSha256(artifactSnapshotPath, options.artifactSha256, 'Review artifact snapshot');
+        if (options.rawReviewOutputPath && options.rawReviewOutputContent != null) {
+            assertReviewArtifactFileSha256(
+                options.rawReviewOutputPath,
+                options.rawReviewOutputSha256,
+                'Canonical raw review output'
+            );
+        }
+        if (options.findingsValidationEvidence) {
+            assertReviewArtifactFileSha256(
+                options.findingsValidationEvidence.artifactPath,
+                options.findingsValidationEvidence.artifactSha256,
+                'Review findings validation artifact'
+            );
+            assertReviewArtifactFileSha256(
+                options.findingsValidationEvidence.snapshotPath,
+                options.findingsValidationEvidence.artifactSha256,
+                'Review findings validation snapshot'
+            );
+        }
+        if (options.findingsDispositionEvidence) {
+            assertReviewArtifactFileSha256(
+                options.findingsDispositionEvidence.artifactPath,
+                options.findingsDispositionEvidence.artifactSha256,
+                'Review findings disposition artifact'
+            );
+            assertReviewArtifactFileSha256(
+                options.findingsDispositionEvidence.snapshotPath,
+                options.findingsDispositionEvidence.artifactSha256,
+                'Review findings disposition snapshot'
+            );
+        }
         const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
             ...buildBoundedReviewRecordedTelemetryDetails(options.receipt),
             receipt_path: normalizePath(receiptPath),
@@ -709,7 +751,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         (receipt as unknown as Record<string, unknown>).historical_stale_review_reason = historicalStaleReviewResultReason;
     }
     if (findingsReport) {
-        const findingsReportSha256 = sha256JsonPayload(findingsReport);
+        const findingsReportSha256 = sha256RedactedJsonPayload(findingsReport);
         const receiptRecord = receipt as unknown as Record<string, unknown>;
         receiptRecord.review_output_format = 'findings_json';
         receiptRecord.review_output_schema_version = findingsReport.schema_version;
@@ -743,9 +785,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         };
     }
 
-    const receiptPayloadSha256 = createHash('sha256')
-        .update(`${JSON.stringify(receipt, null, 2)}\n`)
-        .digest('hex');
+    const receiptPayloadSha256 = sha256RedactedJsonPayload(receipt);
     return writeReviewReceiptSnapshotsAndTelemetry({
         repoRoot: options.repoRoot,
         taskId: options.taskId,
@@ -755,6 +795,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         contextPath: options.contextPath,
         rawReviewOutputPath: options.rawReviewOutputPath,
         rawReviewOutputContent: options.rawReviewOutputContent,
+        rawReviewOutputSha256: options.rawReviewOutputSha256,
         receipt: receipt as unknown as Record<string, unknown>,
         receiptPayloadSha256,
         artifactSha256,

@@ -349,6 +349,61 @@ describe('cli/commands/gates review launch completion', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-reviewer-launch-failed closes an immutable attempt after the canonical context is superseded', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-33-superseded-launch-context';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath,
+            providerInvocationId: 'test-invocation-superseded-context'
+        });
+        const startedArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        const launchContextSha256 = String(startedArtifact.review_context_sha256);
+
+        fs.writeFileSync(fixture.reviewContextPath, '{"superseded":true}\n', 'utf8');
+        const currentContextSha256 = fileSha256ForTest(fixture.reviewContextPath);
+        assert.notEqual(currentContextSha256, launchContextSha256);
+
+        const failure = await runCliWithCapturedOutput([
+            'gate',
+            'record-reviewer-launch-failed',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-superseded-context',
+            '--failure-reason', 'The delegated reviewer stopped before the canonical context was rebuilt.'
+        ], { cwd: repoRoot });
+
+        assert.equal(failure.exitCode, 0, failure.errors.join('\n'));
+        const failedArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(failedArtifact.attestation_state, 'launch_failed');
+        const failureEvent = readTaskTimelineEvents(repoRoot, taskId)
+            .find((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
+        assert.ok(failureEvent);
+        assert.equal(
+            (failureEvent.details as Record<string, unknown>).review_context_sha256,
+            launchContextSha256
+        );
+        assert.notEqual(
+            (failureEvent.details as Record<string, unknown>).review_context_sha256,
+            currentContextSha256
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-reviewer-delegation-started preserves copy-paste launch mode in completion command', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-693-delegation-copy-paste-command';
