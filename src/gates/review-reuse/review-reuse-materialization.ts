@@ -25,6 +25,7 @@ import {
 import type { HistoricalReviewReuseCandidate } from './review-reuse-validation';
 import {
     getReviewCoverageContractViolations,
+    getReviewCoverageValidationSummaryContractViolations,
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
@@ -269,6 +270,16 @@ export async function materializeReusedReviewEvidence(
             return {
                 materialized: false,
                 reason: `reused review coverage validation failed: ${reviewCoverage?.violations.join(' ') || 'coverage ledger validation is missing'}`
+            };
+        }
+        const coverageCompatibilityViolations = getReviewCoverageValidationSummaryContractViolations(
+            reviewCoverage,
+            currentReviewContext.coverage_contract as ReviewCoverageContract
+        );
+        if (coverageCompatibilityViolations.length > 0) {
+            return {
+                materialized: false,
+                reason: `reused review coverage contract does not match the current review context: ${coverageCompatibilityViolations.join('; ')}`
             };
         }
         const refreshedReceipt = buildReusedReviewReceipt(options);

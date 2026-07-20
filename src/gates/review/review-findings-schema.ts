@@ -507,7 +507,6 @@ function validateFocusedValidationNoteFindingLinks(
 function validateFocusedValidationNoteCommand(
     fields: ParsedValidationNoteFields,
     violations: string[],
-    allowPassedTargetOmission: boolean,
     repoRoot?: string
 ): void {
     if (!fields.command) {
@@ -523,7 +522,7 @@ function validateFocusedValidationNoteCommand(
             'Reviewer focused self-validation must execute a focused test or validation command rather than only inspect or print a prospective target.'
         );
     } else if (
-        (!allowPassedTargetOmission || fields.commandOutcome !== 'passed')
+        fields.commandOutcome !== 'passed'
         && !focusedEvidenceNamesTarget(fields.evidence, commandTargets[0])
     ) {
         violations.push(
@@ -535,7 +534,6 @@ function validateFocusedValidationNoteCommand(
 function validateFocusedValidationNote(
     fields: ParsedValidationNoteFields,
     violations: string[],
-    allowPassedTargetOmission: boolean,
     repoRoot?: string
 ): void {
     if (!fields.requiresFocusedCommandFields) {
@@ -543,7 +541,7 @@ function validateFocusedValidationNote(
     }
     validateFocusedValidationNoteMetadata(fields, violations);
     validateFocusedValidationNoteFindingLinks(fields, violations);
-    validateFocusedValidationNoteCommand(fields, violations, allowPassedTargetOmission, repoRoot);
+    validateFocusedValidationNoteCommand(fields, violations, repoRoot);
 }
 
 function buildValidationNote(fields: ParsedValidationNoteFields): ReviewFindingsValidationNote | null {
@@ -578,7 +576,6 @@ function buildValidationNote(fields: ParsedValidationNoteFields): ReviewFindings
 function parseValidationNotes(
     value: unknown,
     violations: string[],
-    allowPassedTargetOmission: boolean,
     repoRoot?: string
 ): ReviewFindingsValidationNote[] {
     if (!Array.isArray(value)) {
@@ -595,7 +592,7 @@ function parseValidationNotes(
         }
         const fields = readValidationNoteFields(entry, subject, violations);
         validateValidationNoteIdentity(fields, violations);
-        validateFocusedValidationNote(fields, violations, allowPassedTargetOmission, repoRoot);
+        validateFocusedValidationNote(fields, violations, repoRoot);
         if (fields.id && REVIEW_VALIDATION_NOTE_ID_PATTERN.test(fields.id)) {
             ids.push(fields.id);
         }
@@ -1738,7 +1735,6 @@ export function validateReviewFindingsReport(
     const validationNotes = parseValidationNotes(
         value.validation_notes,
         violations,
-        findings !== null && getAllFindings(findings).length === 0,
         options.repoRoot
     );
     const coverageLedger = parseCoverageLedger(value.coverage_ledger, violations);

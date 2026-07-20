@@ -87,6 +87,43 @@ test('review coverage audit exposes complete and omitted obligation diagnostics'
     fs.rmSync(reviewsRoot, { recursive: true, force: true });
 });
 
+test('review coverage audit accepts a current contract whose ledger is not required', () => {
+    const reviewsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-coverage-not-required-'));
+    const taskId = 'T-979-coverage-not-required';
+    const contract = buildReviewCoverageContract({ reviewType: 'code', changedFiles: [] });
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-preflight.json`), JSON.stringify({
+        changed_files: ['tests/example.test.ts']
+    }), 'utf8');
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-code-review-context.json`), JSON.stringify({
+        schema_version: 3,
+        coverage_contract: contract
+    }), 'utf8');
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), JSON.stringify({
+        review_coverage: {
+            status: 'PASS',
+            required: false,
+            contract_sha256: contract.contract_sha256,
+            obligation_count: contract.obligation_count,
+            completed_obligation_count: 0,
+            omitted_obligation_ids: [],
+            duplicate_obligation_ids: [],
+            unknown_obligation_ids: [],
+            finding_ids: []
+        }
+    }), 'utf8');
+
+    const summary = buildReviewCoverageAuditSummary({
+        reviewsRoot,
+        taskId,
+        requiredReviews: { code: true }
+    });
+
+    assert.equal(summary.status, 'COMPLETE');
+    assert.deepEqual(summary.omitted_obligation_ids, []);
+    assert.deepEqual(summary.entries[0]?.violations, []);
+    fs.rmSync(reviewsRoot, { recursive: true, force: true });
+});
+
 test('review coverage audit preserves legacy context compatibility', () => {
     const reviewsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-coverage-legacy-'));
     const taskId = 'T-976-legacy';

@@ -1123,7 +1123,7 @@ test('validateReviewFindingsReport accepts passed no-findings validation with a 
     assert.equal(result.valid, true, result.violations.join('\n'));
 });
 
-test('validateReviewFindingsReport keeps target binding for passed validation when findings exist', () => {
+test('validateReviewFindingsReport accepts passed validation without duplicate target when findings exist', () => {
     const report = validReport();
     report.validation_notes = [{
         id: 'N-001',
@@ -1164,10 +1164,7 @@ test('validateReviewFindingsReport keeps target binding for passed validation wh
 
     const result = validateReviewFindingsReport(report, validationOptions);
 
-    assert.equal(result.valid, false);
-    assert.ok(result.violations.some((entry) => entry.includes(
-        'authenticated changed-file evidence must name the exact focused command target'
-    )));
+    assert.equal(result.valid, true, result.violations.join('\n'));
 });
 
 test('validateReviewFindingsReport rejects traversal in focused marker targets and commands', () => {

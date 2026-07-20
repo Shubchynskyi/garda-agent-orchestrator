@@ -78,14 +78,6 @@ function getReceiptString(receipt: Record<string, unknown>, key: string): string
     return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
 }
 
-function getReceiptOutputContractString(receipt: Record<string, unknown>, key: string): string | null {
-    const contract = receipt.review_output_contract;
-    const value = contract && typeof contract === 'object' && !Array.isArray(contract)
-        ? (contract as Record<string, unknown>)[key]
-        : null;
-    return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
-}
-
 export interface ReviewArtifactCheckEntry {
     review: string;
     path: string;
@@ -340,9 +332,7 @@ export function testReviewArtifacts(
                 expectedReviewTreeStateSha256: reusedExistingReview
                     ? getReceiptString(receipt, 'reused_from_review_tree_state_sha256')
                     : getReviewContextTreeStateSha256(reviewContext),
-                expectedCoverageContractSha256: reusedExistingReview
-                    ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
-                    : getReviewContextCoverageContract(reviewContext)?.contract_sha256 || null,
+                expectedCoverageContractSha256: getReviewContextCoverageContract(reviewContext)?.contract_sha256 || null,
                 requireAccepted: true
             });
             if (!validationArtifact.valid) {

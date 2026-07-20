@@ -67,7 +67,7 @@ const FINDING_ID_PATTERN = /^F-\d{3}$/u;
 const FINDING_ID_GLOBAL_PATTERN = /\[(F-\d{3})\]/gu;
 const EVIDENCE_ONLY_FINDING_ID = 'F-000';
 const EVIDENCE_ONLY_FINDING_PATTERN =
-    /^\[garda:evidence-only:missing-focused-validation\]\s+test=tests\/[^\s;]+\.(?:test|spec)\.(?:c|m)?[jt]sx?;\s*action=run-and-record-focused-test$/iu;
+    /^\[garda:evidence-only:missing-focused-validation\]\s+(?:test=tests\/[^\s;]+\.(?:test|spec)\.(?:c|m)?[jt]sx?;\s*action=run-and-record-focused-test|target=[^\s;]+;\s*action=run-and-record-focused-validation)$/iu;
 
 const REVIEW_CATEGORY_IDS: Record<string, readonly string[]> = {
     code: [
@@ -202,6 +202,47 @@ export function getReviewCoverageContractViolations(
         `'${deterministic.review_type}'. Expected sha256=${deterministic.contract_sha256}; ` +
         `actual sha256=${String(actual.contract_sha256 || 'missing')}.`
     ];
+}
+
+function coverageSummaryStringArray(value: unknown): string[] | null {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+        ? value as string[]
+        : null;
+}
+
+export function getReviewCoverageValidationSummaryContractViolations(
+    value: unknown,
+    contract: ReviewCoverageContract
+): string[] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return ['coverage validation summary is missing'];
+    }
+    const summary = value as Partial<ReviewCoverageValidationSummary>;
+    const violations: string[] = [];
+    const expectedCompletedObligationCount = contract.required ? contract.obligation_count : 0;
+    const omittedObligationIds = coverageSummaryStringArray(summary.omitted_obligation_ids);
+    const duplicateObligationIds = coverageSummaryStringArray(summary.duplicate_obligation_ids);
+    const unknownObligationIds = coverageSummaryStringArray(summary.unknown_obligation_ids);
+    if (summary.status !== 'PASS') violations.push('coverage status is not PASS');
+    if (String(summary.contract_sha256 || '').trim().toLowerCase() !== contract.contract_sha256) {
+        violations.push('coverage contract hash mismatch');
+    }
+    if (summary.obligation_count !== contract.obligation_count) {
+        violations.push('coverage obligation count mismatch');
+    }
+    if (summary.completed_obligation_count !== expectedCompletedObligationCount) {
+        violations.push('coverage completed obligation count mismatch');
+    }
+    if (!omittedObligationIds || omittedObligationIds.length > 0) {
+        violations.push('coverage contains omitted obligations');
+    }
+    if (!duplicateObligationIds || duplicateObligationIds.length > 0) {
+        violations.push('coverage contains duplicate obligations');
+    }
+    if (!unknownObligationIds || unknownObligationIds.length > 0) {
+        violations.push('coverage contains unknown obligations');
+    }
+    return violations;
 }
 
 function parseCoverageLedgerEntries(reviewContent: string): {

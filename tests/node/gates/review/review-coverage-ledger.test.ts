@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import {
     buildReviewCoverageContract,
     getReviewCoverageContractViolations,
+    getReviewCoverageValidationSummaryContractViolations,
     resolveReviewCoverageEvidenceSnapshotCommit,
     validateReviewCoverageLedger
 } from '../../../../src/gates/review/review-coverage-ledger';
@@ -240,6 +241,47 @@ test('review coverage context validation rejects forged or stale obligations', (
     assert.ok(violations.some((entry) => entry.includes('does not match the deterministic current-scope contract')));
 });
 
+test('review coverage summary compatibility binds reused evidence to the current contract', () => {
+    const currentContract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: []
+    });
+    const matchingSummary = {
+        status: 'PASS' as const,
+        required: false,
+        contract_sha256: currentContract.contract_sha256,
+        obligation_count: currentContract.obligation_count,
+        completed_obligation_count: 0,
+        omitted_obligation_ids: [],
+        duplicate_obligation_ids: [],
+        unknown_obligation_ids: [],
+        finding_ids: [],
+        violations: []
+    };
+    const historicalContract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/example.ts']
+    });
+
+    assert.deepEqual(
+        getReviewCoverageValidationSummaryContractViolations(matchingSummary, currentContract),
+        []
+    );
+    assert.deepEqual(
+        getReviewCoverageValidationSummaryContractViolations({
+            ...matchingSummary,
+            contract_sha256: historicalContract.contract_sha256,
+            obligation_count: historicalContract.obligation_count,
+            completed_obligation_count: historicalContract.obligation_count
+        }, currentContract),
+        [
+            'coverage contract hash mismatch',
+            'coverage obligation count mismatch',
+            'coverage completed obligation count mismatch'
+        ]
+    );
+});
+
 test('validateReviewCoverageLedger rejects invalid result tokens and out-of-range evidence lines', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-coverage-lines-'));
     fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
@@ -466,7 +508,7 @@ test('JSON coverage ledger accepts critical findings and canonical evidence-only
             }],
             high: [{
                 id: 'F-000',
-                title: '[garda:evidence-only:missing-focused-validation] test=tests/node/example.test.ts; action=run-and-record-focused-test',
+                title: '[garda:evidence-only:missing-focused-validation] target=scripts/validate-example.ts; action=run-and-record-focused-validation',
                 description: 'Canonical evidence-only focused validation marker.',
                 evidence: [{
                     location: 'src/example.ts:1',

@@ -57,7 +57,7 @@ function buildMissingFocusedValidationReport(options: {
     const obligationIds = obligations
         .map((obligation) => String(obligation.id || '').trim())
         .filter(Boolean);
-    const marker = '[garda:evidence-only:missing-focused-validation] test=tests/node/focused-validation.test.ts; action=run-and-record-focused-test';
+    const marker = '[garda:evidence-only:missing-focused-validation] test=tests/app.test.ts; action=run-and-record-focused-test';
     const findingIds = options.includeNonBlockingFinding ? ['F-000', 'F-001'] : ['F-000'];
     return {
         schema_version: 1,
@@ -74,6 +74,20 @@ function buildMissingFocusedValidationReport(options: {
                     {
                         location: 'src/app.ts:1',
                         observation: 'Scoped changed file evidence for the missing focused-validation marker.'
+                    }
+                ]
+            },
+            {
+                id: 'N-002',
+                topic: 'focused-self-validation',
+                note: 'The reviewer attempted the smallest relevant focused test before reporting missing validation evidence.',
+                command: 'node --test tests/app.test.ts',
+                command_outcome: 'unavailable',
+                diagnostics: 'The focused test target is unavailable in this isolated fixture, so the command could not execute.',
+                evidence: [
+                    {
+                        location: 'src/app.ts:1',
+                        observation: 'The changed application path is the behavior targeted by tests/app.test.ts, which motivated the unavailable focused test.'
                     }
                 ]
             }
@@ -563,6 +577,8 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Qwen');
         const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
         runEnterTaskMode({
             repoRoot,
             taskId,
@@ -630,6 +646,8 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Qwen');
         const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
         runEnterTaskMode({
             repoRoot,
             taskId,
@@ -725,7 +743,7 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -733,7 +751,7 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
                 security: false,
                 refactor: false,
                 api: false,
-                test: true,
+                test: false,
                 performance: false,
                 infra: false,
                 dependency: false
@@ -840,7 +858,7 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -848,7 +866,7 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
                 security: false,
                 refactor: false,
                 api: false,
-                test: true,
+                test: false,
                 performance: false,
                 infra: false,
                 dependency: false

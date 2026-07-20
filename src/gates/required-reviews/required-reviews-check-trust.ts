@@ -38,6 +38,10 @@ import {
     reviewContextRequiresFindingsOnlyArtifact
 } from '../review/review-findings-artifact-verdict';
 import {
+    getReviewCoverageValidationSummaryContractViolations,
+    type ReviewCoverageContract
+} from '../review/review-coverage-ledger';
+import {
     reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
@@ -80,13 +84,6 @@ function getPreflightScopeSha256(preflightPayload: Record<string, unknown> | nul
         ? preflightPayload.metrics as Record<string, unknown>
         : null;
     return normalizeSha256String(metrics?.scope_sha256) || normalizeSha256String(metrics?.changed_files_sha256);
-}
-
-function getReceiptOutputContractString(receipt: ReviewReceipt, key: string): string | null {
-    const receiptRecord = receipt as unknown as Record<string, unknown>;
-    const contract = toPlainRecord(receiptRecord.review_output_contract);
-    const value = contract?.[key];
-    return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
 }
 
 export function validateReviewArtifactGateEligibility(options: {
@@ -386,18 +383,20 @@ export function validateReviewArtifactGateEligibility(options: {
                     if (reviewContext && requiresFindingsOnlyArtifact) {
                         const reviewCoverage = toPlainRecord((receipt as unknown as Record<string, unknown>).review_coverage);
                         const coverageContract = toPlainRecord(reviewContext.coverage_contract);
-                        const expectedCoverageContractSha256 = reusedExistingReview
-                            ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
-                            : String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null;
+                        const expectedCoverageContractSha256 = String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null;
                         if (reviewCoverage?.status !== 'PASS') {
                             errors.push(`Review receipt for '${reviewKey}' is missing complete review_coverage evidence.`);
-                        } else if (
-                            expectedCoverageContractSha256
-                            &&
-                            String(reviewCoverage.contract_sha256 || '').trim().toLowerCase()
-                            !== expectedCoverageContractSha256
-                        ) {
-                            errors.push(`Review receipt coverage contract hash mismatch for '${reviewKey}'.`);
+                        } else if (coverageContract) {
+                            const coverageCompatibilityViolations = getReviewCoverageValidationSummaryContractViolations(
+                                reviewCoverage,
+                                coverageContract as unknown as ReviewCoverageContract
+                            );
+                            if (coverageCompatibilityViolations.length > 0) {
+                                errors.push(
+                                    `Review receipt coverage contract mismatch for '${reviewKey}': ` +
+                                    coverageCompatibilityViolations.join('; ')
+                                );
+                            }
                         }
                         const validationArtifact = validateReviewFindingsValidationArtifactForReceipt({
                             receipt: receipt as unknown as Record<string, unknown>,

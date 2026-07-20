@@ -72,7 +72,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 'output template must show reviewers the strict active-finding object shape'
             );
             assert.ok(parsed.reviewer_notes.some((entry: string) => (
-                entry.includes('the target path may be omitted here for a passed no-findings result')
+                entry.includes('for a passed command, the target path may be omitted here even when another finding exists')
             )));
             assert.ok(promptContract.includes('Return exactly one JSON object'));
             assert.ok(promptContract.includes('Complete the entire assigned review scope before returning'));
@@ -85,7 +85,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptContract.includes('Every FILE-* coverage obligation must cite its own target path:line'));
             assert.ok(promptContract.includes('Active finding object shape: {"id":"F-001"'));
             assert.ok(promptContract.includes('The command must identify the one exact check target'));
-            assert.ok(promptContract.includes('a passed no-findings result does not need to repeat the target path outside the command'));
+            assert.ok(promptContract.includes('For a passed command, evidence does not need to repeat the target path, even when the review reports a separate finding'));
             assert.ok(promptContract.includes('does not claim OS-enforced containment against another process running as the same OS user'));
             assert.ok(promptContract.includes('unless the authenticated task acceptance criteria explicitly require that stronger boundary'));
             assert.ok(promptContract.includes('Continue to report ordinary path traversal, symlink or junction escape, stale identity, and observable replacement defects'));

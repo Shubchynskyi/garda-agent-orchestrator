@@ -121,6 +121,20 @@ function buildMissingFocusedValidationReport(options: {
                         observation: 'Scoped changed file evidence for the missing focused-validation marker.'
                     }
                 ]
+            },
+            {
+                id: 'N-002',
+                topic: 'focused-self-validation',
+                note: 'The reviewer attempted the smallest relevant focused test before reporting missing validation evidence.',
+                command: 'node --test tests/node/focused-validation.test.ts',
+                command_outcome: 'unavailable',
+                diagnostics: 'The focused test target is unavailable in this isolated fixture, so the command could not execute.',
+                evidence: [
+                    {
+                        location: 'src/example.ts:1',
+                        observation: 'The changed example path is the behavior targeted by tests/node/focused-validation.test.ts, which motivated the unavailable focused test.'
+                    }
+                ]
             }
         ],
         coverage_ledger: {

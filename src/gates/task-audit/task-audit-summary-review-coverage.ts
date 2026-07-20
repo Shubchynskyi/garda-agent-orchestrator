@@ -3,7 +3,8 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
     buildReviewCoverageContract,
-    getReviewCoverageContractViolations
+    getReviewCoverageContractViolations,
+    getReviewCoverageValidationSummaryContractViolations
 } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
 
@@ -120,14 +121,13 @@ export function buildReviewCoverageAuditSummary(options: {
         const coverage = receipt?.review_coverage && typeof receipt.review_coverage === 'object' && !Array.isArray(receipt.review_coverage)
             ? receipt.review_coverage as Record<string, unknown>
             : null;
-        const contractHash = authoritativeContract.contract_sha256;
         const receiptHash = String(coverage?.contract_sha256 || '').trim().toLowerCase();
         const obligationCount = authoritativeContract.obligation_count;
         const contractObligationIds = authoritativeContract.obligations.map((entry) => entry.id);
-        const receiptObligationCount = Number(coverage?.obligation_count || 0);
         const completedObligationCount = Number(coverage?.completed_obligation_count || 0);
         const reportedOmittedObligationIds = stringArray(coverage?.omitted_obligation_ids);
-        const omissionAccountingValid = completedObligationCount + reportedOmittedObligationIds.length === obligationCount;
+        const omissionAccountingValid = !authoritativeContract.required
+            || completedObligationCount + reportedOmittedObligationIds.length === obligationCount;
         const omittedObligationIds = coverage && omissionAccountingValid
             ? reportedOmittedObligationIds
             : [...new Set([...reportedOmittedObligationIds, ...contractObligationIds])].sort();
@@ -149,13 +149,8 @@ export function buildReviewCoverageAuditSummary(options: {
             }
         }
         if (!String(contract?.contract_sha256 || '').trim()) violations.push('context coverage contract hash is missing');
-        if (coverage?.status !== 'PASS') violations.push('receipt coverage status is not PASS');
-        if (!receiptHash || receiptHash !== contractHash) violations.push('receipt coverage contract hash mismatch');
-        if (obligationCount <= 0 || receiptObligationCount !== obligationCount) violations.push('receipt obligation count mismatch');
-        if (completedObligationCount !== obligationCount) violations.push('receipt completed obligation count mismatch');
-        if (omittedObligationIds.length > 0) violations.push('receipt contains omitted obligations');
-        if (duplicateObligationIds.length > 0) violations.push('receipt contains duplicate obligations');
-        if (unknownObligationIds.length > 0) violations.push('receipt contains unknown obligations');
+        violations.push(...getReviewCoverageValidationSummaryContractViolations(coverage, authoritativeContract)
+            .map((violation) => `receipt ${violation}`));
         const complete = violations.length === 0;
         entries.push({
             review_type: reviewType,

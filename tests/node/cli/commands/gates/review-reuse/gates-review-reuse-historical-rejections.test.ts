@@ -726,6 +726,91 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('does not reuse historical review evidence when the current coverage contract differs', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-no-reuse-coverage-contract-change';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject historical review reuse when the current coverage contract differs'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            priorPreflightPath,
+            reviewContextPath,
+            'agent:code-reviewer'
+        );
+        const historicalContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const historicalCoverage = historicalContext.coverage_contract as Record<string, unknown>;
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 1 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const build = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        const currentContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const currentCoverage = currentContext.coverage_contract as Record<string, unknown>;
+
+        assert.notEqual(historicalCoverage.contract_sha256, currentCoverage.contract_sha256);
+        assert.notEqual(historicalCoverage.obligation_count, currentCoverage.obligation_count);
+        assert.equal(build.reusedReviewEvidence, false);
+        assert.ok(build.outputLines.some((line) => line.includes(
+            'reused review coverage contract does not match the current review context'
+        )), build.outputLines.join('\n'));
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latestCompileSequence = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        assert.equal(events.slice(latestCompileSequence + 1).some((event) => (
+            event.event_type === 'REVIEW_RECORDED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+        )), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('does not reuse review evidence after rule context content changes', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-no-reuse-rule-context-change';

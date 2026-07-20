@@ -396,10 +396,9 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
             expectedReviewTreeStateSha256: receipt.reused_existing_review === true
                 ? normalizeOptionalSha256(receipt.reused_from_review_tree_state_sha256)
                 : reviewTreeStateSha256,
-            expectedCoverageContractSha256: getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
-                || (isRecord(reviewContext.coverage_contract)
-                    ? normalizeOptionalSha256((reviewContext.coverage_contract as Record<string, unknown>).contract_sha256)
-                    : null),
+            expectedCoverageContractSha256: isRecord(reviewContext.coverage_contract)
+                ? normalizeOptionalSha256((reviewContext.coverage_contract as Record<string, unknown>).contract_sha256)
+                : null,
             requireAccepted: true,
             preferSnapshot: receipt.reused_existing_review === true
         });
