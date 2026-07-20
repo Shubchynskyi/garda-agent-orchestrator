@@ -94,6 +94,12 @@ interface RollbackEventSignature {
     detail_subset: Record<string, string>;
 }
 
+interface RollbackEventIdentity {
+    task_id: string;
+    task_sequence: number;
+    event_sha256: string;
+}
+
 export interface CompletionFinalizationResult {
     completion_event_recorded: boolean;
     status_event_recorded: boolean;
@@ -568,12 +574,91 @@ function shouldKeepAppendedAggregateLogLineForTaskIds(rawLine: string, taskIds: 
     }
 }
 
+function parseRollbackEventIdentity(rawLine: string): RollbackEventIdentity | null {
+    try {
+        const parsed = JSON.parse(rawLine) as Record<string, unknown>;
+        const integrity = parsed.integrity && typeof parsed.integrity === 'object' && !Array.isArray(parsed.integrity)
+            ? parsed.integrity as Record<string, unknown>
+            : null;
+        const taskId = String(parsed.task_id || '').trim();
+        const taskSequence = Number(integrity?.task_sequence);
+        const eventSha256 = String(integrity?.event_sha256 || '').trim().toLowerCase();
+        if (!taskId || !Number.isSafeInteger(taskSequence) || taskSequence < 1 || !/^[a-f0-9]{64}$/u.test(eventSha256)) {
+            return null;
+        }
+        return {
+            task_id: taskId,
+            task_sequence: taskSequence,
+            event_sha256: eventSha256
+        };
+    } catch {
+        return null;
+    }
+}
+
+function getRollbackEventIdentityKey(identity: RollbackEventIdentity): string {
+    return `${identity.task_id}\u0000${identity.task_sequence}\u0000${identity.event_sha256}`;
+}
+
+function getTransactionOwnedRollbackEventIdentities(rawLines: readonly string[]): RollbackEventIdentity[] {
+    const identities = rawLines.map((line) => parseRollbackEventIdentity(line));
+    if (identities.some((identity) => identity == null)) {
+        throw new Error('transaction-owned task-event suffix is missing valid integrity identity');
+    }
+    return identities as RollbackEventIdentity[];
+}
+
+function rollbackAggregateTransactionEventsAfterRewriteUnsafe(options: {
+    aggregateSnapshot: FileSnapshot;
+    transactionEventIdentities: readonly RollbackEventIdentity[];
+}): void {
+    if (options.transactionEventIdentities.length === 0) {
+        return;
+    }
+    const aggregatePath = options.aggregateSnapshot.path;
+    const currentContent = readCurrentSnapshotContent(options.aggregateSnapshot);
+    const transactionIdentityKeys = new Set(
+        options.transactionEventIdentities.map((identity) => getRollbackEventIdentityKey(identity))
+    );
+    let removedCount = 0;
+    const keptLines = currentContent
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .filter((line) => {
+            const identity = parseRollbackEventIdentity(line);
+            if (!identity || !transactionIdentityKeys.has(getRollbackEventIdentityKey(identity))) {
+                return true;
+            }
+            removedCount += 1;
+            return false;
+        });
+    if (removedCount === 0) {
+        return;
+    }
+    const restoredContent = keptLines.length > 0 ? `${keptLines.join('\n')}\n` : '';
+    if (!options.aggregateSnapshot.existed && restoredContent.length === 0) {
+        fs.rmSync(aggregatePath, { force: true });
+        return;
+    }
+    writeFileAtomically(aggregatePath, restoredContent, { encoding: 'utf8' });
+}
+
 function rollbackAggregateTaskEntriesForTaskIdsUnsafe(options: {
     taskIds: readonly string[];
     aggregateSnapshot: FileSnapshot;
+    transactionEventIdentities?: readonly RollbackEventIdentity[];
 }): void {
     const taskIds = new Set(options.taskIds);
     const aggregatePath = options.aggregateSnapshot.path;
+    const baselineContent = options.aggregateSnapshot.existed ? (options.aggregateSnapshot.content || '') : '';
+    const currentContent = readCurrentSnapshotContent(options.aggregateSnapshot);
+    if (!currentContent.startsWith(baselineContent) && options.transactionEventIdentities) {
+        rollbackAggregateTransactionEventsAfterRewriteUnsafe({
+            aggregateSnapshot: options.aggregateSnapshot,
+            transactionEventIdentities: options.transactionEventIdentities
+        });
+        return;
+    }
     const appendedTailLines = getAppendedRawLinesSinceSnapshot(options.aggregateSnapshot)
         .filter((line) => shouldKeepAppendedAggregateLogLineForTaskIds(line, taskIds));
     const restoredContent = buildSnapshotRestoredContent(options.aggregateSnapshot, appendedTailLines);
@@ -586,10 +671,14 @@ function rollbackAggregateTaskEntriesForTaskIdsUnsafe(options: {
     writeFileAtomically(aggregatePath, restoredContent, { encoding: 'utf8' });
 }
 
-function rollbackAggregateTaskEntriesUnsafe(options: AggregateRollbackOptions): void {
+function rollbackAggregateTaskEntriesUnsafe(
+    options: AggregateRollbackOptions,
+    transactionEventIdentities: readonly RollbackEventIdentity[]
+): void {
     rollbackAggregateTaskEntriesForTaskIdsUnsafe({
         taskIds: [options.taskId],
-        aggregateSnapshot: options.aggregateSnapshot
+        aggregateSnapshot: options.aggregateSnapshot,
+        transactionEventIdentities
     });
 }
 
@@ -744,8 +833,9 @@ function rollbackEventSignatureMatches(actual: RollbackEventSignature, expected:
     ));
 }
 
-function assertNoUnexpectedSameTaskAppend(options: TaskEventRollbackOptions): void {
-    const appendedEventSignatures = getRollbackEventSignatures(getAppendedRawLinesSinceSnapshot(options.timelineSnapshot));
+function assertNoUnexpectedSameTaskAppend(options: TaskEventRollbackOptions): string[] {
+    const appendedRawLines = getAppendedRawLinesSinceSnapshot(options.timelineSnapshot);
+    const appendedEventSignatures = getRollbackEventSignatures(appendedRawLines);
     const allowedSequences = options.expectedRollbackEventSequences;
     const rollbackTailIsAllowed = allowedSequences.some((sequence) => (
         sequence.length === appendedEventSignatures.length
@@ -757,6 +847,7 @@ function assertNoUnexpectedSameTaskAppend(options: TaskEventRollbackOptions): vo
             + `allowed_sequences=${formatAllowedRollbackEventSequences(allowedSequences)}`
         );
     }
+    return appendedRawLines;
 }
 
 function rollbackTaskEventArtifacts(options: TaskEventRollbackOptions): TaskEventRollbackResult {
@@ -770,14 +861,15 @@ function rollbackTaskEventArtifacts(options: TaskEventRollbackOptions): TaskEven
     const aggregateLockPath = path.join(options.taskEventsRoot, '.all-tasks.lock');
     try {
         withFilesystemLock(taskLockPath, {}, () => {
-            assertNoUnexpectedSameTaskAppend(options);
+            const appendedRawLines = assertNoUnexpectedSameTaskAppend(options);
+            const transactionEventIdentities = getTransactionOwnedRollbackEventIdentities(appendedRawLines);
             restoreFileSnapshot(options.timelineSnapshot);
             rollbackResult.timeline_restored = true;
             withFilesystemLock(aggregateLockPath, {}, () => {
                 rollbackAggregateTaskEntriesUnsafe({
                     taskId: options.taskId,
                     aggregateSnapshot: options.aggregateSnapshot
-                });
+                }, transactionEventIdentities);
             });
             rollbackResult.aggregate_reconciled = true;
             reconcileTimelineSummaryForTask(options.taskEventsRoot, options.taskId);

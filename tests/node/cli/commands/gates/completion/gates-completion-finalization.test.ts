@@ -409,9 +409,69 @@ describe('cli/commands/gates', () => {
         const finalCloseoutJsonPath = path.join(reviewsRoot, `${taskId}-final-closeout.json`);
         const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${taskId}-final-closeout.md`);
         const finalUserReportPath = path.join(reviewsRoot, `${taskId}-final-user-report.md`);
+        const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
+        const aggregatePath = path.join(taskEventsRoot, 'all-tasks.jsonl');
+        const readAggregateEntries = () => fs.readFileSync(aggregatePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim().length > 0)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        const assertAggregateTaskProjectionMatchesTimeline = (aggregateEntries: Record<string, unknown>[]) => {
+            const timelineEvents = readTaskTimelineEvents(repoRoot, taskId) as unknown as Record<string, unknown>[];
+            const identityOf = (event: Record<string, unknown>) => {
+                const integrity = event.integrity as Record<string, unknown> | undefined;
+                return `${String(integrity?.task_sequence || '')}:${String(integrity?.event_sha256 || '')}`;
+            };
+            const aggregateTaskEvents = aggregateEntries.filter((entry) => entry.task_id === taskId);
+            const aggregateIdentities = new Set(aggregateTaskEvents.map(identityOf));
+            const replayedTimelineProjection = timelineEvents.filter((event) => aggregateIdentities.has(identityOf(event)));
+            assert.deepEqual(
+                aggregateTaskEvents,
+                replayedTimelineProjection,
+                'aggregate current-task projection must replay as an ordered subset of the canonical task timeline'
+            );
+        };
+        const baselineAggregateEntries = readAggregateEntries();
+        const baselineCompletionPassCount = baselineAggregateEntries.filter((entry) => (
+            entry.task_id === taskId && entry.event_type === 'COMPLETION_GATE_PASSED'
+        )).length;
+        const baselineDoneCount = baselineAggregateEntries.filter((entry) => (
+            entry.task_id === taskId
+            && entry.event_type === 'STATUS_CHANGED'
+            && typeof entry.details === 'object'
+            && !Array.isArray(entry.details)
+            && (entry.details as Record<string, unknown>).new_status === 'DONE'
+        )).length;
+        const foreignAggregateMarker = 'RETENTION_REWRITE_FOREIGN_EVENT';
         const fsModule = require('node:fs') as typeof import('node:fs');
         const originalRenameSync = fsModule.renameSync;
+        const originalAppendFileSync = fsModule.appendFileSync;
         let injectedReportWriteFailure = false;
+        let injectedAggregateRewrite = false;
+        fsModule.appendFileSync = ((filePath: fs.PathOrFileDescriptor, data: string | Uint8Array, options?: fs.WriteFileOptions) => {
+            const result = originalAppendFileSync(filePath, data, options);
+            const normalizedPath = typeof filePath === 'string' ? path.resolve(filePath) : '';
+            const payload = typeof data === 'string' ? data : '';
+            if (
+                !injectedAggregateRewrite
+                && normalizedPath === path.resolve(aggregatePath)
+                && payload.includes('"event_type":"STATUS_CHANGED"')
+                && payload.includes('"new_status":"DONE"')
+            ) {
+                originalAppendFileSync(aggregatePath, `${JSON.stringify({
+                    schema_version: 2,
+                    task_id: 'T-903-foreign-retention-rewrite',
+                    event_type: 'FOREIGN_EVENT',
+                    marker: foreignAggregateMarker
+                })}\n`, 'utf8');
+                const rewrittenLines = fsModule.readFileSync(aggregatePath, 'utf8')
+                    .split('\n')
+                    .filter((line) => line.trim().length > 0)
+                    .slice(1);
+                fsModule.writeFileSync(aggregatePath, `${rewrittenLines.join('\n')}\n`, 'utf8');
+                injectedAggregateRewrite = true;
+            }
+            return result;
+        }) as typeof fsModule.appendFileSync;
         fsModule.renameSync = ((oldPath: fs.PathLike, newPath: fs.PathLike) => {
             if (
                 !injectedReportWriteFailure
@@ -435,10 +495,12 @@ describe('cli/commands/gates', () => {
             assert.match(error.message, /mandatory final closeout materialization failed/i);
             assert.match(error.message, /Injected final user report write failure/i);
         } finally {
+            fsModule.appendFileSync = originalAppendFileSync;
             fsModule.renameSync = originalRenameSync;
         }
 
         assert.equal(injectedReportWriteFailure, true);
+        assert.equal(injectedAggregateRewrite, true);
         assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_REVIEW');
         assert.equal(fs.existsSync(finalCloseoutJsonPath), false);
         assert.equal(fs.existsSync(finalCloseoutMarkdownPath), false);
@@ -460,6 +522,31 @@ describe('cli/commands/gates', () => {
             failedAttemptEvents.filter((event) => event.event_type === 'COMPLETION_GATE_FAILED').length,
             1
         );
+        const failedAggregateEntries = readAggregateEntries();
+        assert.equal(
+            failedAggregateEntries.filter((entry) => (
+                entry.task_id === taskId && entry.event_type === 'COMPLETION_GATE_PASSED'
+            )).length,
+            baselineCompletionPassCount,
+            'aggregate rollback must remove only the failed transaction completion pass after retention rewrites the prefix'
+        );
+        assert.equal(
+            failedAggregateEntries.filter((entry) => (
+                entry.task_id === taskId
+                && entry.event_type === 'STATUS_CHANGED'
+                && typeof entry.details === 'object'
+                && !Array.isArray(entry.details)
+                && (entry.details as Record<string, unknown>).new_status === 'DONE'
+            )).length,
+            baselineDoneCount,
+            'aggregate rollback must remove only the failed transaction DONE status after retention rewrites the prefix'
+        );
+        assert.equal(
+            failedAggregateEntries.some((entry) => entry.marker === foreignAggregateMarker),
+            true,
+            'aggregate rollback must preserve unrelated rows appended around a retention rewrite'
+        );
+        assertAggregateTaskProjectionMatchesTimeline(failedAggregateEntries);
 
         await handleCompletionGate([
             '--preflight-path', preflightPath,
@@ -470,6 +557,26 @@ describe('cli/commands/gates', () => {
         assert.equal(fs.existsSync(finalCloseoutJsonPath), true);
         assert.equal(fs.existsSync(finalCloseoutMarkdownPath), true);
         assert.equal(fs.existsSync(finalUserReportPath), true);
+        const completedAggregateEntries = readAggregateEntries();
+        assert.equal(
+            completedAggregateEntries.filter((entry) => (
+                entry.task_id === taskId && entry.event_type === 'COMPLETION_GATE_PASSED'
+            )).length,
+            baselineCompletionPassCount + 1,
+            'corrected retry must leave exactly one committed aggregate completion pass'
+        );
+        assert.equal(
+            completedAggregateEntries.filter((entry) => (
+                entry.task_id === taskId
+                && entry.event_type === 'STATUS_CHANGED'
+                && typeof entry.details === 'object'
+                && !Array.isArray(entry.details)
+                && (entry.details as Record<string, unknown>).new_status === 'DONE'
+            )).length,
+            baselineDoneCount + 1,
+            'corrected retry must leave exactly one committed aggregate DONE status'
+        );
+        assertAggregateTaskProjectionMatchesTimeline(completedAggregateEntries);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

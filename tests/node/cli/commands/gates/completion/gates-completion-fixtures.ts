@@ -695,6 +695,29 @@ function writeReceiptBackedReviewArtifact(
     verdict: string,
     contentLines?: string[]
 ): void {
+    if (contentLines === undefined) {
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const preflightFixture = readReviewPreflightFixture(repoRoot, taskId);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
+        const orchestratorRoot = getOrchestratorRoot(repoRoot);
+        const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'review started', {
+            review_type: reviewKey
+        });
+        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
+        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', {
+            reference_path: `/live/skills/${skillId}/SKILL.md`
+        });
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            reviewKey,
+            verdict,
+            preflightFixture.preflightPath,
+            reviewContextPath
+        );
+        return;
+    }
     const reviewsRoot = getReviewsRoot(repoRoot);
     const execution = resolveReviewerExecutionFixture(taskId, 'Codex');
     fs.mkdirSync(reviewsRoot, { recursive: true });
