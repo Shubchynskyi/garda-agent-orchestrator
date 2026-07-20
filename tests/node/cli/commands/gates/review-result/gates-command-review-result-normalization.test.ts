@@ -2433,6 +2433,109 @@ describe('gates command review result - normalization', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result restores the completed launch when corrected findings are accepted', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-corrected-findings-recovery';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, '{ malformed reviewer output\n', 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'corrected-findings-recovery-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true
+        });
+        const completedLaunchSha256 = createHash('sha256')
+            .update(fs.readFileSync(fixture.launchArtifactPath))
+            .digest('hex');
+        const args = [
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ];
+
+        const rejected = await runCliWithCapturedOutput(args, { cwd: repoRoot });
+
+        assert.notEqual(rejected.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+            'launch_failed'
+        );
+        const failedLaunchSha256 = createHash('sha256')
+            .update(fs.readFileSync(fixture.launchArtifactPath))
+            .digest('hex');
+        fs.writeFileSync(
+            outputPath,
+            `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            'utf8'
+        );
+        const receiptPath = path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`);
+        fs.mkdirSync(receiptPath);
+
+        const persistenceFailure = await runCliWithCapturedOutput(args, { cwd: repoRoot });
+
+        assert.notEqual(persistenceFailure.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+            'launch_failed'
+        );
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(fixture.launchArtifactPath)).digest('hex'),
+            failedLaunchSha256
+        );
+        fs.rmSync(receiptPath, { recursive: true, force: true });
+
+        const corrected = await runCliWithCapturedOutput(args, { cwd: repoRoot });
+
+        assert.equal(corrected.exitCode, 0, corrected.errors.join('\n'));
+        assert.equal(
+            JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+            'launched'
+        );
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(fixture.launchArtifactPath)).digest('hex'),
+            completedLaunchSha256
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED').length,
+            1
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_RECORDED').length,
+            1
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-receipt terminalizes rejected findings from the bound canonical artifact', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-7-receipt-json-invalid-validation-artifact';
@@ -2459,6 +2562,14 @@ describe('gates command review result - normalization', () => {
             reviewOutputPath: artifactPath,
             recordCompletion: true
         });
+        const completedLaunchArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        // Model the one-millisecond inversion caused by filesystem mtime and ISO timestamp rounding.
+        const roundedOutputMtime = new Date(
+            Date.parse(String(completedLaunchArtifact.launch_completed_at_utc || '')) + 1
+        );
+        fs.utimesSync(artifactPath, roundedOutputMtime, roundedOutputMtime);
         const receiptArgs = [
             'gate', 'record-review-receipt',
             '--task-id', taskId,

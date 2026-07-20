@@ -587,6 +587,18 @@ async function emitFindingsValidationLaunchFailure(options: {
     );
 }
 
+const REVIEW_OUTPUT_COMPLETION_TIMESTAMP_TOLERANCE_MS = 1;
+const FINDINGS_VALIDATION_FAILURE_FIELDS = [
+    'launch_failure_stage',
+    'launch_failure_reason',
+    'launch_failed_at_utc',
+    'launch_failure_recorded_by',
+    'rejected_reviewer_launch_artifact_sha256',
+    'review_findings_validation_artifact_path',
+    'review_findings_validation_artifact_sha256',
+    'review_result_rejected_at_utc'
+] as const;
+
 async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
     repoRoot: string;
     taskId: string;
@@ -824,7 +836,8 @@ async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
     if (
         !Number.isFinite(reviewOutputSourceMtimeMs)
         || !Number.isFinite(completionEventTimestampMs)
-        || reviewOutputSourceMtimeMs > completionEventTimestampMs
+        || reviewOutputSourceMtimeMs
+            > completionEventTimestampMs + REVIEW_OUTPUT_COMPLETION_TIMESTAMP_TOLERANCE_MS
     ) {
         await options.persistValidationEvidence();
         return;
@@ -893,6 +906,113 @@ async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
             'The immutable launch artifact was restored because telemetry could not be persisted.'
         );
     }
+}
+
+function restoreCompletedLaunchAfterAcceptedFindingsCorrection(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    invocationEvent: ReturnType<typeof readDependencyTimelineEvents>[number] | null;
+    timelineEvents: ReturnType<typeof readDependencyTimelineEvents>;
+}): { rollback: () => void } | null {
+    const invocationDetails = options.invocationEvent?.details;
+    if (!invocationDetails) {
+        return null;
+    }
+    const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        artifactPathValue: getArtifactStringField(
+            invocationDetails,
+            'reviewer_launch_artifact_path',
+            'reviewerLaunchArtifactPath'
+        ) || undefined
+    });
+    if (!fs.existsSync(launchArtifactPath) || !fs.statSync(launchArtifactPath).isFile()) {
+        return null;
+    }
+    const failedArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
+    let failedArtifact: Record<string, unknown>;
+    try {
+        const parsed = JSON.parse(failedArtifactText) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return null;
+        }
+        failedArtifact = parsed as Record<string, unknown>;
+    } catch {
+        return null;
+    }
+    if (
+        getArtifactStringField(failedArtifact, 'attestation_state', 'attestationState') !== 'launch_failed'
+        || getArtifactStringField(
+            failedArtifact,
+            'launch_failure_stage',
+            'launchFailureStage'
+        ) !== 'review_findings_validation'
+    ) {
+        return null;
+    }
+    const failedArtifactSha256 = fileSha256(launchArtifactPath) || '';
+    const completedArtifactSha256 = getArtifactStringField(
+        failedArtifact,
+        'rejected_reviewer_launch_artifact_sha256',
+        'rejectedReviewerLaunchArtifactSha256'
+    ).toLowerCase();
+    const invocationArtifactSha256 = getArtifactStringField(
+        invocationDetails,
+        'reviewer_launch_artifact_sha256',
+        'reviewerLaunchArtifactSha256'
+    ).toLowerCase();
+    if (
+        !failedArtifactSha256
+        || !completedArtifactSha256
+        || completedArtifactSha256 !== invocationArtifactSha256
+        || !hasRecordedReviewerLaunchFailure(
+            options.timelineEvents,
+            failedArtifact,
+            launchArtifactPath,
+            failedArtifactSha256
+        )
+        || !findCompletedReviewerLaunchAttempt(
+            options.timelineEvents,
+            failedArtifact,
+            launchArtifactPath,
+            completedArtifactSha256
+        )
+    ) {
+        throw new Error(
+            `Accepted findings correction cannot authenticate the original completed launch for '${options.reviewType}'.`
+        );
+    }
+    const restoredArtifact: Record<string, unknown> = {
+        ...failedArtifact,
+        attestation_state: 'launched'
+    };
+    for (const fieldName of FINDINGS_VALIDATION_FAILURE_FIELDS) {
+        delete restoredArtifact[fieldName];
+    }
+    try {
+        writeReviewArtifactJson(launchArtifactPath, restoredArtifact);
+        if (fileSha256(launchArtifactPath)?.toLowerCase() !== completedArtifactSha256) {
+            throw new Error('restored launch artifact hash does not match the completed launch');
+        }
+    } catch (error: unknown) {
+        fs.writeFileSync(launchArtifactPath, failedArtifactText, 'utf8');
+        throw new Error(
+            `Accepted findings correction could not restore the completed launch for '${options.reviewType}': ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+    return {
+        rollback: () => {
+            fs.writeFileSync(launchArtifactPath, failedArtifactText, 'utf8');
+            if (fileSha256(launchArtifactPath)?.toLowerCase() !== failedArtifactSha256.toLowerCase()) {
+                throw new Error('failed launch artifact hash was not restored');
+            }
+        }
+    };
 }
 
 function summarizeReviewFindingsValidationEvidence(evidence: ReviewFindingsValidationEvidence): Record<string, unknown> {
@@ -1418,22 +1538,46 @@ async function recordReviewReceiptFromArtifacts(options: {
     }
 
     const receiptPayloadSha256 = sha256RedactedJsonPayload(receipt);
-    return writeReviewReceiptSnapshotsAndTelemetry({
-        repoRoot: options.repoRoot,
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        artifactPath: options.artifactPath,
-        artifactContent: options.reviewArtifactContent,
-        contextPath: options.contextPath,
-        rawReviewOutputPath: options.rawReviewOutputPath,
-        rawReviewOutputContent: options.rawReviewOutputContent,
-        rawReviewOutputSha256: options.rawReviewOutputSha256,
-        receipt: receipt as unknown as Record<string, unknown>,
-        receiptPayloadSha256,
-        artifactSha256,
-        findingsValidationEvidence,
-        findingsDispositionEvidence
-    });
+    const completedLaunchRestoration = findingsValidationEvidence?.payload.validation_result.accepted
+        && options.reviewerExecutionMode === 'delegated_subagent'
+        ? restoreCompletedLaunchAfterAcceptedFindingsCorrection({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerIdentity: options.reviewerIdentity,
+            invocationEvent,
+            timelineEvents
+        })
+        : null;
+    try {
+        return await writeReviewReceiptSnapshotsAndTelemetry({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            artifactPath: options.artifactPath,
+            artifactContent: options.reviewArtifactContent,
+            contextPath: options.contextPath,
+            rawReviewOutputPath: options.rawReviewOutputPath,
+            rawReviewOutputContent: options.rawReviewOutputContent,
+            rawReviewOutputSha256: options.rawReviewOutputSha256,
+            receipt: receipt as unknown as Record<string, unknown>,
+            receiptPayloadSha256,
+            artifactSha256,
+            findingsValidationEvidence,
+            findingsDispositionEvidence
+        });
+    } catch (error: unknown) {
+        try {
+            completedLaunchRestoration?.rollback();
+        } catch (rollbackError: unknown) {
+            throw new Error(
+                `Review receipt persistence failed and launch rollback also failed for '${options.reviewType}': ` +
+                `${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+                { cause: error }
+            );
+        }
+        throw error;
+    }
 }
 
 function validateFindingsOnlyReviewOutput(options: {
