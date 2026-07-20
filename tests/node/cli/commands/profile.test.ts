@@ -176,6 +176,19 @@ async function invokeUiProfileRequest(
     };
 }
 
+async function previewUiProfileRequest(
+    repoRoot: string,
+    actionToken: string,
+    payload: Record<string, unknown>
+): Promise<string> {
+    const response = await invokeUiProfileRequest(repoRoot, actionToken, { ...payload, mode: 'preview' });
+    assert.equal(response.status, 200);
+    const preview = await response.json();
+    assert.equal(preview.status, 'previewed');
+    assert.match(String(preview.preview_sha256), /^[a-f0-9]{64}$/u);
+    return String(preview.preview_sha256);
+}
+
 async function captureConsoleAsync(fn: () => Promise<unknown>): Promise<{ lines: string[]; result: unknown }> {
     const originalLog = console.log;
     const lines: string[] = [];
@@ -1546,16 +1559,22 @@ test('UI profile writer rebuilds its plan under the shared lock before persistin
         return originalWithProfilesDataLock(lockedProfilesPath, operation);
     };
     try {
-        const response = await invokeUiProfileRequest(repoRoot, 'profile-test-token', {
+        const action = {
             operation: 'create',
-            mode: 'execute',
             profile_name: 'ui-race',
-            copy_from: 'balanced',
-            confirmation: 'APPLY PROFILE CHANGE'
+            copy_from: 'balanced'
+        };
+        const previewSha256 = await previewUiProfileRequest(repoRoot, 'profile-test-token', action);
+        const response = await invokeUiProfileRequest(repoRoot, 'profile-test-token', {
+            ...action,
+            mode: 'execute',
+            confirmation: 'APPLY PROFILE CHANGE',
+            preview_sha256: previewSha256
         });
-        assert.equal(response.status, 500);
+        assert.equal(response.status, 409);
         const payload = await response.json();
-        assert.equal(payload.status, 'failed_to_apply');
+        assert.equal(payload.status, 'state_conflict');
+        assert.equal(payload.code, 'state_conflict');
         assert.match(String(payload.error), /already exists/iu);
         assert.equal(
             JSON.parse(fs.readFileSync(targetProfilesPath, 'utf8')).user_profiles['ui-race'].description,
@@ -1588,12 +1607,17 @@ test('UI profile writer recovers a pending policy audit before changing profiles
         after_config_sha256: preview.after_config_sha256
     })}\n`, 'utf8');
 
-    const response = await invokeUiProfileRequest(repoRoot, 'profile-test-token', {
+    const action = {
         operation: 'create',
-        mode: 'execute',
         profile_name: 'after-recovery',
-        copy_from: 'balanced',
-        confirmation: 'APPLY PROFILE CHANGE'
+        copy_from: 'balanced'
+    };
+    const previewSha256 = await previewUiProfileRequest(repoRoot, 'profile-test-token', action);
+    const response = await invokeUiProfileRequest(repoRoot, 'profile-test-token', {
+        ...action,
+        mode: 'execute',
+        confirmation: 'APPLY PROFILE CHANGE',
+        preview_sha256: previewSha256
     });
 
     assert.equal(response.status, 200);
@@ -1622,12 +1646,17 @@ test('UI profile writer reports executed when only post-commit lock release fail
     const originalFtruncateSync = fsModule.ftruncateSync;
     fsModule.ftruncateSync = () => { throw new Error('injected UI post-commit release failure'); };
     try {
-        const response = await invokeUiProfileRequest(repoRoot, 'profile-test-token', {
+        const action = {
             operation: 'create',
-            mode: 'execute',
             profile_name: 'committed-ui-profile',
-            copy_from: 'balanced',
-            confirmation: 'APPLY PROFILE CHANGE'
+            copy_from: 'balanced'
+        };
+        const previewSha256 = await previewUiProfileRequest(repoRoot, 'profile-test-token', action);
+        const response = await invokeUiProfileRequest(repoRoot, 'profile-test-token', {
+            ...action,
+            mode: 'execute',
+            confirmation: 'APPLY PROFILE CHANGE',
+            preview_sha256: previewSha256
         });
         assert.equal(response.status, 200);
         const payload = await response.json();

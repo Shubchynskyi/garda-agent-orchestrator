@@ -172,13 +172,30 @@ function readProfileForm(profileName) {
     review_policy: reviewPolicy
   };
 }
-async function submitProfileAction(payload, confirmation) {
-  const response = await fetch('/api/profiles', {
+async function submitProfileAction(payload) {
+  const previewResponse = await fetch('/api/profiles', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
-    body: JSON.stringify({ ...payload, mode: 'execute', confirmation })
+    body: JSON.stringify({ ...payload, mode: 'preview' })
   });
-  const result = await response.json();
+  const preview = await previewResponse.json();
+  renderProfileResult(preview);
+  if (!preview || preview.status !== 'previewed' || !/^[a-f0-9]{64}$/u.test(String(preview.preview_sha256 || ''))) {
+    return;
+  }
+  const confirmation = profileConfirmationPrompt();
+  if (confirmation === null) return;
+  const executeResponse = await fetch('/api/profiles', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
+    body: JSON.stringify({
+      ...payload,
+      mode: 'execute',
+      confirmation,
+      preview_sha256: preview.preview_sha256
+    })
+  });
+  const result = await executeResponse.json();
   renderProfileResult(result);
   if (result && result.status === 'executed') {
     if (payload && payload.operation === 'delete') {
@@ -216,9 +233,7 @@ function attachProfileActionHandlers() {
       } else {
         payload = { operation: action, profile_name: button.dataset.profileName || '' };
       }
-      const confirmation = profileConfirmationPrompt();
-      if (confirmation === null) return;
-      submitProfileAction(payload, confirmation);
+      submitProfileAction(payload);
     });
   }
 }

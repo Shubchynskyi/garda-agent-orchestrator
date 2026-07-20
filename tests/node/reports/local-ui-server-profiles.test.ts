@@ -33,6 +33,18 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             'origin': server.url.slice(0, -1),
             'x-garda-action-token': actionToken
         };
+        const previewProfileAction = async (payload: Record<string, unknown>): Promise<string> => {
+            const response = await fetch(`${server.url}api/profiles`, {
+                method: 'POST',
+                headers: actionHeaders,
+                body: JSON.stringify({ ...payload, mode: 'preview' })
+            });
+            assert.equal(response.status, 200);
+            const result = await response.json() as { status: string; preview_sha256: string };
+            assert.equal(result.status, 'previewed');
+            assert.match(result.preview_sha256, /^[a-f0-9]{64}$/u);
+            return result.preview_sha256;
+        };
 
         const listResponse = await fetch(`${server.url}api/profiles`);
         assert.equal(listResponse.status, 200);
@@ -55,16 +67,25 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.ok(list.review_types.some((reviewType) => reviewType.id === 'test'));
         assert.ok(list.profiles.some((profile) => profile.name === 'balanced' && profile.protected));
 
+        const createPayload = {
+            operation: 'create',
+            profile_name: 'custom-review',
+            copy_from: 'balanced',
+            description: 'Custom profile',
+            depth: '3',
+            review_policy: {
+                code: 'required',
+                test: 'auto',
+                performance: 'disabled',
+                security: true
+            }
+        };
         const createPreviewResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
             headers: actionHeaders,
             body: JSON.stringify({
-                operation: 'create',
+                ...createPayload,
                 mode: 'preview',
-                profile_name: 'custom-review',
-                copy_from: 'balanced',
-                description: 'Custom profile',
-                depth: '2'
             })
         });
         assert.equal(createPreviewResponse.status, 200);
@@ -73,11 +94,13 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             confirmation_phrase: string;
             changed_keys: string[];
             command: string;
+            preview_sha256: string;
         };
         assert.equal(createPreview.status, 'previewed');
         assert.equal(createPreview.confirmation_phrase, 'APPLY PROFILE CHANGE');
         assert.deepEqual(createPreview.changed_keys, ['user_profiles.custom-review']);
         assert.match(createPreview.command, /profile create custom-review/u);
+        assert.match(createPreview.preview_sha256, /^[a-f0-9]{64}$/u);
 
         const invalidNameResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
@@ -94,15 +117,76 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(invalidName.code, 'invalid_profile_request');
         assert.match(invalidName.error, /Profile name/u);
 
+        for (const previewSha256 of [undefined, 'not-a-sha256']) {
+            const invalidPreviewResponse = await fetch(`${server.url}api/profiles`, {
+                method: 'POST',
+                headers: actionHeaders,
+                body: JSON.stringify({
+                    ...createPayload,
+                    mode: 'execute',
+                    confirmation: 'APPLY PROFILE CHANGE',
+                    ...(previewSha256 === undefined ? {} : { preview_sha256: previewSha256 })
+                })
+            });
+            assert.equal(invalidPreviewResponse.status, 400);
+            const invalidPreview = await invalidPreviewResponse.json() as { code: string; error: string };
+            assert.equal(invalidPreview.code, 'invalid_profile_request');
+            assert.match(invalidPreview.error, /preview_sha256/u);
+        }
+
+        const mismatchedPreviewSha256 = `${createPreview.preview_sha256[0] === '0' ? '1' : '0'}${createPreview.preview_sha256.slice(1)}`;
+        const mismatchedPreviewResponse = await fetch(`${server.url}api/profiles`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                ...createPayload,
+                mode: 'execute',
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: mismatchedPreviewSha256
+            })
+        });
+        assert.equal(mismatchedPreviewResponse.status, 409);
+        const mismatchedPreview = await mismatchedPreviewResponse.json() as { code: string; status: string };
+        assert.equal(mismatchedPreview.code, 'state_conflict');
+        assert.equal(mismatchedPreview.status, 'state_conflict');
+        assert.equal(Object.hasOwn(
+            JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).user_profiles,
+            'custom-review'
+        ), false);
+
+        const driftPayload = { operation: 'select', profile_name: 'fast' };
+        const driftPreviewSha256 = await previewProfileAction(driftPayload);
+        const beforeDriftText = fs.readFileSync(profilesPath(repoRoot), 'utf8');
+        const driftedData = JSON.parse(beforeDriftText) as {
+            built_in_profiles: Record<string, { description: string }>;
+        };
+        driftedData.built_in_profiles.balanced.description = 'Changed after preview';
+        fs.writeFileSync(profilesPath(repoRoot), JSON.stringify(driftedData, null, 2), 'utf8');
+        const driftResponse = await fetch(`${server.url}api/profiles`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                ...driftPayload,
+                mode: 'execute',
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: driftPreviewSha256
+            })
+        });
+        assert.equal(driftResponse.status, 409);
+        const driftResult = await driftResponse.json() as { code: string; status: string };
+        assert.equal(driftResult.code, 'state_conflict');
+        assert.equal(driftResult.status, 'state_conflict');
+        assert.equal(JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).active_profile, 'balanced');
+        fs.writeFileSync(profilesPath(repoRoot), beforeDriftText, 'utf8');
+
         const createBlockedResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
             headers: actionHeaders,
             body: JSON.stringify({
-                operation: 'create',
+                ...createPayload,
                 mode: 'execute',
-                profile_name: 'custom-review',
-                copy_from: 'balanced',
-                confirmation: 'wrong'
+                confirmation: 'wrong',
+                preview_sha256: createPreview.preview_sha256
             })
         });
         assert.equal(createBlockedResponse.status, 409);
@@ -112,19 +196,10 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             method: 'POST',
             headers: actionHeaders,
             body: JSON.stringify({
-                operation: 'create',
+                ...createPayload,
                 mode: 'execute',
-                profile_name: 'custom-review',
-                copy_from: 'balanced',
-                description: 'Custom profile',
-                depth: '3',
-                review_policy: {
-                    code: 'required',
-                    test: 'auto',
-                    performance: 'disabled',
-                    security: true
-                },
-                confirmation: 'APPLY PROFILE CHANGE'
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: createPreview.preview_sha256
             })
         });
         assert.equal(createResponse.status, 200);
@@ -152,28 +227,32 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(deleteBuiltInResponse.status, 400);
         assert.equal((await deleteBuiltInResponse.json() as { code: string }).code, 'invalid_profile_request');
 
+        const selectPayload = { operation: 'select', profile_name: 'custom-review' };
+        const selectPreviewSha256 = await previewProfileAction(selectPayload);
         const selectResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
             headers: actionHeaders,
             body: JSON.stringify({
-                operation: 'select',
+                ...selectPayload,
                 mode: 'execute',
-                profile_name: 'custom-review',
-                confirmation: 'APPLY PROFILE CHANGE'
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: selectPreviewSha256
             })
         });
         assert.equal(selectResponse.status, 200);
         assert.equal((await selectResponse.json() as { status: string }).status, 'executed');
         assert.equal(JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).active_profile, 'custom-review');
 
+        const deletePayload = { operation: 'delete', profile_name: 'custom-review' };
+        const deletePreviewSha256 = await previewProfileAction(deletePayload);
         const deleteResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
             headers: actionHeaders,
             body: JSON.stringify({
-                operation: 'delete',
+                ...deletePayload,
                 mode: 'execute',
-                profile_name: 'custom-review',
-                confirmation: 'APPLY PROFILE CHANGE'
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: deletePreviewSha256
             })
         });
         assert.equal(deleteResponse.status, 200);
@@ -184,17 +263,22 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(Object.hasOwn(deletedData.user_profiles, 'custom-review'), false);
         assert.equal(deletedData.active_profile, 'balanced');
 
+        const saveBuiltInPayload = {
+            operation: 'save',
+            profile_name: 'balanced',
+            description: 'Locally edited balanced',
+            depth: '1',
+            review_policy: { code: true, test: true }
+        };
+        const saveBuiltInPreviewSha256 = await previewProfileAction(saveBuiltInPayload);
         const saveBuiltInResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
             headers: actionHeaders,
             body: JSON.stringify({
-                operation: 'save',
+                ...saveBuiltInPayload,
                 mode: 'execute',
-                profile_name: 'balanced',
-                description: 'Locally edited balanced',
-                depth: '1',
-                review_policy: { code: true, test: true },
-                confirmation: 'APPLY PROFILE CHANGE'
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: saveBuiltInPreviewSha256
             })
         });
         assert.equal(saveBuiltInResponse.status, 200);
@@ -206,16 +290,21 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(saveBuiltIn.proposed_value.source, 'built_in');
         assert.equal(JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).built_in_profiles.balanced.depth, 1);
 
+        const localizedCreatePayload = {
+            operation: 'create',
+            profile_name: 'ьестовый',
+            copy_from: 'balanced',
+            description: 'Localized profile'
+        };
+        const localizedCreatePreviewSha256 = await previewProfileAction(localizedCreatePayload);
         const localizedCreateResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
             headers: actionHeaders,
             body: JSON.stringify({
-                operation: 'create',
+                ...localizedCreatePayload,
                 mode: 'execute',
-                profile_name: 'ьестовый',
-                copy_from: 'balanced',
-                description: 'Localized profile',
-                confirmation: 'APPLY PROFILE CHANGE'
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: localizedCreatePreviewSha256
             })
         });
         assert.equal(localizedCreateResponse.status, 200);
@@ -224,14 +313,16 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         };
         assert.ok(Object.hasOwn(localizedData.user_profiles, 'ьестовый'));
 
+        const resetPayload = { operation: 'reset', profile_name: 'balanced' };
+        const resetPreviewSha256 = await previewProfileAction(resetPayload);
         const resetResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',
             headers: actionHeaders,
             body: JSON.stringify({
-                operation: 'reset',
+                ...resetPayload,
                 mode: 'execute',
-                profile_name: 'balanced',
-                confirmation: 'APPLY PROFILE CHANGE'
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: resetPreviewSha256
             })
         });
         assert.equal(resetResponse.status, 200);

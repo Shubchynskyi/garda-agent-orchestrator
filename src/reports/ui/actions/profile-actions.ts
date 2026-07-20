@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
-import * as path from 'node:path';
 import type * as http from 'node:http';
+import * as path from 'node:path';
 import {
     assertValidProfileName,
     buildPromptReadyProfileEntry,
@@ -19,6 +20,7 @@ import {
     writeProfilesDataUnlocked
 } from '../../../cli/commands/profile/profile-data';
 import { recoverPendingProfileFindingPolicyAudits } from '../../../cli/commands/profile/profile-finding-policy-mutation';
+import { hashProfilesData } from '../../../cli/commands/profile/profile-finding-policy';
 import type { ProfileEntry, ProfilesData } from '../../../cli/commands/profile/profile-types';
 import { joinOrchestratorPath } from '../../../gates/shared/helpers';
 import { buildProfilesTab } from '../../report-data-contract';
@@ -44,6 +46,7 @@ interface UiProfileRequest {
     description?: unknown;
     depth?: unknown;
     review_policy?: unknown;
+    preview_sha256?: unknown;
 }
 
 interface ProfileActionPlan {
@@ -55,6 +58,13 @@ interface ProfileActionPlan {
     command: string;
     apply: () => ProfilesData;
     proposedValue: Record<string, unknown>;
+}
+
+class ProfileStateConflictError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ProfileStateConflictError';
+    }
 }
 
 function normalizeProfileRequest(payload: unknown): UiProfileRequest {
@@ -299,6 +309,23 @@ function buildProfileActionPlan(repoRoot: string, payload: UiProfileRequest): Pr
     return buildSavePlan(data, payload);
 }
 
+function buildProfilePreviewSha256(plan: ProfileActionPlan): string {
+    return createHash('sha256').update(JSON.stringify({
+        schema_version: 1,
+        operation: plan.operation,
+        profile_name: plan.profileName,
+        proposed_config_sha256: hashProfilesData(plan.apply())
+    }), 'utf8').digest('hex');
+}
+
+function requirePreviewSha256(value: unknown): string {
+    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (!/^[a-f0-9]{64}$/u.test(normalized)) {
+        throw new Error('preview_sha256 must be a 64-character SHA-256 hex string from profile preview.');
+    }
+    return normalized;
+}
+
 function buildProfileResponsePayload(
     plan: ProfileActionPlan,
     mode: 'preview' | 'execute',
@@ -351,6 +378,7 @@ export async function handleUiProfileRequest(
     const mode = payload.mode === 'execute' ? 'execute' : 'preview';
     const timestampUtc = new Date().toISOString();
     if (mode === 'preview') {
+        const previewSha256 = buildProfilePreviewSha256(plan);
         const auditPath = appendUiActionAudit(repoRoot, {
             timestamp_utc: timestampUtc,
             action_id: `profile:${plan.operation}:${plan.profileName}`,
@@ -359,10 +387,18 @@ export async function handleUiProfileRequest(
             command: plan.command
         });
         sendJson(response, 200, buildProfileResponsePayload(plan, mode, 'previewed', {
+            preview_sha256: previewSha256,
             requires_confirmation: true,
             confirmation_phrase: PROFILE_CONFIRMATION_PHRASE,
             audit_path: auditPath
         }));
+        return;
+    }
+    let expectedPreviewSha256: string;
+    try {
+        expectedPreviewSha256 = requirePreviewSha256(payload.preview_sha256);
+    } catch (error) {
+        sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_profile_request');
         return;
     }
     if (payload.confirmation !== PROFILE_CONFIRMATION_PHRASE) {
@@ -388,7 +424,18 @@ export async function handleUiProfileRequest(
         try {
             plan = withProfilesDataLock(targetProfilesPath, () => {
                 recoverPendingProfileFindingPolicyAudits(bundleRoot, readProfilesData(targetProfilesPath));
-                const lockedPlan = buildProfileActionPlan(repoRoot, payload);
+                let lockedPlan: ProfileActionPlan;
+                try {
+                    lockedPlan = buildProfileActionPlan(repoRoot, payload);
+                } catch (error) {
+                    const reason = error instanceof Error ? error.message : String(error);
+                    throw new ProfileStateConflictError(
+                        `Profile state changed after preview; refresh the preview before executing. ${reason}`
+                    );
+                }
+                if (buildProfilePreviewSha256(lockedPlan) !== expectedPreviewSha256) {
+                    throw new ProfileStateConflictError('Profile state changed after preview; refresh the preview before executing.');
+                }
                 writeProfilesDataUnlocked(targetProfilesPath, lockedPlan.apply());
                 return lockedPlan;
             });
@@ -412,17 +459,24 @@ export async function handleUiProfileRequest(
         }));
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const stateConflict = error instanceof ProfileStateConflictError;
         const auditPath = appendUiActionAudit(repoRoot, {
             timestamp_utc: timestampUtc,
             action_id: `profile:${plan.operation}:${plan.profileName}`,
             mode,
-            status: 'failed_to_apply',
+            status: stateConflict ? 'state_conflict' : 'failed_to_apply',
             command: plan.command,
             error: message
         });
-        sendJson(response, 500, buildProfileResponsePayload(plan, mode, 'failed_to_apply', {
-            error: message,
-            audit_path: auditPath
-        }));
+        sendJson(response, stateConflict ? 409 : 500, buildProfileResponsePayload(
+            plan,
+            mode,
+            stateConflict ? 'state_conflict' : 'failed_to_apply',
+            {
+                ...(stateConflict ? { code: 'state_conflict' } : {}),
+                error: message,
+                audit_path: auditPath
+            }
+        ));
     }
 }

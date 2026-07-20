@@ -1082,3 +1082,72 @@ test('profiles tab renders required auto disabled policy controls without trigge
     assert.match(html, /id="profile-custom-review-review-performance"[\s\S]*<option value="required">[\s\S]*?<\/option>[\s\S]*<option value="auto">[\s\S]*?<\/option>[\s\S]*<option value="disabled" selected>[\s\S]*?<\/option>/u);
     assert.doesNotMatch(html, /data-profile-trigger|profileTrigger|review_trigger/u);
 });
+
+test('profile browser action previews before confirmation and binds execute to the preview hash', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const previewSha256 = 'a'.repeat(64);
+    const context = {
+        actionToken: 'test-token',
+        currentProfileActionResult: null,
+        profilesStatusNode: { innerHTML: '' },
+        renderSettingResultMarkup: () => '',
+        t: (key: string) => key,
+        window: {
+            prompt: () => 'APPLY PROFILE CHANGE'
+        },
+        fetch: async (_url: string, options: { body: string }) => {
+            const payload = JSON.parse(options.body) as Record<string, unknown>;
+            requests.push(payload);
+            return {
+                json: async () => requests.length === 1
+                    ? { status: 'previewed', preview_sha256: previewSha256 }
+                    : { status: 'confirmation_required' }
+            };
+        }
+    };
+
+    await vm.runInNewContext(
+        `${UI_DASHBOARD_CLIENT_PROFILES}\nsubmitProfileAction({ operation: 'select', profile_name: 'balanced' });`,
+        context
+    );
+
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].mode, 'preview');
+    assert.equal(requests[0].preview_sha256, undefined);
+    assert.equal(requests[1].mode, 'execute');
+    assert.equal(requests[1].confirmation, 'APPLY PROFILE CHANGE');
+    assert.equal(requests[1].preview_sha256, previewSha256);
+});
+
+test('profile browser action stops before confirmation when preview hash is invalid', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    let promptCalls = 0;
+    const context = {
+        actionToken: 'test-token',
+        currentProfileActionResult: null,
+        profilesStatusNode: { innerHTML: '' },
+        renderSettingResultMarkup: () => '',
+        t: (key: string) => key,
+        window: {
+            prompt: () => {
+                promptCalls += 1;
+                return 'APPLY PROFILE CHANGE';
+            }
+        },
+        fetch: async (_url: string, options: { body: string }) => {
+            requests.push(JSON.parse(options.body) as Record<string, unknown>);
+            return {
+                json: async () => ({ status: 'previewed', preview_sha256: 'not-a-sha256' })
+            };
+        }
+    };
+
+    await vm.runInNewContext(
+        `${UI_DASHBOARD_CLIENT_PROFILES}\nsubmitProfileAction({ operation: 'select', profile_name: 'balanced' });`,
+        context
+    );
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].mode, 'preview');
+    assert.equal(promptCalls, 0);
+});
