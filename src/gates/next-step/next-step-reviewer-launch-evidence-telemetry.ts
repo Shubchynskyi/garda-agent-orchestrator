@@ -118,6 +118,7 @@ export function hasControllerResumeAfterSequence(lines: string[], sequence: numb
 }
 
 export function hasMatchingReviewerProviderFailureTelemetry(options: {
+    timelineIntegrityVerified: boolean;
     lines: string[];
     taskId: string;
     reviewType: string;
@@ -129,8 +130,13 @@ export function hasMatchingReviewerProviderFailureTelemetry(options: {
     delegationStartedAtUtc: string;
     delegationStartedSequence: number | null;
     reviewerLaunchAttemptId?: string;
+    reviewerLaunchArtifactSha256?: string;
+    rejectedReviewerLaunchArtifactSha256?: string;
+    launchFailureStage?: string;
+    reviewFindingsValidationArtifactPath?: string;
+    reviewFindingsValidationArtifactSha256?: string;
 }): boolean {
-    if (options.delegationStartedSequence == null) {
+    if (!options.timelineIntegrityVerified || options.delegationStartedSequence == null) {
         return false;
     }
     const normalizedReviewContextSha256 = options.reviewContextSha256.toLowerCase();
@@ -179,6 +185,31 @@ export function hasMatchingReviewerProviderFailureTelemetry(options: {
                 && String(details.review_context_sha256 || details.reviewContextSha256 || '').trim().toLowerCase() === normalizedReviewContextSha256
                 && String(details.routing_event_sha256 || details.routingEventSha256 || '').trim().toLowerCase() === normalizedRoutingEventSha256
                 && (!options.reviewerLaunchAttemptId || getArtifactStringField(details, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId') === options.reviewerLaunchAttemptId)
+                && (!options.reviewerLaunchArtifactSha256 || getArtifactStringField(
+                    details,
+                    'reviewer_launch_artifact_sha256',
+                    'reviewerLaunchArtifactSha256'
+                ).toLowerCase() === options.reviewerLaunchArtifactSha256.toLowerCase())
+                && (!options.rejectedReviewerLaunchArtifactSha256 || getArtifactStringField(
+                    details,
+                    'rejected_reviewer_launch_artifact_sha256',
+                    'rejectedReviewerLaunchArtifactSha256'
+                ).toLowerCase() === options.rejectedReviewerLaunchArtifactSha256.toLowerCase())
+                && (!options.launchFailureStage || getArtifactStringField(
+                    details,
+                    'launch_failure_stage',
+                    'launchFailureStage'
+                ) === options.launchFailureStage)
+                && (!options.reviewFindingsValidationArtifactPath || normalizePath(getArtifactStringField(
+                    details,
+                    'review_findings_validation_artifact_path',
+                    'reviewFindingsValidationArtifactPath'
+                )) === normalizePath(options.reviewFindingsValidationArtifactPath))
+                && (!options.reviewFindingsValidationArtifactSha256 || getArtifactStringField(
+                    details,
+                    'review_findings_validation_artifact_sha256',
+                    'reviewFindingsValidationArtifactSha256'
+                ).toLowerCase() === options.reviewFindingsValidationArtifactSha256.toLowerCase())
                 && detailsProviderInvocationId === options.providerInvocationId
                 && String(details.delegation_started_at_utc || details.delegationStartedAtUtc || '').trim() === options.delegationStartedAtUtc
                 && (outcome === 'FAIL' || outcome === 'ERROR' || Boolean(failureReason))

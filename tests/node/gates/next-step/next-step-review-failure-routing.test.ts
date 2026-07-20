@@ -28,6 +28,12 @@ import {
     readReviewArtifactState
 } from '../../../../src/gates/next-step/next-step-review-artifact-readers';
 import {
+    getCurrentReviewerLaunchArtifactEvidenceForInvocation
+} from '../../../../src/gates/next-step/next-step-reviewer-launch-evidence';
+import {
+    inspectTaskEventFile
+} from '../../../../src/gate-runtime/task-events-integrity';
+import {
     buildReviewFindingsDispositionArtifact,
     getReviewFindingsDispositionArtifactPath,
     getReviewFindingsDispositionArtifactSnapshotPath
@@ -694,7 +700,7 @@ function writeJsonFocusedValidationReviewEvidence(
     const primaryObligation = coverageContract.obligations[0];
     const evidence = {
         location: `${requiredTestPath}:1`,
-        observation: 'The changed focused test requires a current task-owned focused validation run.'
+        observation: `The changed focused test ${requiredTestPath} requires a current task-owned focused validation run.`
     };
     const marker = `[garda:evidence-only:missing-focused-validation] test=${requiredTestPath}; action=run-and-record-focused-test`;
     const markerField = options.markerField ?? 'title';
@@ -706,8 +712,11 @@ function writeJsonFocusedValidationReviewEvidence(
         tree_state_sha256: String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || ''),
         validation_notes: [{
             id: 'N-001',
-            topic: 'Focused validation handoff',
-            note: 'Reviewed the focused-validation handoff evidence for the changed test scope.',
+            topic: 'focused-self-validation',
+            note: 'The reviewer attempted the smallest relevant focused test after prior execution evidence was unavailable.',
+            command: `node scripts/node-foundation/build-scripts.cjs test.js ${requiredTestPath}`,
+            command_outcome: 'unavailable',
+            diagnostics: 'The isolated reviewer environment could not execute the repository test wrapper.',
             evidence: [evidence]
         }],
         coverage_ledger: {
@@ -1257,13 +1266,13 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
     });
 
-    it('restarts the review cycle when rejected findings lack a current resolved reviewer attempt', () => {
+    it('restarts the review cycle when immutable failure telemetry authenticates the terminalized attempt', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
         seedCompilePass(repoRoot, TASK_ID);
         writeRejectedFindingsValidationReviewEvidence(repoRoot, TASK_ID, 'code');
-        fs.rmSync(path.join(
+        const launchArtifactPath = path.join(
             repoRoot,
             'garda-agent-orchestrator',
             'runtime',
@@ -1272,17 +1281,205 @@ describe('gates/next-step', () => {
             TASK_ID,
             'code',
             'reviewer-launch.json'
-        ));
+        );
+        const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        const rejectedLaunchArtifactSha256 = fileSha256(launchArtifactPath);
+        const validationArtifactPath = getReviewFindingsValidationArtifactPath(
+            path.join(reviewsRoot(repoRoot), `${TASK_ID}-code.md`)
+        );
+        const validationArtifactSha256 = fileSha256(validationArtifactPath);
+        const launchFailedAtUtc = '2026-04-28T00:00:14.000Z';
+        const failedLaunchArtifact = {
+            ...launchArtifact,
+            attestation_state: 'launch_failed',
+            launch_failure_stage: 'review_findings_validation',
+            launch_failure_reason: 'Review findings validation rejected the delegated reviewer output.',
+            launch_failed_at_utc: launchFailedAtUtc,
+            rejected_reviewer_launch_artifact_sha256: rejectedLaunchArtifactSha256,
+            review_findings_validation_artifact_path: validationArtifactPath.replace(/\\/g, '/'),
+            review_findings_validation_artifact_sha256: validationArtifactSha256
+        };
+        writeJson(launchArtifactPath, failedLaunchArtifact);
+        const failedLaunchArtifactSha256 = fileSha256(launchArtifactPath);
+        const unauthenticatedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(unauthenticatedResult.status, 'BLOCKED');
+        assert.equal(unauthenticatedResult.next_gate, 'restart-review-cycle');
+        assert.doesNotMatch(unauthenticatedResult.title, /Recover failed 'code' delegated reviewer launch/);
+        assert.match(unauthenticatedResult.reason, /current_attempt_not_launched|current_attempt_not_resolved/);
+
+        const failureIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_FAILED', 'FAIL', {
+            task_id: TASK_ID,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:code-reviewer',
+            reviewer_identity: 'agent:code-reviewer',
+            review_context_sha256: String(launchArtifact.review_context_sha256 || ''),
+            routing_event_sha256: String(launchArtifact.routing_event_sha256 || ''),
+            reviewer_launch_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
+            reviewer_launch_artifact_sha256: failedLaunchArtifactSha256,
+            rejected_reviewer_launch_artifact_sha256: rejectedLaunchArtifactSha256,
+            provider_invocation_id: String(launchArtifact.provider_invocation_id || ''),
+            delegation_started_at_utc: String(launchArtifact.delegation_started_at_utc || ''),
+            launch_failed_at_utc: launchFailedAtUtc,
+            launch_failure_stage: 'review_findings_validation',
+            launch_failure_reason: 'Review findings validation rejected the delegated reviewer output.',
+            review_findings_validation_artifact_path: validationArtifactPath.replace(/\\/g, '/'),
+            review_findings_validation_artifact_sha256: validationArtifactSha256
+        });
+
+        const timelinePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `${TASK_ID}.jsonl`
+        );
+        assert.match(inspectTaskEventFile(timelinePath, TASK_ID).status, /^PASS/u);
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const failedReviewState = readReviewArtifactState(
+            reviewsRoot(repoRoot),
+            TASK_ID,
+            'code',
+            preflightPath,
+            fileSha256(preflightPath),
+            JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+            repoRoot
+        );
+        const failedLaunchEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
+            repoRoot,
+            path.dirname(timelinePath),
+            TASK_ID,
+            failedReviewState
+        );
+        assert.equal(
+            failedLaunchEvidence.state,
+            'provider_failed',
+            JSON.stringify({ failedLaunchEvidence, failedReviewState })
+        );
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'restart-review-cycle');
-        assert.match(result.title, /Recover 'code' reviewer identity/);
-        assert.match(result.reason, /current_attempt_not_launched/);
+        assert.match(result.title, /Recover failed 'code' delegated reviewer launch/);
+        assert.match(result.reason, /provider recorded a failed launch/);
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
         assert.equal(result.commands[0].command.includes('record-review-result'), false);
         assert.equal(result.commands[0].command.includes('agent:pending'), false);
+        assert.match(failureIntegrity.event_sha256, /^[0-9a-f]{64}$/);
+
+        const validationArtifactContent = fs.readFileSync(validationArtifactPath);
+        fs.appendFileSync(validationArtifactPath, '\n', 'utf8');
+        const tamperedValidationResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(tamperedValidationResult.status, 'BLOCKED');
+        assert.equal(tamperedValidationResult.next_gate, 'restart-review-cycle');
+        assert.doesNotMatch(tamperedValidationResult.title, /Recover failed 'code' delegated reviewer launch/);
+        assert.ok(tamperedValidationResult.commands.every((entry) => !entry.command.includes('record-review-result')));
+
+        fs.writeFileSync(validationArtifactPath, validationArtifactContent);
+        const restoredValidationResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.match(restoredValidationResult.title, /Recover failed 'code' delegated reviewer launch/);
+
+        const timelineLines = fs.readFileSync(timelinePath, 'utf8').trim().split(/\r?\n/);
+        const lastEvent = JSON.parse(timelineLines[timelineLines.length - 1]) as Record<string, unknown>;
+        (lastEvent.integrity as Record<string, unknown>).event_sha256 = '0'.repeat(64);
+        timelineLines[timelineLines.length - 1] = JSON.stringify(lastEvent);
+        fs.writeFileSync(timelinePath, `${timelineLines.join('\n')}\n`, 'utf8');
+        const corruptedTimelineResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(corruptedTimelineResult.status, 'BLOCKED');
+        assert.equal(corruptedTimelineResult.next_gate, 'restart-review-cycle');
+        assert.doesNotMatch(corruptedTimelineResult.title, /Recover failed 'code' delegated reviewer launch/);
+        assert.ok(corruptedTimelineResult.commands.every((entry) => !entry.command.includes('record-review-result')));
+    });
+
+    it('authenticates ordinary provider failures for both launch-input modes and rejects tampered input evidence', () => {
+        for (const launchInputMode of ['copy_paste_prompt', 'launch_artifact_path'] as const) {
+            const repoRoot = makeTempRepo();
+            seedStartedTask(repoRoot, TASK_ID);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+            seedCompilePass(repoRoot, TASK_ID);
+            writeReviewEvidence(repoRoot, TASK_ID, 'code');
+            const launchArtifactPath = path.join(
+                repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                'reviews',
+                TASK_ID,
+                'code',
+                'reviewer-launch.json'
+            );
+            const launchArtifact = JSON.parse(
+                fs.readFileSync(launchArtifactPath, 'utf8')
+            ) as Record<string, unknown>;
+            launchArtifact.evidence_type = 'delegated_reviewer_launch_preparation';
+            launchArtifact.attestation_state = 'launch_failed';
+            launchArtifact.launch_failure_stage = 'provider_invocation';
+            launchArtifact.launch_failure_reason = 'Provider rejected delegated reviewer invocation.';
+            if (launchInputMode === 'launch_artifact_path') {
+                const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+                writeJson(launchInputArtifactPath, {
+                    schema_version: 1,
+                    task_id: TASK_ID,
+                    review_type: 'code',
+                    handoff: 'authenticated provider launch input'
+                });
+                const launchInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+                launchArtifact.launch_input_mode = launchInputMode;
+                launchArtifact.launch_input_sha256 = launchInputArtifactSha256;
+                launchArtifact.launch_input_artifact_path = normalizeForTimeline(launchInputArtifactPath);
+                launchArtifact.launch_input_artifact_sha256 = launchInputArtifactSha256;
+                launchArtifact.reviewer_launch_input_artifact_path = normalizeForTimeline(launchInputArtifactPath);
+                launchArtifact.reviewer_launch_input_artifact_sha256 = launchInputArtifactSha256;
+                launchArtifact.prepared_reviewer_launch_artifact_sha256 = 'a'.repeat(64);
+            }
+            writeJson(launchArtifactPath, launchArtifact);
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_FAILED', 'FAIL', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer',
+                reviewer_identity: 'agent:code-reviewer',
+                review_context_sha256: String(launchArtifact.review_context_sha256 || ''),
+                routing_event_sha256: String(launchArtifact.routing_event_sha256 || ''),
+                provider_invocation_id: String(launchArtifact.provider_invocation_id || ''),
+                delegation_started_at_utc: String(launchArtifact.delegation_started_at_utc || ''),
+                launch_failure_stage: 'provider_invocation',
+                provider_failure_reason: 'Provider rejected delegated reviewer invocation.'
+            });
+            const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+            const state = readReviewArtifactState(
+                reviewsRoot(repoRoot),
+                TASK_ID,
+                'code',
+                preflightPath,
+                fileSha256(preflightPath),
+                JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+                repoRoot
+            );
+            const evidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
+                repoRoot,
+                eventsRoot(repoRoot),
+                TASK_ID,
+                state
+            );
+            assert.equal(evidence.state, 'provider_failed', launchInputMode);
+
+            if (launchInputMode === 'launch_artifact_path') {
+                fs.appendFileSync(String(launchArtifact.reviewer_launch_input_artifact_path), '\n', 'utf8');
+            } else {
+                launchArtifact.launch_input_sha256 = '0'.repeat(64);
+                writeJson(launchArtifactPath, launchArtifact);
+            }
+            const tamperedEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
+                repoRoot,
+                eventsRoot(repoRoot),
+                TASK_ID,
+                state
+            );
+            assert.equal(tamperedEvidence.state, 'missing_or_invalid', launchInputMode);
+        }
     });
 
     it('routes fix_now findings-only review evidence to implementation remediation', () => {

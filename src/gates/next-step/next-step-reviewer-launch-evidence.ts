@@ -6,8 +6,13 @@ import {
     normalizeProviderId
 } from '../../core/provider-registry';
 import {
-    fileSha256
+    fileSha256,
+    isPathRealpathInsideRoot,
+    resolvePathInsideRepo
 } from '../shared/helpers';
+import {
+    inspectTaskEventFile
+} from '../../gate-runtime/task-events-integrity';
 import {
     resolveDefaultReviewScratchPath
 } from '../review/review-scratch-paths';
@@ -63,6 +68,108 @@ export interface CurrentReviewerLaunchArtifactEvidence {
     reviewerIdentity: string | null;
     reviewContextSha256: string | null;
     orphanedReason: string | null;
+}
+
+function resolveLaunchArtifactPathForPreparedEvent(options: {
+    repoRoot: string;
+    lines: string[];
+    preparedEventIndex: number;
+    preparedLaunchEventSha256: string;
+    preparedArtifactPath: unknown;
+    taskId: string;
+    reviewType: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+}): string {
+    const candidates: string[] = [];
+    const addCandidate = (rawPath: unknown): void => {
+        const resolved = resolveReviewerLaunchArtifactPathFromTelemetry(options.repoRoot, rawPath);
+        if (resolved && !candidates.some((candidate) => path.resolve(candidate) === path.resolve(resolved))) {
+            candidates.push(resolved);
+        }
+    };
+    for (let index = options.lines.length - 1; index > options.preparedEventIndex; index -= 1) {
+        try {
+            const event = JSON.parse(options.lines[index]) as Record<string, unknown>;
+            const details = isPlainRecord(event.details) ? event.details : {};
+            if (
+                getArtifactStringField(details, 'task_id', 'taskId') === options.taskId
+                && getArtifactStringField(details, 'review_type', 'reviewType') === options.reviewType
+                && getArtifactStringField(
+                    details,
+                    'review_context_sha256',
+                    'reviewContextSha256'
+                ).toLowerCase() === options.reviewContextSha256
+                && getArtifactStringField(
+                    details,
+                    'routing_event_sha256',
+                    'routingEventSha256'
+                ).toLowerCase() === options.routingEventSha256
+            ) {
+                addCandidate(getArtifactStringField(
+                    details,
+                    'reviewer_launch_artifact_path',
+                    'reviewerLaunchArtifactPath'
+                ));
+            }
+        } catch {
+            // Timeline integrity is verified before this helper is called.
+        }
+    }
+    addCandidate(options.preparedArtifactPath);
+    addCandidate(resolveDefaultReviewScratchPath(
+        options.repoRoot,
+        options.taskId,
+        options.reviewType,
+        'reviewer-launch.json'
+    ));
+    return candidates.find((candidate) => {
+        const artifact = safeReadJson(candidate);
+        return artifact != null
+            && getArtifactStringField(
+                artifact,
+                'prepared_launch_event_sha256',
+                'preparedLaunchEventSha256'
+            ).toLowerCase() === options.preparedLaunchEventSha256;
+    }) || candidates[0] || resolveDefaultReviewScratchPath(
+        options.repoRoot,
+        options.taskId,
+        options.reviewType,
+        'reviewer-launch.json'
+    );
+}
+
+function authenticateFindingsValidationArtifact(
+    repoRoot: string,
+    launchArtifact: Record<string, unknown>
+): { path: string; sha256: string } | null {
+    const claimedPath = getArtifactStringField(
+        launchArtifact,
+        'review_findings_validation_artifact_path',
+        'reviewFindingsValidationArtifactPath'
+    );
+    const claimedSha256 = getArtifactStringField(
+        launchArtifact,
+        'review_findings_validation_artifact_sha256',
+        'reviewFindingsValidationArtifactSha256'
+    ).toLowerCase();
+    try {
+        const resolvedPath = resolvePathInsideRepo(claimedPath, repoRoot, {
+            allowMissing: false,
+            enforceInside: true
+        });
+        if (
+            !resolvedPath
+            || !/^[0-9a-f]{64}$/.test(claimedSha256)
+            || !isPathRealpathInsideRoot(resolvedPath, repoRoot)
+            || fileSha256(resolvedPath)?.toLowerCase() !== claimedSha256
+        ) {
+            return null;
+        }
+        return { path: resolvedPath, sha256: claimedSha256 };
+    } catch {
+        return null;
+    }
 }
 
 function getReviewContextSha256CandidatesForInvocationMatching(
@@ -125,6 +232,10 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
     if (!fileExists(timelinePath)) {
         return missing;
     }
+    const timelineIntegrityStatus = inspectTaskEventFile(timelinePath, taskId).status;
+    if (timelineIntegrityStatus !== 'PASS' && timelineIntegrityStatus !== 'PASS_WITH_LEGACY_PREFIX') {
+        return missing;
+    }
     const lines = fs.readFileSync(timelinePath, 'utf8')
         .split('\n')
         .map((line) => line.trim())
@@ -139,10 +250,17 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
             const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
             const details = isPlainRecord(event.details) ? event.details : {};
             const preparedLaunchEventSha256 = String(integrity?.event_sha256 || '').trim().toLowerCase();
-            const launchArtifactPath = resolveReviewerLaunchArtifactPathFromTelemetry(
+            const launchArtifactPath = resolveLaunchArtifactPathForPreparedEvent({
                 repoRoot,
-                details.reviewer_launch_artifact_path
-            ) || resolveDefaultReviewScratchPath(repoRoot, taskId, state.reviewType, 'reviewer-launch.json');
+                lines,
+                preparedEventIndex: index,
+                preparedLaunchEventSha256,
+                preparedArtifactPath: details.reviewer_launch_artifact_path,
+                taskId,
+                reviewType: state.reviewType,
+                reviewContextSha256,
+                routingEventSha256
+            });
             const launchArtifact = safeReadJson(launchArtifactPath);
             if (!launchArtifact) {
                 continue;
@@ -182,6 +300,11 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 'reviewer_launch_attempt_id',
                 'reviewerLaunchAttemptId'
             );
+            const preparedEventReviewerLaunchAttemptId = getArtifactStringField(
+                details,
+                'reviewer_launch_attempt_id',
+                'reviewerLaunchAttemptId'
+            );
             if (
                 !/^[0-9a-f]{64}$/.test(preparedLaunchEventSha256)
                 || !/^[0-9a-f]{64}$/.test(launchBindingSha256)
@@ -213,15 +336,28 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 || String(details.launch_binding_sha256 || '').trim().toLowerCase() !== launchBindingSha256
                 || (
                     reviewerLaunchAttemptId
-                    && getArtifactStringField(details, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId')
-                        !== reviewerLaunchAttemptId
+                    && preparedEventReviewerLaunchAttemptId
+                    && preparedEventReviewerLaunchAttemptId !== reviewerLaunchAttemptId
                 )
             ) {
                 continue;
             }
             const evidenceType = getArtifactStringField(launchArtifact, 'evidence_type', 'artifact_type');
             const attestationState = getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState');
-            const artifactDeclaresProviderFailure = evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+            const findingsValidationFailure = evidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+                && attestationState === 'launch_failed'
+                && getArtifactStringField(
+                    launchArtifact,
+                    'launch_failure_stage',
+                    'launchFailureStage'
+                ) === 'review_findings_validation';
+            const authenticatedFindingsValidationArtifact = findingsValidationFailure
+                ? authenticateFindingsValidationArtifact(repoRoot, launchArtifact)
+                : null;
+            const artifactDeclaresProviderFailure = (
+                evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+                || findingsValidationFailure
+            )
                 && PROVIDER_FAILED_ATTESTATION_STATES.has(attestationState)
                 && hasDelegationStartedEvidence(launchArtifact);
             const launchArtifactSha256 = fileSha256(launchArtifactPath);
@@ -332,7 +468,9 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 })
                 : null;
             const hasMatchingProviderFailure = artifactState === 'delegation_started'
+                && (!findingsValidationFailure || authenticatedFindingsValidationArtifact != null)
                 && hasMatchingReviewerProviderFailureTelemetry({
+                    timelineIntegrityVerified: true,
                     lines,
                     taskId,
                     reviewType: state.reviewType,
@@ -349,8 +487,49 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                     ),
                     delegationStartedAtUtc,
                     delegationStartedSequence: matchingDelegationStarted?.taskSequence ?? null,
+                    reviewerLaunchAttemptId,
+                    ...(findingsValidationFailure && authenticatedFindingsValidationArtifact
+                        ? {
+                            reviewerLaunchArtifactSha256: launchArtifactSha256 || '',
+                            rejectedReviewerLaunchArtifactSha256: getArtifactStringField(
+                                launchArtifact,
+                                'rejected_reviewer_launch_artifact_sha256',
+                                'rejectedReviewerLaunchArtifactSha256'
+                            ),
+                            launchFailureStage: 'review_findings_validation',
+                            reviewFindingsValidationArtifactPath: authenticatedFindingsValidationArtifact.path,
+                            reviewFindingsValidationArtifactSha256: authenticatedFindingsValidationArtifact.sha256
+                        }
+                        : {})
+                })
+                && (!findingsValidationFailure || hasMatchingReviewerLaunchCompletedTelemetry({
+                    lines,
+                    taskId,
+                    reviewType: state.reviewType,
+                    reviewerIdentity,
+                    plannedReviewerIdentity,
+                    reviewContextSha256: matchedReviewContextSha256,
+                    routingEventSha256,
+                    launchArtifactSha256: getArtifactStringField(
+                        launchArtifact,
+                        'rejected_reviewer_launch_artifact_sha256',
+                        'rejectedReviewerLaunchArtifactSha256'
+                    ),
+                    providerInvocationId: getArtifactStringField(
+                        launchArtifact,
+                        'provider_invocation_id',
+                        'providerInvocationId',
+                        'controller_invocation_id',
+                        'controllerInvocationId'
+                    ),
+                    delegationStartedAtUtc,
+                    launchCompletedAtUtc: getArtifactStringField(
+                        launchArtifact,
+                        'launch_completed_at_utc',
+                        'launchCompletedAtUtc'
+                    ),
                     reviewerLaunchAttemptId
-                });
+                }));
             if (
                 artifactState === 'delegation_started'
                 && hasMatchingProviderFailure
@@ -379,28 +558,54 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 || artifactState === 'provider_failed'
                 || artifactState === 'orphaned'
             ) {
-                launchInputArtifactPath = resolveReviewerLaunchArtifactPathFromTelemetry(
-                    repoRoot,
-                    getArtifactStringField(
-                        launchArtifact,
-                        'reviewer_launch_input_artifact_path',
-                        'reviewerLaunchInputArtifactPath'
-                    )
-                );
-                if (!launchInputArtifactPath || !fileExists(launchInputArtifactPath)) {
-                    continue;
-                }
-                const pinnedInputArtifactSha256 = getArtifactStringField(
+                const launchInputMode = getArtifactStringField(
                     launchArtifact,
-                    'reviewer_launch_input_artifact_sha256',
-                    'reviewerLaunchInputArtifactSha256'
+                    'launch_input_mode',
+                    'launchInputMode'
                 ).toLowerCase();
-                launchInputArtifactSha256 = fileSha256(launchInputArtifactPath);
-                if (
-                    !launchInputArtifactSha256
-                    || !/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)
-                    || launchInputArtifactSha256 !== pinnedInputArtifactSha256
-                ) {
+                if (launchInputMode === 'launch_artifact_path') {
+                    launchInputArtifactPath = resolveReviewerLaunchArtifactPathFromTelemetry(
+                        repoRoot,
+                        getArtifactStringField(
+                            launchArtifact,
+                            'reviewer_launch_input_artifact_path',
+                            'reviewerLaunchInputArtifactPath'
+                        )
+                    );
+                    if (!launchInputArtifactPath || !fileExists(launchInputArtifactPath)) {
+                        continue;
+                    }
+                    const pinnedInputArtifactSha256 = getArtifactStringField(
+                        launchArtifact,
+                        'reviewer_launch_input_artifact_sha256',
+                        'reviewerLaunchInputArtifactSha256'
+                    ).toLowerCase();
+                    launchInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+                    if (
+                        !launchInputArtifactSha256
+                        || !/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)
+                        || launchInputArtifactSha256 !== pinnedInputArtifactSha256
+                    ) {
+                        continue;
+                    }
+                } else if (launchInputMode === 'copy_paste_prompt') {
+                    const launchInputSha256 = getArtifactStringField(
+                        launchArtifact,
+                        'launch_input_sha256',
+                        'launchInputSha256'
+                    ).toLowerCase();
+                    const copyPastePromptSha256 = getArtifactStringField(
+                        launchArtifact,
+                        'copy_paste_reviewer_launch_prompt_sha256',
+                        'copyPasteReviewerLaunchPromptSha256'
+                    ).toLowerCase();
+                    if (
+                        !/^[0-9a-f]{64}$/.test(launchInputSha256)
+                        || launchInputSha256 !== copyPastePromptSha256
+                    ) {
+                        continue;
+                    }
+                } else {
                     continue;
                 }
             }

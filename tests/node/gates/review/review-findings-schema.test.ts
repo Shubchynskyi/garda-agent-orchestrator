@@ -1080,6 +1080,55 @@ test('validateReviewFindingsReport requires every focused target to be named by 
     )));
 });
 
+test('validateReviewFindingsReport accepts a no-findings focused target named by authenticated evidence location', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The reviewer ran the smallest relevant changed test target.',
+        command: 'node --test tests/node/example.test.ts',
+        command_outcome: 'passed',
+        diagnostics: 'The focused target completed thirty tests without any reported failures.',
+        evidence: [evidence(
+            'tests/node/example.test.ts:42',
+            'This changed test directly exercises the parser behavior reviewed in the assigned scope.'
+        )]
+    }];
+
+    const result = validateReviewFindingsReport(report, {
+        ...validationOptions,
+        expectedChangedFilePaths: ['src/example.ts', 'tests/node/example.test.ts']
+    });
+
+    assert.equal(result.valid, true, result.violations.join('\n'));
+});
+
+test('validateReviewFindingsReport rejects a near-match focused evidence location', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The reviewer ran a focused test target.',
+        command: 'node --test tests/node/example.test.ts',
+        command_outcome: 'passed',
+        diagnostics: 'The focused target completed thirty tests without any reported failures.',
+        evidence: [evidence(
+            'tests/node/example.test.ts.backup:42',
+            'This changed backup file motivated a focused local check.'
+        )]
+    }];
+
+    const result = validateReviewFindingsReport(report, {
+        ...validationOptions,
+        expectedChangedFilePaths: ['src/example.ts', 'tests/node/example.test.ts.backup']
+    });
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => (
+        entry.includes('authenticated changed-file evidence must name the exact focused command target')
+    )));
+});
+
 test('validateReviewFindingsReport rejects traversal in focused marker targets and commands', () => {
     const report = missingFocusedValidationReport();
     const finding = (report.findings as Record<string, Array<Record<string, unknown>>>).medium[0];

@@ -11,7 +11,8 @@ import {
 } from '../../../../gate-runtime/review-context';
 import { fileSha256 } from '../../../../gate-runtime/hash';
 import {
-    emitReviewRecordedEventAsync
+    emitReviewRecordedEventAsync,
+    emitReviewerLaunchFailedEventAsync
 } from '../../../../gate-runtime/lifecycle-events';
 import {
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
@@ -23,12 +24,16 @@ import {
 } from '../../../../gate-runtime/review/reviewer-identity-contract';
 import {
     assertReviewArtifactFileSha256,
+    writeReviewArtifactJson,
     writeReviewArtifactsWithRollback
 } from '../../../../gate-runtime/review-artifacts';
 import {
+    acquireFilesystemLockAsync,
     assertValidTaskId,
+    releaseFilesystemLock,
     taskEventAppendHasBlockingFailure
 } from '../../../../gate-runtime/task-events';
+import { inspectTaskEventFile } from '../../../../gate-runtime/task-events-integrity';
 import {
     buildDomainScopeFingerprints
 } from '../../../../gates/scope/domain-scope-fingerprints';
@@ -85,6 +90,12 @@ import {
 import {
     resolveReviewOutputInput
 } from './review-output-input';
+import {
+    resolveReviewerLaunchArtifactPathForWrite
+} from '../launch/review-artifact-path-support';
+import {
+    isCompletedReviewerLaunchAttemptConsumed
+} from '../launch/reviewer-handoff-support';
 import {
     assertReviewReceiptRoutingMatchesContext
 } from './review-receipt-validation';
@@ -273,6 +284,615 @@ async function writeRejectedReviewFindingsValidationEvidence(evidence: ReviewFin
             'Review findings validation snapshot'
         );
     });
+}
+
+function getArtifactStringField(artifact: Record<string, unknown>, ...keys: string[]): string {
+    for (const key of keys) {
+        const value = artifact[key];
+        if (value != null && String(value).trim()) {
+            return String(value).trim();
+        }
+    }
+    return '';
+}
+
+function normalizeArtifactPathForComparison(value: string): string {
+    if (!String(value || '').trim()) {
+        return '';
+    }
+    const normalized = normalizePath(path.resolve(value));
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function findCompletedReviewerLaunchAttempt(
+    timelineEvents: ReturnType<typeof readDependencyTimelineEvents>,
+    launchArtifact: Record<string, unknown>,
+    launchArtifactPath: string,
+    launchArtifactSha256: string
+): ReturnType<typeof readDependencyTimelineEvents>[number] | null {
+    const reviewerLaunchAttemptId = getArtifactStringField(
+        launchArtifact,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId'
+    ).toLowerCase();
+    const reviewType = getArtifactStringField(launchArtifact, 'review_type', 'reviewType').toLowerCase();
+    const reviewerIdentity = getArtifactStringField(
+        launchArtifact,
+        'reviewer_identity',
+        'reviewerIdentity'
+    );
+    const reviewContextSha256 = getArtifactStringField(
+        launchArtifact,
+        'review_context_sha256',
+        'reviewContextSha256'
+    ).toLowerCase();
+    if (!reviewerLaunchAttemptId || !reviewType || !reviewerIdentity || !reviewContextSha256) {
+        return null;
+    }
+    const normalizedLaunchArtifactPath = normalizeArtifactPathForComparison(launchArtifactPath);
+    return timelineEvents.find((event) => event.event_type === 'REVIEWER_LAUNCH_COMPLETED'
+        && !!event.details
+        && !!event.integrity
+        && getArtifactStringField(
+            event.details,
+            'reviewer_launch_attempt_id',
+            'reviewerLaunchAttemptId'
+        ).toLowerCase() === reviewerLaunchAttemptId
+        && getArtifactStringField(event.details, 'review_type', 'reviewType').toLowerCase() === reviewType
+        && getArtifactStringField(event.details, 'reviewer_identity', 'reviewerIdentity') === reviewerIdentity
+        && getArtifactStringField(
+            event.details,
+            'review_context_sha256',
+            'reviewContextSha256'
+        ).toLowerCase() === reviewContextSha256
+        && normalizeArtifactPathForComparison(getArtifactStringField(
+            event.details,
+            'reviewer_launch_artifact_path',
+            'reviewerLaunchArtifactPath'
+        )) === normalizedLaunchArtifactPath
+        && getArtifactStringField(
+            event.details,
+            'reviewer_launch_artifact_sha256',
+            'reviewerLaunchArtifactSha256'
+        ).toLowerCase() === launchArtifactSha256.toLowerCase()) || null;
+}
+
+function hasRecordedReviewerLaunchFailure(
+    timelineEvents: ReturnType<typeof readDependencyTimelineEvents>,
+    launchArtifact: Record<string, unknown>,
+    launchArtifactPath: string,
+    launchArtifactSha256: string
+): boolean {
+    const reviewerLaunchAttemptId = getArtifactStringField(
+        launchArtifact,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId'
+    ).toLowerCase();
+    const reviewType = getArtifactStringField(launchArtifact, 'review_type', 'reviewType').toLowerCase();
+    const reviewerIdentity = getArtifactStringField(
+        launchArtifact,
+        'reviewer_identity',
+        'reviewerIdentity'
+    );
+    const reviewContextSha256 = getArtifactStringField(
+        launchArtifact,
+        'review_context_sha256',
+        'reviewContextSha256'
+    ).toLowerCase();
+    const normalizedLaunchArtifactPath = normalizeArtifactPathForComparison(launchArtifactPath);
+    const validationArtifactPath = normalizeArtifactPathForComparison(getArtifactStringField(
+        launchArtifact,
+        'review_findings_validation_artifact_path',
+        'reviewFindingsValidationArtifactPath'
+    ));
+    const validationArtifactSha256 = getArtifactStringField(
+        launchArtifact,
+        'review_findings_validation_artifact_sha256',
+        'reviewFindingsValidationArtifactSha256'
+    ).toLowerCase();
+    return !!reviewerLaunchAttemptId && !!reviewType && !!reviewerIdentity && !!reviewContextSha256
+        && !!validationArtifactPath && !!validationArtifactSha256
+        && timelineEvents.some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'
+            && !!event.details
+            && !!event.integrity
+            && getArtifactStringField(
+                event.details,
+                'reviewer_launch_attempt_id',
+                'reviewerLaunchAttemptId'
+            ).toLowerCase() === reviewerLaunchAttemptId
+            && getArtifactStringField(event.details, 'review_type', 'reviewType').toLowerCase() === reviewType
+            && getArtifactStringField(event.details, 'reviewer_identity', 'reviewerIdentity') === reviewerIdentity
+            && getArtifactStringField(
+                event.details,
+                'review_context_sha256',
+                'reviewContextSha256'
+            ).toLowerCase() === reviewContextSha256
+            && getArtifactStringField(
+                event.details,
+                'launch_failure_stage',
+                'launchFailureStage'
+            ) === 'review_findings_validation'
+            && normalizeArtifactPathForComparison(getArtifactStringField(
+                event.details,
+                'reviewer_launch_artifact_path',
+                'reviewerLaunchArtifactPath'
+            )) === normalizedLaunchArtifactPath
+            && getArtifactStringField(
+                event.details,
+                'reviewer_launch_artifact_sha256',
+                'reviewerLaunchArtifactSha256'
+            ).toLowerCase() === launchArtifactSha256.toLowerCase()
+            && getArtifactStringField(
+                event.details,
+                'review_findings_validation_artifact_sha256',
+                'reviewFindingsValidationArtifactSha256'
+            ).toLowerCase() === validationArtifactSha256
+            && normalizeArtifactPathForComparison(getArtifactStringField(
+                event.details,
+                'review_findings_validation_artifact_path',
+                'reviewFindingsValidationArtifactPath'
+            )) === validationArtifactPath);
+}
+
+interface ReviewArtifactFileSnapshot {
+    path: string;
+    existed: boolean;
+    content: Buffer | null;
+}
+
+function assertReviewArtifactRollbackPathSafe(repoRoot: string, pathValue: string): void {
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    const resolvedPath = path.resolve(pathValue);
+    if (!gateHelpers.isPathRealpathInsideRoot(resolvedPath, resolvedRepoRoot, { allowMissing: true })) {
+        throw new Error(
+            `Review findings validation rollback path must stay inside repo root: ${normalizePath(resolvedPath)}.`
+        );
+    }
+    const relativePath = path.relative(resolvedRepoRoot, resolvedPath);
+    let currentPath = resolvedRepoRoot;
+    for (const segment of relativePath.split(path.sep).filter(Boolean)) {
+        currentPath = path.join(currentPath, segment);
+        if (fs.existsSync(currentPath) && fs.lstatSync(currentPath).isSymbolicLink()) {
+            throw new Error(
+                `Review findings validation rollback path must not traverse symlinks or junctions: ` +
+                `${normalizePath(currentPath)}.`
+            );
+        }
+    }
+}
+
+function captureReviewArtifactFile(repoRoot: string, pathValue: string): ReviewArtifactFileSnapshot {
+    assertReviewArtifactRollbackPathSafe(repoRoot, pathValue);
+    const pathExists = fs.existsSync(pathValue);
+    if (pathExists && !fs.lstatSync(pathValue).isFile()) {
+        throw new Error(
+            `Review findings validation rollback family members must be regular files: ${normalizePath(pathValue)}.`
+        );
+    }
+    const existed = pathExists;
+    return {
+        path: pathValue,
+        existed,
+        content: existed ? fs.readFileSync(pathValue) : null
+    };
+}
+
+function restoreReviewArtifactFile(repoRoot: string, snapshot: ReviewArtifactFileSnapshot): void {
+    assertReviewArtifactRollbackPathSafe(repoRoot, snapshot.path);
+    if (snapshot.existed && snapshot.content) {
+        fs.writeFileSync(snapshot.path, snapshot.content);
+        return;
+    }
+    fs.rmSync(snapshot.path, { force: true });
+}
+
+function captureReviewArtifactFamily(repoRoot: string, artifactPath: string): ReviewArtifactFileSnapshot[] {
+    const artifactDirectory = path.dirname(artifactPath);
+    assertReviewArtifactRollbackPathSafe(repoRoot, artifactDirectory);
+    const artifactExtension = path.extname(artifactPath);
+    const artifactStem = path.basename(artifactPath, artifactExtension);
+    if (!fs.existsSync(artifactDirectory) || !fs.lstatSync(artifactDirectory).isDirectory()) {
+        return [captureReviewArtifactFile(repoRoot, artifactPath)];
+    }
+    const familyPaths = fs.readdirSync(artifactDirectory)
+        .filter((name) => name === path.basename(artifactPath)
+            || (name.startsWith(`${artifactStem}-`) && name.endsWith(artifactExtension)))
+        .map((name) => path.join(artifactDirectory, name));
+    if (!familyPaths.includes(artifactPath)) {
+        familyPaths.push(artifactPath);
+    }
+    return familyPaths.map((familyPath) => captureReviewArtifactFile(repoRoot, familyPath));
+}
+
+function restoreReviewArtifactFamily(
+    repoRoot: string,
+    artifactPath: string,
+    snapshots: ReviewArtifactFileSnapshot[]
+): void {
+    const artifactDirectory = path.dirname(artifactPath);
+    assertReviewArtifactRollbackPathSafe(repoRoot, artifactDirectory);
+    const artifactExtension = path.extname(artifactPath);
+    const artifactStem = path.basename(artifactPath, artifactExtension);
+    if (fs.existsSync(artifactDirectory) && fs.lstatSync(artifactDirectory).isDirectory()) {
+        fs.readdirSync(artifactDirectory)
+            .filter((name) => name === path.basename(artifactPath)
+                || (name.startsWith(`${artifactStem}-`) && name.endsWith(artifactExtension)))
+            .forEach((name) => {
+                const familyPath = path.join(artifactDirectory, name);
+                assertReviewArtifactRollbackPathSafe(repoRoot, familyPath);
+                if (!fs.lstatSync(familyPath).isFile()) {
+                    return;
+                }
+                fs.rmSync(familyPath, { force: true });
+            });
+    }
+    snapshots.forEach((snapshot) => restoreReviewArtifactFile(repoRoot, snapshot));
+}
+
+async function emitFindingsValidationLaunchFailure(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    launchArtifact: Record<string, unknown>;
+    launchArtifactPath: string;
+    launchArtifactSha256: string;
+    rejectedLaunchArtifactSha256: string;
+    rejectedAtUtc: string;
+    validationReason: string;
+    validationArtifactPath: string;
+    validationArtifactSha256: string;
+}): Promise<Awaited<ReturnType<typeof emitReviewerLaunchFailedEventAsync>>> {
+    return emitReviewerLaunchFailedEventAsync(
+        gateHelpers.joinOrchestratorPath(options.repoRoot, ''),
+        options.taskId,
+        options.reviewType,
+        'delegated_subagent',
+        options.reviewerIdentity,
+        options.reviewContextSha256,
+        getArtifactStringField(options.launchArtifact, 'routing_event_sha256', 'routingEventSha256'),
+        {
+            launchDetails: {
+                reviewer_launch_attempt_id: getArtifactStringField(
+                    options.launchArtifact,
+                    'reviewer_launch_attempt_id',
+                    'reviewerLaunchAttemptId'
+                ) || null,
+                reviewer_launch_artifact_path: normalizePath(options.launchArtifactPath),
+                reviewer_launch_artifact_sha256: options.launchArtifactSha256,
+                rejected_reviewer_launch_artifact_sha256: options.rejectedLaunchArtifactSha256,
+                provider_invocation_id: getArtifactStringField(
+                    options.launchArtifact,
+                    'provider_invocation_id',
+                    'providerInvocationId'
+                ) || null,
+                controller_invocation_id: getArtifactStringField(
+                    options.launchArtifact,
+                    'controller_invocation_id',
+                    'controllerInvocationId'
+                ) || null,
+                delegation_started_at_utc: getArtifactStringField(
+                    options.launchArtifact,
+                    'delegation_started_at_utc',
+                    'delegationStartedAtUtc'
+                ) || null,
+                launch_failed_at_utc: options.rejectedAtUtc,
+                launch_failure_stage: 'review_findings_validation',
+                launch_failure_reason: options.validationReason,
+                review_findings_validation_artifact_path: normalizePath(options.validationArtifactPath),
+                review_findings_validation_artifact_sha256: options.validationArtifactSha256
+            }
+        }
+    );
+}
+
+async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    preflightPath: string;
+    reviewContextPath: string;
+    reviewOutputSourcePath?: string | null;
+    reviewOutputSourceMtimeUtc?: string | null;
+    failureRecordedBy: 'record-review-result' | 'record-review-receipt';
+    validationEvidence: ReviewFindingsValidationEvidence;
+    persistValidationEvidence: () => Promise<void>;
+}): Promise<void> {
+    const reviewContextSha256 = fileSha256(options.reviewContextPath) || '';
+    const timelinePath = gateHelpers.joinOrchestratorPath(
+        options.repoRoot,
+        path.join('runtime', 'task-events', `${options.taskId}.jsonl`)
+    );
+    if (!inspectTaskEventFile(timelinePath, options.taskId).status.startsWith('PASS')) {
+        await options.persistValidationEvidence();
+        return;
+    }
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    const boundInvocation = [...timelineEvents].reverse().find((event) => {
+        if (event.event_type !== 'REVIEWER_INVOCATION_ATTESTED' || !event.details || !event.integrity) {
+            return false;
+        }
+        return getArtifactStringField(event.details, 'task_id', 'taskId') === options.taskId
+            && getArtifactStringField(event.details, 'review_type', 'reviewType').toLowerCase() === options.reviewType
+            && getArtifactStringField(event.details, 'reviewer_identity', 'reviewerIdentity') === options.reviewerIdentity
+            && getArtifactStringField(event.details, 'review_context_sha256', 'reviewContextSha256').toLowerCase() === reviewContextSha256
+            && !!getArtifactStringField(
+                event.details,
+                'reviewer_launch_artifact_sha256',
+                'reviewerLaunchArtifactSha256'
+            );
+    });
+    if (!boundInvocation?.details) {
+        await options.persistValidationEvidence();
+        return;
+    }
+    const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        artifactPathValue: getArtifactStringField(
+            boundInvocation.details,
+            'reviewer_launch_artifact_path',
+            'reviewerLaunchArtifactPath'
+        ) || undefined
+    });
+    if (!fs.existsSync(launchArtifactPath) || !fs.statSync(launchArtifactPath).isFile()) {
+        await options.persistValidationEvidence();
+        return;
+    }
+
+    const originalArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
+    let launchArtifact: Record<string, unknown>;
+    try {
+        const parsed = JSON.parse(originalArtifactText) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            await options.persistValidationEvidence();
+            return;
+        }
+        launchArtifact = parsed as Record<string, unknown>;
+    } catch {
+        await options.persistValidationEvidence();
+        return;
+    }
+
+    const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
+    const launchIdentityMatches = getArtifactStringField(launchArtifact, 'task_id', 'taskId') === options.taskId
+        && getArtifactStringField(launchArtifact, 'review_type', 'reviewType').toLowerCase() === options.reviewType
+        && getArtifactStringField(launchArtifact, 'reviewer_execution_mode', 'reviewerExecutionMode') === 'delegated_subagent'
+        && getArtifactStringField(launchArtifact, 'reviewer_identity', 'reviewerIdentity') === options.reviewerIdentity
+        && getArtifactStringField(launchArtifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase() === reviewContextSha256;
+    if (!launchIdentityMatches) {
+        await options.persistValidationEvidence();
+        return;
+    }
+    const attestationState = getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState');
+    if (
+        attestationState === 'launch_failed'
+        && getArtifactStringField(launchArtifact, 'launch_failure_stage', 'launchFailureStage') === 'review_findings_validation'
+    ) {
+        if (hasRecordedReviewerLaunchFailure(timelineEvents, launchArtifact, launchArtifactPath, launchArtifactSha256)) {
+            return;
+        }
+        const rejectedLaunchArtifactSha256 = getArtifactStringField(
+            launchArtifact,
+            'rejected_reviewer_launch_artifact_sha256',
+            'rejectedReviewerLaunchArtifactSha256'
+        ).toLowerCase();
+        const invocationLaunchArtifactSha256 = getArtifactStringField(
+            boundInvocation.details,
+            'reviewer_launch_artifact_sha256',
+            'reviewerLaunchArtifactSha256'
+        ).toLowerCase();
+        if (
+            !rejectedLaunchArtifactSha256
+            || rejectedLaunchArtifactSha256 !== invocationLaunchArtifactSha256
+            || !findCompletedReviewerLaunchAttempt(
+                timelineEvents,
+                launchArtifact,
+                launchArtifactPath,
+                rejectedLaunchArtifactSha256
+            )
+            || isCompletedReviewerLaunchAttemptConsumed(timelineEvents, launchArtifact)
+        ) {
+            throw new Error(
+                `Rejected findings recovery cannot authenticate the original completed launch for '${options.reviewType}'.`
+            );
+        }
+        const storedValidationArtifactPath = gateHelpers.resolvePathInsideRepo(
+            getArtifactStringField(
+                launchArtifact,
+                'review_findings_validation_artifact_path',
+                'reviewFindingsValidationArtifactPath'
+            ),
+            options.repoRoot,
+            { allowMissing: true }
+        );
+        const storedValidationArtifactSha256 = getArtifactStringField(
+            launchArtifact,
+            'review_findings_validation_artifact_sha256',
+            'reviewFindingsValidationArtifactSha256'
+        ).toLowerCase();
+        const expectedValidationArtifactPath = normalizeArtifactPathForComparison(
+            options.validationEvidence.artifactPath
+        );
+        if (
+            !storedValidationArtifactPath
+            || !storedValidationArtifactSha256
+            || normalizeArtifactPathForComparison(storedValidationArtifactPath) !== expectedValidationArtifactPath
+            || storedValidationArtifactSha256 !== options.validationEvidence.artifactSha256.toLowerCase()
+            || fileSha256(storedValidationArtifactPath)?.toLowerCase() !== storedValidationArtifactSha256
+        ) {
+            throw new Error(
+                `Rejected findings recovery cannot authenticate persisted validation evidence for '${options.reviewType}'.`
+            );
+        }
+        const replayedFailureEvent = await emitFindingsValidationLaunchFailure({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerIdentity: options.reviewerIdentity,
+            reviewContextSha256,
+            launchArtifact,
+            launchArtifactPath,
+            launchArtifactSha256,
+            rejectedLaunchArtifactSha256,
+            rejectedAtUtc: getArtifactStringField(
+                launchArtifact,
+                'launch_failed_at_utc',
+                'launchFailedAtUtc'
+            ) || new Date().toISOString(),
+            validationReason: getArtifactStringField(
+                launchArtifact,
+                'launch_failure_reason',
+                'launchFailureReason'
+            ) || 'Review findings validation rejected the delegated reviewer output.',
+            validationArtifactPath: storedValidationArtifactPath,
+            validationArtifactSha256: storedValidationArtifactSha256
+        });
+        if (!replayedFailureEvent || taskEventAppendHasBlockingFailure(replayedFailureEvent, false)) {
+            throw new Error(
+                `Rejected findings recovery requires REVIEWER_LAUNCH_FAILED telemetry for '${options.reviewType}'.`
+            );
+        }
+        return;
+    }
+    if (
+        attestationState !== 'launched'
+        || getArtifactStringField(
+            boundInvocation.details,
+            'reviewer_launch_artifact_sha256',
+            'reviewerLaunchArtifactSha256'
+        ).toLowerCase() !== launchArtifactSha256
+        || !launchArtifactSha256
+    ) {
+        await options.persistValidationEvidence();
+        return;
+    }
+    const completedLaunchAttempt = findCompletedReviewerLaunchAttempt(
+        timelineEvents,
+        launchArtifact,
+        launchArtifactPath,
+        launchArtifactSha256
+    );
+    if (!completedLaunchAttempt) {
+        await options.persistValidationEvidence();
+        return;
+    }
+    if (isCompletedReviewerLaunchAttemptConsumed(timelineEvents, launchArtifact)) {
+        return;
+    }
+    const validationArtifactSnapshots = captureReviewArtifactFamily(
+        options.repoRoot,
+        options.validationEvidence.artifactPath
+    );
+    const boundReviewOutputPath = getArtifactStringField(
+        launchArtifact,
+        'review_output_path',
+        'reviewOutputPath'
+    );
+    const resolvedBoundReviewOutputPath = gateHelpers.resolvePathInsideRepo(
+        boundReviewOutputPath,
+        options.repoRoot,
+        { allowMissing: true }
+    );
+    const resolvedReviewOutputSourcePath = gateHelpers.resolvePathInsideRepo(
+        String(options.reviewOutputSourcePath || ''),
+        options.repoRoot,
+        { allowMissing: true }
+    );
+    const comparablePath = (value: string): string => {
+        const resolved = path.resolve(value);
+        return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    };
+    if (
+        !resolvedBoundReviewOutputPath
+        || !resolvedReviewOutputSourcePath
+        || comparablePath(resolvedBoundReviewOutputPath) !== comparablePath(resolvedReviewOutputSourcePath)
+        || !options.reviewOutputSourceMtimeUtc
+    ) {
+        await options.persistValidationEvidence();
+        return;
+    }
+    const reviewOutputSourceMtimeMs = Date.parse(options.reviewOutputSourceMtimeUtc);
+    const completionEventTimestampMs = Date.parse(getArtifactStringField(
+        completedLaunchAttempt.details || {},
+        'launch_completed_at_utc',
+        'launchCompletedAtUtc'
+    ));
+    if (
+        !Number.isFinite(reviewOutputSourceMtimeMs)
+        || !Number.isFinite(completionEventTimestampMs)
+        || reviewOutputSourceMtimeMs > completionEventTimestampMs
+    ) {
+        await options.persistValidationEvidence();
+        return;
+    }
+    assertReviewOutputNotOlderThanDelegation({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightPath: options.preflightPath,
+        repoRoot: options.repoRoot,
+        reviewerExecutionMode: 'delegated_subagent',
+        reviewerIdentity: options.reviewerIdentity,
+        reviewOutputSourcePath: resolvedReviewOutputSourcePath,
+        reviewOutputSourceMtimeUtc: options.reviewOutputSourceMtimeUtc,
+        delegationStartedAtUtc: getArtifactStringField(
+            launchArtifact,
+            'delegation_started_at_utc',
+            'delegationStartedAtUtc'
+        )
+    });
+    await options.persistValidationEvidence();
+
+    const rejectedAtUtc = new Date().toISOString();
+    const validationReason = options.validationEvidence.payload.validation_result.violations.join(' ')
+        || 'Review findings validation rejected the delegated reviewer output.';
+    const failedArtifact = {
+        ...launchArtifact,
+        attestation_state: 'launch_failed',
+        launch_failure_stage: 'review_findings_validation',
+        launch_failure_reason: validationReason,
+        launch_failed_at_utc: rejectedAtUtc,
+        launch_failure_recorded_by: options.failureRecordedBy,
+        rejected_reviewer_launch_artifact_sha256: launchArtifactSha256,
+        review_findings_validation_artifact_path: normalizePath(options.validationEvidence.artifactPath),
+        review_findings_validation_artifact_sha256: options.validationEvidence.artifactSha256,
+        review_result_rejected_at_utc: rejectedAtUtc
+    };
+    let failedEvent: Awaited<ReturnType<typeof emitReviewerLaunchFailedEventAsync>> = null;
+    try {
+        writeReviewArtifactJson(launchArtifactPath, failedArtifact);
+        const failedArtifactSha256 = fileSha256(launchArtifactPath) || '';
+        failedEvent = await emitFindingsValidationLaunchFailure({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerIdentity: options.reviewerIdentity,
+            reviewContextSha256,
+            launchArtifact,
+            launchArtifactPath,
+            launchArtifactSha256: failedArtifactSha256,
+            rejectedLaunchArtifactSha256: launchArtifactSha256,
+            rejectedAtUtc,
+            validationReason,
+            validationArtifactPath: options.validationEvidence.artifactPath,
+            validationArtifactSha256: options.validationEvidence.artifactSha256
+        });
+    } catch (error: unknown) {
+        fs.writeFileSync(launchArtifactPath, originalArtifactText, 'utf8');
+        restoreReviewArtifactFamily(options.repoRoot, options.validationEvidence.artifactPath, validationArtifactSnapshots);
+        throw error;
+    }
+    if (!failedEvent || taskEventAppendHasBlockingFailure(failedEvent, false)) {
+        fs.writeFileSync(launchArtifactPath, originalArtifactText, 'utf8');
+        restoreReviewArtifactFamily(options.repoRoot, options.validationEvidence.artifactPath, validationArtifactSnapshots);
+        throw new Error(
+            `Rejected findings recovery requires REVIEWER_LAUNCH_FAILED telemetry for '${options.reviewType}'. ` +
+            'The immutable launch artifact was restored because telemetry could not be persisted.'
+        );
+    }
 }
 
 function summarizeReviewFindingsValidationEvidence(evidence: ReviewFindingsValidationEvidence): Record<string, unknown> {
@@ -691,7 +1311,19 @@ async function recordReviewReceiptFromArtifacts(options: {
     }
     if (findingsValidation && (!findingsValidation.detected || !findingsValidation.valid || !findingsValidation.report)) {
         if (findingsValidationEvidence) {
-            await writeRejectedReviewFindingsValidationEvidence(findingsValidationEvidence);
+            await terminalizeCompletedLaunchAfterFindingsRejection({
+                repoRoot: options.repoRoot,
+                taskId: options.taskId,
+                reviewType: options.reviewType,
+                reviewerIdentity: options.reviewerIdentity,
+                preflightPath: options.preflightPath,
+                reviewContextPath: options.contextPath,
+                reviewOutputSourcePath: options.rawReviewOutputSourcePath ?? options.rawReviewOutputPath ?? null,
+                reviewOutputSourceMtimeUtc: options.rawReviewOutputSourceMtimeUtc,
+                failureRecordedBy: 'record-review-receipt',
+                validationEvidence: findingsValidationEvidence,
+                persistValidationEvidence: () => writeRejectedReviewFindingsValidationEvidence(findingsValidationEvidence)
+            });
         }
         const validationMessage = findingsValidation.detected
             ? findingsValidation.violations.join(' ')
@@ -827,7 +1459,7 @@ function validateFindingsOnlyReviewOutput(options: {
     return validation;
 }
 
-async function handleRecordReviewResultWithDependencies(
+async function handleRecordReviewResultUnlocked(
     gateArgv: string[],
     dependencies: ReviewResultHandlersDependencies
 ): Promise<void> {
@@ -927,7 +1559,19 @@ async function handleRecordReviewResultWithDependencies(
                 reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
                 coverageContract: parsedReviewContext.coverage_contract as ReviewCoverageContract | null | undefined
             });
-            await writeRejectedReviewFindingsValidationEvidence(findingsValidationEvidence);
+            await terminalizeCompletedLaunchAfterFindingsRejection({
+                repoRoot,
+                taskId,
+                reviewType,
+                reviewerIdentity,
+                preflightPath,
+                reviewContextPath: contextPath,
+                reviewOutputSourcePath: reviewOutput.reviewOutputSourcePath,
+                reviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
+                failureRecordedBy: 'record-review-result',
+                validationEvidence: findingsValidationEvidence,
+                persistValidationEvidence: () => writeRejectedReviewFindingsValidationEvidence(findingsValidationEvidence)
+            });
             const validationMessage = findingsValidation.detected
                 ? findingsValidation.violations.join(' ')
                 : 'review output must be a JSON object.';
@@ -1120,7 +1764,7 @@ async function handleRecordReviewResultWithDependencies(
     console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
 }
 
-async function handleRecordReviewReceiptWithDependencies(
+async function handleRecordReviewReceiptUnlocked(
     gateArgv: string[],
     dependencies: ReviewResultHandlersDependencies
 ): Promise<void> {
@@ -1171,6 +1815,62 @@ async function handleRecordReviewReceiptWithDependencies(
     }, dependencies);
     console.log(`REVIEW_RECORDED: ${reviewType} (Receipt: ${normalizePath(receiptPath)})`);
     console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
+}
+
+async function handleRecordReviewReceiptWithDependencies(
+    gateArgv: string[],
+    dependencies: ReviewResultHandlersDependencies
+): Promise<void> {
+    const { options: rawOptions } = parseOptions(gateArgv, recordReviewReceiptOptionDefinitions(), {
+        allowPositionals: false
+    });
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = String(options.reviewType || '').trim().toLowerCase();
+    if (!REVIEW_CONTRACTS.some(([candidate]) => candidate === reviewType)) {
+        throw new Error(`Unsupported review type '${reviewType || 'missing'}' for record-review-receipt.`);
+    }
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    const resultLockPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'tmp', 'reviews', taskId, reviewType, '.record-review-result.lock')
+    );
+    const { handle } = await acquireFilesystemLockAsync(resultLockPath, {
+        ownerLabel: `record-review-result:${taskId}:${reviewType}`
+    });
+    try {
+        await handleRecordReviewReceiptUnlocked(gateArgv, dependencies);
+    } finally {
+        releaseFilesystemLock(handle);
+    }
+}
+
+async function handleRecordReviewResultWithDependencies(
+    gateArgv: string[],
+    dependencies: ReviewResultHandlersDependencies
+): Promise<void> {
+    const { options: rawOptions } = parseOptions(gateArgv, recordReviewResultOptionDefinitions(), {
+        allowPositionals: false
+    });
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = String(options.reviewType || '').trim().toLowerCase();
+    if (!REVIEW_CONTRACTS.some(([candidate]) => candidate === reviewType)) {
+        throw new Error(`Unsupported review type '${reviewType || 'missing'}' for record-review-result.`);
+    }
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    const resultLockPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'tmp', 'reviews', taskId, reviewType, '.record-review-result.lock')
+    );
+    const { handle } = await acquireFilesystemLockAsync(resultLockPath, {
+        ownerLabel: `record-review-result:${taskId}:${reviewType}`
+    });
+    try {
+        await handleRecordReviewResultUnlocked(gateArgv, dependencies);
+    } finally {
+        releaseFilesystemLock(handle);
+    }
 }
 
 export function createReviewResultHandlers(dependencies: ReviewResultHandlersDependencies): ReviewResultHandlers {

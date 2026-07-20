@@ -24,6 +24,12 @@ import {
     seedPromptBoundReviewFixture
 } from './gates-command-review-result-fixtures';
 import { createHash } from 'node:crypto';
+import * as os from 'node:os';
+import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
+import { readReviewArtifactState } from '../../../../../../src/gates/next-step/next-step-review-artifact-readers';
+import {
+    getCurrentReviewerLaunchArtifactEvidenceForInvocation
+} from '../../../../../../src/gates/next-step/next-step-reviewer-launch-evidence';
 
 function buildNoFindingCoverageLedger(reviewContextPath: string): string[] {
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
@@ -212,6 +218,73 @@ function profileNeutralValidationSnapshot(validationArtifact: Record<string, unk
     const profileNeutralResult = { ...validationResult };
     delete profileNeutralResult.bindings;
     return profileNeutralResult;
+}
+
+function rebindCompletedLaunchAttemptForTest(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    reviewContextPath: string;
+    launchArtifactPath: string;
+    reviewerLaunchAttemptId: string;
+    reviewOutputPath?: string;
+    recordCompletion?: boolean;
+}): void {
+    const invocationEvent = [...readTaskTimelineEvents(options.repoRoot, options.taskId)]
+        .reverse()
+        .find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+    assert.ok(invocationEvent?.details);
+    const launchArtifact = JSON.parse(fs.readFileSync(options.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+    launchArtifact.reviewer_launch_attempt_id = options.reviewerLaunchAttemptId;
+    launchArtifact.review_output_path = (
+        options.reviewOutputPath || path.join(path.dirname(options.launchArtifactPath), 'review-output.md')
+    ).replace(/\\/g, '/');
+    const reboundLaunchCompletedAtUtc = options.recordCompletion ? new Date().toISOString() : null;
+    if (reboundLaunchCompletedAtUtc) {
+        launchArtifact.launch_completed_at_utc = reboundLaunchCompletedAtUtc;
+    }
+    fs.writeFileSync(options.launchArtifactPath, `${JSON.stringify(launchArtifact, null, 2)}\n`, 'utf8');
+    const reviewContextSha256 = createHash('sha256')
+        .update(fs.readFileSync(options.reviewContextPath))
+        .digest('hex');
+    const launchArtifactSha256 = createHash('sha256')
+        .update(fs.readFileSync(options.launchArtifactPath))
+        .digest('hex');
+    const reboundDetails = {
+        ...(invocationEvent.details as Record<string, unknown>),
+        reviewer_launch_attempt_id: options.reviewerLaunchAttemptId,
+        reviewer_launch_artifact_path: options.launchArtifactPath.replace(/\\/g, '/'),
+        reviewer_launch_artifact_sha256: launchArtifactSha256,
+        review_context_sha256: reviewContextSha256,
+        ...(reboundLaunchCompletedAtUtc ? { launch_completed_at_utc: reboundLaunchCompletedAtUtc } : {})
+    };
+    if (options.recordCompletion) {
+        appendTaskEvent(
+            getOrchestratorRoot(options.repoRoot),
+            options.taskId,
+            'REVIEWER_DELEGATION_STARTED',
+            'INFO',
+            'Reviewer delegation start rebound by lifecycle regression fixture.',
+            reboundDetails
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(options.repoRoot),
+            options.taskId,
+            'REVIEWER_LAUNCH_COMPLETED',
+            'PASS',
+            'Reviewer launch completion rebound by lifecycle regression fixture.',
+            reboundDetails
+        );
+    }
+    appendTaskEvent(
+        getOrchestratorRoot(options.repoRoot),
+        options.taskId,
+        'REVIEWER_INVOCATION_ATTESTED',
+        'INFO',
+        'Reviewer invocation rebound by lifecycle regression fixture.',
+        reboundDetails
+    );
 }
 
 describe('gates command review result - normalization', () => {
@@ -1108,6 +1181,16 @@ describe('gates command review result - normalization', () => {
             reviewContextPath: fixture.reviewContextPath,
             reviewerIdentity: fixture.reviewerIdentity
         });
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'accepted-result-attempt',
+            recordCompletion: true
+        });
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
@@ -1141,6 +1224,76 @@ describe('gates command review result - normalization', () => {
         assert.equal(coverage.status, 'PASS');
         assert.equal(coverage.completed_obligation_count, coverage.obligation_count);
         assert.equal(receipt.review_output_format, 'findings_json');
+        const acceptedValidationArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-findings-validation.json`
+        );
+        const acceptedValidationArtifactSha256 = createHash('sha256')
+            .update(fs.readFileSync(acceptedValidationArtifactPath))
+            .digest('hex');
+        const rejectedReplay = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        rejectedReplay.validation_notes = [];
+        const unboundReplayOutputPath = path.join(reviewOutputDir, 'unbound-invalid-replay.md');
+        fs.writeFileSync(unboundReplayOutputPath, `${JSON.stringify(rejectedReplay, null, 2)}\n`, 'utf8');
+        const replayResult = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', unboundReplayOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.notEqual(replayResult.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+            'launched',
+            'an accepted attempt must not be relabeled after an invalid replay'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
+        );
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(acceptedValidationArtifactPath)).digest('hex'),
+            acceptedValidationArtifactSha256,
+            'an invalid replay must not replace accepted validation evidence'
+        );
+        assert.equal(
+            JSON.parse(fs.readFileSync(acceptedValidationArtifactPath, 'utf8')).validation_result.status,
+            'accepted'
+        );
+        const completedLaunchArtifactText = fs.readFileSync(fixture.launchArtifactPath, 'utf8');
+        const completedLaunchArtifactSha256 = createHash('sha256')
+            .update(completedLaunchArtifactText)
+            .digest('hex');
+        fs.writeFileSync(fixture.launchArtifactPath, `${JSON.stringify({
+            ...JSON.parse(completedLaunchArtifactText),
+            attestation_state: 'launch_failed',
+            launch_failure_stage: 'review_findings_validation',
+            rejected_reviewer_launch_artifact_sha256: completedLaunchArtifactSha256,
+            review_findings_validation_artifact_path: acceptedValidationArtifactPath.replace(/\\/g, '/'),
+            review_findings_validation_artifact_sha256: acceptedValidationArtifactSha256
+        }, null, 2)}\n`, 'utf8');
+        const relabeledReplayResult = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', unboundReplayOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.notEqual(relabeledReplayResult.exitCode, 0);
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false,
+            'mutable failed-state relabel must not create authenticated failure telemetry'
+        );
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
@@ -1155,12 +1308,23 @@ describe('gates command review result - normalization', () => {
             reviewContextPath: fixture.reviewContextPath,
             reviewerIdentity: fixture.reviewerIdentity
         });
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'stale-rejected-output-attempt',
+            recordCompletion: true
+        });
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         const report = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
         report.validation_notes = [];
         fs.writeFileSync(reviewOutputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+        fs.utimesSync(reviewOutputPath, new Date('2026-01-01T00:00:00.000Z'), new Date('2026-01-01T00:00:00.000Z'));
 
         const result = await runCliWithCapturedOutput([
             'gate',
@@ -1177,9 +1341,18 @@ describe('gates command review result - normalization', () => {
         assert.notEqual(result.exitCode, 0);
         assert.ok(
             result.errors.some((line) => (
-                line.includes('validation_notes must contain at least one validation note')
+                line.includes('review_output_source_mtime_utc')
             )),
             result.errors.join('\n')
+        );
+        assert.equal(
+            JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+            'launched'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
         );
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
@@ -1213,7 +1386,7 @@ describe('gates command review result - normalization', () => {
             '## Verdict', 'REVIEW PASSED'
         ].join('\n'), 'utf8');
 
-        const result = await runCliWithCapturedOutput([
+        const recordArgs = [
             'gate', 'record-review-result',
             '--task-id', taskId,
             '--review-type', 'code',
@@ -1222,7 +1395,8 @@ describe('gates command review result - normalization', () => {
             '--repo-root', repoRoot,
             '--reviewer-execution-mode', 'delegated_subagent',
             '--reviewer-identity', fixture.reviewerIdentity
-        ], { cwd: repoRoot });
+        ];
+        const result = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
 
         assert.equal(result.exitCode, 1);
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
@@ -1246,7 +1420,7 @@ describe('gates command review result - normalization', () => {
         const outputPath = path.join(fixture.reviewsRoot, `${taskId}-downgraded-output.md`);
         fs.writeFileSync(outputPath, '# Review\n\n## Verdict\nREVIEW PASSED\n', 'utf8');
 
-        const result = await runCliWithCapturedOutput([
+        const recordArgs = [
             'gate', 'record-review-result',
             '--task-id', taskId,
             '--review-type', 'code',
@@ -1255,7 +1429,38 @@ describe('gates command review result - normalization', () => {
             '--repo-root', repoRoot,
             '--reviewer-execution-mode', 'delegated_subagent',
             '--reviewer-identity', fixture.reviewerIdentity
-        ], { cwd: repoRoot });
+        ];
+        const taskEventsPath = path.join(
+            getOrchestratorRoot(repoRoot),
+            'runtime',
+            'task-events',
+            `${taskId}.jsonl`
+        );
+        const authenticatedTimeline = fs.readFileSync(taskEventsPath, 'utf8');
+        const corruptedTimelineLines = authenticatedTimeline.trim().split(/\r?\n/u);
+        const completedEvent = JSON.parse(
+            corruptedTimelineLines[corruptedTimelineLines.length - 1]
+        ) as Record<string, unknown>;
+        (completedEvent.integrity as Record<string, unknown>).event_sha256 = '0'.repeat(64);
+        corruptedTimelineLines[corruptedTimelineLines.length - 1] = JSON.stringify(completedEvent);
+        fs.writeFileSync(taskEventsPath, `${corruptedTimelineLines.join('\n')}\n`, 'utf8');
+
+        const unauthenticatedResult = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+
+        assert.notEqual(unauthenticatedResult.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+            'launched',
+            'corrupted completion-event integrity must not authorize terminalization'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
+        );
+        fs.writeFileSync(taskEventsPath, authenticatedTimeline, 'utf8');
+
+        const result = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
 
         assert.equal(result.exitCode, 1);
         assert.ok([...result.logs, ...result.errors].join('\n').includes('require review-context schema_version 3 or newer'));
@@ -1363,6 +1568,13 @@ describe('gates command review result - normalization', () => {
         assert.equal(receipt.review_output_contract.reviewer_identity, fixture.reviewerIdentity);
         assert.equal(receipt.review_findings_validation.status, 'accepted');
         assert.equal(receipt.review_findings_validation.accepted, true);
+        const acceptedLaunchArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8'));
+        assert.equal(acceptedLaunchArtifact.attestation_state, 'launched');
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
+        );
         assert.equal(receipt.review_output_contract.validation_artifact_sha256, receipt.review_findings_validation.artifact_sha256);
         assert.equal(
             receipt.review_output_contract.validation_result_sha256,
@@ -1712,6 +1924,30 @@ describe('gates command review result - normalization', () => {
             reviewContextPath: fixture.reviewContextPath,
             reviewerIdentity: fixture.reviewerIdentity
         });
+        const explicitLaunchArtifactPath = path.join(
+            path.dirname(fixture.launchArtifactPath),
+            'explicit-reviewer-launch.json'
+        );
+        fs.renameSync(fixture.launchArtifactPath, explicitLaunchArtifactPath);
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: explicitLaunchArtifactPath,
+            reviewerLaunchAttemptId: 'explicit-path-rejected-attempt',
+            reviewOutputPath: path.join(
+                repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                'reviews',
+                taskId,
+                'code',
+                'review-output.md'
+            )
+        });
         const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as {
             coverage_contract: {
                 contract_sha256: string;
@@ -1725,7 +1961,7 @@ describe('gates command review result - normalization', () => {
         const outputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(outputDir, { recursive: true });
         const outputPath = path.join(outputDir, 'review-output.md');
-        fs.writeFileSync(outputPath, `${JSON.stringify({
+        const invalidReviewOutput = `${JSON.stringify({
             schema_version: 1,
             task_id: taskId,
             review_type: 'code',
@@ -1746,7 +1982,358 @@ describe('gates command review result - normalization', () => {
             findings: { critical: [], high: [], medium: [], low: [] },
             residual_risks: [],
             reviewer_notes: []
+        }, null, 2)}\n`;
+        fs.writeFileSync(outputPath, invalidReviewOutput, 'utf8');
+
+        const recordArgs = [
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ];
+        const validationArtifactPath = path.join(fixture.reviewsRoot, `${taskId}-code-findings-validation.json`);
+        const incompleteResult = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+        assert.notEqual(incompleteResult.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(explicitLaunchArtifactPath, 'utf8')).attestation_state,
+            'launched'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
+        );
+        assert.equal(fs.existsSync(validationArtifactPath), true);
+        const incompleteValidationSha256 = createHash('sha256')
+            .update(fs.readFileSync(validationArtifactPath))
+            .digest('hex');
+        const invocationEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        assert.ok(invocationEvent?.details);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEWER_LAUNCH_COMPLETED',
+            'PASS',
+            'Stale launch completion fixture with mismatched launch-artifact hash.',
+            {
+                ...(invocationEvent.details as Record<string, unknown>),
+                reviewer_launch_artifact_sha256: '0'.repeat(64)
+            }
+        );
+
+        const staleCompletionResult = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+        assert.notEqual(staleCompletionResult.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(explicitLaunchArtifactPath, 'utf8')).attestation_state,
+            'launched'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
+        );
+        const incompleteValidationFamily = fs.readdirSync(fixture.reviewsRoot)
+            .filter((name) => name.startsWith(`${taskId}-code-findings-validation`))
+            .sort()
+            .map((name) => ({
+                name,
+                sha256: createHash('sha256')
+                    .update(fs.readFileSync(path.join(fixture.reviewsRoot, name)))
+                    .digest('hex')
+            }));
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: explicitLaunchArtifactPath,
+            reviewerLaunchAttemptId: 'explicit-path-rejected-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true
+        });
+        const unboundOutputPath = path.join(outputDir, 'unbound-invalid-output.md');
+        fs.writeFileSync(unboundOutputPath, invalidReviewOutput, 'utf8');
+        const unboundResult = await runCliWithCapturedOutput([
+            ...recordArgs.slice(0, 9),
+            unboundOutputPath,
+            ...recordArgs.slice(10)
+        ], { cwd: repoRoot });
+        assert.notEqual(unboundResult.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(explicitLaunchArtifactPath, 'utf8')).attestation_state,
+            'launched',
+            'an unbound output path must not terminalize an unconsumed completed attempt'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
+        );
+        const resultRecorderLockPath = path.join(
+            path.dirname(explicitLaunchArtifactPath),
+            '.record-review-result.lock'
+        );
+        fs.mkdirSync(resultRecorderLockPath, { recursive: true });
+        fs.writeFileSync(path.join(resultRecorderLockPath, 'owner.json'), `${JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString(),
+            owner_label: `record-review-result:${taskId}:code`
         }, null, 2)}\n`, 'utf8');
+        const concurrentResult = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+        assert.notEqual(concurrentResult.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(explicitLaunchArtifactPath, 'utf8')).attestation_state,
+            'launched',
+            'a concurrent result recorder must not enter the recovery transition'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
+        );
+        fs.rmSync(resultRecorderLockPath, { recursive: true, force: true });
+        const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
+        const lockPath = path.join(taskEventsRoot, `.${taskId}.lock`);
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), `${JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2)}\n`, 'utf8');
+
+        const rollbackResult = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+        assert.notEqual(rollbackResult.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(explicitLaunchArtifactPath, 'utf8')).attestation_state,
+            'launched'
+        );
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex'),
+            incompleteValidationSha256
+        );
+        assert.deepEqual(
+            fs.readdirSync(fixture.reviewsRoot)
+                .filter((name) => name.startsWith(`${taskId}-code-findings-validation`))
+                .sort()
+                .map((name) => ({
+                    name,
+                    sha256: createHash('sha256')
+                        .update(fs.readFileSync(path.join(fixture.reviewsRoot, name)))
+                        .digest('hex')
+                })),
+            incompleteValidationFamily
+        );
+        fs.rmSync(lockPath, { recursive: true, force: true });
+        const completedLaunchArtifactSha256 = createHash('sha256')
+            .update(fs.readFileSync(explicitLaunchArtifactPath))
+            .digest('hex');
+
+        const result = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(
+            result.errors.some((line) => line.includes('Verdict-free findings JSON report is invalid')),
+            result.errors.join('\n')
+        );
+        assert.equal(fs.existsSync(validationArtifactPath), true);
+        const validationArtifact = JSON.parse(fs.readFileSync(validationArtifactPath, 'utf8'));
+        assert.equal(validationArtifact.validation_result.status, 'rejected');
+        assert.equal(validationArtifact.validation_result.accepted, false);
+        assert.ok(validationArtifact.validation_result.violations.some((violation: string) =>
+            violation.includes('validation_notes must contain at least one validation note')
+        ));
+        assert.equal(
+            fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-findings-disposition.json`)),
+            false
+        );
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        assert.equal(fs.existsSync(outputPath), true, 'rejected reviewer output must remain available as audit evidence');
+        assert.equal(fs.existsSync(fixture.launchArtifactPath), false);
+        const failedLaunchArtifact = JSON.parse(fs.readFileSync(explicitLaunchArtifactPath, 'utf8'));
+        assert.equal(failedLaunchArtifact.attestation_state, 'launch_failed');
+        assert.equal(failedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
+        assert.equal(failedLaunchArtifact.launch_failure_recorded_by, 'record-review-result');
+        assert.equal(
+            failedLaunchArtifact.review_findings_validation_artifact_path,
+            validationArtifactPath.replace(/\\/g, '/')
+        );
+        assert.equal(
+            failedLaunchArtifact.review_findings_validation_artifact_sha256,
+            createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex')
+        );
+        assert.equal(
+            failedLaunchArtifact.rejected_reviewer_launch_artifact_sha256,
+            completedLaunchArtifactSha256
+        );
+        const failedLaunchArtifactSha256 = createHash('sha256')
+            .update(fs.readFileSync(explicitLaunchArtifactPath))
+            .digest('hex');
+        const rejectedValidationSha256 = createHash('sha256')
+            .update(fs.readFileSync(validationArtifactPath))
+            .digest('hex');
+        const failedLaunchEvent = readTaskTimelineEvents(repoRoot, taskId)
+            .find((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
+        assert.ok(failedLaunchEvent);
+        const failedLaunchEventDetails = failedLaunchEvent.details as Record<string, unknown>;
+        assert.equal(failedLaunchEventDetails.reviewer_launch_attempt_id, 'explicit-path-rejected-attempt');
+        assert.equal(failedLaunchEventDetails.review_type, 'code');
+        assert.equal(failedLaunchEventDetails.reviewer_identity, fixture.reviewerIdentity);
+        assert.equal(failedLaunchEventDetails.review_context_sha256, reviewContextSha256);
+        assert.equal(
+            failedLaunchEventDetails.launch_failure_stage,
+            'review_findings_validation'
+        );
+        assert.equal(
+            failedLaunchEventDetails.reviewer_launch_artifact_path,
+            explicitLaunchArtifactPath.replace(/\\/g, '/')
+        );
+        assert.equal(failedLaunchEventDetails.reviewer_launch_artifact_sha256, failedLaunchArtifactSha256);
+        assert.equal(
+            failedLaunchEventDetails.rejected_reviewer_launch_artifact_sha256,
+            completedLaunchArtifactSha256
+        );
+        assert.equal(
+            failedLaunchEventDetails.review_findings_validation_artifact_path,
+            validationArtifactPath.replace(/\\/g, '/')
+        );
+        assert.equal(
+            failedLaunchEventDetails.review_findings_validation_artifact_sha256,
+            rejectedValidationSha256
+        );
+        assert.match(
+            String((failedLaunchEvent.integrity as Record<string, unknown> | undefined)?.event_sha256 || ''),
+            /^[0-9a-f]{64}$/
+        );
+
+        const taskEventsPath = path.join(taskEventsRoot, `${taskId}.jsonl`);
+        const timelineWithoutFailure = fs.readFileSync(taskEventsPath, 'utf8')
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .filter((line) => JSON.parse(line).event_type !== 'REVIEWER_LAUNCH_FAILED');
+        fs.writeFileSync(taskEventsPath, `${timelineWithoutFailure.join('\n')}\n`, 'utf8');
+
+        const crashReplayResult = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+
+        assert.notEqual(crashReplayResult.exitCode, 0);
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(explicitLaunchArtifactPath)).digest('hex'),
+            failedLaunchArtifactSha256
+        );
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex'),
+            rejectedValidationSha256
+        );
+        const recoveredFailureEvents = readTaskTimelineEvents(repoRoot, taskId)
+            .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
+        assert.equal(recoveredFailureEvents.length, 1);
+        const recoveredFailedLaunchEvent = recoveredFailureEvents[0];
+        const recoveredFailureDetails = recoveredFailedLaunchEvent.details as Record<string, unknown>;
+        assert.equal(recoveredFailureDetails.reviewer_launch_attempt_id, 'explicit-path-rejected-attempt');
+        assert.equal(recoveredFailureDetails.reviewer_launch_artifact_sha256, failedLaunchArtifactSha256);
+        assert.equal(
+            recoveredFailureDetails.rejected_reviewer_launch_artifact_sha256,
+            completedLaunchArtifactSha256
+        );
+        assert.equal(
+            recoveredFailureDetails.review_findings_validation_artifact_sha256,
+            rejectedValidationSha256
+        );
+
+        fs.writeFileSync(outputPath, `${JSON.stringify({ schema_version: 1 }, null, 2)}\n`, 'utf8');
+        const replayResult = await runCliWithCapturedOutput(recordArgs, { cwd: repoRoot });
+
+        assert.notEqual(replayResult.exitCode, 0);
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(explicitLaunchArtifactPath)).digest('hex'),
+            failedLaunchArtifactSha256
+        );
+        assert.equal(
+            createHash('sha256').update(fs.readFileSync(validationArtifactPath)).digest('hex'),
+            rejectedValidationSha256
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED').length,
+            1
+        );
+        const currentPreflight = JSON.parse(fs.readFileSync(fixture.preflightPath, 'utf8')) as Record<string, unknown>;
+        const failedReviewState = readReviewArtifactState(
+            fixture.reviewsRoot,
+            taskId,
+            'code',
+            fixture.preflightPath,
+            createHash('sha256').update(fs.readFileSync(fixture.preflightPath)).digest('hex'),
+            currentPreflight,
+            repoRoot
+        );
+        const failedLaunchEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
+            repoRoot,
+            taskEventsRoot,
+            taskId,
+            failedReviewState
+        );
+        assert.equal(
+            failedLaunchEvidence.state,
+            'provider_failed',
+            JSON.stringify({ failedLaunchEvidence, failedReviewState })
+        );
+        assert.equal(failedLaunchEvidence.path, explicitLaunchArtifactPath);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result does not terminalize output rewritten after launch completion', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-post-completion-rewrite';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, `${JSON.stringify({ schema_version: 1 }, null, 2)}\n`, 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'post-completion-rewrite-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true
+        });
+        const completedAttempt = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_LAUNCH_COMPLETED'
+                && String((event.details as Record<string, unknown> | undefined)?.reviewer_launch_attempt_id || '')
+                    === 'post-completion-rewrite-attempt');
+        assert.ok(completedAttempt);
+        fs.writeFileSync(outputPath, `${JSON.stringify({ schema_version: 1, replaced: true }, null, 2)}\n`, 'utf8');
+        const postCompletionMtime = new Date(Date.parse(String(
+            (completedAttempt.details as Record<string, unknown> | undefined)?.launch_completed_at_utc || ''
+        )) + 1_000);
+        fs.utimesSync(outputPath, postCompletionMtime, postCompletionMtime);
 
         const result = await runCliWithCapturedOutput([
             'gate', 'record-review-result',
@@ -1760,23 +2347,245 @@ describe('gates command review result - normalization', () => {
         ], { cwd: repoRoot });
 
         assert.notEqual(result.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+            'launched'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
+        );
+        assert.equal(
+            fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-findings-validation.json`)),
+            true
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result terminalizes a completed launch when the first output is malformed JSON', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-result-malformed-first-output';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, '{ malformed reviewer output\n', 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'malformed-first-output-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true
+        });
+
+        const result = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        const validationArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-findings-validation.json`
+        );
+        const validationArtifact = JSON.parse(fs.readFileSync(validationArtifactPath, 'utf8')) as {
+            validation_result: { accepted: boolean; detected: boolean; violations: string[] };
+        };
+        assert.equal(validationArtifact.validation_result.accepted, false);
+        assert.equal(validationArtifact.validation_result.detected, false);
+        assert.ok(validationArtifact.validation_result.violations.includes('review output must be a JSON object.'));
+        const failedLaunchArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(failedLaunchArtifact.attestation_state, 'launch_failed');
+        assert.equal(failedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED').length,
+            1
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt terminalizes rejected findings from the bound canonical artifact', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-7-receipt-json-invalid-validation-artifact';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const artifactPath = path.join(fixture.reviewsRoot, `${taskId}-code.md`);
+        const invalidReport = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        invalidReport.validation_notes = [];
+        fs.writeFileSync(artifactPath, `${JSON.stringify(invalidReport, null, 2)}\n`, 'utf8');
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'receipt-rejected-attempt',
+            reviewOutputPath: artifactPath,
+            recordCompletion: true
+        });
+        const receiptArgs = [
+            'gate', 'record-review-receipt',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-context-path', fixture.reviewContextPath,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--repo-root', repoRoot
+        ];
+        const outsideValidationDirectory = fs.mkdtempSync(
+            path.join(os.tmpdir(), 'garda-findings-validation-outside-')
+        );
+        const outsideSentinelPath = path.join(outsideValidationDirectory, 'sentinel.txt');
+        const linkedValidationFamilyPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-findings-validation-external.json`
+        );
+        fs.writeFileSync(outsideSentinelPath, 'outside-validation-family', 'utf8');
+        try {
+            fs.symlinkSync(
+                outsideValidationDirectory,
+                linkedValidationFamilyPath,
+                process.platform === 'win32' ? 'junction' : 'dir'
+            );
+
+            const linkedValidationFamilyResult = await runCliWithCapturedOutput(receiptArgs, { cwd: repoRoot });
+
+            assert.notEqual(linkedValidationFamilyResult.exitCode, 0);
+            assert.ok(
+                linkedValidationFamilyResult.errors.some((line) =>
+                    line.includes('Review findings validation rollback path must stay inside repo root')
+                    || line.includes('must not traverse symlinks or junctions')
+                ),
+                linkedValidationFamilyResult.errors.join('\n')
+            );
+            assert.equal(fs.readFileSync(outsideSentinelPath, 'utf8'), 'outside-validation-family');
+            assert.equal(
+                JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+                'launched',
+                'a linked validation-family member must fail before terminalizing the launch'
+            );
+        } finally {
+            fs.rmSync(linkedValidationFamilyPath, { recursive: true, force: true });
+            fs.rmSync(outsideValidationDirectory, { recursive: true, force: true });
+        }
+        const directoryValidationFamilyPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-findings-validation-directory.json`
+        );
+        const directoryValidationSentinelPath = path.join(directoryValidationFamilyPath, 'sentinel.txt');
+        fs.mkdirSync(directoryValidationFamilyPath);
+        fs.writeFileSync(directoryValidationSentinelPath, 'in-repo-validation-family-directory', 'utf8');
+
+        const directoryValidationFamilyResult = await runCliWithCapturedOutput(receiptArgs, { cwd: repoRoot });
+
+        assert.notEqual(directoryValidationFamilyResult.exitCode, 0);
+        assert.ok(
+            directoryValidationFamilyResult.errors.some((line) =>
+                line.includes('rollback family members must be regular files')
+            ),
+            directoryValidationFamilyResult.errors.join('\n')
+        );
+        assert.equal(
+            fs.readFileSync(directoryValidationSentinelPath, 'utf8'),
+            'in-repo-validation-family-directory'
+        );
+        assert.equal(
+            JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+            'launched',
+            'a directory validation-family member must fail before terminalizing the launch'
+        );
+        fs.rmSync(directoryValidationFamilyPath, { recursive: true, force: true });
+        const resultLockPath = path.join(
+            path.dirname(fixture.launchArtifactPath),
+            '.record-review-result.lock'
+        );
+        fs.mkdirSync(resultLockPath, { recursive: true });
+        fs.writeFileSync(path.join(resultLockPath, 'owner.json'), `${JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString(),
+            owner_label: `record-review-result:${taskId}:code`
+        }, null, 2)}\n`, 'utf8');
+
+        const concurrentResult = await runCliWithCapturedOutput(receiptArgs, { cwd: repoRoot });
+
+        assert.notEqual(concurrentResult.exitCode, 0);
+        assert.equal(
+            JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')).attestation_state,
+            'launched'
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED'),
+            false
+        );
+        fs.rmSync(resultLockPath, { recursive: true, force: true });
+
+        const result = await runCliWithCapturedOutput(receiptArgs, { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
         assert.ok(
             result.errors.some((line) => line.includes('Verdict-free findings JSON report is invalid')),
             result.errors.join('\n')
         );
-        const validationArtifactPath = path.join(fixture.reviewsRoot, `${taskId}-code-findings-validation.json`);
-        assert.equal(fs.existsSync(validationArtifactPath), true);
-        const validationArtifact = JSON.parse(fs.readFileSync(validationArtifactPath, 'utf8'));
-        assert.equal(validationArtifact.validation_result.status, 'rejected');
-        assert.equal(validationArtifact.validation_result.accepted, false);
-        assert.ok(validationArtifact.validation_result.violations.some((violation: string) =>
-            violation.includes('validation_notes must contain at least one validation note')
-        ));
+        const failedLaunchArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(failedLaunchArtifact.attestation_state, 'launch_failed');
+        assert.equal(failedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
+        assert.equal(failedLaunchArtifact.launch_failure_recorded_by, 'record-review-receipt');
+        const failedLaunchEvent = readTaskTimelineEvents(repoRoot, taskId)
+            .find((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
+        assert.ok(failedLaunchEvent?.integrity);
         assert.equal(
-            fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-findings-disposition.json`)),
+            (failedLaunchEvent.details as Record<string, unknown>).reviewer_launch_attempt_id,
+            'receipt-rejected-attempt'
+        );
+        assert.equal(
+            (failedLaunchEvent.details as Record<string, unknown>).reviewer_launch_artifact_sha256,
+            createHash('sha256').update(fs.readFileSync(fixture.launchArtifactPath)).digest('hex')
+        );
+        assert.equal(
+            fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)),
             false
         );
-        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
@@ -1910,6 +2719,9 @@ describe('gates command review result - normalization', () => {
     it('record-review-result preserves canonical evidence-only marker with reserved coverage id', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-976-result-evidence-only-coverage';
+        const focusedTarget = 'tests/node/example.test.ts';
+        fs.mkdirSync(path.join(repoRoot, 'tests', 'node'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, focusedTarget), 'export {};\n', 'utf8');
         const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
         attestReviewerInvocationForTest({
             repoRoot,
@@ -1933,7 +2745,20 @@ describe('gates command review result - normalization', () => {
         const findings = report.findings as {
             high: Array<Record<string, unknown>>;
         };
-        const marker = '[garda:evidence-only:missing-focused-validation] test=tests/node/example.test.ts; action=run-and-record-focused-test';
+        const marker = `[garda:evidence-only:missing-focused-validation] test=${focusedTarget}; action=run-and-record-focused-test`;
+        const validationNotes = report.validation_notes as Array<Record<string, unknown>>;
+        validationNotes.push({
+            id: 'N-002',
+            topic: 'focused-self-validation',
+            note: 'The reviewer attempted the smallest relevant focused test after prior execution evidence was unavailable.',
+            command: `node --test ${focusedTarget}`,
+            command_outcome: 'unavailable',
+            diagnostics: 'The isolated reviewer environment did not provide the runtime needed to execute the focused test.',
+            evidence: [{
+                location: `${reviewContext.task_scope.changed_files[0]}:1`,
+                observation: `The changed implementation is covered by ${focusedTarget}, which motivated the focused attempt.`
+            }]
+        });
         findings.high = [{
             id: 'F-000',
             title: marker,

@@ -1128,8 +1128,11 @@ function focusedEvidenceNamesTarget(
         `(?<![a-z0-9._/\\-])${escapedTarget}(?![a-z0-9_/\\-]|\\.[a-z0-9])`,
         'u'
     );
-    return evidence.map((entry) => entry.observation)
-        .some((entry) => exactTargetPattern.test(entry.replace(/\\/gu, '/')));
+    return evidence.some((entry) => {
+        const location = parseReviewEvidenceLocation(entry.location);
+        return normalizeFocusedTargetPath(location?.filePath || '') === normalizedTarget
+            || exactTargetPattern.test(entry.observation.replace(/\\/gu, '/'));
+    });
 }
 
 function focusedAttemptBindsTargetToEvidence(note: ReviewFindingsValidationNote, markerTarget: string): boolean {

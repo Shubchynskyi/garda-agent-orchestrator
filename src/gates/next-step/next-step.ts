@@ -3800,6 +3800,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 reviewContextChain,
                 downstreamReviewTypes,
                 reviewerResultRecoveryIdentity,
+                launchArtifactState: currentReviewerLaunchArtifactEvidence?.state || 'missing_or_invalid',
                 commands: {
                     restartReviewCycle: buildCommand(
                         state.failureKind === 'missing-focused-validation-evidence'

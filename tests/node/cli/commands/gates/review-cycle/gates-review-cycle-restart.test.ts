@@ -21,6 +21,7 @@ import {
     os,
     path,
     readTaskTimelineEvents,
+    runBuildReviewContextCommand,
     runCompileGateCommand,
     runCompletionGate,
     runEnterTaskMode,
@@ -47,6 +48,18 @@ import {
     writeSimpleCompileCommandsFile,
     writeWorkflowConfig
 } from './gates-review-cycle-fixtures';
+import {
+    handleCompleteReviewerLaunch,
+    handlePrepareReviewerLaunch,
+    handleRecordReviewerDelegationStarted,
+    handleRecordReviewResult,
+    handleRecordReviewRouting
+} from '../../../../../../src/cli/commands/gate-review-handlers';
+import {
+    runFullSuiteValidationCommand,
+    runQualityChecklistCommand
+} from '../../../../../../src/cli/commands/gates';
+import { resolveNextStep } from '../../../../gates/next-step/next-step-test-support';
 
 describe('cli/commands/gates – review-cycle restart suite', () => {
     const OPTIONAL_SKILL_HEADLINES_PATH = 'garda-agent-orchestrator/live/config/skills-headlines.json';
@@ -1652,9 +1665,10 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-code-only';
         seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Qwen');
+        seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
@@ -1683,6 +1697,30 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
+        const qualityChecklistResult = runQualityChecklistCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            answersJson: JSON.stringify([
+                'code_simplification',
+                'project_style_fit',
+                'unnecessary_abstraction',
+                'size_growth',
+                'hardcoded_values_contracts',
+                'duplicated_logic_contracts',
+                'test_verification_scope'
+            ].map((ruleId) => ({
+                rule_id: ruleId,
+                status: 'PASS',
+                answer: `Reviewed ${ruleId} for the focused restart-recovery fixture; no action is required.`,
+                evidence_files: ['src/app.ts', 'tests/app.test.ts'],
+                actions_taken: [],
+                actions_required: []
+            }))),
+            emitMetrics: false
+        });
+        assert.equal(qualityChecklistResult.exitCode, 0, qualityChecklistResult.outputLines.join('\n'));
+
         const compileResult = await runCompileGateCommand({
             repoRoot,
             taskId,
@@ -1692,6 +1730,97 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             emitMetrics: false
         });
         assert.equal(compileResult.exitCode, 0);
+        const fullSuiteResult = await runFullSuiteValidationCommand({
+            repoRoot,
+            taskId,
+            preflightPath
+        });
+        assert.equal(fullSuiteResult.exitCode, 0, fullSuiteResult.outputText);
+        const codeReviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`);
+        const initialContextResult = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: '2',
+            preflightPath
+        });
+        assert.equal(initialContextResult.reusedReviewEvidence, false);
+        const reviewerLaunchArtifactPath = path.join(
+            getOrchestratorRoot(repoRoot),
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'reviewer-launch.json'
+        );
+        await handleRecordReviewRouting([
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--review-context-path', codeReviewContextPath,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--repo-root', repoRoot
+        ]);
+        await handlePrepareReviewerLaunch([
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--review-context-path', codeReviewContextPath,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath,
+            '--repo-root', repoRoot
+        ]);
+        const preparedLaunchArtifact = JSON.parse(
+            fs.readFileSync(reviewerLaunchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        const rejectedReviewerLaunchAttemptId = String(preparedLaunchArtifact.reviewer_launch_attempt_id || '');
+        const rejectedReviewOutputPath = String(preparedLaunchArtifact.review_output_path || '');
+        const reviewerLaunchInputArtifactPath = String(
+            preparedLaunchArtifact.reviewer_launch_input_artifact_path || ''
+        );
+        const reviewerLaunchInputArtifactSha256 = fileSha256(reviewerLaunchInputArtifactPath);
+        assert.ok(
+            reviewerLaunchInputArtifactSha256,
+            'prepared reviewer launch input artifact must exist before delegation starts'
+        );
+        const rejectedReviewerIdentity = 'agent:integration-code-reviewer';
+        const rejectedProviderInvocationId = 'multi_agent_v1:integration-code-reviewer';
+        const launchAttestationArgs = [
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--review-context-path', codeReviewContextPath,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', rejectedReviewerIdentity,
+            '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath,
+            '--provider-invocation-id', rejectedProviderInvocationId,
+            '--attestation-source', 'multi_agent_v1.spawn_agent',
+            '--launch-input-mode', 'launch_artifact_path',
+            '--launch-input-artifact-path', reviewerLaunchInputArtifactPath,
+            '--launch-input-sha256', reviewerLaunchInputArtifactSha256,
+            '--fork-context', 'false',
+            '--repo-root', repoRoot
+        ];
+        await handleRecordReviewerDelegationStarted(launchAttestationArgs);
+        fs.writeFileSync(rejectedReviewOutputPath, '{ malformed reviewer output\n', 'utf8');
+        await handleCompleteReviewerLaunch([...launchAttestationArgs, '--record-invocation']);
+        await assert.rejects(
+            () => handleRecordReviewResult([
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-context-path', codeReviewContextPath,
+                '--review-output-path', rejectedReviewOutputPath,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', rejectedReviewerIdentity,
+                '--repo-root', repoRoot
+            ]),
+            /Verdict-free findings JSON report is invalid/u
+        );
+        const rejectedLaunchArtifact = JSON.parse(
+            fs.readFileSync(reviewerLaunchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(rejectedLaunchArtifact.attestation_state, 'launch_failed');
+        assert.equal(rejectedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
+        const rejectedRecoveryRoute = resolveNextStep({ taskId, repoRoot });
+        assert.equal(rejectedRecoveryRoute.next_gate, 'restart-review-cycle', rejectedRecoveryRoute.reason);
 
         const restartResult = await runRestartReviewCycleCommand({
             repoRoot,
@@ -1729,6 +1858,36 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             false
         );
 
+        await handleRecordReviewRouting([
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--review-context-path', codeReviewContextPath,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--repo-root', repoRoot
+        ]);
+        await handlePrepareReviewerLaunch([
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--review-context-path', codeReviewContextPath,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath,
+            '--repo-root', repoRoot
+        ]);
+        const freshLaunchArtifact = JSON.parse(
+            fs.readFileSync(reviewerLaunchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(freshLaunchArtifact.attestation_state, 'prepared');
+        assert.notEqual(
+            freshLaunchArtifact.reviewer_launch_attempt_id,
+            rejectedReviewerLaunchAttemptId,
+            'restart recovery must prepare one fresh attempt instead of reusing the rejected output'
+        );
+        assert.notEqual(
+            freshLaunchArtifact.review_output_path,
+            rejectedReviewOutputPath,
+            'restart recovery must not route the fresh attempt back to the rejected output path'
+        );
+
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const handshakeIndexes = events.reduce<number[]>((indexes, event, index) => {
             if (event.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED') {
@@ -1755,10 +1914,11 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const lastHandshakeIndex = handshakeIndexes.at(-1) ?? -1;
         const lastShellSmokeIndex = shellSmokeIndexes.at(-1) ?? -1;
         assert.ok(lastCompileIndex >= 0);
-        assert.equal(handshakeIndexes.length, 1);
-        assert.equal(shellSmokeIndexes.length, 1);
+        assert.equal(handshakeIndexes.length, 2);
+        assert.equal(shellSmokeIndexes.length, 2);
         assert.ok(firstCompileIndex >= 0);
-        assert.ok(firstCompileIndex > lastHandshakeIndex);
+        assert.ok(firstCompileIndex > handshakeIndexes[0]);
+        assert.ok(shellSmokeIndexes[0] > handshakeIndexes[0]);
         assert.ok(lastShellSmokeIndex > lastHandshakeIndex);
         assert.ok(lastCompileIndex > lastShellSmokeIndex);
         assert.ok(lastCodeReviewPhaseIndex === -1 || lastCodeReviewPhaseIndex > lastCompileIndex);
