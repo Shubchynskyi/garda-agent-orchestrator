@@ -9,9 +9,13 @@ import {
 import { resolveActiveTaskIds } from '../../../core/task-queue/active-task-state';
 import { normalizePathValue } from '../cli-helpers';
 import {
+    assertProfileBundleRootOwnership,
+    assertProfileBundleRootOwnershipCurrent,
+    fsyncProfilesDirectoryBestEffort,
     getCompletedProfilesOperationResult,
     readProfilesData,
     resolveProfilesPath,
+    type ProfileBundleRootOwnership,
     withProfilesDataLock,
     writeProfilesDataUnlocked
 } from './profile-data';
@@ -34,6 +38,7 @@ interface ExpectedMutationHashes {
 }
 
 interface LockedPolicyMutationOptions {
+    ownership: ProfileBundleRootOwnership;
     bundleRoot: string;
     configPath: string;
     request: ProfileFindingPolicyMutationRequest;
@@ -78,9 +83,9 @@ function normalizeSha256(value: unknown, flagName: string): string {
     return normalized;
 }
 
-function readShippedProfiles(bundleRoot: string): ProfilesData | null {
+function readShippedProfiles(bundleRoot: string, ownership: ProfileBundleRootOwnership): ProfilesData | null {
     const shippedPath = path.join(bundleRoot, 'template', 'config', 'profiles.json');
-    return fs.existsSync(shippedPath) ? readProfilesData(shippedPath) : null;
+    return fs.existsSync(shippedPath) ? readProfilesData(shippedPath, ownership) : null;
 }
 
 function requireMutationConfirmation(options: ParsedOptionsRecord): void {
@@ -98,17 +103,19 @@ function requireMutationConfirmation(options: ParsedOptionsRecord): void {
     });
 }
 
-function resolveActiveTaskAudit(repoRoot: string, bundleRoot: string): {
+function resolveActiveTaskAudit(ownership: ProfileBundleRootOwnership): {
     active_task_discovery_status: 'resolved' | 'failed';
     active_task_discovery_error: string | null;
     active_task_count: number;
     active_task_ids_sha256: string;
 } {
+    assertProfileBundleRootOwnershipCurrent(ownership);
     try {
-        const taskIds = [...resolveActiveTaskIds(repoRoot, bundleRoot, [], {
+        const taskIds = [...resolveActiveTaskIds(ownership.repoRoot, ownership.bundleRoot, [], {
             includeAmbiguousRuntimeTasks: false,
             includeStaleRuntimeActiveTasks: false
         })].sort((left, right) => left.localeCompare(right));
+        assertProfileBundleRootOwnershipCurrent(ownership);
         return {
             active_task_discovery_status: 'resolved',
             active_task_discovery_error: null,
@@ -116,6 +123,7 @@ function resolveActiveTaskAudit(repoRoot: string, bundleRoot: string): {
             active_task_ids_sha256: sha256Text(JSON.stringify(taskIds))
         };
     } catch (error: unknown) {
+        assertProfileBundleRootOwnershipCurrent(ownership);
         return {
             active_task_discovery_status: 'failed',
             active_task_discovery_error: error instanceof Error ? error.name : 'UnknownError',
@@ -129,21 +137,6 @@ function resolveMutationAuditPath(bundleRoot: string): string {
     return path.join(bundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl');
 }
 
-function fsyncDirectoryBestEffort(directoryPath: string): void {
-    if (process.platform === 'win32') return;
-    let directoryFd: number | null = null;
-    try {
-        directoryFd = fs.openSync(directoryPath, 'r');
-        fs.fsyncSync(directoryFd);
-    } catch {
-        // Directory fsync is not portable across every supported filesystem.
-    } finally {
-        if (directoryFd !== null) {
-            try { fs.closeSync(directoryFd); } catch { /* best-effort descriptor cleanup */ }
-        }
-    }
-}
-
 function pathExistsWithoutFollowing(filePath: string): boolean {
     try {
         fs.lstatSync(filePath);
@@ -154,12 +147,25 @@ function pathExistsWithoutFollowing(filePath: string): boolean {
     }
 }
 
-function assertAuditDirectoryBoundary(auditPath: string): void {
+function assertAuditDirectoryBoundary(
+    auditPath: string,
+    ownership?: ProfileBundleRootOwnership
+): void {
     const auditDirectory = path.dirname(auditPath);
     const bundleRoot = path.dirname(auditDirectory);
+    const bundleIdentity = fs.lstatSync(bundleRoot);
+    if (!bundleIdentity.isDirectory() || bundleIdentity.isSymbolicLink()) {
+        throw new Error('Profile policy bundle root must remain a real directory.');
+    }
     const directoryIdentity = fs.lstatSync(auditDirectory);
     if (!directoryIdentity.isDirectory() || directoryIdentity.isSymbolicLink()) {
         throw new Error('Profile policy audit directory must be a real directory inside the bundle.');
+    }
+    if (ownership) {
+        if (path.resolve(bundleRoot) !== path.resolve(ownership.bundleRoot)) {
+            throw new Error('Profile policy audit path does not belong to the validated bundle.');
+        }
+        assertProfileBundleRootOwnershipCurrent(ownership);
     }
     const realBundleRoot = fs.realpathSync.native(bundleRoot);
     const realAuditDirectory = fs.realpathSync.native(auditDirectory);
@@ -169,7 +175,11 @@ function assertAuditDirectoryBoundary(auditPath: string): void {
     }
 }
 
-function assertOpenedAuditIdentity(auditPath: string, fd: number): void {
+function assertOpenedAuditIdentity(
+    auditPath: string,
+    fd: number,
+    ownership?: ProfileBundleRootOwnership
+): void {
     const openedIdentity = fs.fstatSync(fd);
     const pathIdentity = fs.lstatSync(auditPath);
     if (!openedIdentity.isFile() || !pathIdentity.isFile() || pathIdentity.isSymbolicLink()) {
@@ -181,14 +191,18 @@ function assertOpenedAuditIdentity(auditPath: string, fd: number): void {
     if (openedIdentity.dev !== pathIdentity.dev || openedIdentity.ino !== pathIdentity.ino) {
         throw new Error('Profile policy audit path changed while it was opened.');
     }
-    assertAuditDirectoryBoundary(auditPath);
+    assertAuditDirectoryBoundary(auditPath, ownership);
 }
 
-function openAuditFileSecurely(auditPath: string, flags: number): number {
-    assertAuditDirectoryBoundary(auditPath);
+function openAuditFileSecurely(
+    auditPath: string,
+    flags: number,
+    ownership?: ProfileBundleRootOwnership
+): number {
+    assertAuditDirectoryBoundary(auditPath, ownership);
     const fd = fs.openSync(auditPath, flags | fs.constants.O_NOFOLLOW, 0o600);
     try {
-        assertOpenedAuditIdentity(auditPath, fd);
+        assertOpenedAuditIdentity(auditPath, fd, ownership);
         return fd;
     } catch (error: unknown) {
         fs.closeSync(fd);
@@ -196,13 +210,19 @@ function openAuditFileSecurely(auditPath: string, flags: number): number {
     }
 }
 
-function appendAuditRecordDurably(auditPath: string, record: Record<string, unknown>): void {
+function appendAuditRecordDurably(
+    auditPath: string,
+    record: Record<string, unknown>,
+    ownership?: ProfileBundleRootOwnership
+): void {
     const auditDirectory = path.dirname(auditPath);
+    if (ownership) assertProfileBundleRootOwnershipCurrent(ownership);
     const auditFileExisted = pathExistsWithoutFollowing(auditPath);
     fs.mkdirSync(auditDirectory, { recursive: true });
     const fd = openAuditFileSecurely(
         auditPath,
-        fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT
+        fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT,
+        ownership
     );
     let persisted = false;
     try {
@@ -214,7 +234,7 @@ function appendAuditRecordDurably(auditPath: string, record: Record<string, unkn
     } finally {
         fs.closeSync(fd);
     }
-    if (persisted && !auditFileExisted) fsyncDirectoryBestEffort(auditDirectory);
+    if (persisted && !auditFileExisted) fsyncProfilesDirectoryBestEffort(auditDirectory);
 }
 
 function assertAuditRecordFits(serializedRecord: string): void {
@@ -223,9 +243,13 @@ function assertAuditRecordFits(serializedRecord: string): void {
     }
 }
 
-function readRecoverableAuditRecords(auditPath: string): Array<Record<string, unknown>> {
+function readRecoverableAuditRecords(
+    auditPath: string,
+    ownership?: ProfileBundleRootOwnership
+): Array<Record<string, unknown>> {
+    if (ownership) assertProfileBundleRootOwnershipCurrent(ownership);
     if (!pathExistsWithoutFollowing(auditPath)) return [];
-    const fd = openAuditFileSecurely(auditPath, fs.constants.O_RDWR);
+    const fd = openAuditFileSecurely(auditPath, fs.constants.O_RDWR, ownership);
     try {
         const size = fs.fstatSync(fd).size;
         const readStart = Math.max(0, size - MAX_AUDIT_RECOVERY_BYTES);
@@ -272,9 +296,13 @@ function readRecoverableAuditRecords(auditPath: string): Array<Record<string, un
     }
 }
 
-function recoverPendingMutationAudits(auditPath: string, currentConfigSha256: string): void {
+function recoverPendingMutationAudits(
+    auditPath: string,
+    currentConfigSha256: string,
+    ownership?: ProfileBundleRootOwnership
+): void {
     const latestByTransaction = new Map<string, Record<string, unknown>>();
-    for (const record of readRecoverableAuditRecords(auditPath)) {
+    for (const record of readRecoverableAuditRecords(auditPath, ownership)) {
         if (record.event_source !== 'profile-finding-policy-mutation') continue;
         const transactionId = String(record.transaction_id || '').trim();
         if (transactionId) latestByTransaction.set(transactionId, record);
@@ -297,15 +325,16 @@ function recoverPendingMutationAudits(auditPath: string, currentConfigSha256: st
             transaction_state: transactionState,
             status: transactionState === 'COMMITTED' ? record.intended_status : 'ABORTED',
             recovered: true
-        });
+        }, ownership);
     }
 }
 
 export function recoverPendingProfileFindingPolicyAudits(
     bundleRoot: string,
-    currentData: ProfilesData
+    currentData: ProfilesData,
+    ownership?: ProfileBundleRootOwnership
 ): void {
-    recoverPendingMutationAudits(resolveMutationAuditPath(bundleRoot), hashProfilesData(currentData));
+    recoverPendingMutationAudits(resolveMutationAuditPath(bundleRoot), hashProfilesData(currentData), ownership);
 }
 
 function buildMutationAuditRecord(
@@ -405,6 +434,7 @@ function getBoundedAuditErrorMessage(error: unknown): string {
 }
 
 type ApplyPlanWithAuditOptions = {
+    ownership: ProfileBundleRootOwnership;
     bundleRoot: string;
     configPath: string;
     plan: ProfileFindingPolicyPlan;
@@ -416,11 +446,12 @@ type ApplyPlanStatus = 'APPLIED' | 'NO_CHANGE';
 function prepareMutationAudit(
     auditPath: string,
     record: Record<string, unknown>,
-    status: ApplyPlanStatus
+    status: ApplyPlanStatus,
+    ownership: ProfileBundleRootOwnership
 ): void {
     try {
         if (record.transaction_state === 'PREPARED') assertTerminalAuditRecordsFit(record, status);
-        appendAuditRecordDurably(auditPath, record);
+        appendAuditRecordDurably(auditPath, record, ownership);
     } catch (error: unknown) {
         throw new Error(`Profile policy audit preparation failed: ${getErrorMessage(error)}`);
     }
@@ -444,9 +475,13 @@ function assertTerminalAuditRecordsFit(record: Record<string, unknown>, status: 
     for (const candidate of candidates) assertAuditRecordFits(`${JSON.stringify(candidate)}\n`);
 }
 
-function inspectConfigAfterWriteFailure(configPath: string, configError: unknown): string {
+function inspectConfigAfterWriteFailure(
+    configPath: string,
+    configError: unknown,
+    ownership: ProfileBundleRootOwnership
+): string {
     try {
-        return hashProfilesData(readProfilesData(configPath));
+        return hashProfilesData(readProfilesData(configPath, ownership));
     } catch (inspectionError: unknown) {
         throw new Error(
             `Profile policy config write failed and the resulting config could not be inspected; ` +
@@ -463,7 +498,11 @@ function handleConfigWriteFailure(options: {
     status: ApplyPlanStatus;
     configError: unknown;
 }): never {
-    const observedConfigSha256 = inspectConfigAfterWriteFailure(options.apply.configPath, options.configError);
+    const observedConfigSha256 = inspectConfigAfterWriteFailure(
+        options.apply.configPath,
+        options.configError,
+        options.apply.ownership
+    );
     if (observedConfigSha256 === options.apply.plan.after_config_sha256) {
         appendAuditRecordDurably(options.auditPath, {
             ...options.record,
@@ -472,7 +511,7 @@ function handleConfigWriteFailure(options: {
             status: options.status,
             committed_after_write_error: true,
             write_error: getBoundedAuditErrorMessage(options.configError)
-        });
+        }, options.apply.ownership);
         throw new Error(
             `Profile policy config committed but write finalization reported an error: ${getErrorMessage(options.configError)}`
         );
@@ -483,7 +522,7 @@ function handleConfigWriteFailure(options: {
             timestamp_utc: new Date().toISOString(),
             transaction_state: 'ABORTED',
             status: 'ABORTED'
-        });
+        }, options.apply.ownership);
         throw options.configError;
     }
     throw new Error(
@@ -495,7 +534,8 @@ function handleConfigWriteFailure(options: {
 function finalizeCommittedAudit(
     auditPath: string,
     record: Record<string, unknown>,
-    status: ApplyPlanStatus
+    status: ApplyPlanStatus,
+    ownership: ProfileBundleRootOwnership
 ): void {
     try {
         appendAuditRecordDurably(auditPath, {
@@ -503,7 +543,7 @@ function finalizeCommittedAudit(
             timestamp_utc: new Date().toISOString(),
             transaction_state: 'COMMITTED',
             status
-        });
+        }, ownership);
     } catch (auditError: unknown) {
         throw new Error(
             `Profile policy config committed but audit finalization failed; rerun apply to recover: ` +
@@ -521,16 +561,21 @@ function applyPlanWithAudit(options: ApplyPlanWithAuditOptions): { status: Apply
         status,
         options.activeTaskAudit
     );
-    prepareMutationAudit(auditPath, record, status);
+    prepareMutationAudit(auditPath, record, status, options.ownership);
     if (!options.plan.changed) {
         return { status, auditPath: normalizePathValue(auditPath).replace(/\\/gu, '/') };
     }
     try {
-        writeProfilesDataUnlocked(options.configPath, options.plan.proposed_data);
+        writeProfilesDataUnlocked(
+            options.configPath,
+            options.plan.proposed_data,
+            options.ownership,
+            options.plan.before_config_sha256
+        );
     } catch (configError: unknown) {
         handleConfigWriteFailure({ apply: options, auditPath, record, status, configError });
     }
-    finalizeCommittedAudit(auditPath, record, status);
+    finalizeCommittedAudit(auditPath, record, status, options.ownership);
     return { status, auditPath: normalizePathValue(auditPath).replace(/\\/gu, '/') };
 }
 
@@ -560,30 +605,34 @@ function assertCurrentPlanMatchesPreview(
 function runLockedPolicyMutation(options: LockedPolicyMutationOptions): ProfileFindingPolicyCommandPayload {
     try {
         return withProfilesDataLock(options.configPath, () => {
-            const currentData = readProfilesData(options.configPath);
+            const currentData = readProfilesData(options.configPath, options.ownership);
             try {
-                recoverPendingProfileFindingPolicyAudits(options.bundleRoot, currentData);
+                recoverPendingProfileFindingPolicyAudits(options.bundleRoot, currentData, options.ownership);
             } catch (error: unknown) {
                 throw new Error(`Profile policy audit recovery failed: ${getErrorMessage(error)}`);
             }
             const plan = buildProfileFindingPolicyPlan(currentData, options.request, options.shippedData);
             assertCurrentPlanMatchesPreview(plan, options.expectedHashes);
             const result = applyPlanWithAudit({
+                ownership: options.ownership,
                 bundleRoot: options.bundleRoot,
                 configPath: options.configPath,
                 plan,
                 activeTaskAudit: options.activeTaskAudit
             });
             return buildPayload(plan, 'apply', result.status, options.configPath, result.auditPath);
-        });
+        }, options.ownership);
     } catch (error: unknown) {
         const completed = getCompletedProfilesOperationResult<ProfileFindingPolicyCommandPayload>(error);
         if (!completed) throw error;
+        const completionDescription = completed.result.status === 'NO_CHANGE'
+            ? 'Profile policy no-change audit committed'
+            : 'Profiles config committed';
         return {
             ...completed.result,
             diagnostics: [
                 ...completed.result.diagnostics,
-                `Profiles config committed, but lock release failed: ${getErrorMessage(error)}`
+                `${completionDescription}, but lock release failed: ${getErrorMessage(error)}`
             ]
         };
     }
@@ -596,10 +645,11 @@ export function runProfileFindingPolicyCommand(options: {
     repoRoot: string;
     bundleRoot: string;
 }): ProfileFindingPolicyCommandPayload {
-    const configPath = resolveProfilesPath(options.bundleRoot);
+    const ownedRoots = assertProfileBundleRootOwnership(options.repoRoot, options.bundleRoot);
+    const configPath = resolveProfilesPath(ownedRoots.bundleRoot);
     const request = requestFromOptions(options.targetProfile, options.parsedOptions);
-    const shippedData = request.reset ? readShippedProfiles(options.bundleRoot) : null;
-    const plan = buildProfileFindingPolicyPlan(readProfilesData(configPath), request, shippedData);
+    const shippedData = request.reset ? readShippedProfiles(ownedRoots.bundleRoot, ownedRoots) : null;
+    const plan = buildProfileFindingPolicyPlan(readProfilesData(configPath, ownedRoots), request, shippedData);
     if (options.mode === 'preview') {
         return buildPayload(plan, 'preview', 'PREVIEW', configPath, null);
     }
@@ -608,12 +658,13 @@ export function runProfileFindingPolicyCommand(options: {
     }
     requireMutationConfirmation(options.parsedOptions);
     return runLockedPolicyMutation({
-        bundleRoot: options.bundleRoot,
+        ownership: ownedRoots,
+        bundleRoot: ownedRoots.bundleRoot,
         configPath,
         request,
         shippedData,
         expectedHashes: readExpectedMutationHashes(options.parsedOptions),
-        activeTaskAudit: resolveActiveTaskAudit(options.repoRoot, options.bundleRoot)
+        activeTaskAudit: resolveActiveTaskAudit(ownedRoots)
     });
 }
 

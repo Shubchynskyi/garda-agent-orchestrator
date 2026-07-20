@@ -15,7 +15,8 @@ import {
     buildProfileCreateOutput,
     buildProfileDeleteOutput,
     buildProfileValidateOutput,
-    hashReviewFindingPolicy
+    hashReviewFindingPolicy,
+    runProfileFindingPolicyCommand
 } from '../../../../src/cli/commands/profile';
 import type { ProfileEntry } from '../../../../src/cli/commands/profile/profile-types';
 import { handleUiProfileRequest } from '../../../../src/reports/ui/actions/profile-actions';
@@ -744,6 +745,454 @@ test('profile policy audit discovers tasks from the workspace owning an explicit
     );
 });
 
+test('programmatic profile policy mutation rejects a bundle owned by another workspace', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const preview = runProfileFindingPolicyCommand({
+        mode: 'preview',
+        targetProfile: 'balanced',
+        parsedOptions: { preset: 'soft' },
+        repoRoot: path.dirname(bundleRoot),
+        bundleRoot
+    });
+    const unrelatedRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-unrelated-workspace-'));
+
+    assert.throws(
+        () => runProfileFindingPolicyCommand({
+            mode: 'apply',
+            targetProfile: 'balanced',
+            parsedOptions: {
+                preset: 'soft',
+                expectedPolicySha256: preview.policy_sha256,
+                expectedPlanSha256: preview.plan_sha256,
+                expectedConfigSha256: preview.before_config_sha256,
+                operatorConfirmed: 'yes',
+                operatorConfirmedAtUtc: new Date().toISOString()
+            },
+            repoRoot: unrelatedRepoRoot,
+            bundleRoot
+        }),
+        /parent directory of --bundle-root/iu
+    );
+});
+
+test('programmatic profile policy mutation rejects an external bundle through a filesystem alias', () => {
+    const externalBundleRoot = createTempBundleWithProfiles();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-alias-workspace-'));
+    const aliasedBundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    fs.symlinkSync(
+        externalBundleRoot,
+        aliasedBundleRoot,
+        process.platform === 'win32' ? 'junction' : 'dir'
+    );
+
+    assert.throws(
+        () => runProfileFindingPolicyCommand({
+            mode: 'preview',
+            targetProfile: 'balanced',
+            parsedOptions: { preset: 'soft' },
+            repoRoot,
+            bundleRoot: aliasedBundleRoot
+        }),
+        /parent directory of --bundle-root/iu
+    );
+});
+
+test('programmatic profile policy mutation keeps using the validated bundle after an alias swap', () => {
+    const stagedOwnedBundleRoot = createTempBundleWithProfiles();
+    const externalBundleRoot = createTempBundleWithProfiles();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-alias-swap-workspace-'));
+    const ownedBundleRoot = path.join(repoRoot, 'owned-bundle');
+    const aliasedBundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    fs.renameSync(stagedOwnedBundleRoot, ownedBundleRoot);
+    fs.symlinkSync(ownedBundleRoot, aliasedBundleRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    const externalProfilesPath = path.join(externalBundleRoot, 'live', 'config', 'profiles.json');
+    const externalProfilesBefore = fs.readFileSync(externalProfilesPath, 'utf8');
+    const preview = runProfileFindingPolicyCommand({
+        mode: 'preview',
+        targetProfile: 'balanced',
+        parsedOptions: { preset: 'soft' },
+        repoRoot,
+        bundleRoot: ownedBundleRoot
+    });
+    const fsModule = require('node:fs');
+    const originalRealpathSyncNative = fsModule.realpathSync.native;
+    let aliasSwapped = false;
+    fsModule.realpathSync.native = (targetPath: fs.PathLike) => {
+        const resolved = originalRealpathSyncNative(targetPath);
+        if (!aliasSwapped && path.resolve(String(targetPath)) === path.resolve(aliasedBundleRoot)) {
+            aliasSwapped = true;
+            fs.unlinkSync(aliasedBundleRoot);
+            fs.symlinkSync(
+                externalBundleRoot,
+                aliasedBundleRoot,
+                process.platform === 'win32' ? 'junction' : 'dir'
+            );
+        }
+        return resolved;
+    };
+    try {
+        const applied = runProfileFindingPolicyCommand({
+            mode: 'apply',
+            targetProfile: 'balanced',
+            parsedOptions: {
+                preset: 'soft',
+                expectedPolicySha256: preview.policy_sha256,
+                expectedPlanSha256: preview.plan_sha256,
+                expectedConfigSha256: preview.before_config_sha256,
+                operatorConfirmed: 'yes',
+                operatorConfirmedAtUtc: new Date().toISOString()
+            },
+            repoRoot,
+            bundleRoot: aliasedBundleRoot
+        });
+
+        assert.equal(aliasSwapped, true);
+        assert.equal(applied.status, 'APPLIED');
+        assert.equal(path.resolve(applied.config_path), path.resolve(ownedBundleRoot, 'live', 'config', 'profiles.json'));
+        assert.equal(
+            JSON.parse(fs.readFileSync(path.join(ownedBundleRoot, 'live', 'config', 'profiles.json'), 'utf8'))
+                .built_in_profiles.balanced.review_finding_policy.policy_id,
+            'soft'
+        );
+        assert.equal(fs.readFileSync(externalProfilesPath, 'utf8'), externalProfilesBefore);
+    } finally {
+        fsModule.realpathSync.native = originalRealpathSyncNative;
+    }
+});
+
+test('programmatic profile policy mutation rejects canonical bundle replacement after ownership validation', () => {
+    const stagedOwnedBundleRoot = createTempBundleWithProfiles();
+    const externalBundleRoot = createTempBundleWithProfiles();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-bundle-replacement-workspace-'));
+    const ownedBundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const relocatedOwnedBundleRoot = path.join(repoRoot, 'validated-bundle');
+    fs.renameSync(stagedOwnedBundleRoot, ownedBundleRoot);
+    const preview = runProfileFindingPolicyCommand({
+        mode: 'preview',
+        targetProfile: 'balanced',
+        parsedOptions: { preset: 'soft' },
+        repoRoot,
+        bundleRoot: ownedBundleRoot
+    });
+    const externalProfilesPath = path.join(externalBundleRoot, 'live', 'config', 'profiles.json');
+    const externalProfilesBefore = fs.readFileSync(externalProfilesPath, 'utf8');
+    const ownedProfilesPath = path.join(ownedBundleRoot, 'live', 'config', 'profiles.json');
+    const fsModule = require('node:fs');
+    const originalExistsSync = fsModule.existsSync;
+    let bundleReplaced = false;
+    fsModule.existsSync = (targetPath: fs.PathLike) => {
+        if (!bundleReplaced && path.resolve(String(targetPath)) === path.resolve(ownedProfilesPath)) {
+            bundleReplaced = true;
+            fs.renameSync(ownedBundleRoot, relocatedOwnedBundleRoot);
+            fs.symlinkSync(
+                externalBundleRoot,
+                ownedBundleRoot,
+                process.platform === 'win32' ? 'junction' : 'dir'
+            );
+        }
+        return originalExistsSync(targetPath);
+    };
+    try {
+        assert.throws(
+            () => runProfileFindingPolicyCommand({
+                mode: 'apply',
+                targetProfile: 'balanced',
+                parsedOptions: {
+                    preset: 'soft',
+                    expectedPolicySha256: preview.policy_sha256,
+                    expectedPlanSha256: preview.plan_sha256,
+                    expectedConfigSha256: preview.before_config_sha256,
+                    operatorConfirmed: 'yes',
+                    operatorConfirmedAtUtc: new Date().toISOString()
+                },
+                repoRoot,
+                bundleRoot: ownedBundleRoot
+            }),
+            /real directory|changed after profile policy ownership validation/iu
+        );
+        assert.equal(bundleReplaced, true);
+        assert.equal(fs.readFileSync(externalProfilesPath, 'utf8'), externalProfilesBefore);
+    } finally {
+        fsModule.existsSync = originalExistsSync;
+    }
+});
+
+test('profile policy apply does not overwrite an in-place config edit after audit preparation', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft', '--bundle-root', bundleRoot, '--json'
+    ]);
+    const filesystemModule = require(require.resolve('../../../../src/core/filesystem'));
+    const originalWriteTextFileAtomically = filesystemModule.writeTextFileAtomically;
+    let competingEditWritten = false;
+    filesystemModule.writeTextFileAtomically = (filePath: string, ...args: unknown[]) => {
+        const result = originalWriteTextFileAtomically(filePath, ...args);
+        if (!competingEditWritten && path.basename(filePath).includes('.garda-commit-')) {
+            competingEditWritten = true;
+            const competingData = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+            competingData.built_in_profiles.balanced.description = 'concurrent in-place edit';
+            fs.writeFileSync(profilesPath, `${JSON.stringify(competingData, null, 2)}\n`, 'utf8');
+        }
+        return result;
+    };
+    try {
+        assert.throws(
+            () => handleProfile([
+                'policy', 'apply', 'balanced', '--preset', 'soft',
+                '--expected-policy-sha256', String(preview.policy_sha256),
+                '--expected-plan-sha256', String(preview.plan_sha256),
+                '--expected-config-sha256', String(preview.before_config_sha256),
+                '--bundle-root', bundleRoot,
+                ...freshOperatorConfirmationArgs()
+            ], PACKAGE_JSON),
+            /divergent config|stale preview/iu
+        );
+        assert.equal(competingEditWritten, true);
+        assert.equal(
+            JSON.parse(fs.readFileSync(profilesPath, 'utf8')).built_in_profiles.balanced.description,
+            'concurrent in-place edit'
+        );
+        const auditRecords = fs.readFileSync(
+            path.join(bundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl'),
+            'utf8'
+        ).trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+        assert.deepEqual(auditRecords.map((record) => record.transaction_state), ['PREPARED']);
+    } finally {
+        filesystemModule.writeTextFileAtomically = originalWriteTextFileAtomically;
+    }
+});
+
+test('profile policy apply restores an in-place config edit made at the final claim boundary', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft', '--bundle-root', bundleRoot, '--json'
+    ]);
+    const fsModule = require('node:fs');
+    const originalRenameSync = fsModule.renameSync;
+    let competingEditWritten = false;
+    fsModule.renameSync = (sourcePath: fs.PathLike, targetPath: fs.PathLike) => {
+        if (
+            !competingEditWritten
+            && path.resolve(String(sourcePath)) === path.resolve(profilesPath)
+            && path.basename(String(targetPath)).includes('.garda-claimed-')
+        ) {
+            competingEditWritten = true;
+            const competingData = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+            competingData.built_in_profiles.balanced.description = 'late concurrent in-place edit';
+            fs.writeFileSync(profilesPath, `${JSON.stringify(competingData, null, 2)}\n`, 'utf8');
+        }
+        return originalRenameSync(sourcePath, targetPath);
+    };
+    try {
+        assert.throws(
+            () => handleProfile([
+                'policy', 'apply', 'balanced', '--preset', 'soft',
+                '--expected-policy-sha256', String(preview.policy_sha256),
+                '--expected-plan-sha256', String(preview.plan_sha256),
+                '--expected-config-sha256', String(preview.before_config_sha256),
+                '--bundle-root', bundleRoot,
+                ...freshOperatorConfirmationArgs()
+            ], PACKAGE_JSON),
+            /claimed config|stale preview/iu
+        );
+    } finally {
+        fsModule.renameSync = originalRenameSync;
+    }
+    assert.equal(competingEditWritten, true);
+    assert.equal(
+        JSON.parse(fs.readFileSync(profilesPath, 'utf8')).built_in_profiles.balanced.description,
+        'late concurrent in-place edit'
+    );
+    const auditRecords = fs.readFileSync(
+        path.join(bundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl'),
+        'utf8'
+    ).trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    assert.deepEqual(auditRecords.map((record) => record.transaction_state), ['PREPARED']);
+});
+
+test('profile policy apply never clobbers a config created during final publication', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'soft', '--bundle-root', bundleRoot, '--json'
+    ]);
+    const fsModule = require('node:fs');
+    const originalLinkSync = fsModule.linkSync;
+    let competingConfigPublished = false;
+    fsModule.linkSync = (sourcePath: fs.PathLike, targetPath: fs.PathLike) => {
+        if (
+            !competingConfigPublished
+            && path.resolve(String(targetPath)) === path.resolve(profilesPath)
+            && path.basename(String(sourcePath)).includes('.garda-commit-')
+        ) {
+            competingConfigPublished = true;
+            const competingData = JSON.parse(fs.readFileSync(String(sourcePath), 'utf8'));
+            competingData.built_in_profiles.balanced.description = 'concurrent published config';
+            fs.writeFileSync(profilesPath, `${JSON.stringify(competingData, null, 2)}\n`, 'utf8');
+        }
+        return originalLinkSync(sourcePath, targetPath);
+    };
+    try {
+        assert.throws(
+            () => handleProfile([
+                'policy', 'apply', 'balanced', '--preset', 'soft',
+                '--expected-policy-sha256', String(preview.policy_sha256),
+                '--expected-plan-sha256', String(preview.plan_sha256),
+                '--expected-config-sha256', String(preview.before_config_sha256),
+                '--bundle-root', bundleRoot,
+                ...freshOperatorConfirmationArgs()
+            ], PACKAGE_JSON),
+            /divergent config/iu
+        );
+    } finally {
+        fsModule.linkSync = originalLinkSync;
+    }
+    assert.equal(competingConfigPublished, true);
+    assert.equal(
+        JSON.parse(fs.readFileSync(profilesPath, 'utf8')).built_in_profiles.balanced.description,
+        'concurrent published config'
+    );
+});
+
+test('profile readers and the next locked writer recover a config left in a commit claim', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const beforeData = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    const beforeConfigSha256 = createHash('sha256')
+        .update(JSON.stringify(beforeData), 'utf8')
+        .digest('hex');
+    const claimedPath = path.join(
+        path.dirname(profilesPath),
+        `.profiles.json.garda-claimed-${beforeConfigSha256}-${'0'.repeat(64)}-interrupted`
+    );
+    fs.renameSync(profilesPath, claimedPath);
+
+    const validation = captureConsole(
+        () => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON)
+    ).result as { passed: boolean };
+    assert.equal(validation.passed, true);
+    const current = captureJsonProfileCommand(['current', '--bundle-root', bundleRoot, '--json']);
+    assert.equal(current.active_profile, 'balanced');
+    assert.equal(fs.existsSync(profilesPath), false);
+
+    captureJsonProfileCommand(['use', 'fast', '--bundle-root', bundleRoot, '--json']);
+    assert.equal(fs.existsSync(claimedPath), false);
+    assert.equal(JSON.parse(fs.readFileSync(profilesPath, 'utf8')).active_profile, 'fast');
+});
+
+test('profile claim recovery reconciles interrupted publication and restoration hard links', () => {
+    const publicationBundleRoot = createTempBundleWithProfiles();
+    const publicationProfilesPath = path.join(publicationBundleRoot, 'live', 'config', 'profiles.json');
+    const beforeData = JSON.parse(fs.readFileSync(publicationProfilesPath, 'utf8'));
+    const afterData = structuredClone(beforeData);
+    afterData.active_profile = 'fast';
+    const beforeConfigSha256 = createHash('sha256')
+        .update(JSON.stringify(beforeData), 'utf8')
+        .digest('hex');
+    const afterConfigSha256 = createHash('sha256')
+        .update(JSON.stringify(afterData), 'utf8')
+        .digest('hex');
+    const publicationClaimedPath = path.join(
+        path.dirname(publicationProfilesPath),
+        `.profiles.json.garda-claimed-${beforeConfigSha256}-${afterConfigSha256}-publication`
+    );
+    const publicationTempPath = path.join(
+        path.dirname(publicationProfilesPath),
+        '.profiles.json.garda-commit-interrupted'
+    );
+    fs.renameSync(publicationProfilesPath, publicationClaimedPath);
+    fs.writeFileSync(publicationTempPath, `${JSON.stringify(afterData, null, 2)}\n`, 'utf8');
+    fs.linkSync(publicationTempPath, publicationProfilesPath);
+
+    const publishedCurrent = captureJsonProfileCommand([
+        'current', '--bundle-root', publicationBundleRoot, '--json'
+    ]);
+    assert.equal(publishedCurrent.active_profile, 'fast');
+    captureJsonProfileCommand(['use', 'balanced', '--bundle-root', publicationBundleRoot, '--json']);
+    assert.equal(fs.existsSync(publicationClaimedPath), false);
+    assert.equal(fs.existsSync(publicationTempPath), false);
+    assert.equal(JSON.parse(fs.readFileSync(publicationProfilesPath, 'utf8')).active_profile, 'balanced');
+
+    const restorationBundleRoot = createTempBundleWithProfiles();
+    const restorationProfilesPath = path.join(restorationBundleRoot, 'live', 'config', 'profiles.json');
+    const restorationData = JSON.parse(fs.readFileSync(restorationProfilesPath, 'utf8'));
+    const restorationBeforeSha256 = createHash('sha256')
+        .update(JSON.stringify(restorationData), 'utf8')
+        .digest('hex');
+    const restorationClaimedPath = path.join(
+        path.dirname(restorationProfilesPath),
+        `.profiles.json.garda-claimed-${restorationBeforeSha256}-${'0'.repeat(64)}-restoration`
+    );
+    fs.renameSync(restorationProfilesPath, restorationClaimedPath);
+    fs.linkSync(restorationClaimedPath, restorationProfilesPath);
+
+    captureJsonProfileCommand(['use', 'fast', '--bundle-root', restorationBundleRoot, '--json']);
+    assert.equal(fs.existsSync(restorationClaimedPath), false);
+    assert.equal(JSON.parse(fs.readFileSync(restorationProfilesPath, 'utf8')).active_profile, 'fast');
+});
+
+test('profile readers retry when the canonical config moves to an authenticated claim before open', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const beforeData = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    const beforeConfigSha256 = createHash('sha256')
+        .update(JSON.stringify(beforeData), 'utf8')
+        .digest('hex');
+    const claimedPath = path.join(
+        path.dirname(profilesPath),
+        `.profiles.json.garda-claimed-${beforeConfigSha256}-${'0'.repeat(64)}-reader-race`
+    );
+    const fsModule = require('node:fs');
+    const originalOpenSync = fsModule.openSync;
+    let movedBeforeOpen = false;
+    fsModule.openSync = (filePath: fs.PathLike, ...args: unknown[]) => {
+        if (!movedBeforeOpen && path.resolve(String(filePath)) === path.resolve(profilesPath)) {
+            movedBeforeOpen = true;
+            fs.renameSync(profilesPath, claimedPath);
+        }
+        return originalOpenSync(filePath, ...args);
+    };
+    try {
+        const current = captureJsonProfileCommand(['current', '--bundle-root', bundleRoot, '--json']);
+        assert.equal(current.active_profile, 'balanced');
+    } finally {
+        fsModule.openSync = originalOpenSync;
+        if (!fs.existsSync(profilesPath) && fs.existsSync(claimedPath)) {
+            fs.renameSync(claimedPath, profilesPath);
+        }
+    }
+    assert.equal(movedBeforeOpen, true);
+});
+
+test('profile claim recovery preserves the original when the published config is not authenticated', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const beforeData = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    const beforeConfigSha256 = createHash('sha256')
+        .update(JSON.stringify(beforeData), 'utf8')
+        .digest('hex');
+    const claimedPath = path.join(
+        path.dirname(profilesPath),
+        `.profiles.json.garda-claimed-${beforeConfigSha256}-${'0'.repeat(64)}-interrupted`
+    );
+    fs.renameSync(profilesPath, claimedPath);
+    const divergentData = structuredClone(beforeData);
+    divergentData.built_in_profiles.balanced.description = 'unauthenticated publication';
+    fs.writeFileSync(profilesPath, `${JSON.stringify(divergentData, null, 2)}\n`, 'utf8');
+
+    assert.throws(
+        () => handleProfile(['use', 'fast', '--bundle-root', bundleRoot], PACKAGE_JSON),
+        /diverges from the pending claim after hash/iu
+    );
+    assert.equal(fs.existsSync(claimedPath), true);
+    assert.equal(
+        JSON.parse(fs.readFileSync(profilesPath, 'utf8')).built_in_profiles.balanced.description,
+        'unauthenticated publication'
+    );
+});
+
 test('profile policy apply serializes config writers and fails before config write when audit preparation fails', () => {
     const bundleRoot = createTempBundleWithProfiles();
     const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
@@ -972,13 +1421,16 @@ test('profile policy audit covers no-change, aborted write, and aborted recovery
         'policy', 'preview', 'balanced', '--preset', 'soft',
         '--bundle-root', failedWriteBundleRoot, '--json'
     ]);
-    const filesystemModule = require(require.resolve('../../../../src/core/filesystem'));
-    const originalWriteTextFileAtomically = filesystemModule.writeTextFileAtomically;
-    filesystemModule.writeTextFileAtomically = (filePath: string, ...args: unknown[]) => {
-        if (path.resolve(filePath) === path.resolve(failedWriteProfilesPath)) {
+    const fsModule = require('node:fs');
+    const originalLinkSync = fsModule.linkSync;
+    fsModule.linkSync = (sourcePath: fs.PathLike, targetPath: fs.PathLike) => {
+        if (
+            path.resolve(String(targetPath)) === path.resolve(failedWriteProfilesPath)
+            && path.basename(String(sourcePath)).includes('.garda-commit-')
+        ) {
             throw new Error('simulated profiles config write failure');
         }
-        return originalWriteTextFileAtomically(filePath, ...args);
+        return originalLinkSync(sourcePath, targetPath);
     };
     try {
         assert.throws(
@@ -993,7 +1445,7 @@ test('profile policy audit covers no-change, aborted write, and aborted recovery
             /simulated profiles config write failure/u
         );
     } finally {
-        filesystemModule.writeTextFileAtomically = originalWriteTextFileAtomically;
+        fsModule.linkSync = originalLinkSync;
     }
     const failedWriteAuditPath = path.join(failedWriteBundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl');
     const failedWriteRecords = fs.readFileSync(failedWriteAuditPath, 'utf8')
@@ -1006,11 +1458,16 @@ test('profile policy audit covers no-change, aborted write, and aborted recovery
         'policy', 'preview', 'balanced', '--preset', 'soft',
         '--bundle-root', committedErrorBundleRoot, '--json'
     ]);
-    filesystemModule.writeTextFileAtomically = (filePath: string, content: string, options: unknown) => {
-        originalWriteTextFileAtomically(filePath, content, options);
-        if (path.resolve(filePath) === path.resolve(committedErrorProfilesPath)) {
+    const originalUnlinkSync = fsModule.unlinkSync;
+    fsModule.unlinkSync = (targetPath: fs.PathLike) => {
+        const result = originalUnlinkSync(targetPath);
+        if (
+            path.dirname(String(targetPath)) === path.dirname(committedErrorProfilesPath)
+            && path.basename(String(targetPath)).includes('.garda-commit-')
+        ) {
             throw new Error(`simulated post-commit finalization failure ${'x'.repeat(5_000)}`);
         }
+        return result;
     };
     try {
         assert.throws(
@@ -1025,7 +1482,7 @@ test('profile policy audit covers no-change, aborted write, and aborted recovery
             /config committed.*post-commit finalization failure/iu
         );
     } finally {
-        filesystemModule.writeTextFileAtomically = originalWriteTextFileAtomically;
+        fsModule.unlinkSync = originalUnlinkSync;
     }
     assert.equal(
         JSON.parse(fs.readFileSync(committedErrorProfilesPath, 'utf8'))
@@ -1456,6 +1913,43 @@ test('profile policy reports success when only post-commit lock release fails', 
             JSON.parse(fs.readFileSync(profilesPath, 'utf8')).built_in_profiles.balanced.review_finding_policy.policy_id,
             'soft'
         );
+    } finally {
+        fsModule.ftruncateSync = originalFtruncateSync;
+        fs.rmSync(`${profilesPath}.garda-write.lock`, { force: true });
+        fs.rmSync(cleanupPath, { force: true });
+    }
+});
+
+test('profile policy no-change release warning does not report a config commit', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const cleanupPath = `${profilesPath}.garda-write.lock.dead-owner-cleanup`;
+    const before = fs.readFileSync(profilesPath, 'utf8');
+    fs.writeFileSync(cleanupPath, JSON.stringify({
+        pid: process.pid,
+        created_at_utc: new Date().toISOString()
+    }), 'utf8');
+    const preview = captureJsonProfileCommand([
+        'policy', 'preview', 'balanced', '--preset', 'balanced', '--bundle-root', bundleRoot, '--json'
+    ]);
+    assert.equal(preview.changed, false);
+    const fsModule = require('node:fs');
+    const originalFtruncateSync = fsModule.ftruncateSync;
+    fsModule.ftruncateSync = () => { throw new Error('injected no-change release failure'); };
+    try {
+        const applied = captureJsonProfileCommand([
+            'policy', 'apply', 'balanced', '--preset', 'balanced',
+            '--expected-policy-sha256', String(preview.policy_sha256),
+            '--expected-plan-sha256', String(preview.plan_sha256),
+            '--expected-config-sha256', String(preview.before_config_sha256),
+            '--bundle-root', bundleRoot, '--json',
+            ...freshOperatorConfirmationArgs()
+        ]);
+        const diagnostic = (applied.diagnostics as string[]).at(-1) || '';
+        assert.equal(applied.status, 'NO_CHANGE');
+        assert.match(diagnostic, /no-change audit committed.*lock release failed/iu);
+        assert.doesNotMatch(diagnostic, /profiles config committed/iu);
+        assert.equal(fs.readFileSync(profilesPath, 'utf8'), before);
     } finally {
         fsModule.ftruncateSync = originalFtruncateSync;
         fs.rmSync(`${profilesPath}.garda-write.lock`, { force: true });

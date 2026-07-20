@@ -1,5 +1,3 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { PRIMARY_CLI_NAME } from '../../../core/constants';
 import {
     buildGuardedCommandHelpText,
@@ -8,6 +6,7 @@ import {
     supportsInteractivePrompts
 } from '../cli-helpers';
 import {
+    assertProfileBundleRootOwnership,
     getAllProfileNames,
     getProfileEntry,
     isBuiltInProfile,
@@ -230,12 +229,6 @@ function handleDelete(positionals: string[], options: ParsedOptionsRecord, bundl
 
 function handleValidate(options: ParsedOptionsRecord, bundleRoot: string): ProfileValidateResult {
     const profilesPath = resolveProfilesPath(bundleRoot);
-    if (!fs.existsSync(profilesPath)) {
-        const issues = [`Profiles config not found: ${profilesPath}`];
-        const emptyData = { version: 0, active_profile: '', built_in_profiles: {}, user_profiles: {} } as ProfilesData;
-        console.log(buildProfileValidateOutput(emptyData, issues, profilesPath, options.json === true));
-        return { passed: false, issues };
-    }
     let data: ProfilesData;
     try {
         data = readProfilesData(profilesPath);
@@ -277,26 +270,15 @@ function handlePolicy(commandArgv: string[]): void {
         throw new Error(`Profile name is required for 'profile policy ${mode}'.`);
     }
     const { targetRoot, bundleRoot } = resolveBundleRoot(options);
-    if (
-        typeof options.targetRoot === 'string'
-        && typeof options.bundleRoot === 'string'
-        && !areEquivalentPaths(path.resolve(targetRoot), path.dirname(path.resolve(bundleRoot)))
-    ) {
-        throw new Error("Profile policy requires --target-root to be the parent directory of --bundle-root.");
-    }
+    const ownedRoots = assertProfileBundleRootOwnership(targetRoot, bundleRoot);
     const payload = runProfileFindingPolicyCommand({
         mode,
         targetProfile,
         parsedOptions: options,
-        repoRoot: targetRoot,
-        bundleRoot
+        repoRoot: ownedRoots.repoRoot,
+        bundleRoot: ownedRoots.bundleRoot
     });
     console.log(formatProfileFindingPolicyCommandOutput(payload, options.json === true));
-}
-
-function areEquivalentPaths(left: string, right: string): boolean {
-    if (process.platform !== 'win32') return left === right;
-    return left.toLowerCase() === right.toLowerCase();
 }
 
 export function handleProfile(commandArgv: string[], packageJson: PackageJsonLike): MaybePromise<ProfileValidateResult | null> {
