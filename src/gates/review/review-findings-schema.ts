@@ -507,6 +507,7 @@ function validateFocusedValidationNoteFindingLinks(
 function validateFocusedValidationNoteCommand(
     fields: ParsedValidationNoteFields,
     violations: string[],
+    allowPassedTargetOmission: boolean,
     repoRoot?: string
 ): void {
     if (!fields.command) {
@@ -521,7 +522,10 @@ function validateFocusedValidationNoteCommand(
         violations.push(
             'Reviewer focused self-validation must execute a focused test or validation command rather than only inspect or print a prospective target.'
         );
-    } else if (!focusedEvidenceNamesTarget(fields.evidence, commandTargets[0])) {
+    } else if (
+        (!allowPassedTargetOmission || fields.commandOutcome !== 'passed')
+        && !focusedEvidenceNamesTarget(fields.evidence, commandTargets[0])
+    ) {
         violations.push(
             'Reviewer focused self-validation authenticated changed-file evidence must name the exact focused command target and why it is relevant.'
         );
@@ -531,6 +535,7 @@ function validateFocusedValidationNoteCommand(
 function validateFocusedValidationNote(
     fields: ParsedValidationNoteFields,
     violations: string[],
+    allowPassedTargetOmission: boolean,
     repoRoot?: string
 ): void {
     if (!fields.requiresFocusedCommandFields) {
@@ -538,7 +543,7 @@ function validateFocusedValidationNote(
     }
     validateFocusedValidationNoteMetadata(fields, violations);
     validateFocusedValidationNoteFindingLinks(fields, violations);
-    validateFocusedValidationNoteCommand(fields, violations, repoRoot);
+    validateFocusedValidationNoteCommand(fields, violations, allowPassedTargetOmission, repoRoot);
 }
 
 function buildValidationNote(fields: ParsedValidationNoteFields): ReviewFindingsValidationNote | null {
@@ -573,6 +578,7 @@ function buildValidationNote(fields: ParsedValidationNoteFields): ReviewFindings
 function parseValidationNotes(
     value: unknown,
     violations: string[],
+    allowPassedTargetOmission: boolean,
     repoRoot?: string
 ): ReviewFindingsValidationNote[] {
     if (!Array.isArray(value)) {
@@ -589,7 +595,7 @@ function parseValidationNotes(
         }
         const fields = readValidationNoteFields(entry, subject, violations);
         validateValidationNoteIdentity(fields, violations);
-        validateFocusedValidationNote(fields, violations, repoRoot);
+        validateFocusedValidationNote(fields, violations, allowPassedTargetOmission, repoRoot);
         if (fields.id && REVIEW_VALIDATION_NOTE_ID_PATTERN.test(fields.id)) {
             ids.push(fields.id);
         }
@@ -1728,9 +1734,14 @@ export function validateReviewFindingsReport(
         violations.push('tree_state_sha256 does not match the current review tree state.');
     }
 
-    const validationNotes = parseValidationNotes(value.validation_notes, violations, options.repoRoot);
-    const coverageLedger = parseCoverageLedger(value.coverage_ledger, violations);
     const findings = parseFindings(value.findings, violations);
+    const validationNotes = parseValidationNotes(
+        value.validation_notes,
+        violations,
+        findings !== null && getAllFindings(findings).length === 0,
+        options.repoRoot
+    );
+    const coverageLedger = parseCoverageLedger(value.coverage_ledger, violations);
     const residualRisks = parseResidualRisks(value.residual_risks, violations);
     const reviewerNotes = parseReviewerNotes(value.reviewer_notes, violations);
     validateMissingFocusedValidationPostAttemptEvidence(

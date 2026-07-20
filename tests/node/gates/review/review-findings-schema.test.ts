@@ -1060,7 +1060,7 @@ test('validateReviewFindingsReport rejects unsafe network, mutation, and backgro
     }
 });
 
-test('validateReviewFindingsReport requires every focused target to be named by authenticated evidence', () => {
+test('validateReviewFindingsReport accepts passed no-findings validation without a duplicate evidence target', () => {
     const report = validReport();
     report.validation_notes = [{
         id: 'N-001',
@@ -1074,10 +1074,7 @@ test('validateReviewFindingsReport requires every focused target to be named by 
 
     const result = validateReviewFindingsReport(report, validationOptions);
 
-    assert.equal(result.valid, false);
-    assert.ok(result.violations.some((entry) => (
-        entry.includes('authenticated changed-file evidence must name the exact focused command target')
-    )));
+    assert.equal(result.valid, true, result.violations.join('\n'));
 });
 
 test('validateReviewFindingsReport accepts a no-findings focused target named by authenticated evidence location', () => {
@@ -1103,7 +1100,7 @@ test('validateReviewFindingsReport accepts a no-findings focused target named by
     assert.equal(result.valid, true, result.violations.join('\n'));
 });
 
-test('validateReviewFindingsReport rejects a near-match focused evidence location', () => {
+test('validateReviewFindingsReport accepts passed no-findings validation with a different authenticated evidence path', () => {
     const report = validReport();
     report.validation_notes = [{
         id: 'N-001',
@@ -1123,9 +1120,53 @@ test('validateReviewFindingsReport rejects a near-match focused evidence locatio
         expectedChangedFilePaths: ['src/example.ts', 'tests/node/example.test.ts.backup']
     });
 
+    assert.equal(result.valid, true, result.violations.join('\n'));
+});
+
+test('validateReviewFindingsReport keeps target binding for passed validation when findings exist', () => {
+    const report = validReport();
+    report.validation_notes = [{
+        id: 'N-001',
+        topic: 'focused-self-validation',
+        note: 'The reviewer ran a focused test target before reporting an ordinary finding.',
+        command: 'node --test tests/node/example.test.ts',
+        command_outcome: 'passed',
+        diagnostics: 'The focused target completed thirty tests without any reported failures.',
+        evidence: [evidence('src/example.ts:10', 'The changed parser branch motivated a focused local check.')]
+    }];
+    report.findings = {
+        critical: [],
+        high: [],
+        medium: [{
+            id: 'F-001',
+            title: 'Parser rejects a supported input',
+            description: 'The changed parser branch rejects one supported input outside the focused target.',
+            evidence: [evidence()],
+            coverage_obligation_ids: ['FILE-001']
+        }],
+        low: []
+    };
+    report.coverage_ledger = {
+        coverage_contract_sha256: CONTRACT_HASH,
+        entries: [
+            {
+                obligation_id: 'FILE-001',
+                evidence: [evidence()],
+                finding_ids: ['F-001']
+            },
+            {
+                obligation_id: 'CATEGORY-SCHEMA',
+                evidence: [evidence('src/example.ts:20', 'Concrete schema category validation was inspected')],
+                finding_ids: []
+            }
+        ]
+    };
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
     assert.equal(result.valid, false);
-    assert.ok(result.violations.some((entry) => (
-        entry.includes('authenticated changed-file evidence must name the exact focused command target')
+    assert.ok(result.violations.some((entry) => entry.includes(
+        'authenticated changed-file evidence must name the exact focused command target'
     )));
 });
 

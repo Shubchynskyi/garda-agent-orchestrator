@@ -1194,9 +1194,22 @@ describe('gates command review result - normalization', () => {
         const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        const report = buildNoFindingsJsonReport(fixture.reviewContextPath, taskId);
+        (report.validation_notes as Array<Record<string, unknown>>).push({
+            id: 'N-002',
+            topic: 'focused-self-validation',
+            note: 'The reviewer ran one narrow validation relevant to the changed source behavior.',
+            command: 'node tools/validate-contract.js garda-agent-orchestrator/runtime/init-answers.json',
+            command_outcome: 'passed',
+            diagnostics: 'The focused validation completed successfully with no reported contract errors.',
+            evidence: [{
+                location: 'src/app.ts:1',
+                observation: 'The changed source contract motivated this focused validation.'
+            }]
+        });
         fs.writeFileSync(
             reviewOutputPath,
-            `${JSON.stringify(buildNoFindingsJsonReport(fixture.reviewContextPath, taskId), null, 2)}\n`,
+            `${JSON.stringify(report, null, 2)}\n`,
             'utf8'
         );
 
