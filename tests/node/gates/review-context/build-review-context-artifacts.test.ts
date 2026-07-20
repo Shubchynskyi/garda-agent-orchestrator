@@ -81,6 +81,9 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.ok(promptContract.includes('Supporting artifacts may inform observations but are not admissible location evidence'));
             assert.ok(promptContract.includes('Every FILE-* coverage obligation must cite its own target path:line'));
             assert.ok(promptContract.includes('Active finding object shape: {"id":"F-001"'));
+            assert.ok(promptContract.includes('does not claim OS-enforced containment against another process running as the same OS user'));
+            assert.ok(promptContract.includes('unless the authenticated task acceptance criteria explicitly require that stronger boundary'));
+            assert.ok(promptContract.includes('Continue to report ordinary path traversal, symlink or junction escape, stale identity, and observable replacement defects'));
             assert.ok(promptContract.includes('Do not choose downstream disposition'));
             assert.equal(/REVIEW PASSED|REVIEW FAILED|## Verdict/u.test(promptContract), false);
             assert.equal(/fix_now|create_follow_up|ignore|Profile:|profile strictness|balanced profile|strict profile/iu.test(promptContract), false);

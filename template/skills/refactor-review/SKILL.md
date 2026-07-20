@@ -16,7 +16,7 @@ metadata:
 # Refactor Review
 
 ## Generated Findings-Only Handoff
-When orchestration supplies generated role-prompt, reviewer-prompt, output-template, and evidence-manifest artifacts, those artifacts are the sole output-format authority and override legacy verdict-oriented format text below. Return exactly one findings-only JSON object, complete the entire assigned scope and every coverage-ledger obligation, and do not add verdict, pass/fail, status, downstream disposition, or remediation fields.
+When orchestration supplies generated role-prompt, prompt-template, reviewer-prompt, output-template, and evidence-manifest artifacts, those artifacts are the sole instruction and output-format authority and override legacy workflow or verdict-oriented text below. Use this skill only as the assigned review lens/checklist. Never modify source files, control artifacts, or task state, and never launch another agent; the only permitted write is the exact `ReviewOutputPath`. Return exactly one findings-only JSON object, complete the entire assigned scope and every coverage-ledger obligation, and do not add verdict, pass/fail, status, downstream disposition, or remediation fields.
 
 Use this skill for independent refactor safety assessment.
 Primary goal is behavior preservation with lower maintenance risk.
@@ -27,10 +27,7 @@ Primary goal is behavior preservation with lower maintenance risk.
 - Relevant tests and verification scope.
 - Inspection output for changed files when available (for example IntelliJ IDEA / JetBrains inspections, Qodana, compiler warnings, or linter warnings).
 - Optional review-context artifact from orchestration: `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json`.
-- Rule context package selected by orchestration and explicitly passed to reviewer:
-  - token economy active + `depth=1`: only `00-core.md`, `80-task-workflow.md`, and refactor-triggered rule ids/snippets for changed scope.
-  - token economy active + `depth=2`: `00-core.md`, `30-code-style.md`, `35-strict-coding-rules.md`, `50-structure-and-docs.md`, `80-task-workflow.md`.
-  - token economy disabled or `depth=3`: full required refactor rule set for changed scope.
+- Review-only rule context selected and explicitly passed by orchestration; do not load task-lifecycle rules or commands independently.
 
 ## Token Economy Mode
 - Config source: `garda-agent-orchestrator/live/config/token-economy.json`.
