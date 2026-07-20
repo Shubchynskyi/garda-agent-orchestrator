@@ -28,6 +28,10 @@ import {
 } from '../../../../policy/task-profile-policy-snapshot';
 import { detectCodeChanged } from '../../../../gates/preflight/preflight-code-change';
 import {
+    applyTaskRequiredReviewDeclaration,
+    resolveTaskRequiredReviewDeclaration
+} from '../../../../gates/preflight/classify-change-task-required-reviews';
+import {
     buildOptionalSkillSelectionArtifact,
     isMandatoryOptionalSkillSelectionPolicyMode,
     isOptionalSkillSelectionPolicyConfigured,
@@ -510,6 +514,19 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         let trustedWorkflowConfigBaselineFiles: string[] = [];
         const rawTaskProfile = taskModeEvidence.task_profile || taskQueueMetadata?.profile || null;
         const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
+        try {
+            const taskRequiredReviewDeclaration = resolveTaskRequiredReviewDeclaration({
+                taskId: resolvedTaskId,
+                notes: taskQueueMetadata?.notes,
+                reviewCapabilities
+            });
+            if (taskRequiredReviewDeclaration) {
+                result.task_required_review_declaration = taskRequiredReviewDeclaration;
+                applyTaskRequiredReviewDeclaration(result.required_reviews, taskRequiredReviewDeclaration);
+            }
+        } catch (error: unknown) {
+            preflightErrors.push(error instanceof Error ? error.message : String(error));
+        }
         const domainSurface = buildDomainReviewSurface(result);
         const profileGuardrailOptions = {
             domainSurface,

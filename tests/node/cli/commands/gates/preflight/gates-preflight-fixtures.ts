@@ -110,11 +110,18 @@ export function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
 }
 
-export function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO', profile = 'default'): void {
+export function seedTaskQueue(
+    repoRoot: string,
+    taskId: string,
+    status = 'TODO',
+    profile = 'default',
+    notes = 'fixture',
+    title = 'Update app flow'
+): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | ${profile} | fixture |`
+        `| ${taskId} | ${status} | P1 | test | ${title} | unassigned | 2026-03-28 | ${profile} | ${notes} |`
     ].join('\n'), 'utf8');
 }
 

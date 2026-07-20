@@ -42,6 +42,7 @@ import { detectPathTriggers } from './classify-change-path-detection';
 import { buildRequiredReviews } from './classify-change-required-reviews';
 import { classifyScopeCategory, type ScopeCategory } from './classify-change-scope-category';
 import { analyzeUiI18nCompanionScope } from './classify-change-i18n-companion';
+import type { TaskRequiredReviewDeclaration } from './classify-change-task-required-reviews';
 
 export type {
     ClassificationConfig,
@@ -208,6 +209,7 @@ export interface ClassifyChangeResult {
     depth_escalation?: DepthEscalationRecord;
     risk_aware_depth?: RiskAwareDepthResult;
     optional_skill_selection?: Record<string, unknown>;
+    task_required_review_declaration?: TaskRequiredReviewDeclaration;
     split_checkpoint_scope?: {
         task_id: string;
         parent_task_id: string;

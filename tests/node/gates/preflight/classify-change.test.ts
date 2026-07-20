@@ -553,6 +553,36 @@ describe('gates/classify-change', () => {
             }
         });
 
+        it('triggers api review for a standalone API intent without matching incidental substrings', () => {
+            const apiResult = classifyChange({
+                normalizedFiles: ['src/reports/profile-policy.ts'],
+                taskIntent: 'Add guarded local UI policy API flow',
+                changedLinesTotal: 34,
+                additionsTotal: 20,
+                deletionsTotal: 14,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, api: true }
+            });
+            const incidentalResult = classifyChange({
+                normalizedFiles: ['src/reports/profile-policy.ts'],
+                taskIntent: 'Adjust capitalization in the rapid preview flow',
+                changedLinesTotal: 34,
+                additionsTotal: 20,
+                deletionsTotal: 14,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, api: true }
+            });
+
+            assert.equal(apiResult.triggers.api_intent, true);
+            assert.equal(apiResult.required_reviews.api, true);
+            assert.equal(incidentalResult.triggers.api_intent, false);
+            assert.equal(incidentalResult.required_reviews.api, false);
+        });
+
         it('suppresses api and performance domain reviews for pure test-only maintenance', () => {
             const result = classifyChange({
                 normalizedFiles: [

@@ -71,7 +71,7 @@ export function hasSecurityReviewIntent(taskIntent: string): boolean {
 }
 
 export function hasApiReviewIntent(taskIntent: string): boolean {
-    return /\b(public webhook|webhook|callback|endpoint|route|handler|controller|request|response|dto|contract|openapi|swagger|graphql|telegram bot api|file[-\s]?download)\b/i.test(taskIntent);
+    return /\b(api|public webhook|webhook|callback|endpoint|route|handler|controller|request|response|dto|contract|openapi|swagger|graphql|telegram bot api|file[-\s]?download)\b/i.test(taskIntent);
 }
 
 export function hasPerformanceReviewIntent(taskIntent: string): boolean {
