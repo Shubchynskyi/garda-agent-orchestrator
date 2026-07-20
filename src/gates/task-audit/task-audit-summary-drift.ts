@@ -4,6 +4,10 @@ import { buildBundleRelativePath } from '../../core/constants';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from '../preflight/classify-change';
 import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
+import {
+    detectProtectedDirtyWorkspaceDrift,
+    getProtectedDirtyWorkspaceScopeFromPreflight
+} from '../workspace/dirty-worktree-protection';
 import { stringSha256, toPosix } from '../shared/helpers';
 import {
     type BlockerEntry,
@@ -354,13 +358,25 @@ export function buildPostDoneWorkspaceDriftBlocker(
         };
     }
     const auditedSet = new Set(auditedChangedFiles.map((entry) => toPosix(entry)).filter(Boolean));
-    const unexpectedFiles = [...new Set(currentChangedFiles.filter((entry) => !auditedSet.has(entry)))].sort();
-    if (unexpectedFiles.length > 0) {
+    const unexpectedWorkspace = getUnexpectedPostDoneWorkspaceFiles(
+        repoRoot,
+        currentChangedFiles,
+        [...auditedSet],
+        preflight
+    );
+    if (unexpectedWorkspace.protectedBaselineIntegrityError || unexpectedWorkspace.unexpectedFiles.length > 0) {
+        const details = unexpectedWorkspace.protectedBaselineIntegrityError
+            ? 'Dirty workspace protected-baseline authentication failed' + (
+                unexpectedWorkspace.unexpectedFiles.length > 0
+                    ? ` for: ${unexpectedWorkspace.unexpectedFiles.join(', ')}.`
+                    : '.'
+            )
+            : `${unexpectedWorkspace.unexpectedFiles.join(', ')}.`;
         return {
             gate: 'post-done-drift',
             reason:
-                'Tracked post-DONE workspace drift exists outside the completed task closeout scope: ' +
-                `${unexpectedFiles.join(', ')}. ` +
+                'Post-DONE workspace drift exists outside the completed task closeout scope: ' +
+                `${details} ` +
                 'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
         };
     }
@@ -393,6 +409,59 @@ export function buildPostDoneWorkspaceDriftBlocker(
         preflight,
         finalCloseoutJsonPath
     );
+}
+
+export interface PostDoneUnexpectedWorkspaceResult {
+    unexpectedFiles: string[];
+    protectedBaselineIntegrityError: boolean;
+}
+
+export function getUnexpectedPostDoneWorkspaceFiles(
+    repoRoot: string,
+    currentChangedFiles: string[],
+    auditedChangedFiles: string[],
+    preflight: Record<string, unknown> | null
+): PostDoneUnexpectedWorkspaceResult {
+    const auditedSet = new Set(auditedChangedFiles.map((entry) => toPosix(entry)).filter(Boolean));
+    const triggers = preflight?.triggers && typeof preflight.triggers === 'object' && !Array.isArray(preflight.triggers)
+        ? preflight.triggers as Record<string, unknown>
+        : null;
+    const unchangedProtectedFiles = new Set<string>();
+    const changedProtectedFiles = new Set<string>();
+    let protectedBaselineIntegrityError = false;
+    if (String(triggers?.dirty_workspace_protection_status || '').trim().toUpperCase() === 'PASS') {
+        const protection = detectProtectedDirtyWorkspaceDrift(
+            repoRoot,
+            getProtectedDirtyWorkspaceScopeFromPreflight(preflight)
+        );
+        const recordedProtectedFilesSha256 = normalizeOptionalHash(triggers?.dirty_workspace_protected_files_sha256);
+        const currentProtectedFilesSha256 = stringSha256(protection.protected_files.join('\n'));
+        if (
+            !recordedProtectedFilesSha256
+            || recordedProtectedFilesSha256 !== currentProtectedFilesSha256
+        ) {
+            protectedBaselineIntegrityError = true;
+            for (const protectedFile of protection.protected_files) {
+                changedProtectedFiles.add(protectedFile);
+            }
+        } else {
+            for (const protectedFile of protection.protected_files) {
+                const baselineHash = normalizeOptionalHash(protection.baseline_file_hashes[protectedFile]);
+                const currentHash = normalizeOptionalHash(protection.current_file_hashes[protectedFile]);
+                if (baselineHash && currentHash === baselineHash) {
+                    unchangedProtectedFiles.add(protectedFile);
+                } else {
+                    changedProtectedFiles.add(protectedFile);
+                }
+            }
+        }
+    }
+    return {
+        unexpectedFiles: [...new Set([...currentChangedFiles, ...changedProtectedFiles]
+            .map((entry) => toPosix(entry))
+            .filter((entry) => entry && !auditedSet.has(entry) && !unchangedProtectedFiles.has(entry)))].sort(),
+        protectedBaselineIntegrityError
+    };
 }
 
 function buildPostDoneSameScopeDriftBlocker(

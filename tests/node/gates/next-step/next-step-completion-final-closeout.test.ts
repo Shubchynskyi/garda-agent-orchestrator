@@ -30,6 +30,48 @@ import {
     seedSourceCheckoutRuntime
 } from './next-step-completion-fixtures';
 
+function bindProtectedDirtyBaseline(
+    preflightPath: string,
+    relativePath: string,
+    contentSha256: string
+): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    preflight.triggers = {
+        dirty_workspace_protection_status: 'PASS',
+        dirty_workspace_untouched_baseline_files: [relativePath],
+        dirty_workspace_protected_files: [relativePath],
+        dirty_workspace_protected_files_sha256: sha256Text(relativePath),
+        dirty_workspace_protected_file_hashes: {
+            [relativePath]: contentSha256
+        }
+    };
+    writeJson(preflightPath, preflight);
+}
+
+function seedCompletedTaskWithProtectedDirtyBaseline(
+    repoRoot: string
+): { baselinePath: string; preflightPath: string } {
+    const baselineRelativePath = 'src/local-baseline.ts';
+    const baselinePath = path.join(repoRoot, baselineRelativePath);
+    fs.writeFileSync(baselinePath, 'export const localBaseline = 1;\n', 'utf8');
+    initGitRepo(repoRoot);
+    fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+    fs.writeFileSync(baselinePath, 'export const localBaseline = 2;\n', 'utf8');
+    seedStartedTask(repoRoot, TASK_ID);
+    const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+    bindProtectedDirtyBaseline(
+        preflightPath,
+        baselineRelativePath,
+        sha256Text(fs.readFileSync(baselinePath, 'utf8'))
+    );
+    seedCompilePass(repoRoot, TASK_ID);
+    seedReviewGatePass(repoRoot, TASK_ID);
+    seedDocImpactPass(repoRoot, TASK_ID);
+    seedCompletionPass(repoRoot, TASK_ID);
+    materializeFinalCloseout(repoRoot, TASK_ID);
+    return { baselinePath, preflightPath };
+}
+
 describe('gates/next-step', () => {
     const expectedSourceRuntimeRebuildCommand = buildForcedSourceCheckoutRuntimeBuildCommand();
 
@@ -636,6 +678,100 @@ describe('gates/next-step', () => {
 
 
 
+    it('filters only a hash-identical authenticated dirty baseline after DONE', () => {
+
+        const repoRoot = makeTempRepo();
+
+        const fixture = seedCompletedTaskWithProtectedDirtyBaseline(repoRoot);
+
+
+
+        const unchangedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(unchangedResult.status, 'DONE', unchangedResult.reason);
+
+        assert.equal(unchangedResult.next_gate, null);
+
+        assert.doesNotMatch(unchangedResult.reason, /post-DONE workspace drift/i);
+
+        fs.appendFileSync(fixture.baselinePath, 'export const postDoneDrift = 3;\n', 'utf8');
+        const changedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(changedResult.next_gate, 'post-done-drift');
+        assert.match(changedResult.reason, /src\/local-baseline\.ts/);
+
+        fs.writeFileSync(fixture.baselinePath, 'export const localBaseline = 1;\n', 'utf8');
+        const restoredToHeadResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(restoredToHeadResult.next_gate, 'post-done-drift');
+        assert.match(restoredToHeadResult.reason, /src\/local-baseline\.ts/);
+
+        fs.writeFileSync(fixture.baselinePath, 'export const localBaseline = 2;\n', 'utf8');
+        fs.unlinkSync(fixture.baselinePath);
+        const deletedBaselineResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(deletedBaselineResult.next_gate, 'post-done-drift');
+        assert.match(deletedBaselineResult.reason, /src\/local-baseline\.ts/);
+
+        fs.writeFileSync(fixture.baselinePath, 'export const localBaseline = 2;\n', 'utf8');
+        const preflight = JSON.parse(fs.readFileSync(fixture.preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.detection_source = 'git_staged_only';
+        preflight.include_untracked = false;
+        writeJson(fixture.preflightPath, preflight);
+        const newUntrackedPath = path.join(repoRoot, 'src', 'post-done-untracked.ts');
+        fs.writeFileSync(newUntrackedPath, 'export const postDoneUntracked = true;\n', 'utf8');
+        const newUntrackedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(newUntrackedResult.next_gate, 'post-done-drift');
+        assert.match(newUntrackedResult.reason, /src\/post-done-untracked\.ts/);
+
+        fs.unlinkSync(newUntrackedPath);
+        const preflightWithMissingHash = JSON.parse(fs.readFileSync(fixture.preflightPath, 'utf8')) as Record<string, unknown>;
+        const triggers = preflightWithMissingHash.triggers as Record<string, unknown>;
+        triggers.dirty_workspace_protected_files = ['src/local-baseline.ts', 'src/deleted-untracked.ts'];
+        triggers.dirty_workspace_protected_file_hashes = {
+            'src/local-baseline.ts': sha256Text(fs.readFileSync(fixture.baselinePath, 'utf8'))
+        };
+        writeJson(fixture.preflightPath, preflightWithMissingHash);
+        const missingHashResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingHashResult.next_gate, 'post-done-drift');
+        assert.match(missingHashResult.reason, /src\/deleted-untracked\.ts/);
+
+        bindProtectedDirtyBaseline(
+            fixture.preflightPath,
+            'src/local-baseline.ts',
+            sha256Text(fs.readFileSync(fixture.baselinePath, 'utf8'))
+        );
+        const preflightWithMalformedScopeHash = JSON.parse(
+            fs.readFileSync(fixture.preflightPath, 'utf8')
+        ) as Record<string, unknown>;
+        (preflightWithMalformedScopeHash.triggers as Record<string, unknown>)
+            .dirty_workspace_protected_files_sha256 = 'malformed';
+        writeJson(fixture.preflightPath, preflightWithMalformedScopeHash);
+        const malformedScopeHashResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(malformedScopeHashResult.next_gate, 'post-done-drift');
+        assert.match(malformedScopeHashResult.reason, /src\/local-baseline\.ts/);
+
+        bindProtectedDirtyBaseline(fixture.preflightPath, 'src/local-baseline.ts', 'malformed');
+        const malformedHashResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(malformedHashResult.next_gate, 'post-done-drift');
+        assert.match(malformedHashResult.reason, /src\/local-baseline\.ts/);
+
+        bindProtectedDirtyBaseline(
+            fixture.preflightPath,
+            'src/local-baseline.ts',
+            sha256Text(fs.readFileSync(fixture.baselinePath, 'utf8'))
+        );
+        const preflightWithEmptyProtectedScope = JSON.parse(
+            fs.readFileSync(fixture.preflightPath, 'utf8')
+        ) as Record<string, unknown>;
+        (preflightWithEmptyProtectedScope.triggers as Record<string, unknown>)
+            .dirty_workspace_protected_files = [];
+        writeJson(fixture.preflightPath, preflightWithEmptyProtectedScope);
+        const emptyProtectedScopeResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(emptyProtectedScopeResult.next_gate, 'post-done-drift');
+        assert.match(emptyProtectedScopeResult.reason, /protected-baseline authentication failed/i);
+
+    });
+
     it('blocks completed tasks on tracked post-DONE drift without reopening lifecycle gates', () => {
 
         const repoRoot = makeTempRepo();
@@ -674,7 +810,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.commands.length, 0);
 
-        assert.match(result.reason, /Tracked post-DONE workspace drift detected/);
+        assert.match(result.reason, /Post-DONE workspace drift detected/);
 
         assert.match(result.reason, /src\/post-done-drift\.ts/);
 
@@ -728,7 +864,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.commands.length, 0);
 
-        assert.match(result.reason, /Tracked post-DONE workspace drift detected/);
+        assert.match(result.reason, /Post-DONE workspace drift detected/);
 
         assert.match(result.reason, /src\/post-done-staged\.ts/);
 

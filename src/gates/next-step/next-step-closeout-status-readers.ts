@@ -29,7 +29,8 @@ import {
     type WorkspaceSnapshot
 } from '../workspace/workspace-snapshot-cache';
 import {
-    evaluateStagedPostDoneAuditedScope
+    evaluateStagedPostDoneAuditedScope,
+    getUnexpectedPostDoneWorkspaceFiles
 } from '../task-audit/task-audit-summary-drift';
 import { isPlainRecord } from '../../core/records';
 
@@ -188,13 +189,9 @@ export function readPostDoneWorkspaceDriftDecision(
         return { blocked: false, reason: 'No preflight is available for post-DONE drift comparison.' };
     }
 
-    const normalizedDetectionSource = String(preflight.detection_source || 'git_auto').trim().toLowerCase();
-    const includeUntracked = normalizedDetectionSource === 'git_staged_only'
-        ? false
-        : (typeof preflight.include_untracked === 'boolean' ? preflight.include_untracked : true);
     let currentSnapshot: WorkspaceSnapshot & { cache_hit: boolean };
     try {
-        currentSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', includeUntracked, [], {
+        currentSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], {
             noCache: true,
             readOnly: true
         });
@@ -212,15 +209,26 @@ export function readPostDoneWorkspaceDriftDecision(
         };
     }
     const auditedChangedFiles = getPostDoneAuditedChangedFiles(preflight, docImpactPath);
-    const auditedSet = new Set(auditedChangedFiles);
     const currentChangedFiles = currentSnapshot.changed_files.map((entry) => normalizePath(entry)).filter(Boolean);
-    const unexpectedFiles = currentChangedFiles.filter((entry) => !auditedSet.has(entry));
-    if (unexpectedFiles.length > 0) {
+    const unexpectedWorkspace = getUnexpectedPostDoneWorkspaceFiles(
+        repoRoot,
+        currentChangedFiles,
+        auditedChangedFiles,
+        preflight
+    );
+    if (unexpectedWorkspace.protectedBaselineIntegrityError || unexpectedWorkspace.unexpectedFiles.length > 0) {
+        const details = unexpectedWorkspace.protectedBaselineIntegrityError
+            ? 'dirty workspace protected-baseline authentication failed' + (
+                unexpectedWorkspace.unexpectedFiles.length > 0
+                    ? ` for ${describePathList(unexpectedWorkspace.unexpectedFiles)}`
+                    : ''
+            )
+            : describePathList(unexpectedWorkspace.unexpectedFiles);
         return {
             blocked: true,
             reason:
-                `Tracked post-DONE workspace drift detected outside completed scope ${describePathList(auditedChangedFiles)}: ` +
-                `${describePathList(unexpectedFiles)}. ` +
+                `Post-DONE workspace drift detected outside completed scope ${describePathList(auditedChangedFiles)}: ` +
+                `${details}. ` +
                 'Do not reopen stale lifecycle gates automatically. Commit or isolate the already-completed task diff, or explicitly reopen/reset the task before running classify, compile, review, full-suite, or completion gates again.'
         };
     }
@@ -246,7 +254,7 @@ export function readPostDoneWorkspaceDriftDecision(
     if ((expectedAuditedScopeContentSha256 || expectedAuditedChangedFilesSha256) && auditedChangedFiles.length > 0) {
         let currentAuditedScope: WorkspaceSnapshot & { cache_hit: boolean };
         try {
-            currentAuditedScope = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', includeUntracked, auditedChangedFiles, {
+            currentAuditedScope = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, auditedChangedFiles, {
                 noCache: true,
                 readOnly: true
             });
