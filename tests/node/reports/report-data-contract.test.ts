@@ -26,10 +26,26 @@ import type {
     ReportTaskQualityChecklistLatest
 } from '../../../src/reports/report-data-contract';
 import { writeRollbackRecords } from '../../../src/lifecycle/common';
+import { buildProfileFindingPolicyProjection } from '../../../src/cli/commands/profile/profile-finding-policy';
 
 type WorkflowConfig = ReturnType<typeof buildDefaultWorkflowConfig>;
 const DEFAULT_QUALITY_CHECK_SCOPE_CATEGORY = 'mixed';
 const DEFAULT_QUALITY_CHECK_CHANGED_FILES = Object.freeze(['src/reports/report-data-contract.ts']);
+
+test('buildProfileFindingPolicyProjection requires migration for malformed persisted policy', () => {
+    const projection = buildProfileFindingPolicyProjection('malformed', {
+        description: 'Malformed policy profile',
+        depth: 2,
+        review_policy: { code: true },
+        review_finding_policy: { policy_id: 'balanced' } as never,
+        token_economy: { enabled: true },
+        skills: { auto_suggest: true }
+    });
+
+    assert.equal(projection.policy.policy_id, 'strict');
+    assert.equal(projection.migration.required, true);
+    assert.match(projection.migration.reason, /malformed review_finding_policy/iu);
+});
 
 function makeTempRepo(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-report-data-'));
@@ -137,6 +153,21 @@ function writeProfilesConfig(repoRoot: string): void {
             infra: 'auto',
             dependency: 'auto'
         },
+        review_finding_policy: {
+            schema_version: 1,
+            policy_id: 'balanced',
+            findings: {
+                critical: 'fix_now',
+                high: 'fix_now',
+                medium: 'fix_now',
+                low: 'create_follow_up'
+            },
+            residual_risk: 'create_follow_up'
+        },
+        review_follow_up_policy: {
+            schema_version: 1,
+            materialization_mode: 'grouped_by_parent'
+        },
         token_economy: {
             enabled: true,
             strip_examples: true,
@@ -160,6 +191,12 @@ function writeProfilesConfig(repoRoot: string): void {
                     ...balancedProfile.review_policy,
                     security: true
                 }
+            },
+            legacy: {
+                ...balancedProfile,
+                description: 'Legacy profile',
+                review_finding_policy: undefined,
+                review_follow_up_policy: undefined
             }
         }
     };
@@ -1875,6 +1912,27 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
         && profile.source === 'user'
         && !profile.protected
     )));
+    const balancedReportProfile = report.profiles_tab.profiles.find((profile) => profile.name === 'balanced');
+    const customReportProfile = report.profiles_tab.profiles.find((profile) => profile.name === 'custom-review');
+    assert.equal(balancedReportProfile?.review_finding_policy.policy_id, 'balanced');
+    assert.equal(balancedReportProfile?.review_finding_policy_migration.required, false);
+    assert.match(balancedReportProfile?.review_finding_policy_sha256 || '', /^[a-f0-9]{64}$/u);
+    assert.equal(
+        balancedReportProfile?.review_finding_policy_sha256,
+        customReportProfile?.review_finding_policy_sha256
+    );
+    assert.equal(balancedReportProfile?.review_follow_up_policy.materialization_mode, 'grouped_by_parent');
+    const legacyReportProfile = report.profiles_tab.profiles.find((profile) => profile.name === 'legacy');
+    assert.equal(legacyReportProfile?.review_finding_policy.policy_id, 'strict');
+    assert.equal(legacyReportProfile?.review_finding_policy_migration.required, true);
+    assert.notEqual(
+        balancedReportProfile?.review_finding_policy_sha256,
+        legacyReportProfile?.review_finding_policy_sha256
+    );
+    assert.match(
+        legacyReportProfile?.review_finding_policy_migration.diagnostics.join('\n') || '',
+        /missing review_finding_policy/iu
+    );
     assert.equal(report.quality_gate_tab.status, 'present');
     assert.equal(report.quality_gate_tab.enabled, true);
     assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'missing');
@@ -2232,6 +2290,23 @@ test('buildReportSnapshotFingerprint changes when workflow config audit log chan
         changed_fields: ['task_reset.enabled'],
         before_sha256: 'before',
         after_sha256: 'after'
+    })}\n`, 'utf8');
+    const after = buildReportSnapshotFingerprint(repoRoot);
+    assert.notEqual(before, after);
+});
+
+test('buildReportSnapshotFingerprint changes when profile finding-policy audit log changes', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const before = buildReportSnapshotFingerprint(repoRoot);
+    const auditPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'profile-finding-policy-audit.jsonl');
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    fs.writeFileSync(auditPath, `${JSON.stringify({
+        schema_version: 1,
+        event_source: 'profile-finding-policy-mutation',
+        transaction_id: 'fingerprint-regression',
+        transaction_state: 'COMMITTED'
     })}\n`, 'utf8');
     const after = buildReportSnapshotFingerprint(repoRoot);
     assert.notEqual(before, after);

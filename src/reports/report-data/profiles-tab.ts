@@ -3,7 +3,9 @@ import * as path from 'node:path';
 import { type ProfileEntry, type ProfilesData } from '../../cli/commands/profile/profile-types';
 import { KNOWN_REVIEW_TYPES } from '../../cli/commands/profile/profile-model';
 import { readProfilesData } from '../../cli/commands/profile/profile-data';
+import { buildProfileFindingPolicyProjection } from '../../cli/commands/profile/profile-finding-policy';
 import { joinOrchestratorPath, toPosix } from '../../gates/shared/helpers';
+import { resolveReviewFollowUpPolicy } from '../../policy/profile-resolver';
 import { getKnownReviewTypeLabel } from '../review-type-setting-text';
 import type { ReportDataUnavailableEntry, ReportProfileRow, ReportProfilesTab } from './types';
 
@@ -28,6 +30,8 @@ function buildProfileRow(
     activeProfile: string,
     entry: ProfileEntry
 ): ReportProfileRow {
+    const findingPolicy = buildProfileFindingPolicyProjection(name, entry);
+    const followUpPolicy = resolveReviewFollowUpPolicy(entry.review_follow_up_policy, name);
     return {
         name,
         source,
@@ -36,6 +40,14 @@ function buildProfileRow(
         description: entry.description,
         depth: entry.depth,
         review_policy: { ...entry.review_policy },
+        review_finding_policy: findingPolicy.policy,
+        review_finding_policy_sha256: findingPolicy.policy_sha256,
+        review_finding_policy_migration: {
+            ...findingPolicy.migration,
+            diagnostics: findingPolicy.diagnostics
+        },
+        review_follow_up_policy: { ...followUpPolicy.policy },
+        review_follow_up_policy_diagnostics: [...followUpPolicy.diagnostics],
         token_economy: { ...entry.token_economy },
         skills: { ...entry.skills }
     };

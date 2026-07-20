@@ -92,7 +92,7 @@ export function buildProfileFindingPolicyProjection(
 ): ProfileFindingPolicyProjection {
     const resolution = resolveReviewFindingPolicy(entry.review_finding_policy, profileName);
     const policy = clonePolicy(resolution.policy);
-    const required = entry.review_finding_policy === undefined;
+    const required = resolution.migration_required;
     return {
         policy,
         policy_sha256: hashReviewFindingPolicy(policy),

@@ -53,6 +53,7 @@ export function buildReportSnapshotFingerprint(repoRoot: string): string {
         statFingerprint(path.join(bundleRoot, 'live', 'config', 'profiles.json')),
         statFingerprint(path.join(bundleRoot, 'template', 'config', 'profiles.json')),
         statFingerprint(path.join(bundleRoot, 'runtime', 'workflow-config-audit.jsonl')),
+        statFingerprint(path.join(bundleRoot, 'runtime', 'profile-finding-policy-audit.jsonl')),
         statFingerprint(path.join(bundleRoot, 'live', 'config', 'task-reset-enablement-receipt.json')),
         statFingerprint(path.join(bundleRoot, 'runtime', 'protected-control-plane-manifest.json')),
         statFingerprint(path.join(bundleRoot, 'live', 'config', 'paths.json')),

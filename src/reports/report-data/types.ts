@@ -21,6 +21,7 @@ import type {
     OptionalSkillSelectionPolicyMode
 } from '../../runtime/optional-skill-selection';
 import type { ScopeBudgetStatusSnapshot } from '../../core/scope-budget-status';
+import type { ReviewFindingPolicy, ReviewFollowUpPolicy } from '../../policy/profile-resolver';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
 export const DEFAULT_REPORT_MAX_DETAILED_TASKS = 0;
@@ -322,6 +323,16 @@ export interface ReportProfileRow {
     description: string;
     depth: number;
     review_policy: Record<string, ReportProfileReviewPolicyValue>;
+    review_finding_policy: ReviewFindingPolicy;
+    review_finding_policy_sha256: string;
+    review_finding_policy_migration: {
+        required: boolean;
+        reason: string;
+        target_policy_id: ReviewFindingPolicy['policy_id'];
+        diagnostics: string[];
+    };
+    review_follow_up_policy: ReviewFollowUpPolicy;
+    review_follow_up_policy_diagnostics: string[];
     token_economy: Record<string, boolean>;
     skills: Record<string, boolean>;
 }

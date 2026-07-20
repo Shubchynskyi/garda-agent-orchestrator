@@ -46,6 +46,7 @@ export interface ReviewFindingPolicy {
 export interface ReviewFindingPolicyResolution {
     policy: ReviewFindingPolicy;
     diagnostics: string[];
+    migration_required: boolean;
 }
 
 export type ReviewFollowUpMaterializationMode = 'per_finding' | 'grouped_by_parent';
@@ -425,6 +426,7 @@ export function resolveReviewFindingPolicy(
     if (policyInput === undefined) {
         return {
             policy: strictPolicy,
+            migration_required: true,
             diagnostics: [
                 `Profile '${profileName}' is missing review_finding_policy; resolved fail-closed to strict. Add review_finding_policy to migrate this legacy profile.`
             ]
@@ -433,6 +435,7 @@ export function resolveReviewFindingPolicy(
     if (!isPlainRecord(policyInput)) {
         return {
             policy: strictPolicy,
+            migration_required: true,
             diagnostics: [
                 `Profile '${profileName}' has invalid review_finding_policy; resolved fail-closed to strict.`
             ]
@@ -450,6 +453,7 @@ export function resolveReviewFindingPolicy(
     ) {
         return {
             policy: strictPolicy,
+            migration_required: true,
             diagnostics: [
                 `Profile '${profileName}' has malformed review_finding_policy; resolved fail-closed to strict.`
             ]
@@ -467,6 +471,7 @@ export function resolveReviewFindingPolicy(
     if (unknownFindingKeys.length > 0) {
         return {
             policy: strictPolicy,
+            migration_required: true,
             diagnostics: [
                 `Profile '${profileName}' has malformed review_finding_policy findings; resolved fail-closed to strict.`
             ]
@@ -477,6 +482,7 @@ export function resolveReviewFindingPolicy(
         if (!isReviewFindingDispositionAction(action)) {
             return {
                 policy: strictPolicy,
+                migration_required: true,
                 diagnostics: [
                     `Profile '${profileName}' has invalid review_finding_policy.findings.${severity}; resolved fail-closed to strict.`
                 ]
@@ -486,6 +492,7 @@ export function resolveReviewFindingPolicy(
             if (!isCriticalReviewFindingDispositionAction(action)) {
                 return {
                     policy: strictPolicy,
+                    migration_required: true,
                     diagnostics: [
                         `Profile '${profileName}' attempted to weaken critical finding disposition; critical is an immutable safety floor. ` +
                         'Resolved fail-closed to strict.'
@@ -500,6 +507,7 @@ export function resolveReviewFindingPolicy(
     if (!isReviewFindingDispositionAction(policyInput.residual_risk)) {
         return {
             policy: strictPolicy,
+            migration_required: true,
             diagnostics: [
                 `Profile '${profileName}' has invalid review_finding_policy.residual_risk; resolved fail-closed to strict.`
             ]
@@ -516,6 +524,7 @@ export function resolveReviewFindingPolicy(
     if (presetMismatch) {
         return {
             policy: strictPolicy,
+            migration_required: true,
             diagnostics: [
                 `Profile '${profileName}' has inconsistent ${policy.policy_id} review_finding_policy; ${presetMismatch} Resolved fail-closed to strict.`
             ]
@@ -523,7 +532,7 @@ export function resolveReviewFindingPolicy(
     }
 
     diagnostics.push(`Profile '${profileName}' review_finding_policy resolved: ${formatReviewFindingPolicy(policy)}.`);
-    return { policy, diagnostics };
+    return { policy, diagnostics, migration_required: false };
 }
 
 export function resolveReviewFollowUpPolicy(
