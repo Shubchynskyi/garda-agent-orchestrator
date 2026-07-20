@@ -1085,19 +1085,27 @@ test('profiles tab renders required auto disabled policy controls without trigge
 
 test('profile browser action previews before confirmation and binds execute to the preview hash', async () => {
     const requests: Array<Record<string, unknown>> = [];
+    const events: string[] = [];
     const previewSha256 = 'a'.repeat(64);
     const context = {
         actionToken: 'test-token',
         currentProfileActionResult: null,
         profilesStatusNode: { innerHTML: '' },
-        renderSettingResultMarkup: () => '',
+        renderSettingResultMarkup: (result: { status: string }) => {
+            events.push(`render:${result.status}`);
+            return '';
+        },
         t: (key: string) => key,
         window: {
-            prompt: () => 'APPLY PROFILE CHANGE'
+            prompt: () => {
+                events.push('prompt');
+                return 'APPLY PROFILE CHANGE';
+            }
         },
         fetch: async (_url: string, options: { body: string }) => {
             const payload = JSON.parse(options.body) as Record<string, unknown>;
             requests.push(payload);
+            events.push(`request:${payload.mode}`);
             return {
                 json: async () => requests.length === 1
                     ? { status: 'previewed', preview_sha256: previewSha256 }
@@ -1117,6 +1125,13 @@ test('profile browser action previews before confirmation and binds execute to t
     assert.equal(requests[1].mode, 'execute');
     assert.equal(requests[1].confirmation, 'APPLY PROFILE CHANGE');
     assert.equal(requests[1].preview_sha256, previewSha256);
+    assert.deepEqual(events, [
+        'request:preview',
+        'render:previewed',
+        'prompt',
+        'request:execute',
+        'render:confirmation_required'
+    ]);
 });
 
 test('profile browser action stops before confirmation when preview hash is invalid', async () => {
