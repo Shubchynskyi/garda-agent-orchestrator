@@ -1023,6 +1023,27 @@ test('profiles tab renders required auto disabled policy controls without trigge
         config_path: 'garda-agent-orchestrator/live/config/profiles.json',
         active_profile: 'custom-review',
         unavailable: [],
+        finding_policy_actions: ['fix_now', 'create_follow_up', 'ignore'],
+        finding_policy_presets: {
+            soft: {
+                schema_version: 1,
+                policy_id: 'soft',
+                findings: { critical: 'fix_now', high: 'create_follow_up', medium: 'create_follow_up', low: 'ignore' },
+                residual_risk: 'ignore'
+            },
+            balanced: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: { critical: 'fix_now', high: 'fix_now', medium: 'fix_now', low: 'create_follow_up' },
+                residual_risk: 'create_follow_up'
+            },
+            strict: {
+                schema_version: 1,
+                policy_id: 'strict',
+                findings: { critical: 'fix_now', high: 'fix_now', medium: 'fix_now', low: 'fix_now' },
+                residual_risk: 'fix_now'
+            }
+        },
         review_types: [
             { id: 'code', label: 'Code' },
             { id: 'test', label: 'Test' },
@@ -1040,6 +1061,12 @@ test('profiles tab renders required auto disabled policy controls without trigge
                     code: true,
                     test: 'auto',
                     performance: false
+                },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'custom',
+                    findings: { critical: 'fix_now', high: 'fix_now', medium: 'create_follow_up', low: 'ignore' },
+                    residual_risk: 'create_follow_up'
                 }
             },
             {
@@ -1053,6 +1080,12 @@ test('profiles tab renders required auto disabled policy controls without trigge
                     code: true,
                     test: true,
                     performance: 'auto'
+                },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'balanced',
+                    findings: { critical: 'fix_now', high: 'fix_now', medium: 'fix_now', low: 'create_follow_up' },
+                    residual_risk: 'create_follow_up'
                 }
             }
         ]
@@ -1080,7 +1113,133 @@ test('profiles tab renders required auto disabled policy controls without trigge
     assert.match(html, /id="profile-custom-review-review-code"[\s\S]*<option value="required" selected>[\s\S]*?<\/option>[\s\S]*<option value="auto">[\s\S]*?<\/option>[\s\S]*<option value="disabled">[\s\S]*?<\/option>/u);
     assert.match(html, /id="profile-custom-review-review-test"[\s\S]*<option value="required">[\s\S]*?<\/option>[\s\S]*<option value="auto" selected>[\s\S]*?<\/option>[\s\S]*<option value="disabled">[\s\S]*?<\/option>/u);
     assert.match(html, /id="profile-custom-review-review-performance"[\s\S]*<option value="required">[\s\S]*?<\/option>[\s\S]*<option value="auto">[\s\S]*?<\/option>[\s\S]*<option value="disabled" selected>[\s\S]*?<\/option>/u);
+    assert.match(html, /<fieldset class="profile-finding-policy"><legend>Finding disposition<\/legend>/u);
+    assert.match(html, /Changes affect future tasks only/u);
+    assert.match(html, /<span>Policy preset<\/span>/u);
+    assert.match(html, /<span>Critical<\/span><select[^>]*aria-label="Critical"/u);
+    assert.match(html, /<span>High<\/span><select[^>]*aria-label="High"/u);
+    assert.match(html, /<span>Medium<\/span><select[^>]*aria-label="Medium"/u);
+    assert.match(html, /<span>Low<\/span><select[^>]*aria-label="Low"/u);
+    assert.match(html, /<span>Residual risk<\/span><select[^>]*aria-label="Residual risk"/u);
+    assert.doesNotMatch(html, /<span>policy_id<\/span>|aria-label="(?:critical|high|medium|low|residual_risk)"/u);
+    assert.match(html, /id="profile-custom-review-finding-critical"[^>]* disabled[^>]*>[\s\S]*<option value="fix_now" selected>/u);
+    assert.match(html, /id="profile-custom-review-finding-preset"[\s\S]*<option value="custom" selected>/u);
+    assert.match(html, /data-profile-policy-action="copy" data-profile-name="custom-review"/u);
+    assert.match(html, /data-profile-policy-action="reset" data-profile-name="custom-review"/u);
+    assert.match(html, /data-profile-policy-action="apply" data-profile-name="custom-review"/u);
+    assert.match(UI_DASHBOARD_CLIENT_PROFILES, /presetInput\.value = 'custom'/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.profile-finding-policy-grid \.profile-finding-critical/u);
     assert.doesNotMatch(html, /data-profile-trigger|profileTrigger|review_trigger/u);
+});
+
+test('profile finding policy handlers apply presets and submit copy reset and custom payloads', () => {
+    type BrowserElement = {
+        value: string;
+        dataset: Record<string, string>;
+        listeners: Record<string, () => void>;
+        addEventListener: (event: string, listener: () => void) => void;
+        closest: () => { dataset: { profileName: string } };
+    };
+    const profileName = 'custom-review';
+    const createElement = (value = '', dataset: Record<string, string> = {}): BrowserElement => {
+        const element = {
+            value,
+            dataset,
+            listeners: {} as Record<string, () => void>,
+            addEventListener(event: string, listener: () => void) {
+                this.listeners[event] = listener;
+            },
+            closest: () => ({ dataset: { profileName } })
+        };
+        return element;
+    };
+    const preset = createElement('strict');
+    const critical = createElement('fix_now', { profileFindingAction: 'critical' });
+    const high = createElement('create_follow_up', { profileFindingAction: 'high' });
+    const medium = createElement('create_follow_up', { profileFindingAction: 'medium' });
+    const low = createElement('ignore', { profileFindingAction: 'low' });
+    const residualRisk = createElement('ignore', { profileFindingAction: 'residual_risk' });
+    const copyFrom = createElement('balanced');
+    const copy = createElement('', { profileName, profilePolicyAction: 'copy' });
+    const reset = createElement('', { profileName, profilePolicyAction: 'reset' });
+    const apply = createElement('', { profileName, profilePolicyAction: 'apply' });
+    const elementsById: Record<string, BrowserElement> = {
+        [`profile-${profileName}-finding-preset`]: preset,
+        [`profile-${profileName}-finding-critical`]: critical,
+        [`profile-${profileName}-finding-high`]: high,
+        [`profile-${profileName}-finding-medium`]: medium,
+        [`profile-${profileName}-finding-low`]: low,
+        [`profile-${profileName}-finding-residual_risk`]: residualRisk,
+        [`profile-${profileName}-finding-copy-from`]: copyFrom
+    };
+    const submitted: string[] = [];
+    const context = {
+        currentProfilesPayload: {
+            finding_policy_presets: {
+                strict: {
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'fix_now',
+                        low: 'fix_now'
+                    },
+                    residual_risk: 'fix_now'
+                }
+            }
+        },
+        profilesNode: {
+            querySelectorAll: (selector: string) => {
+                if (selector.endsWith('select[id$="-finding-preset"]')) return [preset];
+                if (selector.endsWith('select[data-profile-finding-action]')) {
+                    return [critical, high, medium, low, residualRisk];
+                }
+                if (selector === 'button[data-profile-policy-action]') return [copy, reset, apply];
+                return [];
+            }
+        },
+        document: {
+            getElementById: (id: string) => elementsById[id] || null
+        },
+        submitted
+    };
+
+    vm.runInNewContext(
+        `${UI_DASHBOARD_CLIENT_PROFILES}\nsubmitProfileAction = payload => submitted.push(JSON.stringify(payload));\nattachProfileFindingPolicyHandlers();`,
+        context
+    );
+
+    preset.listeners.change();
+    assert.deepEqual(
+        [critical.value, high.value, medium.value, low.value, residualRisk.value],
+        ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'fix_now']
+    );
+    apply.listeners.click();
+
+    high.value = 'create_follow_up';
+    high.listeners.change();
+    assert.equal(preset.value, 'custom');
+
+    copy.listeners.click();
+    reset.listeners.click();
+    apply.listeners.click();
+
+    assert.deepEqual(submitted.map((payload) => JSON.parse(payload)), [
+        { operation: 'policy', profile_name: profileName, policy_preset: 'strict' },
+        { operation: 'policy', profile_name: profileName, policy_copy_from: 'balanced' },
+        { operation: 'policy', profile_name: profileName, policy_reset: true },
+        {
+            operation: 'policy',
+            profile_name: profileName,
+            policy_preset: 'custom',
+            policy_actions: {
+                critical: 'fix_now',
+                high: 'create_follow_up',
+                medium: 'fix_now',
+                low: 'fix_now',
+                residual_risk: 'fix_now'
+            }
+        }
+    ]);
 });
 
 test('profile browser action previews before confirmation and binds execute to the preview hash', async () => {

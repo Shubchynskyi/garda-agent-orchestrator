@@ -52,6 +52,8 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
             enabled: boolean;
             status: string;
             active_profile: string;
+            finding_policy_actions: string[];
+            finding_policy_presets: Record<string, { policy_id: string }>;
             review_types: Array<{ id: string }>;
             profiles: Array<{
                 name: string;
@@ -64,6 +66,8 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(list.enabled, true);
         assert.equal(list.status, 'present');
         assert.equal(list.active_profile, 'balanced');
+        assert.deepEqual(list.finding_policy_actions, ['fix_now', 'create_follow_up', 'ignore']);
+        assert.equal(list.finding_policy_presets.strict.policy_id, 'strict');
         assert.ok(list.review_types.some((reviewType) => reviewType.id === 'test'));
         assert.ok(list.profiles.some((profile) => profile.name === 'balanced' && profile.protected));
 
@@ -214,6 +218,147 @@ test('local UI profiles endpoint reads, edits, and protects profile definitions'
         assert.equal(createdData.user_profiles['custom-review'].review_policy.performance, false);
         assert.equal(createdData.user_profiles['custom-review'].review_policy.security, true);
         assert.match(fs.readFileSync(create.audit_path, 'utf8'), /"action_id":"profile:create:custom-review"/u);
+
+        const unsafePolicyResponse = await fetch(`${server.url}api/profiles`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                operation: 'policy',
+                mode: 'preview',
+                profile_name: 'custom-review',
+                policy_preset: 'custom',
+                policy_actions: {
+                    critical: 'ignore',
+                    high: 'fix_now',
+                    medium: 'create_follow_up',
+                    low: 'ignore',
+                    residual_risk: 'create_follow_up'
+                }
+            })
+        });
+        assert.equal(unsafePolicyResponse.status, 400);
+        assert.match(
+            (await unsafePolicyResponse.json() as { error: string }).error,
+            /critical is immutable and must be fix_now/iu
+        );
+
+        const presetPolicyPayload = {
+            operation: 'policy',
+            profile_name: 'custom-review',
+            policy_preset: 'strict'
+        };
+        const presetPolicyPreviewSha256 = await previewProfileAction(presetPolicyPayload);
+        const presetPolicyApplyResponse = await fetch(`${server.url}api/profiles`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                ...presetPolicyPayload,
+                mode: 'execute',
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: presetPolicyPreviewSha256
+            })
+        });
+        assert.equal(presetPolicyApplyResponse.status, 200);
+        assert.equal(
+            JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).user_profiles['custom-review'].review_finding_policy.policy_id,
+            'strict'
+        );
+
+        const customPolicyPayload = {
+            operation: 'policy',
+            profile_name: 'custom-review',
+            policy_preset: 'custom',
+            policy_actions: {
+                critical: 'fix_now',
+                high: 'fix_now',
+                medium: 'create_follow_up',
+                low: 'ignore',
+                residual_risk: 'create_follow_up'
+            }
+        };
+        const customPolicyPreviewResponse = await fetch(`${server.url}api/profiles`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ ...customPolicyPayload, mode: 'preview' })
+        });
+        assert.equal(customPolicyPreviewResponse.status, 200);
+        const customPolicyPreview = await customPolicyPreviewResponse.json() as {
+            status: string;
+            preview_sha256: string;
+            changed_keys: string[];
+            proposed_value: {
+                policy: { policy_id: string; findings: { critical: string; low: string } };
+                task_effect: { scope: string; active_task_snapshots_changed: boolean };
+            };
+        };
+        assert.equal(customPolicyPreview.status, 'previewed');
+        assert.deepEqual(customPolicyPreview.changed_keys, ['user_profiles.custom-review.review_finding_policy']);
+        assert.equal(customPolicyPreview.proposed_value.policy.policy_id, 'custom');
+        assert.equal(customPolicyPreview.proposed_value.policy.findings.critical, 'fix_now');
+        assert.equal(customPolicyPreview.proposed_value.policy.findings.low, 'ignore');
+        assert.deepEqual(customPolicyPreview.proposed_value.task_effect, {
+            scope: 'future_tasks_only',
+            active_task_snapshots_changed: false
+        });
+        const customPolicyApplyResponse = await fetch(`${server.url}api/profiles`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                ...customPolicyPayload,
+                mode: 'execute',
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: customPolicyPreview.preview_sha256
+            })
+        });
+        assert.equal(customPolicyApplyResponse.status, 200);
+        assert.equal(
+            JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).user_profiles['custom-review'].review_finding_policy.policy_id,
+            'custom'
+        );
+
+        const copyPolicyPayload = {
+            operation: 'policy',
+            profile_name: 'custom-review',
+            policy_copy_from: 'balanced'
+        };
+        const copyPolicyPreviewSha256 = await previewProfileAction(copyPolicyPayload);
+        const copyPolicyApplyResponse = await fetch(`${server.url}api/profiles`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                ...copyPolicyPayload,
+                mode: 'execute',
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: copyPolicyPreviewSha256
+            })
+        });
+        assert.equal(copyPolicyApplyResponse.status, 200);
+        assert.equal(
+            JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).user_profiles['custom-review'].review_finding_policy.policy_id,
+            'strict'
+        );
+
+        const resetPolicyPayload = {
+            operation: 'policy',
+            profile_name: 'custom-review',
+            policy_reset: true
+        };
+        const resetPolicyPreviewSha256 = await previewProfileAction(resetPolicyPayload);
+        const resetPolicyApplyResponse = await fetch(`${server.url}api/profiles`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                ...resetPolicyPayload,
+                mode: 'execute',
+                confirmation: 'APPLY PROFILE CHANGE',
+                preview_sha256: resetPolicyPreviewSha256
+            })
+        });
+        assert.equal(resetPolicyApplyResponse.status, 200);
+        assert.equal(
+            JSON.parse(fs.readFileSync(profilesPath(repoRoot), 'utf8')).user_profiles['custom-review'].review_finding_policy.policy_id,
+            'strict'
+        );
 
         const deleteBuiltInResponse = await fetch(`${server.url}api/profiles`, {
             method: 'POST',

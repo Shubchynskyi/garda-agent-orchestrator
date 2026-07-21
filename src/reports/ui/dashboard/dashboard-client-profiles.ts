@@ -24,6 +24,9 @@ function profileInputId(profileName, field) {
 function profileReviewInputId(profileName, reviewType) {
   return profileInputId(profileName, 'review-' + reviewType);
 }
+function profileFindingInputId(profileName, field) {
+  return profileInputId(profileName, 'finding-' + field);
+}
 function renderProfileResult(result) {
   currentProfileActionResult = result;
   if (!profilesStatusNode) return;
@@ -66,6 +69,65 @@ function renderProfilePolicyGrid(profile, disabled) {
         + '</label>';
     }).join('')
     + '</div>';
+}
+function findingPolicyActions() {
+  return currentProfilesPayload && Array.isArray(currentProfilesPayload.finding_policy_actions)
+    ? currentProfilesPayload.finding_policy_actions
+    : [];
+}
+function findingPolicyPresets() {
+  return currentProfilesPayload && currentProfilesPayload.finding_policy_presets
+    ? currentProfilesPayload.finding_policy_presets
+    : {};
+}
+function findingPolicyFieldLabel(key) {
+  const translationKeys = {
+    critical: 'profileFindingCritical',
+    high: 'profileFindingHigh',
+    medium: 'profileFindingMedium',
+    low: 'profileFindingLow',
+    residual_risk: 'profileFindingResidualRisk'
+  };
+  return t(translationKeys[key] || key);
+}
+function renderFindingActionSelect(profileName, key, value, disabled, locked) {
+  const options = findingPolicyActions();
+  const values = options.includes(value) ? options : [value, ...options];
+  return '<select id="' + safe(profileFindingInputId(profileName, key)) + '" data-profile-finding-action="' + safe(key) + '"'
+    + (disabled || locked ? ' disabled' : '') + ' aria-label="' + safe(findingPolicyFieldLabel(key)) + '">'
+    + values.map(action => '<option value="' + safe(action) + '"' + (action === value ? ' selected' : '') + '>' + safe(action) + '</option>').join('')
+    + '</select>';
+}
+function renderFindingPolicySection(profile, disabled) {
+  const policy = profile.review_finding_policy || {};
+  const findings = policy.findings || {};
+  const presets = findingPolicyPresets();
+  const presetIds = [...Object.keys(presets), 'custom'];
+  const profiles = currentProfilesPayload && Array.isArray(currentProfilesPayload.profiles)
+    ? currentProfilesPayload.profiles
+    : [];
+  const copySources = profiles.filter(candidate => candidate.name !== profile.name);
+  return '<fieldset class="profile-finding-policy"><legend>' + safe(t('profileFindingDispositionTitle')) + '</legend>'
+    + '<p class="empty profile-finding-policy-help">' + safe(t('profileFindingDispositionHelp')) + '</p>'
+    + '<div class="profile-finding-policy-toolbar">'
+    + '<label><span>' + safe(t('profileFindingPolicyPreset')) + '</span><select id="' + safe(profileFindingInputId(profile.name, 'preset')) + '"' + (disabled ? ' disabled' : '') + '>'
+    + presetIds.map(presetId => '<option value="' + safe(presetId) + '"' + (presetId === policy.policy_id ? ' selected' : '') + '>' + safe(presetId) + '</option>').join('')
+    + '</select></label>'
+    + '<label><span>' + safe(t('profileCopyFrom')) + '</span><select id="' + safe(profileFindingInputId(profile.name, 'copy-from')) + '"' + (disabled || copySources.length === 0 ? ' disabled' : '') + '>'
+    + copySources.map(candidate => '<option value="' + safe(candidate.name) + '">' + safe(candidate.name) + '</option>').join('')
+    + '</select></label>'
+    + '<button type="button" data-profile-policy-action="copy" data-profile-name="' + safe(profile.name) + '"' + (disabled || copySources.length === 0 ? ' disabled' : '') + '>' + safe(t('profileFindingCopyPolicy')) + '</button>'
+    + '<button type="button" data-profile-policy-action="reset" data-profile-name="' + safe(profile.name) + '"' + (disabled ? ' disabled' : '') + '>' + safe(t('profileFindingResetPolicy')) + '</button>'
+    + '</div>'
+    + '<div class="profile-finding-policy-grid">'
+    + '<label class="profile-finding-critical"><span>' + safe(findingPolicyFieldLabel('critical')) + '</span>' + renderFindingActionSelect(profile.name, 'critical', findings.critical || 'fix_now', disabled, true) + '</label>'
+    + '<label><span>' + safe(findingPolicyFieldLabel('high')) + '</span>' + renderFindingActionSelect(profile.name, 'high', findings.high || '', disabled, false) + '</label>'
+    + '<label><span>' + safe(findingPolicyFieldLabel('medium')) + '</span>' + renderFindingActionSelect(profile.name, 'medium', findings.medium || '', disabled, false) + '</label>'
+    + '<label><span>' + safe(findingPolicyFieldLabel('low')) + '</span>' + renderFindingActionSelect(profile.name, 'low', findings.low || '', disabled, false) + '</label>'
+    + '<label><span>' + safe(findingPolicyFieldLabel('residual_risk')) + '</span>' + renderFindingActionSelect(profile.name, 'residual_risk', policy.residual_risk || '', disabled, false) + '</label>'
+    + '</div>'
+    + '<div class="profile-card-footer"><button type="button" data-profile-policy-action="apply" data-profile-name="' + safe(profile.name) + '"' + (disabled ? ' disabled' : '') + '>' + safe(t('apply')) + '</button></div>'
+    + '</fieldset>';
 }
 function renderAddProfileForm(payload, disabled) {
   const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
@@ -150,9 +212,28 @@ function renderProfileCard(profile, disabled) {
     + [1, 2, 3].map(depth => '<option value="' + depth + '"' + (Number(profile.depth) === depth ? ' selected' : '') + '>' + depth + '</option>').join('')
     + '</select></label>'
     + '</div>'
+    + renderFindingPolicySection(profile, disabled)
     + renderProfilePolicyGrid(profile, disabled)
     + '<div class="profile-card-footer"><button type="button" data-profile-action="save" data-profile-name="' + safe(profile.name) + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div>'
     + '</article>';
+}
+function readFindingPolicyForm(profileName) {
+  const preset = document.getElementById(profileFindingInputId(profileName, 'preset'));
+  const presetValue = preset ? preset.value : 'custom';
+  const payload = {
+    operation: 'policy',
+    profile_name: profileName,
+    policy_preset: presetValue
+  };
+  if (presetValue === 'custom') {
+    const actions = {};
+    for (const key of ['critical', 'high', 'medium', 'low', 'residual_risk']) {
+      const input = document.getElementById(profileFindingInputId(profileName, key));
+      actions[key] = input ? input.value : '';
+    }
+    payload.policy_actions = actions;
+  }
+  return payload;
 }
 function readProfileForm(profileName) {
   const description = document.getElementById(profileInputId(profileName, 'description'));
@@ -257,6 +338,60 @@ function attachProfilePolicyVisualHandlers() {
     });
   }
 }
+function setFindingPolicyInputs(profileName, policy) {
+  const findings = policy && policy.findings ? policy.findings : {};
+  const values = {
+    critical: findings.critical,
+    high: findings.high,
+    medium: findings.medium,
+    low: findings.low,
+    residual_risk: policy ? policy.residual_risk : ''
+  };
+  for (const [key, value] of Object.entries(values)) {
+    const input = document.getElementById(profileFindingInputId(profileName, key));
+    if (input && value) input.value = value;
+  }
+}
+function attachProfileFindingPolicyHandlers() {
+  const preset = profilesNode.querySelectorAll('.profile-finding-policy select[id$="-finding-preset"]')[0];
+  if (preset) {
+    preset.addEventListener('change', () => {
+      const card = preset.closest('[data-profile-name]');
+      const profileName = card ? card.dataset.profileName || '' : '';
+      const policy = findingPolicyPresets()[preset.value];
+      if (policy) setFindingPolicyInputs(profileName, policy);
+    });
+  }
+  for (const select of profilesNode.querySelectorAll('.profile-finding-policy select[data-profile-finding-action]')) {
+    if (select.dataset.profileFindingAction === 'critical') continue;
+    select.addEventListener('change', () => {
+      const card = select.closest('[data-profile-name]');
+      const profileName = card ? card.dataset.profileName || '' : '';
+      const presetInput = document.getElementById(profileFindingInputId(profileName, 'preset'));
+      if (presetInput) presetInput.value = 'custom';
+    });
+  }
+  for (const button of profilesNode.querySelectorAll('button[data-profile-policy-action]')) {
+    button.addEventListener('click', () => {
+      const profileName = button.dataset.profileName || '';
+      const action = button.dataset.profilePolicyAction;
+      if (action === 'copy') {
+        const copyInput = document.getElementById(profileFindingInputId(profileName, 'copy-from'));
+        submitProfileAction({
+          operation: 'policy',
+          profile_name: profileName,
+          policy_copy_from: copyInput ? copyInput.value : ''
+        });
+        return;
+      }
+      if (action === 'reset') {
+        submitProfileAction({ operation: 'policy', profile_name: profileName, policy_reset: true });
+        return;
+      }
+      submitProfileAction(readFindingPolicyForm(profileName));
+    });
+  }
+}
 function renderProfiles(payload) {
   currentProfilesPayload = payload;
   setPanelConfigPath(profilesConfigPathNode, payload && payload.config_path ? payload.config_path : '');
@@ -280,6 +415,7 @@ function renderProfiles(payload) {
     + '</section>';
   attachProfileTabHandlers();
   attachProfilePolicyVisualHandlers();
+  attachProfileFindingPolicyHandlers();
   attachProfileActionHandlers();
 }
 async function refreshProfilesPayload() {

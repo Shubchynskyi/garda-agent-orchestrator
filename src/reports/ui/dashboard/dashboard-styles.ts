@@ -113,8 +113,8 @@ tr.selected { background: #eef8f6; }
 .quality-gate-evidence-invalid, .quality-gate-effect-invalid, .quality-gate-effect-required_rework { background: #fee7e7; color: #8a1f1f; }
 .profiles-detail { display: grid; gap: 14px; }
 .profile-add-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr) minmax(180px, 1.5fr) minmax(90px, .5fr) minmax(104px, auto); gap: 8px; align-items: end; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #f7fbfa; }
-.profile-add-row label, .profile-fields label, .profile-policy-grid label { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 12px; }
-.profile-add-row input, .profile-add-row select, .profile-fields input, .profile-fields select, .profile-policy-grid select { width: 100%; min-width: 0; }
+.profile-add-row label, .profile-fields label, .profile-policy-grid label, .profile-finding-policy label { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 12px; }
+.profile-add-row input, .profile-add-row select, .profile-fields input, .profile-fields select, .profile-policy-grid select, .profile-finding-policy select { width: 100%; min-width: 0; }
 .profile-section { display: grid; gap: 10px; margin-top: 14px; }
 .profile-tab-groups { display: grid; gap: 10px; min-width: 0; }
 .profile-tab-group { display: grid; gap: 7px; min-width: 0; }
@@ -142,6 +142,15 @@ tr.selected { background: #eef8f6; }
 .profile-policy-grid label.profile-policy-required select { border-color: #7bc99b; }
 .profile-policy-grid label.profile-policy-auto select { border-color: #9cb9ee; }
 .profile-policy-grid label.profile-policy-disabled select { border-color: #c6ccd6; color: var(--muted); }
+.profile-finding-policy { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.profile-finding-policy legend { padding: 0 6px; font-weight: 800; }
+.profile-finding-policy-help { margin: 0; }
+.profile-finding-policy-toolbar { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(150px, 1fr) auto auto; gap: 8px; align-items: end; }
+.profile-finding-policy-grid { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); gap: 8px; }
+.profile-finding-policy-grid label { padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fbfcfe; }
+.profile-finding-policy-grid span, .profile-finding-policy-toolbar span { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
+.profile-finding-policy-grid .profile-finding-critical { border-color: #efb4b4; background: #fff1f1; }
+.profile-finding-policy-grid .profile-finding-critical select { border-color: #d98d8d; font-weight: 700; }
 .profile-source-built-in { background: #eef2ff; color: #3442a0; }
 .profile-source-user { background: #eaf7ee; color: #176333; }
 .profile-active { background: #e6f4fb; color: #1f5f82; }
@@ -300,7 +309,7 @@ button.file-open-inline, .file-open-inline { min-width: auto; width: auto; min-h
 .switch-strip .badge { min-width: 156px; }
 @media (max-width: 1060px) { .tasks-layout { grid-template-columns: 1fr; } .header-row { display: grid; grid-template-columns: 1fr 180px; } }
 @media (max-width: 1160px) { nav { flex-wrap: wrap; } .session-compact { margin-left: 0; } }
-@media (max-width: 1060px) { .profile-add-row, .profile-policy-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 860px) { .command-preview-meta, .cleanup-grid, .cleanup-policy-list, .plan-meta, .system-inline-details, .system-signal-grid, .profile-add-row, .profile-policy-grid, .profile-fields { grid-template-columns: 1fr; } .cleanup-section:first-child { grid-column: auto; } .system-health-summary { flex-direction: column; } .profile-card-head { flex-direction: column; } .profile-card-actions { justify-content: flex-start; } }
+@media (max-width: 1060px) { .profile-add-row, .profile-policy-grid, .profile-finding-policy-grid, .profile-finding-policy-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 860px) { .command-preview-meta, .cleanup-grid, .cleanup-policy-list, .plan-meta, .system-inline-details, .system-signal-grid, .profile-add-row, .profile-policy-grid, .profile-fields, .profile-finding-policy-grid, .profile-finding-policy-toolbar { grid-template-columns: 1fr; } .cleanup-section:first-child { grid-column: auto; } .system-health-summary { flex-direction: column; } .profile-card-head { flex-direction: column; } .profile-card-actions { justify-content: flex-start; } }
 @media (max-width: 760px) { .overview { grid-template-columns: repeat(2, minmax(120px, 1fr)); } .toolbar { grid-template-columns: 1fr; } .session-compact { flex: 1 1 100%; max-width: none; width: 100%; min-width: 0; margin-left: 0; } .switch-strip { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 640px) { header, main, nav { padding-left: 14px; padding-right: 14px; } th, td { padding: 8px; } .tab-buttons { flex: 1 1 100%; width: 100%; } .metrics, .quality-gate-summary { grid-template-columns: 1fr; } .header-row { grid-template-columns: 1fr; } .top-controls { justify-content: flex-end; justify-self: end; } }`;

@@ -64,6 +64,10 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.equal(LOCAL_UI_INIT_SETTING_TEXT.ru['UpdatedAt'], undefined);
     assert.match(LOCAL_UI_INIT_SETTING_TEXT.ru['EnforceNoAutoCommit'].description || '', /во всяком случае пытается/u);
     assert.match(getLocalUiText('ru').ordinaryDocsHelp, /не триггерят лишние виды ревью/u);
+    assert.equal(getLocalUiText('ru').profileFindingDispositionTitle, 'Обработка находок ревью');
+    assert.match(getLocalUiText('ru').profileFindingDispositionHelp, /только для будущих задач/u);
+    assert.equal(getLocalUiText('ru').profileFindingPolicyPreset, 'Предустановка политики');
+    assert.equal(getLocalUiText('ru').profileFindingResidualRisk, 'Остаточный риск');
     assert.equal(getLocalUiText('ru').fullSuiteTimeoutBlocker, 'Таймаут блокирует задачу');
     assert.equal(getLocalUiText('ru').fullSuiteForecastExclusionReasons, 'Причины исключения из прогноза');
     assert.equal(getLocalUiText('uk').tasksTab, 'Задачі');

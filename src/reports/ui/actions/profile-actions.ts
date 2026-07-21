@@ -20,9 +20,14 @@ import {
     writeProfilesDataUnlocked
 } from '../../../cli/commands/profile/profile-data';
 import { recoverPendingProfileFindingPolicyAudits } from '../../../cli/commands/profile/profile-finding-policy-mutation';
-import { hashProfilesData } from '../../../cli/commands/profile/profile-finding-policy';
+import {
+    buildProfileFindingPolicyPlan,
+    hashProfilesData,
+    type ProfileFindingPolicyMutationRequest
+} from '../../../cli/commands/profile/profile-finding-policy';
 import type { ProfileEntry, ProfilesData } from '../../../cli/commands/profile/profile-types';
 import { joinOrchestratorPath } from '../../../gates/shared/helpers';
+import { REVIEW_FINDING_POLICY_PRESETS } from '../../../policy/profile-resolver';
 import { buildProfilesTab } from '../../report-data-contract';
 import { appendUiActionAudit, resolveBundleRoot } from './action-common';
 import {
@@ -35,7 +40,7 @@ import {
 
 const PROFILE_CONFIRMATION_PHRASE = 'APPLY PROFILE CHANGE';
 
-type ProfileOperation = 'create' | 'select' | 'save' | 'reset' | 'delete';
+type ProfileOperation = 'create' | 'select' | 'save' | 'reset' | 'delete' | 'policy';
 
 interface UiProfileRequest {
     operation?: unknown;
@@ -46,6 +51,10 @@ interface UiProfileRequest {
     description?: unknown;
     depth?: unknown;
     review_policy?: unknown;
+    policy_preset?: unknown;
+    policy_copy_from?: unknown;
+    policy_reset?: unknown;
+    policy_actions?: unknown;
     preview_sha256?: unknown;
 }
 
@@ -143,6 +152,9 @@ function assertProfilesValid(data: ProfilesData): void {
 }
 
 function buildDisplayCommand(plan: Pick<ProfileActionPlan, 'operation' | 'profileName'>): string {
+    if (plan.operation === 'policy') {
+        return `garda profile policy ${plan.profileName} preview --target-root "."`;
+    }
     if (plan.operation === 'select') {
         return `garda profile use ${plan.profileName} --target-root "."`;
     }
@@ -156,6 +168,58 @@ function buildDisplayCommand(plan: Pick<ProfileActionPlan, 'operation' | 'profil
         return `garda ui profile reset ${plan.profileName}`;
     }
     return `garda ui profile save ${plan.profileName}`;
+}
+
+function optionalString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function buildFindingPolicyRequest(payload: UiProfileRequest): ProfileFindingPolicyMutationRequest {
+    const actions = payload.policy_actions && typeof payload.policy_actions === 'object' && !Array.isArray(payload.policy_actions)
+        ? payload.policy_actions as Record<string, unknown>
+        : {};
+    return {
+        targetProfile: normalizeProfileName(payload.profile_name),
+        preset: optionalString(payload.policy_preset),
+        copyFrom: optionalString(payload.policy_copy_from),
+        reset: payload.policy_reset === true,
+        critical: optionalString(actions.critical),
+        high: optionalString(actions.high),
+        medium: optionalString(actions.medium),
+        low: optionalString(actions.low),
+        residualRisk: optionalString(actions.residual_risk)
+    };
+}
+
+function buildFindingPolicyPlan(repoRoot: string, data: ProfilesData, payload: UiProfileRequest): ProfileActionPlan {
+    const request = buildFindingPolicyRequest(payload);
+    const policyPlan = buildProfileFindingPolicyPlan(
+        data,
+        request,
+        request.reset ? loadShippedProfiles(repoRoot) : null
+    );
+    const sourceKey = isBuiltInProfile(data, request.targetProfile) ? 'built_in_profiles' : 'user_profiles';
+    return {
+        operation: 'policy',
+        profileName: request.targetProfile,
+        changedKeys: [`${sourceKey}.${request.targetProfile}.review_finding_policy`],
+        beforeActiveProfile: data.active_profile,
+        proposedActiveProfile: data.active_profile,
+        command: buildDisplayCommand({ operation: 'policy', profileName: request.targetProfile }),
+        proposedValue: {
+            policy: policyPlan.policy,
+            policy_sha256: policyPlan.policy_sha256,
+            plan_sha256: policyPlan.plan_sha256,
+            source_profile: policyPlan.source_profile,
+            changed: policyPlan.changed,
+            migration: policyPlan.migration,
+            task_effect: {
+                scope: 'future_tasks_only',
+                active_task_snapshots_changed: false
+            }
+        },
+        apply: () => policyPlan.proposed_data
+    };
 }
 
 function buildProfileEntryFromPayload(
@@ -298,10 +362,11 @@ function buildDeletePlan(data: ProfilesData, payload: UiProfileRequest): Profile
 
 function buildProfileActionPlan(repoRoot: string, payload: UiProfileRequest): ProfileActionPlan {
     const operation = typeof payload.operation === 'string' ? payload.operation.trim() as ProfileOperation : 'save';
-    if (!['create', 'select', 'save', 'reset', 'delete'].includes(operation)) {
-        throw new Error('Profile operation must be create, select, save, reset, or delete.');
+    if (!['create', 'select', 'save', 'reset', 'delete', 'policy'].includes(operation)) {
+        throw new Error('Profile operation must be create, select, save, reset, delete, or policy.');
     }
     const data = readProfilesData(profilesPath(repoRoot));
+    if (operation === 'policy') return buildFindingPolicyPlan(repoRoot, data, payload);
     if (operation === 'create') return buildCreatePlan(data, payload);
     if (operation === 'select') return buildSelectPlan(data, payload);
     if (operation === 'reset') return buildResetPlan(repoRoot, data, payload);
@@ -349,6 +414,8 @@ function buildProfileResponsePayload(
 export function buildUiProfilesPayload(repoRoot: string, actionsEnabled: boolean): Record<string, unknown> {
     return {
         enabled: actionsEnabled,
+        finding_policy_presets: REVIEW_FINDING_POLICY_PRESETS,
+        finding_policy_actions: ['fix_now', 'create_follow_up', 'ignore'],
         ...buildProfilesTab(repoRoot)
     };
 }
