@@ -78,6 +78,7 @@ export function resolveDelegatedReviewReadinessRoute(
 ): DelegatedReviewReadinessRoute | null {
     if (
         !options.currentReviewReuseRecorded
+        && options.launchArtifactState !== 'orphaned'
         && (
             !options.contextReviewerIdentity.startsWith('agent:')
             || !options.routingCurrent

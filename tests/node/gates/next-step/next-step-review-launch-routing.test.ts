@@ -761,8 +761,13 @@ function seedCompletedReviewerLaunchAndInvocation(
     taskId: string,
     reviewType: string,
     reviewerIdentity: string,
-    options: { includeInvocation?: boolean; reviewOutputPath?: string } = {}
+    options: {
+        includeInvocation?: boolean;
+        reviewOutputPath?: string;
+        attestationState?: 'delegation_started' | 'launched';
+    } = {}
 ): void {
+    const attestationState = options.attestationState || 'launched';
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
         review_type: reviewType,
@@ -797,8 +802,10 @@ function seedCompletedReviewerLaunchAndInvocation(
     const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, reviewType, 'reviewer-launch.json');
     writeJson(launchArtifactPath, {
         schema_version: 1,
-        evidence_type: 'delegated_reviewer_launch',
-        attestation_state: 'launched',
+        evidence_type: attestationState === 'launched'
+            ? 'delegated_reviewer_launch'
+            : 'delegated_reviewer_launch_preparation',
+        attestation_state: attestationState,
         task_id: taskId,
         review_type: reviewType,
         reviewer_execution_mode: 'delegated_subagent',
@@ -811,22 +818,26 @@ function seedCompletedReviewerLaunchAndInvocation(
         provider_invocation_id: `test-${reviewType}-invocation`,
         delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
         launched_at_utc: '2026-04-28T00:00:00.000Z',
-        launch_completed_at_utc: '2026-04-28T00:00:12.000Z',
+        ...(attestationState === 'launched'
+            ? { launch_completed_at_utc: '2026-04-28T00:00:12.000Z' }
+            : {}),
         ...(options.reviewOutputPath ? { review_output_path: options.reviewOutputPath.replace(/\\/g, '/') } : {}),
         ...launchInputEvidenceFixture(taskId, reviewType),
         fork_context: false
     });
-    appendLaunchCompletedEventForTest({
-        repoRoot,
-        taskId,
-        reviewType,
-        reviewerIdentity,
-        reviewContextPath,
-        routingEventSha256: routeIntegrity.event_sha256,
-        launchArtifactPath,
-        providerInvocationId: `test-${reviewType}-invocation`
-    });
-    if (options.includeInvocation === false) {
+    if (attestationState === 'launched') {
+        appendLaunchCompletedEventForTest({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchArtifactPath,
+            providerInvocationId: `test-${reviewType}-invocation`
+        });
+    }
+    if (options.includeInvocation === false || attestationState !== 'launched') {
         return;
     }
     const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
@@ -1582,6 +1593,121 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('completed reviewer launch has no bound review output'));
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
         assert.ok(!result.commands[0].command.includes('record-review-result'));
+    });
+
+    it('recovers a stale completed launch with missing bound output before fresh routing', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-stale-launch';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const launchArtifactPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'reviewer-launch.json'
+        );
+        const reviewOutputPath = path.join(path.dirname(launchArtifactPath), 'missing-stale-review-output.md');
+        seedCompletedReviewerLaunchAndInvocation(
+            repoRoot,
+            TASK_ID,
+            'code',
+            reviewerIdentity,
+            { reviewOutputPath }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const refreshedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        writeJson(reviewContextPath, {
+            ...refreshedReviewContext,
+            review_cycle_marker: 'refreshed-after-launch'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.equal(result.commands[0].label, 'Restart/supersede orphaned delegated reviewer launch');
+        assert.ok(result.reason.includes('completed reviewer launch has no bound review output'));
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(!result.commands[0].command.includes('gate record-review-routing'));
+    });
+
+    it('does not recover a stale completed launch after its review result was accepted', () => {
+        const repoRoot = makeTempRepo();
+        const cleanedReviewOutputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'cleaned-stale-review-output.md'
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            reviewOutputPath: cleanedReviewOutputPath
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const refreshedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        writeJson(reviewContextPath, {
+            ...refreshedReviewContext,
+            review_cycle_marker: 'refreshed-after-accepted-result'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.ok(!result.commands.some((entry) => entry.command.includes('gate restart-review-cycle')));
+    });
+
+    it('does not recover a stale delegation-started launch as a completed orphan', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-stale-in-flight';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const reviewOutputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'missing-stale-in-flight-output.md'
+        );
+        seedCompletedReviewerLaunchAndInvocation(
+            repoRoot,
+            TASK_ID,
+            'code',
+            reviewerIdentity,
+            {
+                attestationState: 'delegation_started',
+                reviewOutputPath
+            }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const refreshedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        writeJson(reviewContextPath, {
+            ...refreshedReviewContext,
+            review_cycle_marker: 'refreshed-while-reviewer-in-flight'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.ok(!result.commands.some((entry) => entry.command.includes('gate restart-review-cycle')));
     });
 
     it('does not orphan a completed launch after an accepted result cleans the bound review output', () => {
