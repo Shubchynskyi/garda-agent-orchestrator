@@ -42,6 +42,7 @@ export interface DelegatedReviewReadinessRouteOptions {
     contextReviewerIdentity: string;
     reviewerIdentityIsPlanned: boolean;
     launchArtifactState: DelegatedReviewLaunchArtifactState;
+    launchArtifactOrphanedReason?: string | null;
     providerLaunchTargetSummary: string;
     reviewerReadinessChain: string;
     reviewRoutingChain: string;
@@ -171,12 +172,15 @@ export function resolveDelegatedReviewReadinessRoute(
         }
 
         if (options.launchArtifactState === 'orphaned') {
+            const completedLaunchMissingOutput = options.launchArtifactOrphanedReason === 'completed_launch_missing_review_output';
             return {
                 status: 'BLOCKED',
                 nextGate: 'restart-review-cycle',
                 title: `Recover orphaned '${options.reviewType}' delegated reviewer launch.`,
                 reason:
-                    `Required review '${options.reviewType}' has delegated reviewer start evidence, but the current run appears to be a resumed controller session and the prepared review output artifact is still missing. ` +
+                    (completedLaunchMissingOutput
+                        ? `Required review '${options.reviewType}' has completed reviewer launch evidence, but the completed reviewer launch has no bound review output. `
+                        : `Required review '${options.reviewType}' has delegated reviewer start evidence, but the current run appears to be a resumed controller session and the prepared review output artifact is still missing. `) +
                     `Treat this as an abandoned delegated reviewer launch: do not complete the old launch, do not reuse the lost reviewer session, and do not fabricate review output. ` +
                     `Restart or supersede the review cycle so a fresh delegated reviewer gets new launch/input evidence. ` +
                     `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +

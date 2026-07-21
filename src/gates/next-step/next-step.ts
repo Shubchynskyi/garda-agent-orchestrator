@@ -4078,6 +4078,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             contextReviewerIdentity,
             reviewerIdentityIsPlanned,
             launchArtifactState: launchArtifactEvidence.state,
+            launchArtifactOrphanedReason: launchArtifactEvidence.orphanedReason,
             providerLaunchTargetSummary,
             reviewerReadinessChain,
             reviewRoutingChain,

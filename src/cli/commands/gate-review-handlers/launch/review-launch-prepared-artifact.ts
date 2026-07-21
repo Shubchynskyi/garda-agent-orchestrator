@@ -45,6 +45,7 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
     reviewerLaunchAttemptId: string;
     recordReviewerDelegationStartedCommand?: string | null;
     completeReviewerLaunchCommand?: string | null;
+    recordReviewerLaunchFailedCommand?: string | null;
     routingEventSequence: number;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
 }): string[] {
@@ -110,6 +111,13 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
             !== options.completeReviewerLaunchCommand
     ) {
         mismatches.push('complete_reviewer_launch_command mismatch');
+    }
+    if (
+        options.recordReviewerLaunchFailedCommand
+        && getStringField(options.artifact, 'record_reviewer_launch_failed_command', 'recordReviewerLaunchFailedCommand')
+            !== options.recordReviewerLaunchFailedCommand
+    ) {
+        mismatches.push('record_reviewer_launch_failed_command mismatch');
     }
     if (!preparedLaunchEventSha256) {
         mismatches.push('prepared_launch_event_sha256 missing');

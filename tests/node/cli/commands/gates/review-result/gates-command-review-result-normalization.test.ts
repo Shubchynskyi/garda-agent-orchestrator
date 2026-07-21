@@ -2446,6 +2446,84 @@ describe('gates command review result - normalization', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result terminalizes a plain-text transport error even when it contains a legacy verdict token', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-54-result-plain-transport-error';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const outputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'review-output.md'
+        );
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(
+            outputPath,
+            'Agent errored: stream disconnected before completion.\n\n## Verdict\nREVIEW PASSED\n',
+            'utf8'
+        );
+        rebindCompletedLaunchAttemptForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextPath: fixture.reviewContextPath,
+            launchArtifactPath: fixture.launchArtifactPath,
+            reviewerLaunchAttemptId: 'plain-transport-error-attempt',
+            reviewOutputPath: outputPath,
+            recordCompletion: true
+        });
+
+        const result = await runCliWithCapturedOutput([
+            'gate', 'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', outputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        const validationArtifactPath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-findings-validation.json`
+        );
+        const validationArtifact = JSON.parse(fs.readFileSync(validationArtifactPath, 'utf8')) as {
+            validation_result: { accepted: boolean; detected: boolean; violations: string[] };
+        };
+        assert.equal(validationArtifact.validation_result.accepted, false);
+        assert.equal(validationArtifact.validation_result.detected, false);
+        assert.ok(validationArtifact.validation_result.violations.includes('review output must be a JSON object.'));
+        const failedLaunchArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(failedLaunchArtifact.attestation_state, 'launch_failed');
+        assert.equal(failedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED').length,
+            1
+        );
+        assert.equal(
+            fs.readFileSync(outputPath, 'utf8'),
+            'Agent errored: stream disconnected before completion.\n\n## Verdict\nREVIEW PASSED\n'
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result restores the completed launch when corrected findings are accepted', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-7-result-corrected-findings-recovery';

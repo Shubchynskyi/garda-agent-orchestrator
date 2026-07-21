@@ -24,6 +24,7 @@ export interface ReviewerLaunchCommandTemplateOptions {
 const RESOLVED_REVIEWER_IDENTITY_PLACEHOLDER = '<agent:resolved-provider-reviewer-id-from-delegated-agent>';
 const PROVIDER_INVOCATION_ID_PLACEHOLDER = '<provider-owned invocation id from delegated reviewer launch result>';
 const PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER = '<provider-owned attestation source from delegated reviewer launch result>';
+const PROVIDER_FAILURE_REASON_PLACEHOLDER = '<replace with provider/controller failure reason>';
 
 function quoteLaunchCommandValue(value: string): string {
     const normalizedValue = value.replace(/\\/g, '/');
@@ -62,7 +63,9 @@ export function buildReviewerLaunchNextAction(): string {
         'ReviewerLaunchArtifactPath is main-agent control metadata; ReviewerLaunchInputArtifactPath is the reviewer-facing handoff. ' +
         'Do not reconstruct reviewer prompts from memory. ' +
         `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
-        'Immediately run record-reviewer-delegation-started with the resolved provider reviewer identity and launch_input evidence, then run complete-reviewer-launch after reviewer completion.'
+        'Immediately run record-reviewer-delegation-started with the resolved provider reviewer identity and launch_input evidence. ' +
+        'If the reviewer returns a transport or runtime error without valid review output, run record-reviewer-launch-failed and do not run complete-reviewer-launch. ' +
+        'Run complete-reviewer-launch only after successful reviewer completion and after the returned review output is available at ReviewOutputPath.'
     );
 }
 
@@ -74,7 +77,9 @@ export function buildPreparedReviewerLaunchNextAction(handoffArtifactNames: stri
         `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
         'Do not open or summarize the generated review context in the main agent. Then update only the ' +
         'after_launch_required_updates fields while preserving the prepared hashes. ' +
-        'Run record-reviewer-delegation-started immediately after provider launch, then complete-reviewer-launch after the reviewer returns.'
+        'Run record-reviewer-delegation-started immediately after provider launch. ' +
+        'If the reviewer returns a transport or runtime error without valid review output, run record-reviewer-launch-failed and do not run complete-reviewer-launch. ' +
+        'Run complete-reviewer-launch only after successful reviewer completion and after the returned review output is available at ReviewOutputPath.'
     );
 }
 
@@ -115,6 +120,22 @@ export function buildCompleteReviewerLaunchCommandTemplate(options: ReviewerLaun
         '--launch-input-sha256', quoteLaunchCommandValue(options.launchInputArtifactSha256),
         '--fork-context', 'false',
         '--record-invocation',
+        '--repo-root', quoteLaunchCommandValue('.')
+    ].join(' ');
+}
+
+export function buildRecordReviewerLaunchFailedCommandTemplate(options: ReviewerLaunchCommandTemplateOptions): string {
+    const cliPrefix = buildLaunchCommandCliPrefix(options.repoRoot);
+    return [
+        `${cliPrefix} gate record-reviewer-launch-failed`,
+        '--task-id', quoteLaunchCommandValue(options.taskId),
+        '--review-type', quoteLaunchCommandValue(options.reviewType),
+        '--review-context-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.reviewContextPath)),
+        '--reviewer-execution-mode', quoteLaunchCommandValue('delegated_subagent'),
+        '--reviewer-identity', quoteLaunchCommandValue(RESOLVED_REVIEWER_IDENTITY_PLACEHOLDER),
+        '--reviewer-launch-artifact-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchArtifactPath)),
+        '--provider-invocation-id', quoteLaunchCommandValue(PROVIDER_INVOCATION_ID_PLACEHOLDER),
+        '--failure-reason', quoteLaunchCommandValue(PROVIDER_FAILURE_REASON_PLACEHOLDER),
         '--repo-root', quoteLaunchCommandValue('.')
     ].join(' ');
 }

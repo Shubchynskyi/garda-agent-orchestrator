@@ -543,6 +543,14 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                     artifactState = 'orphaned';
                     orphanedReason = 'controller_resume_after_delegation_start_with_missing_review_output';
                 }
+            } else if (
+                artifactState === 'launched'
+                && reviewOutputPath
+                && !fileExists(reviewOutputPath)
+                && !(state.artifactExists && state.receiptExists)
+            ) {
+                artifactState = 'orphaned';
+                orphanedReason = 'completed_launch_missing_review_output';
             }
             if (artifactState === 'provider_failed') {
                 const hasStartedTelemetry = matchingDelegationStarted != null;

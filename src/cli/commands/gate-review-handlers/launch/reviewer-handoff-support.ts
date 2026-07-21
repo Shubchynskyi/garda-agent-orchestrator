@@ -266,6 +266,40 @@ export function buildCompleteReviewerLaunchCommand(options: {
     return commandParts.join(' ');
 }
 
+export function buildRecordReviewerLaunchFailedCommand(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerExecutionMode: 'delegated_subagent';
+    reviewerIdentity: string;
+    reviewContextPath: string;
+    reviewerLaunchArtifactPath: string;
+    providerInvocationId?: string | null;
+    controllerInvocationId?: string | null;
+    failureReason: string;
+}): string {
+    const cliPrefix = buildReviewerHandoffCliPrefix(options.repoRoot);
+    const commandParts = [
+        `${cliPrefix} gate record-reviewer-launch-failed`,
+        '--task-id', quoteReviewerLaunchCommandValue(options.taskId),
+        '--review-type', quoteReviewerLaunchCommandValue(options.reviewType),
+        '--review-context-path', quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewContextPath)),
+        '--reviewer-execution-mode', quoteReviewerLaunchCommandValue(options.reviewerExecutionMode),
+        '--reviewer-identity', quoteReviewerLaunchCommandValue(options.reviewerIdentity),
+        '--reviewer-launch-artifact-path', quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewerLaunchArtifactPath))
+    ];
+    if (options.providerInvocationId) {
+        commandParts.push('--provider-invocation-id', quoteReviewerLaunchCommandValue(options.providerInvocationId));
+    } else if (options.controllerInvocationId) {
+        commandParts.push('--controller-invocation-id', quoteReviewerLaunchCommandValue(options.controllerInvocationId));
+    }
+    commandParts.push(
+        '--failure-reason', quoteReviewerLaunchCommandValue(options.failureReason),
+        '--repo-root', quoteReviewerLaunchCommandValue('.')
+    );
+    return commandParts.join(' ');
+}
+
 export function buildRecordReviewResultCommand(options: {
     repoRoot: string;
     taskId: string;

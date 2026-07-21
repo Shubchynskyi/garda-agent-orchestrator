@@ -1377,12 +1377,26 @@ async function recordReviewReceiptFromArtifacts(options: {
         delegationStartedAtUtc: getDelegationStartedAtUtc(reviewerProvenance)
     });
     const strictFindingsOnlyOutput = reviewContextRequiresFindingsOnlyArtifact(parsedReviewContext);
+    const expectedPassVerdict = REVIEW_CONTRACTS.find(
+        ([candidate]) => candidate === options.reviewType
+    )?.[1] || null;
+    const legacyVerdictToken = strictFindingsOnlyOutput && expectedPassVerdict
+        ? extractReviewVerdictToken(
+            reviewArtifactContent,
+            expectedPassVerdict,
+            expectedPassVerdict.replace(/\bPASSED\b/, 'FAILED'),
+            options.reviewType
+        )
+        : null;
     let findingsReport: ReviewFindingsReport | null = null;
     let coverageValidation: ReviewCoverageValidationSummary | null = null;
     let findingsValidationEvidence: ReviewFindingsValidationEvidence | null = null;
     let findingsDispositionEvidence: ReviewFindingsDispositionEvidence | null = null;
     let findingsValidation: JsonReviewFindingsArtifactValidation | null = null;
-    if (String(reviewArtifactContent || '').trim().startsWith('{')) {
+    if (
+        String(reviewArtifactContent || '').trim().startsWith('{')
+        || (strictFindingsOnlyOutput && !legacyVerdictToken)
+    ) {
         findingsValidation = validateFindingsOnlyReviewOutput({
             reviewContent: reviewArtifactContent,
             taskId: options.taskId,
@@ -1670,7 +1684,7 @@ async function handleRecordReviewResultUnlocked(
     let findingsDisposition: ReviewFindingsDispositionEvaluation | null = null;
     const rawReviewOutputSha256 = sha256ReviewArtifactContent(reviewOutput.reviewContent);
     const reviewContentLooksLikeFindingsJson = String(reviewContent || '').trim().startsWith('{');
-    if (reviewContentLooksLikeFindingsJson && (strictFindingsOnlyOutput || (!strictFindingsOnlyOutput && !verdictToken))) {
+    if (strictFindingsOnlyOutput || (reviewContentLooksLikeFindingsJson && !verdictToken)) {
         const findingsValidation = validateFindingsOnlyReviewOutput({
             reviewContent,
             taskId,
@@ -1716,18 +1730,21 @@ async function handleRecordReviewResultUnlocked(
                 validationEvidence: findingsValidationEvidence,
                 persistValidationEvidence: () => writeRejectedReviewFindingsValidationEvidence(findingsValidationEvidence)
             });
-            const validationMessage = findingsValidation.detected
-                ? findingsValidation.violations.join(' ')
-                : 'review output must be a JSON object.';
-            throw new Error(
-                `Verdict-free findings JSON report is invalid for '${reviewType}': ` +
-                validationMessage
-            );
-        }
-        findingsReport = findingsValidation.report;
-        if (findingsReport) {
-            findingsDisposition = evaluateReviewFindingsReportDispositionsFromPreflight(findingsReport, preflightPayload);
-            verdictToken = findingsDisposition.blocking_count > 0 ? expectedFailVerdict : expectedPassVerdict;
+            if (!verdictToken) {
+                const validationMessage = findingsValidation.detected
+                    ? findingsValidation.violations.join(' ')
+                    : 'review output must be a JSON object.';
+                throw new Error(
+                    `Verdict-free findings JSON report is invalid for '${reviewType}': ` +
+                    validationMessage
+                );
+            }
+        } else {
+            findingsReport = findingsValidation.report;
+            if (findingsReport) {
+                findingsDisposition = evaluateReviewFindingsReportDispositionsFromPreflight(findingsReport, preflightPayload);
+                verdictToken = findingsDisposition.blocking_count > 0 ? expectedFailVerdict : expectedPassVerdict;
+            }
         }
     }
     if (!verdictToken) {

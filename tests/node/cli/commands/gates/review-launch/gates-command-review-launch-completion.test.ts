@@ -256,6 +256,9 @@ describe('cli/commands/gates review launch completion', () => {
         assert.ok(startedOutput.includes('--launch-input-artifact-path'));
         assert.ok(startedOutput.includes('--record-invocation'));
         assert.ok(started.logs.some((line) => line.startsWith('CompleteReviewerLaunchCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
+        assert.ok(started.logs.some((line) => line.startsWith('RecordReviewerLaunchFailedCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-launch-failed')));
+        assert.ok(started.logs.some((line) => line.includes('If the reviewer returns a transport or runtime error')));
+        assert.ok(started.logs.some((line) => line.includes('do not run complete-reviewer-launch')));
         assert.equal(started.logs.some((line) => line.startsWith('NextAction:')), false);
         assert.ok(started.logs.some((line) => line.includes('REVIEWER_DELEGATION_STARTED: code')));
         const startedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;

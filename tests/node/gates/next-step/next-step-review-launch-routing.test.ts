@@ -419,6 +419,7 @@ function writeReviewEvidence(
         verdict?: 'pass' | 'fail';
         body?: string;
         includeLaunchArtifact?: boolean;
+        reviewOutputPath?: string;
     } = {}
 ): void {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
@@ -519,6 +520,9 @@ function writeReviewEvidence(
             delegation_started_at_utc: launchedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
+            ...(options.reviewOutputPath
+                ? { review_output_path: options.reviewOutputPath.replace(/\\/g, '/') }
+                : {}),
             ...launchInputEvidenceFixture(taskId, reviewType),
             fork_context: false
         });
@@ -757,7 +761,7 @@ function seedCompletedReviewerLaunchAndInvocation(
     taskId: string,
     reviewType: string,
     reviewerIdentity: string,
-    options: { includeInvocation?: boolean } = {}
+    options: { includeInvocation?: boolean; reviewOutputPath?: string } = {}
 ): void {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
@@ -808,6 +812,7 @@ function seedCompletedReviewerLaunchAndInvocation(
         delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
         launched_at_utc: '2026-04-28T00:00:00.000Z',
         launch_completed_at_utc: '2026-04-28T00:00:12.000Z',
+        ...(options.reviewOutputPath ? { review_output_path: options.reviewOutputPath.replace(/\\/g, '/') } : {}),
         ...launchInputEvidenceFixture(taskId, reviewType),
         fork_context: false
     });
@@ -1544,6 +1549,66 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('record-review-result'));
     });
 
+    it('routes a completed launch with missing bound review output to orphaned launch recovery', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-t97954';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const launchArtifactPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'reviewer-launch.json'
+        );
+        const reviewOutputPath = path.join(path.dirname(launchArtifactPath), 'missing-review-output.md');
+        seedCompletedReviewerLaunchAndInvocation(
+            repoRoot,
+            TASK_ID,
+            'code',
+            reviewerIdentity,
+            { reviewOutputPath }
+        );
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.equal(result.commands[0].label, 'Restart/supersede orphaned delegated reviewer launch');
+        assert.ok(result.reason.includes('completed reviewer launch has no bound review output'));
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(!result.commands[0].command.includes('record-review-result'));
+    });
+
+    it('does not orphan a completed launch after an accepted result cleans the bound review output', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        const cleanedReviewOutputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'cleaned-review-output.md'
+        );
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            reviewOutputPath: cleanedReviewOutputPath
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'required-reviews-check', result.reason);
+        assert.ok(!result.commands.some((entry) => entry.command.includes('restart-review-cycle')));
+    });
+
     it('routes delegation-started refactor launch to completion before record-review-result', () => {
         const repoRoot = makeTempRepo();
         const reviewType = 'refactor';
@@ -2032,6 +2097,7 @@ describe('gates/next-step', () => {
             launch_input_sha256: launchArtifact.launch_input_sha256,
             copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256
         });
+        fs.writeFileSync(String(launchArtifact.review_output_path), 'review output placeholder\n', 'utf8');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
@@ -2185,6 +2251,7 @@ describe('gates/next-step', () => {
             launch_input_sha256: launchArtifact.launch_input_sha256,
             copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256
         });
+        fs.writeFileSync(String(launchArtifact.review_output_path), 'review output placeholder\n', 'utf8');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
@@ -2288,6 +2355,7 @@ describe('gates/next-step', () => {
             launch_input_sha256: launchArtifact.launch_input_sha256,
             copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256
         });
+        fs.writeFileSync(String(launchArtifact.review_output_path), 'review output placeholder\n', 'utf8');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 

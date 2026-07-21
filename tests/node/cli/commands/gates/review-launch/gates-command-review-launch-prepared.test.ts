@@ -353,11 +353,22 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(completeLaunchCommand.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`));
         assert.ok(completeLaunchCommand.includes('--fork-context false'));
         assert.ok(completeLaunchCommand.includes('--record-invocation'));
+        const failedLaunchCommand = String(launchArtifact.record_reviewer_launch_failed_command);
+        assert.ok(failedLaunchCommand.includes('gate record-reviewer-launch-failed'));
+        assert.ok(failedLaunchCommand.includes(`--review-context-path '${commandReviewContextPath}'`));
+        assert.ok(failedLaunchCommand.includes("--reviewer-execution-mode 'delegated_subagent'"));
+        assert.ok(failedLaunchCommand.includes("--reviewer-identity '<agent:resolved-provider-reviewer-id-from-delegated-agent>'"));
+        assert.ok(failedLaunchCommand.includes(`--reviewer-launch-artifact-path '${commandLaunchArtifactPath}'`));
+        assert.ok(failedLaunchCommand.includes("--provider-invocation-id '<provider-owned invocation id from delegated reviewer launch result>'"));
+        assert.ok(failedLaunchCommand.includes("--failure-reason '<replace with provider/controller failure reason>'"));
         assert.ok(String(launchArtifact.next_action).includes('Launch a real subagent using built-in tools'));
         assert.ok(String(launchArtifact.next_action).includes('if for some reason that is impossible right now, you must stop and report this to the user'));
         assert.ok(String(launchArtifact.next_action).includes('this is expected behavior in this repository'));
         assert.ok(String(launchArtifact.next_action).includes('Launch a fresh delegated reviewer once'));
         assert.ok(String(launchArtifact.next_action).includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or reviewer-facing ReviewerLaunchInputArtifactPath'));
+        assert.ok(String(launchArtifact.next_action).includes('transport or runtime error'));
+        assert.ok(String(launchArtifact.next_action).includes('record-reviewer-launch-failed'));
+        assert.ok(String(launchArtifact.next_action).includes('do not run complete-reviewer-launch'));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const launchPreparedEvent = events.find((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED');
         const launchPreparedIntegrity = launchPreparedEvent?.integrity as { event_sha256?: string } | undefined;
@@ -471,15 +482,18 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         const commandLaunchInputArtifactPath = quoteLaunchCommandValueForTest(path.relative(repoRoot, launchInputArtifactPath));
         const recordDelegationCommand = String(launchArtifact.record_reviewer_delegation_started_command);
         const completeLaunchCommand = String(launchArtifact.complete_reviewer_launch_command);
+        const failedLaunchCommand = String(launchArtifact.record_reviewer_launch_failed_command);
 
         assert.ok(recordDelegationCommand.includes(`--reviewer-launch-artifact-path ${commandLaunchArtifactPath}`));
         assert.ok(recordDelegationCommand.includes(`--launch-input-artifact-path ${commandLaunchInputArtifactPath}`));
         assert.ok(completeLaunchCommand.includes(`--reviewer-launch-artifact-path ${commandLaunchArtifactPath}`));
         assert.ok(completeLaunchCommand.includes(`--launch-input-artifact-path ${commandLaunchInputArtifactPath}`));
+        assert.ok(failedLaunchCommand.includes(`--reviewer-launch-artifact-path ${commandLaunchArtifactPath}`));
         assert.ok(!recordDelegationCommand.includes('--reviewer-launch-artifact-path "'));
         assert.ok(!recordDelegationCommand.includes('--launch-input-artifact-path "'));
         assert.ok(!completeLaunchCommand.includes('--reviewer-launch-artifact-path "'));
         assert.ok(!completeLaunchCommand.includes('--launch-input-artifact-path "'));
+        assert.ok(!failedLaunchCommand.includes('--reviewer-launch-artifact-path "'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -507,6 +521,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         const launchArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8'));
         assert.match(String(launchArtifact.record_reviewer_delegation_started_command), /^node bin\/garda\.js gate record-reviewer-delegation-started /);
         assert.match(String(launchArtifact.complete_reviewer_launch_command), /^node bin\/garda\.js gate complete-reviewer-launch /);
+        assert.match(String(launchArtifact.record_reviewer_launch_failed_command), /^node bin\/garda\.js gate record-reviewer-launch-failed /);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

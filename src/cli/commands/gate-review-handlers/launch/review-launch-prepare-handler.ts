@@ -23,6 +23,7 @@ import {
     buildCompleteReviewerLaunchCommandTemplate,
     buildPreparedReviewerLaunchNextAction,
     buildRecordReviewerDelegationStartedCommandTemplate,
+    buildRecordReviewerLaunchFailedCommandTemplate,
     buildReviewerLaunchNextAction,
     printReviewerLaunchHandoffLines
 } from './reviewer-launch-command-templates';
@@ -388,6 +389,15 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             launchInputArtifactPath,
             launchInputArtifactSha256: existingLaunchInputArtifactSha256
         });
+        const recordReviewerLaunchFailedCommand = buildRecordReviewerLaunchFailedCommandTemplate({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewContextPath: contextPath,
+            launchArtifactPath,
+            launchInputArtifactPath,
+            launchInputArtifactSha256: existingLaunchInputArtifactSha256
+        });
         const preparedMismatches = getCurrentPreparedReviewerLaunchMismatches({
             artifactPath: launchArtifactPath,
             artifact: existingArtifact,
@@ -411,6 +421,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             reviewerLaunchAttemptId,
             recordReviewerDelegationStartedCommand,
             completeReviewerLaunchCommand,
+            recordReviewerLaunchFailedCommand,
             routingEventSequence: routingEvent.sequence,
             timelineEvents
         });
@@ -470,6 +481,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log('SupersededLaunchArtifact: none');
             console.log(`RecordReviewerDelegationStartedCommand: ${recordReviewerDelegationStartedCommand}`);
             console.log(`CompleteReviewerLaunchCommand: ${completeReviewerLaunchCommand}`);
+            console.log(`RecordReviewerLaunchFailedCommand: ${recordReviewerLaunchFailedCommand}`);
             printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
             console.log(`NextStep: existing reviewer launch metadata is current; ${buildReviewerLaunchNextAction()}`);
             return;
@@ -778,10 +790,20 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         launchInputArtifactPath,
         launchInputArtifactSha256
     });
+    const recordReviewerLaunchFailedCommand = buildRecordReviewerLaunchFailedCommandTemplate({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewContextPath: contextPath,
+        launchArtifactPath,
+        launchInputArtifactPath,
+        launchInputArtifactSha256
+    });
     const preparedArtifactWithCommands = {
         ...preparedArtifactWithPinnedInput,
         record_reviewer_delegation_started_command: recordReviewerDelegationStartedCommand,
-        complete_reviewer_launch_command: completeReviewerLaunchCommand
+        complete_reviewer_launch_command: completeReviewerLaunchCommand,
+        record_reviewer_launch_failed_command: recordReviewerLaunchFailedCommand
     };
     writeReviewArtifactJson(launchArtifactPath, preparedArtifactWithCommands);
     const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
@@ -846,6 +868,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`PreservePreparedFields: ${preservePreparedFields.join(', ')}`);
     console.log(`RecordReviewerDelegationStartedCommand: ${recordReviewerDelegationStartedCommand}`);
     console.log(`CompleteReviewerLaunchCommand: ${completeReviewerLaunchCommand}`);
+    console.log(`RecordReviewerLaunchFailedCommand: ${recordReviewerLaunchFailedCommand}`);
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
     printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
     console.log(`NextStep: ${buildReviewerLaunchNextAction()}`);

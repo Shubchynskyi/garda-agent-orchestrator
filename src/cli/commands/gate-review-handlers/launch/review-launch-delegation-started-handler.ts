@@ -26,7 +26,10 @@ import {
 } from '../../shared-command-utils';
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
-import { buildCompleteReviewerLaunchCommand } from './reviewer-handoff-support';
+import {
+    buildCompleteReviewerLaunchCommand,
+    buildRecordReviewerLaunchFailedCommand
+} from './reviewer-handoff-support';
 
 export interface ReviewerDelegationStartedHandlerDependencies {
     assertPreparedReviewerLaunchArtifact: typeof import('../index').assertPreparedReviewerLaunchArtifact;
@@ -362,6 +365,18 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         forkContext: options.forkContext === true,
         recordInvocation: true
     });
+    const recordReviewerLaunchFailedCommand = buildRecordReviewerLaunchFailedCommand({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewerExecutionMode: 'delegated_subagent',
+        reviewerIdentity,
+        reviewContextPath: contextPath,
+        reviewerLaunchArtifactPath: launchArtifactPath,
+        providerInvocationId: providerInvocationId || null,
+        controllerInvocationId: controllerInvocationId || null,
+        failureReason: '<replace with provider/controller failure reason>'
+    });
     const startedEvent = await emitReviewerDelegationStartedEventAsync(
         gateHelpers.joinOrchestratorPath(repoRoot, ''),
         taskId,
@@ -423,6 +438,7 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         console.log(`LaunchInputArtifactPath: ${normalizePath(launchInputAttestation.artifactPath)}`);
     }
     console.log(`CompleteReviewerLaunchCommand: ${completeReviewerLaunchCommand}`);
-    console.log('NextStep: after the delegated reviewer returns, run complete-reviewer-launch to record completion attestation.');
+    console.log(`RecordReviewerLaunchFailedCommand: ${recordReviewerLaunchFailedCommand}`);
+    console.log('NextStep: if the reviewer returns valid review output, ensure it is available at ReviewOutputPath and run complete-reviewer-launch. If the reviewer returns a transport or runtime error without valid review output, run record-reviewer-launch-failed and do not run complete-reviewer-launch.');
 };
 }
