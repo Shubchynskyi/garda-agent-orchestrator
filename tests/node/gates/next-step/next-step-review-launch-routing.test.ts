@@ -174,7 +174,8 @@ function appendEvent(
     eventType: string,
     outcome = 'PASS',
     details: Record<string, unknown> = {},
-    timestampUtc?: string
+    timestampUtc?: string,
+    actor = 'gate'
 ): { task_sequence: number; prev_event_sha256: string | null; event_sha256: string } {
     const timelinePath = path.join(eventsRoot(repoRoot), `${taskId}.jsonl`);
     const existingLines = fs.existsSync(timelinePath)
@@ -194,7 +195,7 @@ function appendEvent(
         task_id: taskId,
         event_type: eventType,
         outcome,
-        actor: 'gate',
+        actor,
         message: eventType,
         timestamp_utc: timestampUtc || new Date().toISOString(),
         details,
@@ -214,6 +215,29 @@ function appendEvent(
         prev_event_sha256: previousEventSha256,
         event_sha256: eventSha256
     };
+}
+
+function appendRestartBoundary(
+    repoRoot: string,
+    taskId: string,
+    eventType: 'COHERENT_CYCLE_RESTARTED' | 'REVIEW_CYCLE_RESTARTED',
+    options: {
+        invalidatedReviewTypes?: unknown;
+        preservedReviewTypes?: string[];
+        actor?: string;
+        outcome?: string;
+        detailsTaskId?: string;
+        detailsEventType?: string;
+        status?: string;
+    } = {}
+): void {
+    appendEvent(repoRoot, taskId, eventType, options.outcome || 'PASS', {
+        task_id: options.detailsTaskId || taskId,
+        event_type: options.detailsEventType || eventType,
+        status: options.status || 'PASSED',
+        invalidated_review_types: options.invalidatedReviewTypes ?? [],
+        preserved_review_types: options.preservedReviewTypes || []
+    }, undefined, options.actor || 'orchestrator');
 }
 
 function seedStartedTask(repoRoot: string, taskId: string): void {
@@ -1148,6 +1172,7 @@ describe('gates/next-step', () => {
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
+            launch_input_mode: 'launch_artifact_path',
             reviewer_launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
             prepared_launch_event_sha256: preparedIntegrity.event_sha256
         });
@@ -1635,6 +1660,254 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('completed reviewer launch has no bound review output'));
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
         assert.ok(!result.commands[0].command.includes('gate record-review-routing'));
+    });
+
+    it('does not rediscover a stale orphan after review-cycle restart invalidates its lane', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-invalidated-launch';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const reviewOutputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'missing-invalidated-review-output.md'
+        );
+        seedCompletedReviewerLaunchAndInvocation(
+            repoRoot,
+            TASK_ID,
+            'code',
+            reviewerIdentity,
+            { reviewOutputPath }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const refreshedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        writeJson(reviewContextPath, {
+            ...refreshedReviewContext,
+            review_cycle_marker: 'refreshed-after-invalidating-restart'
+        });
+        appendRestartBoundary(repoRoot, TASK_ID, 'REVIEW_CYCLE_RESTARTED', {
+            invalidatedReviewTypes: ['code'],
+            preservedReviewTypes: ['test']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-routing', result.reason);
+        assert.ok(result.commands[0].command.includes('gate record-review-routing'));
+        assert.ok(!result.commands.some((entry) => entry.command.includes('gate restart-review-cycle')));
+    });
+
+    it('invalidates a current routing when review-cycle restart follows its launch', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-current-before-restart';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const reviewOutputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'missing-current-before-restart-output.md'
+        );
+        seedCompletedReviewerLaunchAndInvocation(
+            repoRoot,
+            TASK_ID,
+            'code',
+            reviewerIdentity,
+            { reviewOutputPath }
+        );
+        appendRestartBoundary(repoRoot, TASK_ID, 'REVIEW_CYCLE_RESTARTED', {
+            invalidatedReviewTypes: ['code'],
+            preservedReviewTypes: ['test']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-routing', result.reason);
+        assert.ok(result.commands[0].command.includes('gate record-review-routing'));
+        assert.ok(!result.commands.some((entry) => entry.command.includes('gate restart-review-cycle')));
+    });
+
+    it('keeps a current routing created after an invalidating review-cycle restart', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-current-after-restart';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        appendRestartBoundary(repoRoot, TASK_ID, 'REVIEW_CYCLE_RESTARTED', {
+            invalidatedReviewTypes: ['code'],
+            preservedReviewTypes: ['test']
+        });
+        const reviewOutputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'missing-current-after-restart-output.md'
+        );
+        seedCompletedReviewerLaunchAndInvocation(
+            repoRoot,
+            TASK_ID,
+            'code',
+            reviewerIdentity,
+            { reviewOutputPath }
+        );
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+    });
+
+    it('keeps stale orphan recovery for a lane preserved by review-cycle restart', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-preserved-launch';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const reviewOutputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'missing-preserved-review-output.md'
+        );
+        seedCompletedReviewerLaunchAndInvocation(
+            repoRoot,
+            TASK_ID,
+            'code',
+            reviewerIdentity,
+            { reviewOutputPath }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const refreshedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        writeJson(reviewContextPath, {
+            ...refreshedReviewContext,
+            review_cycle_marker: 'refreshed-after-preserving-restart'
+        });
+        appendRestartBoundary(repoRoot, TASK_ID, 'REVIEW_CYCLE_RESTARTED', {
+            invalidatedReviewTypes: ['test'],
+            preservedReviewTypes: ['code']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+    });
+
+    it('does not rediscover any stale orphan before a coherent-cycle restart', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-coherent-launch';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const reviewOutputPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'missing-coherent-review-output.md'
+        );
+        seedCompletedReviewerLaunchAndInvocation(
+            repoRoot,
+            TASK_ID,
+            'code',
+            reviewerIdentity,
+            { reviewOutputPath }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const refreshedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        writeJson(reviewContextPath, {
+            ...refreshedReviewContext,
+            review_cycle_marker: 'refreshed-after-coherent-restart'
+        });
+        appendRestartBoundary(repoRoot, TASK_ID, 'COHERENT_CYCLE_RESTARTED');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-routing', result.reason);
+        assert.ok(result.commands[0].command.includes('gate record-review-routing'));
+        assert.ok(!result.commands.some((entry) => entry.command.includes('gate restart-review-cycle')));
+    });
+
+    it('does not trust malformed or unauthenticated invalidating restart boundaries', () => {
+        const invalidBoundaries = [
+            { name: 'non-orchestrator actor', options: { actor: 'gate' } },
+            { name: 'failed outcome', options: { outcome: 'FAIL' } },
+            { name: 'mismatched details task', options: { detailsTaskId: 'T-OTHER' } },
+            { name: 'mismatched details event type', options: { detailsEventType: 'COHERENT_CYCLE_RESTARTED' } },
+            { name: 'failed details status', options: { status: 'FAILED' } },
+            { name: 'non-array invalidated lanes', options: { invalidatedReviewTypes: 'code' } }
+        ];
+        for (const invalidBoundary of invalidBoundaries) {
+            const repoRoot = makeTempRepo();
+            const reviewerIdentity = `agent:019dc191-3d81-7091-aca0-${invalidBoundary.name.replace(/\W+/g, '-')}`;
+            seedStartedTask(repoRoot, TASK_ID);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+            seedCompilePass(repoRoot, TASK_ID);
+            writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+            const reviewOutputPath = path.join(
+                repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                'reviews',
+                TASK_ID,
+                'code',
+                `missing-${invalidBoundary.name.replace(/\W+/g, '-')}-output.md`
+            );
+            seedCompletedReviewerLaunchAndInvocation(
+                repoRoot,
+                TASK_ID,
+                'code',
+                reviewerIdentity,
+                { reviewOutputPath }
+            );
+            seedCompilePass(repoRoot, TASK_ID);
+            const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+            const refreshedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+            writeJson(reviewContextPath, {
+                ...refreshedReviewContext,
+                review_cycle_marker: `refreshed-after-${invalidBoundary.name}`
+            });
+            appendRestartBoundary(repoRoot, TASK_ID, 'REVIEW_CYCLE_RESTARTED', {
+                invalidatedReviewTypes: ['code'],
+                ...invalidBoundary.options
+            });
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'restart-review-cycle', invalidBoundary.name);
+            assert.ok(result.commands[0].command.includes('gate restart-review-cycle'), invalidBoundary.name);
+        }
     });
 
     it('does not recover a stale completed launch after its review result was accepted', () => {

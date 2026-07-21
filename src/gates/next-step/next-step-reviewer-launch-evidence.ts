@@ -49,13 +49,11 @@ import {
     hasMatchingReviewerDelegationStartedTelemetry,
     hasMatchingReviewerLaunchCompletedTelemetry,
     hasMatchingReviewerProviderFailureTelemetry,
-    resolveReviewerLaunchArtifactPathFromTelemetry,
-    timelineHasDelegatedReviewRoutingAfterCompile
+    resolveReviewerLaunchArtifactPathFromTelemetry
 } from './next-step-reviewer-launch-evidence-telemetry';
 
 export {
-    getDelegatedReviewRoutingShaAfterCompile,
-    timelineHasDelegatedReviewRoutingAfterCompile
+    getDelegatedReviewRoutingShaAfterCompile
 } from './next-step-reviewer-launch-evidence-telemetry';
 
 export interface CurrentReviewerLaunchArtifactEvidence {
@@ -224,6 +222,98 @@ function timelineHasMatchingReviewerRoutingEventSha(options: {
     });
 }
 
+function findReviewerRoutingEventIndexBySha(
+    lines: string[],
+    reviewType: string,
+    routingEventSha256: string
+): number {
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        try {
+            const event = JSON.parse(lines[index]) as Record<string, unknown>;
+            const integrity = isPlainRecord(event.integrity) ? event.integrity : {};
+            const details = isPlainRecord(event.details) ? event.details : {};
+            if (
+                String(event.event_type || '').trim() === 'REVIEWER_DELEGATION_ROUTED'
+                && String(integrity.event_sha256 || '').trim().toLowerCase() === routingEventSha256
+                && String(details.review_type || '').trim() === reviewType
+            ) {
+                return index;
+            }
+        } catch {
+            // Timeline integrity is verified by the caller.
+        }
+    }
+    return -1;
+}
+
+function isAuthenticatedRestartBoundaryForReview(
+    event: Record<string, unknown>,
+    taskId: string,
+    reviewType: string
+): boolean {
+    const eventType = String(event.event_type || '').trim();
+    if (eventType !== 'COHERENT_CYCLE_RESTARTED' && eventType !== 'REVIEW_CYCLE_RESTARTED') {
+        return false;
+    }
+    const details = isPlainRecord(event.details) ? event.details : {};
+    if (
+        String(event.task_id || '').trim() !== taskId
+        || String(event.outcome || '').trim() !== 'PASS'
+        || String(event.actor || '').trim() !== 'orchestrator'
+        || String(details.task_id || '').trim() !== taskId
+        || String(details.event_type || '').trim() !== eventType
+        || String(details.status || '').trim() !== 'PASSED'
+    ) {
+        return false;
+    }
+    if (eventType === 'COHERENT_CYCLE_RESTARTED') {
+        return true;
+    }
+    return Array.isArray(details.invalidated_review_types)
+        && details.invalidated_review_types.some((entry) => String(entry || '').trim() === reviewType);
+}
+
+export function timelineHasDelegatedReviewRoutingAfterCompile(
+    eventsRoot: string,
+    taskId: string,
+    reviewType: string,
+    reviewerIdentity: string
+): boolean {
+    const routingEventSha256 = getDelegatedReviewRoutingShaAfterCompile(
+        eventsRoot,
+        taskId,
+        reviewType,
+        reviewerIdentity
+    );
+    if (!routingEventSha256) {
+        return false;
+    }
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fileExists(timelinePath)) {
+        return false;
+    }
+    const timelineIntegrityStatus = inspectTaskEventFile(timelinePath, taskId).status;
+    if (timelineIntegrityStatus !== 'PASS' && timelineIntegrityStatus !== 'PASS_WITH_LEGACY_PREFIX') {
+        return false;
+    }
+    const lines = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    const routingEventIndex = findReviewerRoutingEventIndexBySha(lines, reviewType, routingEventSha256);
+    for (let index = lines.length - 1; index > routingEventIndex; index -= 1) {
+        try {
+            const event = JSON.parse(lines[index]) as Record<string, unknown>;
+            if (isAuthenticatedRestartBoundaryForReview(event, taskId, reviewType)) {
+                return false;
+            }
+        } catch {
+            // Timeline integrity is verified above.
+        }
+    }
+    return routingEventIndex >= 0;
+}
+
 export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
     repoRoot: string,
     eventsRoot: string,
@@ -272,11 +362,27 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
         .split('\n')
         .map((line) => line.trim())
         .filter(Boolean);
+    let latestRestartBoundaryIndex = -1;
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        try {
+            const event = JSON.parse(lines[index]) as Record<string, unknown>;
+            if (isAuthenticatedRestartBoundaryForReview(event, taskId, state.reviewType)) {
+                latestRestartBoundaryIndex = index;
+                break;
+            }
+        } catch {
+            // Timeline integrity is verified above.
+        }
+    }
+    const currentRoutingEventIndex = currentRoutingEventSha256
+        ? findReviewerRoutingEventIndexBySha(lines, state.reviewType, currentRoutingEventSha256)
+        : -1;
+    const currentRoutingIsAfterRestartBoundary = currentRoutingEventIndex > latestRestartBoundaryIndex;
     const invocationCandidates: Array<{
         reviewContextSha256: string;
         routingEventSha256: string;
         stale: boolean;
-    }> = currentRoutingEventSha256
+    }> = currentRoutingEventSha256 && currentRoutingIsAfterRestartBoundary
         ? reviewContextSha256Candidates.map((reviewContextSha256) => ({
             reviewContextSha256,
             routingEventSha256: currentRoutingEventSha256,
@@ -286,6 +392,9 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
     for (let index = lines.length - 1; index >= 0; index -= 1) {
         try {
             const event = JSON.parse(lines[index]) as Record<string, unknown>;
+            if (isAuthenticatedRestartBoundaryForReview(event, taskId, state.reviewType)) {
+                break;
+            }
             if (String(event.event_type || '').trim() !== 'REVIEWER_LAUNCH_PREPARED') {
                 continue;
             }
@@ -300,9 +409,15 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 'routing_event_sha256',
                 'routingEventSha256'
             ).toLowerCase();
+            const routingEventIndex = findReviewerRoutingEventIndexBySha(
+                lines,
+                state.reviewType,
+                routingEventSha256
+            );
             if (
                 !/^[0-9a-f]{64}$/.test(reviewContextSha256)
                 || !/^[0-9a-f]{64}$/.test(routingEventSha256)
+                || routingEventIndex <= latestRestartBoundaryIndex
                 || (
                     reviewContextSha256Candidates.includes(reviewContextSha256)
                     && routingEventSha256 === currentRoutingEventSha256
@@ -413,6 +528,11 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                     plannedReviewerIdentity,
                     routingEventSha256
                 })
+                || findReviewerRoutingEventIndexBySha(
+                    lines,
+                    state.reviewType,
+                    routingEventSha256
+                ) <= latestRestartBoundaryIndex
                 || !matchedReviewContextSha256
                 || getArtifactStringField(launchArtifact, 'routing_event_sha256', 'routingEventSha256').toLowerCase() !== routingEventSha256
                 || String(details.review_type || '').trim() !== state.reviewType
