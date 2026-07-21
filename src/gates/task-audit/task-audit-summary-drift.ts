@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { buildBundleRelativePath } from '../../core/constants';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from '../preflight/classify-change';
+import { buildScopeContentFingerprint } from '../compile/compile-gate';
 import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
 import {
     detectProtectedDirtyWorkspaceDrift,
@@ -416,6 +417,53 @@ export interface PostDoneUnexpectedWorkspaceResult {
     protectedBaselineIntegrityError: boolean;
 }
 
+export interface PostDoneAuditedScopeFingerprint {
+    changed_files: string[];
+    changed_files_sha256: string | null;
+    scope_content_sha256: string | null;
+}
+
+export function buildPostDoneAuditedScopeFingerprint(
+    repoRoot: string,
+    auditedFiles: string[]
+): PostDoneAuditedScopeFingerprint {
+    const changedFiles = [...new Set(auditedFiles.map((entry) => toPosix(entry)).filter(Boolean))].sort();
+    return {
+        changed_files: changedFiles,
+        changed_files_sha256: stringSha256(changedFiles.join('\n')),
+        scope_content_sha256: buildScopeContentFingerprint(repoRoot, 'explicit_changed_files', changedFiles)
+    };
+}
+
+export function readPostDoneAuditedScopeFingerprint(
+    repoRoot: string,
+    auditedFiles: string[],
+    implementationSummary: Record<string, unknown> | null
+): PostDoneAuditedScopeFingerprint {
+    const normalizedAuditedFiles = normalizeChangedFiles(auditedFiles);
+    const recordedChangedFiles = normalizeChangedFiles(implementationSummary?.changed_files);
+    const recordedChangedFilesSha256 = normalizeOptionalHash(implementationSummary?.changed_files_sha256);
+    const recordedFileListIsAuthenticated = !!recordedChangedFilesSha256
+        && recordedChangedFilesSha256 === changedFilesSha256(recordedChangedFiles)
+        && recordedChangedFiles.length === normalizedAuditedFiles.length
+        && recordedChangedFiles.every((entry, index) => entry === normalizedAuditedFiles[index]);
+    if (recordedFileListIsAuthenticated) {
+        return buildPostDoneAuditedScopeFingerprint(repoRoot, normalizedAuditedFiles);
+    }
+    const legacySnapshot = getWorkspaceSnapshotCached(
+        repoRoot,
+        'explicit_changed_files',
+        true,
+        normalizedAuditedFiles,
+        { noCache: true, readOnly: true }
+    );
+    return {
+        changed_files: legacySnapshot.changed_files,
+        changed_files_sha256: legacySnapshot.changed_files_sha256,
+        scope_content_sha256: legacySnapshot.scope_content_sha256
+    };
+}
+
 export function getUnexpectedPostDoneWorkspaceFiles(
     repoRoot: string,
     currentChangedFiles: string[],
@@ -546,22 +594,25 @@ function buildPostDoneAuditedScopeDriftBlocker(
         return null;
     }
     const implementationSummary = readFinalCloseoutImplementationSummary(finalCloseoutJsonPath);
-    const expectedScopeContentSha256 = typeof implementationSummary?.scope_content_sha256 === 'string'
-        ? implementationSummary.scope_content_sha256.trim().toLowerCase()
-        : '';
-    const expectedChangedFilesSha256 = typeof implementationSummary?.changed_files_sha256 === 'string'
-        ? implementationSummary.changed_files_sha256.trim().toLowerCase()
-        : '';
-    if (!expectedScopeContentSha256 && !expectedChangedFilesSha256) {
-        return null;
+    const expectedScopeContentSha256 = normalizeOptionalHash(implementationSummary?.scope_content_sha256);
+    const expectedChangedFilesSha256 = normalizeOptionalHash(implementationSummary?.changed_files_sha256);
+    if (!expectedScopeContentSha256 || !expectedChangedFilesSha256) {
+        return {
+            gate: 'post-done-drift',
+            reason:
+                'Materialized final closeout is missing valid audited scope hashes for post-DONE authentication: ' +
+                `${auditedFiles.join(', ')}. ` +
+                'Both changed_files_sha256 and scope_content_sha256 must be valid SHA-256 values before committed scope can remain complete.'
+        };
     }
 
-    let currentAuditedSnapshot: ReturnType<typeof getWorkspaceSnapshotCached>;
+    let currentAuditedSnapshot: PostDoneAuditedScopeFingerprint;
     try {
-        currentAuditedSnapshot = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, auditedFiles, {
-            noCache: true,
-            readOnly: true
-        });
+        currentAuditedSnapshot = readPostDoneAuditedScopeFingerprint(
+            repoRoot,
+            auditedFiles,
+            implementationSummary
+        );
     } catch (error) {
         const gitMetadataPath = path.join(repoRoot, '.git');
         if (!fs.existsSync(gitMetadataPath)) {
@@ -576,10 +627,8 @@ function buildPostDoneAuditedScopeDriftBlocker(
         };
     }
 
-    const contentChanged = !!expectedScopeContentSha256
-        && currentAuditedSnapshot.scope_content_sha256 !== expectedScopeContentSha256;
-    const fileSetChanged = !!expectedChangedFilesSha256
-        && currentAuditedSnapshot.changed_files_sha256 !== expectedChangedFilesSha256;
+    const contentChanged = currentAuditedSnapshot.scope_content_sha256 !== expectedScopeContentSha256;
+    const fileSetChanged = currentAuditedSnapshot.changed_files_sha256 !== expectedChangedFilesSha256;
     if (!contentChanged && !fileSetChanged) {
         return null;
     }

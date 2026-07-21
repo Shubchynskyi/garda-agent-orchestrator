@@ -30,7 +30,8 @@ import {
 } from '../workspace/workspace-snapshot-cache';
 import {
     evaluateStagedPostDoneAuditedScope,
-    getUnexpectedPostDoneWorkspaceFiles
+    getUnexpectedPostDoneWorkspaceFiles,
+    readPostDoneAuditedScopeFingerprint
 } from '../task-audit/task-audit-summary-drift';
 import { isPlainRecord } from '../../core/records';
 
@@ -56,6 +57,11 @@ function fileExists(filePath: string): boolean {
 
 function sha256Text(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function normalizeSha256(value: unknown): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
 }
 
 function getPreflightChangedFiles(preflight: Record<string, unknown> | null): string[] {
@@ -124,6 +130,53 @@ function finalCloseoutMatchesCurrentCycle(
     return !(expectedBinding.preflight_path && actualBinding.preflight_path !== expectedBinding.preflight_path);
 }
 
+function finalCloseoutMatchesMaterializedLedger(
+    reviewsRoot: string,
+    taskId: string,
+    closeout: Record<string, unknown>,
+    closeoutJsonPath: string,
+    closeoutMarkdownPath: string
+): boolean {
+    const ledgerPath = path.join(path.dirname(reviewsRoot), 'task-ledger', `${taskId}.json`);
+    const ledger = safeReadJson(ledgerPath);
+    if (!isPlainRecord(ledger) || String(ledger.task_id || '').trim() !== taskId) {
+        return false;
+    }
+    const verification = isPlainRecord(ledger.verification) ? ledger.verification : null;
+    const artifactRefs = isPlainRecord(ledger.artifact_refs) ? ledger.artifact_refs : null;
+    const jsonRef = isPlainRecord(artifactRefs?.final_closeout_json) ? artifactRefs.final_closeout_json : null;
+    const markdownRef = isPlainRecord(artifactRefs?.final_closeout_markdown) ? artifactRefs.final_closeout_markdown : null;
+    const expectedJsonSha256 = typeof jsonRef?.sha256 === 'string' ? jsonRef.sha256.trim().toLowerCase() : '';
+    const expectedMarkdownSha256 = typeof markdownRef?.sha256 === 'string' ? markdownRef.sha256.trim().toLowerCase() : '';
+    if (
+        String(ledger.audit_status || '').trim().toUpperCase() !== 'PASS'
+        || String(verification?.status || '').trim().toUpperCase() !== 'VERIFIED'
+        || !/^[0-9a-f]{64}$/u.test(expectedJsonSha256)
+        || !/^[0-9a-f]{64}$/u.test(expectedMarkdownSha256)
+    ) {
+        return false;
+    }
+    const actualJson = fs.readFileSync(closeoutJsonPath, 'utf8');
+    const actualMarkdown = fs.readFileSync(closeoutMarkdownPath, 'utf8');
+    if (
+        sha256Text(actualJson) !== expectedJsonSha256
+        || sha256Text(actualMarkdown) !== expectedMarkdownSha256
+        || actualJson !== `${JSON.stringify(closeout, null, 2)}\n`
+    ) {
+        return false;
+    }
+    const implementationSummary = isPlainRecord(closeout.implementation_summary) ? closeout.implementation_summary : null;
+    const ledgerScope = isPlainRecord(ledger.scope) ? ledger.scope : null;
+    const cycleBinding = isPlainRecord(closeout.cycle_binding) ? closeout.cycle_binding : null;
+    const timing = isPlainRecord(ledger.timing) ? ledger.timing : null;
+    return !!implementationSummary
+        && !!ledgerScope
+        && ledgerScope.changed_files_sha256 === implementationSummary.changed_files_sha256
+        && ledgerScope.scope_content_sha256 === implementationSummary.scope_content_sha256
+        && ledgerScope.scope_sha256 === implementationSummary.scope_sha256
+        && timing?.compile_gate_timestamp === cycleBinding?.compile_gate_timestamp;
+}
+
 export function readReadyFinalReportSummary(
     repoRoot: string,
     reviewsRoot: string,
@@ -154,14 +207,29 @@ export function readReadyFinalReportSummary(
     const expectedCloseout = { ...summary.final_closeout, generated_utc: generatedUtc, artifact_state: 'MATERIALIZED' as const };
     const expectedAttestation = expectedCloseout.review_integrity_attestation;
     const expectedJson = `${JSON.stringify(expectedCloseout, null, 2)}\n`;
-    if (!generatedUtc || !expectedAttestation || expectedAttestation.completion_allowed !== true || fs.readFileSync(closeoutJsonPath, 'utf8') !== expectedJson) {
+    const exactCurrentSummaryMatch = !!generatedUtc
+        && !!expectedAttestation
+        && expectedAttestation.completion_allowed === true
+        && fs.readFileSync(closeoutJsonPath, 'utf8') === expectedJson;
+    const materializedLedgerMatch = !exactCurrentSummaryMatch
+        && finalCloseoutMatchesMaterializedLedger(
+            reviewsRoot,
+            taskId,
+            closeout,
+            closeoutJsonPath,
+            closeoutMarkdownPath
+        );
+    if (!exactCurrentSummaryMatch && !materializedLedgerMatch) {
         return null;
     }
-    const expectedMarkdown = `${formatFinalCloseoutMarkdown(expectedCloseout)}\n`;
+    const canonicalCloseout = exactCurrentSummaryMatch
+        ? expectedCloseout
+        : closeout as unknown as TaskAuditSummaryResult['final_closeout'];
+    const expectedMarkdown = `${formatFinalCloseoutMarkdown(canonicalCloseout)}\n`;
     if (fs.readFileSync(closeoutMarkdownPath, 'utf8') !== expectedMarkdown) {
         return null;
     }
-    const expectedFinalUserReport = `${formatFinalUserReport(expectedCloseout)}\n`;
+    const expectedFinalUserReport = `${formatFinalUserReport(canonicalCloseout)}\n`;
     const actualFinalUserReport = fs.readFileSync(finalUserReportPath, 'utf8');
     if (actualFinalUserReport !== expectedFinalUserReport) {
         return null;
@@ -245,19 +313,24 @@ export function readPostDoneWorkspaceDriftDecision(
     }
     const closeout = safeReadJson(finalCloseoutJsonPath);
     const implementationSummary = isPlainRecord(closeout?.implementation_summary) ? closeout.implementation_summary : null;
-    const expectedAuditedScopeContentSha256 = typeof implementationSummary?.scope_content_sha256 === 'string'
-        ? implementationSummary.scope_content_sha256.trim().toLowerCase()
-        : '';
-    const expectedAuditedChangedFilesSha256 = typeof implementationSummary?.changed_files_sha256 === 'string'
-        ? implementationSummary.changed_files_sha256.trim().toLowerCase()
-        : '';
-    if ((expectedAuditedScopeContentSha256 || expectedAuditedChangedFilesSha256) && auditedChangedFiles.length > 0) {
-        let currentAuditedScope: WorkspaceSnapshot & { cache_hit: boolean };
+    const expectedAuditedScopeContentSha256 = normalizeSha256(implementationSummary?.scope_content_sha256);
+    const expectedAuditedChangedFilesSha256 = normalizeSha256(implementationSummary?.changed_files_sha256);
+    if (auditedChangedFiles.length > 0 && (!expectedAuditedScopeContentSha256 || !expectedAuditedChangedFilesSha256)) {
+        return {
+            blocked: true,
+            reason:
+                `Materialized final closeout is missing valid audited scope hashes for ${describePathList(auditedChangedFiles)}. ` +
+                'Both changed_files_sha256 and scope_content_sha256 must be valid SHA-256 values before the task can remain DONE.'
+        };
+    }
+    if (expectedAuditedScopeContentSha256 && expectedAuditedChangedFilesSha256 && auditedChangedFiles.length > 0) {
+        let currentAuditedScope: ReturnType<typeof readPostDoneAuditedScopeFingerprint>;
         try {
-            currentAuditedScope = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, auditedChangedFiles, {
-                noCache: true,
-                readOnly: true
-            });
+            currentAuditedScope = readPostDoneAuditedScopeFingerprint(
+                repoRoot,
+                auditedChangedFiles,
+                implementationSummary
+            );
         } catch (error) {
             return {
                 blocked: true,
@@ -268,10 +341,10 @@ export function readPostDoneWorkspaceDriftDecision(
             };
         }
         const auditedViolations = [
-            expectedAuditedScopeContentSha256 && currentAuditedScope.scope_content_sha256 !== expectedAuditedScopeContentSha256
+            currentAuditedScope.scope_content_sha256 !== expectedAuditedScopeContentSha256
                 ? `audited scope_content_sha256=${expectedAuditedScopeContentSha256} differs from current audited scope_content_sha256=${currentAuditedScope.scope_content_sha256}`
                 : '',
-            expectedAuditedChangedFilesSha256 && currentAuditedScope.changed_files_sha256 !== expectedAuditedChangedFilesSha256
+            currentAuditedScope.changed_files_sha256 !== expectedAuditedChangedFilesSha256
                 ? `audited changed_files_sha256=${expectedAuditedChangedFilesSha256} differs from current audited changed_files_sha256=${currentAuditedScope.changed_files_sha256}`
                 : ''
         ].filter(Boolean);

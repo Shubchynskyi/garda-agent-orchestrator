@@ -1011,6 +1011,7 @@ export function writeStrictIndependentCodeReviewEvidence(repoRoot: string, taskI
     const reviewTreeState = reviewContextScope.tree_state as Record<string, unknown> | undefined;
     const reviewTreeStateSha256 = String(reviewTreeState?.tree_state_sha256 || '').trim();
     const reviewContext = {
+        schema_version: 2,
         task_id: taskId,
         review_type: reviewType,
         preflight_path: preflightPath,

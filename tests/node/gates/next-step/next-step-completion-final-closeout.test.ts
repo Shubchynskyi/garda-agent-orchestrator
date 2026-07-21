@@ -636,6 +636,74 @@ describe('gates/next-step', () => {
 
     });
 
+    it('keeps a materialized completed task DONE after its exact audited diff is committed', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+        runGitFixtureCommand(repoRoot, ['commit', '-m', 'commit completed scope']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'DONE', result.reason);
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+    });
+
+    it('blocks a materialized completed task when committed audited content no longer matches', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+        runGitFixtureCommand(repoRoot, ['commit', '-m', 'commit completed scope']);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const laterValue = 3;\n', 'utf8');
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+        runGitFixtureCommand(repoRoot, ['commit', '-m', 'change completed scope later']);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'post-done-drift');
+        assert.match(result.reason, /scope_content_sha256/);
+    });
+
+    it('blocks a materialized completed task when an audited scope hash is missing', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+        const closeoutPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-final-closeout.json`);
+        const closeout = JSON.parse(fs.readFileSync(closeoutPath, 'utf8')) as Record<string, unknown>;
+        delete (closeout.implementation_summary as Record<string, unknown>).scope_content_sha256;
+        writeJson(closeoutPath, closeout);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'post-done-drift');
+        assert.match(result.reason, /missing valid audited scope hashes/);
+    });
+
 
 
     it('routes completed tasks to initial final closeout materialization despite tracked drift', () => {
@@ -910,11 +978,11 @@ describe('gates/next-step', () => {
 
 
 
-        assert.equal(result.status, 'READY', result.reason);
+        assert.equal(result.status, 'DONE', result.reason);
 
-        assert.equal(result.next_gate, 'task-audit-summary');
+        assert.equal(result.next_gate, null);
 
-        assert.match(result.reason, /final closeout artifacts are not materialized/i);
+        assert.match(result.reason, /canonical final closeout is materialized/i);
 
         assert.doesNotMatch(result.reason, /post-DONE workspace drift/i);
 

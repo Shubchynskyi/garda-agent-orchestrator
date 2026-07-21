@@ -453,6 +453,98 @@ describe('gates/task-audit-summary', () => {
             assert.match(blocker.reason, /src\/app\.ts/);
         });
 
+        it('keeps final closeout ready after the exact audited diff is committed', () => {
+            fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            initGitRepo(tmpDir);
+            fs.appendFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+            const completedSnapshot = getWorkspaceSnapshot(tmpDir, 'git_auto', true, []);
+            writePassedLifecycle(eventsDir, TASK_ID);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: completedSnapshot.changed_files,
+                metrics: {
+                    changed_lines_total: completedSnapshot.changed_lines_total,
+                    changed_files_sha256: completedSnapshot.changed_files_sha256,
+                    scope_content_sha256: completedSnapshot.scope_content_sha256
+                },
+                required_reviews: {}
+            });
+            const ready = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            synchronizeFinalCloseoutArtifacts(ready);
+            execFileSync('git', ['add', 'src/app.ts'], { cwd: tmpDir, stdio: 'ignore' });
+            execFileSync('git', ['commit', '-m', 'commit completed scope'], { cwd: tmpDir, stdio: 'ignore' });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'READY');
+            assert.equal(result.blockers.some((entry) => entry.gate === 'post-done-drift'), false);
+            assert.equal(result.final_report_contract.status, 'READY');
+
+            fs.appendFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const laterValue = 3;\n', 'utf8');
+            execFileSync('git', ['add', 'src/app.ts'], { cwd: tmpDir, stdio: 'ignore' });
+            execFileSync('git', ['commit', '-m', 'change completed scope later'], { cwd: tmpDir, stdio: 'ignore' });
+
+            const drifted = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            const blocker = drifted.blockers.find((entry) => entry.gate === 'post-done-drift');
+            assert.ok(blocker);
+            assert.match(blocker.reason, /scope_content_sha256/);
+        });
+
+        it('blocks final closeout when an audited scope hash is missing', () => {
+            fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            initGitRepo(tmpDir);
+            fs.appendFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+            const completedSnapshot = getWorkspaceSnapshot(tmpDir, 'git_auto', true, []);
+            writePassedLifecycle(eventsDir, TASK_ID);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: completedSnapshot.changed_files,
+                metrics: {
+                    changed_lines_total: completedSnapshot.changed_lines_total,
+                    changed_files_sha256: completedSnapshot.changed_files_sha256,
+                    scope_content_sha256: completedSnapshot.scope_content_sha256
+                },
+                required_reviews: {}
+            });
+            const ready = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            synchronizeFinalCloseoutArtifacts(ready);
+            const closeoutPath = path.join(reviewsDir, `${TASK_ID}-final-closeout.json`);
+            const closeout = JSON.parse(fs.readFileSync(closeoutPath, 'utf8')) as Record<string, unknown>;
+            delete (closeout.implementation_summary as Record<string, unknown>).scope_content_sha256;
+            writeArtifact(reviewsDir, TASK_ID, '-final-closeout.json', closeout);
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            const blocker = result.blockers.find((entry) => entry.gate === 'post-done-drift');
+            assert.ok(blocker);
+            assert.match(blocker.reason, /missing valid audited scope hashes/);
+        });
+
         it('blocks final closeout when tracked post-DONE drift changes a doc-impact audited file', () => {
             fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
             fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
