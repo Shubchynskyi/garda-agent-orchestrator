@@ -721,6 +721,7 @@ describe('gates/next-step protected recovery', () => {
         assert.match(result.reason, /protected workflow-config recovery signal/);
         assert.ok(command.includes('--orchestrator-work'));
         assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes('--upgrade-existing-task-mode'));
         assert.ok(command.includes('--operator-confirmed yes'));
         assert.ok(command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
         assert.ok(command.includes('--planned-changed-file "garda-agent-orchestrator/live/config/workflow-config.json"'));
@@ -752,6 +753,7 @@ describe('gates/next-step protected recovery', () => {
         assert.match(result.reason, /before classify-change/);
         assert.ok(command.includes('--orchestrator-work'));
         assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes('--upgrade-existing-task-mode'));
         assert.ok(command.includes('--operator-confirmed yes'));
         assert.ok(command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
         assert.ok(command.includes(`--planned-changed-file "${workflowConfigRelativePath}"`));

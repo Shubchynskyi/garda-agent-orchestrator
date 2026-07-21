@@ -32,6 +32,7 @@ describe('gates/next-step lifecycle command builders', () => {
             );
 
             assert.ok(command.includes('--orchestrator-work'), command);
+            assert.ok(command.includes('--upgrade-existing-task-mode'), command);
             assert.ok(!command.includes('--workflow-config-work'), command);
             assert.ok(command.includes('--planned-changed-file "src/app.ts"'), command);
             assert.ok(!command.includes('garda-agent-orchestrator/live/config/workflow-config.json'), command);
@@ -64,6 +65,7 @@ describe('gates/next-step lifecycle command builders', () => {
 
             assert.ok(command.includes('--orchestrator-work'), command);
             assert.ok(command.includes('--workflow-config-work'), command);
+            assert.ok(command.includes('--upgrade-existing-task-mode'), command);
             assert.ok(command.includes('--planned-changed-file "src/app.ts"'), command);
             assert.ok(command.includes('--planned-changed-file "garda-agent-orchestrator/live/config/workflow-config.json"'), command);
         } finally {

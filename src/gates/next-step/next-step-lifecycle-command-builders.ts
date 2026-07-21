@@ -269,6 +269,7 @@ export function buildOrchestratorWorkRestartCommand(
     if (includeWorkflowConfigWork) {
         parts.push('--workflow-config-work');
     }
+    parts.push('--upgrade-existing-task-mode');
     parts.push(...buildProtectedOperatorConfirmationCommandParts());
     const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
         ? taskMode.planned_changed_files.map((entry) => normalizePath(entry)).filter(Boolean)

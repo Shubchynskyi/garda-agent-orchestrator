@@ -18,7 +18,10 @@ import {
     resolveTaskModeArtifactPath,
     type TaskModePlanMetadata
 } from '../../../../gates/task-mode/task-mode';
-import { captureDirtyWorkspaceBaseline } from '../../../../gates/workspace/dirty-worktree-protection';
+import {
+    captureDirtyWorkspaceBaseline,
+    type DirtyWorkspaceBaseline
+} from '../../../../gates/workspace/dirty-worktree-protection';
 import {
     validateTaskPlan,
     computeTaskPlanDigest,
@@ -203,6 +206,7 @@ export interface EnterTaskModeCommandOptions {
     plannedChangedFiles?: unknown;
     orchestratorWork?: unknown;
     workflowConfigWork?: unknown;
+    upgradeExistingTaskMode?: unknown;
     operatorConfirmed?: unknown;
     operatorConfirmedAtUtc?: unknown;
     allowedDirtyWorkflowConfigFiles?: unknown;
@@ -215,6 +219,80 @@ export interface EnterTaskModeCommandOptions {
     artifactPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
+}
+
+interface TaskModeScopeUpgradeState {
+    dirtyWorkspaceBaseline: DirtyWorkspaceBaseline;
+    allowedDirtyWorkflowConfigFiles: string[];
+    workflowConfigFileHashes: Record<string, string | null> | null;
+    workflowConfigCompatibilityBaselineFiles: string[];
+}
+
+function resolveTaskModeScopeUpgrade(input: {
+    repoRoot: string;
+    taskId: string;
+    artifactPath: string;
+    requested: boolean;
+    orchestratorWork: boolean;
+    workflowConfigWork: boolean;
+    plannedChangedFiles: string[];
+    currentDirtyWorkspaceBaseline: DirtyWorkspaceBaseline;
+    dirtyWorkflowConfigFiles: string[];
+}): TaskModeScopeUpgradeState | null {
+    if (!input.requested) {
+        return null;
+    }
+
+    const previousTaskMode = getTaskModeEvidence(input.repoRoot, input.taskId, input.artifactPath);
+    const violations = getTaskModeEvidenceViolations(previousTaskMode);
+    if (violations.length > 0) {
+        throw new Error(
+            'Cannot upgrade task-mode scope without valid current task-mode evidence. ' + violations.join(' ')
+        );
+    }
+    if (!previousTaskMode.dirty_workspace_baseline) {
+        throw new Error('Cannot upgrade task-mode scope because the original dirty workspace baseline is missing.');
+    }
+    if (previousTaskMode.orchestrator_work === true && !input.orchestratorWork) {
+        throw new Error('Task-mode scope upgrade cannot remove the existing --orchestrator-work authorization.');
+    }
+    if (previousTaskMode.workflow_config_work === true && !input.workflowConfigWork) {
+        throw new Error('Task-mode scope upgrade cannot remove the existing --workflow-config-work authorization.');
+    }
+
+    const originalBaselineFiles = new Set(previousTaskMode.dirty_workspace_baseline.changed_files);
+    const plannedFiles = new Set(input.plannedChangedFiles);
+    const unplannedTaskOwnedFiles = input.currentDirtyWorkspaceBaseline.changed_files.filter((entry) => (
+        !originalBaselineFiles.has(entry) && !plannedFiles.has(entry)
+    ));
+    if (unplannedTaskOwnedFiles.length > 0) {
+        throw new Error(
+            'Task-mode scope upgrade requires every post-entry changed file in the planned scope: ' +
+            unplannedTaskOwnedFiles.join(', ') + '.'
+        );
+    }
+
+    const preExistingWorkflowConfigFiles = input.dirtyWorkflowConfigFiles.filter((entry) => (
+        originalBaselineFiles.has(entry)
+    ));
+    if (preExistingWorkflowConfigFiles.length > 0) {
+        throw new Error(
+            'Task-mode scope upgrade cannot authorize workflow config files that were already dirty at original entry: ' +
+            preExistingWorkflowConfigFiles.join(', ') + '.'
+        );
+    }
+    if (input.dirtyWorkflowConfigFiles.length > 0 && !previousTaskMode.workflow_config_file_hashes) {
+        throw new Error(
+            'Task-mode scope upgrade cannot authenticate the original workflow config baseline because its hashes are missing.'
+        );
+    }
+
+    return {
+        dirtyWorkspaceBaseline: previousTaskMode.dirty_workspace_baseline,
+        allowedDirtyWorkflowConfigFiles: [...input.dirtyWorkflowConfigFiles],
+        workflowConfigFileHashes: previousTaskMode.workflow_config_file_hashes,
+        workflowConfigCompatibilityBaselineFiles: previousTaskMode.workflow_config_compatibility_baseline_files
+    };
 }
 
 export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): { outputLines: string[]; exitCode: number } {
@@ -231,12 +309,25 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         protectedPlannedFiles,
         workflowConfigPlannedFiles
     } = resolveTaskModeEntryScope(repoRoot, options.plannedChangedFiles);
-    const dirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot, plannedChangedFiles);
+    const currentDirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot, plannedChangedFiles);
     const orchestratorWork = parseBooleanOption(options.orchestratorWork, false);
     const workflowConfigWork = parseBooleanOption(options.workflowConfigWork, false);
+    const upgradeExistingTaskMode = parseBooleanOption(options.upgradeExistingTaskMode, false);
     const workflowConfigPreTaskBaseline = getWorkflowConfigPreTaskBaselineState(repoRoot, workflowConfigFileHashes);
     const dirtyWorkflowConfigFiles = [...workflowConfigPreTaskBaseline.changed_files].sort();
     const startBanner = resolveTaskModeStartBanner(options.startBanner);
+    const scopeUpgrade = resolveTaskModeScopeUpgrade({
+        repoRoot,
+        taskId,
+        artifactPath,
+        requested: upgradeExistingTaskMode,
+        orchestratorWork,
+        workflowConfigWork,
+        plannedChangedFiles,
+        currentDirtyWorkspaceBaseline,
+        dirtyWorkflowConfigFiles
+    });
+    const dirtyWorkspaceBaseline = scopeUpgrade?.dirtyWorkspaceBaseline || currentDirtyWorkspaceBaseline;
 
     let planMetadata: TaskModePlanMetadata | null = null;
     const rawPlanPath = String(options.planPath || '').trim();
@@ -279,13 +370,16 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         workflowConfigPreTaskBaseline,
         orchestratorWork,
         workflowConfigWork,
-        allowedDirtyWorkflowConfigFiles: options.allowedDirtyWorkflowConfigFiles,
+        allowedDirtyWorkflowConfigFiles: scopeUpgrade?.allowedDirtyWorkflowConfigFiles
+            || options.allowedDirtyWorkflowConfigFiles,
         taskQueueMetadata
     });
     const workflowConfigFileHashesForArtifact = normalizeWorkflowConfigFileHashes(options.workflowConfigFileHashesOverride)
+        || normalizeWorkflowConfigFileHashes(scopeUpgrade?.workflowConfigFileHashes)
         || workflowConfigFileHashes;
     const workflowConfigCompatibilityBaselineFiles = options.workflowConfigCompatibilityBaselineFilesOverride === undefined
-        ? workflowConfigPreTaskBaseline.compatibility_baseline_files
+        ? scopeUpgrade?.workflowConfigCompatibilityBaselineFiles
+            || workflowConfigPreTaskBaseline.compatibility_baseline_files
         : options.workflowConfigCompatibilityBaselineFilesOverride as string[];
 
     const rawTaskProfile = taskQueueMetadata?.profile || null;
