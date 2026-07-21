@@ -156,7 +156,6 @@ export function readPreflightWorkspaceReadiness(
         options.dirtyWorkspaceBaselineChangedFiles
     );
     const dirtyWorkspaceBaselineFileHashes = options.dirtyWorkspaceBaselineFileHashes || {};
-    const expectedChangedFilesSha256 = stringSha256(changedFiles.join('\n'));
     const hasActualChangedFiles = Array.isArray(metrics.actual_changed_files);
     const expectedActualChangedFiles = hasActualChangedFiles
         ? [...new Set((metrics.actual_changed_files as unknown[])
@@ -194,12 +193,12 @@ export function readPreflightWorkspaceReadiness(
     const workflowConfigFileHashes = getWorkflowConfigFileHashes(repoRoot, preflight);
     const expectedComparableChangedFilesSha256 = ignoredWorkflowConfigOnlyWorkspaceDelta
         ? stringSha256(comparableChangedFiles.join('\n'))
-        : expectedChangedFilesSha256;
+        : expectedActualChangedFilesSha256;
     const expectedComparableChangedLinesTotal = ignoredWorkflowConfigOnlyWorkspaceDelta
         ? currentScope.changed_lines_total
         : expectedChangedLinesTotal;
     const violations: string[] = [];
-    if (currentScope.changed_files_sha256 !== expectedActualChangedFilesSha256) {
+    if (currentScope.changed_files_sha256 !== expectedComparableChangedFilesSha256) {
         const expectedSet = new Set(expectedActualChangedFiles);
         const currentSet = new Set(currentScopeFiles);
         const missingFromPreflight = currentScopeFiles.filter((entry) => !expectedSet.has(entry));

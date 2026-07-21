@@ -1537,13 +1537,14 @@ describe('cli/commands/gates — task-start', () => {
         }, null, 2), 'utf8');
         appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
 
-        // Deliberately omit code-review-required files (35-strict-coding-rules.md, 50-structure-and-docs.md, 70-security.md)
+        // Reviewer rule files are intentionally excluded from reviewer handoffs. Omit one
+        // main-agent POST_PREFLIGHT rule to exercise the remediation command instead.
         const result = runLoadRulePackCommand({
             repoRoot,
             taskId,
             stage: 'POST_PREFLIGHT',
             preflightPath,
-            loadedRuleFiles: ['00-core.md', '15-project-memory.md', '40-commands.md', '80-task-workflow.md', '90-skill-catalog.md'],
+            loadedRuleFiles: ['00-core.md', '40-commands.md', '80-task-workflow.md', '90-skill-catalog.md'],
             emitMetrics: false
         });
 
@@ -1557,14 +1558,10 @@ describe('cli/commands/gates — task-start', () => {
         assert.match(remediationCommand, new RegExp(`--task-id.*${taskId}`));
         assert.match(remediationCommand, /--stage.*POST_PREFLIGHT/);
         assert.match(remediationCommand, /--preflight-path/);
-        // 8 required files total: Set union of 5 entry files and 5 code-review-depth-2 files
-        // (2 overlap: 00-core.md, 80-task-workflow.md), net result = 8 unique files
+        // The current main-agent POST_PREFLIGHT set is the five entry rules.
         const loadedRuleFileMatches = remediationCommand.match(/--loaded-rule-file/g);
-        assert.equal(loadedRuleFileMatches?.length ?? 0, 8, 'Expected 8 --loaded-rule-file flags (union of entry + code-review-specific sets)');
-        // The 3 files that were deliberately omitted must appear in the remediation command
-        assert.match(remediationCommand, /35-strict-coding-rules\.md/);
-        assert.match(remediationCommand, /50-structure-and-docs\.md/);
-        assert.match(remediationCommand, /70-security\.md/);
+        assert.equal(loadedRuleFileMatches?.length ?? 0, 5, 'Expected 5 --loaded-rule-file flags');
+        assert.match(remediationCommand, /15-project-memory\.md/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -235,6 +235,7 @@ const COMPATIBILITY_TOP_LEVEL_KEYS = [
     'optional_quality_checks',
     'project_memory_maintenance',
     'review_cycle_guard',
+    'review_delegation',
     'review_execution_policy',
     'scope_budget_guard',
     'task_reset'
@@ -244,6 +245,7 @@ const COMPATIBILITY_OPTIONAL_TOP_LEVEL_KEYS = [
     'auto_backup',
     'optional_quality_checks',
     'orchestrator_work_policy',
+    'review_delegation',
     'review_execution_policy',
     'task_reset'
 ];
@@ -273,6 +275,7 @@ const COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS = [
 ];
 const COMPATIBILITY_COMPILE_GATE_KEYS = ['command'];
 const COMPATIBILITY_REVIEW_EXECUTION_POLICY_KEYS = ['mode'];
+const COMPATIBILITY_REVIEW_DELEGATION_KEYS = ['no_delegate'];
 const COMPATIBILITY_LEGACY_SCOPE_BUDGET_GUARD_KEYS = [
     'action',
     'enabled',
@@ -312,7 +315,12 @@ const COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS = [
 ];
 const COMPATIBILITY_TASK_RESET_KEYS = ['enabled'];
 const COMPATIBILITY_AUTO_BACKUP_KEYS = ['enabled', 'interval_days', 'keep_latest'];
-const COMPATIBILITY_OPTIONAL_QUALITY_CHECKS_KEYS = ['baseline_version', 'enabled', 'rules'];
+const COMPATIBILITY_OPTIONAL_QUALITY_CHECKS_KEYS = [
+    'baseline_version',
+    'enabled',
+    'review_failure_cadence_interval',
+    'rules'
+];
 const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_REQUIRED_KEYS = ['enabled', 'id', 'prompt', 'title'];
 const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_OPTIONAL_KEYS = [
     'excluded_scope_categories',
@@ -602,6 +610,11 @@ function isExactDefaultOptionalQualityChecksCompatibilityBaseline(input: unknown
         || !rules
         || !defaultRules
         || optionalQualityChecks.baseline_version !== defaultOptionalQualityChecks.baseline_version
+        || !numberEquals(
+            optionalQualityChecks,
+            'review_failure_cadence_interval',
+            defaultOptionalQualityChecks.review_failure_cadence_interval
+        )
         || rules.length !== defaultRules.length
     ) {
         return false;
@@ -714,6 +727,19 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
             || !hasExactOwnKeys(defaultReviewExecutionPolicy, COMPATIBILITY_REVIEW_EXECUTION_POLICY_KEYS)
             || !hasExactOwnKeys(reviewExecutionPolicy, COMPATIBILITY_REVIEW_EXECUTION_POLICY_KEYS)
             || !['code_first_optional', 'strict_sequential'].includes(reviewExecutionMode)
+        ) {
+            return false;
+        }
+    }
+
+    if (hasOwnKey(config, 'review_delegation')) {
+        const reviewDelegation = toPlainRecord(config.review_delegation);
+        const defaultReviewDelegation = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.review_delegation as unknown as Record<string, unknown>;
+        if (
+            !reviewDelegation
+            || !hasExactOwnKeys(defaultReviewDelegation, COMPATIBILITY_REVIEW_DELEGATION_KEYS)
+            || !hasExactOwnKeys(reviewDelegation, COMPATIBILITY_REVIEW_DELEGATION_KEYS)
+            || reviewDelegation.no_delegate !== false
         ) {
             return false;
         }

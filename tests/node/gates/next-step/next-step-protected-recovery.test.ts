@@ -1214,11 +1214,11 @@ describe('gates/next-step protected recovery', () => {
         const repoRoot = makeTempRepo();
         const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, ...workflowConfigRelativePath.split('/')), '{"validation":"baseline"}\n', 'utf8');
         initGitRepo(repoRoot);
         fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
         const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
-            changedFiles: [workflowConfigRelativePath, 'src/app.ts']
+            changedFiles: [workflowConfigRelativePath, 'src/app.ts'],
+            includeDomainScopeFingerprints: true
         });
 
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
