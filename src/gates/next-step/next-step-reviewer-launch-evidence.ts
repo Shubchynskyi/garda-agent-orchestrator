@@ -42,6 +42,7 @@ import {
     hasCompletedReviewerLaunchEvidence,
     hasDelegationStartedEvidence
 } from './next-step-reviewer-launch-evidence-validation';
+import { isAuthenticatedReviewRestartBoundary } from '../review/review-restart-boundary';
 import {
     findMatchingReviewerDelegationStartedTelemetry,
     getDelegatedReviewRoutingShaAfterCompile,
@@ -246,33 +247,6 @@ function findReviewerRoutingEventIndexBySha(
     return -1;
 }
 
-function isAuthenticatedRestartBoundaryForReview(
-    event: Record<string, unknown>,
-    taskId: string,
-    reviewType: string
-): boolean {
-    const eventType = String(event.event_type || '').trim();
-    if (eventType !== 'COHERENT_CYCLE_RESTARTED' && eventType !== 'REVIEW_CYCLE_RESTARTED') {
-        return false;
-    }
-    const details = isPlainRecord(event.details) ? event.details : {};
-    if (
-        String(event.task_id || '').trim() !== taskId
-        || String(event.outcome || '').trim() !== 'PASS'
-        || String(event.actor || '').trim() !== 'orchestrator'
-        || String(details.task_id || '').trim() !== taskId
-        || String(details.event_type || '').trim() !== eventType
-        || String(details.status || '').trim() !== 'PASSED'
-    ) {
-        return false;
-    }
-    if (eventType === 'COHERENT_CYCLE_RESTARTED') {
-        return true;
-    }
-    return Array.isArray(details.invalidated_review_types)
-        && details.invalidated_review_types.some((entry) => String(entry || '').trim() === reviewType);
-}
-
 export function timelineHasDelegatedReviewRoutingAfterCompile(
     eventsRoot: string,
     taskId: string,
@@ -304,7 +278,7 @@ export function timelineHasDelegatedReviewRoutingAfterCompile(
     for (let index = lines.length - 1; index > routingEventIndex; index -= 1) {
         try {
             const event = JSON.parse(lines[index]) as Record<string, unknown>;
-            if (isAuthenticatedRestartBoundaryForReview(event, taskId, reviewType)) {
+            if (isAuthenticatedReviewRestartBoundary(event, taskId, reviewType)) {
                 return false;
             }
         } catch {
@@ -366,7 +340,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
     for (let index = lines.length - 1; index >= 0; index -= 1) {
         try {
             const event = JSON.parse(lines[index]) as Record<string, unknown>;
-            if (isAuthenticatedRestartBoundaryForReview(event, taskId, state.reviewType)) {
+            if (isAuthenticatedReviewRestartBoundary(event, taskId, state.reviewType)) {
                 latestRestartBoundaryIndex = index;
                 break;
             }
@@ -392,7 +366,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
     for (let index = lines.length - 1; index >= 0; index -= 1) {
         try {
             const event = JSON.parse(lines[index]) as Record<string, unknown>;
-            if (isAuthenticatedRestartBoundaryForReview(event, taskId, state.reviewType)) {
+            if (isAuthenticatedReviewRestartBoundary(event, taskId, state.reviewType)) {
                 break;
             }
             if (String(event.event_type || '').trim() !== 'REVIEWER_LAUNCH_PREPARED') {

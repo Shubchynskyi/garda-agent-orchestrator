@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildExhaustiveReviewContractLines } from '../../../../gates/review-context/review-context-artifacts';
 import {
@@ -25,6 +26,157 @@ import {
     toReviewerHandoffAbsolutePath
 } from '../support/review-handler-common';
 import { type ReviewDependencyTimelineEvent } from '../../../../gates/review/review-dependencies';
+import { inspectTaskEventFile } from '../../../../gate-runtime/task-events-integrity';
+import { isAuthenticatedReviewRestartBoundary } from '../../../../gates/review/review-restart-boundary';
+import { buildReviewerLaunchBindingSha256 } from './review-launch-input-attestation';
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function isReviewerLaunchAttemptSupersededByAuthenticatedRestart(
+    timelinePath: string,
+    taskId: string,
+    reviewType: string,
+    launchArtifactPath: string,
+    launchArtifact: Record<string, unknown>
+): boolean {
+    const normalizedTaskId = taskId.trim();
+    const normalizedReviewType = reviewType.trim().toLowerCase();
+    const attemptId = getStringField(
+        launchArtifact,
+        'reviewer_launch_attempt_id',
+        'reviewerLaunchAttemptId'
+    ).toLowerCase();
+    const preparedEventSha256 = getStringField(
+        launchArtifact,
+        'prepared_launch_event_sha256',
+        'preparedLaunchEventSha256'
+    ).toLowerCase();
+    const preparedTaskSequence = Number(
+        launchArtifact.prepared_launch_event_task_sequence
+        ?? launchArtifact.preparedLaunchEventTaskSequence
+        ?? 0
+    );
+    const reviewerExecutionMode = getStringField(
+        launchArtifact,
+        'reviewer_execution_mode',
+        'reviewerExecutionMode'
+    );
+    const reviewerIdentity = getStringField(launchArtifact, 'reviewer_identity', 'reviewerIdentity');
+    const reviewContextSha256 = getStringField(
+        launchArtifact,
+        'review_context_sha256',
+        'reviewContextSha256'
+    ).toLowerCase();
+    const routingEventSha256 = getStringField(
+        launchArtifact,
+        'routing_event_sha256',
+        'routingEventSha256'
+    ).toLowerCase();
+    const reviewerPromptSha256 = getStringField(
+        launchArtifact,
+        'reviewer_prompt_sha256',
+        'reviewerPromptSha256'
+    ).toLowerCase();
+    const launchBindingSha256 = getStringField(
+        launchArtifact,
+        'launch_binding_sha256',
+        'launchBindingSha256'
+    ).toLowerCase();
+    const normalizedLaunchArtifactPath = normalizePath(path.resolve(launchArtifactPath));
+    if (
+        !normalizedTaskId
+        || !normalizedReviewType
+        || getStringField(launchArtifact, 'task_id', 'taskId') !== normalizedTaskId
+        || getStringField(launchArtifact, 'review_type', 'reviewType').toLowerCase() !== normalizedReviewType
+        || !attemptId
+        || reviewerExecutionMode !== 'delegated_subagent'
+        || !reviewerIdentity
+        || !/^[0-9a-f]{64}$/.test(reviewContextSha256)
+        || !/^[0-9a-f]{64}$/.test(routingEventSha256)
+        || !/^[0-9a-f]{64}$/.test(reviewerPromptSha256)
+        || !/^[0-9a-f]{64}$/.test(launchBindingSha256)
+        || buildReviewerLaunchBindingSha256({
+            taskId: normalizedTaskId,
+            reviewType: normalizedReviewType,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            reviewContextSha256,
+            routingEventSha256,
+            reviewerPromptSha256
+        }) !== launchBindingSha256
+        || !/^[0-9a-f]{64}$/.test(preparedEventSha256)
+        || !Number.isInteger(preparedTaskSequence)
+        || preparedTaskSequence <= 0
+        || !fs.existsSync(timelinePath)
+        || !inspectTaskEventFile(timelinePath, normalizedTaskId).status.startsWith('PASS')
+    ) {
+        return false;
+    }
+
+    const events = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .flatMap((line) => {
+            try {
+                const event = JSON.parse(line) as Record<string, unknown>;
+                return [event];
+            } catch {
+                return [];
+            }
+        });
+    const preparedEvent = events.find((event) => {
+        const details = isPlainRecord(event.details) ? event.details : {};
+        const integrity = isPlainRecord(event.integrity) ? event.integrity : {};
+        return String(event.event_type || '').trim() === 'REVIEWER_LAUNCH_PREPARED'
+            && String(event.task_id || '').trim() === normalizedTaskId
+            && String(event.outcome || '').trim() === 'INFO'
+            && String(event.actor || '').trim() === 'orchestrator'
+            && String(details.task_id || '').trim() === normalizedTaskId
+            && String(details.review_type || '').trim().toLowerCase() === normalizedReviewType
+            && String(details.reviewer_execution_mode || '').trim() === reviewerExecutionMode
+            && String(details.reviewer_identity || '').trim() === reviewerIdentity
+            && String(details.review_context_sha256 || '').trim().toLowerCase() === reviewContextSha256
+            && String(details.routing_event_sha256 || '').trim().toLowerCase() === routingEventSha256
+            && String(details.reviewer_prompt_sha256 || '').trim().toLowerCase() === reviewerPromptSha256
+            && String(details.launch_binding_sha256 || '').trim().toLowerCase() === launchBindingSha256
+            && normalizePath(String(details.reviewer_launch_artifact_path || '').trim()) === normalizedLaunchArtifactPath
+            && String(details.reviewer_launch_attempt_id || '').trim().toLowerCase() === attemptId
+            && Number(integrity.task_sequence) === preparedTaskSequence
+            && String(integrity.event_sha256 || '').trim().toLowerCase() === preparedEventSha256;
+    });
+    if (!preparedEvent) {
+        return false;
+    }
+    const latestRestartSequence = events.reduce((latestSequence, event) => {
+        if (!isAuthenticatedReviewRestartBoundary(
+            event,
+            normalizedTaskId,
+            normalizedReviewType,
+            preparedTaskSequence
+        )) {
+            return latestSequence;
+        }
+        const integrity = isPlainRecord(event.integrity) ? event.integrity : {};
+        return Math.max(latestSequence, Number(integrity.task_sequence) || 0);
+    }, 0);
+    if (latestRestartSequence <= preparedTaskSequence) {
+        return false;
+    }
+    const hasCurrentPreparedAttempt = events.some((event) => {
+        const details = isPlainRecord(event.details) ? event.details : {};
+        const integrity = isPlainRecord(event.integrity) ? event.integrity : {};
+        return String(event.event_type || '').trim() === 'REVIEWER_LAUNCH_PREPARED'
+            && String(event.task_id || '').trim() === normalizedTaskId
+            && String(event.outcome || '').trim() === 'INFO'
+            && String(event.actor || '').trim() === 'orchestrator'
+            && String(details.task_id || '').trim() === normalizedTaskId
+            && String(details.review_type || '').trim().toLowerCase() === normalizedReviewType
+            && Number(integrity.task_sequence) > latestRestartSequence;
+    });
+    return !hasCurrentPreparedAttempt;
+}
 
 export function isCompletedReviewerLaunchAttemptConsumed(
     timelineEvents: ReviewDependencyTimelineEvent[],

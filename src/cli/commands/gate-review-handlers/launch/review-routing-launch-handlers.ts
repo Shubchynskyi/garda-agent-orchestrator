@@ -23,7 +23,10 @@ import { createPrepareReviewerLaunchHandler } from './review-launch-prepare-hand
 import { createCompleteReviewerLaunchHandler } from './review-launch-complete-handler';
 import { createReviewerDelegationStartedHandler } from './review-launch-delegation-started-handler';
 import { createReviewerLaunchFailedHandler } from './review-launch-failed-handler';
-import { isCompletedReviewerLaunchAttemptConsumed } from './reviewer-handoff-support';
+import {
+    isCompletedReviewerLaunchAttemptConsumed,
+    isReviewerLaunchAttemptSupersededByAuthenticatedRestart
+} from './reviewer-handoff-support';
 import {
     parseReviewerIdentity,
     resolveReviewerIdentityOption
@@ -183,6 +186,15 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
     for (const launchArtifactPath of launchArtifactPaths) {
         const currentLaunchArtifact = readJsonObjectIfPresent(launchArtifactPath);
         if (!currentLaunchArtifact) {
+            continue;
+        }
+        if (isReviewerLaunchAttemptSupersededByAuthenticatedRestart(
+            timelinePath,
+            taskId,
+            reviewType,
+            launchArtifactPath,
+            currentLaunchArtifact
+        )) {
             continue;
         }
         const launchState = getStringField(currentLaunchArtifact, 'attestation_state', 'attestationState');

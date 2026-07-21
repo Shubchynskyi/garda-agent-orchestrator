@@ -2,6 +2,7 @@ import {
     appendTaskEvent,
     assert,
     createHash,
+    completeReviewerLaunchArtifactForTest,
     createReviewerRoutingFixture,
     createTempRepo,
     describe,
@@ -26,6 +27,47 @@ import {
     seedTaskQueue,
     writePreflight
 } from './gates-command-review-launch-fixtures';
+
+function appendRestartBoundary(
+    repoRoot: string,
+    taskId: string,
+    eventType: 'COHERENT_CYCLE_RESTARTED' | 'REVIEW_CYCLE_RESTARTED',
+    options: {
+        invalidatedReviewTypes?: string[];
+        actor?: string;
+        outcome?: string;
+        status?: string;
+        detailsEventType?: string;
+        detailsTaskId?: string;
+    } = {}
+): void {
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        eventType,
+        options.outcome || 'PASS',
+        'Review cycle restarted by test fixture.',
+        {
+            task_id: options.detailsTaskId || taskId,
+            event_type: options.detailsEventType || eventType,
+            status: options.status || 'PASSED',
+            invalidated_review_types: options.invalidatedReviewTypes || []
+        },
+        { actor: options.actor || 'orchestrator' }
+    );
+}
+
+async function seedCompletedUnconsumedLaunch(repoRoot: string, taskId: string) {
+    const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+    await prepareReviewerLaunchForTest({
+        repoRoot,
+        taskId,
+        reviewerIdentity: fixture.reviewerIdentity,
+        launchArtifactPath: fixture.launchArtifactPath
+    });
+    completeReviewerLaunchArtifactForTest(fixture.launchArtifactPath);
+    return fixture;
+}
 
 describe('cli/commands/gates review launch routing', () => {
     it('record-review-routing rejects required canonical contexts without current preflight binding', async () => {
@@ -500,6 +542,289 @@ describe('cli/commands/gates review launch routing', () => {
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
+
+    it('record-review-routing and prepare-reviewer-launch replace a launched attempt invalidated by an authenticated review restart', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-57-invalidated';
+        const fixture = await seedCompletedUnconsumedLaunch(repoRoot, taskId);
+        const previousArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        appendRestartBoundary(repoRoot, taskId, 'REVIEW_CYCLE_RESTARTED', {
+            invalidatedReviewTypes: ['code']
+        });
+
+        const reviewerIdentity = 'agent:replacement-code-reviewer';
+        const reroute = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(reroute.exitCode, 0, reroute.errors.join('\n'));
+
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
+
+        const currentArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.notEqual(
+            currentArtifact.reviewer_launch_attempt_id,
+            previousArtifact.reviewer_launch_attempt_id
+        );
+        const supersededArtifact = currentArtifact.superseded_launch_artifact as Record<string, unknown> | null;
+        assert.ok(supersededArtifact?.snapshot_path);
+        assert.ok(fs.existsSync(String(supersededArtifact?.snapshot_path)));
+        assert.deepEqual(
+            JSON.parse(fs.readFileSync(String(supersededArtifact?.snapshot_path), 'utf8')),
+            previousArtifact
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    for (const launchState of ['prepared', 'delegation_started'] as const) {
+        it(`record-review-routing and prepare-reviewer-launch replace a ${launchState} attempt invalidated by an authenticated review restart`, async () => {
+            const repoRoot = createTempRepo();
+            const taskId = `T-979-57-invalidated-${launchState.replace('_', '-')}`;
+            const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+            await prepareReviewerLaunchForTest({
+                repoRoot,
+                taskId,
+                reviewerIdentity: fixture.reviewerIdentity,
+                launchArtifactPath: fixture.launchArtifactPath
+            });
+            if (launchState === 'delegation_started') {
+                await recordReviewerDelegationStartedForTest({
+                    repoRoot,
+                    taskId,
+                    reviewerIdentity: fixture.reviewerIdentity,
+                    launchArtifactPath: fixture.launchArtifactPath,
+                    providerInvocationId: 'test-invocation-invalidated-inflight'
+                });
+            }
+            const previousArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+            appendRestartBoundary(repoRoot, taskId, 'REVIEW_CYCLE_RESTARTED', {
+                invalidatedReviewTypes: ['code']
+            });
+
+            const reviewerIdentity = `agent:replacement-${launchState}-reviewer`;
+            const reroute = await runCliWithCapturedOutput([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', reviewerIdentity
+            ], { cwd: repoRoot });
+            assert.equal(reroute.exitCode, 0, reroute.errors.join('\n'));
+
+            const prepare = await runCliWithCapturedOutput([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', reviewerIdentity,
+                '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+            ], { cwd: repoRoot });
+            assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
+
+            const currentArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+            assert.notEqual(currentArtifact.reviewer_launch_attempt_id, previousArtifact.reviewer_launch_attempt_id);
+            const supersededArtifact = currentArtifact.superseded_launch_artifact as Record<string, unknown> | null;
+            assert.ok(supersededArtifact?.snapshot_path);
+            assert.deepEqual(
+                JSON.parse(fs.readFileSync(String(supersededArtifact.snapshot_path), 'utf8')),
+                previousArtifact
+            );
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+    }
+
+    it('record-review-routing replaces a launched attempt after an authenticated coherent restart', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-57-coherent';
+        const fixture = await seedCompletedUnconsumedLaunch(repoRoot, taskId);
+        const previousArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        appendRestartBoundary(repoRoot, taskId, 'COHERENT_CYCLE_RESTARTED');
+
+        const reviewerIdentity = 'agent:replacement-code-reviewer';
+        const reroute = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(reroute.exitCode, 0, reroute.errors.join('\n'));
+
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
+
+        const currentArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.notEqual(currentArtifact.reviewer_launch_attempt_id, previousArtifact.reviewer_launch_attempt_id);
+        const supersededArtifact = currentArtifact.superseded_launch_artifact as Record<string, unknown> | null;
+        assert.ok(supersededArtifact?.snapshot_path);
+        assert.ok(fs.existsSync(String(supersededArtifact.snapshot_path)));
+        assert.deepEqual(
+            JSON.parse(fs.readFileSync(String(supersededArtifact.snapshot_path), 'utf8')),
+            previousArtifact
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-routing does not supersede a current attempt whose artifact was rewritten with pre-restart provenance', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-57-rewritten-provenance';
+        const fixture = await seedCompletedUnconsumedLaunch(repoRoot, taskId);
+        const staleArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        appendRestartBoundary(repoRoot, taskId, 'REVIEW_CYCLE_RESTARTED', {
+            invalidatedReviewTypes: ['code']
+        });
+
+        const reviewerIdentity = 'agent:current-code-reviewer';
+        const reroute = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(reroute.exitCode, 0, reroute.errors.join('\n'));
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
+
+        const currentArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        for (const field of [
+            'reviewer_launch_attempt_id',
+            'prepared_launch_event_sha256',
+            'prepared_launch_event_task_sequence',
+            'reviewer_execution_mode',
+            'reviewer_identity',
+            'review_context_sha256',
+            'routing_event_sha256',
+            'reviewer_prompt_sha256',
+            'launch_binding_sha256'
+        ]) {
+            currentArtifact[field] = staleArtifact[field];
+        }
+        fs.writeFileSync(fixture.launchArtifactPath, JSON.stringify(currentArtifact, null, 2) + '\n', 'utf8');
+
+        const blockedReroute = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', 'agent:unexpected-third-reviewer'
+        ], { cwd: repoRoot });
+        assert.notEqual(blockedReroute.exitCode, 0);
+        assert.ok(
+            blockedReroute.errors.some((line) => line.includes('immutable reviewer launch attempt is already prepared')),
+            blockedReroute.errors.join('\n')
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    for (const scenario of [
+        { name: 'no restart boundary', appendBoundary: false },
+        { name: 'a preserved review lane', appendBoundary: true, invalidatedReviewTypes: ['test'] },
+        { name: 'an untrusted restart actor', appendBoundary: true, invalidatedReviewTypes: ['code'], actor: 'gate' },
+        { name: 'a failed restart outcome', appendBoundary: true, invalidatedReviewTypes: ['code'], outcome: 'FAIL' },
+        { name: 'a failed restart status', appendBoundary: true, invalidatedReviewTypes: ['code'], status: 'FAILED' },
+        {
+            name: 'a mismatched restart details event type',
+            appendBoundary: true,
+            invalidatedReviewTypes: ['code'],
+            detailsEventType: 'COHERENT_CYCLE_RESTARTED'
+        }
+    ]) {
+        it(`record-review-routing preserves an immutable launched attempt with ${scenario.name}`, async () => {
+            const repoRoot = createTempRepo();
+            const taskId = `T-979-57-blocked-${scenario.name.replace(/[^a-z]+/g, '-').replace(/-$/g, '')}`;
+            const fixture = await seedCompletedUnconsumedLaunch(repoRoot, taskId);
+            if (scenario.appendBoundary) {
+                appendRestartBoundary(repoRoot, taskId, 'REVIEW_CYCLE_RESTARTED', {
+                    invalidatedReviewTypes: scenario.invalidatedReviewTypes,
+                    actor: scenario.actor,
+                    outcome: scenario.outcome,
+                    status: scenario.status,
+                    detailsEventType: scenario.detailsEventType
+                });
+            }
+
+            const reroute = await runCliWithCapturedOutput([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:replacement-code-reviewer'
+            ], { cwd: repoRoot });
+            assert.notEqual(reroute.exitCode, 0);
+            assert.ok(
+                reroute.errors.some((line) => line.includes('immutable reviewer launch attempt is already launched')),
+                reroute.errors.join('\n')
+            );
+
+            const prepare = await runCliWithCapturedOutput([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+            ], { cwd: repoRoot });
+            assert.notEqual(prepare.exitCode, 0);
+            assert.ok(
+                prepare.errors.some((line) => line.includes('immutable reviewer launch attempt is already launched')),
+                prepare.errors.join('\n')
+            );
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+    }
 
     it('record-review-routing allows rerouting before a review result is recorded', async () => {
         const repoRoot = createTempRepo();

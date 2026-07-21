@@ -35,7 +35,10 @@ import {
 } from '../../shared-command-utils';
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
-import { isCompletedReviewerLaunchAttemptConsumed } from './reviewer-handoff-support';
+import {
+    isCompletedReviewerLaunchAttemptConsumed,
+    isReviewerLaunchAttemptSupersededByAuthenticatedRestart
+} from './reviewer-handoff-support';
 type SupersededReviewerLaunchArtifactSnapshot = import('../index').SupersededReviewerLaunchArtifactSnapshot;
 
 export type PrepareReviewerLaunchHandler = (gateArgv: string[]) => Promise<void>;
@@ -245,7 +248,16 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const existingLaunchAttemptId = existingArtifact
         ? getStringField(existingArtifact, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId')
         : '';
-    if (existingAttestationState === 'delegation_started') {
+    const existingAttemptSuperseded = existingArtifact
+        ? isReviewerLaunchAttemptSupersededByAuthenticatedRestart(
+            timelinePath,
+            taskId,
+            reviewType,
+            launchArtifactPath,
+            existingArtifact
+        )
+        : false;
+    if (existingAttestationState === 'delegation_started' && !existingAttemptSuperseded) {
         throw new Error(
             `The immutable reviewer launch attempt is already delegation_started for '${reviewType}'. ` +
             'Complete it or record-reviewer-launch-failed before preparing another attempt.'
@@ -254,6 +266,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     if (
         existingAttestationState === 'launched'
         && existingArtifact
+        && !existingAttemptSuperseded
         && !isCompletedReviewerLaunchAttemptConsumed(timelineEvents, existingArtifact)
     ) {
         throw new Error(
@@ -262,6 +275,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         );
     }
     const reviewerLaunchAttemptId = existingAttestationState === 'prepared'
+        && !existingAttemptSuperseded
         && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(existingLaunchAttemptId)
         ? existingLaunchAttemptId.toLowerCase()
         : randomUUID();
@@ -490,6 +504,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             existingEvidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
             && existingAttestationState === 'prepared'
             && existingLaunchAttemptId
+            && !existingAttemptSuperseded
         ) {
             throw new Error(
                 `Prepared reviewer launch attempt '${existingLaunchAttemptId}' is immutable and no longer matches ` +
@@ -499,6 +514,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         if (
             existingEvidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
             && existingAttestationState === 'launched'
+            && !existingAttemptSuperseded
             && isCurrentCompletedReviewerLaunchArtifact({
                 repoRoot,
                 artifactPath: launchArtifactPath,
