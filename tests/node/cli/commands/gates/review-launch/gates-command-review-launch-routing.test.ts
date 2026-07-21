@@ -10,6 +10,7 @@ import {
     getOrchestratorRoot,
     getReviewsRoot,
     it,
+    launchArtifactInputArgsForTest,
     manualReviewContextBindingFixture,
     manualReviewContextTaskScopeFixture,
     os,
@@ -66,6 +67,46 @@ async function seedCompletedUnconsumedLaunch(repoRoot: string, taskId: string) {
         launchArtifactPath: fixture.launchArtifactPath
     });
     completeReviewerLaunchArtifactForTest(fixture.launchArtifactPath);
+    return fixture;
+}
+
+async function seedResolvedCompletedUnconsumedLaunch(repoRoot: string, taskId: string) {
+    const plannedReviewerIdentity = `agent:pending:${taskId}-code`;
+    const resolvedReviewerIdentity = `agent:/root/${taskId.toLowerCase()}-code-review`;
+    const providerInvocationId = `test-invocation-${taskId.toLowerCase()}`;
+    const fixture = await seedRoutedReviewerLaunchFixture({
+        repoRoot,
+        taskId,
+        reviewerIdentity: plannedReviewerIdentity
+    });
+    await prepareReviewerLaunchForTest({
+        repoRoot,
+        taskId,
+        reviewerIdentity: plannedReviewerIdentity,
+        launchArtifactPath: fixture.launchArtifactPath
+    });
+    await recordReviewerDelegationStartedForTest({
+        repoRoot,
+        taskId,
+        reviewerIdentity: resolvedReviewerIdentity,
+        launchArtifactPath: fixture.launchArtifactPath,
+        providerInvocationId
+    });
+    const complete = await runCliWithCapturedOutput([
+        'gate',
+        'complete-reviewer-launch',
+        '--task-id', taskId,
+        '--review-type', 'code',
+        '--repo-root', repoRoot,
+        '--reviewer-execution-mode', 'delegated_subagent',
+        '--reviewer-identity', resolvedReviewerIdentity,
+        '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
+        '--provider-invocation-id', providerInvocationId,
+        '--attestation-source', 'test_provider_controller',
+        ...launchArtifactInputArgsForTest(fixture.launchArtifactPath),
+        '--fork-context', 'false'
+    ], { cwd: repoRoot });
+    assert.equal(complete.exitCode, 0, complete.errors.join('\n'));
     return fixture;
 }
 
@@ -546,7 +587,7 @@ describe('cli/commands/gates review launch routing', () => {
     it('record-review-routing and prepare-reviewer-launch replace a launched attempt invalidated by an authenticated review restart', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-57-invalidated';
-        const fixture = await seedCompletedUnconsumedLaunch(repoRoot, taskId);
+        const fixture = await seedResolvedCompletedUnconsumedLaunch(repoRoot, taskId);
         const previousArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
         appendRestartBoundary(repoRoot, taskId, 'REVIEW_CYCLE_RESTARTED', {
             invalidatedReviewTypes: ['code']

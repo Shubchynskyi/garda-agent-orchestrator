@@ -27,6 +27,7 @@ import {
 } from '../support/review-handler-common';
 import { type ReviewDependencyTimelineEvent } from '../../../../gates/review/review-dependencies';
 import { inspectTaskEventFile } from '../../../../gate-runtime/task-events-integrity';
+import { resolveLaunchBindingReviewerIdentity } from '../../../../gate-runtime/review/reviewer-identity-contract';
 import { isAuthenticatedReviewRestartBoundary } from '../../../../gates/review/review-restart-boundary';
 import { buildReviewerLaunchBindingSha256 } from './review-launch-input-attestation';
 
@@ -64,6 +65,17 @@ export function isReviewerLaunchAttemptSupersededByAuthenticatedRestart(
         'reviewerExecutionMode'
     );
     const reviewerIdentity = getStringField(launchArtifact, 'reviewer_identity', 'reviewerIdentity');
+    const plannedReviewerIdentity = getStringField(
+        launchArtifact,
+        'planned_reviewer_identity',
+        'plannedReviewerIdentity'
+    );
+    const launchBindingReviewerIdentity = resolveLaunchBindingReviewerIdentity({
+        taskId: normalizedTaskId,
+        reviewType: normalizedReviewType,
+        artifactReviewerIdentity: reviewerIdentity,
+        plannedReviewerIdentity
+    });
     const reviewContextSha256 = getStringField(
         launchArtifact,
         'review_context_sha256',
@@ -93,6 +105,7 @@ export function isReviewerLaunchAttemptSupersededByAuthenticatedRestart(
         || !attemptId
         || reviewerExecutionMode !== 'delegated_subagent'
         || !reviewerIdentity
+        || !launchBindingReviewerIdentity
         || !/^[0-9a-f]{64}$/.test(reviewContextSha256)
         || !/^[0-9a-f]{64}$/.test(routingEventSha256)
         || !/^[0-9a-f]{64}$/.test(reviewerPromptSha256)
@@ -101,7 +114,7 @@ export function isReviewerLaunchAttemptSupersededByAuthenticatedRestart(
             taskId: normalizedTaskId,
             reviewType: normalizedReviewType,
             reviewerExecutionMode,
-            reviewerIdentity,
+            reviewerIdentity: launchBindingReviewerIdentity,
             reviewContextSha256,
             routingEventSha256,
             reviewerPromptSha256
@@ -136,7 +149,7 @@ export function isReviewerLaunchAttemptSupersededByAuthenticatedRestart(
             && String(details.task_id || '').trim() === normalizedTaskId
             && String(details.review_type || '').trim().toLowerCase() === normalizedReviewType
             && String(details.reviewer_execution_mode || '').trim() === reviewerExecutionMode
-            && String(details.reviewer_identity || '').trim() === reviewerIdentity
+            && String(details.reviewer_identity || '').trim() === launchBindingReviewerIdentity
             && String(details.review_context_sha256 || '').trim().toLowerCase() === reviewContextSha256
             && String(details.routing_event_sha256 || '').trim().toLowerCase() === routingEventSha256
             && String(details.reviewer_prompt_sha256 || '').trim().toLowerCase() === reviewerPromptSha256
