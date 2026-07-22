@@ -17,6 +17,7 @@ export const REVIEW_FINDINGS_DISPOSITION_ARTIFACT_TYPE = 'review_findings_dispos
 export const REVIEW_FINDINGS_DISPOSITION_ARTIFACT_SCHEMA_VERSION = 1;
 
 const REVIEW_FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const satisfies readonly ReviewFindingsSeverity[];
+const EVIDENCE_ONLY_FINDING_ID = 'F-000';
 
 export type ReviewFindingsDispositionItemKind = 'finding' | 'residual_risk';
 export type ReviewFindingsDispositionItemMaterializationStatus =
@@ -173,6 +174,9 @@ export function buildReviewFindingsDispositionArtifact(
     for (const severity of REVIEW_FINDING_SEVERITIES) {
         const action = dispositionResult.findings[severity].action;
         for (const finding of validationResult.normalized_inventory.findings_by_severity[severity]) {
+            if (finding.id === EVIDENCE_ONLY_FINDING_ID) {
+                continue;
+            }
             items.push(buildFindingItem(finding, action, options.policyResolution.source));
         }
     }

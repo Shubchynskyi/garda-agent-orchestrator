@@ -6,6 +6,7 @@ import {
     evaluateReviewFindingsValidationArtifactDispositions,
     type LockedReviewFindingPolicyResolution
 } from '../../../../src/gates/review/review-finding-disposition';
+import { buildReviewFindingsDispositionArtifact } from '../../../../src/gates/review/review-findings-disposition-artifact';
 import type { ReviewFindingsValidationArtifact } from '../../../../src/gates/review/review-findings-validation-artifact';
 import type { ReviewFinding, ReviewFindingsReport } from '../../../../src/gates/review/review-findings-schema';
 
@@ -128,6 +129,22 @@ test('evidence-only F-000 remains nonblocking in an accepted validation artifact
     assert.equal(result.verdict, 'pass_no_findings');
     assert.equal(result.total_count, 0);
     assert.equal(result.blocking_count, 0);
+});
+
+test('evidence-only F-000 is excluded from disposition materialization items', () => {
+    const artifact = buildReviewFindingsDispositionArtifact({
+        taskId: 'T-evidence-only',
+        reviewType: 'code',
+        validationArtifact: validationArtifact([finding('F-000')]),
+        validationArtifactPath: 'runtime/reviews/T-evidence-only-code-findings-validation.json',
+        validationArtifactSha256: 'e'.repeat(64),
+        policyResolution: STRICT_POLICY
+    });
+
+    assert.equal(artifact.disposition_result.verdict, 'pass_no_findings');
+    assert.deepEqual(artifact.items, []);
+    assert.equal(artifact.summary.item_count, 0);
+    assert.equal(artifact.summary.follow_up_pending_count, 0);
 });
 
 test('an ordinary finding still blocks when mixed with evidence-only F-000', () => {
