@@ -30,8 +30,10 @@ import {
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
 import {
-    resolveLockedReviewFindingPolicyFromReceiptDisposition
+    resolveLockedReviewFindingPolicyFromPreflight,
+    resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence
 } from '../review/review-finding-disposition';
+import { validateReviewFindingsDispositionEvidence } from '../review/review-findings-disposition-evidence';
 import {
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint,
@@ -192,6 +194,7 @@ export function collectRequiredReviewEvidence(input: {
                     findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(artifactPath, null);
                 } else {
                     const repoRoot = path.resolve(input.reviewsRoot, '..', '..', '..');
+                    const reusedExistingReview = receipt.reused_existing_review === true;
                     const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(input.preflight, repoRoot);
                     const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(reviewKey, input.preflight, repoRoot);
                     const validationArtifact = validateReviewFindingsValidationArtifactForReceipt({
@@ -201,35 +204,65 @@ export function collectRequiredReviewEvidence(input: {
                         expectedReviewType: reviewKey,
                         expectedReviewOutputSha256: getReceiptString(receipt, 'review_output_sha256'),
                         expectedReviewArtifactSha256: fileSha256(artifactPath),
-                        expectedReviewContextPath: receipt.reused_existing_review === true ? null : reviewContextPath,
-                        expectedReviewContextSha256: receipt.reused_existing_review === true
+                        expectedReviewContextPath: reusedExistingReview ? null : reviewContextPath,
+                        expectedReviewContextSha256: reusedExistingReview
                             ? getReceiptString(receipt, 'reused_from_review_context_sha256')
                             : fileSha256(reviewContextPath),
-                        expectedPreflightPath: receipt.reused_existing_review === true ? null : input.preflightPath,
-                        expectedPreflightSha256: receipt.reused_existing_review === true ? null : input.preflightSha256,
-                        expectedScopeSha256: receipt.reused_existing_review === true ? null : getPreflightScopeSha256(input.preflight),
-                        expectedReviewScopeSha256: receipt.reused_existing_review === true
+                        expectedPreflightPath: reusedExistingReview ? null : input.preflightPath,
+                        expectedPreflightSha256: reusedExistingReview ? null : input.preflightSha256,
+                        expectedScopeSha256: reusedExistingReview ? null : getPreflightScopeSha256(input.preflight),
+                        expectedReviewScopeSha256: reusedExistingReview
                             ? getReceiptString(receipt, 'reused_from_review_scope_sha256')
                             : String(reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase() || null,
-                        expectedCodeScopeSha256: receipt.reused_existing_review === true
+                        expectedCodeScopeSha256: reusedExistingReview
                             ? getReceiptString(receipt, 'reused_from_code_scope_sha256')
                             : isNonTestReviewScope(reviewKey)
                                 ? String(codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase() || null
                                 : null,
-                        expectedReviewTreeStateSha256: receipt.reused_existing_review === true
+                        expectedReviewTreeStateSha256: reusedExistingReview
                             ? getReceiptString(receipt, 'reused_from_review_tree_state_sha256')
                             : getReviewContextTreeStateSha256(reviewContext),
-                        expectedCoverageContractSha256: receipt.reused_existing_review === true
+                        expectedCoverageContractSha256: reusedExistingReview
                             ? getReceiptOutputContractString(receipt, 'coverage_contract_sha256')
                             : getCoverageContractSha256(reviewContext),
                         requireAccepted: true
                     });
                     input.errors.push(...validationArtifact.violations);
+                    const policyResolution = reusedExistingReview
+                        ? resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence(receipt as unknown as Record<string, unknown>)
+                        : resolveLockedReviewFindingPolicyFromPreflight(input.preflight);
                     findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(
                         artifactPath,
                         validationArtifact.valid ? validationArtifact.artifact : null,
-                        resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt as unknown as Record<string, unknown>)
+                        policyResolution
                     );
+                    if (
+                        validationArtifact.valid
+                        && validationArtifact.artifact
+                        && validationArtifact.reference
+                        && validationArtifact.artifact_sha256
+                    ) {
+                        const dispositionEvidence = validateReviewFindingsDispositionEvidence({
+                            repoRoot,
+                            receipt: receipt as unknown as Record<string, unknown>,
+                            receiptPath,
+                            reviewArtifactPath: artifactPath,
+                            expectedTaskId: input.taskId,
+                            expectedReviewType: reviewKey,
+                            validationArtifact: validationArtifact.artifact,
+                            validationArtifactPath: validationArtifact.reference.artifact_path,
+                            validationArtifactSha256: validationArtifact.artifact_sha256,
+                            policyResolution,
+                            expectedReceiptPath: reusedExistingReview
+                                ? getReceiptString(receipt, 'reused_from_receipt_path')
+                                : null,
+                            expectedReceiptSha256: reusedExistingReview
+                                ? getReceiptString(receipt, 'reused_from_receipt_sha256')
+                                : null,
+                            preferSnapshot: reusedExistingReview
+                        });
+                        input.errors.push(...dispositionEvidence.violations);
+                    }
                 }
             } else {
                 findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
