@@ -468,7 +468,9 @@ export function formatWorkflowSetSummaryOutput(result: WorkflowSetResult): strin
         lines.push(`ProtectedManifestPath: ${result.protected_manifest_path}`);
     }
     if (result.status === 'NO_CHANGE') {
-        lines.push('Hint: requested workflow settings already matched the current config; no audit record was written.');
+        lines.push(result.audit_path
+            ? 'Hint: requested workflow settings already matched the current config; audit evidence was refreshed.'
+            : 'Hint: requested workflow settings already matched the current config; no audit record was written.');
     }
     return colorizeWorkflowHumanOutput(lines.join('\n'));
 }

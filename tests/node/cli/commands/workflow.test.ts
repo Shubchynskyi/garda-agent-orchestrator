@@ -872,6 +872,8 @@ test('workflow set can repair task reset audit evidence when config is already e
         assert.deepEqual(result.noop_fields, ['task_reset.enabled']);
         assert.ok(result.audit_path);
         assert.ok(output.includes('Status: NO_CHANGE'));
+        assert.ok(output.includes('audit evidence was refreshed'));
+        assert.ok(!output.includes('no audit record was written'));
         const auditText = fs.readFileSync(result.audit_path, 'utf8');
         const auditRecord = JSON.parse(auditText) as { changed_fields?: unknown };
         assert.deepEqual(auditRecord.changed_fields, ['task_reset.enabled']);
