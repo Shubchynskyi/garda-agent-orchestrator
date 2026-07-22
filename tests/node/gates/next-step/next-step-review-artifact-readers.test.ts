@@ -6,12 +6,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
+    buildTaskQueueFollowUpFingerprintIndex,
     getScopedDiffMetadataReadiness,
     readReviewArtifactState,
     readReviewTrust,
     reviewReceiptDomainScopeMatchesCurrentPreflight,
     scopedDiffExpectedForReview
 } from '../../../../src/gates/next-step/next-step-review-artifact-readers';
+import type { TaskQueueEntry } from '../../../../src/core/task-queue-read';
 import { buildReviewReceipt } from '../../../../src/gate-runtime/review-context';
 import {
     buildReviewFindingsValidationArtifact,
@@ -28,6 +30,39 @@ const TREE_STATE_SHA256 = 'b'.repeat(64);
 const COVERAGE_CONTRACT_SHA256 = 'c'.repeat(64);
 const SCOPE_SHA256 = 'd'.repeat(64);
 const CHANGED_FILE = 'src/gates/next-step/next-step-review-artifact-readers.ts';
+
+test('buildTaskQueueFollowUpFingerprintIndex reuses one parsed TASK snapshot across review lanes', () => {
+    const perFindingFingerprint = '1'.repeat(64);
+    const groupFingerprint = '2'.repeat(64);
+    const itemFingerprintsSha256 = '3'.repeat(64);
+    const sourceBindingSha256 = '4'.repeat(64);
+    const taskEntries = new Map<string, TaskQueueEntry>([
+        ['T-100', { taskId: 'T-100', status: 'IN_REVIEW', area: null, title: null, profile: null, notes: null }],
+        ['T-100-F1', {
+            taskId: 'T-100-F1',
+            status: 'TODO',
+            area: null,
+            title: null,
+            profile: null,
+            notes: [
+                `review_follow_up_fingerprint=${perFindingFingerprint}.`,
+                `review_follow_up_group_fingerprint=${groupFingerprint}.`,
+                `review_follow_up_lane_binding=code:2:${itemFingerprintsSha256}:${sourceBindingSha256}.`,
+                'review_follow_up_lane_artifact=code:`runtime/reviews/code-follow-ups.json`.'
+            ].join(' ')
+        }]
+    ]);
+
+    const index = buildTaskQueueFollowUpFingerprintIndex(taskEntries, 'T-100');
+
+    assert.equal(index?.perFindingByTask.get('T-100-F1'), perFindingFingerprint);
+    assert.equal(index?.groupedFingerprintByTask.get('T-100-F1'), groupFingerprint);
+    const laneBinding = index?.groupedByTask.get('T-100-F1')?.get('code');
+    assert.equal(laneBinding?.itemCount, 2);
+    assert.equal(laneBinding?.itemFingerprintsSha256, itemFingerprintsSha256);
+    assert.equal(laneBinding?.sourceBindingSha256, sourceBindingSha256);
+    assert.equal(laneBinding?.artifactPath, 'runtime/reviews/code-follow-ups.json');
+});
 
 function tempRoot(prefix: string): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), prefix));

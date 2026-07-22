@@ -1,6 +1,6 @@
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists } from '../../core/filesystem';
+import { readBoundedJsonlTail } from '../../core/bounded-jsonl-tail';
 import { BASELINE_SKILL_DIRECTORIES } from '../skill-manifest';
 
 import {
@@ -20,7 +20,12 @@ interface TimelinePoint {
     taskSequence: number | null;
 }
 
-const OPTIONAL_SKILL_TIMELINE_MAX_READ_BYTES = 1024 * 1024;
+export const OPTIONAL_SKILL_TIMELINE_READ_LIMITS = Object.freeze({
+    maxBytes: 1024 * 1024,
+    maxLines: 4096,
+    maxEvents: 2048,
+    maxParseAttempts: 4096
+});
 
 export interface OptionalSkillActivationPoint {
     timestampMs: number;
@@ -72,22 +77,6 @@ function normalizeSha256Fingerprint(value: unknown): string | null {
     return /^[a-f0-9]{64}$/.test(fingerprint) ? fingerprint : null;
 }
 
-function readRecentTaskEventLines(taskEventsPath: string): string[] {
-    const stats = fs.statSync(taskEventsPath);
-    const bytesToRead = Math.min(stats.size, OPTIONAL_SKILL_TIMELINE_MAX_READ_BYTES);
-    const start = Math.max(0, stats.size - bytesToRead);
-    const buffer = Buffer.alloc(bytesToRead);
-    const handle = fs.openSync(taskEventsPath, 'r');
-    try {
-        fs.readSync(handle, buffer, 0, bytesToRead, start);
-    } finally {
-        fs.closeSync(handle);
-    }
-    const text = buffer.toString('utf8');
-    const lines = text.split(/\r?\n/);
-    return start > 0 ? lines.slice(1) : lines;
-}
-
 export function readOptionalSkillSelectionTimelineEvidence(
     bundleRoot: string,
     taskId: string,
@@ -126,18 +115,11 @@ export function readOptionalSkillSelectionTimelineEvidence(
     }
 
     const liveSkillsRoot = path.join(bundleRoot, 'live', 'skills');
-    let invalidJson = false;
-    for (const rawLine of readRecentTaskEventLines(resolvedTaskEventsPath)) {
-        if (!rawLine.trim()) {
-            continue;
-        }
-        let parsedLine: Record<string, unknown> | null = null;
-        try {
-            parsedLine = JSON.parse(rawLine) as Record<string, unknown>;
-        } catch {
-            invalidJson = true;
-            break;
-        }
+    const boundedRead = readBoundedJsonlTail<Record<string, unknown>>(
+        resolvedTaskEventsPath,
+        OPTIONAL_SKILL_TIMELINE_READ_LIMITS
+    );
+    for (const parsedLine of boundedRead.records) {
         const eventTaskId = String(parsedLine.task_id || '').trim();
         if (eventTaskId && eventTaskId !== taskId) {
             continue;
@@ -272,7 +254,18 @@ export function readOptionalSkillSelectionTimelineEvidence(
     return {
         timelinePath: resolvedTaskEventsPath,
         exists: true,
-        invalidJson,
+        invalidJson: boundedRead.invalidJson,
+        boundedRead: {
+            truncated: boundedRead.truncated,
+            bytesRead: boundedRead.bytesRead,
+            retainedLineCount: boundedRead.retainedLineCount,
+            parsedEventCount: boundedRead.records.length,
+            parseAttempts: boundedRead.parseAttempts,
+            maxBytes: boundedRead.limits.maxBytes,
+            maxLines: boundedRead.limits.maxLines,
+            maxEvents: boundedRead.limits.maxEvents,
+            maxParseAttempts: boundedRead.limits.maxParseAttempts
+        },
         eventTypes,
         latestTaskModeEnteredTimestampUtc: latestTaskModeEntered.timestampUtc,
         latestTaskModeEnteredTaskSequence: latestTaskModeEntered.taskSequence,

@@ -60,8 +60,9 @@ import {
     isNonTestReviewScope
 } from '../review-reuse/review-reuse';
 import {
-    parseCanonicalActiveTaskQueue
-} from '../../core/task-md-table';
+    readTaskQueueEntries,
+    type TaskQueueEntry
+} from '../../core/task-queue-read';
 import {
     detectMissingFocusedValidationEvidenceFailureReason,
     detectMissingValidationEvidenceFailureReason,
@@ -247,10 +248,38 @@ function isParentFollowUpTaskId(parentTaskId: string, taskId: string): boolean {
     return /^[1-9][0-9]*$/u.test(taskId.slice(prefix.length));
 }
 
-interface TaskQueueFollowUpFingerprintIndex {
+export interface TaskQueueFollowUpFingerprintIndex {
     groupedByTask: Map<string, Map<string, GroupedReviewFollowUpLaneBinding>>;
     groupedFingerprintByTask: Map<string, string>;
     perFindingByTask: Map<string, string>;
+}
+
+export function buildTaskQueueFollowUpFingerprintIndex(
+    taskEntries: ReadonlyMap<string, TaskQueueEntry>,
+    parentTaskId: string
+): TaskQueueFollowUpFingerprintIndex | null {
+    const groupedByTask = new Map<string, Map<string, GroupedReviewFollowUpLaneBinding>>();
+    const groupedFingerprintByTask = new Map<string, string>();
+    const perFindingByTask = new Map<string, string>();
+    for (const row of taskEntries.values()) {
+        if (!isParentFollowUpTaskId(parentTaskId, row.taskId)) {
+            continue;
+        }
+        const notes = row.notes || '';
+        const fingerprint = extractReviewFollowUpFingerprint(notes);
+        if (fingerprint) {
+            perFindingByTask.set(row.taskId, fingerprint);
+        }
+        const groupedBindings = extractGroupedReviewFollowUpLaneBindings(notes);
+        if (groupedBindings.size > 0) {
+            groupedByTask.set(row.taskId, groupedBindings);
+            const groupedFingerprint = extractGroupedReviewFollowUpFingerprint(notes);
+            if (groupedFingerprint) {
+                groupedFingerprintByTask.set(row.taskId, groupedFingerprint);
+            }
+        }
+    }
+    return { groupedByTask, groupedFingerprintByTask, perFindingByTask };
 }
 
 function readTaskQueueFollowUpFingerprintIndex(
@@ -261,31 +290,7 @@ function readTaskQueueFollowUpFingerprintIndex(
     if (!fileExists(taskPath)) {
         return null;
     }
-    const parsed = parseCanonicalActiveTaskQueue(fs.readFileSync(taskPath, 'utf8'));
-    if (!parsed.found) {
-        return null;
-    }
-    const groupedByTask = new Map<string, Map<string, GroupedReviewFollowUpLaneBinding>>();
-    const groupedFingerprintByTask = new Map<string, string>();
-    const perFindingByTask = new Map<string, string>();
-    for (const row of parsed.rows) {
-        if (!isParentFollowUpTaskId(parentTaskId, row.taskId)) {
-            continue;
-        }
-        const fingerprint = extractReviewFollowUpFingerprint(row.notes);
-        if (fingerprint) {
-            perFindingByTask.set(row.taskId, fingerprint);
-        }
-        const groupedBindings = extractGroupedReviewFollowUpLaneBindings(row.notes);
-        if (groupedBindings.size > 0) {
-            groupedByTask.set(row.taskId, groupedBindings);
-            const groupedFingerprint = extractGroupedReviewFollowUpFingerprint(row.notes);
-            if (groupedFingerprint) {
-                groupedFingerprintByTask.set(row.taskId, groupedFingerprint);
-            }
-        }
-    }
-    return { groupedByTask, groupedFingerprintByTask, perFindingByTask };
+    return buildTaskQueueFollowUpFingerprintIndex(readTaskQueueEntries(repoRoot), parentTaskId);
 }
 
 function taskQueueHasFollowUpFingerprint(
@@ -468,6 +473,7 @@ export function followUpArtifactMatchesCurrentTaskQueue(params: {
     expectedFollowUpCount: number;
     materializationMode: ReviewFollowUpMaterializationMode;
     followUpArtifactPath: string;
+    taskQueueFollowUpFingerprintIndex?: TaskQueueFollowUpFingerprintIndex | null;
 }): boolean {
     if (!params.repoRoot) {
         return false;
@@ -511,7 +517,8 @@ export function followUpArtifactMatchesCurrentTaskQueue(params: {
     if (!expectedFingerprints || expectedFingerprints.size !== params.expectedFollowUpCount) {
         return false;
     }
-    const taskQueueFollowUpFingerprintIndex = readTaskQueueFollowUpFingerprintIndex(params.repoRoot, params.taskId);
+    const taskQueueFollowUpFingerprintIndex = params.taskQueueFollowUpFingerprintIndex
+        ?? readTaskQueueFollowUpFingerprintIndex(params.repoRoot, params.taskId);
     if (!taskQueueFollowUpFingerprintIndex) {
         return false;
     }
@@ -587,7 +594,8 @@ export function readReviewArtifactState(
     preflightPath: string,
     preflightSha256: string | null,
     preflightPayload: Record<string, unknown> | null,
-    repoRoot?: string
+    repoRoot?: string,
+    taskQueueFollowUpFingerprintIndex?: TaskQueueFollowUpFingerprintIndex | null
 ): ReviewArtifactState {
     const contextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
@@ -975,7 +983,8 @@ export function readReviewArtifactState(
                                 reviewType,
                                 expectedFollowUpCount: reviewFindingsDisposition.counts_by_action.create_follow_up,
                                 materializationMode: reviewFollowUpMaterializationMode,
-                                followUpArtifactPath: reviewFindingsFollowUpArtifactPath
+                                followUpArtifactPath: reviewFindingsFollowUpArtifactPath,
+                                taskQueueFollowUpFingerprintIndex
                             })
                         );
                     }

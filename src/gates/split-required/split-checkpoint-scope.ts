@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 
 import { isTaskQueueDecomposedStatus } from '../../core/active-task-state';
-import { readTaskQueueEntries } from '../../core/task-queue-read';
+import { readTaskQueueEntries, type TaskQueueEntry } from '../../core/task-queue-read';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import {
     isPathRealpathInsideRoot,
@@ -462,8 +462,12 @@ export function getSplitCheckpointWorkspaceSnapshot(
     };
 }
 
-export function resolveSplitCheckpointTaskScope(repoRoot: string, taskId: string): SplitCheckpointScopeResolution {
-    const taskEntries = readTaskQueueEntries(repoRoot);
+export function resolveSplitCheckpointTaskScope(
+    repoRoot: string,
+    taskId: string,
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>
+): SplitCheckpointScopeResolution {
+    const taskEntries = taskQueueEntries || readTaskQueueEntries(repoRoot);
     const childTask = taskEntries.get(taskId);
     const notes = String(childTask?.notes || '');
     const checkpointCommit = parseCommitHash(notes, CHECKPOINT_COMMIT_PATTERN);

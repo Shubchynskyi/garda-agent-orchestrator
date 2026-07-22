@@ -439,9 +439,10 @@ export function getPreflightRefreshChangedFiles(
 
 export function resolveAuthenticatedSplitCheckpointCommandScope(
     repoRoot: string,
-    taskId: string
+    taskId: string,
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>
 ): AuthenticatedSplitCheckpointCommandScope | null {
-    const resolution = resolveSplitCheckpointTaskScope(repoRoot, taskId);
+    const resolution = resolveSplitCheckpointTaskScope(repoRoot, taskId, taskQueueEntries);
     if (resolution.scope) {
         return {
             detectionSource: resolution.scope.detection_source,

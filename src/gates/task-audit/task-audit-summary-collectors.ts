@@ -15,6 +15,7 @@ import {
     type OptionalSkillSelectionTimelineEvidence
 } from '../../runtime/optional-skill-selection';
 import type { DomainScopeFingerprints } from '../scope/domain-scope-fingerprints';
+import type { TaskQueueEntry } from '../../core/task-queue-read';
 
 export { collectKnownRequiredReviewTypes, safeReadJson } from './task-audit-summary-review-common';
 export {
@@ -192,7 +193,22 @@ export function resolveEventsRoot(repoRoot: string, explicit?: string | null): s
     return joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
 }
 
-export function readTaskQueueMetadata(repoRoot: string, taskId: string): TaskQueueMetadata | null {
+export function readTaskQueueMetadata(
+    repoRoot: string,
+    taskId: string,
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>
+): TaskQueueMetadata | null {
+    if (taskQueueEntries) {
+        const entry = taskQueueEntries.get(taskId);
+        return entry
+            ? {
+                area: entry.area,
+                title: entry.title,
+                profile: entry.profile,
+                notes: entry.notes
+            }
+            : null;
+    }
     const taskPath = path.join(repoRoot, 'TASK.md');
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return null;

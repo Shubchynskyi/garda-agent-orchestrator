@@ -21,6 +21,7 @@ import type {
     ReviewAttemptSummary
 } from './task-audit-summary-collectors';
 import type { ReviewCoverageAuditSummary } from './task-audit-summary-review-coverage';
+import type { TaskQueueEntry } from '../../core/task-queue-read';
 
 export interface TaskAuditSummaryOptions {
     taskId: string;
@@ -28,6 +29,7 @@ export interface TaskAuditSummaryOptions {
     eventsRoot?: string | null;
     reviewsRoot?: string | null;
     ignoreActiveCompletionFinalizationLock?: boolean;
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>;
 }
 
 export interface FinalCloseoutArtifact {

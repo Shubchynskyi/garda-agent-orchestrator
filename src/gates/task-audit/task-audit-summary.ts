@@ -251,7 +251,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const liveFullSuiteValidationEnabled = loadFullSuiteValidationConfig(repoRoot).enabled;
     const liveReviewExecutionPolicyMode = loadReviewExecutionPolicyConfig(repoRoot).mode;
     const reviewCycleExcludedReviewTypes = readReviewCycleExcludedReviewTypes(repoRoot);
-    const taskMetadata = readTaskQueueMetadata(repoRoot, safeTaskId);
+    const taskMetadata = readTaskQueueMetadata(repoRoot, safeTaskId, options.taskQueueEntries);
     const taskPath = path.join(repoRoot, 'TASK.md');
     const taskFileExists = fs.existsSync(taskPath) && fs.statSync(taskPath).isFile();
     const taskEventFile = path.join(eventsRoot, `${safeTaskId}.jsonl`);
@@ -276,7 +276,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const hasCompletionPassEvent = events.some((event) => String(event.event_type || '').trim().toUpperCase() === 'COMPLETION_GATE_PASSED');
     const projectMemoryImpactRequired = projectMemoryImpactEvidence.required
         && (!hasCompletionPassEvent || hasCurrentProjectMemoryImpactEvent);
-    const workspaceStatusSnapshot = getStatusSnapshot(repoRoot);
+    const workspaceStatusSnapshot = getStatusSnapshot(repoRoot, undefined, options.taskQueueEntries);
     const lifecycleGates = getLifecycleGates(fullSuiteValidationRequiredForLifecycle, projectMemoryImpactRequired);
     let integrityStatus: string;
     if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {

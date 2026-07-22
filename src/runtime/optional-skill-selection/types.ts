@@ -208,6 +208,17 @@ export interface OptionalSkillSelectionTimelineEvidence {
     timelinePath: string;
     exists: boolean;
     invalidJson: boolean;
+    boundedRead?: {
+        truncated: boolean;
+        bytesRead: number;
+        retainedLineCount: number;
+        parsedEventCount: number;
+        parseAttempts: number;
+        maxBytes: number;
+        maxLines: number;
+        maxEvents: number;
+        maxParseAttempts: number;
+    };
     eventTypes: Set<string>;
     latestTaskModeEnteredTimestampUtc: string | null;
     latestTaskModeEnteredTaskSequence?: number | null;

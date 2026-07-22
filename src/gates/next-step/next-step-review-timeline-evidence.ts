@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { readBoundedJsonlTail, type BoundedJsonlTailResult } from '../../core/bounded-jsonl-tail';
 
 import type {
     ReviewReuseTelemetryEventLike
@@ -11,6 +12,52 @@ export function fileExists(filePath: string): boolean {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
 }
 
+export const NEXT_STEP_REVIEW_TIMELINE_READ_LIMITS = Object.freeze({
+    maxBytes: 2 * 1024 * 1024,
+    maxLines: 8192,
+    maxEvents: 4096,
+    maxParseAttempts: 8192
+});
+
+export interface TaskTimelineEventWindow {
+    events: ReviewReuseTelemetryEventLike[];
+    truncated: boolean;
+    invalidJson: boolean;
+    bytesRead: number;
+    retainedLineCount: number;
+    parseAttempts: number;
+}
+
+function readTaskTimelineWindowFromPath(timelinePath: string): BoundedJsonlTailResult<ReviewReuseTelemetryEventLike> {
+    return readBoundedJsonlTail<ReviewReuseTelemetryEventLike>(
+        timelinePath,
+        NEXT_STEP_REVIEW_TIMELINE_READ_LIMITS
+    );
+}
+
+export function readTaskTimelineEventWindow(eventsRoot: string, taskId: string): TaskTimelineEventWindow {
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fileExists(timelinePath)) {
+        return {
+            events: [],
+            truncated: false,
+            invalidJson: false,
+            bytesRead: 0,
+            retainedLineCount: 0,
+            parseAttempts: 0
+        };
+    }
+    const result = readTaskTimelineWindowFromPath(timelinePath);
+    return {
+        events: result.invalidJson ? [] : result.records,
+        truncated: result.truncated,
+        invalidJson: result.invalidJson,
+        bytesRead: result.bytesRead,
+        retainedLineCount: result.retainedLineCount,
+        parseAttempts: result.parseAttempts
+    };
+}
+
 export function getLatestTaskSequenceForEventTypes(
     eventsRoot: string,
     taskId: string,
@@ -20,48 +67,29 @@ export function getLatestTaskSequenceForEventTypes(
     if (!fileExists(timelinePath)) {
         return null;
     }
+    const window = readTaskTimelineEventWindow(eventsRoot, taskId);
+    if (window.invalidJson) {
+        return null;
+    }
     const wanted = new Set(eventTypes);
     let latestSequence: number | null = null;
-    for (const line of fs.readFileSync(timelinePath, 'utf8').split('\n')) {
-        if (!line.trim()) {
+    for (const event of window.events) {
+        if (!wanted.has(String(event.event_type || '').trim())) {
             continue;
         }
-        try {
-            const event = JSON.parse(line) as Record<string, unknown>;
-            if (!wanted.has(String(event.event_type || '').trim())) {
-                continue;
-            }
-            const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
-            const sequence = typeof integrity?.task_sequence === 'number'
-                ? integrity.task_sequence
-                : Number(integrity?.task_sequence);
-            if (Number.isInteger(sequence) && sequence > 0) {
-                latestSequence = latestSequence == null ? sequence : Math.max(latestSequence, sequence);
-            }
-        } catch {
-            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+        const sequence = typeof integrity?.task_sequence === 'number'
+            ? integrity.task_sequence
+            : Number(integrity?.task_sequence);
+        if (Number.isInteger(sequence) && sequence > 0) {
+            latestSequence = latestSequence == null ? sequence : Math.max(latestSequence, sequence);
         }
     }
     return latestSequence;
 }
 
 export function readTaskTimelineEventLikes(eventsRoot: string, taskId: string): ReviewReuseTelemetryEventLike[] {
-    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
-    if (!fileExists(timelinePath)) {
-        return [];
-    }
-    const events: ReviewReuseTelemetryEventLike[] = [];
-    for (const line of fs.readFileSync(timelinePath, 'utf8').split('\n')) {
-        if (!line.trim()) {
-            continue;
-        }
-        try {
-            events.push(JSON.parse(line) as ReviewReuseTelemetryEventLike);
-        } catch {
-            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
-        }
-    }
-    return events;
+    return readTaskTimelineEventWindow(eventsRoot, taskId).events;
 }
 
 export function getTimelineEventTaskSequence(event: ReviewReuseTelemetryEventLike): number | null {

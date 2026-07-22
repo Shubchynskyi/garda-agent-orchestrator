@@ -25,7 +25,8 @@ import {
     buildToxinStatusSummary
 } from '../runtime/toxin-metrics';
 import { assessProtectedManifest } from './protected-manifest-assessment';
-import { readTaskQueueStatusMap } from './task-status-map';
+import { buildTaskQueueStatusMap, readTaskQueueStatusMap } from './task-status-map';
+import type { TaskQueueEntry } from '../core/task-queue-read';
 import { buildRecommendedNextCommand } from './status/status-recommendations';
 import { RECOMMENDED_UI_ACTIONS_COMMAND } from '../core/onboarding-contract';
 import { formatFullSuitePerformanceGuidance } from '../gates/full-suite/full-suite-validation';
@@ -555,7 +556,11 @@ function resolveScopeBudgetPreflightPath(bundlePath: string, taskStatuses: Map<s
     return null;
 }
 
-export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string): StatusSnapshot {
+export function getStatusSnapshot(
+    targetRoot: string,
+    initAnswersPath?: string,
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>
+): StatusSnapshot {
     const resolvedTargetRoot = path.resolve(targetRoot);
     const bundlePath = getBundlePath(resolvedTargetRoot);
     const bundlePresent = pathExists(bundlePath) && fs.lstatSync(bundlePath).isDirectory();
@@ -642,7 +647,9 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
     const activeAgentFilesValue = currentActiveAgentFiles.length > 0
         ? currentActiveAgentFiles.join(', ')
         : null;
-    const taskStatuses = readTaskQueueStatusMap(taskPath, taskPresent);
+    const taskStatuses = taskQueueEntries
+        ? buildTaskQueueStatusMap(taskQueueEntries)
+        : readTaskQueueStatusMap(taskPath, taskPresent);
     const timelineSummary = readTimelineSummary(bundlePath, bundlePresent, taskStatuses);
     const activeProfile = readActiveProfile(bundlePath, bundlePresent);
     const toxinMetricsSummary = readToxinMetricsSummary(resolvedTargetRoot, bundlePath, bundlePresent);

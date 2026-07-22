@@ -178,6 +178,7 @@ import {
     hasAcceptedDocsOnlyFullSuiteSkipArtifact
 } from './next-step-readiness-readers';
 import {
+    buildTaskQueueFollowUpFingerprintIndex,
     getScopedDiffMetadataReadiness,
     readReviewArtifactState,
     readReviewTrust,
@@ -1906,8 +1907,13 @@ function buildAuthenticatedScopeClassifyChangeCommand(params: {
     preflightCommandPath: string;
     includePlannedScope: boolean;
     changedFiles?: string[];
+    taskQueueEntries: ReadonlyMap<string, TaskQueueEntry>;
 }): string {
-    const splitCheckpointScope = resolveAuthenticatedSplitCheckpointCommandScope(params.repoRoot, params.taskId);
+    const splitCheckpointScope = resolveAuthenticatedSplitCheckpointCommandScope(
+        params.repoRoot,
+        params.taskId,
+        params.taskQueueEntries
+    );
     const callerChangedFiles = normalizeChangedFileSet(params.changedFiles || []);
     if (
         splitCheckpointScope
@@ -2185,7 +2191,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         taskId,
         repoRoot,
         eventsRoot,
-        reviewsRoot
+        reviewsRoot,
+        taskQueueEntries: taskEntries
     });
     const fullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
     const fullSuiteTimeoutForecast = fullSuiteConfig.enabled
@@ -2271,8 +2278,18 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     });
     const projectMemorySummary = buildProjectMemoryNextStepSummary(repoRoot, projectMemoryEvidence);
     const reviewPolicy = resolveReviewPolicy(preflight, workflowReviewPolicy);
+    const taskQueueFollowUpFingerprintIndex = buildTaskQueueFollowUpFingerprintIndex(taskEntries, taskId);
     const reviewStates = requiredReviewTypes.map((reviewType) => (
-        readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight, repoRoot)
+        readReviewArtifactState(
+            reviewsRoot,
+            taskId,
+            reviewType,
+            preflightPath,
+            preflightSha256,
+            preflight,
+            repoRoot,
+            taskQueueFollowUpFingerprintIndex
+        )
     ));
     const fullSuiteTimedOutRetryAvailable = fullSuiteFailedTimeoutRetryAvailable(
         readinessArtifacts.fullSuiteValidation,
@@ -2766,7 +2783,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskModePath,
             preflightCommandPath,
             includePlannedScope: !filteredNoPreflightChangedFiles,
-            changedFiles: filteredNoPreflightChangedFiles
+            changedFiles: filteredNoPreflightChangedFiles,
+            taskQueueEntries: taskEntries
         });
         return buildResult({
             ...resultBase,
@@ -2804,6 +2822,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         taskModePath,
                         preflightCommandPath,
                         includePlannedScope: false,
+                        taskQueueEntries: taskEntries,
                         changedFiles: getPreflightRefreshCommandChangedFiles({
                             repoRoot,
                             taskMode,
@@ -2830,6 +2849,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 taskModePath,
                 preflightCommandPath,
                 includePlannedScope: false,
+                taskQueueEntries: taskEntries,
                 changedFiles: getPreflightRefreshCommandChangedFiles({
                     repoRoot,
                     taskMode,
@@ -2927,6 +2947,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
+            taskQueueEntries: taskEntries,
             changedFiles: getPreflightRefreshCommandChangedFiles({
                 repoRoot,
                 taskMode,
@@ -2953,6 +2974,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
+            taskQueueEntries: taskEntries,
             changedFiles: getPreflightRefreshCommandChangedFiles({
                 repoRoot,
                 preflight,
@@ -3371,6 +3393,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
+            taskQueueEntries: taskEntries,
             changedFiles: getPreflightRefreshCommandChangedFiles({
                 repoRoot,
                 preflight,

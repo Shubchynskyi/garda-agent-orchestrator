@@ -630,11 +630,11 @@ describe('review findings follow-up task materialization', () => {
         assert.equal(taskRows(repoRoot).filter((row) => row.taskId.startsWith(`${TASK_ID}-F`)).length, 2);
     });
 
-    it('keeps TASK notes bounded while preserving all grouped item evidence in the artifact', () => {
+    it('keeps representative large grouped materialization bounded and deterministic', () => {
         const repoRoot = makeRepo();
         seedGroupedPreflight(repoRoot);
         const artifacts = seedReviewArtifacts(repoRoot);
-        const itemCount = 30;
+        const itemCount = 200;
         const itemIds = Array.from({ length: itemCount }, (_, index) => `F-${String(index + 1).padStart(3, '0')}`);
         const validation = readJson(artifacts.validationArtifactPath);
         const validationResult = validation.validation_result as Record<string, unknown>;
@@ -714,30 +714,52 @@ describe('review findings follow-up task materialization', () => {
         receiptContract.disposition_result_sha256 = disposition.disposition_result_sha256;
         writeJson(artifacts.receiptPath, receipt);
 
+        const startedAt = process.hrtime.bigint();
         const materialized = materializeReviewFindingsFollowUpTasks({
             repoRoot,
             taskId: TASK_ID,
             reviewType: REVIEW_TYPE,
             dispositionArtifactPath: artifacts.dispositionArtifactPath
         });
+        const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
 
         assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        assert.ok(elapsedMs < 10_000, `grouped materialization took ${elapsedMs.toFixed(1)}ms`);
         const childRow = rowFor(repoRoot, `${TASK_ID}-F1`);
         assert.ok(childRow);
         assert.ok(childRow.notes.length < 1000, childRow.notes);
-        assert.match(childRow.notes, /review_follow_up_lane_binding=code:30:[0-9a-f]{64}:[0-9a-f]{64}\./u);
+        assert.match(childRow.notes, /review_follow_up_lane_binding=code:200:[0-9a-f]{64}:[0-9a-f]{64}\./u);
         assert.match(childRow.notes, /review_follow_up_lane_artifact=code:`[^`]+`\./u);
-        assert.doesNotMatch(childRow.notes, /Grouped deferred finding 30/u);
-        assert.doesNotMatch(childRow.notes, /grouped-evidence-30/u);
+        assert.doesNotMatch(childRow.notes, /Grouped deferred finding 200/u);
+        assert.doesNotMatch(childRow.notes, /grouped-evidence-200/u);
 
         const followUpArtifact = readJson(materialized.artifact_path);
         const materializedItems = followUpArtifact.items as Array<Record<string, unknown>>;
         assert.equal(materializedItems.length, itemCount);
-        assert.equal(materializedItems[29].source_item_id, 'F-030');
-        assert.deepEqual(materializedItems[29].evidence_locations, ['src/gates/review/grouped-evidence-30.ts:10']);
+        assert.equal(materializedItems[199].source_item_id, 'F-200');
+        assert.deepEqual(materializedItems[199].evidence_locations, ['src/gates/review/grouped-evidence-200.ts:10']);
         assert.equal((followUpArtifact.source_validation as Record<string, unknown>).artifact_sha256, validationArtifactSha256);
         assert.equal((followUpArtifact.source_disposition as Record<string, unknown>).artifact_sha256, dispositionArtifactSha256);
         assert.equal((followUpArtifact.source_receipt as Record<string, unknown>).receipt_sha256, fileSha256(artifacts.receiptPath));
+
+        const stableMaterializationItems = (items: unknown): string => JSON.stringify(
+            (Array.isArray(items) ? items : []).map((item) => Object.fromEntries(
+                Object.entries(item as Record<string, unknown>)
+                    .filter(([key]) => key !== 'materialization_status')
+            ))
+        );
+        const firstMaterializationItems = stableMaterializationItems(followUpArtifact.items);
+        const rerunStartedAt = process.hrtime.bigint();
+        const rerun = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: REVIEW_TYPE,
+            dispositionArtifactPath: artifacts.dispositionArtifactPath
+        });
+        const rerunElapsedMs = Number(process.hrtime.bigint() - rerunStartedAt) / 1_000_000;
+        assert.equal(rerun.status, 'ALREADY_MATERIALIZED', rerun.output_lines.join('\n'));
+        assert.ok(rerunElapsedMs < 10_000, `grouped materialization rerun took ${rerunElapsedMs.toFixed(1)}ms`);
+        assert.equal(stableMaterializationItems(readJson(materialized.artifact_path).items), firstMaterializationItems);
     });
 
     it('uses the canonical compile timeline timestamp when the artifact timestamp differs', () => {

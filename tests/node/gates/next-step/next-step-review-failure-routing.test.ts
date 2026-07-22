@@ -1675,7 +1675,7 @@ describe('gates/next-step', () => {
         assert.match(result.title, /Prepare 'security' review context/);
     });
 
-    it('reads TASK.md once while validating multiple materialized follow-up fingerprints', () => {
+    it('reads TASK.md once per next-step evaluation across review lanes with multiple follow-up fingerprints', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, {
@@ -1693,20 +1693,24 @@ describe('gates/next-step', () => {
         });
         seedCompilePass(repoRoot, TASK_ID);
         writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'code', { followUpFindingCount: 3 });
-        const receipt = JSON.parse(
-            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`), 'utf8')
-        ) as Record<string, unknown>;
-        const dispositionArtifact = receipt.review_findings_disposition_artifact as Record<string, unknown>;
-        const materialized = materializeReviewFindingsFollowUpTasks({
-            repoRoot,
-            taskId: TASK_ID,
-            reviewType: 'code',
-            dispositionArtifactPath: String(dispositionArtifact.artifact_path),
-            receiptPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`)
+        writeAcceptedFindingsDispositionReviewEvidence(repoRoot, TASK_ID, 'security', { followUpFindingCount: 2 });
+        const materializedByLane = (['code', 'security'] as const).map((reviewType) => {
+            const receiptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-receipt.json`);
+            const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+            const dispositionArtifact = receipt.review_findings_disposition_artifact as Record<string, unknown>;
+            return materializeReviewFindingsFollowUpTasks({
+                repoRoot,
+                taskId: TASK_ID,
+                reviewType,
+                dispositionArtifactPath: String(dispositionArtifact.artifact_path),
+                receiptPath
+            });
         });
 
-        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
-        assert.deepEqual(materialized.created_task_ids, [`${TASK_ID}-F1`, `${TASK_ID}-F2`, `${TASK_ID}-F3`]);
+        assert.equal(materializedByLane[0].status, 'MATERIALIZED', materializedByLane[0].output_lines.join('\n'));
+        assert.deepEqual(materializedByLane[0].created_task_ids, [`${TASK_ID}-F1`, `${TASK_ID}-F2`, `${TASK_ID}-F3`]);
+        assert.equal(materializedByLane[1].status, 'MATERIALIZED', materializedByLane[1].output_lines.join('\n'));
+        assert.deepEqual(materializedByLane[1].created_task_ids, [`${TASK_ID}-F4`, `${TASK_ID}-F5`]);
         const taskPath = path.join(repoRoot, 'TASK.md');
         const mutableFs = nodeRequire('node:fs') as typeof fs;
         const originalReadFileSync = mutableFs.readFileSync;
@@ -1718,17 +1722,10 @@ describe('gates/next-step', () => {
             return originalReadFileSync(file as never, ...(args as never[]));
         }) as typeof fs.readFileSync;
         try {
-            const state = readReviewArtifactState(
-                reviewsRoot(repoRoot),
-                TASK_ID,
-                'code',
-                path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`),
-                fileSha256(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
-                JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')) as Record<string, unknown>,
-                repoRoot
-            );
-            assert.equal(state.reviewFindingsDisposition?.counts_by_action.create_follow_up, 3);
-            assert.equal(state.reviewFindingsFollowUpSatisfied, true, state.violations.join('\n'));
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.notEqual(result.next_gate, 'materialize-review-follow-up-tasks');
+            assert.notEqual(result.status, 'FAILED', `${result.next_gate}: ${result.title} :: ${result.reason}`);
         } finally {
             mutableFs.readFileSync = originalReadFileSync;
         }
