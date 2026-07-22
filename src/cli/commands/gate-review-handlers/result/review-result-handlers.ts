@@ -131,6 +131,12 @@ import {
     getReviewFindingsValidationArtifactSnapshotPath,
     type ReviewFindingsValidationArtifact
 } from '../../../../gates/review/review-findings-validation-artifact';
+import {
+    buildReviewRemediationBaselineArtifact,
+    getReviewRemediationBaselineArtifactPath,
+    getReviewRemediationBaselineSnapshotPath,
+    type ReviewRemediationBaselineArtifact
+} from '../../../../gates/review-remediation/review-remediation-baseline';
 
 function summarizeReviewFindingsReport(report: ReviewFindingsReport): Record<string, unknown> {
     const findingIdsBySeverity = {
@@ -182,6 +188,13 @@ interface ReviewFindingsDispositionEvidence {
     snapshotPath: string;
     artifactSha256: string;
     payload: ReviewFindingsDispositionArtifact;
+}
+
+interface ReviewRemediationBaselineEvidence {
+    artifactPath: string;
+    snapshotPath: string;
+    artifactSha256: string;
+    payload: ReviewRemediationBaselineArtifact;
 }
 
 function getPreflightScopeSha256(preflight: Record<string, unknown>): string | null {
@@ -255,6 +268,43 @@ function buildReviewFindingsDispositionEvidence(options: {
     return {
         artifactPath,
         snapshotPath: getReviewFindingsDispositionArtifactSnapshotPath(artifactPath, artifactSha256),
+        artifactSha256,
+        payload
+    };
+}
+
+function buildReviewRemediationBaselineEvidence(options: {
+    taskId: string;
+    reviewType: string;
+    reviewArtifactPath: string;
+    reviewArtifactSha256: string;
+    receipt: Record<string, unknown>;
+    receiptSha256: string;
+    validationEvidence: ReviewFindingsValidationEvidence;
+    dispositionEvidence: ReviewFindingsDispositionEvidence;
+    profilePolicySnapshot: unknown;
+}): ReviewRemediationBaselineEvidence {
+    const artifactPath = getReviewRemediationBaselineArtifactPath(options.reviewArtifactPath);
+    const payload = buildReviewRemediationBaselineArtifact({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewArtifactPath: options.reviewArtifactPath,
+        reviewArtifactSha256: options.reviewArtifactSha256,
+        receiptPath: options.reviewArtifactPath.replace(/\.md$/u, '-receipt.json'),
+        receiptSha256: options.receiptSha256,
+        receipt: options.receipt,
+        validationArtifactPath: options.validationEvidence.artifactPath,
+        validationArtifactSha256: options.validationEvidence.artifactSha256,
+        validationArtifact: options.validationEvidence.payload,
+        dispositionArtifactPath: options.dispositionEvidence.artifactPath,
+        dispositionArtifactSha256: options.dispositionEvidence.artifactSha256,
+        dispositionArtifact: options.dispositionEvidence.payload,
+        profilePolicySnapshot: options.profilePolicySnapshot
+    });
+    const artifactSha256 = sha256RedactedJsonPayload(payload);
+    return {
+        artifactPath,
+        snapshotPath: getReviewRemediationBaselineSnapshotPath(artifactPath, artifactSha256),
         artifactSha256,
         payload
     };
@@ -1061,6 +1111,7 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     artifactSha256: string | null;
     findingsValidationEvidence?: ReviewFindingsValidationEvidence | null;
     findingsDispositionEvidence?: ReviewFindingsDispositionEvidence | null;
+    remediationBaselineEvidence?: ReviewRemediationBaselineEvidence | null;
 }): Promise<string> {
     const receiptPath = options.artifactPath.replace(/\.md$/, '-receipt.json');
     const receiptSnapshotPath = options.artifactPath.replace(/\.md$/, `-receipt-${options.receiptPayloadSha256}.json`);
@@ -1121,6 +1172,20 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
                 }
             ]
             : []),
+        ...(options.remediationBaselineEvidence
+            ? [
+                {
+                    artifactPath: options.remediationBaselineEvidence.artifactPath,
+                    contentType: 'json' as const,
+                    payload: options.remediationBaselineEvidence.payload
+                },
+                {
+                    artifactPath: options.remediationBaselineEvidence.snapshotPath,
+                    contentType: 'json' as const,
+                    payload: options.remediationBaselineEvidence.payload
+                }
+            ]
+            : []),
         {
             artifactPath: artifactSnapshotPath,
             contentType: 'text' as const,
@@ -1163,6 +1228,18 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
                 'Review findings disposition snapshot'
             );
         }
+        if (options.remediationBaselineEvidence) {
+            assertReviewArtifactFileSha256(
+                options.remediationBaselineEvidence.artifactPath,
+                options.remediationBaselineEvidence.artifactSha256,
+                'Review remediation baseline artifact'
+            );
+            assertReviewArtifactFileSha256(
+                options.remediationBaselineEvidence.snapshotPath,
+                options.remediationBaselineEvidence.artifactSha256,
+                'Review remediation baseline snapshot'
+            );
+        }
         const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
             ...buildBoundedReviewRecordedTelemetryDetails(options.receipt),
             receipt_path: normalizePath(receiptPath),
@@ -1172,7 +1249,15 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
             review_artifact_path: normalizePath(options.artifactPath),
             review_artifact_snapshot_path: normalizePath(artifactSnapshotPath),
             review_artifact_snapshot_sha256: options.artifactSha256,
-            review_context_path: normalizePath(options.contextPath)
+            review_context_path: normalizePath(options.contextPath),
+            ...(options.remediationBaselineEvidence
+                ? {
+                    remediation_baseline_path: normalizePath(options.remediationBaselineEvidence.artifactPath),
+                    remediation_baseline_sha256: options.remediationBaselineEvidence.artifactSha256,
+                    remediation_baseline_snapshot_path: normalizePath(options.remediationBaselineEvidence.snapshotPath),
+                    remediation_baseline_snapshot_sha256: options.remediationBaselineEvidence.artifactSha256
+                }
+                : {})
         });
         if (!recordedEvent || taskEventAppendHasBlockingFailure(recordedEvent, false)) {
             throw new Error(
@@ -1552,6 +1637,23 @@ async function recordReviewReceiptFromArtifacts(options: {
     }
 
     const receiptPayloadSha256 = sha256RedactedJsonPayload(receipt);
+    let remediationBaselineEvidence: ReviewRemediationBaselineEvidence | null = null;
+    if ((findingsDispositionEvidence?.payload.summary.fix_now_count || 0) > 0) {
+        if (!findingsValidationEvidence || !findingsDispositionEvidence || !artifactSha256) {
+            throw new Error('fix_now review findings require complete remediation baseline evidence.');
+        }
+        remediationBaselineEvidence = buildReviewRemediationBaselineEvidence({
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewArtifactPath: options.artifactPath,
+            reviewArtifactSha256: artifactSha256,
+            receipt: receipt as unknown as Record<string, unknown>,
+            receiptSha256: receiptPayloadSha256,
+            validationEvidence: findingsValidationEvidence,
+            dispositionEvidence: findingsDispositionEvidence,
+            profilePolicySnapshot: preflight.profile_policy_snapshot
+        });
+    }
     const completedLaunchRestoration = findingsValidationEvidence?.payload.validation_result.accepted
         && options.reviewerExecutionMode === 'delegated_subagent'
         ? restoreCompletedLaunchAfterAcceptedFindingsCorrection({
@@ -1578,7 +1680,8 @@ async function recordReviewReceiptFromArtifacts(options: {
             receiptPayloadSha256,
             artifactSha256,
             findingsValidationEvidence,
-            findingsDispositionEvidence
+            findingsDispositionEvidence,
+            remediationBaselineEvidence
         });
     } catch (error: unknown) {
         try {

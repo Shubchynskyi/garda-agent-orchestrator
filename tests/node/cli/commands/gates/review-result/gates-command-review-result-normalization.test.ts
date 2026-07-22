@@ -1858,6 +1858,41 @@ describe('gates command review result - normalization', () => {
                             : 'audited_ignored'
                 );
                 assert.equal(dispositionItem.audit_status, 'retained_in_disposition_artifact');
+                const remediationBaselinePath = path.join(
+                    fixture.reviewsRoot,
+                    `${scenario.taskId}-code-remediation-baseline.json`
+                );
+                assert.equal(
+                    fs.existsSync(remediationBaselinePath),
+                    scenario.expectedAction === 'fix_now'
+                );
+                if (scenario.expectedAction === 'fix_now') {
+                    const baseline = JSON.parse(fs.readFileSync(remediationBaselinePath, 'utf8'));
+                    assert.equal(baseline.artifact_type, 'review_findings_remediation_baseline');
+                    assert.equal(baseline.task_id, scenario.taskId);
+                    assert.equal(baseline.review_type, 'code');
+                    assert.deepEqual(baseline.fix_now_items.map((item: { id: string }) => item.id), ['F-001']);
+                    assert.equal(baseline.fix_now_items[0].action, 'fix_now');
+                    assert.equal(baseline.path_line_inventory.length, 1);
+                    assert.deepEqual(baseline.path_line_inventory[0].item_ids, ['F-001']);
+                    assert.equal(
+                        baseline.bindings.findings_validation.artifact_sha256,
+                        receipt.review_findings_validation.artifact_sha256
+                    );
+                    assert.equal(
+                        baseline.bindings.findings_disposition.artifact_sha256,
+                        receipt.review_findings_disposition_artifact.artifact_sha256
+                    );
+                    const recordedEvent = readTaskTimelineEvents(repoRoot, scenario.taskId)
+                        .find((event) => event.event_type === 'REVIEW_RECORDED');
+                    const recordedDetails = recordedEvent?.details as Record<string, unknown> | undefined;
+                    assert.equal(recordedDetails?.remediation_baseline_path, remediationBaselinePath.replace(/\\/gu, '/'));
+                    assert.equal(
+                        recordedDetails?.remediation_baseline_sha256,
+                        createHash('sha256').update(fs.readFileSync(remediationBaselinePath)).digest('hex')
+                    );
+                    assert.equal(fs.existsSync(String(recordedDetails?.remediation_baseline_snapshot_path || '')), true);
+                }
             } finally {
                 fs.rmSync(repoRoot, { recursive: true, force: true });
             }
@@ -2794,7 +2829,25 @@ describe('gates command review result - normalization', () => {
     it('record-review-result treats residual-risk-only findings JSON as a failed gate verdict', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-2-result-json-residual-risk';
-        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        const fixture = await seedPromptBoundReviewFixture({
+            repoRoot,
+            taskId,
+            preflightOverrides: {
+                profile_policy_snapshot: {
+                    review_finding_policy: {
+                        schema_version: 1,
+                        policy_id: 'strict',
+                        findings: {
+                            critical: 'fix_now',
+                            high: 'fix_now',
+                            medium: 'fix_now',
+                            low: 'fix_now'
+                        },
+                        residual_risk: 'fix_now'
+                    }
+                }
+            }
+        });
         attestReviewerInvocationForTest({
             repoRoot,
             taskId,
