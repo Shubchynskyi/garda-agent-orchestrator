@@ -1457,6 +1457,18 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(artifact.profile_policy_snapshot.review_finding_policy.findings.high, 'create_follow_up');
         assert.equal(artifact.profile_policy_snapshot.review_finding_policy.findings.medium, 'ignore');
         assert.equal(artifact.profile_policy_snapshot.review_finding_policy.residual_risk, 'ignore');
+        assert.equal(
+            artifact.profile_policy_snapshot.review_remediation_rerun_policy.policy_id,
+            'baseline_bound_remediation_rerun_v1'
+        );
+        assert.equal(
+            artifact.profile_policy_snapshot.review_remediation_rerun_policy.rules.leaf_test.strategy,
+            'current_review_only'
+        );
+        assert.deepEqual(
+            artifact.profile_policy_snapshot.review_remediation_rerun_policy.rules.structural_test.ordered_rerun_lanes,
+            ['refactor', 'test']
+        );
         assert.equal(artifact.profile_policy_snapshot.finding_policy.policy_id, 'profile_review_finding_dispositions_v1');
         assert.equal(artifact.profile_policy_snapshot.finding_policy.active_findings.critical, 'block_until_resolved');
         assert.equal(artifact.profile_policy_snapshot.finding_policy.active_findings.high, 'create_follow_up');
@@ -1475,6 +1487,7 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
 
         const firstSnapshotHash = artifact.profile_policy_snapshot.snapshot_hash;
         const firstSnapshotLockTimestamp = artifact.profile_policy_snapshot.lock_timestamp_utc;
+        const firstRerunPolicy = artifact.profile_policy_snapshot.review_remediation_rerun_policy;
         const profilesPath = path.join(configDir, 'profiles.json');
         const mutatedProfiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
         mutatedProfiles.active_profile = 'fast';
@@ -1505,6 +1518,7 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(rerunArtifact.profile_policy_snapshot.review_finding_policy.residual_risk, 'ignore');
         assert.equal(rerunArtifact.profile_policy_snapshot.finding_policy.active_findings.high, 'create_follow_up');
         assert.equal(rerunArtifact.profile_policy_snapshot.finding_policy.residual_risks, 'ignore');
+        assert.deepEqual(rerunArtifact.profile_policy_snapshot.review_remediation_rerun_policy, firstRerunPolicy);
 
         const rerunEvidence = getTaskModeEvidence(tmpDir, 'T-100');
         assert.equal(rerunEvidence.evidence_status, 'PASS');
@@ -1579,6 +1593,8 @@ test('runEnterTaskModeCommand reuses legacy strict finding-policy snapshots with
         const legacySnapshot = artifact.profile_policy_snapshot as Record<string, unknown>;
         delete legacySnapshot.review_finding_policy;
         delete legacySnapshot.review_finding_policy_diagnostics;
+        delete legacySnapshot.review_remediation_rerun_policy;
+        delete legacySnapshot.review_remediation_rerun_policy_diagnostics;
         delete legacySnapshot.review_trigger_policy;
         legacySnapshot.finding_policy = {
             schema_version: 1,
@@ -1614,6 +1630,19 @@ test('runEnterTaskModeCommand reuses legacy strict finding-policy snapshots with
         assert.equal(legacySummary.review_trigger_policy.test_refactor_changed_lines_threshold, 20);
         assert.ok(legacySummary.review_trigger_policy.test_refactor_structural_path_regexes.length > 0);
         assert.equal(
+            legacySummary.review_remediation_rerun_policy.rules.leaf_test.strategy,
+            'affected_dependent_reviews'
+        );
+        assert.equal(
+            legacySummary.review_remediation_rerun_policy.rules.leaf_test.ordered_rerun_lanes,
+            'all_required'
+        );
+        assert.ok(
+            legacySummary.review_remediation_rerun_policy_diagnostics.some((entry) => (
+                entry.includes('Legacy task profile policy snapshot')
+            ))
+        );
+        assert.equal(
             legacySummary.review_finding_policy_diagnostics.some((entry) => (
                 entry.includes('Legacy task profile policy snapshot')
             )),
@@ -1632,6 +1661,7 @@ test('runEnterTaskModeCommand reuses legacy strict finding-policy snapshots with
         const rerunArtifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
         assert.equal(rerunArtifact.profile_policy_snapshot.snapshot_hash, legacySnapshot.snapshot_hash);
         assert.equal(rerunArtifact.profile_policy_snapshot.review_finding_policy, undefined);
+        assert.equal(rerunArtifact.profile_policy_snapshot.review_remediation_rerun_policy, undefined);
         assert.equal(rerunArtifact.profile_policy_snapshot.review_trigger_policy, undefined);
         assert.equal(rerunArtifact.profile_policy_snapshot.finding_policy.policy_id, 'legacy_strict_review_findings_v1');
     } finally {
@@ -2090,6 +2120,9 @@ test('runEnterTaskModeCommand fails closed when profile policy snapshot finding,
         snapshot.remediation_policy.failed_review_requires_rework = false as true;
         snapshot.remediation_policy.review_restarts_retain_profile_snapshot = false as true;
         snapshot.remediation_policy.remediation_restarts_retain_profile_snapshot = false as true;
+        assert.ok(snapshot.review_remediation_rerun_policy);
+        snapshot.review_remediation_rerun_policy.rules.leaf_test.strategy =
+            'silent_reuse' as 'current_review_only';
         snapshot.snapshot_hash = computeTaskProfilePolicySnapshotHash(snapshot);
         artifact.profile_policy_snapshot = snapshot;
         fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
@@ -2130,6 +2163,11 @@ test('runEnterTaskModeCommand fails closed when profile policy snapshot finding,
         assert.ok(
             forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
                 entry.includes('remediation_policy.failed_review_requires_rework')
+            ))
+        );
+        assert.ok(
+            forgedEvidence.profile_policy_snapshot_violations.some((entry) => (
+                entry.includes('review_remediation_rerun_policy.rules.leaf_test.strategy')
             ))
         );
         assert.ok(

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { sha256RedactedJsonPayload } from '../../core/redaction';
 import { DEFAULT_REVIEW_TRIGGER_POLICY } from '../../policy/review-trigger-policy';
+import type { ReviewRemediationDeltaCategory } from '../../policy/review-remediation-rerun-policy';
 import { normalizePath } from '../shared/helpers';
 import { isTestLikeRemediationPath } from './review-remediation-scope-boundary';
 import {
@@ -18,14 +19,7 @@ import {
 export const REVIEW_REMEDIATION_DELTA_SCHEMA_VERSION = 1;
 export const REVIEW_REMEDIATION_DELTA_MAX_DIFF_WORK_UNITS = 250000;
 
-export type ReviewRemediationDeltaCategory =
-    | 'leaf_test'
-    | 'structural_test'
-    | 'shared_test_helper_or_harness'
-    | 'production'
-    | 'global'
-    | 'generated_churn'
-    | 'ambiguous';
+export type { ReviewRemediationDeltaCategory } from '../../policy/review-remediation-rerun-policy';
 
 export type ReviewRemediationDeltaOperation = 'added' | 'deleted' | 'modified' | 'type_changed';
 
