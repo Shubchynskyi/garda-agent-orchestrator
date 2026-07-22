@@ -122,6 +122,24 @@ test('validateReviewCoverageLedger rejects missing, duplicate, generic, and unkn
     assert.ok(result.violations.some((entry) => entry.includes('generic evidence')));
 });
 
+test('validateReviewCoverageLedger accepts reviewed as an adjective in concrete evidence', () => {
+    const contract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/example.ts'],
+        categoryIds: ['documentation-impact']
+    });
+    const lines = contract.obligations.map((obligation, index) => ledgerLine(
+        obligation.id,
+        `src/example.ts:${index + 1}`,
+        'The changed public surface is a module re-export; the reviewed code adds no CLI option or documentation contract'
+    ));
+
+    const result = validateReviewCoverageLedger(buildReviewOutput(lines), contract);
+
+    assert.equal(result.status, 'PASS');
+    assert.deepEqual(result.violations, []);
+});
+
 test('validateReviewCoverageLedger explains the review evidence domain and file-target rule', () => {
     const contract = buildReviewCoverageContract({
         reviewType: 'test',

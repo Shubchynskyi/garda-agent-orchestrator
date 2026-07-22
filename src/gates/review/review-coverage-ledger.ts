@@ -497,7 +497,7 @@ function isGenericObservation(observation: string): boolean {
     const normalized = String(observation || '').trim().toLowerCase();
     return normalized.length < 24
         || normalized.split(/\s+/u).length < 4
-        || /\b(?:reviewed|checked|validated|inspected)\s+(?:the\s+)?(?:whole\s+)?(?:file|scope|code)\b/u.test(normalized)
+        || /^(?:reviewed|checked|validated|inspected)\s+(?:the\s+)?(?:whole\s+)?(?:file|scope|code)\b/u.test(normalized)
         || /\b(?:no issues|looks good|full scope|all files|everything)\b/u.test(normalized);
 }
 
