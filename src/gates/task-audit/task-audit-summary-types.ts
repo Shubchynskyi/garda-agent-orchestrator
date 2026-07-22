@@ -21,6 +21,7 @@ import type {
     ReviewAttemptSummary
 } from './task-audit-summary-collectors';
 import type { ReviewCoverageAuditSummary } from './task-audit-summary-review-coverage';
+import type { ReviewFindingsAuditSummary } from './task-audit-summary-review-findings';
 import type { TaskQueueEntry } from '../../core/task-queue-read';
 
 export interface TaskAuditSummaryOptions {
@@ -48,6 +49,7 @@ export interface FinalCloseoutArtifact {
     review_timing_audit?: FinalCloseoutReviewTimingAuditSummary | null;
     review_integrity_attestation?: FinalCloseoutReviewIntegrityAttestation;
     review_attempt_summary?: ReviewAttemptSummary | null;
+    review_findings_audit?: ReviewFindingsAuditSummary | null;
     review_coverage_summary?: ReviewCoverageAuditSummary | null;
     optional_skills?: FinalCloseoutOptionalSkillsSummary | null;
     workflow?: {
@@ -148,6 +150,7 @@ export interface TaskAuditSummaryResult {
     point_in_time_snapshot: PointInTimeSnapshot;
     task_cycle_diagnostics?: FinalCloseoutTaskCycleDiagnostics;
     review_attempt_summary?: ReviewAttemptSummary | null;
+    review_findings_audit?: ReviewFindingsAuditSummary | null;
     review_coverage_summary?: ReviewCoverageAuditSummary | null;
     final_report_contract: FinalReportContract;
     final_closeout: FinalCloseoutArtifact;

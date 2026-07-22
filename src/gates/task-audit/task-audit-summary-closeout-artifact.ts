@@ -30,6 +30,7 @@ import type {
 import { parseOptionalNumber } from './task-audit-summary-collectors';
 import { buildFinalCloseoutProjectMemorySummary } from './task-audit-summary-project-memory';
 import type { ReviewCoverageAuditSummary } from './task-audit-summary-review-coverage';
+import type { ReviewFindingsAuditSummary } from './task-audit-summary-review-findings';
 import {
     collectKnownNonBlockingSignals
 } from '../shared/known-nonblocking-signals';
@@ -62,6 +63,7 @@ export interface BuildFinalCloseoutArtifactInput {
     reviewTimingAudit: FinalCloseoutReviewTimingAuditSummary | null;
     reviewIntegrityAttestation: FinalCloseoutReviewIntegrityAttestation;
     reviewAttemptSummary: ReviewAttemptSummary | null;
+    reviewFindingsAudit: ReviewFindingsAuditSummary | null;
     reviewCoverageSummary: ReviewCoverageAuditSummary | null;
     optionalSkillsSummary: FinalCloseoutOptionalSkillsSummary | null;
     fullSuiteValidation: Record<string, unknown> | null;
@@ -486,6 +488,7 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
         review_timing_audit: input.reviewTimingAudit,
         review_integrity_attestation: input.reviewIntegrityAttestation,
         review_attempt_summary: input.reviewAttemptSummary,
+        review_findings_audit: input.reviewFindingsAudit,
         review_coverage_summary: input.reviewCoverageSummary,
         optional_skills: input.optionalSkillsSummary,
         workflow: {

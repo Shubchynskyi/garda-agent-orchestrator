@@ -76,6 +76,7 @@ import {
     readReviewExecutionPolicyModeFromCurrentCycleTimeline
 } from './task-audit-summary-review-timing-audit';
 import { buildReviewCoverageAuditSummary } from './task-audit-summary-review-coverage';
+import { buildReviewFindingsAuditSummary } from './task-audit-summary-review-findings';
 import type {
     FinalCloseoutTaskCycleDiagnostics,
     PointInTimeSnapshot,
@@ -97,6 +98,13 @@ export type {
     TaskAuditSummaryOptions,
     TaskAuditSummaryResult
 } from './task-audit-summary-types';
+export type {
+    ReviewFindingsAuditItem,
+    ReviewFindingsAuditLane,
+    ReviewFindingsAuditSummary,
+    ReviewFindingsRemediationCycleAudit,
+    ReviewFindingsValidationFailureAudit
+} from './task-audit-summary-review-findings';
 
 const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no committable changes are present.';
 const NO_COMMIT_CONFIRMATION_MESSAGE = 'No commit confirmation required.';
@@ -429,6 +437,15 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             currentPreflight: preflight,
             excludedReviewTypes: reviewCycleExcludedReviewTypes
         });
+        const reviewFindingsAudit = buildReviewFindingsAuditSummary({
+            repoRoot,
+            reviewsRoot,
+            taskId: safeTaskId,
+            requiredReviews,
+            currentPreflight: preflight,
+            timelineEvents: events,
+            reviewAttemptSummary
+        });
         const reviewTimingAudit = buildReviewTimingAuditSummary(reviewsRoot, safeTaskId, events, repoRoot);
         const reviewCoverageSummary = buildReviewCoverageAuditSummary({
             reviewsRoot,
@@ -440,6 +457,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             evidence,
             requiredReviewBlockers,
             reviewAttemptSummary,
+            reviewFindingsAudit,
             reviewIntegrityAttestation,
             reviewTimingAudit,
             reviewCoverageSummary,
@@ -619,6 +637,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         reviewVerdicts,
         reviewTrustSummary,
         reviewAttemptSummary,
+        reviewFindingsAudit,
         reviewTimingAudit,
         reviewIntegrityAttestation
     } = reviewSnapshot;
@@ -700,6 +719,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         reviewTimingAudit,
         reviewIntegrityAttestation,
         reviewAttemptSummary,
+        reviewFindingsAudit,
         reviewCoverageSummary: reviewSnapshot.reviewCoverageSummary,
         optionalSkillsSummary,
         fullSuiteValidation,
@@ -733,6 +753,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         point_in_time_snapshot: pointInTimeSnapshot,
         task_cycle_diagnostics: taskCycleDiagnostics,
         review_attempt_summary: reviewAttemptSummary,
+        review_findings_audit: reviewFindingsAudit,
         review_coverage_summary: reviewSnapshot.reviewCoverageSummary,
         final_report_contract: finalReportContract,
         final_closeout: finalCloseout

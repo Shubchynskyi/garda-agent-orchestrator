@@ -157,6 +157,183 @@ describe('gates/task-audit-summary', () => {
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(expectedLine));
         });
 
+        it('classifies findings-json remediation attempts from structured receipt evidence without prose verdicts', () => {
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' }
+            ]);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: { code: false }
+            });
+            const reviewContextPath = path.join(reviewsDir, `${TASK_ID}-code-review-context.json`);
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: makeDelegatedRouting('agent:structured-reviewer')
+            });
+
+            const recordStructuredAttempt = (verdict: 'fail_for_fix_now' | 'pass_no_findings'): void => {
+                const content = `${JSON.stringify({ structured_review: true, disposition: verdict })}\n`;
+                writeArtifact(reviewsDir, TASK_ID, '-code.md', content);
+                writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                    schema_version: 2,
+                    task_id: TASK_ID,
+                    review_type: 'code',
+                    preflight_sha256: null,
+                    review_context_sha256: computeFileSha256(reviewContextPath),
+                    review_artifact_sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_identity: 'agent:structured-reviewer',
+                    reviewer_fallback_reason: null,
+                    trust_level: 'INDEPENDENT_AUDITED',
+                    review_output_format: 'findings_json',
+                    review_findings_validation: {
+                        status: 'accepted',
+                        accepted: true
+                    },
+                    review_findings_disposition: {
+                        verdict
+                    }
+                });
+                appendIntegrityEvent(eventsDir, TASK_ID, {
+                    event_type: 'REVIEW_RECORDED',
+                    details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code')
+                });
+            };
+
+            recordStructuredAttempt('fail_for_fix_now');
+            recordStructuredAttempt('pass_no_findings');
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.review_attempt_summary?.total_attempts, 2);
+            assert.deepEqual(result.review_attempt_summary?.review_types, [{
+                review_type: 'code',
+                total_attempts: 2,
+                pass_count: 1,
+                fail_count: 1,
+                reused_count: 0,
+                missing_or_invalid_count: 0
+            }]);
+        });
+
+        it('dedupes duplicate materialization of one fresh reviewer invocation', () => {
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' }
+            ]);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: { code: false }
+            });
+            const content = '# Code Review\n\n## Verdict\nREVIEW PASSED\n';
+            const reviewContextPath = path.join(reviewsDir, `${TASK_ID}-code-review-context.json`);
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', content);
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: makeDelegatedRouting('agent:one-invocation')
+            });
+            const receiptPath = path.join(reviewsDir, `${TASK_ID}-code-receipt.json`);
+            const receipt = {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: null,
+                review_context_sha256: computeFileSha256(reviewContextPath),
+                review_artifact_sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:one-invocation',
+                reviewer_fallback_reason: null,
+                trust_level: 'INDEPENDENT_AUDITED',
+                reviewer_provenance: { event_sha256: 'a'.repeat(64) },
+                recorded_at_utc: '2026-07-22T00:00:01.000Z'
+            };
+            fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+            appendIntegrityEvent(eventsDir, TASK_ID, {
+                event_type: 'REVIEW_RECORDED',
+                details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code')
+            });
+            receipt.recorded_at_utc = '2026-07-22T00:00:02.000Z';
+            fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+            appendIntegrityEvent(eventsDir, TASK_ID, {
+                event_type: 'REVIEW_RECORDED',
+                details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code')
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.review_attempt_summary?.total_attempts, 1);
+            assert.equal(result.review_attempt_summary?.review_types[0].total_attempts, 1);
+        });
+
+        it('dedupes fallback snapshots from one fresh reviewer invocation without telemetry', () => {
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' }
+            ]);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: { code: false }
+            });
+            const content = '# Code Review\n\n## Verdict\nREVIEW PASSED\n';
+            const reviewContextPath = path.join(reviewsDir, `${TASK_ID}-code-review-context.json`);
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', content);
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: makeDelegatedRouting('agent:one-fallback-invocation')
+            });
+            const receiptPath = path.join(reviewsDir, `${TASK_ID}-code-receipt.json`);
+            const receipt = {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: null,
+                review_context_sha256: computeFileSha256(reviewContextPath),
+                review_artifact_sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:one-fallback-invocation',
+                reviewer_fallback_reason: null,
+                trust_level: 'INDEPENDENT_AUDITED',
+                reviewer_provenance: { event_sha256: 'b'.repeat(64) },
+                recorded_at_utc: '2026-07-22T00:00:01.000Z'
+            };
+            fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+            buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code');
+            receipt.recorded_at_utc = '2026-07-22T00:00:02.000Z';
+            fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+            buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code');
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.review_attempt_summary?.source_mode, 'current_artifacts_fallback');
+            assert.equal(result.review_attempt_summary?.total_attempts, 1);
+            assert.equal(result.review_attempt_summary?.review_types[0].total_attempts, 1);
+        });
+
         it('reports cumulative and current-scope review-cycle diagnostics in audit and closeout summaries', () => {
             writeWorkflowConfig(tmpDir, false);
             const currentCodeScopeSha256 = '1'.repeat(64);
@@ -697,7 +874,7 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.equal(result.review_attempt_summary?.source_mode, 'task_events');
+            assert.equal(result.review_attempt_summary?.source_mode, 'mixed');
             assert.equal(result.review_attempt_summary?.total_attempts, 1);
             assert.deepEqual(result.review_attempt_summary?.review_types, [
                 {

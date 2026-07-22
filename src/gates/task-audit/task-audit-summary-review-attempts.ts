@@ -161,10 +161,41 @@ function isReviewReceiptBoundToArtifact(
     return !!recordedReviewArtifactHash && !!artifactSha256 && recordedReviewArtifactHash === artifactSha256;
 }
 
+function readReviewerInvocationSha256(receipt: Record<string, unknown> | null): string | null {
+    const provenance = isPlainRecord(receipt?.reviewer_provenance)
+        ? receipt.reviewer_provenance
+        : null;
+    return normalizeSha256Text(provenance?.event_sha256);
+}
+
 function classifyReviewAttemptVerdict(
     reviewType: string,
-    reviewContent: string | null
+    reviewContent: string | null,
+    receipt: Record<string, unknown> | null
 ): 'PASS' | 'FAIL' | 'MISSING_OR_INVALID' {
+    if (String(receipt?.review_output_format || '').trim() === 'findings_json') {
+        const validation = isPlainRecord(receipt?.review_findings_validation)
+            ? receipt.review_findings_validation
+            : null;
+        const disposition = isPlainRecord(receipt?.review_findings_disposition)
+            ? receipt.review_findings_disposition
+            : null;
+        const verdict = String(disposition?.verdict || '').trim();
+        if (
+            validation?.accepted !== true
+            || String(validation.status || '').trim() !== 'accepted'
+            || !disposition
+        ) {
+            return 'MISSING_OR_INVALID';
+        }
+        if (verdict === 'fail_for_fix_now') {
+            return 'FAIL';
+        }
+        if (verdict === 'pass_no_findings' || verdict === 'pass_with_follow_up_or_ignored_findings') {
+            return 'PASS';
+        }
+        return 'MISSING_OR_INVALID';
+    }
     if (!reviewContent) {
         return 'MISSING_OR_INVALID';
     }
@@ -350,9 +381,9 @@ function buildReviewAttemptDiagnostics(
                 freshNonTestAttempts += 1;
             }
         }
-        if (attempt.currentScope) {
+        if (attempt.currentScope && !attempt.reusedExistingReview) {
             currentScopeTotalAttempts += 1;
-            if (countsTowardNonTest && !attempt.reusedExistingReview) {
+            if (countsTowardNonTest) {
                 const currentScopeCounts = currentScopeCountsByType.get(reviewType) || createReviewAttemptCountSummary();
                 recordReviewAttemptCount(currentScopeCounts, attempt);
                 currentScopeCountsByType.set(reviewType, currentScopeCounts);
@@ -385,7 +416,7 @@ function buildReviewAttemptDiagnostics(
 
     const sortedScopeHashEntries = [...scopeHashCountsByType.entries()].sort(([left], [right]) => left.localeCompare(right));
     return {
-        total_attempts: attempts.length,
+        total_attempts: attempts.filter((attempt) => !attempt.reusedExistingReview).length,
         total_non_test_attempts: totalNonTestAttempts,
         current_scope_total_attempts: currentScopeTotalAttempts,
         current_scope_non_test_attempts: currentScopeNonTestAttempts,
@@ -418,6 +449,7 @@ function summarizeReviewAttemptFromEvent(
     reusedExistingReview: boolean;
     receiptSha256: string | null;
     reviewArtifactSha256: string | null;
+    reviewerInvocationSha256: string | null;
     scopeHash: string | null;
     currentScope: boolean;
 } | null {
@@ -441,6 +473,7 @@ function summarizeReviewAttemptFromEvent(
             reusedExistingReview,
             receiptSha256: null,
             reviewArtifactSha256: null,
+            reviewerInvocationSha256: null,
             scopeHash,
             currentScope
         };
@@ -456,6 +489,7 @@ function summarizeReviewAttemptFromEvent(
             reusedExistingReview,
             receiptSha256: null,
             reviewArtifactSha256: null,
+            reviewerInvocationSha256: null,
             scopeHash,
             currentScope
         };
@@ -470,6 +504,7 @@ function summarizeReviewAttemptFromEvent(
             reusedExistingReview,
             receiptSha256: null,
             reviewArtifactSha256: null,
+            reviewerInvocationSha256: null,
             scopeHash,
             currentScope
         };
@@ -495,7 +530,7 @@ function summarizeReviewAttemptFromEvent(
     const verdict = receiptResult.valid
         && reviewArtifactResult.valid
         && isReviewReceiptBoundToArtifact(receiptResult.receipt, reviewArtifactResult.sha256)
-        ? classifyReviewAttemptVerdict(reviewType, reviewArtifactResult.content)
+        ? classifyReviewAttemptVerdict(reviewType, reviewArtifactResult.content, receiptResult.receipt)
         : 'MISSING_OR_INVALID';
     return {
         reviewType,
@@ -503,6 +538,7 @@ function summarizeReviewAttemptFromEvent(
         reusedExistingReview: reusedExistingReviewFromArtifacts,
         receiptSha256: receiptSnapshotSha256,
         reviewArtifactSha256: reviewArtifactSnapshotSha256,
+        reviewerInvocationSha256: readReviewerInvocationSha256(receiptResult.receipt),
         scopeHash,
         currentScope
     };
@@ -518,6 +554,7 @@ function summarizeReviewAttemptsFromSnapshotArtifacts(
     reusedExistingReview: boolean;
     receiptSha256: string | null;
     reviewArtifactSha256: string | null;
+    reviewerInvocationSha256: string | null;
     scopeHash: string | null;
     currentScope: boolean;
 }[] {
@@ -557,7 +594,7 @@ function summarizeReviewAttemptsFromSnapshotArtifacts(
         const verdict = receiptResult.valid
             && reviewArtifactResult.valid
             && isReviewReceiptBoundToArtifact(receiptResult.receipt, reviewArtifactResult.sha256)
-            ? classifyReviewAttemptVerdict(reviewType, reviewArtifactResult.content)
+            ? classifyReviewAttemptVerdict(reviewType, reviewArtifactResult.content, receiptResult.receipt)
             : 'MISSING_OR_INVALID';
         const scopeHash = getReviewAttemptScopeHash(reviewType, receiptResult.receipt);
         const currentScope = reviewAttemptMatchesCurrentScope(reviewType, receiptResult.receipt, currentPreflightFingerprints);
@@ -566,6 +603,7 @@ function summarizeReviewAttemptsFromSnapshotArtifacts(
             reusedExistingReview,
             receiptSha256,
             reviewArtifactSha256,
+            reviewerInvocationSha256: readReviewerInvocationSha256(receiptResult.receipt),
             scopeHash,
             currentScope
         };
@@ -574,11 +612,23 @@ function summarizeReviewAttemptsFromSnapshotArtifacts(
 
 function buildReviewAttemptEvidenceKey(
     receiptSha256: string | null | undefined,
-    reviewArtifactSha256: string | null | undefined
+    reviewArtifactSha256: string | null | undefined,
+    reviewerInvocationSha256: string | null | undefined,
+    reusedExistingReview: boolean
 ): string | null {
     const normalizedReceiptSha256 = normalizeSha256Text(receiptSha256);
     const normalizedReviewArtifactSha256 = normalizeSha256Text(reviewArtifactSha256);
-    return normalizedReceiptSha256 || normalizedReviewArtifactSha256 || null;
+    const normalizedReviewerInvocationSha256 = normalizeSha256Text(reviewerInvocationSha256);
+    if (reusedExistingReview) {
+        return normalizedReceiptSha256
+            ? `receipt:${normalizedReceiptSha256}`
+            : normalizedReviewArtifactSha256 ? `artifact:${normalizedReviewArtifactSha256}` : null;
+    }
+    return normalizedReviewerInvocationSha256
+        ? `invocation:${normalizedReviewerInvocationSha256}`
+        : normalizedReceiptSha256
+            ? `receipt:${normalizedReceiptSha256}`
+            : normalizedReviewArtifactSha256 ? `artifact:${normalizedReviewArtifactSha256}` : null;
 }
 
 export function buildReviewAttemptSummary(options: {
@@ -590,7 +640,7 @@ export function buildReviewAttemptSummary(options: {
 }): ReviewAttemptSummary | null {
     return withReviewArtifactReadBarrier(options.reviewsRoot, () => {
         const attemptCounts = new Map<string, ReviewAttemptTypeSummary>();
-        const eventEvidenceKeysByType = new Map<string, Set<string>>();
+        const seenEvidenceKeysByType = new Map<string, Set<string>>();
         const diagnosticAttempts: ReviewAttemptDiagnosticInput[] = [];
         const currentPreflightFingerprints = readPreflightDomainScopeFingerprints(options.currentPreflight);
         const excludedReviewTypes = options.excludedReviewTypes ?? ['test'];
@@ -607,16 +657,31 @@ export function buildReviewAttemptSummary(options: {
             if (!eventAttempt) {
                 continue;
             }
-            const eventEvidenceKey = buildReviewAttemptEvidenceKey(eventAttempt.receiptSha256, eventAttempt.reviewArtifactSha256);
-            const reviewTypeEvidenceKeys = eventEvidenceKeysByType.get(eventAttempt.reviewType) || new Set<string>();
+            const eventEvidenceKey = buildReviewAttemptEvidenceKey(
+                eventAttempt.receiptSha256,
+                eventAttempt.reviewArtifactSha256,
+                eventAttempt.reviewerInvocationSha256,
+                eventAttempt.reusedExistingReview
+            );
+            const reviewTypeEvidenceKeys = seenEvidenceKeysByType.get(eventAttempt.reviewType) || new Set<string>();
             if (eventEvidenceKey && reviewTypeEvidenceKeys.has(eventEvidenceKey)) {
                 continue;
             }
             if (eventEvidenceKey) {
                 reviewTypeEvidenceKeys.add(eventEvidenceKey);
-                eventEvidenceKeysByType.set(eventAttempt.reviewType, reviewTypeEvidenceKeys);
+                seenEvidenceKeysByType.set(eventAttempt.reviewType, reviewTypeEvidenceKeys);
             }
             if (eventAttempt.reusedExistingReview) {
+                if (eventAttempt.verdict !== 'MISSING_OR_INVALID') {
+                    diagnosticAttempts.push({
+                        reviewType: eventAttempt.reviewType,
+                        verdict: eventAttempt.verdict,
+                        reusedExistingReview: true,
+                        scopeHash: eventAttempt.scopeHash,
+                        currentScope: eventAttempt.currentScope
+                    });
+                    taskEventAttemptCount += 1;
+                }
                 continue;
             }
             const summary = attemptCounts.get(eventAttempt.reviewType) || createReviewAttemptTypeSummary(eventAttempt.reviewType);
@@ -641,12 +706,29 @@ export function buildReviewAttemptSummary(options: {
             )) {
                 const fallbackEvidenceKey = buildReviewAttemptEvidenceKey(
                     fallbackAttempt.receiptSha256,
-                    fallbackAttempt.reviewArtifactSha256
+                    fallbackAttempt.reviewArtifactSha256,
+                    fallbackAttempt.reviewerInvocationSha256,
+                    fallbackAttempt.reusedExistingReview
                 );
-                if (fallbackEvidenceKey && eventEvidenceKeysByType.get(reviewType)?.has(fallbackEvidenceKey)) {
+                const reviewTypeEvidenceKeys = seenEvidenceKeysByType.get(reviewType) || new Set<string>();
+                if (fallbackEvidenceKey && reviewTypeEvidenceKeys.has(fallbackEvidenceKey)) {
                     continue;
                 }
+                if (fallbackEvidenceKey) {
+                    reviewTypeEvidenceKeys.add(fallbackEvidenceKey);
+                    seenEvidenceKeysByType.set(reviewType, reviewTypeEvidenceKeys);
+                }
                 if (fallbackAttempt.reusedExistingReview) {
+                    if (fallbackAttempt.verdict !== 'MISSING_OR_INVALID') {
+                        diagnosticAttempts.push({
+                            reviewType,
+                            verdict: fallbackAttempt.verdict,
+                            reusedExistingReview: true,
+                            scopeHash: fallbackAttempt.scopeHash,
+                            currentScope: fallbackAttempt.currentScope
+                        });
+                        fallbackAttemptCount += 1;
+                    }
                     continue;
                 }
                 const summary = attemptCounts.get(reviewType) || createReviewAttemptTypeSummary(reviewType);
@@ -666,7 +748,7 @@ export function buildReviewAttemptSummary(options: {
         const reviewTypes = [...attemptCounts.values()]
             .filter((entry) => entry.total_attempts > 0)
             .sort((left, right) => left.review_type.localeCompare(right.review_type));
-        if (reviewTypes.length === 0) {
+        if (reviewTypes.length === 0 && diagnosticAttempts.length === 0) {
             return null;
         }
 

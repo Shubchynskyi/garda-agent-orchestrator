@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     fs,
     path,
+    createHash,
     buildTaskAuditSummary,
     formatTaskAuditSummaryText,
     formatFinalCloseoutMarkdown,
@@ -855,6 +856,18 @@ describe('gates/task-audit-summary', () => {
                 invocation_attested_at_utc: timing.invocation_attested_at_utc
             };
             fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+            const duplicateReceipt = {
+                ...receipt,
+                recorded_at_utc: '2026-04-29T00:01:01.000Z',
+                review_result_recorded_at_utc: '2026-04-29T00:01:01.000Z'
+            };
+            const duplicateReceiptText = `${JSON.stringify(duplicateReceipt, null, 2)}\n`;
+            const duplicateReceiptSha256 = createHash('sha256').update(duplicateReceiptText, 'utf8').digest('hex');
+            fs.writeFileSync(
+                path.join(reviewsDir, `${taskId}-code-receipt-${duplicateReceiptSha256}.json`),
+                duplicateReceiptText,
+                'utf8'
+            );
 
             const result = buildTaskAuditSummary({
                 taskId,

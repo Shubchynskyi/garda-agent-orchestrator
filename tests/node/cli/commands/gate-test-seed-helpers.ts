@@ -1031,6 +1031,7 @@ function buildFixtureFindingsReport(options: {
     reviewTreeStateSha256: string | null;
     coverageContract: ReviewCoverageContract;
     findingSeverity: 'critical' | 'high' | 'medium' | 'low' | null;
+    residualRisk?: boolean;
 }): Record<string, unknown> {
     const defaultEvidenceFile = options.coverageContract.obligations.find((entry) => entry.kind === 'file')?.target
         || 'src/app.ts';
@@ -1046,6 +1047,14 @@ function buildFixtureFindingsReport(options: {
         coverage_obligation_ids: options.coverageContract.obligations.map((obligation) => obligation.id)
     };
     const findingIds = options.findingSeverity ? [findingId] : [];
+    const residualRisk = {
+        id: 'R-001',
+        description: 'Seeded residual-risk fixture for downstream gate behavior.',
+        evidence: [{
+            location: `${defaultEvidenceFile}:1`,
+            observation: 'The fixture intentionally records a residual risk.'
+        }]
+    };
     return {
         schema_version: 1,
         task_id: options.taskId,
@@ -1080,7 +1089,7 @@ function buildFixtureFindingsReport(options: {
             medium: options.findingSeverity === 'medium' ? [finding] : [],
             low: options.findingSeverity === 'low' ? [finding] : []
         },
-        residual_risks: [],
+        residual_risks: options.residualRisk ? [residualRisk] : [],
         reviewer_notes: []
     };
 }
@@ -1093,6 +1102,7 @@ function buildFixtureFindingsContent(options: {
     coverageContract: ReviewCoverageContract;
     verdict: string;
     findingSeverity?: 'critical' | 'high' | 'medium' | 'low' | null;
+    residualRisk?: boolean;
 }): string {
     const report = buildFixtureFindingsReport({
         taskId: options.taskId,
@@ -1102,7 +1112,8 @@ function buildFixtureFindingsContent(options: {
         coverageContract: options.coverageContract,
         findingSeverity: options.findingSeverity === undefined
             ? (/\bFAILED\b/u.test(options.verdict) ? 'high' : null)
-            : options.findingSeverity
+            : options.findingSeverity,
+        residualRisk: options.residualRisk
     });
     return `${JSON.stringify(report, null, 2)}\n`;
 }
@@ -1116,6 +1127,7 @@ export function writeReceiptBackedReviewArtifact(
     options: {
         allowLegacyManualReviewContext?: boolean;
         findingSeverity?: 'critical' | 'high' | 'medium' | 'low' | null;
+        residualRisk?: boolean;
     } = {}
 ): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
@@ -1158,7 +1170,8 @@ export function writeReceiptBackedReviewArtifact(
             reviewTreeStateSha256,
             coverageContract,
             verdict,
-            findingSeverity: options.findingSeverity
+            findingSeverity: options.findingSeverity,
+            residualRisk: options.residualRisk
         });
     }
     fs.writeFileSync(artifactPath, content, 'utf8');

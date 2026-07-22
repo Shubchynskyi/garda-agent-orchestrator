@@ -1,5 +1,6 @@
 import type { FinalCloseoutArtifact, TaskAuditSummaryResult } from './task-audit-summary';
 import type { ReviewAttemptSummary } from './task-audit-summary-collectors';
+import type { ReviewFindingsAuditSummary } from './task-audit-summary-review-findings';
 import {
     buildAgentReportBlock,
     getAgentReportMessages
@@ -96,6 +97,55 @@ function getReviewAttemptSummaryLine(summary: ReviewAttemptSummary | null | unde
         return `${visibleSummaryLine}; ${reviewCycleSummaryLine}`;
     }
     return visibleSummaryLine || reviewCycleSummaryLine || null;
+}
+
+function appendReviewFindingsAuditLines(
+    lines: string[],
+    summary: ReviewFindingsAuditSummary | null | undefined,
+    indent = ''
+): void {
+    if (!summary) {
+        return;
+    }
+    lines.push(`${indent}${summary.visible_summary_line}`);
+    for (const lane of summary.lanes) {
+        lines.push(
+            `${indent}Review findings ${lane.review_type}: source=${lane.source_mode}; validation=${lane.validation_status}; ` +
+            `disposition=${lane.disposition_status}; fix_now=${lane.disposition_counts.fix_now}; ` +
+            `follow_up=${lane.disposition_counts.create_follow_up}; ignored=${lane.disposition_counts.ignore}; ` +
+            `remaining=${lane.remaining_blocker_ids.join(',') || 'none'}.`
+        );
+        for (const violation of lane.validation_violations) {
+            lines.push(`${indent}  Validation violation: ${violation}`);
+        }
+        for (const item of lane.findings) {
+            lines.push(
+                `${indent}  Finding ${lane.review_type}/${item.id}: kind=${item.kind}; severity=${item.severity}; ` +
+                `title=${item.title || 'none'}; ` +
+                `action=${item.action || 'evidence_only'}; blocking=${item.blocking}; ` +
+                `materialization=${item.follow_up_task_id ? `task:${item.follow_up_task_id}` : item.materialization_status || 'none'}; ` +
+                `evidence=${item.evidence_locations.join(',') || 'none'}; description=${item.description}`
+            );
+        }
+        for (const violation of lane.disposition_violations) {
+            lines.push(`${indent}  Disposition blocker: ${violation}`);
+        }
+    }
+    for (const failure of summary.validation_failures) {
+        lines.push(
+            `${indent}Rejected findings validation ${failure.review_type} at ${failure.timestamp_utc || 'unknown'}: ` +
+            `${failure.violation}`
+        );
+    }
+    for (const cycle of summary.remediation_cycles) {
+        lines.push(
+            `${indent}Remediation cycle ${cycle.timestamp_utc || 'unknown'}: reason=${cycle.reason || 'unknown'}; ` +
+            `invalidated=${cycle.invalidated_review_types.join(',') || 'none'}; ` +
+            `preserved=${cycle.preserved_review_types.join(',') || 'none'}; ` +
+            `launch_required=${cycle.launch_required_review_types.join(',') || 'none'}; ` +
+            `reused=${cycle.reused_review_types.join(',') || 'none'}.`
+        );
+    }
 }
 
 function formatTaskModeAuthorizationSummary(
@@ -244,6 +294,7 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     if (reviewAttemptSummaryLine) {
         lines.push(reviewAttemptSummaryLine);
     }
+    appendReviewFindingsAuditLines(lines, closeout.review_findings_audit);
     if (closeout.review_coverage_summary) {
         lines.push(closeout.review_coverage_summary.visible_summary_line);
         for (const entry of closeout.review_coverage_summary.entries) {
@@ -382,6 +433,7 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         lines.push('');
         lines.push(reviewAttemptSummaryLine);
     }
+    appendReviewFindingsAuditLines(lines, summary.review_findings_audit);
     if (summary.review_coverage_summary) {
         lines.push(summary.review_coverage_summary.visible_summary_line);
         for (const entry of summary.review_coverage_summary.entries) {
@@ -507,6 +559,7 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     if (summary.final_closeout.review_attempt_summary?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.review_attempt_summary.visible_summary_line}`);
     }
+    appendReviewFindingsAuditLines(lines, summary.final_closeout.review_findings_audit, '  ');
     if (summary.final_closeout.review_coverage_summary) {
         lines.push(`  ${summary.final_closeout.review_coverage_summary.visible_summary_line}`);
     }

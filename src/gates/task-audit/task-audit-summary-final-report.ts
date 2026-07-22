@@ -120,6 +120,48 @@ function buildFullSuiteTimeoutEvidenceLines(closeout: FinalCloseoutArtifact): st
     return lines;
 }
 
+function buildReviewFindingsLines(closeout: FinalCloseoutArtifact): string[] {
+    const summary = closeout.review_findings_audit;
+    if (!summary) {
+        return ['none'];
+    }
+    const lines = [summary.visible_summary_line];
+    for (const lane of summary.lanes) {
+        lines.push(
+            `${lane.review_type}: source=${lane.source_mode}; validation=${lane.validation_status}; ` +
+            `disposition=${lane.disposition_status}; remaining=${lane.remaining_blocker_ids.join(',') || 'none'}`
+        );
+        for (const violation of lane.validation_violations) {
+            lines.push(`${lane.review_type} validation: ${violation}`);
+        }
+        for (const item of lane.findings) {
+            lines.push(
+                `${lane.review_type}/${item.id}: severity=${item.severity}; title=${item.title || 'none'}; ` +
+                `action=${item.action || 'evidence_only'}; ` +
+                `blocking=${item.blocking}; materialization=${item.follow_up_task_id ? `task:${item.follow_up_task_id}` : item.materialization_status || 'none'}; ` +
+                `evidence=${item.evidence_locations.join(',') || 'none'}; ${item.description}`
+            );
+        }
+        for (const violation of lane.disposition_violations) {
+            lines.push(`${lane.review_type} disposition: ${violation}`);
+        }
+    }
+    for (const failure of summary.validation_failures) {
+        lines.push(
+            `${failure.review_type} rejected validation (${failure.timestamp_utc || 'unknown'}): ${failure.violation}`
+        );
+    }
+    for (const cycle of summary.remediation_cycles) {
+        lines.push(
+            `remediation cycle (${cycle.timestamp_utc || 'unknown'}): ` +
+            `invalidated=${cycle.invalidated_review_types.join(',') || 'none'}; ` +
+            `launch_required=${cycle.launch_required_review_types.join(',') || 'none'}; ` +
+            `reused=${cycle.reused_review_types.join(',') || 'none'}`
+        );
+    }
+    return lines;
+}
+
 export function formatFinalUserReport(closeout: FinalCloseoutArtifact): string {
     const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
     const profile = closeout.implementation_summary.active_profile || 'unknown';
@@ -154,6 +196,9 @@ export function formatFinalUserReport(closeout: FinalCloseoutArtifact): string {
             lines.push(buildFinalUserReportReviewLine(reviewType, verdict, timingEntries.get(reviewType) || []));
         }
     }
+    lines.push('');
+    lines.push('Review Findings:');
+    lines.push(...buildReviewFindingsLines(closeout));
     lines.push('');
     lines.push('Full-suite Timeout Evidence:');
     lines.push(...buildFullSuiteTimeoutEvidenceLines(closeout));

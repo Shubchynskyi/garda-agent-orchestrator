@@ -253,9 +253,11 @@ export function buildReviewTimingAuditSummary(
         for (const receiptPath of listReviewReceiptPaths(reviewsRoot, taskId, reviewType)) {
             const entry = buildReviewTimingAuditEntry(taskId, reviewType, receiptPath, events, compileSequence);
             if (entry) {
-                const receiptIdentity = entry.receipt_sha256
-                    ? `${entry.review_type}:${entry.receipt_sha256}`
-                    : `${entry.review_type}:${entry.receipt_path}`;
+                const receiptIdentity = entry.provider_invocation_id
+                    ? `${entry.review_type}:invocation:${entry.provider_invocation_id}`
+                    : entry.receipt_sha256
+                        ? `${entry.review_type}:receipt:${entry.receipt_sha256}`
+                        : `${entry.review_type}:path:${entry.receipt_path}`;
                 if (seenReceiptHashes.has(receiptIdentity)) {
                     continue;
                 }
