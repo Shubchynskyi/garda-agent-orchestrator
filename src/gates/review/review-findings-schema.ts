@@ -1471,16 +1471,20 @@ function validateConcreteReviewEvidenceLocations(
         ? createChangedFileLineCountResolver(lineValidationOptions)
         : null;
 
-    for (const [noteIndex, note] of reportParts.validationNotes.entries()) {
-        validateEvidenceLocations(
-            note.evidence,
-            `validation_notes[${noteIndex}]`,
-            changedFiles,
-            expectedReviewType,
-            admissiblePaths,
-            getChangedFileLineCount,
-            violations
-        );
+    const hasFindingsOrResidualRisks = getAllFindings(reportParts.findings).length > 0
+        || reportParts.residualRisks.length > 0;
+    if (hasFindingsOrResidualRisks) {
+        for (const [noteIndex, note] of reportParts.validationNotes.entries()) {
+            validateEvidenceLocations(
+                note.evidence,
+                `validation_notes[${noteIndex}]`,
+                changedFiles,
+                expectedReviewType,
+                admissiblePaths,
+                getChangedFileLineCount,
+                violations
+            );
+        }
     }
     if (reportParts.coverageLedger) {
         for (const [entryIndex, entry] of reportParts.coverageLedger.entries.entries()) {

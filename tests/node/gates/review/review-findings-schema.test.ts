@@ -1321,6 +1321,25 @@ test('validateReviewFindingsReport rejects non-concrete evidence locations outsi
     )));
 });
 
+test('validateReviewFindingsReport keeps supplementary validation-note evidence nonblocking when no findings exist', () => {
+    const report = validReport();
+    (report.validation_notes as Array<Record<string, unknown>>)[0].evidence = [
+        evidence(
+            'tests/example.test.ts:20',
+            'Supplementary test evidence must not turn an otherwise valid no-findings review into another review cycle.'
+        )
+    ];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, true, result.violations.join('\n'));
+    assert.equal(result.report?.findings.critical.length, 0);
+    assert.equal(result.report?.findings.high.length, 0);
+    assert.equal(result.report?.findings.medium.length, 0);
+    assert.equal(result.report?.findings.low.length, 0);
+    assert.equal(result.report?.residual_risks.length, 0);
+});
+
 test('validateReviewFindingsContract authenticates non-ledger evidence line numbers', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-findings-lines-'));
     try {
