@@ -2957,6 +2957,25 @@ describe('gates command review result - normalization', () => {
             source_rule: 'review_finding_policy.residual_risk',
             evidence_locations: [`${defaultFile}:1`]
         }]);
+        assert.equal(baseline.schema_version, 2);
+        assert.equal(baseline.delta_base.task_id, taskId);
+        assert.equal(baseline.delta_base.review_type, 'code');
+        assert.equal(
+            baseline.delta_base.review_tree_state_sha256,
+            reviewContext.tree_state.tree_state_sha256
+        );
+        assert.deepEqual(baseline.delta_base.changed_files, reviewContext.task_scope.changed_files);
+        assert.equal(
+            baseline.delta_base.changed_files_sha256,
+            createHash('sha256').update(reviewContext.task_scope.changed_files.join('\n')).digest('hex')
+        );
+        assert.equal(baseline.delta_base.entries.length, 1);
+        assert.equal(baseline.delta_base.entries[0].path, defaultFile);
+        assert.equal(
+            baseline.delta_base.entries[0].content_sha256,
+            createHash('sha256').update(fs.readFileSync(path.join(repoRoot, defaultFile))).digest('hex')
+        );
+        assert.match(baseline.delta_base.snapshot_sha256, /^[0-9a-f]{64}$/u);
         assert.equal(
             baseline.bindings.findings_validation.artifact_sha256,
             receipt.review_findings_validation.artifact_sha256
