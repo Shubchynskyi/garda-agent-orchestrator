@@ -46,9 +46,9 @@ import {
 } from '../review/review-findings-validation-artifact';
 import {
     resolveLockedReviewFindingPolicyFromPreflight,
-    resolveLockedReviewFindingPolicyFromReceiptDisposition,
-    reviewFindingsValidationArtifactHasBlockingFindings
+    resolveLockedReviewFindingPolicyFromReceiptDisposition
 } from '../review/review-finding-disposition';
+import { validateReviewFindingsDispositionEvidence } from '../review/review-findings-disposition-evidence';
 import {
     findLatestRoutingEventForReviewType,
     findLatestTimelineSequence,
@@ -428,26 +428,35 @@ export function validateReviewArtifactGateEligibility(options: {
                             requireAccepted: true
                         });
                         errors.push(...validationArtifact.violations);
+                        const policyResolution = reusedExistingReview
+                            ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt as unknown as Record<string, unknown>)
+                            : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload);
                         findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(
                             artifactPath,
                             validationArtifact.artifact,
-                            reusedExistingReview
-                                ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt as unknown as Record<string, unknown>)
-                                : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload)
+                            policyResolution
                         );
-                        if (
-                            validationArtifact.valid
-                            && reviewFindingsValidationArtifactHasBlockingFindings(
-                                validationArtifact.artifact,
-                                reusedExistingReview
-                                    ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt as unknown as Record<string, unknown>)
-                                    : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload)
-                            )
-                        ) {
-                            errors.push(
-                                `Review artifact '${normalizePath(artifactPath)}' contains fix_now findings in validation artifact; ` +
-                                `fix implementation and rerun compile plus '${reviewKey}' review before continuing.`
-                            );
+                        if (validationArtifact.valid && validationArtifact.artifact && validationArtifact.reference) {
+                            if (!repoRoot || !validationArtifact.artifact_sha256) {
+                                errors.push(
+                                    `Required review '${reviewKey}' cannot validate findings dispositions without ` +
+                                    'repo root and a hash-bound findings validation artifact.'
+                                );
+                            } else {
+                                const dispositionEvidence = validateReviewFindingsDispositionEvidence({
+                                    repoRoot,
+                                    receipt: receipt as unknown as Record<string, unknown>,
+                                    receiptPath,
+                                    reviewArtifactPath: artifactPath,
+                                    expectedTaskId: resolvedTaskId || '',
+                                    expectedReviewType: reviewKey,
+                                    validationArtifact: validationArtifact.artifact,
+                                    validationArtifactPath: validationArtifact.reference.artifact_path,
+                                    validationArtifactSha256: validationArtifact.artifact_sha256,
+                                    policyResolution
+                                });
+                                errors.push(...dispositionEvidence.violations);
+                            }
                         }
                     }
                 } catch {

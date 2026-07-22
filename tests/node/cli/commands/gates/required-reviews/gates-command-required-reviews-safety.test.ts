@@ -10,9 +10,11 @@ import {
 import {
     runCompileGateCommand,
     runRequiredReviewsCheckCommand} from '../../../../../../src/cli/commands/gates';
+import { runBuildReviewContextCommand } from '../../../../../../src/cli/commands/gate-build-handlers';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../../../src/gates/compile/compile-gate';
 import { buildReviewTreeState } from '../../../../../../src/gates/review/review-tree-state';
+import { materializeReviewFindingsFollowUpTasks } from '../../../../../../src/gates/review/review-findings-follow-up-tasks';
 import {
     buildReviewerLaunchBindingSha256
 } from '../../../../../../src/cli/commands/gate-review-handlers/launch/review-launch-input-attestation';
@@ -461,11 +463,385 @@ async function seedPromptBoundReviewFixture(options: {
     };
 }
 
+async function seedFindingsDispositionConsumerFixture(options: {
+    repoRoot: string;
+    taskId: string;
+    findingSeverity?: 'critical' | 'high' | 'medium' | 'low' | null;
+    preflightOverrides?: Record<string, unknown>;
+}): Promise<{ preflightPath: string; outputFiltersPath: string }> {
+    seedTaskQueue(options.repoRoot, options.taskId);
+    seedInitAnswers(options.repoRoot);
+    const preflightPath = writePreflight(options.repoRoot, options.taskId, options.preflightOverrides);
+    const commandsPath = path.join(options.repoRoot, 'commands-findings-disposition-consumer.md');
+    const outputFiltersPath = path.resolve('live/config/output-filters.json');
+    fs.writeFileSync(commandsPath, [
+        '### Compile Gate (Mandatory)',
+        '```bash',
+        'node -e "console.log(\'build ok\')"',
+        '```'
+    ].join('\n'), 'utf8');
+    runEnterTaskMode({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        taskSummary: 'Consume hash-bound findings dispositions in required reviews'
+    });
+    loadTaskEntryRulePack(options.repoRoot, options.taskId);
+    runHandshakeForTask(options.repoRoot, options.taskId);
+    runShellSmokeForTask(options.repoRoot, options.taskId);
+    loadPostPreflightRulePack(options.repoRoot, options.taskId, preflightPath);
+    await runCompileGateCommand({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        preflightPath,
+        commandsPath,
+        outputFiltersPath,
+        emitMetrics: false
+    });
+    writeReceiptBackedReviewArtifact(
+        options.repoRoot,
+        options.taskId,
+        'code',
+        'REVIEW PASSED',
+        undefined,
+        { findingSeverity: options.findingSeverity }
+    );
+    return { preflightPath, outputFiltersPath };
+}
+
+async function seedReusedFindingsDispositionConsumerFixture(options: {
+    repoRoot: string;
+    taskId: string;
+}): Promise<{ preflightPath: string; outputFiltersPath: string; receiptPath: string }> {
+    seedTaskQueue(options.repoRoot, options.taskId);
+    seedInitAnswers(options.repoRoot);
+    runEnterTaskMode({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        taskSummary: 'Consume hash-bound findings dispositions from reused reviews'
+    });
+    loadTaskEntryRulePack(options.repoRoot, options.taskId);
+    runHandshakeForTask(options.repoRoot, options.taskId);
+    runShellSmokeForTask(options.repoRoot, options.taskId);
+
+    const reviewsRoot = getReviewsRoot(options.repoRoot);
+    const priorPreflightPath = writePreflight(
+        options.repoRoot,
+        options.taskId,
+        {},
+        `${options.taskId}-prior-preflight.json`
+    );
+    const reviewContextPath = path.join(reviewsRoot, `${options.taskId}-code-review-context.json`);
+    seedReusableReviewEvidence(
+        options.repoRoot,
+        options.taskId,
+        'code',
+        'REVIEW PASSED',
+        priorPreflightPath,
+        reviewContextPath,
+        'agent:code-reviewer'
+    );
+
+    const preflightPath = writePreflight(options.repoRoot, options.taskId);
+    loadPostPreflightRulePack(options.repoRoot, options.taskId, preflightPath);
+    writeCompilePassEvidence(options.repoRoot, options.taskId, preflightPath);
+    const reuseResult = await runBuildReviewContextCommand({
+        reviewType: 'code',
+        depth: 2,
+        preflightPath,
+        outputPath: reviewContextPath,
+        repoRoot: options.repoRoot
+    });
+    assert.equal(reuseResult.reusedReviewEvidence, true, reuseResult.outputLines.join('\n'));
+
+    return {
+        preflightPath,
+        outputFiltersPath: path.resolve('live/config/output-filters.json'),
+        receiptPath: path.join(reviewsRoot, `${options.taskId}-code-receipt.json`)
+    };
+}
+
 
 
 
 
 describe('gates command required reviews', () => {
+    it('rejects missing or tampered current findings disposition evidence', async () => {
+        const scenarios = [
+            {
+                taskId: 'T-903-missing-findings-disposition',
+                mutate: (artifactPath: string) => fs.rmSync(artifactPath),
+                expectedDiagnostic: 'Review findings disposition artifact'
+            },
+            {
+                taskId: 'T-903-tampered-findings-disposition',
+                mutate: (artifactPath: string) => {
+                    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+                    const summary = artifact.summary as Record<string, unknown>;
+                    summary.blocking_count = 1;
+                    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+                },
+                expectedDiagnostic: 'sha256 mismatch'
+            }
+        ];
+        for (const scenario of scenarios) {
+            const repoRoot = createTempRepo();
+            const { preflightPath, outputFiltersPath } = await seedFindingsDispositionConsumerFixture({
+                repoRoot,
+                taskId: scenario.taskId
+            });
+            const artifactPath = path.join(
+                getReviewsRoot(repoRoot),
+                `${scenario.taskId}-code-findings-disposition.json`
+            );
+            scenario.mutate(artifactPath);
+
+            const result = runRequiredReviewsCheckCommand({
+                repoRoot,
+                taskId: scenario.taskId,
+                preflightPath,
+                codeReviewVerdict: 'REVIEW PASSED',
+                reviewAuthorshipAttestationJson: '{"code":true}',
+                outputFiltersPath,
+                emitMetrics: false
+            });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, result.outputLines.join('\n'));
+            assert.ok(
+                result.outputLines.some((line) => line.includes(scenario.expectedDiagnostic)),
+                result.outputLines.join('\n')
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('requires create_follow_up dispositions to be materially satisfied before required reviews pass', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-pending-findings-follow-up';
+        const { preflightPath, outputFiltersPath } = await seedFindingsDispositionConsumerFixture({
+            repoRoot,
+            taskId,
+            findingSeverity: 'low'
+        });
+
+        const blocked = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(blocked.exitCode, EXIT_GATE_FAILURE, blocked.outputLines.join('\n'));
+        assert.ok(
+            blocked.outputLines.some((line) => line.includes('Review findings follow-up artifact') && line.includes('is missing')),
+            blocked.outputLines.join('\n')
+        );
+
+        const materialized = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId,
+            reviewType: 'code'
+        });
+        assert.ok(
+            materialized.status === 'MATERIALIZED' || materialized.status === 'ALREADY_MATERIALIZED',
+            materialized.violations.join('\n')
+        );
+
+        const passed = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(passed.exitCode, 0, passed.outputLines.join('\n'));
+        assert.equal(passed.outputLines[0], 'REVIEW_GATE_PASSED');
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects an unsatisfied fix_now disposition', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-unsatisfied-findings-fix-now';
+        const { preflightPath, outputFiltersPath } = await seedFindingsDispositionConsumerFixture({
+            repoRoot,
+            taskId,
+            findingSeverity: 'high'
+        });
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE, result.outputLines.join('\n'));
+        assert.ok(
+            result.outputLines.some((line) => line.includes('contains 1 unsatisfied fix_now finding')),
+            result.outputLines.join('\n')
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('accepts reused disposition evidence and rejects later receipt-field tampering', async () => {
+        const scenarios = [
+            { taskId: 'T-903-reused-findings-disposition', tamperReceipt: false },
+            { taskId: 'T-903-tampered-reused-findings-disposition', tamperReceipt: true }
+        ];
+        for (const scenario of scenarios) {
+            const repoRoot = createTempRepo();
+            const { preflightPath, outputFiltersPath, receiptPath } =
+                await seedReusedFindingsDispositionConsumerFixture({
+                    repoRoot,
+                    taskId: scenario.taskId
+                });
+            const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+            assert.equal(receipt.reused_existing_review, true);
+            const disposition = receipt.review_findings_disposition as Record<string, unknown>;
+            assert.equal(disposition.policy_source, 'receipt_review_findings_disposition');
+            if (scenario.tamperReceipt) {
+                const findings = disposition.findings as Record<string, Record<string, unknown>>;
+                findings.low.action = 'ignore';
+                fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+            }
+
+            const result = runRequiredReviewsCheckCommand({
+                repoRoot,
+                taskId: scenario.taskId,
+                preflightPath,
+                codeReviewVerdict: 'REVIEW PASSED',
+                reviewAuthorshipAttestationJson: '{"code":true}',
+                outputFiltersPath,
+                emitMetrics: false
+            });
+
+            if (scenario.tamperReceipt) {
+                assert.equal(result.exitCode, EXIT_GATE_FAILURE, result.outputLines.join('\n'));
+                assert.ok(
+                    result.outputLines.some((line) => (
+                        line.includes('does not match the system-derived accepted findings and locked policy')
+                    )),
+                    result.outputLines.join('\n')
+                );
+            } else {
+                assert.equal(result.exitCode, 0, result.outputLines.join('\n'));
+                assert.equal(result.outputLines[0], 'REVIEW_GATE_PASSED');
+            }
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects substituted follow-up items even when the materialized count still matches', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-substituted-findings-follow-up';
+        const { preflightPath, outputFiltersPath } = await seedFindingsDispositionConsumerFixture({
+            repoRoot,
+            taskId,
+            findingSeverity: 'low'
+        });
+        const materialized = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId,
+            reviewType: 'code'
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.violations.join('\n'));
+        const artifact = JSON.parse(fs.readFileSync(materialized.artifact_path, 'utf8')) as Record<string, unknown>;
+        const items = artifact.items as Array<Record<string, unknown>>;
+        const followUpItem = items.find((item) => item.action === 'create_follow_up');
+        assert.ok(followUpItem);
+        followUpItem.fingerprint = 'a'.repeat(64);
+        fs.writeFileSync(materialized.artifact_path, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE, result.outputLines.join('\n'));
+        assert.ok(
+            result.outputLines.some((line) => line.includes('must have exactly one materialized item bound by fingerprint')),
+            result.outputLines.join('\n')
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects a valid follow-up fingerprint paired with an unrelated task id', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-substituted-findings-follow-up-task';
+        const { preflightPath, outputFiltersPath } = await seedFindingsDispositionConsumerFixture({
+            repoRoot,
+            taskId,
+            findingSeverity: 'low'
+        });
+        const materialized = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId,
+            reviewType: 'code'
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.violations.join('\n'));
+        const artifact = JSON.parse(fs.readFileSync(materialized.artifact_path, 'utf8')) as Record<string, unknown>;
+        const items = artifact.items as Array<Record<string, unknown>>;
+        const followUpItem = items.find((item) => item.action === 'create_follow_up');
+        assert.ok(followUpItem);
+        followUpItem.task_id = `${taskId}-F999`;
+        fs.writeFileSync(materialized.artifact_path, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE, result.outputLines.join('\n'));
+        assert.ok(
+            result.outputLines.some((line) => line.includes('does not resolve in TASK.md')),
+            result.outputLines.join('\n')
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects current findings dispositions without a locked profile snapshot', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-unlocked-findings-disposition';
+        const { preflightPath, outputFiltersPath } = await seedFindingsDispositionConsumerFixture({
+            repoRoot,
+            taskId,
+            preflightOverrides: { profile_policy_snapshot: null }
+        });
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE, result.outputLines.join('\n'));
+        assert.ok(
+            result.outputLines.some((line) => line.includes('fallback strict policy is not current-cycle evidence')),
+            result.outputLines.join('\n')
+        );
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails required reviews gate when authorship attestation is false for a mandatory review', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-false-authorship-attestation';

@@ -41,8 +41,15 @@ import {
 import {
     buildReviewFindingsValidationArtifact,
     getReviewFindingsValidationArtifactPath,
-    getReviewFindingsValidationArtifactSnapshotPath
+    getReviewFindingsValidationArtifactSnapshotPath,
+    type ReviewFindingsValidationArtifact
 } from '../../../../src/gates/review/review-findings-validation-artifact';
+import {
+    buildReviewFindingsDispositionArtifact,
+    getReviewFindingsDispositionArtifactPath,
+    getReviewFindingsDispositionArtifactSnapshotPath
+} from '../../../../src/gates/review/review-findings-disposition-artifact';
+import {resolveLockedReviewFindingPolicyFromPreflight} from '../../../../src/gates/review/review-finding-disposition';
 import {resolveDefaultReviewScratchPath} from '../../../../src/gates/review/review-scratch-paths';
 import {
     buildReviewerLaunchBindingSha256
@@ -471,6 +478,19 @@ export function writePreflight(
             performance: false,
             infra: false,
             dependency: false
+        },
+        profile_policy_snapshot: {
+            review_finding_policy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'fix_now',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
         },
         triggers: {},
         changed_files: ['src/app.ts'],
@@ -957,13 +977,60 @@ function sha256JsonFixture(value: unknown): string {
     return createHash('sha256').update(`${JSON.stringify(value, null, 2)}\n`).digest('hex');
 }
 
+function attachFixtureFindingsDispositionEvidence(options: {
+    receipt: Record<string, unknown>;
+    artifactPath: string;
+    taskId: string;
+    reviewType: string;
+    validationArtifact: ReviewFindingsValidationArtifact;
+    validationArtifactPath: string;
+    validationArtifactSha256: string;
+    preflight: Record<string, unknown> | null;
+}): { artifactSha256: string | null; resultSha256: string | null } {
+    if (!options.validationArtifact.validation_result.accepted) {
+        return { artifactSha256: null, resultSha256: null };
+    }
+    const artifactPath = getReviewFindingsDispositionArtifactPath(options.artifactPath);
+    const artifact = buildReviewFindingsDispositionArtifact({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        validationArtifact: options.validationArtifact,
+        validationArtifactPath: options.validationArtifactPath,
+        validationArtifactSha256: options.validationArtifactSha256,
+        policyResolution: resolveLockedReviewFindingPolicyFromPreflight(options.preflight)
+    });
+    const artifactSha256 = sha256JsonFixture(artifact);
+    const snapshotPath = getReviewFindingsDispositionArtifactSnapshotPath(artifactPath, artifactSha256);
+    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(snapshotPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+    options.receipt.review_findings_disposition = artifact.disposition_result;
+    options.receipt.review_findings_disposition_artifact = {
+        artifact_path: path.normalize(artifactPath).replace(/\\/g, '/'),
+        artifact_sha256: artifactSha256,
+        snapshot_path: path.normalize(snapshotPath).replace(/\\/g, '/'),
+        snapshot_sha256: artifactSha256,
+        disposition_result_sha256: artifact.disposition_result_sha256,
+        policy_id: artifact.policy.policy_id,
+        policy_source: artifact.policy.policy_source,
+        item_count: artifact.summary.item_count,
+        fix_now_count: artifact.summary.fix_now_count,
+        follow_up_pending_count: artifact.summary.follow_up_pending_count,
+        ignored_count: artifact.summary.ignored_count,
+        blocking_count: artifact.summary.blocking_count
+    };
+    return {
+        artifactSha256,
+        resultSha256: artifact.disposition_result_sha256
+    };
+}
+
 function buildFixtureFindingsReport(options: {
     taskId: string;
     reviewKey: string;
     reviewContextSha256: string;
     reviewTreeStateSha256: string | null;
     coverageContract: ReviewCoverageContract;
-    failed: boolean;
+    findingSeverity: 'critical' | 'high' | 'medium' | 'low' | null;
 }): Record<string, unknown> {
     const defaultEvidenceFile = options.coverageContract.obligations.find((entry) => entry.kind === 'file')?.target
         || 'src/app.ts';
@@ -978,6 +1045,7 @@ function buildFixtureFindingsReport(options: {
         }],
         coverage_obligation_ids: options.coverageContract.obligations.map((obligation) => obligation.id)
     };
+    const findingIds = options.findingSeverity ? [findingId] : [];
     return {
         schema_version: 1,
         task_id: options.taskId,
@@ -1002,15 +1070,15 @@ function buildFixtureFindingsReport(options: {
                         location: `${obligation.kind === 'file' ? obligation.target : defaultEvidenceFile}:1`,
                         observation: `Concrete fixture evidence covers ${obligation.kind} ${obligation.target} for receipt-backed review behavior.`
                     }],
-                    finding_ids: options.failed ? [findingId] : []
+                    finding_ids: findingIds
                 }))
                 : []
         },
         findings: {
-            critical: [],
-            high: options.failed ? [finding] : [],
-            medium: [],
-            low: []
+            critical: options.findingSeverity === 'critical' ? [finding] : [],
+            high: options.findingSeverity === 'high' ? [finding] : [],
+            medium: options.findingSeverity === 'medium' ? [finding] : [],
+            low: options.findingSeverity === 'low' ? [finding] : []
         },
         residual_risks: [],
         reviewer_notes: []
@@ -1024,6 +1092,7 @@ function buildFixtureFindingsContent(options: {
     reviewTreeStateSha256: string | null;
     coverageContract: ReviewCoverageContract;
     verdict: string;
+    findingSeverity?: 'critical' | 'high' | 'medium' | 'low' | null;
 }): string {
     const report = buildFixtureFindingsReport({
         taskId: options.taskId,
@@ -1031,7 +1100,9 @@ function buildFixtureFindingsContent(options: {
         reviewContextSha256: options.reviewContextSha256,
         reviewTreeStateSha256: options.reviewTreeStateSha256,
         coverageContract: options.coverageContract,
-        failed: /\bFAILED\b/u.test(options.verdict)
+        findingSeverity: options.findingSeverity === undefined
+            ? (/\bFAILED\b/u.test(options.verdict) ? 'high' : null)
+            : options.findingSeverity
     });
     return `${JSON.stringify(report, null, 2)}\n`;
 }
@@ -1042,7 +1113,10 @@ export function writeReceiptBackedReviewArtifact(
     reviewKey: string,
     verdict: string,
     contentLines?: string[],
-    options: { allowLegacyManualReviewContext?: boolean } = {}
+    options: {
+        allowLegacyManualReviewContext?: boolean;
+        findingSeverity?: 'critical' | 'high' | 'medium' | 'low' | null;
+    } = {}
 ): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, {recursive: true});
@@ -1083,7 +1157,8 @@ export function writeReceiptBackedReviewArtifact(
             reviewContextSha256: reviewContextHash,
             reviewTreeStateSha256,
             coverageContract,
-            verdict
+            verdict,
+            findingSeverity: options.findingSeverity
         });
     }
     fs.writeFileSync(artifactPath, content, 'utf8');
@@ -1117,9 +1192,11 @@ export function writeReceiptBackedReviewArtifact(
     let reviewScopeSha256: string | null = null;
     let codeScopeSha256: string | null = null;
     let reviewContextReuseSha256: string | null = null;
+    let preflightPayload: Record<string, unknown> | null = null;
     if (fs.existsSync(preflightPath) && fs.statSync(preflightPath).isFile()) {
         const preflightText = fs.readFileSync(preflightPath, 'utf8');
         const preflight = JSON.parse(preflightText) as Record<string, unknown>;
+        preflightPayload = preflight;
         preflightSha256 = crypto.createHash('sha256').update(preflightText).digest('hex');
         scopeSha256 = String(
             (preflight.metrics as Record<string, unknown> | undefined)?.scope_sha256
@@ -1245,12 +1322,24 @@ export function writeReceiptBackedReviewArtifact(
             validation_result_sha256: validationArtifact.validation_result_sha256,
             violation_count: validationArtifact.validation_result.violations.length
         };
+        const dispositionEvidence = attachFixtureFindingsDispositionEvidence({
+            receipt: receiptRecord,
+            artifactPath,
+            taskId,
+            reviewType: reviewKey,
+            validationArtifact,
+            validationArtifactPath,
+            validationArtifactSha256,
+            preflight: preflightPayload
+        });
         receiptRecord.review_output_contract = {
             schema_version: 1,
             format: 'findings_json',
             report_sha256: findingsValidation.report ? sha256JsonFixture(findingsValidation.report) : null,
             validation_artifact_sha256: validationArtifactSha256,
             validation_result_sha256: validationArtifact.validation_result_sha256,
+            disposition_artifact_sha256: dispositionEvidence.artifactSha256,
+            disposition_result_sha256: dispositionEvidence.resultSha256,
             raw_output_sha256: artifactHash,
             review_artifact_sha256: artifactHash,
             review_context_sha256: reviewContextHash,
@@ -1537,12 +1626,24 @@ export function seedReusableReviewEvidence(
             validation_result_sha256: validationArtifact.validation_result_sha256,
             violation_count: validationArtifact.validation_result.violations.length
         };
+        const dispositionEvidence = attachFixtureFindingsDispositionEvidence({
+            receipt: receiptRecord,
+            artifactPath,
+            taskId,
+            reviewType: reviewKey,
+            validationArtifact,
+            validationArtifactPath,
+            validationArtifactSha256,
+            preflight
+        });
         receiptRecord.review_output_contract = {
             schema_version: 1,
             format: 'findings_json',
             report_sha256: findingsValidation.report ? sha256JsonFixture(findingsValidation.report) : null,
             validation_artifact_sha256: validationArtifactSha256,
             validation_result_sha256: validationArtifact.validation_result_sha256,
+            disposition_artifact_sha256: dispositionEvidence.artifactSha256,
+            disposition_result_sha256: dispositionEvidence.resultSha256,
             raw_output_sha256: artifactHash,
             review_artifact_sha256: artifactHash,
             review_context_sha256: reviewContextHash,
