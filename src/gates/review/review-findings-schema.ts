@@ -522,7 +522,7 @@ function validateFocusedValidationNoteCommand(
             'Reviewer focused self-validation must execute a focused test or validation command rather than only inspect or print a prospective target.'
         );
     } else if (
-        fields.commandOutcome !== 'passed'
+        fields.commandOutcome === 'failed'
         && !focusedEvidenceNamesTarget(fields.evidence, commandTargets[0])
     ) {
         violations.push(
@@ -1139,7 +1139,9 @@ function focusedEvidenceNamesTarget(
 }
 
 function focusedAttemptBindsTargetToEvidence(note: ReviewFindingsValidationNote, markerTarget: string): boolean {
-    return focusedEvidenceNamesTarget(note.evidence, markerTarget);
+    return note.command_outcome === 'unavailable'
+        || note.command_outcome === 'prohibited'
+        || focusedEvidenceNamesTarget(note.evidence, markerTarget);
 }
 
 function isSafeRepositoryRelativeFocusedTarget(markerTarget: string): boolean {

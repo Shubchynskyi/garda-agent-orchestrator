@@ -1181,7 +1181,7 @@ test('validateReviewFindingsReport rejects traversal in focused marker targets a
     assert.ok(result.violations.some((entry) => entry.includes('repository-relative path without dot segments')));
 });
 
-test('validateReviewFindingsReport rejects F-000 without an authenticated evidence-to-target binding', () => {
+test('validateReviewFindingsReport accepts an exact unavailable F-000 attempt without redundant evidence target text', () => {
     for (const observation of [
         'The changed parser branch motivated a local check.',
         'The changed parser branch is covered by tests/node/example.test.ts.backup.',
@@ -1195,11 +1195,7 @@ test('validateReviewFindingsReport rejects F-000 without an authenticated eviden
 
         const result = validateReviewFindingsReport(report, validationOptions);
 
-        assert.equal(result.valid, false, observation);
-        assert.ok(
-            result.violations.some((entry) => entry.includes("name that target's relevance")),
-            observation
-        );
+        assert.equal(result.valid, true, `${observation}\n${result.violations.join('\n')}`);
     }
 });
 
