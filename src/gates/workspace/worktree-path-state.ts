@@ -7,6 +7,7 @@ export type SafeWorktreePathStatus =
     | 'file'
     | 'directory'
     | 'special'
+    | 'unreviewable'
     | 'symbolic_link'
     | 'unreviewable_symlink'
     | 'outside_repo'
@@ -28,6 +29,8 @@ export interface SafeWorktreePathState {
 
 export interface SafeWorktreePathStateOptions {
     repoRealPath?: string;
+    includeContentHashes?: boolean;
+    distinguishAccessErrors?: boolean;
 }
 
 function resolveRepoRelativePath(repoRoot: string, relativeFile: string): string | null {
@@ -43,6 +46,13 @@ function resolveRepoRelativePath(repoRoot: string, relativeFile: string): string
     return resolvedPath;
 }
 
+function isMissingPathError(error: unknown): boolean {
+    const errorCode = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+    return errorCode === 'ENOENT' || errorCode === 'ENOTDIR';
+}
+
 export function getSafeWorktreePathState(
     repoRoot: string,
     relativeFile: string,
@@ -55,6 +65,7 @@ export function getSafeWorktreePathState(
     try {
         const stat = fs.lstatSync(resolvedPath);
         const repoRealPath = options.repoRealPath || fs.realpathSync(repoRoot);
+        const includeContentHashes = options.includeContentHashes !== false;
         if (stat.isSymbolicLink()) {
             const linkTarget = fs.readlinkSync(resolvedPath);
             const linkBase = {
@@ -81,7 +92,7 @@ export function getSafeWorktreePathState(
                         ...targetBase,
                         status: 'symbolic_link',
                         target_status: 'file',
-                        target_sha256: fileSha256(worktreeRealPath) || null
+                        target_sha256: includeContentHashes ? fileSha256(worktreeRealPath) || null : null
                     };
                 }
                 return {
@@ -89,12 +100,15 @@ export function getSafeWorktreePathState(
                     status: 'unreviewable_symlink',
                     target_status: targetStat.isDirectory() ? 'directory' : 'special'
                 };
-            } catch {
-                // Broken symlinks have no target content to hash; keep the link text reviewable.
+            } catch (error: unknown) {
+                // Keep the link text reviewable while distinguishing absent targets from
+                // targets whose state could not be inspected by fail-closed callers.
                 return {
                     ...linkBase,
                     status: 'symbolic_link',
-                    target_status: 'missing'
+                    target_status: isMissingPathError(error) || !options.distinguishAccessErrors
+                        ? 'missing'
+                        : 'unreviewable'
                 };
             }
         }
@@ -110,14 +124,19 @@ export function getSafeWorktreePathState(
             return {
                 ...base,
                 status: 'file',
-                sha256: fileSha256(resolvedPath) || null
+                sha256: includeContentHashes ? fileSha256(resolvedPath) || null : null
             };
         }
         if (stat.isDirectory()) {
             return { ...base, status: 'directory' };
         }
         return { ...base, status: 'special' };
-    } catch {
-        return { status: 'missing' };
+    } catch (error: unknown) {
+        if (isMissingPathError(error)) {
+            return { status: 'missing' };
+        }
+        return options.distinguishAccessErrors
+            ? { status: 'unreviewable' }
+            : { status: 'missing' };
     }
 }
