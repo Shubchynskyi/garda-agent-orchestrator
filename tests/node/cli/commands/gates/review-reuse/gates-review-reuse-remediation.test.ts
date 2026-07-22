@@ -243,7 +243,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -326,7 +326,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -436,7 +436,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -516,7 +516,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -593,7 +593,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -683,7 +683,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -773,7 +773,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -866,7 +866,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -982,7 +982,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         const priorProvenance = priorReceipt.reviewer_provenance as Record<string, unknown>;
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -1084,7 +1084,7 @@ describe('cli/commands/gates - review reuse remediation', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
