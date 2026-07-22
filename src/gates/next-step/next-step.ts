@@ -3802,7 +3802,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 : { available: false, reason: null };
             const reviewerResultRecoveryIdentity = state.failureKind === 'review-validation-rejected'
                 ? resolveReviewerResultRecoveryIdentity({
-                    launchState: currentReviewerLaunchArtifactEvidence?.state || 'missing_or_invalid',
+                    launchState: currentReviewerLaunchArtifactEvidence?.state === 'provider_failed'
+                        ? 'launched'
+                        : currentReviewerLaunchArtifactEvidence?.state || 'missing_or_invalid',
                     launchReviewerIdentity: currentReviewerLaunchArtifactEvidence?.reviewerIdentity || null,
                     receiptReviewerIdentity: state.reviewerIdentity,
                     contextReviewerIdentity: state.contextReviewerIdentity,

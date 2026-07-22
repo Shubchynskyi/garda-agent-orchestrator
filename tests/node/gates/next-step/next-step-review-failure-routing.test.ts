@@ -1266,7 +1266,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
     });
 
-    it('restarts the review cycle when immutable failure telemetry authenticates the terminalized attempt', () => {
+    it('routes terminalized findings validation failure back to correction when the completed attempt is authenticated', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true });
@@ -1361,11 +1361,11 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.status, 'BLOCKED');
-        assert.equal(result.next_gate, 'restart-review-cycle');
-        assert.match(result.title, /Recover failed 'code' delegated reviewer launch/);
-        assert.match(result.reason, /provider recorded a failed launch/);
-        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
-        assert.equal(result.commands[0].command.includes('record-review-result'), false);
+        assert.equal(result.next_gate, 'record-review-result');
+        assert.match(result.title, /Correct rejected 'code' review findings report/);
+        assert.match(result.reason, /not an implementation defect/);
+        assert.ok(result.commands[0].command.includes('gate record-review-result'));
+        assert.equal(result.commands[0].command.includes('restart-review-cycle'), false);
         assert.equal(result.commands[0].command.includes('agent:pending'), false);
         assert.match(failureIntegrity.event_sha256, /^[0-9a-f]{64}$/);
 
@@ -1379,7 +1379,7 @@ describe('gates/next-step', () => {
 
         fs.writeFileSync(validationArtifactPath, validationArtifactContent);
         const restoredValidationResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        assert.match(restoredValidationResult.title, /Recover failed 'code' delegated reviewer launch/);
+        assert.match(restoredValidationResult.title, /Correct rejected 'code' review findings report/);
 
         const timelineLines = fs.readFileSync(timelinePath, 'utf8').trim().split(/\r?\n/);
         const lastEvent = JSON.parse(timelineLines[timelineLines.length - 1]) as Record<string, unknown>;

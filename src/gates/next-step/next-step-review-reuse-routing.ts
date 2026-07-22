@@ -116,20 +116,6 @@ export interface FailedReviewRemediationRouteOptions {
 export function resolveFailedReviewRemediationRoute(
     options: FailedReviewRemediationRouteOptions
 ): ReviewReuseRoutingRoute | null {
-    if (
-        options.failureKind === 'review-validation-rejected'
-        && options.launchArtifactState === 'provider_failed'
-    ) {
-        return {
-            status: 'BLOCKED',
-            nextGate: 'restart-review-cycle',
-            title: `Recover failed '${options.reviewType}' delegated reviewer launch.`,
-            reason:
-                `Required review '${options.reviewType}' has delegated reviewer start evidence, but the provider recorded a failed launch ` +
-                'after findings validation rejected the completed reviewer output. Restart the review cycle and launch one fresh delegated reviewer.',
-            commands: [options.commands.restartReviewCycle]
-        };
-    }
     if (options.failureKind === 'review-validation-rejected') {
         if (!options.reviewerResultRecoveryIdentity?.ready) {
             const identityReason = options.reviewerResultRecoveryIdentity?.reason || 'resolved_identity_missing';
