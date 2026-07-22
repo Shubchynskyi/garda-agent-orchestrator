@@ -2919,6 +2919,41 @@ describe('gates command review result - normalization', () => {
 
         assert.equal(result.exitCode, 0, result.errors.join('\n'));
         assert.ok(result.logs.some((line) => line.includes('VerdictToken: REVIEW FAILED')), result.logs.join('\n'));
+        const receiptPath = path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        const remediationBaselinePath = path.join(
+            fixture.reviewsRoot,
+            `${taskId}-code-remediation-baseline.json`
+        );
+        assert.equal(fs.existsSync(remediationBaselinePath), true);
+        const baseline = JSON.parse(fs.readFileSync(remediationBaselinePath, 'utf8'));
+        assert.deepEqual(baseline.accepted_findings, []);
+        assert.deepEqual(baseline.accepted_residual_risks.map((risk: { id: string }) => risk.id), ['R-001']);
+        assert.deepEqual(baseline.fix_now_items, [{
+            id: 'R-001',
+            kind: 'residual_risk',
+            severity: 'residual_risk',
+            action: 'fix_now',
+            source_rule: 'review_finding_policy.residual_risk',
+            evidence_locations: [`${defaultFile}:1`]
+        }]);
+        assert.equal(
+            baseline.bindings.findings_validation.artifact_sha256,
+            receipt.review_findings_validation.artifact_sha256
+        );
+        assert.equal(
+            baseline.bindings.findings_disposition.artifact_sha256,
+            receipt.review_findings_disposition_artifact.artifact_sha256
+        );
+        const recordedEvent = readTaskTimelineEvents(repoRoot, taskId)
+            .find((event) => event.event_type === 'REVIEW_RECORDED');
+        const recordedDetails = recordedEvent?.details as Record<string, unknown> | undefined;
+        assert.equal(recordedDetails?.remediation_baseline_path, remediationBaselinePath.replace(/\\/gu, '/'));
+        assert.equal(
+            recordedDetails?.remediation_baseline_sha256,
+            createHash('sha256').update(fs.readFileSync(remediationBaselinePath)).digest('hex')
+        );
+        assert.equal(fs.existsSync(String(recordedDetails?.remediation_baseline_snapshot_path || '')), true);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
