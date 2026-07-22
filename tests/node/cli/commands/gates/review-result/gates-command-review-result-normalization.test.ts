@@ -1868,7 +1868,9 @@ describe('gates command review result - normalization', () => {
                 );
                 if (scenario.expectedAction === 'fix_now') {
                     const baseline = JSON.parse(fs.readFileSync(remediationBaselinePath, 'utf8'));
+                    const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8'));
                     assert.equal(baseline.artifact_type, 'review_findings_remediation_baseline');
+                    assert.equal(baseline.schema_version, 2);
                     assert.equal(baseline.task_id, scenario.taskId);
                     assert.equal(baseline.review_type, 'code');
                     assert.deepEqual(baseline.fix_now_items.map((item: { id: string }) => item.id), ['F-001']);
@@ -1883,6 +1885,24 @@ describe('gates command review result - normalization', () => {
                         baseline.bindings.findings_disposition.artifact_sha256,
                         receipt.review_findings_disposition_artifact.artifact_sha256
                     );
+                    assert.equal(baseline.delta_base.task_id, scenario.taskId);
+                    assert.equal(baseline.delta_base.review_type, 'code');
+                    assert.equal(
+                        baseline.delta_base.review_tree_state_sha256,
+                        reviewContext.tree_state.tree_state_sha256
+                    );
+                    assert.deepEqual(baseline.delta_base.changed_files, ['src/app.ts']);
+                    assert.equal(
+                        baseline.delta_base.changed_files_sha256,
+                        createHash('sha256').update('src/app.ts').digest('hex')
+                    );
+                    assert.equal(baseline.delta_base.entries.length, 1);
+                    assert.equal(baseline.delta_base.entries[0].path, 'src/app.ts');
+                    assert.equal(
+                        baseline.delta_base.entries[0].content_sha256,
+                        createHash('sha256').update(fs.readFileSync(path.join(repoRoot, 'src', 'app.ts'))).digest('hex')
+                    );
+                    assert.match(baseline.delta_base.snapshot_sha256, /^[0-9a-f]{64}$/u);
                     const recordedEvent = readTaskTimelineEvents(repoRoot, scenario.taskId)
                         .find((event) => event.event_type === 'REVIEW_RECORDED');
                     const recordedDetails = recordedEvent?.details as Record<string, unknown> | undefined;

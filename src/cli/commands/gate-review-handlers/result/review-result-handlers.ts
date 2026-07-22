@@ -137,6 +137,9 @@ import {
     getReviewRemediationBaselineSnapshotPath,
     type ReviewRemediationBaselineArtifact
 } from '../../../../gates/review-remediation/review-remediation-baseline';
+import {
+    buildReviewRemediationDeltaBase
+} from '../../../../gates/review-remediation/review-remediation-delta-contract';
 
 function summarizeReviewFindingsReport(report: ReviewFindingsReport): Record<string, unknown> {
     const findingIdsBySeverity = {
@@ -274,8 +277,11 @@ function buildReviewFindingsDispositionEvidence(options: {
 }
 
 function buildReviewRemediationBaselineEvidence(options: {
+    repoRoot: string;
     taskId: string;
     reviewType: string;
+    reviewTreeStateSha256: string;
+    changedFiles: readonly string[];
     reviewArtifactPath: string;
     reviewArtifactSha256: string;
     receipt: Record<string, unknown>;
@@ -285,6 +291,13 @@ function buildReviewRemediationBaselineEvidence(options: {
     profilePolicySnapshot: unknown;
 }): ReviewRemediationBaselineEvidence {
     const artifactPath = getReviewRemediationBaselineArtifactPath(options.reviewArtifactPath);
+    const deltaBase = buildReviewRemediationDeltaBase({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewTreeStateSha256: options.reviewTreeStateSha256,
+        changedFiles: options.changedFiles
+    });
     const payload = buildReviewRemediationBaselineArtifact({
         taskId: options.taskId,
         reviewType: options.reviewType,
@@ -299,7 +312,8 @@ function buildReviewRemediationBaselineEvidence(options: {
         dispositionArtifactPath: options.dispositionEvidence.artifactPath,
         dispositionArtifactSha256: options.dispositionEvidence.artifactSha256,
         dispositionArtifact: options.dispositionEvidence.payload,
-        profilePolicySnapshot: options.profilePolicySnapshot
+        profilePolicySnapshot: options.profilePolicySnapshot,
+        deltaBase
     });
     const artifactSha256 = sha256RedactedJsonPayload(payload);
     return {
@@ -1639,12 +1653,21 @@ async function recordReviewReceiptFromArtifacts(options: {
     const receiptPayloadSha256 = sha256RedactedJsonPayload(receipt);
     let remediationBaselineEvidence: ReviewRemediationBaselineEvidence | null = null;
     if ((findingsDispositionEvidence?.payload.summary.fix_now_count || 0) > 0) {
-        if (!findingsValidationEvidence || !findingsDispositionEvidence || !artifactSha256) {
+        if (
+            !findingsValidationEvidence
+            || !findingsDispositionEvidence
+            || !artifactSha256
+            || !reviewTreeStateSha256
+            || !Array.isArray(preflight.changed_files)
+        ) {
             throw new Error('fix_now review findings require complete remediation baseline evidence.');
         }
         remediationBaselineEvidence = buildReviewRemediationBaselineEvidence({
+            repoRoot: options.repoRoot,
             taskId: options.taskId,
             reviewType: options.reviewType,
+            reviewTreeStateSha256,
+            changedFiles: preflight.changed_files as string[],
             reviewArtifactPath: options.artifactPath,
             reviewArtifactSha256: artifactSha256,
             receipt: receipt as unknown as Record<string, unknown>,
