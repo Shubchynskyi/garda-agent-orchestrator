@@ -6,11 +6,16 @@ import { readProfilesData } from '../../cli/commands/profile/profile-data';
 import { buildProfileFindingPolicyProjection } from '../../cli/commands/profile/profile-finding-policy';
 import { joinOrchestratorPath, toPosix } from '../../gates/shared/helpers';
 import { resolveReviewFollowUpPolicy } from '../../policy/profile-resolver';
+import { loadReviewTriggerPolicy } from '../../policy/review-trigger-policy';
 import { getKnownReviewTypeLabel } from '../review-type-setting-text';
 import type { ReportDataUnavailableEntry, ReportProfileRow, ReportProfilesTab } from './types';
 
 function profilesPath(repoRoot: string): string {
     return joinOrchestratorPath(path.resolve(repoRoot), path.join('live', 'config', 'profiles.json'));
+}
+
+function pathsConfigPath(repoRoot: string): string {
+    return joinOrchestratorPath(path.resolve(repoRoot), path.join('live', 'config', 'paths.json'));
 }
 
 function buildProfileRows(data: ProfilesData): ReportProfileRow[] {
@@ -59,6 +64,7 @@ function buildEmptyProfilesTab(configPath: string, status: ReportProfilesTab['st
         config_exists: status !== 'missing',
         status,
         active_profile: null,
+        review_trigger_policy: null,
         review_types: KNOWN_REVIEW_TYPES.map((id) => ({ id, label: getKnownReviewTypeLabel(id) })),
         profiles: [],
         built_in_profile_names: [],
@@ -76,11 +82,13 @@ export function buildProfilesTab(repoRoot: string): ReportProfilesTab {
     const unavailable: ReportDataUnavailableEntry[] = [];
     try {
         const data = readProfilesData(configPath);
+        const reviewTriggerPolicy = loadReviewTriggerPolicy(pathsConfigPath(repoRoot));
         return {
             config_path: toPosix(configPath),
             config_exists: true,
             status: 'present',
             active_profile: data.active_profile,
+            review_trigger_policy: reviewTriggerPolicy,
             review_types: KNOWN_REVIEW_TYPES.map((id) => ({ id, label: getKnownReviewTypeLabel(id) })),
             profiles: buildProfileRows(data),
             built_in_profile_names: Object.keys(data.built_in_profiles),

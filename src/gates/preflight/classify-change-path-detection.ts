@@ -45,6 +45,7 @@ export interface PathDetectionResult {
     apiTriggered: boolean;
     dependencyTriggered: boolean;
     infraTriggered: boolean;
+    refactorPathTriggeredFiles: string[];
     ordinaryDocPathMatches: OrdinaryDocPathMatch[];
     ordinaryDocPathMatchedFiles: string[];
     safeOrdinaryDocFiles: string[];
@@ -113,6 +114,10 @@ export function detectPathTriggers(input: PathDetectionInput): PathDetectionResu
     const apiTriggered = apiTriggeredFiles.length > 0;
     const dependencyTriggered = normalizedFiles.some((p: string) => callbacks.testMatch(p, classificationConfig.dependency_trigger_regexes));
     const infraTriggered = normalizedFiles.some((p: string) => callbacks.testMatch(p, classificationConfig.infra_trigger_regexes));
+    const refactorPathTriggeredFiles = normalizedFiles.filter((p: string) => (
+        callbacks.testMatch(p, classificationConfig.refactor_trigger_regexes)
+        && !callbacks.testMatch(p, classificationConfig.test_trigger_regexes)
+    ));
 
     const ordinaryDocPathMatches = callbacks.getSafeOrdinaryDocPathMatches(normalizedFiles, classificationConfig);
     const ordinaryDocPathMatchedFiles = [...new Set(ordinaryDocPathMatches.map((entry) => entry.path))].sort();
@@ -166,6 +171,7 @@ export function detectPathTriggers(input: PathDetectionInput): PathDetectionResu
         apiTriggered,
         dependencyTriggered,
         infraTriggered,
+        refactorPathTriggeredFiles,
         ordinaryDocPathMatches,
         ordinaryDocPathMatchedFiles,
         safeOrdinaryDocFiles,

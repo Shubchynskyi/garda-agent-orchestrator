@@ -22,6 +22,43 @@ describe('gates/classify-change refactor triggers', () => {
         assert.equal(result.required_reviews.refactor, true);
     });
 
+    it('merges the configured refactor path trigger and reports the exact matched files', () => {
+        const result = classifyChange({
+            normalizedFiles: ['src/special.ts'],
+            taskIntent: 'Update special runtime behavior',
+            changedLinesTotal: 5,
+            additionsTotal: 5,
+            deletionsTotal: 0,
+            renameCount: 0,
+            detectionSource: 'git_auto',
+            classificationConfig: makeConfig({
+                refactor_trigger_regexes: ['(^|/)src/special\\.ts$']
+            }),
+            reviewCapabilities: defaultCapabilities
+        });
+
+        assert.equal(result.triggers.refactor_path, true);
+        assert.deepEqual(result.triggers.refactor_path_changed_files, ['src/special.ts']);
+        assert.equal(result.required_reviews.refactor, true);
+    });
+
+    it('does not turn refactor wording into a review without runtime-code scope', () => {
+        const result = classifyChange({
+            normalizedFiles: ['docs/refactor-plan.md'],
+            taskIntent: 'Refactor utility functions later',
+            changedLinesTotal: 5,
+            additionsTotal: 5,
+            deletionsTotal: 0,
+            renameCount: 0,
+            detectionSource: 'git_auto',
+            classificationConfig: makeConfig({ refactor_trigger_regexes: [] }),
+            reviewCapabilities: defaultCapabilities
+        });
+
+        assert.equal(result.triggers.refactor_intent, false);
+        assert.equal(result.required_reviews.refactor, false);
+    });
+
     it('triggers refactor review for decomposition and split task intents', () => {
         const decomposeResult = classifyChange({
             normalizedFiles: ['src/ui-dashboard-html.ts'],

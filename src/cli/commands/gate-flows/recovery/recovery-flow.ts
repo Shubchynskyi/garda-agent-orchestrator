@@ -10,7 +10,7 @@ import {
     assertValidTaskId
 } from '../../../../gate-runtime/task-events';
 import { type TokenEconomyConfig } from '../../../../gates/review-context/review-context-token-economy';
-import { getClassificationConfig } from '../../../../gates/preflight/classify-change';
+import { resolveTaskProfileReviewTriggerPolicy } from '../../../../policy/task-profile-policy-snapshot';
 import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../../gates/preflight/build-scoped-diff';
 import { getPreflightContext, getWorkspaceSnapshot } from '../../../../gates/compile/compile-gate';
 import {
@@ -824,7 +824,10 @@ export async function runRestartReviewCycleCommand(
         taskModeIndexRelativePath,
         ...getTaskManualValidationBoundaryFiles(resolvedTaskId, currentRemediationChangedFiles)
     ].filter(Boolean);
-    const classificationConfig = getClassificationConfig(repoRoot);
+    if (!previousTaskMode.profile_policy_snapshot) {
+        throw new Error('Review-cycle recovery requires the authenticated task profile policy snapshot.');
+    }
+    const reviewTriggerPolicy = resolveTaskProfileReviewTriggerPolicy(previousTaskMode.profile_policy_snapshot);
     let ignoredRemediationTargetAssessment: IgnoredRemediationTargetAssessment = {
         targets: [],
         allowedBoundaryFiles: [],
@@ -834,16 +837,17 @@ export async function runRestartReviewCycleCommand(
         previousChangedFiles,
         currentRemediationChangedFiles,
         baseAllowedBoundaryFiles,
-        classificationConfig.test_trigger_regexes
+        reviewTriggerPolicy.test_path_regexes
     );
     let remediationFixClassification = classifyReviewRemediationFix(
         scopeBoundary,
         [],
         undefined,
-        classificationConfig.test_trigger_regexes,
+        reviewTriggerPolicy.test_path_regexes,
         undefined,
         {
-            testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold
+            testRefactorChangedLinesThreshold: reviewTriggerPolicy.test_refactor_changed_lines_threshold,
+            testRefactorStructuralPathRegexes: reviewTriggerPolicy.test_refactor_structural_path_regexes
         }
     );
     let remediationImpactAnalysis: ReviewRemediationImpactAnalysis;
@@ -984,7 +988,7 @@ export async function runRestartReviewCycleCommand(
                 ...baseAllowedBoundaryFiles,
                 ...ignoredRemediationTargetAssessment.allowedBoundaryFiles
             ],
-            classificationConfig.test_trigger_regexes
+            reviewTriggerPolicy.test_path_regexes
         );
         remediationImpactAnalysis = {
             ...remediationImpactAnalysis,
@@ -994,10 +998,11 @@ export async function runRestartReviewCycleCommand(
             scopeBoundary,
             [],
             remediationImpactAnalysis,
-            classificationConfig.test_trigger_regexes,
+            reviewTriggerPolicy.test_path_regexes,
             undefined,
             {
-                testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold
+                testRefactorChangedLinesThreshold: reviewTriggerPolicy.test_refactor_changed_lines_threshold,
+                testRefactorStructuralPathRegexes: reviewTriggerPolicy.test_refactor_structural_path_regexes
             }
         );
 
@@ -1130,10 +1135,11 @@ export async function runRestartReviewCycleCommand(
             scopeBoundary,
             requiredReviewTypes,
             remediationImpactAnalysis,
-            classificationConfig.test_trigger_regexes,
+            reviewTriggerPolicy.test_path_regexes,
             refreshedPreflight.preflight,
             {
-                testRefactorChangedLinesThreshold: classificationConfig.test_refactor_changed_lines_threshold,
+                testRefactorChangedLinesThreshold: reviewTriggerPolicy.test_refactor_changed_lines_threshold,
+                testRefactorStructuralPathRegexes: reviewTriggerPolicy.test_refactor_structural_path_regexes,
                 changedFileStats: remediationWorkspaceSnapshot.changed_file_stats
             }
         );

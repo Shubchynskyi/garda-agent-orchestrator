@@ -5,6 +5,10 @@ import {
     readReviewCapabilitiesConfigFile,
     type ReviewCapabilitiesConfigMap
 } from '../core/review-capabilities';
+import {
+    loadReviewTriggerPolicy,
+    type ReviewTriggerPolicy
+} from './review-trigger-policy';
 
 export interface ProfileReviewPolicy {
     code: boolean | 'auto';
@@ -130,6 +134,7 @@ export interface EffectivePolicy {
     skills: ProfileSkills;
     installed_packs: string[];
     paths: PathsConfig;
+    review_trigger_policy: ReviewTriggerPolicy;
     safety_floors_applied: string[];
     scope_category: string | null;
     guardrail_diagnostics: ProfileGuardrailResult | null;
@@ -1010,6 +1015,7 @@ export function resolveEffectivePolicy(
     const { skills, installed_packs } = mergeSkills(entry.skills, skillPacksConfig);
 
     const pathsConfig = loadPathsConfig(configPaths.paths);
+    const reviewTriggerPolicy = loadReviewTriggerPolicy(configPaths.paths);
 
     // Build guardrail diagnostics when scope category is available
     let guardrailDiagnostics: ProfileGuardrailResult | null = null;
@@ -1049,6 +1055,7 @@ export function resolveEffectivePolicy(
         skills,
         installed_packs,
         paths: pathsConfig,
+        review_trigger_policy: reviewTriggerPolicy,
         safety_floors_applied: floorsApplied,
         scope_category: scopeCategory,
         guardrail_diagnostics: guardrailDiagnostics,
@@ -1076,6 +1083,13 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
     for (const [key, value] of Object.entries(policy.review_policy)) {
         lines.push(`  ${key}: ${String(value)}`);
     }
+    lines.push('');
+
+    lines.push('ReviewTriggerPolicy:');
+    lines.push(`  refactor_path_regexes: ${policy.review_trigger_policy.refactor_path_regexes.length}`);
+    lines.push(`  test_path_regexes: ${policy.review_trigger_policy.test_path_regexes.length}`);
+    lines.push(`  test_refactor_structural_path_regexes: ${policy.review_trigger_policy.test_refactor_structural_path_regexes.length}`);
+    lines.push(`  test_refactor_changed_lines_threshold: ${policy.review_trigger_policy.test_refactor_changed_lines_threshold}`);
     lines.push('');
 
     lines.push('ReviewFindingPolicy:');

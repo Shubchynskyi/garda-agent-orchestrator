@@ -23,6 +23,7 @@ import { buildGeneratedRuntimeArtifactHygieneWarnings } from '../../../../gates/
 import { loadReviewExecutionPolicyConfig } from '../../../../core/review-execution-policy';
 import { resolveTaskProfileSelection } from '../../../../policy/task-profile-selection';
 import {
+    resolveTaskProfileReviewTriggerPolicy,
     resolveTaskProfileSelectionFromSnapshot,
     summarizeTaskProfilePolicySnapshot
 } from '../../../../policy/task-profile-policy-snapshot';
@@ -392,7 +393,17 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         workspaceSnapshot.detection_source,
         workspaceSnapshot.changed_files
     );
-    const classificationConfig = getClassificationConfig(repoRoot);
+    const taskModeEvidenceForClassification = resolvedTaskId
+        ? getTaskModeEvidence(repoRoot, resolvedTaskId, resolvedTaskModePath)
+        : null;
+    const snapshotReviewTriggerPolicy = taskModeEvidenceForClassification?.evidence_status === 'PASS'
+        && taskModeEvidenceForClassification.profile_policy_snapshot_status === 'PASS'
+        && taskModeEvidenceForClassification.profile_policy_snapshot
+        ? resolveTaskProfileReviewTriggerPolicy(taskModeEvidenceForClassification.profile_policy_snapshot)
+        : undefined;
+    const classificationConfig = getClassificationConfig(repoRoot, {
+        reviewTriggerPolicy: snapshotReviewTriggerPolicy
+    });
     const reviewCapabilities = getReviewCapabilities(repoRoot);
     const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
     const isSourceCheckout = gateHelpers.isOrchestratorSourceCheckout(repoRoot);
@@ -508,7 +519,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         result.task_id = resolvedTaskId;
 
         const preflightErrors: string[] = [];
-        const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, resolvedTaskModePath);
+        const taskModeEvidence = taskModeEvidenceForClassification!;
         const taskQueueMetadata = readTaskQueueMetadata(repoRoot, resolvedTaskId);
         currentTaskSummary = readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary);
         let trustedWorkflowConfigBaselineFiles: string[] = [];

@@ -18,6 +18,7 @@ import {
     runCompileGateCommand,
     runEnterTaskMode,
     runExplicitPreflight,
+    runGit,
     runHandshakeForTask,
     runRestartReviewCycleCommandRaw,
     runRestartReviewCycleCommand,
@@ -33,6 +34,7 @@ import {
     writeSimpleCompileCommandsFile
 } from './gates-review-cycle-fixtures';
 import { resolveNextStep } from '../../../../../../src/gates/next-step/next-step';
+import { classifyReviewRemediationFix } from '../../../../../../src/cli/commands/gate-flows/recovery/recovery-flow-remediation';
 
 const IGNORED_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
 const ROOT_IGNORED_CHANGELOG_PATH = 'CHANGELOG.md';
@@ -1433,6 +1435,166 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             [...((reviewReuse.pending_review_types as string[]) || [])].sort(),
             ['test']
         );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps refactor review reusable when structural test triggers are explicitly disabled', () => {
+        const testFile = 'tests/helpers/recovery-fixture.ts';
+        const classification = classifyReviewRemediationFix(
+            {
+                status: 'OK',
+                previousChangedFiles: [testFile],
+                currentChangedFiles: [testFile],
+                expandedFiles: [],
+                expandedNonTestFiles: [],
+                allowedTestOnlyExpansionFiles: []
+            },
+            ['code', 'refactor', 'test'],
+            {
+                status: 'RECORDED',
+                source: 'inline',
+                summary: `Reviewer finding and intended fix affect only ${testFile}; test impact is isolated and runtime behavior stays unchanged.`,
+                required_topics: [],
+                affected_files: [testFile]
+            },
+            ['(^|/)tests?/'],
+            undefined,
+            {
+                testRefactorChangedLinesThreshold: 100,
+                testRefactorStructuralPathRegexes: [],
+                changedFileStats: { [testFile]: { changed_lines: 1 } }
+            }
+        );
+
+        assert.equal(classification.category, 'test_coverage_only');
+        assert.deepEqual(classification.invalidated_review_types, ['test']);
+        assert.deepEqual(classification.preserved_review_types, ['code', 'refactor']);
+        assert.equal(classification.evidence.test_refactor_trigger_reason, null);
+        assert.deepEqual(classification.evidence.test_refactor_trigger_files, []);
+        assert.equal(classification.evidence.test_refactor_changed_lines_threshold, 100);
+    });
+
+    it('restart-review-cycle uses the frozen test-trigger policy after live paths config changes', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-frozen-recovery-trigger-policy';
+        const sourceFile = 'src/app.ts';
+        const testFile = 'quality/structural-fixture.ts';
+        const changedFiles = [sourceFile, testFile];
+        seedRemediationRepoBase(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
+        const pathsConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
+        const frozenPathsConfig = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8')) as {
+            triggers: Record<string, string[]>;
+            test_refactor_changed_lines_threshold?: number;
+        };
+        frozenPathsConfig.triggers.test = ['(^|/)quality/'];
+        frozenPathsConfig.triggers.test_refactor_structural = ['(^|/)quality/structural-fixture\\.ts$'];
+        frozenPathsConfig.test_refactor_changed_lines_threshold = 100;
+        fs.writeFileSync(pathsConfigPath, `${JSON.stringify(frozenPathsConfig, null, 2)}\n`, 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'frozen-recovery-trigger-policy');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Keep recovery trigger classification bound to the task snapshot',
+            plannedChangedFiles: changedFiles
+        });
+
+        const livePathsConfig = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8')) as {
+            triggers: Record<string, string[]>;
+            test_refactor_changed_lines_threshold?: number;
+        };
+        livePathsConfig.triggers.test = ['(^|/)tests?/'];
+        livePathsConfig.triggers.test_refactor_structural = ['(^|/)tests/helpers?/'];
+        livePathsConfig.test_refactor_changed_lines_threshold = 1000;
+        fs.writeFileSync(pathsConfigPath, `${JSON.stringify(livePathsConfig, null, 2)}\n`, 'utf8');
+        runGit(repoRoot, ['add', 'garda-agent-orchestrator/live/config/paths.json']);
+        runGit(repoRoot, ['commit', '-m', 'test: mutate live trigger policy after task entry']);
+
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, sourceFile), 'export const value = 1;\n', 'utf8');
+        fs.mkdirSync(path.dirname(path.join(repoRoot, testFile)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, testFile), 'export const fixture = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Keep recovery trigger classification bound to the task snapshot',
+            changedFiles
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        for (const [reviewType, verdict] of [
+            ['code', 'REVIEW PASSED'],
+            ['refactor', 'REFACTOR REVIEW PASSED'],
+            ['security', 'SECURITY REVIEW PASSED']
+        ] as Array<[string, string]>) {
+            seedReusableReviewEvidence(
+                repoRoot,
+                taskId,
+                reviewType,
+                verdict,
+                preflightPath,
+                path.join(getReviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`),
+                `agent:${reviewType}-reviewer`
+            );
+        }
+
+        fs.writeFileSync(path.join(repoRoot, testFile), 'export const fixture = 2;\n', 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles,
+            impactAnalysis: [
+                `Reviewer finding: test reviewer requested a focused fixture correction in ${testFile}.`,
+                `Intended fix: edit ${testFile} only while leaving ${sourceFile} unchanged.`,
+                `Affected files/contracts: only the frozen-policy test fixture ${testFile} changes.`,
+                'API/runtime/artifact/test impact: no API or runtime contract changes; the delta is test-domain-only.',
+                'Possible side effects: mutable live trigger config must not change the active task review policy.',
+                'Required targeted checks: recovery classification must use the task snapshot test and structural regexes plus threshold.',
+                'Scope or review-type changes: refactor and test require fresh review; code and security remain reuse candidates.',
+                'Related blockers/follow-up: no separate follow-up is required.'
+            ].join(' '),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
+        const evidence = classification.evidence as Record<string, unknown>;
+        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
+        assert.equal(classification.category, 'test_coverage_only');
+        assert.deepEqual(classification.invalidated_review_types, ['refactor', 'test']);
+        assert.deepEqual(classification.preserved_review_types, ['code', 'security']);
+        assert.equal(evidence.test_refactor_trigger_reason, 'structural_test_domain_file');
+        assert.deepEqual(evidence.test_refactor_trigger_files, [testFile]);
+        assert.equal(evidence.test_refactor_changed_lines_threshold, 100);
+        assert.deepEqual(reviewReuse.reused_review_types, ['code', 'security']);
+        assert.deepEqual(reviewReuse.launch_required_review_types, ['refactor']);
+        assert.deepEqual(reviewReuse.pending_review_types, ['test']);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

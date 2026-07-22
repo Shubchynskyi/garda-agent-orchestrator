@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { writeReviewArtifactJson } from '../../../../gate-runtime/review-artifacts';
 import { getWorkspaceSnapshot } from '../../../../gates/compile/compile-gate';
 import * as gateHelpers from '../../../../gates/shared/helpers';
+import { DEFAULT_REVIEW_TRIGGER_POLICY } from '../../../../policy/review-trigger-policy';
 import {
     assessReviewRemediationScopeBoundary,
     getTaskManualValidationBoundaryFiles,
@@ -305,10 +306,6 @@ function groupReviewRemediationFiles(
     return Object.fromEntries(Object.entries(groups).filter(([, entries]) => entries.length > 0));
 }
 
-const DEFAULT_TEST_REFACTOR_CHANGED_LINES_THRESHOLD = 20;
-const TEST_DOMAIN_STRUCTURAL_PATH_PATTERN =
-    /(^|\/)(?:__fixtures__|fixtures?|__mocks__|mocks?|helpers?|harness|support|setup|factories|factory|snapshots?)(?:\/|\.|-|_|$)|(?:test|spec)[-_]?(?:helpers?|fixtures?|harness|support|setup|factories?|mocks?)|(?:helpers?|fixtures?|harness|support|setup|factories?|mocks?)[-_]?(?:test|spec)/iu;
-
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
@@ -581,8 +578,9 @@ function getChangedLinesForFiles(
     return matchedStats > 0 ? changedLinesTotal : null;
 }
 
-function getStructuralTestDomainFiles(files: readonly string[]): string[] {
-    return normalizeChangedFiles(files).filter((file) => TEST_DOMAIN_STRUCTURAL_PATH_PATTERN.test(file));
+function getStructuralTestDomainFiles(files: readonly string[], patterns: readonly string[]): string[] {
+    const compiledPatterns = patterns.map((pattern) => new RegExp(pattern, 'iu'));
+    return normalizeChangedFiles(files).filter((file) => compiledPatterns.some((pattern) => pattern.test(file)));
 }
 
 function assessTestRefactorInvalidation(options: {
@@ -590,6 +588,7 @@ function assessTestRefactorInvalidation(options: {
     scopeBoundary: ReviewRemediationScopeBoundary;
     preflightPayload?: unknown;
     changedLinesThreshold?: number;
+    structuralPathRegexes?: readonly string[];
     changedFileStats?: unknown;
 }): {
     invalidatesRefactor: boolean;
@@ -600,7 +599,7 @@ function assessTestRefactorInvalidation(options: {
 } {
     const changedLinesThreshold = normalizePositiveInteger(
         options.changedLinesThreshold,
-        DEFAULT_TEST_REFACTOR_CHANGED_LINES_THRESHOLD
+        DEFAULT_REVIEW_TRIGGER_POLICY.test_refactor_changed_lines_threshold
     );
     const semanticChangedFiles = normalizeChangedFiles(options.semanticChangedFiles);
     const expandedTestFiles = normalizeChangedFiles(options.scopeBoundary.allowedTestOnlyExpansionFiles)
@@ -614,7 +613,10 @@ function assessTestRefactorInvalidation(options: {
             changedLinesTotal: getChangedLinesForFiles(options.preflightPayload, semanticChangedFiles, options.changedFileStats)
         };
     }
-    const structuralTestFiles = getStructuralTestDomainFiles(semanticChangedFiles);
+    const structuralTestFiles = getStructuralTestDomainFiles(
+        semanticChangedFiles,
+        options.structuralPathRegexes || DEFAULT_REVIEW_TRIGGER_POLICY.test_refactor_structural_path_regexes
+    );
     if (structuralTestFiles.length > 0) {
         return {
             invalidatesRefactor: true,
@@ -649,7 +651,11 @@ export function classifyReviewRemediationFix(
     impactAnalysis?: ReviewRemediationImpactAnalysis,
     testTriggerRegexes: readonly string[] = [],
     preflightPayload?: unknown,
-    options: { testRefactorChangedLinesThreshold?: number; changedFileStats?: unknown } = {}
+    options: {
+        testRefactorChangedLinesThreshold?: number;
+        testRefactorStructuralPathRegexes?: readonly string[];
+        changedFileStats?: unknown;
+    } = {}
 ): ReviewRemediationFixClassification {
     const normalizedRequiredReviewTypes = [...new Set(
         requiredReviewTypes.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean)
@@ -682,6 +688,7 @@ export function classifyReviewRemediationFix(
         scopeBoundary,
         preflightPayload,
         changedLinesThreshold: options.testRefactorChangedLinesThreshold,
+        structuralPathRegexes: options.testRefactorStructuralPathRegexes,
         changedFileStats: options.changedFileStats
     });
     const base = {

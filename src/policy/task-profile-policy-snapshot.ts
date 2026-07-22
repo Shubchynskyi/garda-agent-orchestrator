@@ -34,6 +34,11 @@ import {
     type ResolvedTaskProfileSelection,
     type TaskProfileSelectionSummary
 } from './task-profile-selection';
+import {
+    normalizeReviewTriggerPolicyFromPaths,
+    validateReviewTriggerPolicy,
+    type ReviewTriggerPolicy
+} from './review-trigger-policy';
 
 export const TASK_PROFILE_POLICY_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
@@ -92,6 +97,7 @@ export interface TaskProfilePolicySnapshot {
     skills: ProfileSkills;
     installed_packs: string[];
     paths: PathsConfig;
+    review_trigger_policy?: ReviewTriggerPolicy;
     resolution_sources: EffectivePolicy['resolution_sources'] & {
         workflow_config: string;
     };
@@ -127,6 +133,7 @@ export interface TaskProfilePolicySnapshotSummary {
     review_follow_up_policy_diagnostics: string[];
     finding_policy: TaskProfileFindingPolicySnapshot;
     remediation_policy: TaskProfileRemediationPolicySnapshot;
+    review_trigger_policy: ReviewTriggerPolicy;
     config_hash: string;
     snapshot_hash: string;
 }
@@ -911,6 +918,7 @@ export function buildTaskProfilePolicySnapshot(
         skills: resolvedProfile.effective_policy.skills,
         installed_packs: resolvedProfile.effective_policy.installed_packs,
         paths: resolvedProfile.effective_policy.paths,
+        review_trigger_policy: resolvedProfile.effective_policy.review_trigger_policy,
         resolution_sources: {
             ...resolvedProfile.effective_policy.resolution_sources,
             workflow_config: path.join(bundleRoot, 'live', 'config', 'workflow-config.json')
@@ -971,6 +979,13 @@ export function validateTaskProfilePolicySnapshot(value: unknown): TaskProfilePo
         validateStringArray(value.review_follow_up_policy_diagnostics, 'review_follow_up_policy_diagnostics', violations);
     }
     validateRemediationPolicySnapshot(value.remediation_policy, violations);
+    if (value.review_trigger_policy !== undefined) {
+        try {
+            validateReviewTriggerPolicy(value.review_trigger_policy);
+        } catch (error: unknown) {
+            violations.push(error instanceof Error ? error.message : String(error));
+        }
+    }
     if (!isPlainRecord(value.config_hashes)) {
         violations.push('Task profile policy snapshot config_hashes must be a JSON object.');
     }
@@ -1057,6 +1072,7 @@ export function resolveTaskProfileSelectionFromSnapshot(
             skills: snapshot.skills,
             installed_packs: snapshot.installed_packs,
             paths: snapshot.paths,
+            review_trigger_policy: resolveTaskProfileReviewTriggerPolicy(snapshot),
             safety_floors_applied: guardrailDiagnostics
                 ? guardrailDiagnostics.safety_floors_applied
                 : snapshot.review_lane_selection.safety_floors_applied,
@@ -1091,7 +1107,16 @@ export function summarizeTaskProfilePolicySnapshot(
         review_follow_up_policy_diagnostics: resolveSnapshotReviewFollowUpPolicyDiagnostics(snapshot),
         finding_policy: resolveSnapshotFindingPolicy(snapshot),
         remediation_policy: snapshot.remediation_policy,
+        review_trigger_policy: resolveTaskProfileReviewTriggerPolicy(snapshot),
         config_hash: snapshot.config_hash,
         snapshot_hash: snapshot.snapshot_hash
     };
+}
+
+export function resolveTaskProfileReviewTriggerPolicy(
+    snapshot: TaskProfilePolicySnapshot
+): ReviewTriggerPolicy {
+    return snapshot.review_trigger_policy
+        ? validateReviewTriggerPolicy(snapshot.review_trigger_policy)
+        : normalizeReviewTriggerPolicyFromPaths(snapshot.paths);
 }

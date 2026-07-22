@@ -398,6 +398,19 @@ function mutateActiveProfileToStrict(profilesPath: string): void {
     fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
 }
 
+function writeSnapshotFreezeTriggerConfig(repoRoot: string): string {
+    const pathsPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
+    fs.writeFileSync(pathsPath, JSON.stringify({
+        test_refactor_changed_lines_threshold: 7,
+        triggers: {
+            refactor: ['(^|/)src/special\\.ts$'],
+            test: ['(^|/)quality/'],
+            test_refactor_structural: ['(^|/)quality/helpers?/']
+        }
+    }, null, 2), 'utf8');
+    return pathsPath;
+}
+
 function updateLatestTaskModeEventDetails(
     repoRoot: string,
     taskId: string,
@@ -815,6 +828,7 @@ describe('cli/commands/gates — preflight', () => {
         const taskId = 'T-979-profile-freeze';
         try {
             const profilesPath = seedSnapshotFreezeProfiles(repoRoot);
+            const pathsPath = writeSnapshotFreezeTriggerConfig(repoRoot);
             seedTaskQueue(repoRoot, taskId, 'TODO', 'default');
             seedInitAnswers(repoRoot);
             runEnterTaskMode({
@@ -828,10 +842,18 @@ describe('cli/commands/gates — preflight', () => {
             runShellSmokeForTask(repoRoot, taskId);
 
             mutateActiveProfileToStrict(profilesPath);
+            fs.writeFileSync(pathsPath, JSON.stringify({
+                test_refactor_changed_lines_threshold: 0,
+                triggers: {
+                    refactor: ['['],
+                    test: ['(^|/)mutated-tests/'],
+                    test_refactor_structural: ['(^|/)mutated-helpers/']
+                }
+            }, null, 2), 'utf8');
 
             const result = runClassifyChangeCommand({
                 repoRoot,
-                changedFiles: ['src/app.ts'],
+                changedFiles: ['src/special.ts'],
                 taskId,
                 taskIntent: 'Freeze profile policy at task mode entry',
                 outputPath: path.join(repoRoot, 'preflight-profile-freeze.json'),
@@ -843,6 +865,10 @@ describe('cli/commands/gates — preflight', () => {
             assert.equal(payload.profile_selection.effective_profile, 'lean');
             assert.equal(payload.profile_selection.runtime_active_profile, 'lean');
             assert.equal(payload.required_reviews.performance, false);
+            assert.equal(payload.required_reviews.refactor, true);
+            assert.equal(payload.triggers.refactor_path, true);
+            assert.deepEqual(payload.triggers.refactor_path_changed_files, ['src/special.ts']);
+            assert.equal(payload.metrics.classification_config_source, 'task_profile_policy_snapshot');
             assert.equal(payload.profile_policy_snapshot.source.effective_profile, 'lean');
             assert.match(payload.profile_policy_snapshot.snapshot_hash, /^[a-f0-9]{64}$/);
             assert.equal(
@@ -866,6 +892,13 @@ describe('cli/commands/gates — preflight', () => {
             assert.equal(payload.profile_policy_snapshot.finding_policy.active_findings.medium, 'ignore');
             assert.equal(payload.profile_policy_snapshot.finding_policy.residual_risks, 'ignore');
             assert.equal(payload.profile_policy_snapshot.remediation_policy.review_restarts_retain_profile_snapshot, true);
+            assert.deepEqual(payload.profile_policy_snapshot.review_trigger_policy, {
+                schema_version: 1,
+                refactor_path_regexes: ['(^|/)src/special\\.ts$'],
+                test_path_regexes: ['(^|/)quality/'],
+                test_refactor_structural_path_regexes: ['(^|/)quality/helpers?/'],
+                test_refactor_changed_lines_threshold: 7
+            });
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

@@ -22,6 +22,7 @@ import type {
 } from '../../runtime/optional-skill-selection';
 import type { ScopeBudgetStatusSnapshot } from '../../core/scope-budget-status';
 import type { ReviewFindingPolicy, ReviewFollowUpPolicy } from '../../policy/profile-resolver';
+import type { ReviewTriggerPolicy } from '../../policy/review-trigger-policy';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
 export const DEFAULT_REPORT_MAX_DETAILED_TASKS = 0;
@@ -342,6 +343,7 @@ export interface ReportProfilesTab {
     config_exists: boolean;
     status: 'present' | 'missing' | 'invalid';
     active_profile: string | null;
+    review_trigger_policy: ReviewTriggerPolicy | null;
     review_types: ReportProfileReviewType[];
     profiles: ReportProfileRow[];
     built_in_profile_names: string[];

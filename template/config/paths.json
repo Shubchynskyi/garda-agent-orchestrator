@@ -41,7 +41,6 @@
       "(^|/)(auth|security|oauth|jwt|token|rbac|acl|keycloak|okta|saml|openid|mfa|crypt|encryption|certificate|secret|vault|webhook|payment|checkout|billing)(/|\\.|$)"
     ],
     "refactor": [
-      "\\.(java|kt|kts|groovy|ts|tsx|js|jsx|cjs|mjs|cs|go|py|rb|php|rs|ps1|psm1|sh)$",
       "(Config|Settings|Options|Schema|Contract|Dto|DTO)[^/]*\\.(java|kt|ts|tsx|js|jsx|py|go|cs|rb|php|json|ya?ml|toml|xml)$",
       "(^|/)(config|configs?|schemas?|contracts?)(/|$)",
       "(^|/)[^/]*(config|settings|paths)[^/]*\\.(json|ya?ml|toml|xml)$"

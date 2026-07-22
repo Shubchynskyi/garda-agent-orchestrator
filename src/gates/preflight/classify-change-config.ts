@@ -12,6 +12,11 @@ import {
     type ReviewCapabilities
 } from '../../core/review-capabilities';
 import type { EffectiveReviewExecutionPolicyMode } from '../../core/review-execution-policy';
+import {
+    DEFAULT_REVIEW_TRIGGER_POLICY,
+    normalizeReviewTriggerPolicyFromPaths,
+    type ReviewTriggerPolicy
+} from '../../policy/review-trigger-policy';
 import { resolveGateExecutionPath } from '../isolation/isolation-sandbox';
 import {
     getProtectedControlPlaneRoots,
@@ -30,6 +35,7 @@ interface TriggerConfig {
     api: string[];
     dependency: string[];
     infra: string[];
+    refactor: string[];
     test: string[];
     performance: string[];
 }
@@ -41,7 +47,7 @@ export interface ClassificationConfig {
     fast_path_allowed_regexes: string[];
     fast_path_sensitive_regexes: string[];
     sql_or_migration_regexes: string[];
-    test_refactor_changed_lines_threshold?: number;
+    test_refactor_changed_lines_threshold: number;
     triggers: TriggerConfig;
     code_like_regexes: string[];
     protected_control_plane_roots: string[];
@@ -57,13 +63,15 @@ export interface ResolvedClassificationConfig {
     fast_path_allowed_regexes: string[];
     fast_path_sensitive_regexes: string[];
     sql_or_migration_regexes: string[];
-    test_refactor_changed_lines_threshold?: number;
+    test_refactor_changed_lines_threshold: number;
     db_trigger_regexes: string[];
     security_trigger_regexes: string[];
     api_trigger_regexes: string[];
     dependency_trigger_regexes: string[];
     infra_trigger_regexes: string[];
+    refactor_trigger_regexes: string[];
     test_trigger_regexes: string[];
+    test_refactor_structural_trigger_regexes: string[];
     performance_trigger_regexes: string[];
     code_like_regexes: string[];
     protected_control_plane_roots: string[];
@@ -94,6 +102,10 @@ export interface ClassifyChangeOptions {
     reviewExecutionPolicyMode?: EffectiveReviewExecutionPolicyMode;
 }
 
+export interface GetClassificationConfigOptions {
+    reviewTriggerPolicy?: ReviewTriggerPolicy;
+}
+
 /**
  * Default classification config for the Node gate runtime.
  */
@@ -110,7 +122,7 @@ export function getDefaultClassificationConfig(repoRoot: string): Classification
             '(^|/)(auth|security|payment|checkout|webhook|token|jwt|guard|middleware|service|repository|query|migration|sql|datasource)(/|\\.|$)'
         ],
         sql_or_migration_regexes: ['\\.sql$', '(^|/)(db|database|migrations?|schema)(/|$)'],
-        test_refactor_changed_lines_threshold: 20,
+        test_refactor_changed_lines_threshold: DEFAULT_REVIEW_TRIGGER_POLICY.test_refactor_changed_lines_threshold,
         triggers: {
             db: [
                 '(^|/)(db|database|migrations?|schema)(/|$)',
@@ -150,11 +162,8 @@ export function getDefaultClassificationConfig(repoRoot: string): Classification
                 '(^|/)(terraform|infra|infrastructure|helm|k8s|kubernetes)(/|$)',
                 '(^|/)\\.github/workflows/'
             ],
-            test: [
-                '/src/test/',
-                '(^|/)(__tests__|tests?)/',
-                '\\.(spec|test)\\.(ts|tsx|js|jsx|java|kt|go|py|rb|php)$'
-            ],
+            refactor: [...DEFAULT_REVIEW_TRIGGER_POLICY.refactor_path_regexes],
+            test: [...DEFAULT_REVIEW_TRIGGER_POLICY.test_path_regexes],
             performance: [
                 '(Cache|Redis|Elasticsearch|Search|Query|Benchmark|Profiling)[^/]*\\.(java|kt|ts|js|py|go|cs|rb|php)$',
                 '(^|/)(performance|perf|benchmark)/'
@@ -169,14 +178,19 @@ export function getDefaultClassificationConfig(repoRoot: string): Classification
 /**
  * Load classification config from paths.json with defaults.
  */
-export function getClassificationConfig(repoRoot: string): ResolvedClassificationConfig {
+export function getClassificationConfig(
+    repoRoot: string,
+    options: GetClassificationConfigOptions = {}
+): ResolvedClassificationConfig {
     const defaults = getDefaultClassificationConfig(repoRoot);
     const configPath = resolveGateExecutionPath(repoRoot, 'live/config/paths.json');
     let source = 'defaults';
+    let rawPathsConfig: Record<string, unknown> = {};
 
     if (fs.existsSync(configPath)) {
         try {
             const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+            rawPathsConfig = raw;
             for (const key of [
                 'metrics_path', 'runtime_roots', 'fast_path_roots',
                 'fast_path_allowed_regexes', 'fast_path_sensitive_regexes',
@@ -187,17 +201,25 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
             }
             if (raw.triggers && typeof raw.triggers === 'object') {
                 const rawTriggers = raw.triggers as Record<string, unknown>;
-                for (const triggerKey of ['db', 'security', 'api', 'dependency', 'infra', 'test', 'performance'] as const) {
+                for (const triggerKey of ['db', 'security', 'api', 'dependency', 'infra', 'refactor', 'test', 'performance'] as const) {
                     if (triggerKey in rawTriggers) {
                         defaults.triggers[triggerKey] = rawTriggers[triggerKey] as string[];
                     }
                 }
             }
             source = 'paths_json';
-        } catch {
+        } catch (error: unknown) {
+            if (!options.reviewTriggerPolicy) {
+                const message = error instanceof Error ? error.message : String(error);
+                throw new Error(`Could not parse classification config '${configPath}': ${message}`);
+            }
             source = 'defaults_with_config_parse_error';
         }
     }
+
+    const reviewTriggerPolicy = options.reviewTriggerPolicy
+        ? validateClassificationReviewTriggerPolicy(options.reviewTriggerPolicy)
+        : normalizeReviewTriggerPolicyFromPaths(rawPathsConfig);
 
     const ordinaryDocPaths = normalizeOrdinaryDocPathPatterns(
         defaults.ordinary_doc_paths,
@@ -206,7 +228,7 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
     );
 
     return {
-        source,
+        source: options.reviewTriggerPolicy ? 'task_profile_policy_snapshot' : source,
         config_path: toPosix(path.resolve(configPath)),
         metrics_path: String(defaults.metrics_path),
         runtime_roots: normalizeRootPrefixes(toStringArray(defaults.runtime_roots)),
@@ -214,22 +236,31 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
         fast_path_allowed_regexes: toStringArray(defaults.fast_path_allowed_regexes),
         fast_path_sensitive_regexes: toStringArray(defaults.fast_path_sensitive_regexes),
         sql_or_migration_regexes: toStringArray(defaults.sql_or_migration_regexes),
-        test_refactor_changed_lines_threshold: typeof defaults.test_refactor_changed_lines_threshold === 'number'
-            && Number.isInteger(defaults.test_refactor_changed_lines_threshold)
-            && defaults.test_refactor_changed_lines_threshold >= 1
-            ? defaults.test_refactor_changed_lines_threshold
-            : 20,
+        test_refactor_changed_lines_threshold: reviewTriggerPolicy.test_refactor_changed_lines_threshold,
         db_trigger_regexes: toStringArray(defaults.triggers.db),
         security_trigger_regexes: toStringArray(defaults.triggers.security),
         api_trigger_regexes: toStringArray(defaults.triggers.api),
         dependency_trigger_regexes: toStringArray(defaults.triggers.dependency),
         infra_trigger_regexes: toStringArray(defaults.triggers.infra),
-        test_trigger_regexes: toStringArray(defaults.triggers.test),
+        refactor_trigger_regexes: [...reviewTriggerPolicy.refactor_path_regexes],
+        test_trigger_regexes: [...reviewTriggerPolicy.test_path_regexes],
+        test_refactor_structural_trigger_regexes: [...reviewTriggerPolicy.test_refactor_structural_path_regexes],
         performance_trigger_regexes: toStringArray(defaults.triggers.performance),
         code_like_regexes: toStringArray(defaults.code_like_regexes),
         protected_control_plane_roots: normalizeProtectedControlPlaneRoots(toStringArray(defaults.protected_control_plane_roots)),
         ordinary_doc_paths: ordinaryDocPaths
     };
+}
+
+function validateClassificationReviewTriggerPolicy(policy: ReviewTriggerPolicy): ReviewTriggerPolicy {
+    return normalizeReviewTriggerPolicyFromPaths({
+        test_refactor_changed_lines_threshold: policy.test_refactor_changed_lines_threshold,
+        triggers: {
+            refactor: policy.refactor_path_regexes,
+            test: policy.test_path_regexes,
+            test_refactor_structural: policy.test_refactor_structural_path_regexes
+        }
+    });
 }
 
 /**

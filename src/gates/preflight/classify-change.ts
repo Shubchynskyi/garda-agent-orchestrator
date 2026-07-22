@@ -121,6 +121,8 @@ export interface ClassifyChangeTriggers {
     security_intent: boolean;
     security_intent_reasons: SecurityReviewIntentReason[];
     refactor: boolean;
+    refactor_path: boolean;
+    refactor_path_changed_files: string[];
     refactor_intent: boolean;
     refactor_heuristic: boolean;
     refactor_heuristic_reasons: string[];
@@ -312,7 +314,11 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
     const apiIntentTriggered = runtimeIntentReviewEligible && hasApiReviewIntent(taskIntent);
     const performanceIntentTriggered = runtimeIntentReviewEligible && hasPerformanceReviewIntent(taskIntent);
     const securityTriggered = pathTriggers.securityTriggered || securityIntentTriggered;
-    const refactorIntentTriggered = hasRefactorIntent(taskIntent);
+    const refactorIntentTriggered = runtimeIntentReviewEligible && hasRefactorIntent(taskIntent);
+    const refactorPathTriggeredFiles = testOnlyDomainReviewSuppressed
+        ? []
+        : pathTriggers.refactorPathTriggeredFiles;
+    const refactorPathTriggered = refactorPathTriggeredFiles.length > 0;
     const refactorHeuristicReasons = buildRefactorHeuristicReasons({
         runtimeChanged: pathTriggers.runtimeChanged,
         normalizedFilesCount: normalizedFiles.length,
@@ -324,7 +330,7 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
         securityTriggered
     });
     const refactorHeuristicTriggered = refactorHeuristicReasons.length > 0;
-    const refactorTriggered = refactorIntentTriggered || refactorHeuristicTriggered;
+    const refactorTriggered = refactorPathTriggered || refactorIntentTriggered || refactorHeuristicTriggered;
 
     const performanceHeuristicTriggered = isPerformanceHeuristicTriggered({
         performancePathTriggered: pathTriggers.performancePathTriggered,
@@ -427,6 +433,8 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
             security_intent: securityIntentTriggered,
             security_intent_reasons: securityIntentClassification.reasons,
             refactor: refactorTriggered,
+            refactor_path: refactorPathTriggered,
+            refactor_path_changed_files: refactorPathTriggeredFiles,
             refactor_intent: refactorIntentTriggered,
             refactor_heuristic: refactorHeuristicTriggered,
             refactor_heuristic_reasons: refactorHeuristicReasons,

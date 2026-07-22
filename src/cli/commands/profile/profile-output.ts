@@ -1,4 +1,6 @@
+import * as path from 'node:path';
 import { padRight } from '../cli-helpers';
+import { loadReviewTriggerPolicy } from '../../../policy/review-trigger-policy';
 import {
     getAllProfileNames,
     getProfileEntry,
@@ -42,11 +44,13 @@ export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, j
 
 export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string, jsonMode: boolean): string {
     const entry = getProfileEntry(data, data.active_profile);
+    const reviewTriggerPolicy = loadReviewTriggerPolicy(path.join(bundleRoot, 'live', 'config', 'paths.json'));
     if (jsonMode) {
         return JSON.stringify({
             active_profile: data.active_profile,
             is_built_in: isBuiltInProfile(data, data.active_profile),
             entry: entry,
+            review_trigger_policy: reviewTriggerPolicy,
             config_path: resolveProfilesPath(bundleRoot)
         }, null, 2);
     }
@@ -63,10 +67,20 @@ export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string
         lines.push(`ReviewFollowUpPolicy: ${formatReviewFollowUpPolicy(entry.review_follow_up_policy)}`);
         lines.push(`TokenEconomy: ${formatTokenEconomy(entry.token_economy)}`);
         lines.push(`Skills: ${formatSkills(entry.skills)}`);
+        lines.push(`ReviewTriggerPolicy: ${formatReviewTriggerPolicy(reviewTriggerPolicy)}`);
         lines.push('Why: Active profile settings are used by default.');
     }
     lines.push('Tip: run "profile list" to inspect all available profiles.');
     return lines.join('\n');
+}
+
+function formatReviewTriggerPolicy(policy: ReturnType<typeof loadReviewTriggerPolicy>): string {
+    return [
+        `refactor_patterns=${policy.refactor_path_regexes.length}`,
+        `test_patterns=${policy.test_path_regexes.length}`,
+        `structural_test_patterns=${policy.test_refactor_structural_path_regexes.length}`,
+        `changed_lines_threshold=${policy.test_refactor_changed_lines_threshold}`
+    ].join(', ');
 }
 
 export function buildProfileUseOutput(name: string, previous: string, jsonMode: boolean): string {
