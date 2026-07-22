@@ -39,6 +39,10 @@ import {
     toRepoDisplayPath
 } from './next-step-command-formatters';
 import { isPlainRecord } from '../../core/records';
+import {
+    assessTrustBoundaryAnalysisApplicability,
+    TRUST_BOUNDARY_ANALYSIS_RULE_ID
+} from '../../core/trust-boundary-analysis';
 import { readTaskTimelineEventLikes } from './next-step-review-timeline-evidence';
 
 export type NextStepQualityChecklistEvidenceStatus = 'disabled' | 'not_required' | 'missing' | 'invalid' | 'stale' | 'current';
@@ -442,14 +446,27 @@ export function readQualityChecklistReadiness(options: {
     const changedFilesCount = preflightChangedFilesCount(options.preflight);
     const changedFiles = preflightChangedFiles(options.preflight);
     const scopeCategory = preflightScopeCategory(options.preflight);
-    const enabledRuleCount = optionalQualityChecks.rules.filter((rule) => rule.enabled).length;
+    const trustBoundaryRequired = assessTrustBoundaryAnalysisApplicability(options.preflight).required;
+    const sourceCheckoutDefaultEnabled = !hasOptionalQualityChecksConfig && isOrchestratorSourceCheckout(options.repoRoot);
+    const ordinaryChecksEnabled = (hasOptionalQualityChecksConfig || sourceCheckoutDefaultEnabled)
+        && optionalQualityChecks.enabled;
+    const isRuleEffectivelyEnabled = (rule: typeof optionalQualityChecks.rules[number]): boolean => (
+        (trustBoundaryRequired && rule.id === TRUST_BOUNDARY_ANALYSIS_RULE_ID)
+        || (ordinaryChecksEnabled && rule.enabled)
+    );
+    const isRuleEffectivelyActive = (rule: typeof optionalQualityChecks.rules[number]): boolean => (
+        isRuleEffectivelyEnabled(rule)
+        && (
+            (trustBoundaryRequired && rule.id === TRUST_BOUNDARY_ANALYSIS_RULE_ID)
+            || isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles)
+        )
+    );
+    const enabledRuleCount = optionalQualityChecks.rules.filter(isRuleEffectivelyEnabled).length;
     const activeRuleCount = optionalQualityChecks.rules
-        .filter((rule) => rule.enabled)
-        .filter((rule) => isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles))
+        .filter(isRuleEffectivelyActive)
         .length;
     const skippedByScopeRuleCount = enabledRuleCount - activeRuleCount;
-    const sourceCheckoutDefaultEnabled = !hasOptionalQualityChecksConfig && isOrchestratorSourceCheckout(options.repoRoot);
-    const enabled = (hasOptionalQualityChecksConfig || sourceCheckoutDefaultEnabled) && optionalQualityChecks.enabled && enabledRuleCount > 0;
+    const enabled = enabledRuleCount > 0;
     if (cadenceInterval.violation && required) {
         return buildReadiness({
             enabled,
@@ -512,7 +529,7 @@ export function readQualityChecklistReadiness(options: {
         || !!ruleSetDiagnostic
         || !!cadenceInterval.violation;
     const cadence = reviewFailureCadence(options.repoRoot, options.taskId, cadenceInterval.value);
-    if (cadence.skip && !forceChecklistRun) {
+    if (cadence.skip && !forceChecklistRun && !trustBoundaryRequired) {
         const answersTemplatePath = resolveDefaultQualityChecklistAnswersTemplatePath(options.repoRoot, options.taskId);
         const templateMaterialization = fileExists(answersTemplatePath)
             ? materializePendingQualityChecklistAnswers(options)
@@ -586,7 +603,7 @@ export function readQualityChecklistReadiness(options: {
         });
     }
     const activeRules = optionalQualityChecks.rules
-        .filter((rule) => rule.enabled && isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles));
+        .filter(isRuleEffectivelyActive);
     let activeQuestionReference: { path: string | null; error: string | null } | null = null;
     const getActiveQuestionReference = (): { path: string | null; error: string | null } => {
         activeQuestionReference ??= tryWriteActiveQuestionReference({

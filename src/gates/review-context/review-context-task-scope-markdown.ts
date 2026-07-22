@@ -21,6 +21,10 @@ import {
     buildFocusedIntermediateValidationEvidenceMarkdown,
     type ReviewContextFocusedIntermediateEvidence
 } from './review-context-focused-intermediate-evidence';
+import {
+    buildTrustBoundaryAnalysisMarkdown,
+    type ReviewContextTrustBoundaryAnalysis
+} from './review-context-trust-boundary-analysis';
 
 export function buildTaskScopeMarkdown(options: {
     taskId: string | null;
@@ -37,6 +41,7 @@ export function buildTaskScopeMarkdown(options: {
     fullSuiteValidation: ReviewContextFullSuiteValidationEvidence | null;
     manualValidation: ReviewContextManualValidationEvidence | null;
     focusedIntermediateValidation: ReviewContextFocusedIntermediateEvidence;
+    trustBoundaryAnalysis: ReviewContextTrustBoundaryAnalysis;
     taskCriteria: ReviewContextTaskCriteria;
     rolePromptArtifactPath: string;
     promptTemplateArtifactPath: string;
@@ -130,6 +135,11 @@ export function buildTaskScopeMarkdown(options: {
     }
     lines.push(...buildFocusedIntermediateValidationEvidenceMarkdown(options.focusedIntermediateValidation));
     lines.push('');
+    const trustBoundaryAnalysisLines = buildTrustBoundaryAnalysisMarkdown(options.trustBoundaryAnalysis);
+    if (trustBoundaryAnalysisLines.length > 0) {
+        lines.push(...trustBoundaryAnalysisLines);
+        lines.push('');
+    }
     lines.push(...buildReviewerOutputContractMarkdown({
         reviewType: options.reviewType,
         rolePromptArtifactPath: options.rolePromptArtifactPath,

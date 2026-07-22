@@ -70,7 +70,7 @@
   },
   "optional_quality_checks": {
     "enabled": true,
-    "baseline_version": "2026-07-08.t934",
+    "baseline_version": "2026-07-21.t969",
     "rules": [
       {
         "id": "code_simplification",
@@ -157,6 +157,17 @@
           "(^|/)(?:scripts|ops|operations|bin|tools|ci|deploy|deployment|backup|restore)(?:/|$).+\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$",
           "(^|/)(?:[^/]*[._-])?(?:deploy|deployment|backup|restore|ops)(?:[._-][^/]*)?\\.(?:sh|bash|zsh|ps1|cmd|bat|js|mjs|cjs|ts|tsx|py|ya?ml|json|conf)$",
           "(^|/)\\.github/workflows/.*(?:deploy|deployment|backup|restore|release|ops).*\\.ya?ml$"
+        ]
+      },
+      {
+        "id": "trust_boundary_adversarial_analysis",
+        "title": "Trust-boundary and adversarial-path analysis",
+        "prompt": "For security, authorization, protected-control-plane, recovery, evidence, or artifact-trust changes, provide a compact trust_boundary_matrix. Name every trust boundary and record its authority source, mutable inputs, immutable or integrity-bound evidence, canonical reconstruction, TOCTOU or replay behavior, and targeted negative paths with test evidence. Every negative-path evidence_files entry must use path#exact test name, scenario must equal that declared test name, and the named test callback must contain a direct assertion statement outside conditional control flow or a nested callback. Happy-path evidence alone is not sufficient.",
+        "enabled": true,
+        "included_changed_file_regexes": [
+          "(^|/)(?:src|bin|scripts|config|template)/.*(?:auth|authori[sz]ation|permission|access|security|protected|recovery|evidence|artifact|trust|integrity|receipt|provenance|review(?:er)?-(?:context|finding|result|receipt|routing|launch|invocation|output|cycle|trust|evidence|identity|attestation)|required-review|completion|task-audit|task-mode|operator-confirmation|hash|signature|token|secret).*(?:\\.(?:ts|tsx|js|mjs|cjs|json|ya?ml|md)|$)",
+          "(^|/)(?:AGENTS\\.md|template/docs/agent-rules/(?:00-core|70-security|80-task-workflow)\\.md)$",
+          "(^|/)garda-agent-orchestrator/(?:live|template)/config/workflow-config\\.json$"
         ]
       }
     ]

@@ -116,13 +116,32 @@ describe('security review task-intent classification', () => {
         }
     });
 
+    it('recognizes recovery, evidence-integrity, and artifact-trust intent on neutral runtime paths', () => {
+        const cases = new Map<string, SecurityReviewIntentReason>([
+            ['Fix recovery state replay in the catalog module', 'recovery_control_plane_change'],
+            ['Recovery flow must reject stale evidence in the catalog module', 'recovery_control_plane_change'],
+            ['Validate evidence integrity before catalog state is accepted', 'evidence_integrity_change'],
+            ['Bind artifact trust to canonical catalog reconstruction', 'artifact_trust_change']
+        ]);
+
+        for (const [taskIntent, expectedReason] of cases) {
+            const result = classifyRuntimeIntent(taskIntent, defaultCapabilities, ['src/domain/catalog.ts']);
+
+            assert.equal(result.triggers.security_intent, true, taskIntent);
+            assert.ok(result.triggers.security_intent_reasons.includes(expectedReason), taskIntent);
+            assert.equal(result.required_reviews.security, true, taskIntent);
+        }
+    });
+
     it('does not trigger from vague or incidental words in unrelated runtime tasks', () => {
         const cases = [
             'Update security documentation wording in the runtime report',
             'Refactor the path formatter for shorter labels',
             'Preserve operator trust in the release notes',
             'Rename the boundary helper used by layout rendering',
-            'Add a follow-up section to the task summary'
+            'Add a follow-up section to the task summary',
+            'Restart review cycle after compile remediation',
+            'Restart review cycle with API review blocked behind code'
         ];
 
         for (const taskIntent of cases) {

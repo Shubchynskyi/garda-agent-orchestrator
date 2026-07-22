@@ -123,6 +123,19 @@ describe('gates/review-context-artifacts', () => {
             fullSuiteValidationEvidence: { status: 'PASSED' },
             focusedIntermediateValidationEvidence: { status: 'AVAILABLE' },
             manualValidationEvidence: { selected_log_count: 1 },
+            trustBoundaryAnalysis: {
+                required: false,
+                status: 'not_required',
+                applicability_reasons: [],
+                rule_id: 'trust_boundary_adversarial_analysis',
+                artifact_path: null,
+                artifact_sha256: null,
+                recorded_artifact_sha256: null,
+                binding_event_sha256: null,
+                matrix_sha256: null,
+                matrix: [],
+                violations: []
+            },
             taskEvidence,
             coverageContract: buildReviewCoverageContract({
                 reviewType: 'code',
@@ -147,9 +160,10 @@ describe('gates/review-context-artifacts', () => {
                 'full_suite_validation',
                 'focused_intermediate_validation',
                 'manual_validation',
+                'trust_boundary_analysis',
                 'tree_state'
             ],
-            instruction: 'Historical task-mode authorization snapshots describe what was authorized at task entry. Use current verification artifacts for current file hashes, scoped diffs, compile/full-suite status, authenticated focused validation evidence, and review tree state.'
+            instruction: 'Historical task-mode authorization snapshots describe what was authorized at task entry. Use current verification artifacts for current file hashes, scoped diffs, compile/full-suite status, authenticated focused validation evidence, authenticated trust-boundary analysis, and review tree state.'
         });
 
         const artifacts = result.evidenceManifest.artifacts as Record<string, Record<string, unknown>>;
@@ -174,6 +188,7 @@ describe('gates/review-context-artifacts', () => {
             'full_suite_validation',
             'focused_intermediate_validation',
             'manual_validation',
+            'trust_boundary_analysis',
             'tree_state'
         ]);
         const taskModeDirtyBaseline = artifacts.task_mode.dirty_workspace_baseline as Record<string, unknown>;

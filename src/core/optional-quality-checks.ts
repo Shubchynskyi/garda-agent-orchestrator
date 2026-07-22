@@ -1,4 +1,10 @@
 import { cloneJsonValue, isPlainObject } from './config-merge';
+import {
+    TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+    TRUST_BOUNDARY_ANALYSIS_RULE_PROMPT,
+    TRUST_BOUNDARY_ANALYSIS_RULE_TITLE,
+    TRUST_BOUNDARY_SENSITIVE_CHANGED_FILE_REGEXES
+} from './trust-boundary-analysis';
 
 export interface OptionalQualityCheckRule {
     id: string;
@@ -41,7 +47,7 @@ export interface OptionalQualityChecksRuleSetDiagnostics {
 }
 
 export const OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE = 'режим опциональных проверок включен, проверь в garda ui перед стартом';
-export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-07-08.t934';
+export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-07-21.t969';
 export const DEFAULT_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL = 3;
 export const MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL = 100;
 export const OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL_KEY = 'review_failure_cadence_interval';
@@ -129,7 +135,14 @@ export const OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityChe
 
 export const DEFAULT_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
     ...LEGACY_OPTIONAL_QUALITY_CHECK_RULES,
-    ...OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES
+    ...OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES,
+    Object.freeze({
+        id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+        title: TRUST_BOUNDARY_ANALYSIS_RULE_TITLE,
+        prompt: TRUST_BOUNDARY_ANALYSIS_RULE_PROMPT,
+        enabled: true,
+        included_changed_file_regexes: [...TRUST_BOUNDARY_SENSITIVE_CHANGED_FILE_REGEXES]
+    })
 ]);
 
 const DEFAULT_OPTIONAL_QUALITY_CHECK_RULE_BY_ID = new Map(

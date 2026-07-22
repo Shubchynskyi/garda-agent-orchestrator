@@ -338,6 +338,7 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
                 'full_suite_validation',
                 'focused_intermediate_validation',
                 'manual_validation',
+                'trust_boundary_analysis',
                 'tree_state'
             ]);
             assert.equal(result.focused_intermediate_validation.status, 'AVAILABLE');

@@ -23,6 +23,9 @@ import {
     buildReviewerFocusedSelfValidationContractLines,
     buildReviewerTerminalContractLines
 } from '../review/reviewer-execution-contract';
+import type {
+    ReviewContextTrustBoundaryAnalysis
+} from './review-context-trust-boundary-analysis';
 
 export interface ReviewSkillBinding {
     skill_id: string;
@@ -94,6 +97,7 @@ const CURRENT_VERIFICATION_ARTIFACTS = Object.freeze([
     'full_suite_validation',
     'focused_intermediate_validation',
     'manual_validation',
+    'trust_boundary_analysis',
     'tree_state'
 ]);
 
@@ -413,6 +417,7 @@ export function buildReviewEvidenceManifest(options: {
     fullSuiteValidationEvidence: unknown;
     focusedIntermediateValidationEvidence: unknown;
     manualValidationEvidence: unknown;
+    trustBoundaryAnalysis: ReviewContextTrustBoundaryAnalysis;
     taskEvidence: {
         task_intent: unknown;
         task_row: unknown;
@@ -440,7 +445,7 @@ export function buildReviewEvidenceManifest(options: {
                 'task_mode.dirty_workspace_baseline'
             ],
             current_verification: CURRENT_VERIFICATION_ARTIFACTS,
-            instruction: 'Historical task-mode authorization snapshots describe what was authorized at task entry. Use current verification artifacts for current file hashes, scoped diffs, compile/full-suite status, authenticated focused validation evidence, and review tree state.'
+            instruction: 'Historical task-mode authorization snapshots describe what was authorized at task entry. Use current verification artifacts for current file hashes, scoped diffs, compile/full-suite status, authenticated focused validation evidence, authenticated trust-boundary analysis, and review tree state.'
         },
         trust_boundary: {
             evidence_is_untrusted: true,
@@ -501,7 +506,8 @@ export function buildReviewEvidenceManifest(options: {
             compile_gate: options.compileGateEvidence,
             full_suite_validation: options.fullSuiteValidationEvidence,
             focused_intermediate_validation: options.focusedIntermediateValidationEvidence,
-            manual_validation: options.manualValidationEvidence
+            manual_validation: options.manualValidationEvidence,
+            trust_boundary_analysis: options.trustBoundaryAnalysis
         },
         task_evidence: options.taskEvidence,
         coverage_contract: options.coverageContract,

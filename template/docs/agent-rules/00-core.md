@@ -33,6 +33,12 @@ Default response brevity: {{ASSISTANT_RESPONSE_BREVITY}}.
 6. When blocked by infrastructure failure, report the exact command, `cwd`, chosen CLI path, and the complete `stderr` output to the user.
 7. Mandatory reviewer launch evidence is one-shot: no agent may create, reserve, hold, or complete a reviewer before `prepare-reviewer-launch` prints the exact `CopyPasteReviewerLaunchPrompt` or `ReviewerLaunchInputArtifactPath`; planned `agent:pending:<task-id>-<review-type>` identities are placeholders until `record-reviewer-delegation-started` records the resolved provider `agent:*` identity.
 
+## Security-Sensitive Trust Boundaries
+1. Before the first reviewer launch for security, authorization, protected-control-plane, recovery, evidence, or artifact-trust changes, complete the active `trust_boundary_adversarial_analysis` quality-check rule.
+2. The answer must contain a compact `trust_boundary_matrix` that names every trust boundary and records its authority source, mutable inputs, immutable or integrity-bound evidence, canonical reconstruction, TOCTOU or replay behavior, and targeted negative paths with test evidence.
+3. Happy-path evidence alone is not sufficient. Missing or incomplete matrix fields block the quality checklist, and the authenticated matrix must be included in the reviewer handoff.
+4. Non-security changes skip this rule by preflight scope; do not add generic threat-model boilerplate to unrelated work or treat the matrix as a replacement for independent security review.
+
 ## Code Quality
 
 ### Cleanliness and Readability

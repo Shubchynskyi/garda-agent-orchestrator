@@ -12,6 +12,13 @@ import {
     type OptionalQualityCheckRule
 } from '../../core/workflow-config';
 import {
+    assessTrustBoundaryAnalysisApplicability,
+    assessTrustBoundaryMatrix,
+    buildTrustBoundaryMatrixScaffold,
+    TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+    type TrustBoundaryMatrixEntry
+} from '../../core/trust-boundary-analysis';
+import {
     appendTaskEvent,
     assertValidTaskId,
     forEachJsonlLine,
@@ -58,6 +65,7 @@ export interface QualityChecklistAnswerInput {
     evidence_files?: unknown;
     actions_taken?: unknown;
     actions_required?: unknown;
+    trust_boundary_matrix?: unknown;
 }
 
 export interface QualityChecklistAnswer {
@@ -67,6 +75,7 @@ export interface QualityChecklistAnswer {
     evidence_files: string[];
     actions_taken: string[];
     actions_required: string[];
+    trust_boundary_matrix?: TrustBoundaryMatrixEntry[];
 }
 
 export interface QualityChecklistRuleArtifact {
@@ -136,6 +145,7 @@ export interface QualityChecklistAnswersTemplateAnswer {
     evidence_files?: string[];
     actions_taken?: string[];
     actions_required?: string[];
+    trust_boundary_matrix?: TrustBoundaryMatrixEntry[];
 }
 
 export interface QualityChecklistAnswersTemplate {
@@ -226,13 +236,18 @@ function normalizeAnswerInput(input: unknown): QualityChecklistAnswer | null {
     if (!ruleId || !status || !answer) {
         return null;
     }
+    const trustBoundaryMatrixInput = input.trust_boundary_matrix ?? input.trustBoundaryMatrix;
+    const trustBoundaryMatrix = trustBoundaryMatrixInput === undefined
+        ? undefined
+        : assessTrustBoundaryMatrix(trustBoundaryMatrixInput).matrix;
     return {
         rule_id: ruleId,
         status,
         answer,
         evidence_files: toTextArray(input.evidence_files ?? input.evidenceFiles).map(normalizePath).filter(Boolean),
         actions_taken: toTextArray(input.actions_taken ?? input.actionsTaken),
-        actions_required: toTextArray(input.actions_required ?? input.actionsRequired)
+        actions_required: toTextArray(input.actions_required ?? input.actionsRequired),
+        ...(trustBoundaryMatrix !== undefined ? { trust_boundary_matrix: trustBoundaryMatrix } : {})
     };
 }
 
@@ -254,13 +269,20 @@ function normalizeScopeCategory(value: unknown): string | null {
 function normalizeRuleForArtifact(
     rule: OptionalQualityCheckRule,
     scopeCategory: string | null,
-    changedFiles: readonly string[]
+    changedFiles: readonly string[],
+    preflight: Record<string, unknown> | null,
+    checklistEnabled: boolean
 ): QualityChecklistRuleArtifact {
-    const enabled = rule.enabled !== false;
+    const trustBoundaryRequired = normalizeRuleId(rule.id) === TRUST_BOUNDARY_ANALYSIS_RULE_ID
+        && assessTrustBoundaryAnalysisApplicability(preflight).required;
+    const enabled = trustBoundaryRequired
+        || (rule.enabled !== false && (checklistEnabled || !assessTrustBoundaryAnalysisApplicability(preflight).required));
     const includedScopeCategories = normalizeOptionalQualityCheckScopeCategories(rule.included_scope_categories);
     const includedChangedFileRegexes = normalizeOptionalQualityCheckChangedFileRegexes(rule.included_changed_file_regexes);
     const excludedScopeCategories = normalizeOptionalQualityCheckScopeCategories(rule.excluded_scope_categories);
-    const scopeSkipReason = getOptionalQualityCheckRuleScopeSkipReason(rule, scopeCategory, changedFiles);
+    const scopeSkipReason = trustBoundaryRequired
+        ? null
+        : getOptionalQualityCheckRuleScopeSkipReason(rule, scopeCategory, changedFiles);
     const scopeApplicability: QualityChecklistRuleArtifact['scope_applicability'] = !enabled
         ? 'disabled'
         : scopeSkipReason
@@ -353,6 +375,7 @@ function readPreflightEvidence(preflightPath: string, expectedTaskId: string): {
     sha256: string | null;
     evidence: QualityChecklistChangedFileEvidence;
     violation: string | null;
+    preflight: Record<string, unknown> | null;
 } {
     const emptyChangedFilesSha256 = stringSha256('') || '';
     const emptyEvidence = {
@@ -367,7 +390,8 @@ function readPreflightEvidence(preflightPath: string, expectedTaskId: string): {
         return {
             sha256: null,
             evidence: emptyEvidence,
-            violation: `Preflight artifact not found: ${normalizePath(preflightPath)}.`
+            violation: `Preflight artifact not found: ${normalizePath(preflightPath)}.`,
+            preflight: null
         };
     }
     const preflight = readJsonRecord(preflightPath);
@@ -375,7 +399,8 @@ function readPreflightEvidence(preflightPath: string, expectedTaskId: string): {
         return {
             sha256: fileSha256(preflightPath),
             evidence: emptyEvidence,
-            violation: `Preflight artifact is not valid JSON object: ${normalizePath(preflightPath)}.`
+            violation: `Preflight artifact is not valid JSON object: ${normalizePath(preflightPath)}.`,
+            preflight: null
         };
     }
     const preflightTaskId = typeof preflight.task_id === 'string' ? preflight.task_id.trim() : '';
@@ -383,7 +408,8 @@ function readPreflightEvidence(preflightPath: string, expectedTaskId: string): {
         return {
             sha256: fileSha256(preflightPath),
             evidence: emptyEvidence,
-            violation: `Preflight artifact task_id '${preflightTaskId}' does not match quality-checklist task_id '${expectedTaskId}'.`
+            violation: `Preflight artifact task_id '${preflightTaskId}' does not match quality-checklist task_id '${expectedTaskId}'.`,
+            preflight
         };
     }
     const changedFiles = Array.isArray(preflight.changed_files)
@@ -400,7 +426,8 @@ function readPreflightEvidence(preflightPath: string, expectedTaskId: string): {
             scope_content_sha256: typeof metrics.scope_content_sha256 === 'string' ? metrics.scope_content_sha256.trim().toLowerCase() : null,
             scope_category: normalizeScopeCategory(preflight.scope_category)
         },
-        violation: null
+        violation: null,
+        preflight
     };
 }
 
@@ -469,10 +496,12 @@ function readChecklistRules(repoRoot: string): {
 }
 
 function decideStatus(
+    repoRoot: string,
     activeRules: readonly QualityChecklistRuleArtifact[],
     skippedByScopeRules: readonly QualityChecklistRuleArtifact[],
     answers: readonly QualityChecklistAnswer[],
-    violations: string[]
+    violations: string[],
+    rawAnswers: unknown
 ): QualityChecklistStatus {
     if (violations.length > 0) {
         return 'CONFIG_ERROR';
@@ -486,13 +515,40 @@ function decideStatus(
             violations.push(`Duplicate answer for quality-check rule '${ruleId}'.`);
         }
     }
+    const activeRuleIds = new Set(activeRules.map((rule) => rule.id));
+    if (activeRuleIds.has(TRUST_BOUNDARY_ANALYSIS_RULE_ID)) {
+        const rawAnswerSource = isRecord(rawAnswers) && Array.isArray(rawAnswers.answers)
+            ? rawAnswers.answers
+            : rawAnswers;
+        const rawTrustAnswers = Array.isArray(rawAnswerSource)
+            ? rawAnswerSource.filter((entry) => (
+                isRecord(entry)
+                && normalizeRuleId(entry.rule_id ?? entry.ruleId ?? entry.id) === TRUST_BOUNDARY_ANALYSIS_RULE_ID
+            ))
+            : [];
+        if (rawTrustAnswers.length > 1) {
+            const duplicateViolation = `Duplicate answer for quality-check rule '${TRUST_BOUNDARY_ANALYSIS_RULE_ID}'.`;
+            if (!violations.includes(duplicateViolation)) {
+                violations.push(duplicateViolation);
+            }
+        }
+        if (rawTrustAnswers.length === 1) {
+            const assessment = assessTrustBoundaryMatrix(
+                (rawTrustAnswers[0] as Record<string, unknown>).trust_boundary_matrix
+                ?? (rawTrustAnswers[0] as Record<string, unknown>).trustBoundaryMatrix,
+                { repoRoot }
+            );
+            for (const violation of assessment.violations) {
+                violations.push(`Answer '${TRUST_BOUNDARY_ANALYSIS_RULE_ID}' ${violation}`);
+            }
+        }
+    }
     const answerByRuleId = new Map(answers.map((answer) => [answer.rule_id, answer]));
     for (const rule of activeRules) {
         if (!answerByRuleId.has(rule.id)) {
             violations.push(`Missing answer for active quality-check rule '${rule.id}'.`);
         }
     }
-    const activeRuleIds = new Set(activeRules.map((rule) => rule.id));
     const skippedByScopeRuleIds = new Set(skippedByScopeRules.map((rule) => rule.id));
     for (const answer of answers) {
         if (skippedByScopeRuleIds.has(answer.rule_id)) {
@@ -531,10 +587,13 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
     const preflight = readPreflightEvidence(preflightPath, taskId);
     const violations = [config.violation, preflight.violation].filter((entry): entry is string => !!entry);
     const scopeCategory = preflight.evidence.scope_category;
+    const trustBoundaryRequired = assessTrustBoundaryAnalysisApplicability(preflight.preflight).required;
     const rules = config.rules.map((rule) => normalizeRuleForArtifact(
         rule,
         scopeCategory,
-        preflight.evidence.changed_files
+        preflight.evidence.changed_files,
+        preflight.preflight,
+        config.enabled
     ));
     const enabledRules = rules.filter((rule) => rule.enabled);
     const activeRules = enabledRules.filter((rule) => rule.scope_applicability === 'active');
@@ -546,10 +605,10 @@ export function buildQualityChecklistArtifact(options: BuildQualityChecklistOpti
     let status: QualityChecklistStatus;
     if (violations.length > 0) {
         status = 'CONFIG_ERROR';
-    } else if (!config.enabled) {
+    } else if (!config.enabled && !trustBoundaryRequired) {
         status = 'SKIPPED_DISABLED';
     } else {
-        status = decideStatus(activeRules, skippedByScopeRules, answers, violations);
+        status = decideStatus(repoRoot, activeRules, skippedByScopeRules, answers, violations, options.answers);
     }
 
     const actionsTaken = [
@@ -735,7 +794,10 @@ export function buildQualityChecklistAnswersTemplate(
             .map((rule) => ({
                 rule_id: rule.id,
                 status: '',
-                answer: ''
+                answer: '',
+                ...(rule.id === TRUST_BOUNDARY_ANALYSIS_RULE_ID
+                    ? { trust_boundary_matrix: buildTrustBoundaryMatrixScaffold() }
+                    : {})
             }))
     };
 }
@@ -778,13 +840,17 @@ function normalizeReusableTemplateAnswer(value: unknown): QualityChecklistAnswer
             return null;
         }
     }
+    const trustBoundaryMatrix = value.trust_boundary_matrix === undefined
+        ? undefined
+        : assessTrustBoundaryMatrix(value.trust_boundary_matrix).matrix;
     return {
         rule_id: ruleId,
         status: value.status,
         answer: value.answer,
         ...(value.evidence_files !== undefined ? { evidence_files: [...(value.evidence_files as string[])] } : {}),
         ...(value.actions_taken !== undefined ? { actions_taken: [...(value.actions_taken as string[])] } : {}),
-        ...(value.actions_required !== undefined ? { actions_required: [...(value.actions_required as string[])] } : {})
+        ...(value.actions_required !== undefined ? { actions_required: [...(value.actions_required as string[])] } : {}),
+        ...(trustBoundaryMatrix !== undefined ? { trust_boundary_matrix: trustBoundaryMatrix } : {})
     };
 }
 
@@ -907,7 +973,8 @@ export function assessQualityChecklistAnswersTemplate(options: {
             && (answer.actions_taken === undefined || (Array.isArray(answer.actions_taken)
                 && answer.actions_taken.every((entry) => typeof entry === 'string')))
             && (answer.actions_required === undefined || (Array.isArray(answer.actions_required)
-                && answer.actions_required.every((entry) => typeof entry === 'string')));
+                && answer.actions_required.every((entry) => typeof entry === 'string')))
+            && (answer.trust_boundary_matrix === undefined || Array.isArray(answer.trust_boundary_matrix));
     });
     if (!scaffoldIsValid) {
         return invalidAnswersTemplate(

@@ -2431,6 +2431,76 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('restart-review-cycle persists recovery before a stale mandatory trust-boundary checklist is refreshed', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-969-restart-review-cycle-trust-prerequisite';
+        const taskSummary = 'Require trust-boundary analysis for reviewer security controls';
+        seedRemediationRepoBase(repoRoot);
+        writeWorkflowConfig(repoRoot, 'strict_sequential');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        writeReviewCapabilitiesConfig(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'gates'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'gates', 'review-control.ts'), 'export const reviewControl = true;\n', 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'restart-review-cycle-trust-prerequisite'
+        );
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary,
+            plannedChangedFiles: [
+                'commands-restart-review-cycle-trust-prerequisite.md',
+                'src/gates/review-control.ts'
+            ]
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            taskSummary,
+            ['src/gates/review-control.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const output = restartResult.outputLines.join('\n');
+        assert.match(output, /REVIEW_CYCLE_RESTARTED/u);
+        assert.match(output, /review_contexts=partially_prepared_prerequisite_blocked/u);
+        assert.match(output, /mandatory trust-boundary checklist/u);
+        assert.equal(
+            fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-review-cycle-restart.json`)),
+            true
+        );
+        const nextStep = resolveNextStep({ taskId, repoRoot });
+        assert.notEqual(nextStep.next_gate, 'restart-coherent-cycle', nextStep.reason);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('restarts the latest coherent cycle with a custom task-mode artifact path', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-restart-coherent-cycle-custom-task-mode';

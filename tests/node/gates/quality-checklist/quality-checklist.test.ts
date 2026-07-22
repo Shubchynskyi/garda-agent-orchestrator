@@ -8,6 +8,7 @@ import {
     DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
     OPS_SHELL_OPTIONAL_QUALITY_CHECK_RULES,
     buildDefaultWorkflowConfig,
+    isOptionalQualityCheckRuleActiveForScope,
     isOptionalQualityCheckRuleExcludedForScope
 } from '../../../../src/core/workflow-config';
 import {
@@ -19,6 +20,9 @@ import {
 import {
     runQualityChecklistCommand
 } from '../../../../src/cli/commands/gate-flows/quality-checklist/quality-checklist-flow';
+import {
+    TRUST_BOUNDARY_ANALYSIS_RULE_ID
+} from '../../../../src/core/trust-boundary-analysis';
 import {
     createGateFixture,
     writeGateFixturePreflight
@@ -158,6 +162,50 @@ function buildPassAnswersForRuleIds(ruleIds: readonly string[]): Array<Record<st
     }));
 }
 
+function buildTrustBoundaryAnswer(): Record<string, unknown> {
+    const scenario = 'rejects stale trust-boundary evidence';
+    return {
+        rule_id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+        status: 'PASS',
+        answer: 'Mapped mutable reviewer output into the gate-owned authenticated receipt boundary.',
+        evidence_files: ['tests/node/gates/quality-checklist/quality-checklist.test.ts'],
+        trust_boundary_matrix: [{
+            boundary_id: 'TB-001',
+            boundary: 'Mutable reviewer output to authenticated receipt',
+            authority_source: 'Gate-owned launch input and receipt bindings',
+            mutable_inputs: ['provider reviewer output'],
+            integrity_evidence: ['launch input sha256', 'review context sha256', 'tree state sha256'],
+            canonical_reconstruction: 'Rebuild the receipt from immutable launch input plus normalized findings.',
+            toctou_replay: 'Reject output from before delegation start or from a superseded review cycle.',
+            negative_paths: [{
+                kind: 'stale',
+                scenario,
+                expected_behavior: 'Reject the output without materializing accepted review state.',
+                evidence_files: [
+                    `tests/node/gates/quality-checklist/quality-checklist.test.ts#${scenario}`
+                ]
+            }]
+        }]
+    };
+}
+
+function seedTrustBoundaryEvidenceFile(fixture: ReturnType<typeof createGateFixture>): void {
+    const evidencePath = path.join(
+        fixture.repoRoot,
+        'tests',
+        'node',
+        'gates',
+        'quality-checklist',
+        'quality-checklist.test.ts'
+    );
+    fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
+    fs.writeFileSync(
+        evidencePath,
+        "test('rejects stale trust-boundary evidence', () => { assert.equal(true, true); });\n",
+        'utf8'
+    );
+}
+
 function buildGenericActionRequiredAnswers(): Array<Record<string, unknown>> {
     const actionByRuleId = new Map<string, string>(
         UNIVERSAL_QUALITY_RULE_EXPECTATIONS.map((rule) => [rule.id, rule.action])
@@ -261,7 +309,7 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.changed_file_evidence.scope_content_sha256, 'b'.repeat(64));
             assert.equal(artifact.enabled_rule_count, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
             assert.equal(artifact.active_rule_count, UNIVERSAL_QUALITY_RULE_IDS.length);
-            assert.equal(artifact.skipped_by_scope_rule_count, OPS_SHELL_QUALITY_RULE_IDS.length);
+            assert.equal(artifact.skipped_by_scope_rule_count, OPS_SHELL_QUALITY_RULE_IDS.length + 1);
             assert.ok(artifact.workflow_config_sha256);
             assert.ok(artifact.preflight_sha256);
             assert.deepEqual(artifact.violations, []);
@@ -270,7 +318,7 @@ describe('quality-checklist gate', () => {
                     .filter((rule) => rule.scope_applicability === 'skipped_by_scope')
                     .map((rule) => rule.id)
                     .sort(),
-                [...OPS_SHELL_QUALITY_RULE_IDS].sort()
+                [...OPS_SHELL_QUALITY_RULE_IDS, TRUST_BOUNDARY_ANALYSIS_RULE_ID].sort()
             );
         } finally {
             fixture.cleanup();
@@ -399,7 +447,7 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.scope_category, 'config-only');
             assert.equal(artifact.enabled_rule_count, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
             assert.equal(artifact.active_rule_count, expectedActiveRuleIds.length);
-            assert.equal(artifact.skipped_by_scope_rule_count, 0);
+            assert.equal(artifact.skipped_by_scope_rule_count, 1);
             assert.deepEqual(
                 artifact.rules
                     .filter((rule) => OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
@@ -445,7 +493,7 @@ describe('quality-checklist gate', () => {
 
                 assert.equal(artifact.status, 'PASS', changedFile);
                 assert.equal(artifact.active_rule_count, expectedActiveRuleIds.length, changedFile);
-                assert.equal(artifact.skipped_by_scope_rule_count, 0, changedFile);
+                assert.equal(artifact.skipped_by_scope_rule_count, 1, changedFile);
                 assert.deepEqual(
                     artifact.rules
                         .filter((rule) => OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
@@ -482,7 +530,7 @@ describe('quality-checklist gate', () => {
 
             assert.equal(artifact.status, 'PASS');
             assert.equal(artifact.active_rule_count, UNIVERSAL_QUALITY_RULE_IDS.length);
-            assert.equal(artifact.skipped_by_scope_rule_count, OPS_SHELL_QUALITY_RULE_IDS.length);
+            assert.equal(artifact.skipped_by_scope_rule_count, OPS_SHELL_QUALITY_RULE_IDS.length + 1);
             assert.deepEqual(
                 artifact.rules
                     .filter((rule) => OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
@@ -508,8 +556,11 @@ describe('quality-checklist gate', () => {
                 changed_files: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
             });
             const activeRuleIds = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
-                .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
-                .filter((rule) => !OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
+                .filter((rule) => isOptionalQualityCheckRuleActiveForScope(
+                    rule,
+                    'test-only',
+                    ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
+                ))
                 .map((rule) => rule.id);
 
             const artifact = buildQualityChecklistArtifact({
@@ -523,7 +574,7 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.scope_category, 'test-only');
             assert.equal(artifact.enabled_rule_count, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
             assert.equal(artifact.active_rule_count, activeRuleIds.length);
-            assert.equal(artifact.skipped_by_scope_rule_count, 3 + OPS_SHELL_QUALITY_RULE_IDS.length);
+            assert.equal(artifact.skipped_by_scope_rule_count, 4 + OPS_SHELL_QUALITY_RULE_IDS.length);
             assert.equal(artifact.answers.length, activeRuleIds.length);
             assert.deepEqual(
                 artifact.rules
@@ -534,6 +585,7 @@ describe('quality-checklist gate', () => {
                     'code_simplification',
                     ...OPS_SHELL_QUALITY_RULE_IDS,
                     'size_growth',
+                    TRUST_BOUNDARY_ANALYSIS_RULE_ID,
                     'unnecessary_abstraction'
                 ].sort()
             );
@@ -599,8 +651,11 @@ describe('quality-checklist gate', () => {
                 changed_files: ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
             });
             const activeRuleIds = config.optional_quality_checks.rules
-                .filter((rule) => !isOptionalQualityCheckRuleExcludedForScope(rule, 'test-only'))
-                .filter((rule) => !OPS_SHELL_QUALITY_RULE_ID_SET.has(rule.id))
+                .filter((rule) => isOptionalQualityCheckRuleActiveForScope(
+                    rule,
+                    'test-only',
+                    ['tests/node/gates/quality-checklist/quality-checklist.test.ts']
+                ))
                 .map((rule) => rule.id);
 
             const artifact = buildQualityChecklistArtifact({
@@ -615,7 +670,7 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.scope_category, 'test-only');
             assert.equal(artifact.enabled_rule_count, config.optional_quality_checks.rules.length);
             assert.equal(artifact.active_rule_count, activeRuleIds.length);
-            assert.equal(artifact.skipped_by_scope_rule_count, 4 + OPS_SHELL_QUALITY_RULE_IDS.length);
+            assert.equal(artifact.skipped_by_scope_rule_count, 5 + OPS_SHELL_QUALITY_RULE_IDS.length);
             assert.equal(skippedCustomRule?.scope_applicability, 'skipped_by_scope');
             assert.deepEqual(skippedCustomRule?.excluded_scope_categories, ['test-only']);
             assert.match(skippedCustomRule?.scope_skip_reason || '', /test-only/u);
@@ -655,9 +710,9 @@ describe('quality-checklist gate', () => {
                     scope_content_sha256: 'd'.repeat(64)
                 },
                 changed_files: [
-                    'src/gates/next-step/next-step-task-queue.ts',
-                    'src/gates/next-step/next-step-pre-review-routing.ts',
-                    'src/gates/review-cycle/review-cycle-guard.ts',
+                    'src/gates/next-step/task-queue.ts',
+                    'src/gates/next-step/pre-routing.ts',
+                    'src/gates/cycle/cycle-guard.ts',
                     'tests/node/gates/next-step/next-step-task-queue.test.ts',
                     'tests/node/gates/next-step/next-step-quality-checklist-routing.test.ts',
                     'tests/node/gates/review-cycle/review-cycle-guard.test.ts'
@@ -1165,7 +1220,7 @@ describe('quality-checklist gate', () => {
         }
     });
 
-    it('preserves a cross-task repair draft and materializes a separate recovery candidate', () => {
+    it('preserves a foreign cross-task repair draft and materializes a separate recovery candidate', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-repair-cross-task-recovery' });
         try {
             const preflightPath = writeGateFixturePreflight(fixture);
@@ -2313,7 +2368,7 @@ describe('quality-checklist gate', () => {
             const diagnostic = String(artifact.violations[0] || '');
 
             assert.equal(artifact.status, 'CONFIG_ERROR');
-            assert.match(diagnostic, /baseline_version '2026-06-26\.t843' differs from shipped '2026-07-08\.t934'/u);
+            assert.match(diagnostic, /baseline_version '2026-06-26\.t843' differs from shipped '2026-07-21\.t969'/u);
             assert.match(diagnostic, /classifier_intent_edge_cases/u);
             assert.match(diagnostic, /custom_garda_classifier_intent_edge_cases/u);
             assert.match(diagnostic, /Canonical enabled quality-check rule ids/u);
@@ -2372,6 +2427,124 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.status, 'CONFIG_ERROR');
             assert.equal(artifact.outcome, 'FAIL');
             assert.ok(artifact.violations.some((violation) => violation.includes('Duplicate answer')));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('rejects forged and missing trust-boundary matrix evidence for security-sensitive preflight', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-trust-boundary' });
+        try {
+            seedTrustBoundaryEvidenceFile(fixture);
+            const preflightPath = writeGateFixturePreflight(fixture, {
+                changed_files: ['src/gates/review/review-findings-schema.ts'],
+                triggers: { security: true }
+            });
+            const complete = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: [...buildPassAnswers(), buildTrustBoundaryAnswer()]
+            });
+            assert.equal(complete.status, 'PASS');
+            assert.equal(
+                complete.rules.find((rule) => rule.id === TRUST_BOUNDARY_ANALYSIS_RULE_ID)?.scope_applicability,
+                'active'
+            );
+
+            const incompleteAnswer = {
+                ...buildTrustBoundaryAnswer(),
+                trust_boundary_matrix: [{
+                    boundary_id: 'TB-001',
+                    boundary: 'Reviewer output receipt',
+                    authority_source: 'Gate-owned launch',
+                    mutable_inputs: ['review output'],
+                    integrity_evidence: ['receipt hash'],
+                    canonical_reconstruction: 'Rebuild from launch input.',
+                    toctou_replay: 'Reject stale cycles.',
+                    negative_paths: []
+                }]
+            };
+            const incomplete = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: [...buildPassAnswers(), incompleteAnswer]
+            });
+            assert.equal(incomplete.status, 'CONFIG_ERROR');
+            assert.ok(incomplete.violations.some((violation) => violation.includes('negative_paths')));
+
+            const missing = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: buildPassAnswers()
+            });
+            assert.equal(missing.status, 'CONFIG_ERROR');
+            assert.ok(missing.violations.some((violation) => violation.includes(TRUST_BOUNDARY_ANALYSIS_RULE_ID)));
+
+            const malformedDuplicate = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: [
+                    ...buildPassAnswers(),
+                    {
+                        rule_id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+                        status: 'PASS',
+                        answer: 'Claims trust-boundary coverage without a matrix.'
+                    },
+                    { rule_id: TRUST_BOUNDARY_ANALYSIS_RULE_ID }
+                ]
+            });
+            assert.equal(malformedDuplicate.status, 'CONFIG_ERROR');
+            assert.ok(malformedDuplicate.violations.some((violation) => violation.includes('Duplicate answer')));
+
+            for (const evidenceFile of ['tests/node/missing.test.ts', 'src/app.ts']) {
+                const unsupportedEvidence = buildTrustBoundaryAnswer();
+                const matrix = unsupportedEvidence.trust_boundary_matrix as Array<Record<string, unknown>>;
+                const negativePaths = matrix[0].negative_paths as Array<Record<string, unknown>>;
+                negativePaths[0].evidence_files = [`${evidenceFile}#rejects stale trust-boundary evidence`];
+                const invalidEvidence = buildQualityChecklistArtifact({
+                    repoRoot: fixture.repoRoot,
+                    taskId: fixture.taskId,
+                    preflightPath,
+                    answers: [...buildPassAnswers(), unsupportedEvidence]
+                });
+                assert.equal(invalidEvidence.status, 'CONFIG_ERROR', evidenceFile);
+                assert.ok(
+                    invalidEvidence.violations.some((violation) => violation.includes('test file')),
+                    evidenceFile
+                );
+            }
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('keeps the trust-boundary rule mandatory when optional checks are disabled', () => {
+        const fixture = createGateFixture({ taskId: 'T-quality-trust-boundary-disabled' });
+        try {
+            seedTrustBoundaryEvidenceFile(fixture);
+            const workflowConfigPath = path.join(fixture.orchestratorRoot, 'live', 'config', 'workflow-config.json');
+            const workflowConfig = buildDefaultWorkflowConfig();
+            workflowConfig.optional_quality_checks.enabled = false;
+            fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
+            const preflightPath = writeGateFixturePreflight(fixture, {
+                changed_files: ['src/gates/review/review-findings-schema.ts'],
+                triggers: { security: true }
+            });
+
+            const artifact = buildQualityChecklistArtifact({
+                repoRoot: fixture.repoRoot,
+                taskId: fixture.taskId,
+                preflightPath,
+                answers: [buildTrustBoundaryAnswer()]
+            });
+
+            assert.equal(artifact.status, 'PASS');
+            assert.equal(artifact.active_rule_count, 1);
+            assert.equal(artifact.answers[0].rule_id, TRUST_BOUNDARY_ANALYSIS_RULE_ID);
         } finally {
             fixture.cleanup();
         }

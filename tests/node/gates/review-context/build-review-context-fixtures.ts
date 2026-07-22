@@ -7,7 +7,15 @@ import * as childProcessModule from 'node:child_process';
 
 import { runGitFixtureCommand } from '../git-fixtures';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
-import { buildReviewContext, getRulePack, toNonNegativeInt, resolveContextOutputPath, resolveScopedDiffMetadataPath } from '../../../../src/gates/review-context/build-review-context';
+import {
+    assessTrustBoundaryAnalysisApplicability,
+    TRUST_BOUNDARY_ANALYSIS_RULE_ID
+} from '../../../../src/core/trust-boundary-analysis';
+import {
+    QUALITY_CHECKLIST_ID,
+    resolveDefaultQualityChecklistArtifactPath
+} from '../../../../src/gates/quality-checklist';
+import { buildReviewContext as buildReviewContextImplementation, getRulePack, toNonNegativeInt, resolveContextOutputPath, resolveScopedDiffMetadataPath } from '../../../../src/gates/review-context/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate';
 import { buildChangedFileFingerprintEntries } from '../../../../src/gates/review-context/review-context-diff';
 import { buildReviewTreeState } from '../../../../src/gates/review/review-tree-state';
@@ -31,7 +39,6 @@ export const childProcess: typeof childProcessModule = childProcessModule;
 
 export {
     appendTaskEvent,
-    buildReviewContext,
     getRulePack,
     toNonNegativeInt,
     resolveContextOutputPath,
@@ -52,6 +59,99 @@ export {
     serializeTaskPlan,
     validateTaskPlan
 };
+
+function seedApplicableTrustBoundaryAnalysisFixture(
+    options: Parameters<typeof buildReviewContextImplementation>[0]
+): void {
+    const repoRoot = pathModule.resolve(options.repoRoot || '.');
+    const preflightPath = pathModule.resolve(String(options.preflightPath || ''));
+    const preflight = JSON.parse(fsModule.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const applicability = assessTrustBoundaryAnalysisApplicability(preflight);
+    if (!applicability.required) {
+        return;
+    }
+    const taskId = String(preflight.task_id || '').trim();
+    const preflightSha256 = sha256Text(fsModule.readFileSync(preflightPath, 'utf8'));
+    const artifactPath = resolveDefaultQualityChecklistArtifactPath(repoRoot, taskId);
+    const artifact = {
+        task_id: taskId,
+        checklist_id: QUALITY_CHECKLIST_ID,
+        preflight_sha256: preflightSha256,
+        status: 'PASS',
+        rules: [{
+            id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+            scope_applicability: 'active'
+        }],
+        answers: [{
+            rule_id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+            trust_boundary_matrix: [{
+                boundary_id: 'TB-FIXTURE-001',
+                boundary: 'Test fixture mutable input to review-context handoff',
+                authority_source: 'Hash-chained QUALITY_CHECKLIST_RECORDED test event',
+                mutable_inputs: ['quality-checklist artifact'],
+                integrity_evidence: ['recorded artifact sha256'],
+                canonical_reconstruction: 'Rebuild from the current preflight fixture.',
+                toctou_replay: 'Reject a digest mismatch or stale preflight binding.',
+                negative_paths: [{
+                    kind: 'replaced',
+                    scenario: 'rejects replaced trust-boundary evidence',
+                    expected_behavior: 'Reject review-context construction.',
+                    evidence_files: [
+                        'tests/node/gates/review-context/review-context-trust-boundary-analysis.test.ts#rejects replaced trust-boundary evidence'
+                    ]
+                }]
+            }]
+        }]
+    };
+    const evidencePath = pathModule.join(
+        repoRoot,
+        'tests',
+        'node',
+        'gates',
+        'review-context',
+        'review-context-trust-boundary-analysis.test.ts'
+    );
+    fsModule.mkdirSync(pathModule.dirname(evidencePath), { recursive: true });
+    if (!fsModule.existsSync(evidencePath)) {
+        fsModule.writeFileSync(
+            evidencePath,
+            "test('rejects replaced trust-boundary evidence', () => { assert.equal(true, true); });\n",
+            'utf8'
+        );
+    }
+    const artifactText = `${JSON.stringify(artifact, null, 2)}\n`;
+    if (fsModule.existsSync(artifactPath) && fsModule.readFileSync(artifactPath, 'utf8') === artifactText) {
+        return;
+    }
+    fsModule.mkdirSync(pathModule.dirname(artifactPath), { recursive: true });
+    fsModule.writeFileSync(artifactPath, artifactText, 'utf8');
+    const artifactSha256 = sha256Text(artifactText);
+    const orchestratorRoot = pathModule.resolve(pathModule.dirname(artifactPath), '..', '..');
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'QUALITY_CHECKLIST_RECORDED',
+        'PASS',
+        'Quality checklist test fixture recorded.',
+        {
+            artifact_path: artifactPath.replace(/\\/gu, '/'),
+            artifact_hash: artifactSha256,
+            status: 'PASS',
+            outcome: 'PASS',
+            checklist_id: QUALITY_CHECKLIST_ID,
+            preflight_path: preflightPath.replace(/\\/gu, '/'),
+            preflight_sha256: preflightSha256
+        },
+        { actor: 'gate' }
+    );
+}
+
+export function buildReviewContext(
+    options: Parameters<typeof buildReviewContextImplementation>[0]
+): ReturnType<typeof buildReviewContextImplementation> {
+    seedApplicableTrustBoundaryAnalysisFixture(options);
+    return buildReviewContextImplementation(options);
+}
 
 export function runGit(repoRoot: string, args: string[]): void {
     runGitFixtureCommand(repoRoot, [

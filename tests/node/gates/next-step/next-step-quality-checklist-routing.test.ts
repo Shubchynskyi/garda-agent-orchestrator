@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+    OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     isOptionalQualityCheckRuleActiveForScope
 } from '../../../../src/core/workflow-config';
 import {
@@ -320,7 +321,7 @@ describe('gates/next-step quality checklist routing', () => {
         assert.equal(result.quality_checklist?.evidence_status, 'missing');
         assert.equal(result.quality_checklist?.effect, 'missing');
         assert.match(result.quality_checklist?.visible_summary_line || '', /QualityChecklist: enabled=true; required=true/u);
-        assert.match(result.quality_checklist?.visible_summary_line || '', /active_rules=7; skipped_by_scope=3/u);
+        assert.match(result.quality_checklist?.visible_summary_line || '', /active_rules=7; skipped_by_scope=4/u);
         assert.equal(result.commands[0].label, 'Run quality checklist');
         assert.ok(result.commands[0].command.includes('gate quality-checklist'));
         assert.ok(result.commands[0].command.includes('--answers-path'));
@@ -802,10 +803,10 @@ describe('gates/next-step quality checklist routing', () => {
 
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
         assert.equal(result.quality_checklist?.scope_category, 'test-only');
-        assert.equal(result.quality_checklist?.enabled_rule_count, 10);
+        assert.equal(result.quality_checklist?.enabled_rule_count, 11);
         assert.equal(result.quality_checklist?.active_rule_count, 4);
-        assert.equal(result.quality_checklist?.skipped_by_scope_rule_count, 6);
-        assert.match(result.reason, /Active rules for scope "test-only": 4; skipped_by_scope=6/u);
+        assert.equal(result.quality_checklist?.skipped_by_scope_rule_count, 7);
+        assert.match(result.reason, /Active rules for scope "test-only": 4; skipped_by_scope=7/u);
         const answersTemplate = JSON.parse(fs.readFileSync(
             path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', `${TASK_ID}-quality-checklist-answers.json`),
             'utf8'
@@ -824,7 +825,9 @@ describe('gates/next-step quality checklist routing', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'quality-checklist', result.reason);
-        assert.match(result.reason, /baseline_version '2026-06-26\.t843' differs from shipped '2026-07-08\.t934'/u);
+        assert.ok(result.reason.includes(
+            `baseline_version '2026-06-26.t843' differs from shipped '${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION}'`
+        ));
         assert.match(result.reason, /classifier_intent_edge_cases/u);
         assert.match(result.reason, /custom_garda_classifier_intent_edge_cases/u);
         assert.match(result.reason, /Canonical enabled quality-check rule ids/u);
@@ -896,9 +899,9 @@ describe('gates/next-step quality checklist routing', () => {
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
         initializeWorkspaceBaseline(repoRoot, [
-            'src/review-fix-1.ts',
-            'src/review-fix-2.ts',
-            'src/review-fix-3.ts'
+            'src/cadence-fix-1.ts',
+            'src/cadence-fix-2.ts',
+            'src/cadence-fix-3.ts'
         ]);
         writeWorkspaceChange(repoRoot, 'src/app.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
@@ -908,11 +911,11 @@ describe('gates/next-step quality checklist routing', () => {
             appendReviewFailure(repoRoot);
             restoreWorkspaceChanges(
                 repoRoot,
-                failureCount === 1 ? 'src/app.ts' : `src/review-fix-${failureCount - 1}.ts`
+                failureCount === 1 ? 'src/app.ts' : `src/cadence-fix-${failureCount - 1}.ts`
             );
-            writeWorkspaceChange(repoRoot, `src/review-fix-${failureCount}.ts`);
+            writeWorkspaceChange(repoRoot, `src/cadence-fix-${failureCount}.ts`);
             writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
-                changedFiles: [`src/review-fix-${failureCount}.ts`]
+                changedFiles: [`src/cadence-fix-${failureCount}.ts`]
             });
             const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
             if (failureCount < 3) {
@@ -927,6 +930,29 @@ describe('gates/next-step quality checklist routing', () => {
         }
     });
 
+    it('does not cadence-skip mandatory trust-boundary analysis after a review failure', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const sensitivePath = 'src/gates/review-context/trust-fix.ts';
+        initializeWorkspaceBaseline(repoRoot, [sensitivePath]);
+        writeWorkspaceChange(repoRoot, 'src/app.ts');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
+
+        appendReviewFailure(repoRoot);
+        restoreWorkspaceChanges(repoRoot, 'src/app.ts');
+        writeWorkspaceChange(repoRoot, sensitivePath);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: [sensitivePath]
+        });
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'quality-checklist', result.reason);
+        assert.notEqual(result.quality_checklist?.status, 'SKIPPED_CADENCE');
+        assert.notEqual(result.quality_checklist?.effect, 'skipped_cadence');
+    });
+
     it('uses configured review-failure cadence interval boundaries', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot, {
@@ -935,16 +961,16 @@ describe('gates/next-step quality checklist routing', () => {
             }
         });
         seedStartedTask(repoRoot, TASK_ID);
-        initializeWorkspaceBaseline(repoRoot, ['src/review-fix-one.ts', 'src/review-fix-two.ts']);
+        initializeWorkspaceBaseline(repoRoot, ['src/cadence-fix-one.ts', 'src/cadence-fix-two.ts']);
         writeWorkspaceChange(repoRoot, 'src/app.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
 
         appendReviewFailure(repoRoot);
         restoreWorkspaceChanges(repoRoot, 'src/app.ts');
-        writeWorkspaceChange(repoRoot, 'src/review-fix-one.ts');
+        writeWorkspaceChange(repoRoot, 'src/cadence-fix-one.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
-            changedFiles: ['src/review-fix-one.ts']
+            changedFiles: ['src/cadence-fix-one.ts']
         });
         const first = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
@@ -954,10 +980,10 @@ describe('gates/next-step quality checklist routing', () => {
         assert.match(first.quality_checklist?.visible_summary_line || '', /review_failure_cadence_interval=2/u);
 
         appendReviewFailure(repoRoot);
-        restoreWorkspaceChanges(repoRoot, 'src/review-fix-one.ts');
-        writeWorkspaceChange(repoRoot, 'src/review-fix-two.ts');
+        restoreWorkspaceChanges(repoRoot, 'src/cadence-fix-one.ts');
+        writeWorkspaceChange(repoRoot, 'src/cadence-fix-two.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
-            changedFiles: ['src/review-fix-two.ts']
+            changedFiles: ['src/cadence-fix-two.ts']
         });
         const second = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
@@ -970,15 +996,15 @@ describe('gates/next-step quality checklist routing', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
-        initializeWorkspaceBaseline(repoRoot, ['src/canonical-review-fix.ts']);
+        initializeWorkspaceBaseline(repoRoot, ['src/canonical-cadence-fix.ts']);
         writeWorkspaceChange(repoRoot, 'src/app.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
         appendCanonicalReviewFailure(repoRoot);
         restoreWorkspaceChanges(repoRoot, 'src/app.ts');
-        writeWorkspaceChange(repoRoot, 'src/canonical-review-fix.ts');
+        writeWorkspaceChange(repoRoot, 'src/canonical-cadence-fix.ts');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
-            changedFiles: ['src/canonical-review-fix.ts']
+            changedFiles: ['src/canonical-cadence-fix.ts']
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -992,15 +1018,15 @@ describe('gates/next-step quality checklist routing', () => {
             const repoRoot = makeTempRepo();
             writeWorkflowConfig(repoRoot);
             seedStartedTask(repoRoot, TASK_ID);
-            initializeWorkspaceBaseline(repoRoot, [`src/${reviewType}-review-fix.ts`]);
+            initializeWorkspaceBaseline(repoRoot, [`src/${reviewType}-cadence-fix.ts`]);
             writeWorkspaceChange(repoRoot, 'src/app.ts');
             writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, [reviewType]: true });
             writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
             appendReviewFailure(repoRoot, reviewType);
             restoreWorkspaceChanges(repoRoot, 'src/app.ts');
-            writeWorkspaceChange(repoRoot, `src/${reviewType}-review-fix.ts`);
+            writeWorkspaceChange(repoRoot, `src/${reviewType}-cadence-fix.ts`);
             writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, [reviewType]: true }, {
-                changedFiles: [`src/${reviewType}-review-fix.ts`]
+                changedFiles: [`src/${reviewType}-cadence-fix.ts`]
             });
 
             const result = resolveNextStep({ taskId: TASK_ID, repoRoot });

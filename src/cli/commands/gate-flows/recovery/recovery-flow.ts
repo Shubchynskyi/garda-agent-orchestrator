@@ -106,7 +106,13 @@ export type {
 
 function getDependencyBlockReason(error: unknown, reviewType: string): string | null {
     const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes(`ReviewType '${reviewType}' is blocked until upstream reviews pass for the current cycle:`)) {
+    const isUpstreamReviewBlock = message.includes(
+        `ReviewType '${reviewType}' is blocked until upstream reviews pass for the current cycle:`
+    );
+    const isTrustBoundaryPrerequisiteBlock = message.includes(
+        'Review context cannot be built because required trust-boundary analysis is'
+    );
+    if (!isUpstreamReviewBlock && !isTrustBoundaryPrerequisiteBlock) {
         return null;
     }
     return message.trim();
@@ -1244,8 +1250,18 @@ export async function runRestartReviewCycleCommand(
             }
         }
 
+        const pendingOnTrustBoundaryPrerequisite = pendingReason?.includes(
+            'Review context cannot be built because required trust-boundary analysis is'
+        ) === true;
+        const reviewContextsRefreshStatus = pendingReviewTypes.length > 0
+            ? pendingOnTrustBoundaryPrerequisite
+                ? 'partially_prepared_prerequisite_blocked'
+                : 'partially_prepared_dependency_blocked'
+            : 'prepared_or_reused';
         const nextStep = pendingReviewTypes.length > 0
-            ? 'Launch and record the prepared upstream reviews first, then rerun restart-review-cycle to materialize the remaining downstream review contexts.'
+            ? pendingOnTrustBoundaryPrerequisite
+                ? 'Rerun next-step to refresh the mandatory trust-boundary checklist before building review contexts.'
+                : 'Launch and record the prepared upstream reviews first, then rerun restart-review-cycle to materialize the remaining downstream review contexts.'
             : launchRequiredReviewTypes.length > 0
                 ? 'Launch and record the prepared review types in dependency-safe order, then rerun required-reviews-check, doc-impact-gate, and completion-gate.'
                 : 'All required review evidence is already current-cycle. Rerun required-reviews-check, doc-impact-gate, and completion-gate.';
@@ -1281,7 +1297,7 @@ export async function runRestartReviewCycleCommand(
                 preflight: 'refreshed',
                 post_preflight_rule_pack: 'reloaded',
                 compile: 'rerun',
-                review_contexts: pendingReviewTypes.length > 0 ? 'partially_prepared_dependency_blocked' : 'prepared_or_reused'
+                review_contexts: reviewContextsRefreshStatus
             },
             review_reuse: {
                 review_execution_policy: reviewExecutionPolicyMode,
@@ -1298,9 +1314,6 @@ export async function runRestartReviewCycleCommand(
                 expanded_non_test_files_block_reuse: true
             }
         });
-        const reviewContextsRefreshStatus = pendingReviewTypes.length > 0
-            ? 'partially_prepared_dependency_blocked'
-            : 'prepared_or_reused';
         const restartArtifactPath = appendRestartCompletedEvidence({
             repoRoot,
             taskId: resolvedTaskId,
