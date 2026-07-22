@@ -768,6 +768,25 @@ describe('gates/completion-verdict', () => {
             assert.equal(result.violations.length, 0);
         });
 
+        it('accepts evidence-only F-000 at completion even under a blocking severity', () => {
+            const artifact = buildAcceptedValidationArtifactWithFinding('high');
+            const finding = artifact.validation_result.normalized_inventory.findings_by_severity.high[0];
+            finding.id = 'F-000';
+            finding.title = '[garda:evidence-only:missing-focused-validation] test=tests/node/example.test.ts; action=run-and-record-focused-test';
+            finding.description = 'The isolated reviewer could not execute the focused command.';
+
+            const result = getReviewFindingsEvidenceFromValidationArtifact(
+                '/review.md',
+                artifact,
+                BALANCED_RECEIPT_POLICY
+            );
+
+            assert.equal(result.status, 'PASS');
+            assert.equal(result.findings_by_severity.high.length, 1);
+            assert.match(result.findings_by_severity.high[0], /F-000/u);
+            assert.equal(result.violations.length, 0);
+        });
+
         it('accepts policy-dispositioned non-blocking residual risks validation artifacts at completion', () => {
             const artifact = buildAcceptedValidationArtifactWithResidualRisk();
 

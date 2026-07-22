@@ -2389,7 +2389,7 @@ describe('gates/next-step', () => {
         assert.match(result.reason, new RegExp(requiredTestPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     });
 
-    it('restarts a failed code review after findings-only JSON reports missing focused validation and bound evidence passes', async () => {
+    it('proceeds to required reviews when findings-only JSON contains only evidence-only F-000', async () => {
         for (const markerField of ['title', 'description'] as const) {
             const repoRoot = makeTempRepo();
             const requiredTestPath = 'tests/node/gates/focused-evidence.test.ts';
@@ -2414,12 +2414,10 @@ describe('gates/next-step', () => {
 
             const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-            assert.equal(result.next_gate, 'restart-review-cycle', markerField + ': ' + result.reason);
-            assert.match(result.title, /focused validation evidence/);
-            assert.match(result.reason, /missing focused validation evidence/);
-            assert.match(result.reason, new RegExp(requiredTestPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-            assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
-            assert.ok(!result.commands[0].command.includes('--changed-file'));
+            assert.equal(result.next_gate, 'required-reviews-check', markerField + ': ' + result.reason);
+            assert.match(result.reason, /review gate has not validated them/);
+            assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
+            assert.ok(!result.commands[0].command.includes('restart-review-cycle'));
         }
     });
 

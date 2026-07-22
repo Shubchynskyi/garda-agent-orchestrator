@@ -26,7 +26,6 @@ import {
     isNonTestReviewScope
 } from '../../../../gates/review-reuse/review-reuse';
 import {
-    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../../../../gates/review/review-findings-validation-artifact';
 import {
@@ -404,9 +403,6 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
         });
         if (!findingsValidation.valid) {
             return reject(`review findings validation artifact is invalid for current PASS reuse: ${findingsValidation.violations.join(' ')}`);
-        }
-        if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(findingsValidation.artifact)) {
-            return reject('review findings validation artifact contains missing-focused-validation evidence and cannot satisfy current PASS reuse');
         }
         if (reviewFindingsValidationArtifactHasBlockingFindings(
             findingsValidation.artifact,

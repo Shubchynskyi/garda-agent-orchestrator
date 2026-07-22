@@ -387,7 +387,7 @@ describe('gates/required-reviews-check core helpers', () => {
             assert.equal(result.checked[0]?.token_found, true);
         });
 
-        it('rejects missing-focused-validation findings even when the locked policy would not fix_now the severity', () => {
+        it('accepts evidence-only missing-focused-validation when there are no real findings', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-reviews-missing-focused-'));
             try {
                 const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
@@ -467,15 +467,8 @@ describe('gates/required-reviews-check core helpers', () => {
                     'runtime/reviews'
                 );
 
-                assert.equal(result.checked[0]?.token_found, false);
-                assert.ok(result.violations.some((violation) =>
-                    violation.includes('missing-focused-validation evidence')
-                ), result.violations.join('\n'));
-                assert.equal(
-                    result.violations.some((violation) => violation.includes('fix_now findings')),
-                    false,
-                    result.violations.join('\n')
-                );
+                assert.equal(result.checked[0]?.token_found, true, result.violations.join('\n'));
+                assert.deepEqual(result.violations, []);
             } finally {
                 fs.rmSync(repoRoot, { recursive: true, force: true });
             }

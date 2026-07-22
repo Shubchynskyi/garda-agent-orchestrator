@@ -2987,6 +2987,9 @@ describe('gates command review result - normalization', () => {
         assert.equal(result.exitCode, 0, result.errors.join('\n'));
         const receipt = JSON.parse(fs.readFileSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`), 'utf8'));
         assert.deepEqual(receipt.review_coverage.finding_ids, ['F-000']);
+        assert.equal(receipt.review_findings_disposition.verdict, 'pass_no_findings');
+        assert.equal(receipt.review_findings_disposition.total_count, 0);
+        assert.equal(receipt.review_findings_disposition.blocking_count, 0);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 

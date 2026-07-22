@@ -571,7 +571,7 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('rejects current-cycle PASS reuse when findings contain only missing-focused-validation under balanced policy', () => {
+    it('accepts current-cycle PASS reuse when findings contain only evidence-only missing-focused-validation', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-current-pass-missing-focused';
         seedTaskQueue(repoRoot, taskId);
@@ -633,14 +633,12 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
             reviewContextPath
         });
 
-        assert.equal(result.accepted, false, JSON.stringify(result, null, 2));
-        assert.match(result.reason, /missing-focused-validation evidence/);
-        assert.equal(/fix_now findings/.test(result.reason), false, result.reason);
+        assert.equal(result.accepted, true, JSON.stringify(result, null, 2));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('rejects current-cycle PASS reuse when missing-focused-validation is mixed with non-blocking findings', () => {
+    it('accepts current-cycle PASS reuse when evidence-only F-000 is mixed with non-blocking findings', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-current-pass-mixed-missing-focused';
         seedTaskQueue(repoRoot, taskId);
@@ -703,9 +701,7 @@ describe('cli/commands/gates - current-cycle review reuse rejections', () => {
             reviewContextPath
         });
 
-        assert.equal(result.accepted, false, JSON.stringify(result, null, 2));
-        assert.match(result.reason, /missing-focused-validation evidence/);
-        assert.equal(/fix_now findings/.test(result.reason), false, result.reason);
+        assert.equal(result.accepted, true, JSON.stringify(result, null, 2));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

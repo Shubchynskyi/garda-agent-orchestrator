@@ -24,7 +24,6 @@ import {
 } from '../review/review-timing-trust';
 import {
     normalizeReviewFindingsValidationReceiptReference,
-    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
 import {
@@ -193,9 +192,6 @@ function validateFindingsValidationForHistoricalReuse(options: {
     });
     if (!validation.valid) {
         return `prior findings validation artifact is invalid: ${validation.violations.join(' ')}`;
-    }
-    if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(validation.artifact)) {
-        return 'prior findings validation artifact contains missing focused validation evidence';
     }
     if (reviewFindingsValidationArtifactHasBlockingFindings(
         validation.artifact,

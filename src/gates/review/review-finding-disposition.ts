@@ -15,6 +15,7 @@ import type {
 const REVIEW_FINDING_POLICY_ACTIONS = ['fix_now', 'create_follow_up', 'ignore'] as const;
 const REVIEW_FINDING_POLICY_IDS = ['soft', 'balanced', 'strict', 'custom'] as const;
 const REVIEW_FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const satisfies readonly ReviewFindingsSeverity[];
+const EVIDENCE_ONLY_FINDING_ID = 'F-000';
 
 export interface LockedReviewFindingPolicyResolution {
     policy: ReviewFindingPolicy;
@@ -212,7 +213,11 @@ function evaluateIds(
 
     for (const severity of REVIEW_FINDING_SEVERITIES) {
         const action = policyResolution.policy.findings[severity];
-        const ids = [...findingIdsBySeverity[severity]];
+        // F-000 is a schema-validated evidence note, not an implementation finding.
+        // Preserve it in the validation artifact and coverage ledger for audit, but do
+        // not let a reviewer's inability to run a focused command change the verdict,
+        // create follow-up work, or trigger another review cycle.
+        const ids = findingIdsBySeverity[severity].filter((id) => id !== EVIDENCE_ONLY_FINDING_ID);
         findings[severity] = buildBucket(action, ids);
         countsByAction[action] += ids.length;
         if (action === 'fix_now') {

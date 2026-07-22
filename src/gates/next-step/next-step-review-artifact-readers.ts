@@ -36,7 +36,6 @@ import {
 } from '../review/review-findings-artifact-verdict';
 import {
     getReviewFindingsValidationArtifactPath,
-    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifact,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
@@ -914,15 +913,7 @@ export function readReviewArtifactState(
             reviewFindingsValidationAccepted = validationArtifact.accepted;
             violations.push(...validationArtifact.violations);
             if (validationArtifact.valid) {
-                if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(validationArtifact.artifact)) {
-                    verdictToken = failToken || null;
-                    failed = true;
-                    failureKind = 'missing-focused-validation-evidence';
-                    failureReason = 'missing auditable focused validation evidence';
-                    violations.push(
-                        `review findings validation artifact contains active findings for missing focused validation evidence (${failureReason}); preserve the failed artifact and use current task-owned focused validation evidence without fake implementation changes`
-                    );
-                } else if (reviewFindingsValidationArtifactHasBlockingFindings(
+                if (reviewFindingsValidationArtifactHasBlockingFindings(
                     validationArtifact.artifact,
                     reusedExistingReview
                         ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt)

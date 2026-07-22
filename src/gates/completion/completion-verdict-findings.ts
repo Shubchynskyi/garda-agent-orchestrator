@@ -10,9 +10,6 @@ import {
     resolveLockedReviewFindingPolicyFromReceiptDisposition
 } from '../review/review-finding-disposition';
 import {
-    reviewFindingsValidationArtifactContainsMissingFocusedValidation
-} from '../review/review-findings-validation-artifact';
-import {
     countCanonicalReviewSectionHeadings,
     extractMarkdownSectionLines,
     formatAcceptedReviewSectionHeadingShapes,
@@ -384,15 +381,9 @@ export function getReviewFindingsEvidenceFromValidationArtifact(
     result.residual_risks = inventory.residual_risks.map((risk) =>
         [risk.id, risk.description, ...risk.evidence_locations].filter(Boolean).join(' ')
     );
-    if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(artifact)) {
-        result.violations.push(
-            `Review artifact '${artifactPathNormalized}' contains active findings in accepted findings validation artifact ` +
-            'for missing focused validation evidence; preserve the failed artifact and record current task-owned focused validation evidence.'
-        );
-    }
     const disposition = evaluateReviewFindingsValidationArtifactDispositions(artifact, policyResolution);
     for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
-        if (disposition.findings[severity].action === 'fix_now' && result.findings_by_severity[severity].length > 0) {
+        if (disposition.findings[severity].action === 'fix_now' && disposition.findings[severity].count > 0) {
             const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
             result.violations.push(
                 `Review artifact '${artifactPathNormalized}' still contains fix_now ${severityLabel} findings in accepted findings validation artifact. ` +
@@ -400,7 +391,7 @@ export function getReviewFindingsEvidenceFromValidationArtifact(
             );
         }
     }
-    if (disposition.residual_risks.action === 'fix_now' && result.residual_risks.length > 0) {
+    if (disposition.residual_risks.action === 'fix_now' && disposition.residual_risks.count > 0) {
         result.violations.push(
             `Review artifact '${artifactPathNormalized}' still contains fix_now residual risks in accepted findings validation artifact. ` +
             'Resolve or explicitly disposition residual risks before completing the task.'

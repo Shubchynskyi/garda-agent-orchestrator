@@ -36,7 +36,6 @@ import {
     buildReviewFindingsValidationArtifact,
     getReviewFindingsValidationArtifactPath,
     getReviewFindingsValidationArtifactSnapshotPath,
-    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt,
     type ReviewFindingsValidationArtifact
 } from '../review/review-findings-validation-artifact';
@@ -469,9 +468,6 @@ function buildReusedReviewFindingsValidationEvidence(
     const policyResolution = resolveLockedReviewFindingPolicyFromReceiptDisposition(
         options.receipt as unknown as Record<string, unknown>
     );
-    if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(sourceValidation.artifact)) {
-        return { reason: 'reused review findings validation contains missing focused validation evidence' };
-    }
     if (reviewFindingsValidationArtifactHasBlockingFindings(sourceValidation.artifact, policyResolution)) {
         return { reason: 'reused review findings validation contains policy-blocking active findings or residual risks' };
     }

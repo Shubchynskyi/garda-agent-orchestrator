@@ -7,7 +7,6 @@ import {
 } from '../../gate-runtime/review-context';
 import {
     normalizeReviewFindingsValidationReceiptReference,
-    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
 import {
@@ -667,9 +666,6 @@ function validateReviewRecordedPassVerdict(
         });
         if (!validation.valid) {
             return `${label}: findings validation artifact is invalid: ${validation.violations.join(' ')}`;
-        }
-        if (reviewFindingsValidationArtifactContainsMissingFocusedValidation(validation.artifact)) {
-            return `${label}: findings validation artifact contains missing focused validation evidence`;
         }
         if (reviewFindingsValidationArtifactHasBlockingFindings(
             validation.artifact,

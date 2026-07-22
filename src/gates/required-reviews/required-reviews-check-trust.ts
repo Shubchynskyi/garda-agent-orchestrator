@@ -42,7 +42,6 @@ import {
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
 import {
-    reviewFindingsValidationArtifactContainsMissingFocusedValidation,
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
 import {
@@ -437,14 +436,6 @@ export function validateReviewArtifactGateEligibility(options: {
                                 : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload)
                         );
                         if (
-                            validationArtifact.valid
-                            && reviewFindingsValidationArtifactContainsMissingFocusedValidation(validationArtifact.artifact)
-                        ) {
-                            errors.push(
-                                `Review artifact '${normalizePath(artifactPath)}' contains active findings in validation artifact ` +
-                                'for missing focused validation evidence; preserve the failed artifact and record current task-owned focused validation evidence.'
-                            );
-                        } else if (
                             validationArtifact.valid
                             && reviewFindingsValidationArtifactHasBlockingFindings(
                                 validationArtifact.artifact,
