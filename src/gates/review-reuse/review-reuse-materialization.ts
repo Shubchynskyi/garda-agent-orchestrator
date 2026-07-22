@@ -26,6 +26,7 @@ import type { HistoricalReviewReuseCandidate } from './review-reuse-validation';
 import {
     getReviewCoverageContractViolations,
     getReviewCoverageValidationSummaryContractViolations,
+    validateReviewCoverageLedger,
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
@@ -33,14 +34,12 @@ import {
     type JsonReviewFindingsArtifactValidation
 } from '../review/review-findings-artifact-verdict';
 import {
-    buildReviewFindingsValidationArtifact,
     getReviewFindingsValidationArtifactPath,
     getReviewFindingsValidationArtifactSnapshotPath,
     validateReviewFindingsValidationArtifactForReceipt,
     type ReviewFindingsValidationArtifact
 } from '../review/review-findings-validation-artifact';
 import {
-    buildReviewFindingsDispositionArtifact,
     getReviewFindingsDispositionArtifactPath,
     getReviewFindingsDispositionArtifactSnapshotPath,
     type ReviewFindingsDispositionArtifact
@@ -48,9 +47,10 @@ import {
 import type { ReviewFindingsReport } from '../review/review-findings-schema';
 import {
     type LockedReviewFindingPolicyResolution,
-    resolveLockedReviewFindingPolicyFromReceiptDisposition,
+    resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence,
     reviewFindingsValidationArtifactHasBlockingFindings
 } from '../review/review-finding-disposition';
+import { validateReviewFindingsDispositionEvidence } from '../review/review-findings-disposition-evidence';
 
 export interface MaterializeReusedReviewEvidenceOptions {
     repoRoot: string;
@@ -171,41 +171,6 @@ function summarizeReviewFindingsDispositionEvidence(
     };
 }
 
-function getReviewEvidenceLocationFilePath(location: string): string | null {
-    const normalized = gateHelpers.normalizePath(String(location || '').trim());
-    const match = normalized.match(/^(.+?):\d+(?::\d+)?$/u);
-    return match?.[1] ? gateHelpers.normalizePath(match[1]) : null;
-}
-
-function buildHistoricalCoverageContractFromReport(
-    report: ReviewFindingsReport,
-    reviewType: string
-): ReviewCoverageContract | null {
-    const contractSha256 = normalizeSha256(report.coverage_ledger.coverage_contract_sha256);
-    if (!contractSha256) {
-        return null;
-    }
-    const obligations = report.coverage_ledger.entries.map((entry) => {
-        const target = entry.evidence
-            .map((evidence) => getReviewEvidenceLocationFilePath(evidence.location))
-            .find((filePath): filePath is string => !!filePath)
-            || `review-evidence/${entry.obligation_id}.txt`;
-        return {
-            id: entry.obligation_id,
-            kind: 'file' as const,
-            target
-        };
-    });
-    return {
-        schema_version: 1,
-        required: obligations.length > 0,
-        review_type: reviewType,
-        obligations,
-        obligation_count: obligations.length,
-        contract_sha256: contractSha256
-    };
-}
-
 function getReceiptBoundFindingsReviewArtifactPath(receipt: ReviewReceipt | null | undefined): string | null {
     if (!receipt) {
         return null;
@@ -264,7 +229,11 @@ export async function materializeReusedReviewEvidence(
                 reason: findingsValidationEvidence.reason
             };
         }
-        const reviewCoverage = findingsValidationEvidence.evidence.validation.coverage_validation;
+        const reviewCoverage = validateReviewCoverageLedger(
+            options.artifactText,
+            currentReviewContext.coverage_contract as ReviewCoverageContract,
+            { repoRoot: options.repoRoot }
+        );
         if (!reviewCoverage || reviewCoverage.status !== 'PASS') {
             return {
                 materialized: false,
@@ -408,33 +377,6 @@ async function persistReusedReviewEvidence(
     }
 }
 
-function buildReusedReviewFindingsDispositionEvidence(options: {
-    taskId: string;
-    reviewType: string;
-    reviewArtifactPath: string;
-    validationArtifact: ReviewFindingsValidationArtifact;
-    validationArtifactPath: string;
-    validationArtifactSha256: string;
-    policyResolution: LockedReviewFindingPolicyResolution;
-}): ReusedReviewFindingsDispositionEvidence {
-    const artifactPath = getReviewFindingsDispositionArtifactPath(options.reviewArtifactPath);
-    const payload = buildReviewFindingsDispositionArtifact({
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        validationArtifact: options.validationArtifact,
-        validationArtifactPath: options.validationArtifactPath,
-        validationArtifactSha256: options.validationArtifactSha256,
-        policyResolution: options.policyResolution
-    });
-    const artifactSha256 = sha256RedactedJsonPayload(payload);
-    return {
-        artifactPath,
-        snapshotPath: getReviewFindingsDispositionArtifactSnapshotPath(artifactPath, artifactSha256),
-        artifactSha256,
-        payload
-    };
-}
-
 function buildReusedReviewFindingsValidationEvidence(
     options: MaterializeReusedReviewEvidenceOptions
 ): { evidence: ReusedReviewFindingsValidationEvidence } | { reason: string } {
@@ -465,7 +407,14 @@ function buildReusedReviewFindingsValidationEvidence(
     if (!sourceValidation.valid || !sourceValidation.artifact) {
         return { reason: `reused review findings validation failed: ${sourceValidation.violations.join(' ')}` };
     }
-    const policyResolution = resolveLockedReviewFindingPolicyFromReceiptDisposition(
+    if (!sourceValidation.reference || !sourceValidation.artifact_sha256) {
+        return { reason: 'reused review findings validation failed: source receipt evidence is incomplete.' };
+    }
+    const validationArtifactPath = getReviewFindingsValidationArtifactPath(options.artifactPath);
+    if (gateHelpers.normalizePath(sourceValidation.reference.artifact_path) !== gateHelpers.normalizePath(validationArtifactPath)) {
+        return { reason: 'reused review findings validation failed: source artifact path does not match the current review lane.' };
+    }
+    const policyResolution = resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence(
         options.receipt as unknown as Record<string, unknown>
     );
     if (reviewFindingsValidationArtifactHasBlockingFindings(sourceValidation.artifact, policyResolution)) {
@@ -480,20 +429,6 @@ function buildReusedReviewFindingsValidationEvidence(
     if (!sourceReport) {
         return { reason: 'reused review findings validation failed: source receipt is missing review_findings_report.' };
     }
-    const sourceCoverageContractSha256 = getReceiptOutputContractString(options.receipt, 'coverage_contract_sha256')
-        || sourceValidation.artifact.validation_result.bindings.coverage_contract_sha256
-        || sourceReport.coverage_ledger.coverage_contract_sha256;
-    const sourceCoverageContract = buildHistoricalCoverageContractFromReport(sourceReport, options.reviewType)
-        || (sourceCoverageContractSha256
-            ? {
-                schema_version: 1,
-                required: false,
-                review_type: options.reviewType,
-                obligations: [],
-                obligation_count: 0,
-                contract_sha256: sourceCoverageContractSha256
-            } as ReviewCoverageContract
-            : null);
     const validation: JsonReviewFindingsArtifactValidation = {
         detected: true,
         valid: true,
@@ -504,40 +439,45 @@ function buildReusedReviewFindingsValidationEvidence(
     const rawOutputSha256 = normalizeSha256(getReceiptRecordString(options.receipt, 'review_output_sha256'))
         || normalizeSha256(getReceiptOutputContractString(options.receipt, 'raw_output_sha256'))
         || normalizeSha256(options.historicalReviewArtifactSha256);
-    const artifactPath = getReviewFindingsValidationArtifactPath(options.artifactPath);
-    const payload = buildReviewFindingsValidationArtifact({
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        validation,
-        reviewOutputSha256: rawOutputSha256,
-        reviewArtifactPath: options.artifactPath,
-        reviewArtifactSha256: options.historicalReviewArtifactSha256,
-        reviewContextPath: null,
-        reviewContextSha256: options.expectedContextSha256,
-        preflightPath: null,
-        preflightSha256: null,
-        scopeSha256: null,
-        reviewScopeSha256: options.expectedReviewScopeSha256,
-        codeScopeSha256: options.expectedCodeScopeSha256,
-        reviewTreeStateSha256: options.expectedReviewTreeStateSha256,
-        coverageContract: sourceCoverageContract
+    const disposition = validateReviewFindingsDispositionEvidence({
+        repoRoot: options.repoRoot,
+        receipt: options.receipt as unknown as Record<string, unknown>,
+        receiptPath: options.candidate.telemetryReceiptPath,
+        reviewArtifactPath: sourceReviewArtifactPath,
+        expectedTaskId: options.taskId,
+        expectedReviewType: options.reviewType,
+        validationArtifact: sourceValidation.artifact,
+        validationArtifactPath: sourceValidation.reference.artifact_path,
+        validationArtifactSha256: sourceValidation.artifact_sha256,
+        policyResolution,
+        expectedReceiptPath: options.reusedFromReceiptPath,
+        expectedReceiptSha256: options.reusedFromReceiptSha256,
+        preferSnapshot: true
     });
-    const artifactSha256 = sha256RedactedJsonPayload(payload);
-    const dispositionEvidence = buildReusedReviewFindingsDispositionEvidence({
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        reviewArtifactPath: options.artifactPath,
-        validationArtifact: payload,
-        validationArtifactPath: artifactPath,
-        validationArtifactSha256: artifactSha256,
-        policyResolution
-    });
+    if (!disposition.valid || !disposition.artifact || !disposition.artifact_sha256) {
+        return {
+            reason: `reused review findings disposition evidence is not satisfied: ${disposition.violations.join(' ')}`
+        };
+    }
+    const dispositionArtifactPath = getReviewFindingsDispositionArtifactPath(options.artifactPath);
+    const dispositionEvidence: ReusedReviewFindingsDispositionEvidence = {
+        artifactPath: dispositionArtifactPath,
+        snapshotPath: getReviewFindingsDispositionArtifactSnapshotPath(
+            dispositionArtifactPath,
+            disposition.artifact_sha256
+        ),
+        artifactSha256: disposition.artifact_sha256,
+        payload: disposition.artifact
+    };
     return {
         evidence: {
-            artifactPath,
-            snapshotPath: getReviewFindingsValidationArtifactSnapshotPath(artifactPath, artifactSha256),
-            artifactSha256,
-            payload,
+            artifactPath: validationArtifactPath,
+            snapshotPath: getReviewFindingsValidationArtifactSnapshotPath(
+                validationArtifactPath,
+                sourceValidation.artifact_sha256
+            ),
+            artifactSha256: sourceValidation.artifact_sha256,
+            payload: sourceValidation.artifact,
             validation,
             rawOutputSha256,
             policyResolution,

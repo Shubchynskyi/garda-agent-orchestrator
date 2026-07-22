@@ -46,7 +46,7 @@ import {
 } from '../review/review-findings-validation-artifact';
 import {
     resolveLockedReviewFindingPolicyFromPreflight,
-    resolveLockedReviewFindingPolicyFromReceiptDisposition
+    resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence
 } from '../review/review-finding-disposition';
 import { validateReviewFindingsDispositionEvidence } from '../review/review-findings-disposition-evidence';
 import {
@@ -383,6 +383,12 @@ export function validateReviewArtifactGateEligibility(options: {
                         const reviewCoverage = toPlainRecord((receipt as unknown as Record<string, unknown>).review_coverage);
                         const coverageContract = toPlainRecord(reviewContext.coverage_contract);
                         const expectedCoverageContractSha256 = String(coverageContract?.contract_sha256 || '').trim().toLowerCase() || null;
+                        const reviewOutputContract = toPlainRecord(
+                            (receipt as unknown as Record<string, unknown>).review_output_contract
+                        );
+                        const findingsCoverageContractSha256 = reusedExistingReview
+                            ? String(reviewOutputContract?.coverage_contract_sha256 || '').trim().toLowerCase() || null
+                            : expectedCoverageContractSha256;
                         if (reviewCoverage?.status !== 'PASS') {
                             errors.push(`Review receipt for '${reviewKey}' is missing complete review_coverage evidence.`);
                         } else if (coverageContract) {
@@ -424,12 +430,12 @@ export function validateReviewArtifactGateEligibility(options: {
                             expectedReviewTreeStateSha256: reusedExistingReview
                                 ? typeof receipt.reused_from_review_tree_state_sha256 === 'string' ? receipt.reused_from_review_tree_state_sha256 : null
                                 : reviewContextTreeStateSha256,
-                            expectedCoverageContractSha256,
+                            expectedCoverageContractSha256: findingsCoverageContractSha256,
                             requireAccepted: true
                         });
                         errors.push(...validationArtifact.violations);
                         const policyResolution = reusedExistingReview
-                            ? resolveLockedReviewFindingPolicyFromReceiptDisposition(receipt as unknown as Record<string, unknown>)
+                            ? resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence(receipt as unknown as Record<string, unknown>)
                             : resolveLockedReviewFindingPolicyFromPreflight(preflightPayload);
                         findingsEvidence = getReviewFindingsEvidenceFromValidationArtifact(
                             artifactPath,
@@ -453,7 +459,14 @@ export function validateReviewArtifactGateEligibility(options: {
                                     validationArtifact: validationArtifact.artifact,
                                     validationArtifactPath: validationArtifact.reference.artifact_path,
                                     validationArtifactSha256: validationArtifact.artifact_sha256,
-                                    policyResolution
+                                    policyResolution,
+                                    expectedReceiptPath: reusedExistingReview
+                                        ? typeof receipt.reused_from_receipt_path === 'string' ? receipt.reused_from_receipt_path : null
+                                        : null,
+                                    expectedReceiptSha256: reusedExistingReview
+                                        ? typeof receipt.reused_from_receipt_sha256 === 'string' ? receipt.reused_from_receipt_sha256 : null
+                                        : null,
+                                    preferSnapshot: reusedExistingReview
                                 });
                                 errors.push(...dispositionEvidence.violations);
                             }

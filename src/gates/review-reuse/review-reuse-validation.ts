@@ -27,9 +27,10 @@ import {
     validateReviewFindingsValidationArtifactForReceipt
 } from '../review/review-findings-validation-artifact';
 import {
-    resolveLockedReviewFindingPolicyFromReceiptDisposition,
+    resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence,
     reviewFindingsValidationArtifactHasBlockingFindings
 } from '../review/review-finding-disposition';
+import { validateReviewFindingsDispositionEvidence } from '../review/review-findings-disposition-evidence';
 
 export interface HistoricalReviewReuseCandidate {
     telemetryReceiptPath: string;
@@ -144,7 +145,10 @@ function getReceiptBoundFindingsReviewArtifactPath(receipt: ReviewReceipt): stri
 }
 
 function validateFindingsValidationForHistoricalReuse(options: {
+    repoRoot: string;
     receipt: ReviewReceipt;
+    receiptPath: string;
+    receiptSha256: string;
     taskId: string;
     reviewType: string;
     reviewArtifactPath: string;
@@ -193,9 +197,39 @@ function validateFindingsValidationForHistoricalReuse(options: {
     if (!validation.valid) {
         return `prior findings validation artifact is invalid: ${validation.violations.join(' ')}`;
     }
+    if (!validation.artifact || !validation.reference || !validation.artifact_sha256) {
+        return 'prior findings validation artifact is missing complete authenticated evidence';
+    }
+    const policyResolution = resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence(
+        options.receipt as unknown as Record<string, unknown>
+    );
+    const dispositionReceiptPath = reusedExistingReview
+        ? getReceiptRecordString(options.receipt, 'reused_from_receipt_path') || options.receiptPath
+        : options.receiptPath;
+    const dispositionReceiptSha256 = reusedExistingReview
+        ? normalizeReceiptSha256(options.receipt.reused_from_receipt_sha256) || options.receiptSha256
+        : options.receiptSha256;
+    const disposition = validateReviewFindingsDispositionEvidence({
+        repoRoot: options.repoRoot,
+        receipt: options.receipt as unknown as Record<string, unknown>,
+        receiptPath: options.receiptPath,
+        reviewArtifactPath: options.reviewArtifactPath,
+        expectedTaskId: options.taskId,
+        expectedReviewType: options.reviewType,
+        validationArtifact: validation.artifact,
+        validationArtifactPath: validation.reference.artifact_path,
+        validationArtifactSha256: validation.artifact_sha256,
+        policyResolution,
+        expectedReceiptPath: dispositionReceiptPath,
+        expectedReceiptSha256: dispositionReceiptSha256,
+        preferSnapshot: options.preferSnapshot
+    });
+    if (!disposition.valid) {
+        return `prior findings disposition evidence is not satisfied: ${disposition.violations.join(' ')}`;
+    }
     if (reviewFindingsValidationArtifactHasBlockingFindings(
         validation.artifact,
-        resolveLockedReviewFindingPolicyFromReceiptDisposition(options.receipt as unknown as Record<string, unknown>)
+        policyResolution
     )) {
         return 'prior findings validation artifact contains policy-blocking active findings or residual risks';
     }
@@ -475,6 +509,9 @@ export function validateHistoricalReviewReuseCandidate(options: {
     if (receipt.task_id !== options.taskId || receipt.review_type !== options.reviewType) {
         return { accepted: false, reason: 'prior review receipt task id or review type does not match current request' };
     }
+    if (!sourceReceiptSha256) {
+        return { accepted: false, reason: 'prior review receipt sha256 is unavailable' };
+    }
     if (!reviewerExecutionMode || !reviewerIdentity || !sourceReceiptContextSha256 || !expectedContextSha256) {
         return { accepted: false, reason: 'prior review receipt is missing reviewer identity or review-context hash' };
     }
@@ -541,7 +578,10 @@ export function validateHistoricalReviewReuseCandidate(options: {
             ?? verifiedArtifact.artifactPath
         ).trim();
         const findingsValidationReuseReason = validateFindingsValidationForHistoricalReuse({
+            repoRoot: options.repoRoot,
             receipt,
+            receiptPath: sourceReceiptPath,
+            receiptSha256: sourceReceiptSha256,
             taskId: options.taskId,
             reviewType: options.reviewType,
             reviewArtifactPath: mutableReviewArtifactPath,

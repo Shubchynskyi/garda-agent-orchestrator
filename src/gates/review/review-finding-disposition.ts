@@ -186,6 +186,31 @@ export function resolveLockedReviewFindingPolicyFromReceiptDisposition(
     };
 }
 
+export function resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence(
+    receiptOrEventDetails: Record<string, unknown> | null | undefined
+): LockedReviewFindingPolicyResolution {
+    const resolution = resolveLockedReviewFindingPolicyFromReceiptDisposition(receiptOrEventDetails);
+    if (resolution.source === 'fallback_strict') {
+        return resolution;
+    }
+    const disposition = isRecord(receiptOrEventDetails?.review_findings_disposition)
+        ? receiptOrEventDetails.review_findings_disposition
+        : isRecord(receiptOrEventDetails?.reviewFindingsDisposition)
+            ? receiptOrEventDetails.reviewFindingsDisposition
+            : null;
+    const recordedSource = disposition?.policy_source;
+    if (
+        recordedSource !== 'preflight_profile_policy_snapshot'
+        && recordedSource !== 'receipt_review_findings_disposition'
+    ) {
+        return resolution;
+    }
+    return {
+        ...resolution,
+        source: recordedSource
+    };
+}
+
 function emptyCounts(): Record<ReviewFindingDispositionAction, number> {
     return {
         fix_now: 0,

@@ -59,6 +59,9 @@ export interface ReviewFindingsDispositionEvidenceCheckOptions {
     validationArtifactPath: string;
     validationArtifactSha256: string;
     policyResolution: LockedReviewFindingPolicyResolution;
+    expectedReceiptPath?: string | null;
+    expectedReceiptSha256?: string | null;
+    preferSnapshot?: boolean;
 }
 
 function normalizeHash(value: unknown): string | null {
@@ -196,6 +199,8 @@ function validateFollowUpSatisfaction(options: {
     validationArtifact: ReviewFindingsValidationArtifact;
     taskId: string;
     reviewType: string;
+    expectedReceiptPath?: string | null;
+    expectedReceiptSha256?: string | null;
 }): { artifactPath: string | null; violations: string[] } {
     const followUpCount = options.dispositionArtifact.summary.follow_up_pending_count;
     if (followUpCount === 0) {
@@ -240,8 +245,10 @@ function validateFollowUpSatisfaction(options: {
     assertEqual(violations, 'Review findings follow-up source validation status', sourceValidation?.status, 'accepted');
     assertEqual(violations, 'Review findings follow-up source validation accepted', sourceValidation?.accepted, true);
     const sourceReceipt = toPlainRecord(artifact.source_receipt);
-    assertEqual(violations, 'Review findings follow-up source receipt path', normalizeNonEmptyPath(sourceReceipt?.receipt_path), normalizePath(options.receiptPath));
-    assertEqual(violations, 'Review findings follow-up source receipt sha256', normalizeHash(sourceReceipt?.receipt_sha256), fileSha256(options.receiptPath));
+    const expectedReceiptPath = normalizePath(options.expectedReceiptPath || options.receiptPath);
+    const expectedReceiptSha256 = normalizeHash(options.expectedReceiptSha256) || fileSha256(options.receiptPath);
+    assertEqual(violations, 'Review findings follow-up source receipt path', normalizeNonEmptyPath(sourceReceipt?.receipt_path), expectedReceiptPath);
+    assertEqual(violations, 'Review findings follow-up source receipt sha256', normalizeHash(sourceReceipt?.receipt_sha256), expectedReceiptSha256);
     const summary = toPlainRecord(artifact.summary);
     assertEqual(violations, 'Review findings follow-up obligation count', normalizeNonNegativeInteger(summary?.follow_up_obligation_count), followUpCount);
     assertEqual(violations, 'Review findings follow-up blocked task count', normalizeNonNegativeInteger(summary?.blocked_task_count), 0);
@@ -367,14 +374,20 @@ function validateReviewFindingsDispositionEvidenceUnlocked(
             `${reference.artifact_path}.`
         );
     }
+    const artifactPathToRead = options.preferSnapshot && reference.snapshot_path
+        ? reference.snapshot_path
+        : reference.artifact_path;
+    const artifactSha256ToRead = options.preferSnapshot && reference.snapshot_sha256
+        ? reference.snapshot_sha256
+        : reference.artifact_sha256;
     const artifactRecord = violations.length === 0
-        ? readJsonRecord(reference.artifact_path, 'Review findings disposition artifact', violations)
+        ? readJsonRecord(artifactPathToRead, 'Review findings disposition artifact', violations)
         : null;
-    const artifactSha256 = artifactRecord ? fileSha256(reference.artifact_path) : null;
-    if (artifactSha256 && artifactSha256 !== reference.artifact_sha256) {
+    const artifactSha256 = artifactRecord ? fileSha256(artifactPathToRead) : null;
+    if (artifactSha256 && artifactSha256 !== artifactSha256ToRead) {
         violations.push(
-            `Review findings disposition artifact '${reference.artifact_path}' sha256 mismatch: ` +
-            `expected ${reference.artifact_sha256}, found ${artifactSha256}.`
+            `Review findings disposition artifact '${artifactPathToRead}' sha256 mismatch: ` +
+            `expected ${artifactSha256ToRead}, found ${artifactSha256}.`
         );
     }
     const expectedSnapshotPath = getReviewFindingsDispositionArtifactSnapshotPath(
@@ -487,7 +500,9 @@ function validateReviewFindingsDispositionEvidenceUnlocked(
         validationArtifactSha256: options.validationArtifactSha256,
         validationArtifact: options.validationArtifact,
         taskId: options.expectedTaskId,
-        reviewType: options.expectedReviewType
+        reviewType: options.expectedReviewType,
+        expectedReceiptPath: options.expectedReceiptPath,
+        expectedReceiptSha256: options.expectedReceiptSha256
     });
     violations.push(...followUp.violations);
     return {

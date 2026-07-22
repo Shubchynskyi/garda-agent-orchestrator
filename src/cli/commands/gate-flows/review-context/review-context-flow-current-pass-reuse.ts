@@ -30,8 +30,10 @@ import {
 } from '../../../../gates/review/review-findings-validation-artifact';
 import {
     resolveLockedReviewFindingPolicyFromPreflight,
+    resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence,
     reviewFindingsValidationArtifactHasBlockingFindings
 } from '../../../../gates/review/review-finding-disposition';
+import { validateReviewFindingsDispositionEvidence } from '../../../../gates/review/review-findings-disposition-evidence';
 import {
     validateStrictReusedReviewEvidence
 } from '../../../../gates/review-reuse/review-reuse-telemetry';
@@ -395,18 +397,53 @@ export function tryAcceptCurrentPassReviewEvidence(options: {
             expectedReviewTreeStateSha256: receipt.reused_existing_review === true
                 ? normalizeOptionalSha256(receipt.reused_from_review_tree_state_sha256)
                 : reviewTreeStateSha256,
-            expectedCoverageContractSha256: isRecord(reviewContext.coverage_contract)
-                ? normalizeOptionalSha256((reviewContext.coverage_contract as Record<string, unknown>).contract_sha256)
-                : null,
+            expectedCoverageContractSha256: receipt.reused_existing_review === true
+                ? normalizeOptionalSha256(getReceiptOutputContractString(receipt, 'coverage_contract_sha256'))
+                : isRecord(reviewContext.coverage_contract)
+                    ? normalizeOptionalSha256((reviewContext.coverage_contract as Record<string, unknown>).contract_sha256)
+                    : null,
             requireAccepted: true,
             preferSnapshot: receipt.reused_existing_review === true
         });
         if (!findingsValidation.valid) {
             return reject(`review findings validation artifact is invalid for current PASS reuse: ${findingsValidation.violations.join(' ')}`);
         }
+        if (!findingsValidation.artifact || !findingsValidation.reference || !findingsValidation.artifact_sha256) {
+            return reject('review findings validation artifact is missing complete authenticated evidence for current PASS reuse');
+        }
+        const policyResolution = receipt.reused_existing_review === true
+            ? resolveLockedReviewFindingPolicyFromReceiptDispositionEvidence(
+                receipt as unknown as Record<string, unknown>
+            )
+            : resolveLockedReviewFindingPolicyFromPreflight(options.preflightPayload);
+        const dispositionEvidence = validateReviewFindingsDispositionEvidence({
+            repoRoot: options.repoRoot,
+            receipt: receipt as unknown as Record<string, unknown>,
+            receiptPath,
+            reviewArtifactPath: artifactPath,
+            expectedTaskId: options.taskId,
+            expectedReviewType: options.reviewType,
+            validationArtifact: findingsValidation.artifact,
+            validationArtifactPath: findingsValidation.reference.artifact_path,
+            validationArtifactSha256: findingsValidation.artifact_sha256,
+            policyResolution,
+            expectedReceiptPath: receipt.reused_existing_review === true
+                ? normalizeOptionalPath(receipt.reused_from_receipt_path)
+                : null,
+            expectedReceiptSha256: receipt.reused_existing_review === true
+                ? normalizeOptionalSha256(receipt.reused_from_receipt_sha256)
+                : null,
+            preferSnapshot: receipt.reused_existing_review === true
+        });
+        if (!dispositionEvidence.valid) {
+            return reject(
+                `review findings disposition evidence is not satisfied for current PASS reuse: ` +
+                dispositionEvidence.violations.join(' ')
+            );
+        }
         if (reviewFindingsValidationArtifactHasBlockingFindings(
             findingsValidation.artifact,
-            resolveLockedReviewFindingPolicyFromPreflight(options.preflightPayload)
+            policyResolution
         )) {
             return reject('review findings validation artifact contains fix_now findings or residual risks');
         }

@@ -42,8 +42,26 @@ import {
     getReviewFindingsValidationArtifactSnapshotPath
 } from '../../../../../../src/gates/review/review-findings-validation-artifact';
 import {
+    buildReviewFindingsDispositionArtifact,
+    getReviewFindingsDispositionArtifactPath,
+    getReviewFindingsDispositionArtifactSnapshotPath
+} from '../../../../../../src/gates/review/review-findings-disposition-artifact';
+import {
+    resolveLockedReviewFindingPolicyFromPreflight
+} from '../../../../../../src/gates/review/review-finding-disposition';
+import {
     validateReviewFindingsContract
 } from '../../../../../../src/gates/review/review-findings-artifact-verdict';
+import {
+    materializeReviewFindingsFollowUpTasks
+} from '../../../../../../src/gates/review/review-findings-follow-up-tasks';
+import {
+    TRUST_BOUNDARY_ANALYSIS_RULE_ID
+} from '../../../../../../src/core/trust-boundary-analysis';
+import {
+    QUALITY_CHECKLIST_ID,
+    resolveDefaultQualityChecklistArtifactPath
+} from '../../../../../../src/gates/quality-checklist';
 
 function sha256File(filePath: string): string {
     const crypto = require('node:crypto');
@@ -59,7 +77,86 @@ function sha256Json(value: unknown): string {
     return sha256Text(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function addBalancedLowFindingToReusableCodeReview(repoRoot: string, taskId: string): void {
+function seedBalancedTaskQueue(repoRoot: string, taskId: string): void {
+    seedTaskQueue(repoRoot, taskId);
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskText = fs.readFileSync(taskPath, 'utf8');
+    fs.writeFileSync(taskPath, taskText.replace('| default | fixture |', '| balanced | fixture |'), 'utf8');
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.copyFileSync(
+        path.resolve('garda-agent-orchestrator/live/config/profiles.json'),
+        path.join(configDir, 'profiles.json')
+    );
+}
+
+function seedTrustBoundaryChecklist(repoRoot: string, taskId: string, preflightPath: string): void {
+    const artifactPath = resolveDefaultQualityChecklistArtifactPath(repoRoot, taskId);
+    const preflightSha256 = sha256File(preflightPath);
+    const evidenceRelativePath = 'tests/node/gates/review-context/review-context-trust-boundary-analysis.test.ts';
+    const evidencePath = path.join(repoRoot, evidenceRelativePath);
+    fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
+    fs.writeFileSync(
+        evidencePath,
+        "test('rejects replaced trust-boundary evidence', () => { assert.equal(true, true); });\n",
+        'utf8'
+    );
+    const artifactText = `${JSON.stringify({
+        task_id: taskId,
+        checklist_id: QUALITY_CHECKLIST_ID,
+        preflight_sha256: preflightSha256,
+        status: 'PASS',
+        rules: [{
+            id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+            scope_applicability: 'active'
+        }],
+        answers: [{
+            rule_id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+            trust_boundary_matrix: [{
+                boundary_id: 'TB-FIXTURE-001',
+                boundary: 'Workflow configuration input to review-reuse validation',
+                authority_source: 'Hash-chained QUALITY_CHECKLIST_RECORDED test event',
+                mutable_inputs: ['workflow configuration', 'quality-checklist artifact'],
+                integrity_evidence: ['recorded artifact sha256', 'preflight sha256'],
+                canonical_reconstruction: 'Rebuild from the current workflow configuration and preflight.',
+                toctou_replay: 'Reject a digest mismatch or stale preflight binding.',
+                negative_paths: [{
+                    kind: 'replaced',
+                    scenario: 'rejects replaced trust-boundary evidence',
+                    expected_behavior: 'Reject review-context construction.',
+                    evidence_files: [
+                        `${evidenceRelativePath}#rejects replaced trust-boundary evidence`
+                    ]
+                }]
+            }]
+        }]
+    }, null, 2)}\n`;
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, artifactText, 'utf8');
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'QUALITY_CHECKLIST_RECORDED',
+        'PASS',
+        'Quality checklist test fixture recorded.',
+        {
+            artifact_path: artifactPath.replace(/\\/gu, '/'),
+            artifact_hash: sha256Text(artifactText),
+            status: 'PASS',
+            outcome: 'PASS',
+            checklist_id: QUALITY_CHECKLIST_ID,
+            preflight_path: path.resolve(preflightPath).replace(/\\/gu, '/'),
+            preflight_sha256: preflightSha256
+        },
+        { actor: 'gate' }
+    );
+}
+
+function addBalancedLowFindingToReusableCodeReview(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string
+): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
     const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
@@ -74,20 +171,16 @@ function addBalancedLowFindingToReusableCodeReview(repoRoot: string, taskId: str
     const coverageLedger = report.coverage_ledger as Record<string, unknown>;
     const entries = coverageLedger.entries as Array<Record<string, unknown>>;
     const obligationId = String(entries[0]?.obligation_id || 'FILE-001');
-    findings.low = [
-        {
-            id: 'F-001',
-            title: 'Accepted low follow-up finding',
-            description: 'A low severity reviewer finding at src/gates/review-context/review-context-token-economy.ts:54 should be retained as non-blocking under balanced review finding policy.',
-            evidence: [
-                {
-                    location: 'src/app.ts:1',
-                    observation: 'The changed line remains covered by historical review evidence.'
-                }
-            ],
-            coverage_obligation_ids: [obligationId]
-        }
-    ];
+    findings.low = [{
+        id: 'F-001',
+        title: 'Accepted low follow-up finding',
+        description: 'A low severity reviewer finding at src/gates/review-context/review-context-token-economy.ts:54 should be retained as non-blocking under balanced review finding policy.',
+        evidence: [{
+            location: 'src/app.ts:1',
+            observation: 'The changed line remains covered by historical review evidence.'
+        }],
+        coverage_obligation_ids: [obligationId]
+    }];
     entries[0].finding_ids = ['F-001'];
     const artifactText = `${JSON.stringify(report, null, 2)}\n`;
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
@@ -116,7 +209,7 @@ function addBalancedLowFindingToReusableCodeReview(repoRoot: string, taskId: str
         reviewArtifactSha256: artifactSha256,
         reviewContextPath,
         reviewContextSha256,
-        preflightPath: String(receipt.preflight_path || ''),
+        preflightPath,
         preflightSha256: String(receipt.preflight_sha256 || ''),
         scopeSha256: typeof receipt.scope_sha256 === 'string' ? receipt.scope_sha256 : null,
         reviewScopeSha256: typeof receipt.review_scope_sha256 === 'string' ? receipt.review_scope_sha256 : null,
@@ -131,6 +224,25 @@ function addBalancedLowFindingToReusableCodeReview(repoRoot: string, taskId: str
     );
     fs.writeFileSync(validationArtifactPath, `${JSON.stringify(validationArtifact, null, 2)}\n`, 'utf8');
     fs.writeFileSync(validationArtifactSnapshotPath, `${JSON.stringify(validationArtifact, null, 2)}\n`, 'utf8');
+
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const policyResolution = resolveLockedReviewFindingPolicyFromPreflight(preflight);
+    const dispositionArtifactPath = getReviewFindingsDispositionArtifactPath(artifactPath);
+    const dispositionArtifact = buildReviewFindingsDispositionArtifact({
+        taskId,
+        reviewType: 'code',
+        validationArtifact,
+        validationArtifactPath,
+        validationArtifactSha256,
+        policyResolution
+    });
+    const dispositionArtifactSha256 = sha256Json(dispositionArtifact);
+    const dispositionSnapshotPath = getReviewFindingsDispositionArtifactSnapshotPath(
+        dispositionArtifactPath,
+        dispositionArtifactSha256
+    );
+    fs.writeFileSync(dispositionArtifactPath, `${JSON.stringify(dispositionArtifact, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(dispositionSnapshotPath, `${JSON.stringify(dispositionArtifact, null, 2)}\n`, 'utf8');
 
     const reportSha256 = sha256Json(report);
     Object.assign(receipt, {
@@ -155,24 +267,20 @@ function addBalancedLowFindingToReusableCodeReview(repoRoot: string, taskId: str
             validation_result_sha256: validationArtifact.validation_result_sha256,
             violation_count: validationArtifact.validation_result.violations.length
         },
-        review_findings_disposition: {
-            schema_version: 1,
-            policy_id: 'balanced',
-            policy_source: 'preflight_profile_policy_snapshot',
-            policy_diagnostics: [],
-            findings: {
-                critical: { action: 'fix_now', ids: [], count: 0 },
-                high: { action: 'fix_now', ids: [], count: 0 },
-                medium: { action: 'create_follow_up', ids: [], count: 0 },
-                low: { action: 'create_follow_up', ids: ['F-001'], count: 1 }
-            },
-            residual_risks: { action: 'create_follow_up', ids: [], count: 0 },
-            counts_by_action: { fix_now: 0, create_follow_up: 1, ignore: 0 },
-            blocking_count: 0,
-            blocking_ids: [],
-            non_blocking_count: 1,
-            total_count: 1,
-            verdict: 'pass_with_follow_up_or_ignored_findings'
+        review_findings_disposition: dispositionArtifact.disposition_result,
+        review_findings_disposition_artifact: {
+            artifact_path: dispositionArtifactPath.replace(/\\/g, '/'),
+            artifact_sha256: dispositionArtifactSha256,
+            snapshot_path: dispositionSnapshotPath.replace(/\\/g, '/'),
+            snapshot_sha256: dispositionArtifactSha256,
+            disposition_result_sha256: dispositionArtifact.disposition_result_sha256,
+            policy_id: dispositionArtifact.policy.policy_id,
+            policy_source: dispositionArtifact.policy.policy_source,
+            item_count: dispositionArtifact.summary.item_count,
+            fix_now_count: dispositionArtifact.summary.fix_now_count,
+            follow_up_pending_count: dispositionArtifact.summary.follow_up_pending_count,
+            ignored_count: dispositionArtifact.summary.ignored_count,
+            blocking_count: dispositionArtifact.summary.blocking_count
         },
         review_output_contract: {
             schema_version: 1,
@@ -180,6 +288,8 @@ function addBalancedLowFindingToReusableCodeReview(repoRoot: string, taskId: str
             report_sha256: reportSha256,
             validation_artifact_sha256: validationArtifactSha256,
             validation_result_sha256: validationArtifact.validation_result_sha256,
+            disposition_artifact_sha256: dispositionArtifactSha256,
+            disposition_result_sha256: dispositionArtifact.disposition_result_sha256,
             raw_output_sha256: artifactSha256,
             review_artifact_sha256: artifactSha256,
             review_context_sha256: reviewContextSha256,
@@ -371,7 +481,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
     it('reuses current-cycle code review evidence and unblocks downstream test review when runtime code scope is unchanged', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-reuse-code-review';
-        seedTaskQueue(repoRoot, taskId);
+        seedBalancedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -422,28 +532,40 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         writeCompilePassEvidence(repoRoot, taskId, priorPreflightPath);
-        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, codeExecution.reviewerIdentity);
-        const orchestratorRoot = getOrchestratorRoot(repoRoot);
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'historical code review started', {
-            review_type: 'code'
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            priorPreflightPath,
+            reviewContextPath,
+            codeExecution.reviewerIdentity
+        );
+        addBalancedLowFindingToReusableCodeReview(repoRoot, taskId, priorPreflightPath);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const taskTextBeforeFollowUp = fs.readFileSync(taskPath, 'utf8');
+        const followUpMaterialization = materializeReviewFindingsFollowUpTasks({
+            repoRoot,
+            taskId,
+            reviewType: 'code'
         });
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'historical code review routing recorded', {
-            review_type: 'code',
-            reviewer_execution_mode: codeExecution.reviewerExecutionMode,
-            reviewer_session_id: codeExecution.reviewerIdentity,
-            delegation_used: codeExecution.reviewerExecutionMode === 'delegated_subagent',
-            reviewer_fallback_reason: codeExecution.reviewerFallbackReason
-        });
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'historical code review recorded', {
-            review_type: 'code',
-            reused_existing_review: false
-        });
-        addBalancedLowFindingToReusableCodeReview(repoRoot, taskId);
+        assert.equal(
+            followUpMaterialization.status,
+            'MATERIALIZED',
+            followUpMaterialization.violations.join('\n')
+        );
+        const materializedTaskText = fs.readFileSync(taskPath, 'utf8');
+        const followUpArtifactPath = path.join(reviewsRoot, `${taskId}-code-findings-follow-ups.json`);
+        const followUpArtifactText = fs.readFileSync(followUpArtifactPath, 'utf8');
+        fs.writeFileSync(taskPath, taskTextBeforeFollowUp, 'utf8');
+        fs.rmSync(followUpArtifactPath, { force: true });
         const preflightPath = runExplicitPreflight(
             repoRoot,
             taskId,
             'Reuse code review evidence when only test scope changes',
-            ['src/app.ts', 'tests/app.test.ts']
+            ['src/app.ts', 'tests/app.test.ts'],
+            `${taskId}-preflight.json`,
+            path.join(reviewsRoot, `${taskId}-task-mode.json`)
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
         const compileResult = await runCompileGateCommand({
@@ -455,6 +577,22 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
             emitMetrics: false
         });
         assert.equal(compileResult.exitCode, 0);
+
+        const rejectedReuse = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        assert.equal(rejectedReuse.reusedReviewEvidence, false);
+        assert.ok(rejectedReuse.outputLines.some((line) => (
+            line.includes('prior findings disposition evidence is not satisfied')
+            && line.toLowerCase().includes('follow-up artifact')
+        )), rejectedReuse.outputLines.join('\n'));
+
+        fs.writeFileSync(taskPath, materializedTaskText, 'utf8');
+        fs.writeFileSync(followUpArtifactPath, followUpArtifactText, 'utf8');
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -657,7 +795,11 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         );
         assert.equal(
             refreshedReceipt.code_scope_sha256,
-            computeCodeReviewScopeFingerprint(JSON.parse(fs.readFileSync(preflightPath, 'utf8')), repoRoot).code_scope_sha256
+            computeReviewReuseCodeScopeFingerprint(
+                'code',
+                JSON.parse(fs.readFileSync(preflightPath, 'utf8')),
+                repoRoot
+            ).code_scope_sha256
         );
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const recordedEvents = events.filter((event) => (
@@ -1180,7 +1322,11 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         ) as Record<string, unknown>;
         assert.equal(
             refreshedReceipt.code_scope_sha256,
-            computeCodeReviewScopeFingerprint(JSON.parse(fs.readFileSync(preflightPath, 'utf8')), repoRoot).code_scope_sha256
+            computeReviewReuseCodeScopeFingerprint(
+                'code',
+                JSON.parse(fs.readFileSync(preflightPath, 'utf8')),
+                repoRoot
+            ).code_scope_sha256
         );
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const recordedEvents = events.filter((event) => (
@@ -1351,6 +1497,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
             required_reviews: requiredReviews
         });
         writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+        seedTrustBoundaryChecklist(repoRoot, taskId, preflightPath);
 
         for (const [reviewType] of reviewTypes) {
             const build = await runBuildReviewContextCommand({
