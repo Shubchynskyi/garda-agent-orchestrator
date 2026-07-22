@@ -55,6 +55,7 @@ import {
     handleRecordReviewResult,
     handleRecordReviewRouting
 } from '../../../../../../src/cli/commands/gate-review-handlers';
+import { buildEventIntegrityHash } from '../../../../../../src/gate-runtime/task-events-helpers';
 import {
     runFullSuiteValidationCommand,
     runQualityChecklistCommand
@@ -683,8 +684,56 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
                 pack_id: 'node-backend',
                 trigger_reason: 'optional_skill_selection',
                 optional_skill_selection_fingerprint_sha256: artifact.payload.selection_fingerprint_sha256,
-                reason: 'not needed for current implementation'
+                reason: 'older sequence with later timestamp'
             }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_DECLINED',
+            'INFO',
+            'Optional skill declined again: node-backend',
+            {
+                skill_id: 'node-backend',
+                pack_id: 'node-backend',
+                trigger_reason: 'optional_skill_selection',
+                optional_skill_selection_fingerprint_sha256: artifact.payload.selection_fingerprint_sha256,
+                reason: 'newer sequence with earlier timestamp'
+            }
+        );
+
+        const taskEventsPath = path.join(
+            getOrchestratorRoot(repoRoot),
+            'runtime',
+            'task-events',
+            `${taskId}.jsonl`
+        );
+        const taskEvents = fs.readFileSync(taskEventsPath, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        const declineEvents = taskEvents.filter((event) => (
+            event.event_type === 'SKILL_DECLINED'
+            && (event.details as Record<string, unknown> | null)?.skill_id === 'node-backend'
+        ));
+        assert.equal(declineEvents.length, 2);
+        declineEvents[0].timestamp_utc = new Date(Date.parse(artifact.payload.timestamp_utc) + 20_000).toISOString();
+        declineEvents[1].timestamp_utc = new Date(Date.parse(artifact.payload.timestamp_utc) + 10_000).toISOString();
+
+        let previousEventSha256: string | null = null;
+        for (const event of taskEvents) {
+            const integrity = event.integrity as Record<string, unknown>;
+            integrity.prev_event_sha256 = previousEventSha256;
+            integrity.event_sha256 = '';
+            const eventSha256 = buildEventIntegrityHash(event);
+            assert.ok(eventSha256);
+            integrity.event_sha256 = eventSha256;
+            previousEventSha256 = eventSha256;
+        }
+        fs.writeFileSync(
+            taskEventsPath,
+            taskEvents.map((event) => JSON.stringify(event)).join('\n') + '\n',
+            'utf8'
         );
 
         const compileResult = await runCompileGateCommand({
@@ -732,6 +781,10 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.ok(lastPreflightIndex >= 0);
         assert.ok(reboundDeclineIndex > lastPreflightIndex);
         assert.ok(lastCompileIndex > reboundDeclineIndex);
+        assert.equal(
+            (events[reboundDeclineIndex].details as Record<string, unknown>).reason,
+            'newer sequence with earlier timestamp'
+        );
         const restartEvent = [...events].reverse().find((event) => event.event_type === 'COHERENT_CYCLE_RESTARTED') as Record<string, unknown> | undefined;
         assert.ok(restartEvent, 'coherent restart must persist a passed restart event');
         assert.deepEqual(
