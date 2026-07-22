@@ -18,9 +18,14 @@ import {
     type NormalizedReviewResidualRiskInventoryEntry,
     type ReviewFindingsValidationArtifact
 } from '../review/review-findings-validation-artifact';
+import {
+    getReviewRemediationDeltaBaseViolations,
+    type ReviewRemediationDeltaBase
+} from './review-remediation-delta-contract';
 
 export const REVIEW_REMEDIATION_BASELINE_ARTIFACT_TYPE = 'review_findings_remediation_baseline';
-export const REVIEW_REMEDIATION_BASELINE_SCHEMA_VERSION = 1;
+export const REVIEW_REMEDIATION_BASELINE_LEGACY_SCHEMA_VERSION = 1;
+export const REVIEW_REMEDIATION_BASELINE_SCHEMA_VERSION = 2;
 
 type RemediationItemKind = 'finding' | 'residual_risk';
 
@@ -61,8 +66,7 @@ export interface ReviewRemediationSnapshotBinding {
     snapshot_sha256: string;
 }
 
-export interface ReviewRemediationBaselineArtifact {
-    schema_version: typeof REVIEW_REMEDIATION_BASELINE_SCHEMA_VERSION;
+interface ReviewRemediationBaselineArtifactCommon {
     artifact_type: typeof REVIEW_REMEDIATION_BASELINE_ARTIFACT_TYPE;
     task_id: string;
     review_type: string;
@@ -109,6 +113,20 @@ export interface ReviewRemediationBaselineArtifact {
     };
 }
 
+export interface LegacyReviewRemediationBaselineArtifact extends ReviewRemediationBaselineArtifactCommon {
+    schema_version: typeof REVIEW_REMEDIATION_BASELINE_LEGACY_SCHEMA_VERSION;
+    delta_base?: ReviewRemediationDeltaBase;
+}
+
+export interface CurrentReviewRemediationBaselineArtifact extends ReviewRemediationBaselineArtifactCommon {
+    schema_version: typeof REVIEW_REMEDIATION_BASELINE_SCHEMA_VERSION;
+    delta_base: ReviewRemediationDeltaBase;
+}
+
+export type ReviewRemediationBaselineArtifact =
+    | LegacyReviewRemediationBaselineArtifact
+    | CurrentReviewRemediationBaselineArtifact;
+
 export interface BuildReviewRemediationBaselineOptions {
     taskId: string;
     reviewType: string;
@@ -124,6 +142,7 @@ export interface BuildReviewRemediationBaselineOptions {
     dispositionArtifactSha256: string;
     dispositionArtifact: ReviewFindingsDispositionArtifact;
     profilePolicySnapshot: unknown;
+    deltaBase?: ReviewRemediationDeltaBase;
 }
 
 export interface ReviewRemediationBaselineValidationOptions {
@@ -316,6 +335,12 @@ export function getReviewRemediationBaselineSnapshotPath(artifactPath: string, a
 }
 
 export function buildReviewRemediationBaselineArtifact(
+    options: BuildReviewRemediationBaselineOptions & { deltaBase: ReviewRemediationDeltaBase }
+): CurrentReviewRemediationBaselineArtifact;
+export function buildReviewRemediationBaselineArtifact(
+    options: BuildReviewRemediationBaselineOptions
+): ReviewRemediationBaselineArtifact;
+export function buildReviewRemediationBaselineArtifact(
     options: BuildReviewRemediationBaselineOptions
 ): ReviewRemediationBaselineArtifact {
     if (
@@ -374,8 +399,17 @@ export function buildReviewRemediationBaselineArtifact(
     const validationArtifactPath = requirePath(options.validationArtifactPath, 'validation artifact path');
     const dispositionArtifactPath = requirePath(options.dispositionArtifactPath, 'disposition artifact path');
     const policy = options.dispositionArtifact.policy.review_finding_policy;
-    return {
-        schema_version: REVIEW_REMEDIATION_BASELINE_SCHEMA_VERSION,
+    if (options.deltaBase) {
+        const deltaBaseViolations = getReviewRemediationDeltaBaseViolations(options.deltaBase, {
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewTreeStateSha256: tree.review_tree_state_sha256 || undefined
+        });
+        if (deltaBaseViolations.length > 0) {
+            throw new Error(`Review remediation baseline delta_base is invalid: ${deltaBaseViolations.join(' ')}`);
+        }
+    }
+    const artifactCommon: ReviewRemediationBaselineArtifactCommon = {
         artifact_type: REVIEW_REMEDIATION_BASELINE_ARTIFACT_TYPE,
         task_id: options.taskId,
         review_type: options.reviewType,
@@ -453,6 +487,17 @@ export function buildReviewRemediationBaselineArtifact(
             findings_report_sha256: findingsReportSha256
         }
     };
+    if (!options.deltaBase) {
+        return {
+            schema_version: REVIEW_REMEDIATION_BASELINE_LEGACY_SCHEMA_VERSION,
+            ...artifactCommon
+        };
+    }
+    return {
+        schema_version: REVIEW_REMEDIATION_BASELINE_SCHEMA_VERSION,
+        ...artifactCommon,
+        delta_base: options.deltaBase
+    };
 }
 
 function validateSnapshotBinding(
@@ -523,14 +568,20 @@ function validateExpectedHash(
 }
 
 function parseBaseline(value: unknown): ReviewRemediationBaselineArtifact | null {
+    const isLegacy = isRecord(value)
+        && value.schema_version === REVIEW_REMEDIATION_BASELINE_LEGACY_SCHEMA_VERSION;
+    const isCurrent = isRecord(value)
+        && value.schema_version === REVIEW_REMEDIATION_BASELINE_SCHEMA_VERSION;
     if (
         !isRecord(value)
-        || value.schema_version !== REVIEW_REMEDIATION_BASELINE_SCHEMA_VERSION
+        || (!isLegacy && !isCurrent)
         || value.artifact_type !== REVIEW_REMEDIATION_BASELINE_ARTIFACT_TYPE
         || !Array.isArray(value.accepted_findings)
         || !Array.isArray(value.accepted_residual_risks)
         || !Array.isArray(value.fix_now_items)
         || !Array.isArray(value.path_line_inventory)
+        || (isCurrent && !isRecord(value.delta_base))
+        || (value.delta_base !== undefined && !isRecord(value.delta_base))
         || !isRecord(value.bindings)
     ) {
         return null;
@@ -909,6 +960,13 @@ function validateBaselineConsistency(
         artifact.path_line_inventory_sha256,
         sha256RedactedJsonPayload(artifact.path_line_inventory)
     );
+    if (artifact.delta_base) {
+        violations.push(...getReviewRemediationDeltaBaseViolations(artifact.delta_base, {
+            taskId: artifact.task_id,
+            reviewType: artifact.review_type,
+            reviewTreeStateSha256: artifact.bindings.tree?.review_tree_state_sha256
+        }));
+    }
     if (artifact.fix_now_items.length === 0) {
         violations.push('fix_now_items must contain at least one item.');
     }
