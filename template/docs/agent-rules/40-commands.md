@@ -289,7 +289,7 @@ Notes:
 - For one task cycle, `classify-change -> POST_PREFLIGHT rule-pack binding -> compile-gate` is a strict sequence, not a parallelizable set. Use `next-step` between each transition; if a newer preflight is classified, rerun downstream gates from the POST_PREFLIGHT command that `next-step` prints against that latest preflight before compile.
 - `record-review-result` accepts exactly one reviewer-output source: `--review-output-path` or `--review-output-stdin`.
 - For review-context schema version 3 or newer, `record-review-result` validates the generated `Coverage Ledger` before writing a receipt: every current-scope file, behavior boundary, and review category obligation must occur exactly once with concrete changed-file `path:line` evidence, and active `[F-NNN]` findings must be linked bidirectionally from the ledger.
-- `--review-output-stdin` is not a bypass path: the gate must first persist raw reviewer input to `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md`, then run the same verdict, routing, receipt, and telemetry validation used for file-based ingest.
+- `--review-output-stdin` is not a bypass path: the gate must first persist raw reviewer input to `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md`, then run the same findings-schema, coverage, routing, receipt, and telemetry validation used for file-based ingest.
 - In a dirty workspace, prefer `--use-staged` after staging task-related tracked files.
 - `--use-staged` includes untracked files by default, so new files are classified even before `git add`.
 - Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.
@@ -306,14 +306,14 @@ Notes:
 - `required-reviews-check` additionally validates compile evidence in `runtime/task-events/<task-id>.jsonl`; without `COMPILE_GATE_PASSED` the review gate fails.
 - `required-reviews-check` additionally validates explicit task-mode entry evidence (`TASK_MODE_ENTERED`) before review pass can succeed.
 - `required-reviews-check` additionally validates post-preflight rule-pack evidence (`runtime/reviews/<task-id>-rule-pack.json`) before review pass can succeed.
-- If explicit `--*-review-verdict` flags are omitted, `required-reviews-check` defaults the expected required verdicts from `preflight.required_reviews` for the current task cycle.
+- Explicit `--*-review-verdict` flags are historical compatibility only. New cycles omit them and `required-reviews-check` derives required lane state from validated findings receipts and locked dispositions for `preflight.required_reviews`.
 - These defaults do not relax validation: the gate still requires current-cycle artifacts, receipts, review-context bindings, and exact pass tokens; it must not auto-scan `runtime/reviews` for a convenient PASS.
 - `required-reviews-check` validates workspace drift against compile evidence scope snapshot; any post-compile changes require re-run of compile gate.
 - `required-reviews-check` supports audited override only for code review in tiny low-risk scopes; all other review overrides are rejected.
 - `doc-impact-gate` is mandatory before completion; it writes `runtime/reviews/<task-id>-doc-impact.json`. When the preflight detected `api`, `security`, `infra`, `dependency`, or `db` triggers, `NO_DOC_UPDATES` requires `--sensitive-scope-reviewed true` with a rationale explaining why no documentation updates are needed.
 - Run `build-review-context` before every required reviewer invocation, even when token economy is inactive; the generated review-context artifact is also lifecycle evidence.
 - `build-review-context` writes `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` automatically for the selected review skill.
-- Upstream review dependencies are launch-time guards, not only gate-time guards. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt already exist for the same cycle.
+- Upstream review dependencies are launch-time guards, not only gate-time guards. Do not launch a dependent downstream reviewer before the required upstream accepted findings receipt reports findings-satisfied for the same cycle.
 - Parallel reviewer launch is allowed only for independent review types with no dependency edge in the current cycle; `test` is not independent when upstream non-`test` reviews are required.
 - `classify-change` auto-emits `PREFLIGHT_STARTED` and, on failure, `PREFLIGHT_FAILED`; `compile-gate` auto-emits `IMPLEMENTATION_STARTED` before compile execution.
 - `completion-gate` validates task-mode evidence, rule-pack evidence, compile evidence, review-gate evidence, doc-impact evidence, rework-after-failure evidence, ordered lifecycle evidence (`PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `REVIEW_PHASE_STARTED`), real review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), required review artifacts, and best-effort task-event integrity before `DONE`.

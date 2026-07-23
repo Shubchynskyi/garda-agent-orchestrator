@@ -484,7 +484,7 @@ export function runInit(options: RunInitOptions) {
 
     // Copy support directories from template to live
     const supportDirectories = [
-        'config', 'skills', 'docs/changes', 'docs/reviews', 'docs/tasks'
+        'config', 'skills', 'schemas', 'docs/changes', 'docs/reviews', 'docs/tasks'
     ];
     let copiedSupportDirs = 0;
 

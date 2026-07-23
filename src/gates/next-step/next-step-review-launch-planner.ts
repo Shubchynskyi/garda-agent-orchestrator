@@ -141,12 +141,12 @@ export function describeBlockedReviewDependencies(
         .map((dependency) => {
             const dependencyState = stateByType.get(dependency);
             if (dependencyState?.failed) {
-                return `${dependency} failed with '${dependencyState.verdictToken || dependencyState.failToken || 'FAILED'}'`;
+                return `${dependency} has a current accepted findings receipt with findings-unsatisfied state`;
             }
             if (dependencyState?.artifactExists && !dependencyState.ready) {
-                return `${dependency} is not PASS-ready (${dependencyState.violations.join('; ')})`;
+                return `${dependency} has no current accepted findings receipt with findings-satisfied state (${dependencyState.violations.join('; ')})`;
             }
-            return `${dependency} has no current PASS artifact and receipt`;
+            return `${dependency} has no current accepted findings receipt with findings-satisfied state`;
         })
         .join('; ');
 }

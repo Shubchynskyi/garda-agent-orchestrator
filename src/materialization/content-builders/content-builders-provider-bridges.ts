@@ -65,7 +65,7 @@ Required:
 12. Mandatory reviews on this provider must preserve \`delegated_subagent\` reviewer execution; same-agent self-review is invalid and stale fallback metadata cannot satisfy a fresh cycle.
 13. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
 14. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
-15. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
+15. Do not launch a dependent downstream reviewer before the required upstream accepted findings receipt reports findings-satisfied for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
 16. ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
 17. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
 18. If any mandatory gate command fails, stop, keep the task blocked, run \`next-step\`, and report the exact command, cwd, CLI path, and stderr.
@@ -127,7 +127,7 @@ ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 14. Run preflight classification before implementation when requested by \`next-step\`: via \`node bin/garda.js gate classify-change ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} classify-change ...\` inside a materialized/deployed workspace.
 15. After preflight, refresh downstream rule-pack evidence when requested by \`next-step\`: via \`node bin/garda.js gate load-rule-pack --stage "POST_PREFLIGHT" ...\` when rules must be read, or \`node bin/garda.js gate bind-rule-pack-to-preflight ...\` when \`next-step\` says current-cycle rule files and hashes are already loaded. Use the matching \`${getNodeGateCommandPrefix()}\` command inside a materialized/deployed workspace, and preserve any custom \`--task-mode-path\` on both POST_PREFLIGHT rule-pack commands.
 16. Run compile gate before review only after \`next-step\` reports it as the next gate: via \`node bin/garda.js gate compile-gate ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} compile-gate ...\` inside a materialized/deployed workspace.
-17. Before each required review, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} build-review-context ...\` inside a materialized/deployed workspace, only when \`next-step\` names that review; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION} Dependent downstream review preparation or reviewer launch must wait until the required upstream PASS artifact and receipt exist for the same cycle.
+17. Before each required review, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} build-review-context ...\` inside a materialized/deployed workspace, only when \`next-step\` names that review; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION} Dependent downstream review preparation or reviewer launch must wait until the required upstream accepted findings receipt reports findings-satisfied for the same cycle.
 18. Do not fan out known producer-consumer validation commands as raw shell sidecars around the gate flow. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
 19. Run required independent reviews and gates via \`node bin/garda.js gate required-reviews-check ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} required-reviews-check ...\` inside a materialized/deployed workspace; only independent review types may fan out in parallel for the same cycle. If a cycle changed only test scope, materialize reusable upstream \`code\` review evidence before launching \`test\`, then run \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
 20. Update task status and artifacts in \`TASK.md\`.
@@ -140,7 +140,7 @@ ${getDelegationRequiredProviderLaunchLines().join('\n')}
 - Providers or bridges without delegated reviewer support are not eligible to satisfy the mandatory review workflow until delegated launch support exists.
 - ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
 - ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
-- Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
+- Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream accepted findings receipt reports findings-satisfied for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge for the current cycle.
 - ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
 - Each review receipt must include \`reviewer_execution_mode\` (\`delegated_subagent\`) and \`reviewer_identity\` (\`agent:...\`). Receipts that do not preserve this delegated reviewer contract cannot satisfy a fresh mandatory review cycle.
@@ -224,7 +224,7 @@ Hard stops:
 - ${REVIEWER_DELEGATION_STARTED_INSTRUCTION}
 - ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
 - ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
-- Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
+- Do not spawn or pre-launch a dependent downstream reviewer before the required upstream accepted findings receipt reports findings-satisfied for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
 - ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
 - Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
@@ -262,14 +262,14 @@ Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`ins
 - Re-read \`${resolveBundleName()}/live/config/token-economy.json\` before execution.
 - Re-read \`${resolveBundleName()}/live/config/output-filters.json\` before execution.
 - Keep downstream rule-pack evidence current via \`${getNodeGateCommandPrefix()} load-rule-pack ...\`; bridge execution is invalid without recorded rule-file loading.
-- Reviewer preparation must run \`${getNodeGateCommandPrefix()} build-review-context --review-type "<review-type>" ...\` before verdict capture; completion for code-changing tasks validates the resulting review-skill telemetry.
-- Downstream \`test\` review must wait for current-cycle PASS evidence from required upstream non-\`test\` reviews; on pure test-scope reruns, materialize reusable upstream \`code\` review evidence first.
+- Reviewer preparation must run \`${getNodeGateCommandPrefix()} build-review-context --review-type "<review-type>" ...\` before findings-result capture; completion for code-changing tasks validates the resulting review-skill telemetry.
+- Downstream \`test\` review must wait for current-cycle accepted findings receipts with findings-satisfied state from required upstream non-\`test\` reviews; on pure test-scope reruns, materialize reusable upstream \`code\` review evidence first.
 - On \`${reviewSkillBridgeHost.providerLabel}\`, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context; same-agent self-review is invalid on this delegation-capable provider. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
 - ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
 - Honor specialist skills added after initialization under \`${resolveBundleName()}/live/skills/**\`.
 - Record review routing and outcomes only through the review gates; \`log-task-event\` cannot emit reviewer provenance events.
 - Task timeline path (per task): \`${resolveBundleName()}/runtime/task-events/<task-id>.jsonl\`.
-- Review verdicts and completion status are recorded only through orchestrator workflow.
+- Validated findings, system-derived lane state, and completion status are recorded only through orchestrator workflow.
 - Never mark task \`DONE\` from this profile; hand off to \`${reviewSkillBridgeHost.bridgePath}\`.
 ${MANAGED_END}`.trim();
 }

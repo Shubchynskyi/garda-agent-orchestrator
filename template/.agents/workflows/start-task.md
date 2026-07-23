@@ -61,7 +61,7 @@ Hard stops:
 - After `prepare-reviewer-launch`, launch the real delegated reviewer and immediately run `record-reviewer-delegation-started` with provider/controller invocation id plus exact launch-input evidence. Treat `complete-reviewer-launch` as post-return completion/finalization evidence, not as reviewer start.
 - Reusing a prior review artifact or receipt is valid only through explicit current-cycle reuse evidence; reusing the same reviewer session for a new mandatory review is not valid fresh-context launch evidence.
 - After the review receipt is persisted, close or release the reviewer sub-agent session.
-- Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
+- Do not spawn or pre-launch a dependent downstream reviewer before the required upstream accepted findings receipt reports findings-satisfied for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
 - Use next-step review navigation output before reviewer launch: `ReviewLaunchableBatch` / `launchable_review_types` list lanes that may be launched now, `BlockedReviewLanes` / `blocked_review_lanes` list dependency reasons, `NextReview` remains legacy single-lane compatibility, failed current reviews take remediation priority, and enabled full-suite validation blocks `test` review until current full-suite PASS evidence exists.
 - Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as `npm run build:node-foundation` -> direct `node --test .node-build/...` must use the guarded workflow path or run strictly sequentially, never in parallel.

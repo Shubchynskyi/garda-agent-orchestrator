@@ -5,6 +5,10 @@ import {
     resolveReviewLaunchableLanePreparationRoute,
     type NextStepReviewLaunchableLanePreparationOptions
 } from '../../../../src/gates/next-step/next-step-review-cycle-routing';
+import {
+    describeBlockedReviewDependencies,
+    type ReviewLaunchPlannerState
+} from '../../../../src/gates/next-step/next-step-review-launch-planner';
 
 function baseOptions(
     overrides?: Partial<NextStepReviewLaunchableLanePreparationOptions>
@@ -45,7 +49,7 @@ function baseOptions(
 test('resolveReviewLaunchableLanePreparationRoute blocks launchable lane on upstream dependencies first', () => {
     const route = resolveReviewLaunchableLanePreparationRoute(baseOptions({
         dependencies: ['code'],
-        dependencyDetails: 'code has no current PASS artifact and receipt',
+        dependencyDetails: 'code has no current accepted findings receipt with findings-satisfied state',
         stateExists: false,
         contextExists: false,
         contextCurrent: false,
@@ -59,7 +63,24 @@ test('resolveReviewLaunchableLanePreparationRoute blocks launchable lane on upst
     assert.equal(route.nextGate, 'build-review-context');
     assert.equal(route.title, "Review 'test' is waiting for upstream review evidence.");
     assert.equal(route.commands[0].label, 'Finish upstream review first');
-    assert.match(route.reason, /code has no current PASS artifact/);
+    assert.match(route.reason, /code has no current accepted findings receipt with findings-satisfied state/);
+});
+
+test('describeBlockedReviewDependencies uses findings receipt state for unsatisfied upstream reviews', () => {
+    const state: ReviewLaunchPlannerState = {
+        reviewType: 'code',
+        ready: false,
+        failed: false,
+        artifactExists: true,
+        verdictToken: 'REVIEW FAILED',
+        failToken: 'CODE REVIEW FAILED',
+        violations: ['one blocking finding remains']
+    };
+
+    const details = describeBlockedReviewDependencies(['code'], [state]);
+
+    assert.match(details, /accepted findings receipt with findings-satisfied state/);
+    assert.doesNotMatch(details, /PASS-ready|REVIEW FAILED|CODE REVIEW FAILED/);
 });
 
 test('resolveReviewLaunchableLanePreparationRoute requires scoped diff before missing review context', () => {

@@ -13,6 +13,10 @@ import {
     resetMessageTemplateUserOverride,
     validateEffectiveMessageTemplates
 } from '../../../src/core/templates';
+import { reviewFindingsReportJsonSchema } from '../../../src/gates/review/review-findings-schema';
+import { getRepoRoot } from '../../../scripts/node-foundation/build';
+
+const normalizeLf = (value: string): string => value.replace(/\r\n/gu, '\n');
 
 test('built-in reviewer prompt supports focused test and validation commands', () => {
     const definition = getMessageTemplateDefinition('reviewer-prompt');
@@ -27,6 +31,24 @@ test('built-in reviewer prompt supports focused test and validation commands', (
     assert.ok(definition.builtinContent.includes(
         '[garda:evidence-only:missing-focused-validation] target=<exact-repository-relative-validation-path>; action=run-and-record-focused-validation'
     ));
+});
+
+test('built-in reviewer prompt and shipped findings schema match tracked templates', () => {
+    const repoRoot = getRepoRoot();
+    const definition = getMessageTemplateDefinition('reviewer-prompt');
+    const trackedPrompt = fs.readFileSync(
+        path.join(repoRoot, 'template', 'templates', 'reviewer-prompt.md'),
+        'utf8'
+    );
+    const trackedSchema = JSON.parse(fs.readFileSync(
+        path.join(repoRoot, 'template', 'schemas', 'review-findings-report.schema.json'),
+        'utf8'
+    ));
+
+    assert.equal(normalizeLf(definition.builtinContent), normalizeLf(trackedPrompt));
+    assert.deepEqual(trackedSchema, reviewFindingsReportJsonSchema);
+    assert.match(trackedPrompt, /findings-only JSON/u);
+    assert.match(trackedPrompt, /do not add verdict, pass\/fail, status, downstream disposition, or remediation fields/iu);
 });
 
 test('listTemplateTokens returns unique placeholders in encounter order', () => {

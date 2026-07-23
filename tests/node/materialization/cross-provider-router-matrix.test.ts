@@ -813,7 +813,7 @@ describe('cross-provider-router-matrix: drift detection', () => {
                 `${profile.providerLabel} bridge missing dependent reviewer launch blocker`
             );
             assert.ok(
-                content.includes('upstream PASS artifact and receipt'),
+                content.includes('upstream accepted findings receipt reports findings-satisfied'),
                 `${profile.providerLabel} bridge missing upstream PASS receipt requirement`
             );
             assert.ok(

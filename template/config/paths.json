@@ -79,6 +79,11 @@
       "(^|/)(__tests__|tests?)/",
       "\\.(spec|test)\\.(ts|tsx|js|jsx|java|kt|go|py|rb|php)$"
     ],
+    "test_refactor_structural": [
+      "(^|/)(?:__fixtures__|fixtures?|__mocks__|mocks?|helpers?|harness|support|setup|factories|factory|snapshots?)(?:/|\\.|-|_|$)",
+      "(?:test|spec)[-_]?(?:helpers?|fixtures?|harness|support|setup|factories?|mocks?)",
+      "(?:helpers?|fixtures?|harness|support|setup|factories?|mocks?)[-_]?(?:test|spec)"
+    ],
     "performance": [
       "(Cache|Redis|Elasticsearch|Search|Query|Benchmark|Profiling)[^/]*\\.(java|kt|ts|js|py|go|cs|rb|php)$",
       "(^|/)(performance|perf|benchmark)/"

@@ -245,7 +245,7 @@ test('repo governance files use the current owner handle and root-relative paths
     assert.ok(gitleaks.includes("'''tests/node/core/redaction\\.test\\.ts'''"));
 });
 
-test('review artifact templates advertise the parser-supported severity subheading contract', () => {
+test('review artifact templates point new cycles to generated findings-only JSON', () => {
     const template = readRepoFile('template/docs/reviews/TEMPLATE.md');
     const materializedLiveTemplate = readGeneratedRepoFile('garda-agent-orchestrator/live/docs/reviews/TEMPLATE.md');
 
@@ -253,26 +253,12 @@ test('review artifact templates advertise the parser-supported severity subheadi
         ['template docs review artifact template', template],
         ['materialized live review artifact template', materializedLiveTemplate]
     ] as const) {
-        assert.match(
-            content,
-            /Use parser-supported severity formats only: `- High: \.\.\.`, `High:` followed by `- \.\.\.`, or `### High` followed by `- \.\.\.`\./u,
-            `${label} must advertise inline, list, and subheading severity formats`
-        );
-        assert.match(
-            content,
-            /Severity subheadings are allowed only inside `## Findings by Severity`\./u,
-            `${label} must scope severity subheadings to Findings by Severity`
-        );
-        assert.match(
-            content,
-            /Severity subheading example: `### Medium` followed by `- tests\/review-parser\.test\.ts:17/u,
-            `${label} must include a parser-valid severity subheading example`
-        );
-        assert.doesNotMatch(
-            content,
-            /Do not use severity headings such as `### Medium`/u,
-            `${label} must not preserve stale severity-heading rejection wording`
-        );
+        assert.match(content, /Findings-Only Review Result Contract/u, `${label} must identify the active contract`);
+        assert.match(content, /generated output template is the immutable fill-in form/u);
+        assert.match(content, /review-findings-report\.schema\.json/u);
+        assert.match(content, /must not contain verdict, pass\/fail, status, downstream/u);
+        assert.match(content, /Historical heading-based review artifacts remain readable for audit/u);
+        assert.doesNotMatch(content, /^## Verdict$/mu, `${label} must not expose a new-cycle verdict field`);
     }
 });
 
@@ -559,95 +545,47 @@ test('reviewer session contract stays synced across rule-pack guidance files', (
     }
 });
 
-test('reviewer skill templates require canonical output-template sections and typed verdicts', () => {
-    const reviewerSkillContracts = [
-        {
-            relativePath: 'template/skills/code-review/SKILL.md',
-            passToken: 'REVIEW PASSED',
-            failToken: 'REVIEW FAILED',
-            compatibilityAlias: 'CODE REVIEW PASSED'
-        },
-        {
-            relativePath: 'template/skills/db-review/SKILL.md',
-            passToken: 'DB REVIEW PASSED',
-            failToken: 'DB REVIEW FAILED'
-        },
-        {
-            relativePath: 'template/skills/security-review/SKILL.md',
-            passToken: 'SECURITY REVIEW PASSED',
-            failToken: 'SECURITY REVIEW FAILED'
-        },
-        {
-            relativePath: 'template/skills/refactor-review/SKILL.md',
-            passToken: 'REFACTOR REVIEW PASSED',
-            failToken: 'REFACTOR REVIEW FAILED'
-        },
-        {
-            relativePath: 'template/skill-packs/quality-architecture/skills/api-contract-review/SKILL.md',
-            passToken: 'API REVIEW PASSED',
-            failToken: 'API REVIEW FAILED'
-        },
-        {
-            relativePath: 'template/skill-packs/quality-architecture/skills/testing-strategy/SKILL.md',
-            passToken: 'TEST REVIEW PASSED',
-            failToken: 'TEST REVIEW FAILED'
-        },
-        {
-            relativePath: 'template/skill-packs/quality-architecture/skills/performance-review/SKILL.md',
-            passToken: 'PERFORMANCE REVIEW PASSED',
-            failToken: 'PERFORMANCE REVIEW FAILED'
-        },
-        {
-            relativePath: 'template/skill-packs/devops-k8s/skills/devops-k8s/SKILL.md',
-            passToken: 'INFRA REVIEW PASSED',
-            failToken: 'INFRA REVIEW FAILED'
-        },
-        {
-            relativePath: 'template/skills/dependency-review/SKILL.md',
-            passToken: 'DEPENDENCY REVIEW PASSED',
-            failToken: 'DEPENDENCY REVIEW FAILED'
-        }
+test('reviewer skill templates make generated findings-only handoff authoritative', () => {
+    const reviewerSkillPaths = [
+        'template/skills/code-review/SKILL.md',
+        'template/skills/db-review/SKILL.md',
+        'template/skills/security-review/SKILL.md',
+        'template/skills/refactor-review/SKILL.md',
+        'template/skills/dependency-review/SKILL.md',
+        'template/skill-packs/quality-architecture/skills/api-contract-review/SKILL.md',
+        'template/skill-packs/quality-architecture/skills/testing-strategy/SKILL.md',
+        'template/skill-packs/quality-architecture/skills/performance-review/SKILL.md',
+        'template/skill-packs/quality-architecture/skills/architecture-review/SKILL.md',
+        'template/skill-packs/devops-k8s/skills/devops-k8s/SKILL.md',
+        'template/skill-packs/ai-agentic/skills/multi-agent-review/SKILL.md',
+        'template/skill-packs/data-database/skills/sql-review/SKILL.md',
+        'template/skill-packs/data-database/skills/prisma-review/SKILL.md',
+        'template/skill-packs/data-database/skills/db-migration-review/SKILL.md',
+        'template/skill-packs/frontend-web/skills/frontend-accessibility/SKILL.md'
     ] as const;
 
     const requiredSnippets = [
-        'generated output template, not a free-form summary',
-        'immutable fill-in form',
-        'replace placeholder lines only',
-        'Preserve these required `##` headings exactly and in this order',
-        'never add, remove, rename, reorder, or nest the required `##` headings',
-        '`## Validation Notes`',
-        '`## Findings by Severity`',
-        '`## Deferred Findings`',
-        '`## Residual Risks`',
-        '`## Verdict`',
-        'required for PASS',
-        'canonical `None`',
-        'parser-supported inline/list/subheading formats',
-        'Severity subheadings are allowed only inside `## Findings by Severity`',
-        'Parser-valid examples',
-        'Justification:',
-        'A finding at any severity does not end the review',
-        'report every distinct evidence-supported finding in the same result',
-        'Deduplicate findings that share one root cause',
-        'file and line evidence, impact, and required remediation',
-        're-sweep the complete current assigned scope',
-        'checklist or rule categories actually reviewed',
-        'never invent or pad findings',
-        'not a guarantee that every latent defect will be discovered'
+        '## Generated Findings-Only Handoff',
+        'sole instruction and output-format authority',
+        'Never modify source files, control artifacts, or task state',
+        'never launch another agent',
+        'only permitted write is the exact `ReviewOutputPath`',
+        'exactly one findings-only JSON object',
+        'every coverage-ledger obligation',
+        'do not add verdict, pass/fail, status, downstream disposition, or remediation fields',
+        'historical audit-only guidance and never applies to generated or other new review cycles'
     ] as const;
 
-    for (const contract of reviewerSkillContracts) {
-        assertRepoFileTrackedAndNotIgnored(contract.relativePath);
-        const content = readRepoFile(contract.relativePath);
+    for (const relativePath of reviewerSkillPaths) {
+        assertRepoFileTrackedAndNotIgnored(relativePath);
+        const content = readRepoFile(relativePath);
         for (const snippet of requiredSnippets) {
-            assert.ok(content.includes(snippet), `${contract.relativePath} must include canonical output contract snippet: ${snippet}`);
+            assert.ok(content.includes(snippet), `${relativePath} must include findings-only handoff snippet: ${snippet}`);
         }
-        assert.ok(content.includes(contract.passToken), `${contract.relativePath} must name typed PASS token ${contract.passToken}`);
-        assert.ok(content.includes(contract.failToken), `${contract.relativePath} must name typed FAIL token ${contract.failToken}`);
-        if ('compatibilityAlias' in contract) {
-            assert.ok(content.includes(contract.compatibilityAlias), `${contract.relativePath} must preserve code-review alias wording`);
-        } else {
-            assert.equal(content.includes('CODE REVIEW PASSED'), false, `${contract.relativePath} must not advertise code-review aliases`);
-        }
+        assert.ok(
+            content.indexOf('## Generated Findings-Only Handoff') < content.indexOf('## Core Workflow')
+                || !content.includes('## Core Workflow'),
+            `${relativePath} must establish the generated contract before workflow guidance`
+        );
     }
 });

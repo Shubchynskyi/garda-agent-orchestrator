@@ -71,7 +71,7 @@ describe('gates/task-audit-summary', () => {
                         'git commit -m "fix(orchestration): <summary>"',
                         'Do you want me to commit now? (yes/no)'
                     ],
-                    implementation_summary_requirements: ['depth', 'path mode', 'review verdicts', 'docs updated'],
+                    implementation_summary_requirements: ['depth', 'path mode', 'review result status', 'docs updated'],
                     commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
                     commit_command_suggestion: 'git commit -m "fix(orchestration): <summary>"',
                     commit_question: 'Do you want me to commit now? (yes/no)'
@@ -176,7 +176,7 @@ describe('gates/task-audit-summary', () => {
                         'git commit -m "fix(orchestration): <summary>"',
                         'Do you want me to commit now? (yes/no)'
                     ],
-                    implementation_summary_requirements: ['depth', 'path mode', 'review verdicts', 'docs updated'],
+                    implementation_summary_requirements: ['depth', 'path mode', 'review result status', 'docs updated'],
                     commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
                     commit_command_suggestion: 'git commit -m "fix(orchestration): <summary>"',
                     commit_question: 'Do you want me to commit now? (yes/no)'

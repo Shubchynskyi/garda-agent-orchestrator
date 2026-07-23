@@ -27,6 +27,9 @@ metadata:
 
 # Multi-Agent Review
 
+## Generated Findings-Only Handoff
+When orchestration supplies generated role-prompt, prompt-template, reviewer-prompt, output-template, and evidence-manifest artifacts, those artifacts are the sole instruction and output-format authority. Use this skill only as the assigned review lens/checklist. Never modify source files, control artifacts, or task state, and never launch another agent; the only permitted write is the exact `ReviewOutputPath`. Return exactly one findings-only JSON object, complete the entire assigned scope and every coverage-ledger obligation, and do not add verdict, pass/fail, status, downstream disposition, or remediation fields. Any verdict-oriented text below is historical audit-only guidance and never applies to generated or other new review cycles.
+
 ## Core Workflow
 
 1. **Decompose the change set into reviewer scopes.** Analyze the diff to identify distinct concern areas (e.g., security surface, data-layer changes, API contract, test coverage, performance-sensitive paths). Assign each area to exactly one primary reviewer agent; minimize scope overlap to control redundancy.

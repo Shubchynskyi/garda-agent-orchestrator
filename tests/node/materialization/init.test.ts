@@ -12,6 +12,8 @@ import {
     UNCONFIGURED_COMPILE_GATE_COMMAND,
     UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND
 } from '../../../src/core/constants';
+import { reviewFindingsReportJsonSchema } from '../../../src/gates/review/review-findings-schema';
+import { DEFAULT_REVIEW_TRIGGER_POLICY } from '../../../src/policy/review-trigger-policy';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -440,6 +442,10 @@ describe('runInit', () => {
     it('copies support directories to live/', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
+            const userSchemaPath = path.join(bundleRoot, 'live/schemas/local-review-extension.schema.json');
+            fs.mkdirSync(path.dirname(userSchemaPath), { recursive: true });
+            fs.writeFileSync(userSchemaPath, '{"title":"user-owned extension"}\n', 'utf8');
+
             const result = runInit({
                 targetRoot: projectRoot,
                 bundleRoot,
@@ -451,7 +457,24 @@ describe('runInit', () => {
             assert.ok(result.supportDirectoriesSynced > 0);
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live/config')));
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live/skills')));
+            assert.ok(fs.existsSync(path.join(bundleRoot, 'live/schemas/review-findings-report.schema.json')));
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live/skills/orchestration/skill.json')));
+            assert.deepEqual(
+                JSON.parse(fs.readFileSync(
+                    path.join(bundleRoot, 'live/schemas/review-findings-report.schema.json'),
+                    'utf8'
+                )),
+                reviewFindingsReportJsonSchema
+            );
+            assert.equal(
+                fs.readFileSync(userSchemaPath, 'utf8'),
+                '{"title":"user-owned extension"}\n'
+            );
+            const pathsConfig = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live/config/paths.json'), 'utf8'));
+            assert.deepEqual(
+                pathsConfig.triggers.test_refactor_structural,
+                DEFAULT_REVIEW_TRIGGER_POLICY.test_refactor_structural_path_regexes
+            );
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

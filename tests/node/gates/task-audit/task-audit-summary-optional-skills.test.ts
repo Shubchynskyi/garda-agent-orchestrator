@@ -161,7 +161,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(renderedMarkdown.includes('GARDA_AGENT_REPORT'));
             assert.ok(renderedMarkdown.includes('Task closeout'));
             assert.ok(renderedMarkdown.includes('Language: French (normalized)'));
-            assert.ok(renderedMarkdown.includes('Review mode: review integrity=DEGRADED_OR_UNVERIFIABLE; verdicts: code=REVIEW PASSED, test=TEST REVIEW PASSED'));
+            assert.ok(renderedMarkdown.includes('Review mode: review integrity=DEGRADED_OR_UNVERIFIABLE; review results: code=findings-satisfied, test=findings-satisfied'));
             assert.ok(renderedMarkdown.includes('Optional skills: no additional skills (generic_context_sufficient)'));
             assert.ok(renderedMarkdown.includes('Mandatory full-suite: enabled'));
             assert.ok(renderedMarkdown.includes('Tell the agent: Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));

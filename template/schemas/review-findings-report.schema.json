@@ -1,0 +1,145 @@
+{
+  "$id": "garda-agent-orchestrator/review-findings-report.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "review_type",
+    "review_context_sha256",
+    "tree_state_sha256",
+    "validation_notes",
+    "coverage_ledger",
+    "findings",
+    "residual_risks",
+    "reviewer_notes"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "review_type": { "type": "string", "minLength": 1 },
+    "review_context_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "tree_state_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "validation_notes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/validation_note" }
+    },
+    "coverage_ledger": { "$ref": "#/definitions/coverage_ledger" },
+    "findings": { "$ref": "#/definitions/findings_by_severity" },
+    "residual_risks": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/residual_risk" }
+    },
+    "reviewer_notes": { "type": "array", "items": { "type": "string" } }
+  },
+  "definitions": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["location", "observation"],
+      "properties": {
+        "location": { "type": "string", "minLength": 1 },
+        "observation": { "type": "string", "minLength": 1 }
+      }
+    },
+    "validation_note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "topic", "note", "evidence"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^N-\\d{3}$" },
+        "topic": { "type": "string", "minLength": 1 },
+        "note": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/evidence" }
+        },
+        "command": { "type": "string", "minLength": 1 },
+        "command_outcome": { "enum": ["passed", "failed", "unavailable", "prohibited"] },
+        "diagnostics": { "type": "string", "minLength": 1 },
+        "finding_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^F-\\d{3}$" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "coverage_ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverage_contract_sha256", "entries"],
+      "properties": {
+        "coverage_contract_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "entries": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/coverage_entry" }
+        }
+      }
+    },
+    "coverage_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["obligation_id", "evidence", "finding_ids"],
+      "properties": {
+        "obligation_id": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/evidence" }
+        },
+        "finding_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^F-\\d{3}$" }
+        }
+      }
+    },
+    "findings_by_severity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["critical", "high", "medium", "low"],
+      "properties": {
+        "critical": { "type": "array", "items": { "$ref": "#/definitions/finding" } },
+        "high": { "type": "array", "items": { "$ref": "#/definitions/finding" } },
+        "medium": { "type": "array", "items": { "$ref": "#/definitions/finding" } },
+        "low": { "type": "array", "items": { "$ref": "#/definitions/finding" } }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "description", "evidence", "coverage_obligation_ids"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^F-\\d{3}$" },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/evidence" }
+        },
+        "coverage_obligation_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "residual_risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "evidence"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^R-\\d{3}$" },
+        "description": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/evidence" }
+        }
+      }
+    }
+  }
+}

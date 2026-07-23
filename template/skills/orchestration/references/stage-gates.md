@@ -41,10 +41,10 @@ Pass criteria:
 ## Gate 8: Independent Reviews
 Pass criteria:
 - Successful review-gate flow reconciles the task to `IN_REVIEW`.
-- Code review verdict `REVIEW PASSED` when `required_reviews.code=true`, otherwise `NOT_REQUIRED`.
-- DB review verdict `DB REVIEW PASSED` when `required_reviews.db=true`, otherwise `NOT_REQUIRED`.
-- Security review verdict `SECURITY REVIEW PASSED` when `required_reviews.security=true`, otherwise `NOT_REQUIRED`.
-- Refactor review verdict `REFACTOR REVIEW PASSED` when `required_reviews.refactor=true`, otherwise `NOT_REQUIRED`.
+- Every required review lane has an accepted findings-only receipt with complete coverage-ledger evidence.
+- Every accepted finding and residual risk has a locked policy disposition.
+- Every `fix_now` item is resolved through authenticated remediation evidence, and every `create_follow_up` item has a materialized task-owned follow-up.
+- Re-review follows the snapshotted selective recovery route and preserves only authenticated unaffected receipts.
 - Review artifacts satisfy `TASK.md` artifact contract.
 - `node garda-agent-orchestrator/bin/garda.js gate required-reviews-check` result is pass.
 - `required-reviews-check` compile-evidence check is pass for same task id.
@@ -64,9 +64,9 @@ Pass criteria:
 - `node garda-agent-orchestrator/bin/garda.js gate completion-gate` result is pass.
 - Timeline contains `TASK_MODE_ENTERED`.
 - Timeline contains `COMPLETION_GATE_PASSED`.
-- Final PASS review artifacts keep active `Findings by Severity` and `Residual Risks` empty (`None`), or record accepted non-blocking follow-up only in `Deferred Findings` with `Justification:`.
+- Required findings receipts are satisfied, no `fix_now` item remains unresolved, and every required follow-up is materialized.
 - Completion finalization reconciles the task to `DONE`.
-- Artifact contract fields are valid for path mode, required verdicts, and evidence.
+- Artifact contract fields are valid for path mode, findings validation, locked dispositions, lane evidence, and recovery bindings.
 - User report is delivered in mandatory order: review integrity attestation -> implementation summary -> conventional-style `git commit -m "<type>(<scope>): <summary>"` suggestion -> `Do you want me to commit now? (yes/no)`.
 
 ## Failure Policy

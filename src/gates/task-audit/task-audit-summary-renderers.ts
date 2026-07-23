@@ -20,6 +20,7 @@ import {
 } from '../shared/known-nonblocking-signals';
 export { buildCommitCommandSuggestion } from './task-audit-summary-commit-suggestion';
 export { formatFinalUserReport } from './task-audit-summary-final-report';
+import { formatReviewResultStatus } from './task-audit-summary-final-report';
 
 function buildLocalizedCloseoutReviewMode(
     closeout: FinalCloseoutArtifact,
@@ -40,12 +41,12 @@ function buildLocalizedCloseoutReviewMode(
     } else {
         trustPrefix = `review integrity=${reviewIntegrityAttestation.status}`;
     }
-    const verdicts = Object.entries(closeout.implementation_summary.review_verdicts)
-        .map(([reviewType, verdict]) => `${reviewType}=${verdict}`);
-    if (verdicts.length === 0) {
+    const reviewResults = Object.entries(closeout.implementation_summary.review_verdicts)
+        .map(([reviewType, verdict]) => `${reviewType}=${formatReviewResultStatus(verdict)}`);
+    if (reviewResults.length === 0) {
         return trustPrefix;
     }
-    return `${trustPrefix}; ${reportMessages.summaries.verdicts}: ${verdicts.join(', ')}`;
+    return `${trustPrefix}; review results: ${reviewResults.join(', ')}`;
 }
 
 function buildLocalizedOptionalSkillsSummary(
@@ -248,9 +249,9 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         ? `profile=${closeout.implementation_summary.active_profile}`
         : 'profile=unknown';
     const pathModeText = closeout.implementation_summary.path_mode || 'unknown';
-    const reviewVerdicts = Object.entries(closeout.implementation_summary.review_verdicts)
-        .map(([reviewType, verdict]) => `\`${reviewType}: ${verdict}\``);
-    const reviewVerdictText = reviewVerdicts.length > 0 ? reviewVerdicts.join(', ') : '`none required`';
+    const reviewResults = Object.entries(closeout.implementation_summary.review_verdicts)
+        .map(([reviewType, verdict]) => `\`${reviewType}: ${formatReviewResultStatus(verdict)}\``);
+    const reviewResultText = reviewResults.length > 0 ? reviewResults.join(', ') : '`none required`';
     const docsUpdatedText = closeout.implementation_summary.docs_updated ? '`yes`' : '`no`';
 
     const lines: string[] = ['## Review Integrity Attestation'];
@@ -267,7 +268,7 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     lines.push('');
     lines.push(
         `Task \`${closeout.task_id}\` completed in \`${profileText}\`, \`path mode=${pathModeText}\`. ` +
-        `Review verdicts: ${reviewVerdictText}. Docs updated: ${docsUpdatedText}.`
+        `Review result status: ${reviewResultText}. Docs updated: ${docsUpdatedText}.`
     );
     lines.push(`Task-mode authorization: ${formatTaskModeAuthorizationSummary(closeout.implementation_summary)}.`);
     lines.push(`Task-mode authorization snapshot: ${formatAuthorizationScopeSnapshot(closeout.implementation_summary)}.`);

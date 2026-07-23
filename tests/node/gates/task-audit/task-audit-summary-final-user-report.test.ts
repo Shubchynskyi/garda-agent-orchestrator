@@ -166,7 +166,7 @@ describe('gates/task-audit-summary final user report rendering', () => {
             }
         }));
 
-        assert.ok(renderedReport.includes('Review Verdicts:\nnone required'));
+        assert.ok(renderedReport.includes('Review Result Status:\nnone required'));
         assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone\n\nAdvisory Notes:\nnone$/u);
     });
 
@@ -206,8 +206,8 @@ describe('gates/task-audit-summary final user report rendering', () => {
             }
         }));
 
-        assert.ok(renderedReport.includes('code(2): passed (1m 05s / 1m 10s)'));
-        assert.ok(renderedReport.includes('test(1): passed (0m 42s)'));
+        assert.ok(renderedReport.includes('code(2): findings-satisfied (1m 05s / 1m 10s)'));
+        assert.ok(renderedReport.includes('test(1): findings-satisfied (0m 42s)'));
         assert.ok(!renderedReport.includes('0m 08s'));
     });
 
@@ -272,7 +272,7 @@ describe('gates/task-audit-summary final user report rendering', () => {
             }
         }));
 
-        assert.ok(renderedReport.includes('api(1): passed (2m 05s)'));
+        assert.ok(renderedReport.includes('api(1): findings-satisfied (2m 05s)'));
         assert.ok(!renderedReport.includes('0m 01s'));
     });
 
@@ -296,7 +296,7 @@ describe('gates/task-audit-summary final user report rendering', () => {
         }));
 
         assert.ok(renderedReport.includes('Profile: strict'));
-        assert.ok(renderedReport.includes('test(2): passed (0m 50s / 2m 05s)'));
+        assert.ok(renderedReport.includes('test(2): findings-satisfied (0m 50s / 2m 05s)'));
         assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone\n\nAdvisory Notes:\nnone$/u);
     });
 

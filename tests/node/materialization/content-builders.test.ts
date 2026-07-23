@@ -642,7 +642,9 @@ describe('buildProviderOrchestratorAgentContent', () => {
     it('includes general dependent-reviewer launch discipline in full provider bridges', () => {
         const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'CLAUDE.md', '.github/agents/orchestrator.md');
         assert.ok(result!.includes('dependent downstream reviewer'));
-        assert.ok(result!.includes('upstream PASS artifact and receipt'));
+        assert.ok(result!.includes('upstream accepted findings receipt reports findings-satisfied'));
+        assert.ok(!result!.includes('before verdict capture'));
+        assert.ok(!result!.includes('Review verdicts and completion status'));
         assert.ok(result!.includes('Parallel reviewer fan-out is allowed only between independent review types'));
         assert.ok(result!.includes('ReviewLaunchableBatch'));
         assert.ok(result!.includes('BlockedReviewLanes'));
@@ -721,7 +723,7 @@ describe('buildProviderOrchestratorAgentContent', () => {
     it('includes general dependent-reviewer launch discipline in Antigravity bridge', () => {
         const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
         assert.ok(result!.includes('dependent downstream reviewer'));
-        assert.ok(result!.includes('upstream PASS artifact and receipt'));
+        assert.ok(result!.includes('upstream accepted findings receipt reports findings-satisfied'));
         assert.ok(result!.includes('Parallel reviewer fan-out is allowed only between independent review types'));
         assert.ok(result!.includes('ReviewLaunchableBatch'));
         assert.ok(result!.includes('BlockedReviewLanes'));

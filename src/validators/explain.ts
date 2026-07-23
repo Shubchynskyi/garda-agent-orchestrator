@@ -243,7 +243,7 @@ function getExplainDatabase(): readonly ExplainEntry[] {
     {
         id: 'REVIEW_GATE_FAILED',
         title: 'Required review gate failed',
-        description: 'One or more required review verdicts are missing or returned FAILED.',
+        description: 'One or more required review results are missing or have unsatisfied findings.',
         remediation: [
             `Check ${bn}/runtime/reviews/<task-id>-code.md (or -db.md, -security.md, -refactor.md) for findings.`,
             "Fix all blocking findings.",

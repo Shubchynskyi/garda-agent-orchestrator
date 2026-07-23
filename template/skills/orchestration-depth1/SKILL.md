@@ -47,7 +47,7 @@ Escalate back to the full orchestration skill immediately if:
 7. Run objective validation for the touched area.
 8. Run the mandatory compile gate.
 9. Run only the required independent reviews from preflight; successful review-gate flow reconciles the task to `IN_REVIEW`.
-10. Resolve findings, ensure the final PASS artifact has no active findings or residual risks unless accepted non-blocking items are moved to `Deferred Findings` with `Justification:`, run completion gate, and only then let completion finalization reconcile the task to `DONE`.
+10. Validate the findings-only report, resolve every locked `fix_now` disposition, materialize required follow-up tasks, rerun only lanes selected by the snapshotted recovery policy, and run completion only after every required findings receipt is satisfied.
 
 ## Hard Rules
 - Depth changes context budget, never gate obligations.

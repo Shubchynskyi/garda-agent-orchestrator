@@ -27,6 +27,9 @@ metadata:
 
 # SQL Review
 
+## Generated Findings-Only Handoff
+When orchestration supplies generated role-prompt, prompt-template, reviewer-prompt, output-template, and evidence-manifest artifacts, those artifacts are the sole instruction and output-format authority. Use this skill only as the assigned review lens/checklist. Never modify source files, control artifacts, or task state, and never launch another agent; the only permitted write is the exact `ReviewOutputPath`. Return exactly one findings-only JSON object, complete the entire assigned scope and every coverage-ledger obligation, and do not add verdict, pass/fail, status, downstream disposition, or remediation fields. Any verdict-oriented text below is historical audit-only guidance and never applies to generated or other new review cycles.
+
 ## Core Workflow
 
 1. **Collect SQL surface.** Identify every new or changed SQL statement: standalone `.sql` files, inline raw queries in application code, query-builder chains that produce raw fragments, stored procedures, and view definitions. Include ORM escape hatches (`$queryRaw`, `Sequelize.literal`, `knex.raw`, `sql` tagged templates).

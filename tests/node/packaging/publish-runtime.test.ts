@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { getRepoRoot } from '../../../scripts/node-foundation/build';
+
+const requireFromTest = createRequire(__filename);
 
 function findRepoRoot(startDir: string): string {
     let current = path.resolve(startDir);
@@ -124,6 +127,99 @@ test('published runtime works when the package is executed from node_modules', (
 
         copyPublishedPackageSurface(fixtureRoot, packageRoot);
         fs.mkdirSync(workspaceRoot, { recursive: true });
+
+        const remediationModules = [
+            'review-remediation-baseline.js',
+            'review-remediation-delta-contract.js',
+            'review-remediation-delta.js',
+            'review-remediation-validation-evidence.js',
+            'review-remediation-recovery-routing.js'
+        ];
+        for (const moduleName of remediationModules) {
+            assert.ok(
+                fs.existsSync(path.join(packageRoot, 'dist', 'src', 'gates', 'review-remediation', moduleName)),
+                `published package must materialize ${moduleName}`
+            );
+        }
+        assert.ok(fs.existsSync(path.join(
+            packageRoot,
+            'template',
+            'schemas',
+            'review-findings-report.schema.json'
+        )));
+
+        type PromptModule = {
+            buildReviewerFindingsOutputTemplateJson(options: Record<string, unknown>): string;
+        };
+        type ValidationModule = {
+            buildReviewFindingsValidationArtifact(options: Record<string, unknown>): {
+                validation_result_sha256: string;
+            };
+        };
+        const sourcePromptModule = requireFromTest(path.join(
+            fixtureRoot,
+            'dist',
+            'src',
+            'gates',
+            'review',
+            'reviewer-findings-prompt-contract.js'
+        )) as PromptModule;
+        const installedPromptModule = requireFromTest(path.join(
+            packageRoot,
+            'dist',
+            'src',
+            'gates',
+            'review',
+            'reviewer-findings-prompt-contract.js'
+        )) as PromptModule;
+        const promptOptions = {
+            taskId: 'T-package-parity',
+            reviewType: 'code',
+            reviewContextSha256: 'a'.repeat(64),
+            treeStateSha256: 'b'.repeat(64),
+            coverageContract: {
+                schema_version: 1,
+                review_type: 'code',
+                contract_sha256: 'c'.repeat(64),
+                obligations: [{ id: 'FILE-001', kind: 'file', target: 'src/example.ts' }]
+            }
+        };
+        assert.equal(
+            installedPromptModule.buildReviewerFindingsOutputTemplateJson(promptOptions),
+            sourcePromptModule.buildReviewerFindingsOutputTemplateJson(promptOptions)
+        );
+
+        const sourceValidationModule = requireFromTest(path.join(
+            fixtureRoot,
+            'dist',
+            'src',
+            'gates',
+            'review',
+            'review-findings-validation-artifact.js'
+        )) as ValidationModule;
+        const installedValidationModule = requireFromTest(path.join(
+            packageRoot,
+            'dist',
+            'src',
+            'gates',
+            'review',
+            'review-findings-validation-artifact.js'
+        )) as ValidationModule;
+        const validationOptions = {
+            taskId: 'T-package-parity',
+            reviewType: 'code',
+            validation: {
+                detected: false,
+                valid: false,
+                report: null,
+                violations: ['fixture rejection'],
+                coverage_validation: null
+            }
+        };
+        assert.equal(
+            installedValidationModule.buildReviewFindingsValidationArtifact(validationOptions).validation_result_sha256,
+            sourceValidationModule.buildReviewFindingsValidationArtifact(validationOptions).validation_result_sha256
+        );
 
         const result = childProcess.spawnSync(
             process.execPath,

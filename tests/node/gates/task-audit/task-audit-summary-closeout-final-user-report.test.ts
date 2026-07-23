@@ -154,8 +154,8 @@ describe('gates/task-audit-summary', () => {
 
             assert.ok(renderedReport.includes('Status: DONE'));
             assert.ok(renderedReport.includes('MandatoryFullSuite: disabled'));
-            assert.ok(renderedReport.includes('db(1): passed (0m 11s)'));
-            assert.ok(renderedReport.includes('test(1): passed (1m 16s)'));
+            assert.ok(renderedReport.includes('db(1): findings-satisfied (0m 11s)'));
+            assert.ok(renderedReport.includes('test(1): findings-satisfied (1m 16s)'));
             assert.ok(!renderedReport.includes('PathMode:'));
             assert.ok(!renderedReport.includes('Commit Readiness:'));
             assert.ok(!renderedReport.includes('Operator Question:'));

@@ -44,7 +44,7 @@ describe('runInstall — provider bridges and start-task router', () => {
             const apiBridge = fs.readFileSync(path.join(projectRoot, '.github', 'agents', 'api-review.md'), 'utf8');
             const infraBridge = fs.readFileSync(path.join(projectRoot, '.github', 'agents', 'infra-review.md'), 'utf8');
             assert.ok(orchestratorBridge.includes('dependent downstream reviewer'));
-            assert.ok(orchestratorBridge.includes('upstream PASS artifact and receipt'));
+            assert.ok(orchestratorBridge.includes('upstream accepted findings receipt reports findings-satisfied'));
             assert.ok(orchestratorBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
             assert.ok(orchestratorBridge.includes('ReviewLaunchableBatch'));
             assert.ok(orchestratorBridge.includes('BlockedReviewLanes'));
@@ -128,7 +128,7 @@ describe('runInstall — provider bridges and start-task router', () => {
             assert.ok(bridge.includes('do not write review output files'));
             assert.ok(bridge.includes('do not invent reviewer launch routing, telemetry, receipts, or review artifacts'));
             assert.ok(bridge.includes('dependent downstream reviewer'));
-            assert.ok(bridge.includes('upstream PASS artifact and receipt'));
+            assert.ok(bridge.includes('upstream accepted findings receipt reports findings-satisfied'));
             assert.ok(bridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
             assert.ok(bridge.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
             assert.ok(bridge.includes('build:node-foundation'));
@@ -216,7 +216,7 @@ describe('runInstall — provider bridges and start-task router', () => {
             const workflowPath = path.join(projectRoot, '.agents', 'workflows', 'start-task.md');
             const staleBridge = fs.readFileSync(bridgePath, 'utf8')
                 .replace(
-                    'Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.',
+                    'Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream accepted findings receipt reports findings-satisfied for the same cycle.',
                     'Treat downstream `test` review as dependency-ordered even on delegation-capable platforms; do not fan it out in parallel with required upstream non-`test` reviews.'
                 )
                 .replace(
@@ -229,7 +229,7 @@ describe('runInstall — provider bridges and start-task router', () => {
                 );
             const staleWorkflow = fs.readFileSync(workflowPath, 'utf8')
                 .replace(
-                    '- Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.',
+                    '- Do not spawn or pre-launch a dependent downstream reviewer before the required upstream accepted findings receipt reports findings-satisfied for the same cycle.',
                     '- Do not spawn downstream `test` reviewers before upstream code review finishes.'
                 )
                 .replace(
@@ -266,7 +266,7 @@ describe('runInstall — provider bridges and start-task router', () => {
             const refreshedBridge = fs.readFileSync(bridgePath, 'utf8');
             const refreshedWorkflow = fs.readFileSync(workflowPath, 'utf8');
             assert.ok(refreshedBridge.includes('dependent downstream reviewer'));
-            assert.ok(refreshedBridge.includes('upstream PASS artifact and receipt'));
+            assert.ok(refreshedBridge.includes('upstream accepted findings receipt reports findings-satisfied'));
             assert.ok(refreshedBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
             assert.ok(refreshedBridge.includes('ReviewLaunchableBatch'));
             assert.ok(refreshedBridge.includes('BlockedReviewLanes'));

@@ -1,42 +1,28 @@
-# Review Artifact Template
+# Findings-Only Review Result Contract
 
-Use one file per review:
-- `garda-agent-orchestrator/runtime/reviews/<task-id>-code-review.md`
-- `garda-agent-orchestrator/runtime/reviews/<task-id>-db-review.md`
-- `garda-agent-orchestrator/runtime/reviews/<task-id>-security-review.md`
-- `garda-agent-orchestrator/runtime/reviews/<task-id>-refactor-review.md`
-- `garda-agent-orchestrator/runtime/reviews/<task-id>-api-review.md`
-- `garda-agent-orchestrator/runtime/reviews/<task-id>-test-review.md`
-- `garda-agent-orchestrator/runtime/reviews/<task-id>-performance-review.md`
-- `garda-agent-orchestrator/runtime/reviews/<task-id>-infra-review.md`
-- `garda-agent-orchestrator/runtime/reviews/<task-id>-dependency-review.md`
+For every new review cycle, use the task-owned generated artifacts in
+`garda-agent-orchestrator/runtime/reviews/`:
 
-Fill the review artifact as an immutable form:
-- Replace placeholder lines only.
-- Never add, remove, rename, reorder, or nest the required `##` headings.
-- Use canonical `None` exactly when `Findings by Severity`, `Deferred Findings`, or `Residual Risks` has no content.
-- Use parser-supported severity formats only: `- High: ...`, `High:` followed by `- ...`, or `### High` followed by `- ...`.
-- Severity subheadings are allowed only inside `## Findings by Severity`.
-- Do not edit launcher, control, receipt, or review-context metadata instead of the designated reviewer output file.
+- `<task-id>-<review-type>-role-prompt.md`
+- `<task-id>-<review-type>-prompt-template.md`
+- `<task-id>-<review-type>-output-template.md`
+- `<task-id>-<review-type>-evidence-manifest.json`
 
-Parser-valid examples (copy the shape only when applicable; do not copy example facts):
-- Validation Notes example: `Reviewed src/review-parser.ts:42 and tests/review-parser.test.ts:17; checked parser-supported finding formats and rejection diagnostics.`
-- Findings by Severity example: `- High: src/review-parser.ts:42 drops later findings; impact: incomplete review evidence; remediation: preserve every severity entry.`
-- Severity subheading example: `### Medium` followed by `- tests/review-parser.test.ts:17 misses hierarchy coverage; impact: nested findings can be lost; remediation: cover severity subheadings.`
-- Deferred Findings example: `- [Low] docs/reviews.md:12 clarify reviewer wording. Next step: update docs in T-123. Justification: documentation-only follow-up is accepted after parser coverage.`
-- Residual Risks example: `- Rollout risk: legacy review artifacts may still use old wording until regenerated; mitigation: parser tests cover both canonical None and supported finding formats.`
+The generated output template is the immutable fill-in form and the exact
+`ReviewOutputPath` is the only permitted reviewer write. Return one JSON object
+with `schema_version`, task/context/tree bindings, `validation_notes`, the
+complete `coverage_ledger`, severity-grouped `findings`, `residual_risks`, and
+`reviewer_notes`.
 
-## Validation Notes
-<REPLACE with 1-3 concrete sentences naming reviewed files, behavior boundaries, tests/checklists, and verification evidence; required for PASS>
+The canonical machine-readable schema is
+`garda-agent-orchestrator/live/schemas/review-findings-report.schema.json`.
+That canonical filename is Garda-managed and is refreshed during materialization.
+Keep user-owned schema extensions under a distinct filename in `live/schemas/`;
+materialization preserves unrelated files in that directory.
+Reviewer output must not contain verdict, pass/fail, status, downstream
+disposition, policy, follow-up, or remediation fields. The orchestrator derives
+lane state only after deterministic validation and locked policy disposition.
 
-## Findings by Severity
-<REPLACE with canonical `None`, or parser-supported active findings using `- High: <file:line> <impact>; remediation: <required action>` / `High:` followed by `- <finding>` / `### High` followed by `- <finding>`>
-
-## Deferred Findings
-<REPLACE with canonical `None`, or parser-supported deferred bullets like `- [Low] <summary with file evidence>. Next step: <action>. Justification: <why deferral is acceptable now>`>
-
-## Residual Risks
-<REPLACE with canonical `None`, or parser-supported residual-risk bullets like `- Rollout risk: <active open risk>; mitigation: <current mitigation>`>
-
-## Verdict
-<REPLACE with exactly one supported verdict token: `REVIEW PASSED`, `REVIEW FAILED`, `DB REVIEW PASSED`, `DB REVIEW FAILED`, `SECURITY REVIEW PASSED`, `SECURITY REVIEW FAILED`, `REFACTOR REVIEW PASSED`, `REFACTOR REVIEW FAILED`, `API REVIEW PASSED`, `API REVIEW FAILED`, `TEST REVIEW PASSED`, `TEST REVIEW FAILED`, `PERFORMANCE REVIEW PASSED`, `PERFORMANCE REVIEW FAILED`, `INFRA REVIEW PASSED`, `INFRA REVIEW FAILED`, `DEPENDENCY REVIEW PASSED`, or `DEPENDENCY REVIEW FAILED`>
+Historical heading-based review artifacts remain readable for audit and legacy
+migration only. Do not use this file to create or reconstruct a historical
+artifact for a new cycle.

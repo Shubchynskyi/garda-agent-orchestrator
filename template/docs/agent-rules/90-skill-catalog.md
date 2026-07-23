@@ -64,7 +64,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Use `bind-rule-pack-to-preflight` only when `next-step` prints it because current-cycle rule files and hashes are unchanged and only the preflight evidence binding must be refreshed.
 - Do not parallelize `classify-change`, POST_PREFLIGHT rule-pack binding, and `compile-gate` for the same task cycle. If preflight is refreshed, rerun downstream gates sequentially from the POST_PREFLIGHT command that `next-step` prints.
 - Before each required reviewer invocation, run `node garda-agent-orchestrator/bin/garda.js gate build-review-context --review-type "<review-type>" --depth "<1|2|3>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
-- Review launch dependencies come from `preflight.review_execution_policy`; prepare `test` only after every required upstream dependency for the active policy is already recorded as PASS.
+- Review launch dependencies come from `preflight.review_execution_policy`; prepare `test` only after every required upstream dependency for the active policy has an accepted findings receipt with findings-satisfied state.
 - On pure test-scope reruns, if the active policy keeps `test` downstream of `code`, run `build-review-context` for reusable upstream `code` review first so the current-cycle reuse receipt exists before launching `test` review.
 - Compile gate is mandatory after implementation and before `IN_REVIEW`:
   `node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
@@ -139,10 +139,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Missing `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, or `SKILL_REFERENCE_LOADED` blocks completion for code-changing tasks.
 - Missing compile-gate pass (`COMPILE_GATE_PASSED`) blocks progression to `IN_REVIEW` and `DONE`.
 - Missing required skill invocation blocks progression.
-- Missing required verdict blocks completion.
+- Missing required findings receipt or unsatisfied locked disposition blocks completion.
 - Missing review gate check pass blocks completion.
 - Missing completion gate pass (`COMPLETION_GATE_PASSED`) blocks completion.
 - Missing task timeline evidence in `runtime/task-events/<task-id>.jsonl` blocks completion.
 - Incomplete task timeline evidence is surfaced by `status` and `doctor`.
 - Missing required docs/changelog updates blocks completion for doc-impacting changes.
-- Reviewer/specialist agents must be closed after verdict capture.
+- Reviewer/specialist agents must be closed after findings receipt persistence.

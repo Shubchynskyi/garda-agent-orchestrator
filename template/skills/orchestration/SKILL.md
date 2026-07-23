@@ -21,6 +21,12 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name>`.
 Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`; run it before the first gate, after every suggested command, and after any gate failure. The numbered workflow below defines policy and allowed gates, but `next-step` owns the executable next command.
 
+## Findings-Only Review Lifecycle
+- Every new review cycle uses the exact generated role prompt, prompt template, output template, and evidence manifest. The reviewer returns one findings-only JSON object to the exact `ReviewOutputPath` and never chooses a verdict, disposition, follow-up, or remediation action.
+- `record-review-result` validates the schema and coverage ledger, applies the task's immutable finding policy, materializes required F-tasks or remediation baseline evidence, and derives the lane result. An accepted empty-findings report must not be blocked for omitted reviewer-owned decision fields.
+- Failed `fix_now` remediation is classified from the authenticated baseline. The snapshotted rerun policy selects focused, focused-plus-affected, or ordinary validation and invalidates only affected review lanes. `next-step` remains the only executable navigator.
+- Verdict-oriented Markdown and explicit verdict flags described later in this file are compatibility surfaces for historical artifacts only; they must never be requested from a reviewer or used to construct a new-cycle result.
+
 ## Required Inputs
 - User request.
 - Current task queue: `TASK.md`.
@@ -79,7 +85,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
   - JSON artifact must record selected rule pack, omitted sections, `deferred_by_depth` reason when applicable, scoped-diff fallback evidence, and nested `rule_context.*` metadata for the generated markdown snapshot.
   - sibling markdown snapshot (`rule_context.artifact_path`) is the preferred prompt payload for reviewer rule text when token economy mode is active.
 - Compact reviewer output contract when active:
-  - if `compact_reviewer_output=true`, require compact reviewer artifacts but keep mandatory sections and exact verdict tokens.
+  - if `compact_reviewer_output=true`, keep the complete findings-only JSON schema and coverage ledger while shortening only free-text evidence.
   - on failed command/test evidence, cap pasted tail output to `fail_tail_lines`.
   - review/completion gates audit compactness best-effort and emit warnings when reviewer artifacts exceed compact budgets.
 
@@ -164,11 +170,11 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
    - `required-reviews-check` fails if post-preflight rule-pack evidence is missing (missing `RULE_PACK_LOADED` / missing `runtime/reviews/<task-id>-rule-pack.json`).
    - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
    - `required-reviews-check` fails if workspace changed after compile evidence; rerun compile gate after post-compile edits.
-   - If explicit `--*-review-verdict` flags are omitted, the gate defaults expected required verdicts from `preflight.required_reviews` for the current cycle.
+   - Explicit `--*-review-verdict` flags are historical CLI compatibility only; new-cycle lane state comes from validated findings receipts and locked dispositions.
    - This defaulting is only a contract convenience; the gate still validates current-cycle artifacts, receipts, review-context bindings, and exact pass tokens, and must not auto-scan `runtime/reviews` for a convenient PASS.
-19. Resolve every review finding before `DONE` and repeat required reviews + gate check until the final PASS artifacts are clean.
+19. Resolve every `fix_now` finding before `DONE`; materialize required follow-ups, preserve ignored-item audit evidence, and repeat only the review lanes selected by the snapshotted remediation policy until every required findings receipt is satisfied.
    - blocking findings must be fixed before rerun.
-   - non-blocking findings may be deferred only in `Deferred Findings` with `Justification:` after the active `Findings by Severity` and `Residual Risks` sections are cleared to `None`.
+   - non-blocking findings and residual risks may proceed only through their locked `create_follow_up` or `ignore` disposition evidence; reviewers do not defer them in prose.
    - On failed gate and return to coding, log event: `REWORK_STARTED`.
 20. Run doc impact gate before completion when `next-step` requests it:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
@@ -198,7 +204,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
     - Before entering a routed decomposed child task, inspect `workflow-config.full_suite_validation.command` against that child scope. If it still includes suspended sibling tests, update it only through the audited workflow-config route before `enter-task-mode`; keep current-child tests covered, exclude suspended siblings, and leave an already-suitable command unchanged.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 27. Report to user in exact order:
-    1. concise implementation summary (include depth, path mode, review verdicts, docs updated)
+    1. concise implementation summary (include depth, path mode, review result status, docs updated)
        - do not paste the full final-closeout markdown or duplicate its complete section order in chat; link or name the canonical artifact when useful, then report only the status, key changes, validations, and commit readiness;
        - at `depth=1` and `depth=2`, include an output-compaction line; at `depth=3` it is optional;
        - use chars as the primary unit, keep approximate percentage when baseline is known, keep spaced breakdown formatting, and include token estimate only as a secondary note when available;
@@ -246,17 +252,17 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
      - token economy flags when active (`depth`, `compact_reviewer_output`, `strip_examples`, `strip_code_blocks`);
       - for `db` / `security` / `refactor` required reviews when scoped diffs are enabled: scoped artifact produced by `node garda-agent-orchestrator/bin/garda.js gate build-scoped-diff`, with scoped metadata artifact and full-diff fallback when helper reports empty scope;
       - required output contract:
-        - verdict token (`... PASSED` or `... FAILED`);
+        - exact findings-only JSON fields from the generated output template;
         - findings list with file evidence;
         - `reviewer_execution_mode` used for this review (`delegated_subagent`);
-        - when verdict is pass, keep active `Findings by Severity` and `Residual Risks` empty (`None`); move any accepted non-blocking follow-up to `Deferred Findings` and include `Justification:` in each deferred entry;
+        - include every evidence-supported finding and residual risk; do not select downstream disposition or remediation;
         - review artifact write path: `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.
    3. Feed reviewer output into `record-review-result` using exactly one source: `--review-output-path` or `--review-output-stdin`.
-      - `--review-output-stdin` is only a transport convenience. The gate must still persist raw reviewer input to `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md` before verdict extraction and receipt materialization.
+      - `--review-output-stdin` is only a transport convenience. The gate must still persist raw reviewer input to `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md` before findings validation and receipt materialization.
       - Do not introduce a lighter validation branch for stdin. Verdict, routing, receipt, and telemetry checks must be identical to file-based ingest.
       - After receipt persistence succeeds, close or release the reviewer sub-agent session; do not keep a reviewer session alive for another mandatory review.
-   4. Parse verdict token from the persisted reviewer output artifact.
-   5. If verdict is failed, or a PASS artifact still leaves active findings/residual risks without justified deferral, fix or explicitly defer the finding and rerun the same reviewer until the final artifact is clean.
+   4. Validate the persisted findings report and materialize its locked disposition evidence.
+   5. If any item is `fix_now`, remediate it and follow the selective recovery route; create required follow-up tasks before allowing completion.
 - Reviewer mapping contract:
   - `required_reviews.code=true` => skill `garda-agent-orchestrator/live/skills/code-review/SKILL.md` => pass token `REVIEW PASSED` => gate parameter `-CodeReviewVerdict`
   - `required_reviews.db=true` => skill `garda-agent-orchestrator/live/skills/db-review/SKILL.md` => pass token `DB REVIEW PASSED` => gate parameter `-DbReviewVerdict`
@@ -267,9 +273,9 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
   - `required_reviews.performance=true` => skill `garda-agent-orchestrator/live/skills/performance-review/SKILL.md` => pass token `PERFORMANCE REVIEW PASSED` => gate parameter `-PerformanceReviewVerdict`
   - `required_reviews.infra=true` => skill `garda-agent-orchestrator/live/skills/devops-k8s/SKILL.md` (or custom `.../infra-review/SKILL.md`) => pass token `INFRA REVIEW PASSED` => gate parameter `-InfraReviewVerdict`
   - `required_reviews.dependency=true` => skill `garda-agent-orchestrator/live/skills/dependency-review/SKILL.md` => pass token `DEPENDENCY REVIEW PASSED` => gate parameter `-DependencyReviewVerdict`
-- After all required verdicts are collected, run gate script with all verdict parameters:
+- After all required findings receipts are collected, run the review gate. Explicit verdict parameters below are historical compatibility only:
   - Node: `node garda-agent-orchestrator/bin/garda.js gate required-reviews-check --preflight-path "<path>" --task-id "<task-id>" --code-review-verdict "<...>" --db-review-verdict "<...>" --security-review-verdict "<...>" --refactor-review-verdict "<...>" --api-review-verdict "<...>" --test-review-verdict "<...>" --performance-review-verdict "<...>" --infra-review-verdict "<...>" --dependency-review-verdict "<...>"`
-  - Explicit verdict flags are optional when the expected required review set already comes from `preflight.required_reviews`; omitted review types default to their required pass tokens for this task cycle.
+  - New cycles omit explicit verdict flags; the gate validates current-cycle findings receipts and system-derived lane state from `preflight.required_reviews`.
 - After review gate pass, run doc impact gate:
   - Node: `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "<path>" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
 - After review gate pass, run completion gate before `DONE`:
@@ -321,7 +327,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 - Preflight artifact: `garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`.
 - Compile gate result: `COMPILE_GATE_PASSED`.
 - Compile gate evidence: `garda-agent-orchestrator/runtime/reviews/<task-id>-compile-gate.json`.
-- Required review artifacts and verdicts.
+- Required review artifacts, validated findings receipts, and satisfied dispositions.
 - Gate check result (`REVIEW_GATE_PASSED` or `REVIEW_GATE_PASSED_WITH_OVERRIDE`).
 - Review gate evidence: `garda-agent-orchestrator/runtime/reviews/<task-id>-review-gate.json`.
 - Documentation impact gate result and artifact: `DOC_IMPACT_ASSESSED` + `garda-agent-orchestrator/runtime/reviews/<task-id>-doc-impact.json`.
@@ -342,7 +348,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 ## Troubleshooting
 - Preflight not found or invalid:
   - Re-run `classify-change` with explicit output path.
-- Required review verdict missing:
+- Required review result missing or findings disposition unsatisfied:
   - Re-run missing reviewer and then `required-reviews-check`.
 - Completion gate failed:
   - Resolve listed timeline/artifact/integrity violations, then rerun `completion-gate`.

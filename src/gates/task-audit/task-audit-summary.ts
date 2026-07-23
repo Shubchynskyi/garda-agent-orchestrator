@@ -668,7 +668,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     );
     const implementationSummaryRequirements = [
         'path mode',
-        'review verdicts',
+        'review result status',
         'docs updated'
     ];
     if (projectMemoryImpactRequired || projectMemoryImpactEvidence.evidence_status !== 'NOT_REQUIRED') {

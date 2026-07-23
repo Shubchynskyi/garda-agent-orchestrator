@@ -54,16 +54,16 @@ function selectPreferredFinalUserReportTimingEntries(timingEntries: ReviewTiming
     return eligibleEntries.map(({ entry }) => entry);
 }
 
-function normalizeFinalUserReportVerdict(value: string): string {
+export function formatReviewResultStatus(value: string): string {
     const text = String(value || '').trim();
     if (!text) {
         return 'unknown';
     }
     if (/\bPASSED\b/iu.test(text)) {
-        return 'passed';
+        return 'findings-satisfied';
     }
     if (/\bFAILED\b/iu.test(text)) {
-        return 'failed';
+        return 'findings-unsatisfied';
     }
     return text.toLowerCase();
 }
@@ -73,7 +73,7 @@ function buildFinalUserReportReviewLine(
     verdict: string,
     timingEntries: ReviewTimingAuditEntry[]
 ): string {
-    const normalizedVerdict = normalizeFinalUserReportVerdict(verdict);
+    const normalizedVerdict = formatReviewResultStatus(verdict);
     const durations = selectPreferredFinalUserReportTimingEntries(timingEntries)
         .map((entry) => entry.delegation_to_result_ms)
         .filter((durationMs): durationMs is number =>
@@ -187,7 +187,7 @@ export function formatFinalUserReport(closeout: FinalCloseoutArtifact): string {
         `MandatoryFullSuite: ${fullSuiteEnabled}`,
         `DocsUpdated: ${docsUpdated}`,
         '',
-        'Review Verdicts:'
+        'Review Result Status:'
     ];
     if (reviewEntries.length === 0) {
         lines.push('none required');

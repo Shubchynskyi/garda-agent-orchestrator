@@ -118,16 +118,16 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Before each required reviewer invocation, run `node garda-agent-orchestrator/bin/garda.js gate build-review-context ...` for that review type.
 - Reviewer preparation must emit `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` before the review gate can satisfy completion for code-changing tasks.
 - After `prepare-reviewer-launch`, launch the real delegated reviewer with the exact generated handoff, then immediately run `record-reviewer-delegation-started` with provider/controller invocation id and launch-input evidence. `record-review-routing` and `prepare-reviewer-launch` may bind only the planned `agent:pending:<task-id>-<review-type>` identity; do not invent, reserve, hold, or pre-complete a provider reviewer identity before launch input exists.
-- Downstream review preparation must follow the current-cycle dependency graph from `preflight.review_execution_policy`; do not start `test` until every required upstream dependency for the active policy has a clean PASS artifact and receipt.
-- Downstream reviewer dependencies are launch blockers, not only materialization blockers. Do not spawn or pre-launch a dependent downstream reviewer as an exploratory pass, early signal, or parallel sidecar before the required upstream PASS artifact and receipt exist for the same cycle.
+- Downstream review preparation must follow the current-cycle dependency graph from `preflight.review_execution_policy`; do not start `test` until every required upstream dependency for the active policy has an accepted findings receipt with findings-satisfied state.
+- Downstream reviewer dependencies are launch blockers, not only materialization blockers. Do not spawn or pre-launch a dependent downstream reviewer as an exploratory pass, early signal, or parallel sidecar before the required upstream accepted findings receipt reports findings-satisfied for the same cycle.
 - Known producer-consumer validation flows are launch blockers too. Do not fan out raw shell commands such as `npm run build:node-foundation` and direct `node --test .node-build/...` in parallel; use the guarded workflow path or run producer then consumer strictly sequentially.
 - If a later cycle changes only test scope, still run `build-review-context` for reusable upstream `code` review first so current-cycle reuse evidence exists before `test` review starts.
 - Required reviews must be launched only from preflight `required_reviews.*`.
 - Parallel reviewer fan-out is allowed only between independent required review types with no dependency edge for the current cycle.
 - Review gate command must pass before `DONE`:
   `node garda-agent-orchestrator/bin/garda.js gate required-reviews-check`.
-- If explicit `--*-review-verdict` flags are omitted, the review gate defaults the expected required verdicts from `preflight.required_reviews` for the current task cycle.
-- Those defaults are only a CLI convenience; `required-reviews-check` still validates current-cycle artifacts, receipts, review-context bindings, and pass tokens, and must not auto-pick a stale PASS from `runtime/reviews/`.
+- Explicit `--*-review-verdict` flags are historical compatibility only. New cycles omit them and the review gate derives required lane state from validated findings receipts and locked dispositions for `preflight.required_reviews`.
+- `required-reviews-check` validates current-cycle artifacts, receipts, review-context bindings, findings satisfaction, and disposition evidence, and must not auto-pick a stale historical result from `runtime/reviews/`.
 - Review gate command validates compile evidence (`COMPILE_GATE_PASSED`) from task timeline for the same task id.
 - Review gate command validates task-mode entry evidence (`TASK_MODE_ENTERED`) for the same task id.
 - Review gate command validates post-preflight rule-pack evidence (`RULE_PACK_LOADED`) for the same task id and preflight artifact.
@@ -153,9 +153,9 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Completion gate command must pass before `DONE`:
   `node garda-agent-orchestrator/bin/garda.js gate completion-gate`.
 - After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json`; the gate now materializes canonical closeout artifacts at `runtime/reviews/<task-id>-final-closeout.json` and `runtime/reviews/<task-id>-final-closeout.md`. Use those artifacts instead of reconstructing the final closeout order free-form.
-- Completion gate validates task-mode entry evidence, post-preflight rule-pack evidence, compile evidence, review-gate evidence, doc-impact evidence, full-suite-validation evidence (when enabled), ordered lifecycle evidence (`TASK_MODE_ENTERED`, `RULE_PACK_LOADED`, `PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `COMPILE_GATE_PASSED`, `REVIEW_PHASE_STARTED`, review pass evidence), review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), best-effort task-event hash-chain integrity, required review artifacts, and final findings-resolution state in PASS review artifacts.
+- Completion gate validates task-mode entry evidence, post-preflight rule-pack evidence, compile evidence, review-gate evidence, doc-impact evidence, full-suite-validation evidence (when enabled), ordered lifecycle evidence (`TASK_MODE_ENTERED`, `RULE_PACK_LOADED`, `PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `COMPILE_GATE_PASSED`, `REVIEW_PHASE_STARTED`, accepted review evidence), review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), best-effort task-event hash-chain integrity, required findings receipts, locked dispositions, follow-up materialization, and selective-remediation evidence.
 - Completion gate rejects zero-diff implementation tasks unless the task has later produced a real diff or an audited no-op artifact exists at `runtime/reviews/<task-id>-no-op.json`.
-- Final PASS review artifacts must keep active `Findings by Severity` and `Residual Risks` empty (`None`). Non-blocking follow-ups may remain only in `Deferred Findings`, and every deferred entry must include `Justification:`.
+- New-cycle reviewers return every finding and residual risk without a verdict or disposition. Completion requires every `fix_now` item resolved, every `create_follow_up` item materialized, and every ignored item retained in auditable locked disposition evidence.
 - Review contexts with schema version 3 or newer bind a deterministic `Coverage Ledger` covering every changed file, generated behavior boundary, and applicable review category. Every obligation must appear exactly once with concrete changed-file `path:line` evidence and an evidence-backed `finding` or `no-finding` result before either PASS or FAIL can be recorded.
 - Every active finding in a schema-version-3 review must have one stable identifier such as `[F-001]` and be referenced by at least one coverage obligation. Missing, duplicate, unknown, generic, or unresolved ledger entries reject receipt recording; there is no minimum finding count and reviewers must not invent or pad findings.
 - Remediation reviews regenerate and complete the same deterministic current-scope coverage contract. Final task audit reports completed and omitted obligations so broad self-attestation cannot substitute for auditable scope coverage.
@@ -175,7 +175,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - When `next-step` prints `CopyPasteFinalUserReport`, paste `CopyPasteFinalUserReport` exactly as printed, without code fences, wrappers, paraphrase, interpretation, summarization, or reformatting.
 - The user-facing final report must not paste the full final-closeout markdown or duplicate every canonical closeout section. Treat `*-final-closeout.*`, `*-final-user-report.md`, and the gate-owned `CopyPasteFinalUserReport` block as the source of truth; final delivery must not add commit readiness or extra review-integrity prose outside the generated artifact. Commit command suggestions and commit permission questions are allowed only after the verbatim generated report and only when `next-step` lists them in `FinalReportOrder`.
 - At `depth=1` and `depth=2`, the implementation summary must include an output-compaction line; at `depth=3` it is optional. Use chars as the primary unit, keep approximate percentage when baseline is known, keep spaced breakdown formatting, and include token estimate only as a secondary note when available: `Suppressed output: ~3528 chars (~67%) (code review context ~3296 chars + DB review context ~100 chars + compile gate output ~132 chars). Token estimate: ~882.`
-- Reviewer and specialist agents must be closed after verdict capture.
+- Reviewer and specialist agents must be closed after findings receipt persistence.
 - HARD STOP: do not skip `enter-task-mode`; compile/review/completion evidence is invalid without explicit task-mode entry.
 - HARD STOP: do not skip `load-rule-pack`; reading the top-level router alone is not enough to prove downstream rule loading.
 - HARD STOP: do not continue a normal task run when the workspace already had modified files before `enter-task-mode`; isolate scope first with staged or explicit preflight inputs.
@@ -212,14 +212,14 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - Antigravity: use delegated reviewer sub-agents with isolated context.
   - Providers or bridges without delegated reviewer support are not eligible to satisfy the mandatory review workflow until delegated launch support exists.
 - If runtime identity is missing, contradictory, still relies on canonical SourceOfTruth fallback, or does not attest launchable reviewer subagents, rerun `enter-task-mode` with explicit runtime identity before `handshake-diagnostics` or `build-review-context`.
-- Launch required reviewers in dependency order. If `test` depends on a current-cycle upstream `code` PASS artifact and receipt, finish upstream receipt materialization before any downstream reviewer launch.
+- Launch required reviewers in dependency order. If `test` depends on a current-cycle upstream `code` result, finish the upstream accepted findings receipt and findings-satisfied materialization before any downstream reviewer launch.
 - Reviewer execution mode must be recorded in review receipts and telemetry:
   - `reviewer_execution_mode`: `delegated_subagent`.
   - `reviewer_identity`: provider-assigned reviewer id with `agent:` scope.
   - Historical `same_agent_fallback` receipts may be read for diagnostics only; they do not satisfy a fresh mandatory review cycle.
   - Gate diagnostics must explain whether each review has valid delegated fresh-context execution evidence.
-- Reviewer verdict is a release gate, not optional advice.
-- Required verdicts:
+- For new cycles, validated findings plus locked disposition state form the release gate; reviewer-authored verdicts are forbidden.
+- Historical verdict tokens remain readable for audit-only compatibility:
   - code: `REVIEW PASSED`
   - db: `DB REVIEW PASSED`
   - security: `SECURITY REVIEW PASSED`
