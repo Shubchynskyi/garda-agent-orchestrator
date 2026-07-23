@@ -1481,7 +1481,7 @@ describe('gates command review result - normalization', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result records verdict-free findings JSON and derives a failed gate verdict', async () => {
+    it('record-review-result records one verdict-free JSON finding and derives a failed gate verdict', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-2-result-findings-json';
         const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
