@@ -1828,6 +1828,7 @@ function getPreflightRefreshCommandChangedFiles(params: {
     taskMode: Record<string, unknown> | null;
     preflight: Record<string, unknown> | null;
     fallbackChangedFiles: string[] | undefined;
+    includeFullFailedReviewRemediationScope?: boolean;
 }): string[] | undefined {
     const plannedChangedFiles = filterSourceCheckoutGeneratedRuntimeArtifacts(
         params.repoRoot,
@@ -1862,7 +1863,9 @@ function getPreflightRefreshCommandChangedFiles(params: {
             ))
         );
         const currentTaskScopeChangedFiles = currentChangedFiles.filter((changedFile) => (
-            plannedSet.has(changedFile)
+            (params.includeFullFailedReviewRemediationScope === true
+                && !unchangedDirtyBaselineSet.has(changedFile))
+            || plannedSet.has(changedFile)
                 || (dirtyBaselineSet.has(changedFile) && !unchangedDirtyBaselineSet.has(changedFile))
                 || (!unchangedDirtyBaselineSet.has(changedFile) && isRelatedToPlannedScope(changedFile, plannedChangedFiles))
         ));
@@ -2979,6 +2982,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 repoRoot,
                 preflight,
                 taskMode,
+                includeFullFailedReviewRemediationScope: Boolean(failedCurrentReviewStateForPreflight),
                 fallbackChangedFiles: (reviewGateAlreadyPassed
                     ? effectivePreflightWorkspaceReadiness.currentChangedFiles
                     : effectiveStrictPreGuardWorkspaceReadiness.currentChangedFiles)

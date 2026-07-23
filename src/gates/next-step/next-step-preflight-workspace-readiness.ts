@@ -156,6 +156,7 @@ export function readPreflightWorkspaceReadiness(
         options.dirtyWorkspaceBaselineChangedFiles
     );
     const dirtyWorkspaceBaselineFileHashes = options.dirtyWorkspaceBaselineFileHashes || {};
+    const failedReviewType = String(options.failedReviewType || '').trim();
     const hasActualChangedFiles = Array.isArray(metrics.actual_changed_files);
     const expectedActualChangedFiles = hasActualChangedFiles
         ? [...new Set((metrics.actual_changed_files as unknown[])
@@ -331,10 +332,13 @@ export function readPreflightWorkspaceReadiness(
                     && !dirtyBaselineSet.has(entry)
                     && isRelatedToPlannedScope(entry, plannedChangedFiles)
             ));
-            const compareOnlyPlannedScope = preflightUsesOnlyPlannedScope
+            const includeFullFailedReviewRemediationScope = Boolean(failedReviewType);
+            const compareOnlyPlannedScope = !includeFullFailedReviewRemediationScope
+                && preflightUsesOnlyPlannedScope
                 && (currentPlannedScopeGitFiles.length > 0 || currentRelatedPlannedScopeGitFiles.length > 0);
             const currentGitChangedFiles = currentGitSnapshotFilesWithMetadata.filter((entry) => (
                 !unchangedProtectedFiles.has(entry)
+                    && (!includeFullFailedReviewRemediationScope || !unchangedDirtyBaselineSet.has(entry))
                     && (!compareOnlyPlannedScope
                         || plannedSet.has(entry)
                         || (dirtyBaselineSet.has(entry) && !unchangedDirtyBaselineSet.has(entry))
@@ -496,7 +500,6 @@ export function readPreflightWorkspaceReadiness(
             currentChangedFiles
         };
     }
-    const failedReviewType = String(options.failedReviewType || '').trim();
     const failedReviewNote = failedReviewType
         ? ` Stale failed review detected: '${failedReviewType}' previously recorded '${String(options.failedReviewVerdict || 'FAILED').trim() || 'FAILED'}', but the workspace hash changed after that review.`
         : '';

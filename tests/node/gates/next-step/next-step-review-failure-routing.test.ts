@@ -3160,6 +3160,40 @@ describe('gates/next-step', () => {
         assert.ok(!command.includes('gate required-reviews-check'));
     });
 
+    it('includes reviewer-required docs outside planned scope in failed-review remediation refresh', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        markTaskInProgress(repoRoot, TASK_ID);
+        const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+        const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        taskMode.planned_changed_files = ['src/app.ts'];
+        writeJson(taskModePath, taskMode);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/app.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['src/app.ts']);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+
+        const docsPath = path.join(repoRoot, 'docs', 'cli-reference.md');
+        fs.mkdirSync(path.dirname(docsPath), { recursive: true });
+        fs.writeFileSync(docsPath, 'Use an npm wrapper for compound full-suite commands.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.match(result.title, /expanded 'code' remediation scope/);
+        assert.ok(command.includes('--changed-file "src/app.ts"'), command);
+        assert.ok(command.includes('--changed-file "docs/cli-reference.md"'), command);
+    });
+
     it('keeps task-owned manual-validation attachments on restart-review-cycle route', () => {
         const repoRoot = makeTempRepo();
         markTaskInProgress(repoRoot, TASK_ID);
