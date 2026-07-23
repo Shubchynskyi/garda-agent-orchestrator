@@ -749,6 +749,9 @@ Initialize or refresh Garda project memory. Inspect the repository through the n
 `validate-manifest --compact` preserves failure diagnostics but reduces the green path to `MANIFEST_VALIDATION_PASSED | entries=<count>`.
 
 Reviewer staging note:
+- The findings-only output, validation/disposition evidence chain, profile
+  snapshot behavior, and legacy migration procedure are documented in
+  [Findings-Only Review Contracts and Legacy Migration](findings-contracts.md).
 - Keep transient reviewer source files under `garda-agent-orchestrator/runtime/tmp/reviews/<task-id>/<review-type>/review-output.md` when using `record-review-result --review-output-path`.
 - If `--review-output-path` points into reviewer scratch storage, the path must encode the current task id so Garda can attribute and clean it safely.
 - `build-review-context` records the fresh-context reviewer contract in `reviewer_routing`: required reviews need a new delegated reviewer session, not a reused long-lived reviewer agent. `record-review-result` prints a reviewer cleanup reminder after receipt persistence.

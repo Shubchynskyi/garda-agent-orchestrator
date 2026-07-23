@@ -162,6 +162,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 | **[docs/cli-reference.md](docs/cli-reference.md)** | Complete CLI command reference |
 | **[docs/architecture.md](docs/architecture.md)** | Design, runtime model, deployed files |
 | **[docs/configuration.md](docs/configuration.md)** | Token economy, output filters, review capabilities |
+| **[docs/findings-contracts.md](docs/findings-contracts.md)** | Findings-only review lifecycle, policy, recovery, and legacy migration |
 | **[docs/node-platform-foundation.md](docs/node-platform-foundation.md)** | Node foundation, execution model, validators, and build/test skeleton |
 | **[docs/work-example.md](docs/work-example.md)** | Task lifecycle walkthrough |
 | **[AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md)** | Setup prompt for coding agents |

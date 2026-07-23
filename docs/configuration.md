@@ -268,6 +268,10 @@ Profiles also control how non-blocking `create_follow_up` items become backlog w
 
 `per_finding` preserves the legacy one-child-per-item behavior. `grouped_by_parent` waits until all required review lanes finish, then creates one snapshot- and cycle-bound pending child and appends each validated deferred item with its source lane, severity, evidence, receipt, validation, disposition, and deterministic fingerprints. It never groups `fix_now` work and refuses to mutate a child that is no longer `TODO`. Legacy profiles and snapshots default compatibly to `per_finding`; changing a profile affects future task snapshots only.
 
+See [Findings-Only Review Contracts and Legacy Migration](findings-contracts.md)
+for the reviewer JSON Schema, derived evidence chain, selective remediation,
+exact legacy diagnostics, and explicit migration procedure.
+
 ## Skill Packs
 
 Tracks which built-in domain packs are currently installed in the workspace.

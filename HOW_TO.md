@@ -287,5 +287,6 @@ If you work on this repository itself in IntelliJ IDEA/WebStorm, open the root `
 - **[docs/architecture.md](docs/architecture.md)** — Design, runtime model, what gets deployed
 - **[docs/configuration.md](docs/configuration.md)** — Token economy, output filters, review capabilities
 - **[docs/cli-reference.md](docs/cli-reference.md)** — Complete CLI command reference
+- **[docs/findings-contracts.md](docs/findings-contracts.md)** — Findings-only review lifecycle and legacy migration
 - **[docs/work-example.md](docs/work-example.md)** — Task lifecycle walkthrough
 - **[CHANGELOG.md](CHANGELOG.md)** — Full changelog
