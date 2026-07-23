@@ -75,7 +75,8 @@ export interface SplitRequiredDecompositionState {
 
 const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+into|continue\s+via\s+child\s+tasks)\b/i;
 const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
-    /\b(?:split\s+into|continue\s+via|execute|created?|linked)\b[^.;\n|]*\b(?:child(?:ren)?|leaf)\s+tasks?\b|\b(?:child(?:ren)?|leaf)\s+tasks?\s*:/igu;
+    /\b(?:split\s+into|continue\s+via|execute|created?|linked)\b[^.;\n|]*\b(?:child(?:ren)?|leaf)\s+tasks?\b|\b(?:child(?:ren)?|leaf)\s+tasks?\s*:|\breview\s+follow-up\s+tasks?\s+materialized\s*:/igu;
+const TASK_QUEUE_REVIEW_FOLLOW_UP_LINK_MARKER_PATTERN = /\breview\s+follow-up\s+tasks?\s+materialized\s*:/iu;
 const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
 const TASK_QUEUE_TASK_ID_REFERENCE_PATTERN = /(^|[^A-Za-z0-9-])([Tt]-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)(?=$|[^A-Za-z0-9-])/gu;
 export const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
@@ -106,7 +107,7 @@ function appendTaskMentionIfMissing(taskMentions: ChildTaskIdMention[], taskId: 
 }
 
 function isExplicitChildListMentionPosition(text: string, index: number): boolean {
-    const introPattern = /\b(?:child(?:ren)?|leaf)\s+tasks?\b\s*:*/igu;
+    const introPattern = /\b(?:(?:child(?:ren)?|leaf)\s+tasks?|review\s+follow-up\s+tasks?\s+materialized)\b\s*:*/igu;
     let introMatch: RegExpExecArray | null;
     let introEnd: number | null = null;
     while ((introMatch = introPattern.exec(text)) !== null) {
@@ -260,7 +261,20 @@ function findExplicitChildSegmentEnd(text: string, startIndex: number): number {
     return text.length;
 }
 
-export function extractExplicitLinkedChildTaskIds(notes: string | null, knownTaskIds: Iterable<string>): string[] {
+function isParentDerivedReviewFollowUpTaskId(parentTaskId: string | null, childTaskId: string): boolean {
+    if (!parentTaskId) {
+        return false;
+    }
+    const prefix = `${parentTaskId}-F`;
+    return childTaskId.toLowerCase().startsWith(prefix.toLowerCase())
+        && /^[1-9]\d*$/u.test(childTaskId.slice(prefix.length));
+}
+
+export function extractExplicitLinkedChildTaskIds(
+    notes: string | null,
+    knownTaskIds: Iterable<string>,
+    parentTaskId: string | null = null
+): string[] {
     const text = String(notes || '');
     const childTaskIds: ChildTaskIdMention[] = [];
     const knownTaskIdList = [...knownTaskIds];
@@ -269,7 +283,12 @@ export function extractExplicitLinkedChildTaskIds(notes: string | null, knownTas
     while ((markerMatch = TASK_QUEUE_CHILD_LINK_MARKER_PATTERN.exec(text)) !== null) {
         const absoluteSegmentEnd = findExplicitChildSegmentEnd(text, markerMatch.index);
         const segment = text.slice(markerMatch.index, absoluteSegmentEnd);
+        const requiresParentDerivedFollowUp = TASK_QUEUE_REVIEW_FOLLOW_UP_LINK_MARKER_PATTERN.test(markerMatch[0]);
         for (const childMention of extractChildTaskMentions(segment, knownTaskIdList)) {
+            if (requiresParentDerivedFollowUp
+                && !isParentDerivedReviewFollowUpTaskId(parentTaskId, childMention.taskId)) {
+                continue;
+            }
             appendTaskMentionIfMissing(childTaskIds, childMention.taskId, markerMatch.index + childMention.index);
         }
     }
@@ -282,14 +301,18 @@ export function resolveNextUnfinishedChildRoute(
     taskEntries: Map<string, TaskQueueEntry>,
     parentTaskId: string,
     visited = new Set<string>(),
-    childTaskIdExtractor: (notes: string | null, knownTaskIds: Iterable<string>) => string[] = extractExplicitLinkedChildTaskIds
+    childTaskIdExtractor: (
+        notes: string | null,
+        knownTaskIds: Iterable<string>,
+        parentTaskId?: string
+    ) => string[] = extractExplicitLinkedChildTaskIds
 ): DecomposedChildRoute | null {
     if (visited.has(parentTaskId)) {
         return null;
     }
     visited.add(parentTaskId);
     const parentEntry = taskEntries.get(parentTaskId);
-    const childTaskIds = childTaskIdExtractor(parentEntry?.notes || null, taskEntries.keys())
+    const childTaskIds = childTaskIdExtractor(parentEntry?.notes || null, taskEntries.keys(), parentTaskId)
         .filter((childTaskId) => childTaskId !== parentTaskId);
 
     for (const childTaskId of childTaskIds) {
@@ -364,7 +387,11 @@ export function resolveDecomposedParentCompletionState(
     taskEntries: Map<string, TaskQueueEntry>,
     parentTaskId: string,
     visited = new Set<string>(),
-    childTaskIdExtractor: (notes: string | null, knownTaskIds: Iterable<string>) => string[] = extractExplicitLinkedChildTaskIds
+    childTaskIdExtractor: (
+        notes: string | null,
+        knownTaskIds: Iterable<string>,
+        parentTaskId?: string
+    ) => string[] = extractExplicitLinkedChildTaskIds
 ): DecomposedParentCompletionState {
     if (visited.has(parentTaskId)) {
         return {
@@ -377,7 +404,7 @@ export function resolveDecomposedParentCompletionState(
     }
     visited.add(parentTaskId);
     const parentEntry = taskEntries.get(parentTaskId);
-    const childTaskIds = childTaskIdExtractor(parentEntry?.notes || null, taskEntries.keys())
+    const childTaskIds = childTaskIdExtractor(parentEntry?.notes || null, taskEntries.keys(), parentTaskId)
         .filter((childTaskId) => childTaskId !== parentTaskId);
 
     if (childTaskIds.length === 0) {
@@ -398,7 +425,7 @@ export function resolveDecomposedParentCompletionState(
             missingChildTaskIds.push(childTaskId);
             continue;
         }
-        const childLinkedTaskIds = childTaskIdExtractor(childEntry.notes || null, taskEntries.keys())
+        const childLinkedTaskIds = childTaskIdExtractor(childEntry.notes || null, taskEntries.keys(), childTaskId)
             .filter((nestedChildTaskId) => nestedChildTaskId !== childTaskId);
         if (childLinkedTaskIds.length > 0 && (
             isTaskQueueDoneStatus(childEntry.status)
@@ -549,7 +576,11 @@ export function resolveSplitRequiredDecompositionState(
     parentTaskId: string
 ): SplitRequiredDecompositionState {
     const parentEntry = taskEntries.get(parentTaskId);
-    const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(parentEntry?.notes || null, taskEntries.keys())
+    const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(
+        parentEntry?.notes || null,
+        taskEntries.keys(),
+        parentTaskId
+    )
         .filter((childTaskId) => childTaskId !== parentTaskId);
     const missingChildTaskIds = linkedChildTaskIds.filter((childTaskId) => !taskEntries.has(childTaskId));
     const quality = childSetQuality(taskEntries, linkedChildTaskIds);
@@ -586,7 +617,11 @@ export function resolveStrictDecompositionSplitRoutingState(
     proposedChildTaskIds: string[]
 ): StrictDecompositionSplitRoutingState {
     const parentEntry = taskEntries.get(parentTaskId);
-    const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(parentEntry?.notes || null, taskEntries.keys())
+    const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(
+        parentEntry?.notes || null,
+        taskEntries.keys(),
+        parentTaskId
+    )
         .filter((childTaskId) => childTaskId !== parentTaskId);
     const linkedChildTaskIdSet = new Set(linkedChildTaskIds);
     const proposedChildTaskIdSet = new Set(proposedChildTaskIds);

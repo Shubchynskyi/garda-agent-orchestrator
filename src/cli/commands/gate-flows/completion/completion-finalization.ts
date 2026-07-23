@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { writeFileAtomically } from '../../../../core/filesystem';
+import { isTaskQueueDoneStatus } from '../../../../core/active-task-state';
 import {
     getBundleCliCommand,
     getSourceCliCommand,
@@ -328,12 +329,31 @@ function resolveParentTaskIdsLinkedToCompletedTasks(params: {
     completedTaskIds: Set<string>;
     settledParentTaskIds: Set<string>;
 }): string[] {
+    let expandedDoneBridge = true;
+    while (expandedDoneBridge) {
+        expandedDoneBridge = false;
+        for (const entry of params.taskEntries.values()) {
+            if (!isTaskQueueDoneStatus(entry.status) || params.completedTaskIds.has(entry.taskId)) {
+                continue;
+            }
+            const childTaskIds = extractExplicitLinkedChildTaskIds(
+                entry.notes,
+                params.taskEntries.keys(),
+                entry.taskId
+            );
+            if (childTaskIds.some((childTaskId) => params.completedTaskIds.has(childTaskId))) {
+                params.completedTaskIds.add(entry.taskId);
+                expandedDoneBridge = true;
+            }
+        }
+    }
+
     const linkedParentTaskIds: string[] = [];
     for (const entry of params.taskEntries.values()) {
         if (!isDecomposedParentTask(entry) || params.settledParentTaskIds.has(entry.taskId)) {
             continue;
         }
-        const childTaskIds = extractExplicitLinkedChildTaskIds(entry.notes, params.taskEntries.keys());
+        const childTaskIds = extractExplicitLinkedChildTaskIds(entry.notes, params.taskEntries.keys(), entry.taskId);
         if (childTaskIds.some((childTaskId) => params.completedTaskIds.has(childTaskId))) {
             linkedParentTaskIds.push(entry.taskId);
         }

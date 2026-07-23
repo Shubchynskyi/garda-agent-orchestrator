@@ -121,7 +121,8 @@ function resolveCompletedFullSuiteRepairWipRestoreRoute(options: {
     }
     const childTaskIds = extractExplicitLinkedChildTaskIds(
         options.taskEntry?.notes || null,
-        options.taskEntries.keys()
+        options.taskEntries.keys(),
+        options.taskId
     ).filter((childTaskId) => childTaskId !== options.taskId);
     for (const childTaskId of childTaskIds) {
         const childEntry = options.taskEntries.get(childTaskId);
