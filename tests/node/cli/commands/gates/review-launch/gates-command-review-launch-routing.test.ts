@@ -811,6 +811,7 @@ describe('cli/commands/gates review launch routing', () => {
         { name: 'an untrusted restart actor', appendBoundary: true, invalidatedReviewTypes: ['code'], actor: 'gate' },
         { name: 'a failed restart outcome', appendBoundary: true, invalidatedReviewTypes: ['code'], outcome: 'FAIL' },
         { name: 'a failed restart status', appendBoundary: true, invalidatedReviewTypes: ['code'], status: 'FAILED' },
+        { name: 'a foreign restart details task id', appendBoundary: true, invalidatedReviewTypes: ['code'], detailsTaskId: 'T-foreign' },
         {
             name: 'a mismatched restart details event type',
             appendBoundary: true,
@@ -828,7 +829,8 @@ describe('cli/commands/gates review launch routing', () => {
                     actor: scenario.actor,
                     outcome: scenario.outcome,
                     status: scenario.status,
-                    detailsEventType: scenario.detailsEventType
+                    detailsEventType: scenario.detailsEventType,
+                    detailsTaskId: scenario.detailsTaskId
                 });
             }
 
