@@ -8,6 +8,7 @@ import {
     appendMetricsEvent,
     computeProtectedSnapshotDigest,
     getProtectedControlPlaneRoots,
+    isPathInsideRoot,
     joinOrchestratorPath,
     normalizePath,
     toPosix,
@@ -18,6 +19,18 @@ import {
     testPathPrefix,
     toStringArray
 } from '../../../../src/gates/shared/helpers';
+
+it('accepts Win32 descendants with case-variant roots', () => {
+    assert.equal(isPathInsideRoot('c:\\repo\\src\\index.ts', 'C:\\Repo', 'win32'), true);
+});
+
+it('rejects a Win32 sibling prefix outside the authorized root', () => {
+    assert.equal(isPathInsideRoot('C:\\Repository\\index.ts', 'C:\\Repo', 'win32'), false);
+});
+
+it('rejects /Repo as a descendant of /repo under POSIX semantics', () => {
+    assert.equal(isPathInsideRoot('/Repo/src/index.ts', '/repo', 'linux'), false);
+});
 
 describe('gates/helpers', () => {
     describe('normalizePath', () => {

@@ -4,6 +4,7 @@ import {
     ALL_BUNDLE_NAMES,
     resolveBundleNameForTarget
 } from '../../core/constants';
+import { isPathInsideRoot as isCorePathInsideRoot } from '../../core/paths';
 
 export interface ResolvePathOptions {
     allowMissing?: boolean;
@@ -90,11 +91,12 @@ export function orchestratorRelativePath(repoRoot: string, relativePath: string)
     return toPosix(joinOrchestratorPath(repoRoot, relativePath));
 }
 
-export function isPathInsideRoot(pathValue: string, rootPath: string): boolean {
-    const resolvedRoot = path.resolve(rootPath);
-    const resolvedPath = path.resolve(pathValue);
-    const relativePath = path.relative(resolvedRoot, resolvedPath);
-    return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+export function isPathInsideRoot(
+    pathValue: string,
+    rootPath: string,
+    platform: string = process.platform
+): boolean {
+    return isCorePathInsideRoot(rootPath, pathValue, platform);
 }
 
 export function isPathRealpathInsideRoot(
