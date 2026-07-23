@@ -569,6 +569,7 @@ garda workflow explain --target-root "."
 Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
 - The current surface manages repo-local `compile_gate`, `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, `task_reset`, and `auto_backup` settings in `live/config/workflow-config.json`.
+- `full_suite_validation.command` uses direct argv execution. Its lexical contract rejects unquoted shell operators, direct shell interpreters, shell interpreters delegated through recognized transparent process hosts, direct executable paths with known shell-script extensions, and WSL commands without an explicit `-e` / `--exec` boundary. It does not infer the behavior of arbitrary executables or reinterpret their data arguments, and it does not inspect executable contents, symlink targets, or `PATH` identity. Put compound commands in a trusted wrapper such as an npm script and configure `npm run <wrapper-script>`.
 - `compile_gate.command` is the executable compile-gate source. Missing values or `__COMPILE_GATE_COMMAND_UNCONFIGURED__` fail closed instead of falling back to `40-commands.md`.
 - `--compile-gate-command` must stay a compile/build/type-check command and must not match the configured full-suite validation command.
 - Scheduled auto-backups are disabled by default and run only through the existing daily maintenance trigger when enabled; configure them with `--auto-backup-enabled`, `--auto-backup-interval-days`, and `--auto-backup-keep-latest`.

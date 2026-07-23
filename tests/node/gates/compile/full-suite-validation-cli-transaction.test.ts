@@ -340,6 +340,14 @@ describe('gates/full-suite-validation', () => {
             assert.ok(fs.existsSync(artifactPath));
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'PASSED');
+            assert.deepEqual(artifact.command_provenance, {
+                schema_version: 1,
+                source: 'workflow_config.full_suite_validation.command',
+                execution_mode: 'DIRECT_ARGV',
+                validation_status: 'PASSED',
+                rejection_reason: null,
+                detected_syntax: null
+            });
             assert.equal(typeof artifact.duration_ms, 'number');
             assert.equal(artifact.timeout_forecast.recommendation_source, 'history');
             assert.ok(artifact.output_telemetry);
@@ -878,6 +886,72 @@ describe('gates/full-suite-validation', () => {
             assert.ok(fs.existsSync(timelinePath));
             const timeline = fs.readFileSync(timelinePath, 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('rejects compound shell syntax before launch and records command provenance', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-compound-command-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const firstScript = path.join(tempDir, 'first.js');
+            const secondScript = path.join(tempDir, 'second.js');
+            const sideEffectPath = path.join(tempDir, 'must-not-exist.txt');
+            fs.writeFileSync(firstScript, `require('node:fs').writeFileSync(${JSON.stringify(sideEffectPath)}, 'first');`, 'utf8');
+            fs.writeFileSync(secondScript, `require('node:fs').writeFileSync(${JSON.stringify(sideEffectPath)}, 'second');`, 'utf8');
+            const command = [
+                `"${process.execPath.replace(/\\/g, '/')}"`,
+                `"${firstScript.replace(/\\/g, '/')}"`,
+                '&&',
+                `"${process.execPath.replace(/\\/g, '/')}"`,
+                `"${secondScript.replace(/\\/g, '/')}"`
+            ].join(' ');
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+            const preflightPath = path.join(reviewsDir, 'T-COMPOUND-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-COMPOUND',
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-COMPOUND',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            assert.equal(fs.existsSync(sideEffectPath), false);
+            assert.equal(fs.existsSync(resolveFullSuiteValidationRunMarkerPath(tempDir, 'T-COMPOUND')), false);
+            const artifact = JSON.parse(
+                fs.readFileSync(path.join(reviewsDir, 'T-COMPOUND-full-suite-validation.json'), 'utf8')
+            );
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.command, command);
+            assert.equal(artifact.exit_code, null);
+            assert.deepEqual(artifact.command_provenance, {
+                schema_version: 1,
+                source: 'workflow_config.full_suite_validation.command',
+                execution_mode: 'DIRECT_ARGV',
+                validation_status: 'REJECTED',
+                rejection_reason: 'SHELL_CONTROL_OPERATOR',
+                detected_syntax: '&&'
+            });
+            assert.ok(artifact.violations.some((line: string) => line.includes('npm run <wrapper-script>')));
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 

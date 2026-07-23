@@ -114,6 +114,15 @@ export interface FullSuiteTimeoutPolicyEvidence {
     repair_task_proposal: FullSuiteTimeoutRepairTaskProposal | null;
 }
 
+export interface FullSuiteCommandProvenance {
+    schema_version: 1;
+    source: 'workflow_config.full_suite_validation.command';
+    execution_mode: 'DIRECT_ARGV';
+    validation_status: 'PASSED' | 'REJECTED';
+    rejection_reason: 'SHELL_CONTROL_OPERATOR' | 'SHELL_INTERPRETER' | 'INVALID_ARGUMENT_SYNTAX' | null;
+    detected_syntax: string | null;
+}
+
 export interface FullSuitePerformanceGuidance {
     mode: 'standard' | 'optimized_sharded' | 'optimized_reuse_aware' | 'optimized_sharded_reuse_aware';
     optimized: boolean;
@@ -148,6 +157,7 @@ export interface FullSuiteValidationResult {
     duration_history_comparison?: FullSuiteDurationHistoryComparison | null;
     timeout_forecast?: FullSuiteTimeoutForecast | null;
     timeout_policy?: FullSuiteTimeoutPolicyEvidence | null;
+    command_provenance?: FullSuiteCommandProvenance;
     cycle_binding?: FullSuiteValidationCycleBinding;
     failure_evidence?: FullSuiteFailureEvidence | null;
 }

@@ -56,6 +56,7 @@ import {
     cleanupGeneratedLocksAfterTimedOutFullSuite,
     formatGeneratedLockCleanupObservation
 } from './full-suite-validation-lock-cleanup';
+import { validateFullSuiteCommandContract } from './full-suite-command-contract';
 import { buildWorkflowConfigWorkBlockedResult } from './full-suite-validation-workflow-config';
 import {
     clearFullSuiteValidationRunMarker,
@@ -250,16 +251,23 @@ export async function runFullSuiteValidationCommand(
         };
     }
 
-    const reboundResult = tryReadRebindableFullSuiteValidationArtifact({
-        artifactPath,
-        repoRoot,
-        taskId,
-        configCommand: config.command,
-        configPlacement: config.placement,
-        cycleBinding
-    });
-    if (reboundResult) {
+    const commandIsUnconfigured = String(config.command || '').trim() === UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND;
+    const commandContract = commandIsUnconfigured
+        ? null
+        : validateFullSuiteCommandContract(config.command);
+    const reboundResult = commandContract?.supported === true
+        ? tryReadRebindableFullSuiteValidationArtifact({
+            artifactPath,
+            repoRoot,
+            taskId,
+            configCommand: config.command,
+            configPlacement: config.placement,
+            cycleBinding
+        })
+        : null;
+    if (reboundResult && commandContract) {
         const retainedReboundResult = normalizeSuccessfulFullSuiteOutputRetention(repoRoot, outputArtifactPath, reboundResult);
+        retainedReboundResult.command_provenance = commandContract.provenance;
         await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, retainedReboundResult.status, retainedReboundResult, {
             status: retainedReboundResult.status,
             enabled: retainedReboundResult.enabled,
@@ -284,7 +292,7 @@ export async function runFullSuiteValidationCommand(
         };
     }
 
-    if (String(config.command || '').trim() === UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND) {
+    if (commandIsUnconfigured) {
         const unconfiguredResult = {
             status: 'FAILED' as const,
             enabled: true,
@@ -320,6 +328,55 @@ export async function runFullSuiteValidationCommand(
         });
         return {
             outputText: `${formatFullSuiteValidationResult(unconfiguredResult)}\n`,
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
+
+    if (!commandContract) {
+        throw new Error('Full-suite command contract was not evaluated.');
+    }
+    if (!commandContract.supported) {
+        const invalidCommandResult = {
+            status: 'FAILED' as const,
+            enabled: true,
+            command: config.command,
+            placement: config.placement,
+            exit_code: null,
+            timed_out: false,
+            output_artifact_path: null,
+            compact_summary: ['Full-suite validation command violates the direct argv execution contract.'],
+            failure_chunks: [],
+            out_of_scope_failure_policy: config.out_of_scope_failure_policy,
+            out_of_scope_failure_detected: false,
+            out_of_scope_audit_verdict: 'NOT_APPLICABLE' as const,
+            violations: commandContract.violation ? [commandContract.violation] : [],
+            warnings: [],
+            command_provenance: commandContract.provenance,
+            cycle_binding: cycleBinding
+        };
+        await writeArtifactThenEmitMandatoryFullSuiteEvent(
+            repoRoot,
+            eventsRoot,
+            taskId,
+            artifactPath,
+            invalidCommandResult.status,
+            invalidCommandResult,
+            {
+                status: invalidCommandResult.status,
+                enabled: invalidCommandResult.enabled,
+                command: invalidCommandResult.command,
+                placement: invalidCommandResult.placement,
+                exit_code: invalidCommandResult.exit_code,
+                timed_out: invalidCommandResult.timed_out,
+                preflight_path: cycleBinding.preflight_path,
+                artifact_path: gateHelpers.normalizePath(artifactPath),
+                cycle_binding: invalidCommandResult.cycle_binding,
+                violations: invalidCommandResult.violations,
+                warnings: invalidCommandResult.warnings
+            }
+        );
+        return {
+            outputText: `${formatFullSuiteValidationResult(invalidCommandResult)}\n`,
             exitCode: EXIT_GATE_FAILURE
         };
     }
@@ -418,6 +475,7 @@ export async function runFullSuiteValidationCommand(
         changedFiles,
         cycleBinding
     );
+    result.command_provenance = commandContract.provenance;
     const timeoutAttemptsExhausted = timedOut && timeoutAttempts.length >= maxAttempts;
     result.timeout_policy = {
         timeout_blocker: executionConfig.timeout_blocker !== false,
@@ -467,6 +525,7 @@ export async function runFullSuiteValidationCommand(
             postWorkflowConfigViolations,
             postWorkflowConfigChanges.scan_error
         );
+        blockedResult.command_provenance = commandContract.provenance;
         blockedResult.output_artifact_path = gateHelpers.normalizePath(outputArtifactPath);
         blockedResult.output_retention = buildRawOutputRetentionEvidence(rawOutputText, true);
         blockedResult.duration_ms = durationMs;
