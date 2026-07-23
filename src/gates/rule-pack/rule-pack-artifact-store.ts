@@ -1,7 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
-import { joinOrchestratorPath, resolvePathInsideRepo } from '../shared/helpers';
+import {
+    isPathRealpathInsideRoot,
+    joinOrchestratorPath,
+    normalizePath,
+    resolvePathInsideRepo
+} from '../shared/helpers';
 import { type RulePackArtifact } from './rule-pack-types';
 import { isRecord } from './rule-pack-records';
 
@@ -23,12 +28,19 @@ export function readExistingRulePackArtifact(artifactPath: string): RulePackArti
 export function resolveRulePackArtifactPath(repoRoot: string, taskId: string, artifactPath: string): string {
     const resolvedTaskId = assertValidTaskId(taskId);
     const explicitPath = String(artifactPath || '').trim();
-    if (explicitPath) {
-        const resolvedPath = resolvePathInsideRepo(explicitPath, repoRoot, { allowMissing: true });
-        if (!resolvedPath) {
-            throw new Error('RulePackArtifactPath must not be empty.');
-        }
-        return resolvedPath;
+    const resolvedPath = explicitPath
+        ? resolvePathInsideRepo(explicitPath, repoRoot, {
+            allowMissing: true,
+            enforceInside: true
+        })
+        : joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${resolvedTaskId}-rule-pack.json`));
+    if (!resolvedPath) {
+        throw new Error('RulePackArtifactPath must not be empty.');
     }
-    return joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${resolvedTaskId}-rule-pack.json`));
+    if (!isPathRealpathInsideRoot(resolvedPath, repoRoot, { allowMissing: true })) {
+        throw new Error(
+            `RulePackArtifactPath must resolve inside repo root without symlink or junction escape: ${normalizePath(resolvedPath)}.`
+        );
+    }
+    return resolvedPath;
 }
