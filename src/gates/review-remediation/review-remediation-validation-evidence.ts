@@ -334,7 +334,9 @@ function rolesSatisfyRequirement(
     ));
 }
 
-function getDeltaViolations(delta: ReviewRemediationDeltaClassification): string[] {
+export function getReviewRemediationDeltaClassificationViolations(
+    delta: ReviewRemediationDeltaClassification
+): string[] {
     const violations: string[] = [];
     if (delta.schema_version !== 1 || delta.status !== 'CLASSIFIED') {
         violations.push('delta must be a schema v1 CLASSIFIED remediation delta.');
@@ -427,7 +429,7 @@ function validationResultPayload(
 export function buildReviewRemediationValidationEvidence(
     options: BuildReviewRemediationValidationEvidenceOptions
 ): ReviewRemediationValidationEvidence {
-    const deltaViolations = getDeltaViolations(options.delta);
+    const deltaViolations = getReviewRemediationDeltaClassificationViolations(options.delta);
     if (deltaViolations.length > 0) {
         throw new Error(`Review remediation validation delta is invalid: ${deltaViolations.join(' ')}`);
     }
