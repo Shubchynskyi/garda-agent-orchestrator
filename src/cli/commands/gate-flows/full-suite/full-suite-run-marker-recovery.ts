@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { getBundleCliCommand, getSourceCliCommand, resolveBundleNameForTarget } from '../../../../core/constants';
+import { writeFileAtomically } from '../../../../core/filesystem';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import { redactSecretText } from '../../../../core/redaction';
 import {
@@ -22,10 +23,11 @@ import {
     serializeCapturedOutputLines
 } from '../../../../gate-runtime/output-log-retention';
 import {
-    clearFullSuiteValidationRunMarker,
-    readInterruptedFullSuiteValidationRunMarker,
+    inspectFullSuiteValidationRunMarker,
     resolveFullSuiteValidationRunMarkerPath,
+    withFullSuiteValidationRunMarkerMutationLockAsync,
     type FullSuiteValidationRunMarkerInspectionOptions,
+    type FullSuiteValidationRunMarkerInspection,
     type FullSuiteValidationInterruptedRunSummary
 } from '../../../../gates/full-suite/full-suite-validation-run-marker';
 import {
@@ -50,6 +52,8 @@ export interface FullSuiteRunMarkerRecoveryCommandOptions {
     clearDeadMarker?: boolean;
     operatorConfirmed?: string;
     inspectionOptions?: FullSuiteValidationRunMarkerInspectionOptions;
+    beforeCleanupLock?: () => void;
+    beforeFinalArtifactWrite?: () => void;
 }
 
 export interface FullSuiteRunMarkerRecoveryCommandResult {
@@ -61,9 +65,12 @@ type RecoveryStatus =
     | 'MISSING'
     | 'LIVE_GATE'
     | 'STALE_DESCENDANTS'
+    | 'STALE_MARKER'
     | 'DEAD_MARKER'
     | 'CLEARED_DEAD_MARKER'
+    | 'CLEARED_STALE_MARKER'
     | 'UNKNOWN_STATE'
+    | 'UNVERIFIABLE_PROCESS_STATE'
     | 'REFUSED_LIVE_CLEAR';
 
 interface CurrentSuccessfulFullSuiteTerminalEvidence {
@@ -90,7 +97,7 @@ export async function runFullSuiteRunMarkerRecoveryCommand(
     const markerPath = resolveFullSuiteValidationRunMarkerPath(repoRoot, taskId);
     const preflightSha256 = gateHelpers.fileSha256(preflightPath) || '';
     const compileGateTimestamp = readLatestCompileGatePassedTimestamp(repoRoot, taskId);
-    const summary = readInterruptedFullSuiteValidationRunMarker(
+    const inspection = inspectFullSuiteValidationRunMarker(
         repoRoot,
         taskId,
         preflightPath,
@@ -98,6 +105,8 @@ export async function runFullSuiteRunMarkerRecoveryCommand(
         compileGateTimestamp,
         options.inspectionOptions
     );
+    const markerStateReason = redactSecretText(inspection.reason);
+    const summary = inspection.summary;
     const requestedClear = options.clearDeadMarker === true;
     const operatorConfirmed = String(options.operatorConfirmed || '').trim().toLowerCase() === 'yes';
     const artifactPath = options.artifactPath
@@ -109,29 +118,49 @@ export async function runFullSuiteRunMarkerRecoveryCommand(
     if (path.resolve(artifactPath) === path.resolve(markerPath)) {
         throw new Error('ArtifactPath must not equal the full-suite run marker path; recovery evidence must survive marker cleanup.');
     }
+    let preservedCleanupEvidence = inspection.state === 'MISSING'
+        ? readPreservedCleanupEvidence(artifactPath, markerPath)
+        : null;
+    if (preservedCleanupEvidence?.phase === 'PREPARED') {
+        finalizePreparedCleanupEvidence(artifactPath, preservedCleanupEvidence);
+        preservedCleanupEvidence = {
+            ...preservedCleanupEvidence,
+            phase: 'CLEARED'
+        };
+    }
 
     let status: RecoveryStatus;
     let action = '';
     let exitCode = 0;
 
-    if (!fs.existsSync(markerPath)) {
+    if (inspection.state === 'MISSING') {
         status = 'MISSING';
-        action = 'No full-suite run marker exists for this task. Rerun next-step to continue normal routing.';
-    } else if (!summary) {
+        action = preservedCleanupEvidence
+            ? `No full-suite run marker exists for this task; prior ${preservedCleanupEvidence.status} audit evidence remains preserved. Rerun next-step to continue normal routing.`
+            : 'No full-suite run marker exists for this task. Rerun next-step to continue normal routing.';
+    } else if (inspection.state === 'INVALID' || !summary) {
         status = 'UNKNOWN_STATE';
-        action = 'A marker exists, but it is stale, invalid, or not bound to the current preflight/compile cycle. Inspect it manually; this command will not clear unknown marker state automatically.';
+        action =
+            `The marker cannot be cleared safely because its owner process state is not verifiable: ${markerStateReason} ` +
+            'Preserve the recovery artifact and repair or quarantine the marker through operator maintenance.';
         exitCode = EXIT_GATE_FAILURE;
-    } else if (summary.gateProcessAlive) {
-        status = requestedClear ? 'REFUSED_LIVE_CLEAR' : 'LIVE_GATE';
-        action = requestedClear
-            ? 'Refused to clear the marker because the recorded gate process is still alive.'
-            : 'The gate process is still alive. Wait for terminal full-suite evidence or inspect task-owned processes only.';
-        exitCode = requestedClear ? EXIT_GATE_FAILURE : 0;
+    } else if (summary.gateProcessAlive !== false) {
+        const gateStateUnknown = summary.gateProcessAlive === null;
+        status = gateStateUnknown ? 'UNVERIFIABLE_PROCESS_STATE' : requestedClear ? 'REFUSED_LIVE_CLEAR' : 'LIVE_GATE';
+        action = gateStateUnknown
+            ? 'Refused to clear the marker because the recorded gate process state could not be verified safely.'
+            : requestedClear
+                ? 'Refused to clear the marker because the recorded gate process is still alive.'
+                : 'The gate process is still alive. Wait for terminal full-suite evidence or inspect task-owned processes only.';
+        exitCode = gateStateUnknown || requestedClear ? EXIT_GATE_FAILURE : 0;
     } else {
         const hasLiveChildTree =
-            summary.childProcessAlive === true
+            summary.childPid == null
+            || summary.childProcessAlive === true
+            || (summary.childPid != null && summary.childProcessAlive === null)
             || summary.descendantProcessCandidates.length > 0
-            || !!summary.processScanWarning;
+            || !!summary.processScanWarning
+            || !!summary.processCheckWarning;
         if (hasLiveChildTree) {
             status = requestedClear ? 'REFUSED_LIVE_CLEAR' : 'STALE_DESCENDANTS';
             action = requestedClear
@@ -140,16 +169,20 @@ export async function runFullSuiteRunMarkerRecoveryCommand(
             exitCode = requestedClear ? EXIT_GATE_FAILURE : 0;
         } else if (requestedClear) {
             if (!operatorConfirmed) {
-                status = 'DEAD_MARKER';
-                action = 'Dead marker can be cleared, but --operator-confirmed yes is required.';
+                status = inspection.state === 'STALE' ? 'STALE_MARKER' : 'DEAD_MARKER';
+                action = `${inspection.state === 'STALE' ? 'Stale' : 'Dead'} marker can be cleared, but --operator-confirmed yes is required.`;
                 exitCode = EXIT_GATE_FAILURE;
             } else {
-                status = 'CLEARED_DEAD_MARKER';
-                action = 'Dead full-suite run marker was cleared after writing recovery evidence.';
+                status = inspection.state === 'STALE' ? 'CLEARED_STALE_MARKER' : 'CLEARED_DEAD_MARKER';
+                action = inspection.state === 'STALE'
+                    ? 'Stale full-suite run marker was cleared after writing recovery evidence; no current-cycle terminal evidence was synthesized.'
+                    : 'Dead full-suite run marker was cleared after writing recovery evidence.';
             }
         } else {
-            status = 'DEAD_MARKER';
-            action = 'Dead marker has no live child or descendant process evidence. Run the printed cleanup command to clear it after preserving this recovery evidence.';
+            status = inspection.state === 'STALE' ? 'STALE_MARKER' : 'DEAD_MARKER';
+            action = inspection.state === 'STALE'
+                ? 'Stale marker has no live owner, child, or descendant process evidence. Run the printed cleanup command to clear it after preserving this recovery evidence.'
+                : 'Dead marker has no live child or descendant process evidence. Run the printed cleanup command to clear it after preserving this recovery evidence.';
         }
     }
 
@@ -173,9 +206,18 @@ export async function runFullSuiteRunMarkerRecoveryCommand(
             configCommand: config.command
         })
         : null;
-    const artifactStatus = status === 'CLEARED_DEAD_MARKER' ? 'DEAD_MARKER' : status;
-    const artifactAction = status === 'CLEARED_DEAD_MARKER'
-        ? 'Dead marker cleanup is in progress; final cleared evidence is written only after terminal evidence and marker cleanup succeed.'
+    const cleanupInProgress = status === 'CLEARED_DEAD_MARKER' || status === 'CLEARED_STALE_MARKER';
+    const cleanupTargetStatus: 'CLEARED_DEAD_MARKER' | 'CLEARED_STALE_MARKER' | null =
+        status === 'CLEARED_DEAD_MARKER' || status === 'CLEARED_STALE_MARKER'
+            ? status
+            : null;
+    const artifactStatus = status === 'CLEARED_DEAD_MARKER'
+        ? 'DEAD_MARKER'
+        : status === 'CLEARED_STALE_MARKER'
+            ? 'STALE_MARKER'
+            : status;
+    const artifactAction = cleanupInProgress
+        ? `${inspection.state === 'STALE' ? 'Stale' : 'Dead'} marker cleanup is in progress; final cleared evidence is written only after marker cleanup succeeds.`
         : action;
     const artifact = buildRecoveryArtifact({
         repoRoot,
@@ -189,42 +231,65 @@ export async function runFullSuiteRunMarkerRecoveryCommand(
         summary,
         cleanupCommand,
         nextRecoveryCommand,
-        existingTerminalEvidence: null
+        existingTerminalEvidence: null,
+        markerState: inspection.state,
+        markerStateReason,
+        cleanupPhase: cleanupInProgress ? 'PREPARED' : null,
+        cleanupTargetStatus
     });
-    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
-
-    if (status === 'CLEARED_DEAD_MARKER' && !existingTerminalEvidence) {
-        await materializeInterruptedFullSuiteTimeoutEvidence({
-            repoRoot,
-            taskId,
-            preflightPath,
-            preflightSha256,
-            compileGateTimestamp,
-            recoveryArtifactPath: artifactPath,
-            markerPath,
-            summary,
-            cleanupCommand,
-            nextRecoveryCommand
-        });
+    if (!preservedCleanupEvidence) {
+        fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+        writeFileAtomically(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, { encoding: 'utf8' });
     }
-    if (status === 'CLEARED_DEAD_MARKER') {
-        clearFullSuiteValidationRunMarker(repoRoot, taskId);
-        const finalArtifact = buildRecoveryArtifact({
-            repoRoot,
-            taskId,
-            markerPath,
-            preflightPath,
-            preflightSha256,
-            compileGateTimestamp,
-            status,
-            action,
-            summary,
-            cleanupCommand,
-            nextRecoveryCommand,
-            existingTerminalEvidence
+
+    if (cleanupInProgress) {
+        options.beforeCleanupLock?.();
+        await withFullSuiteValidationRunMarkerMutationLockAsync(repoRoot, taskId, async () => {
+            const refreshedInspection = inspectFullSuiteValidationRunMarker(
+                repoRoot,
+                taskId,
+                preflightPath,
+                preflightSha256,
+                compileGateTimestamp,
+                options.inspectionOptions
+            );
+            assertCleanupInspectionUnchangedAndSafe(inspection, refreshedInspection);
+            if (status === 'CLEARED_DEAD_MARKER' && !existingTerminalEvidence) {
+                await materializeInterruptedFullSuiteTimeoutEvidence({
+                    repoRoot,
+                    taskId,
+                    preflightPath,
+                    preflightSha256,
+                    compileGateTimestamp,
+                    recoveryArtifactPath: artifactPath,
+                    markerPath,
+                    summary,
+                    cleanupCommand,
+                    nextRecoveryCommand
+                });
+            }
+            fs.rmSync(markerPath, { force: true });
+            const finalArtifact = buildRecoveryArtifact({
+                repoRoot,
+                taskId,
+                markerPath,
+                preflightPath,
+                preflightSha256,
+                compileGateTimestamp,
+                status,
+                action,
+                summary,
+                cleanupCommand,
+                nextRecoveryCommand,
+                existingTerminalEvidence,
+                markerState: inspection.state,
+                markerStateReason,
+                cleanupPhase: 'CLEARED',
+                cleanupTargetStatus
+            });
+            options.beforeFinalArtifactWrite?.();
+            writeFileAtomically(artifactPath, `${JSON.stringify(finalArtifact, null, 2)}\n`, { encoding: 'utf8' });
         });
-        fs.writeFileSync(artifactPath, `${JSON.stringify(finalArtifact, null, 2)}\n`, 'utf8');
     }
 
     const outputLines = [
@@ -233,12 +298,14 @@ export async function runFullSuiteRunMarkerRecoveryCommand(
         `Status: ${status}`,
         `MarkerPath: ${gateHelpers.normalizePath(markerPath)}`,
         `ArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+        `MarkerState: ${inspection.state}`,
+        `MarkerStateReason: ${markerStateReason}`,
         `Action: ${action}`
     ];
     if (summary) {
         outputLines.push(...formatSummaryLines(summary));
     }
-    if (status === 'DEAD_MARKER' && !requestedClear) {
+    if ((status === 'DEAD_MARKER' || status === 'STALE_MARKER') && !requestedClear) {
         outputLines.push(`CleanupCommand: ${cleanupCommand}`);
     }
     return { outputLines, exitCode };
@@ -254,6 +321,104 @@ function buildNextStepCommand(repoRoot: string, taskId: string): string {
     return `${buildCliPrefix(repoRoot)} next-step "${taskId}" --repo-root "."`;
 }
 
+function readPreservedCleanupEvidence(
+    artifactPath: string,
+    markerPath: string
+): {
+    status: 'CLEARED_DEAD_MARKER' | 'CLEARED_STALE_MARKER';
+    phase: 'PREPARED' | 'CLEARED';
+    artifact: Record<string, unknown>;
+} | null {
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+        return null;
+    }
+    try {
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+        const status = String(artifact.status || '');
+        if (gateHelpers.normalizePath(String(artifact.marker_path || '')) !== gateHelpers.normalizePath(markerPath)) {
+            return null;
+        }
+        if (status === 'CLEARED_DEAD_MARKER' || status === 'CLEARED_STALE_MARKER') {
+            return { status, phase: 'CLEARED', artifact };
+        }
+        const cleanupTargetStatus = String(artifact.cleanup_target_status || '');
+        if (
+            artifact.cleanup_phase === 'PREPARED'
+            && (
+                (status === 'DEAD_MARKER' && cleanupTargetStatus === 'CLEARED_DEAD_MARKER')
+                || (status === 'STALE_MARKER' && cleanupTargetStatus === 'CLEARED_STALE_MARKER')
+            )
+        ) {
+            return {
+                status: cleanupTargetStatus,
+                phase: 'PREPARED',
+                artifact
+            };
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+function finalizePreparedCleanupEvidence(
+    artifactPath: string,
+    evidence: {
+        status: 'CLEARED_DEAD_MARKER' | 'CLEARED_STALE_MARKER';
+        artifact: Record<string, unknown>;
+    }
+): void {
+    const finalizedArtifact = {
+        ...evidence.artifact,
+        status: evidence.status,
+        action:
+            'The marker is already absent; prepared cleanup evidence was finalized idempotently after an interrupted final artifact write.',
+        cleanup_phase: 'CLEARED',
+        cleanup_target_status: evidence.status,
+        cleanup_completed_at_utc: new Date().toISOString(),
+        recovered_from_prepared_cleanup: true
+    };
+    writeFileAtomically(
+        artifactPath,
+        `${JSON.stringify(finalizedArtifact, null, 2)}\n`,
+        { encoding: 'utf8' }
+    );
+}
+
+function assertCleanupInspectionUnchangedAndSafe(
+    original: FullSuiteValidationRunMarkerInspection,
+    refreshed: FullSuiteValidationRunMarkerInspection
+): void {
+    if (
+        !original.markerSha256
+        || !refreshed.markerSha256
+        || original.markerSha256 !== refreshed.markerSha256
+    ) {
+        throw new Error(
+            'Full-suite run marker changed after recovery inspection; cleanup was blocked and the current marker was preserved.'
+        );
+    }
+    const summary = refreshed.summary;
+    if (!summary || refreshed.state === 'MISSING' || refreshed.state === 'INVALID') {
+        throw new Error(
+            `Full-suite run marker is no longer safely inspectable (${refreshed.state}: ${refreshed.reason}); cleanup was blocked.`
+        );
+    }
+    const childStateUnknown = summary.childPid == null || summary.childProcessAlive === null;
+    if (
+        summary.gateProcessAlive !== false
+        || summary.childProcessAlive === true
+        || childStateUnknown
+        || summary.descendantProcessCandidates.length > 0
+        || !!summary.processScanWarning
+        || !!summary.processCheckWarning
+    ) {
+        throw new Error(
+            'Full-suite run marker process ownership became live or unverifiable during cleanup; cleanup was blocked and the marker was preserved.'
+        );
+    }
+}
+
 function buildRecoveryArtifact(options: {
     repoRoot: string;
     taskId: string;
@@ -267,6 +432,10 @@ function buildRecoveryArtifact(options: {
     cleanupCommand: string;
     nextRecoveryCommand: string;
     existingTerminalEvidence: CurrentSuccessfulFullSuiteTerminalEvidence | null;
+    markerState: string;
+    markerStateReason: string;
+    cleanupPhase: 'PREPARED' | 'CLEARED' | null;
+    cleanupTargetStatus: 'CLEARED_DEAD_MARKER' | 'CLEARED_STALE_MARKER' | null;
 }): Record<string, unknown> {
     return {
         schema_version: 1,
@@ -278,6 +447,11 @@ function buildRecoveryArtifact(options: {
         preflight_path: gateHelpers.normalizePath(options.preflightPath),
         preflight_sha256: options.preflightSha256,
         compile_gate_timestamp: options.compileGateTimestamp,
+        marker_state: options.markerState,
+        marker_state_reason: options.markerStateReason,
+        cleanup_phase: options.cleanupPhase,
+        cleanup_target_status: options.cleanupTargetStatus,
+        cleanup_completed_at_utc: options.cleanupPhase === 'CLEARED' ? new Date().toISOString() : null,
         terminal_full_suite_evidence: options.status === 'CLEARED_DEAD_MARKER'
             ? options.existingTerminalEvidence ?? {
                 status: 'MATERIALIZED_TIMEOUT_FAILURE',
@@ -288,7 +462,13 @@ function buildRecoveryArtifact(options: {
                 next_recovery_command: redactSecretText(options.nextRecoveryCommand),
                 cleanup_command: redactSecretText(options.cleanupCommand)
             }
-            : null,
+            : options.status === 'CLEARED_STALE_MARKER'
+                ? {
+                    status: 'NOT_APPLICABLE_STALE_MARKER',
+                    next_recovery_command: redactSecretText(options.nextRecoveryCommand),
+                    cleanup_command: redactSecretText(options.cleanupCommand)
+                }
+                : null,
         cleanup_command: redactSecretText(options.cleanupCommand),
         recovery_summary: options.summary
             ? {
@@ -308,6 +488,9 @@ function buildRecoveryArtifact(options: {
                 })),
                 process_scan_warning: options.summary.processScanWarning
                     ? redactSecretText(options.summary.processScanWarning)
+                    : null,
+                process_check_warning: options.summary.processCheckWarning
+                    ? redactSecretText(options.summary.processCheckWarning)
                     : null
             }
             : null
@@ -523,13 +706,19 @@ function formatSummaryLines(summary: FullSuiteValidationInterruptedRunSummary): 
     const descendants = summary.descendantProcessCandidates.length > 0
         ? summary.descendantProcessCandidates
             .slice(0, 5)
-            .map((candidate) => `pid=${candidate.pid},ppid=${candidate.parentPid ?? 'unknown'}`)
+            .map((candidate) => {
+                const processGroup = candidate.processGroupId == null
+                    ? ''
+                    : `,pgid=${candidate.processGroupId}`;
+                return `pid=${candidate.pid},ppid=${candidate.parentPid ?? 'unknown'}${processGroup}`;
+            })
             .join('; ')
         : 'none';
     return [
         `GatePid: ${summary.gatePid} alive=${summary.gateProcessAlive}`,
         `ChildPid: ${summary.childPid ?? 'none'} alive=${summary.childProcessAlive == null ? 'unknown' : summary.childProcessAlive}`,
         `DescendantCandidates: ${descendants}`,
-        `ProcessScanWarning: ${summary.processScanWarning ? redactSecretText(summary.processScanWarning) : 'none'}`
+        `ProcessScanWarning: ${summary.processScanWarning ? redactSecretText(summary.processScanWarning) : 'none'}`,
+        `ProcessCheckWarning: ${summary.processCheckWarning ? redactSecretText(summary.processCheckWarning) : 'none'}`
     ];
 }

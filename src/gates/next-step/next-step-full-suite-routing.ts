@@ -29,7 +29,7 @@ export interface InterruptedFullSuiteValidationRunRouteInput {
     command: string;
     timeoutMs: number;
     gatePid: number;
-    gateProcessAlive: boolean;
+    gateProcessAlive: boolean | null;
     childPid: number | null;
     childProcessAlive: boolean | null;
     childCommand: string | null;
@@ -39,6 +39,9 @@ export interface InterruptedFullSuiteValidationRunRouteInput {
         commandLine: string;
     }>;
     processScanWarning?: string | null;
+    processCheckWarning?: string | null;
+    markerState?: 'CURRENT' | 'STALE';
+    markerStateReason?: string;
 }
 
 export interface NextStepFullSuiteValidationRoutingOptions {
@@ -302,20 +305,28 @@ function buildInterruptedRunRecoveryRoute(
         }
         return null;
     }
-    if (interruptedRun.gateProcessAlive) {
+    const markerStateDetail = interruptedRun.markerState === 'STALE'
+        ? ` The marker is stale for the current cycle: ${redactDiagnosticText(interruptedRun.markerStateReason || 'cycle binding mismatch')}.`
+        : '';
+    if (interruptedRun.gateProcessAlive !== false) {
+        const gateStateUnknown = interruptedRun.gateProcessAlive === null;
         return {
             status: 'BLOCKED',
             nextGate: 'full-suite-validation',
-            title: 'Wait for active full-suite validation run.',
+            title: gateStateUnknown
+                ? 'Inspect unverifiable full-suite validation process state.'
+                : 'Wait for active full-suite validation run.',
             reason:
-                `A full-suite validation run started at ${interruptedRun.startedAtUtc} and is still active for the current compiled scope. ` +
-                `The run marker is ${interruptedRun.markerPath}; gate pid ${interruptedRun.gatePid} is still alive. ` +
-                `Do not start a second full-suite run. Wait for the active run to write terminal evidence, or inspect only task-owned processes if the run appears stuck. ` +
+                `A full-suite validation run marker started at ${interruptedRun.startedAtUtc} and its owner process is ${gateStateUnknown ? 'not safely verifiable' : 'still active'} for the current compiled scope. ` +
+                `The run marker is ${interruptedRun.markerPath}; gate pid ${interruptedRun.gatePid} is ${gateStateUnknown ? 'unverifiable' : 'still alive'}.${markerStateDetail} ` +
+                `Do not start a second full-suite run or clear this marker. ${gateStateUnknown ? 'Run recovery to preserve the exact process-check blocker.' : 'Wait for the active run to write terminal evidence, or inspect only task-owned processes if the run appears stuck.'} ` +
                 `Interrupted command: ${redactDiagnosticText(interruptedRun.command)}. Timeout configured for this run: ${interruptedRun.timeoutMs} ms. ${options.timeoutForecastLine || ''}`.trim(),
             commands: [
                 buildCommand(
-                    'Rerun navigator after the active full-suite run completes',
-                    options.navigatorCommand
+                    gateStateUnknown
+                        ? 'Inspect unverifiable full-suite run marker state'
+                        : 'Rerun navigator after the active full-suite run completes',
+                    gateStateUnknown ? options.runMarkerRecoveryCommand : options.navigatorCommand
                 )
             ]
         };
@@ -331,13 +342,16 @@ function buildInterruptedRunRecoveryRoute(
         : '';
     const descendantCandidates = interruptedRun.descendantProcessCandidates || [];
     const hasLiveChildTree =
-        interruptedRun.childProcessAlive === true
+        interruptedRun.childPid == null
+        || interruptedRun.childProcessAlive === true
+        || (interruptedRun.childPid != null && interruptedRun.childProcessAlive === null)
         || descendantCandidates.length > 0
-        || !!interruptedRun.processScanWarning;
+        || !!interruptedRun.processScanWarning
+        || !!interruptedRun.processCheckWarning;
     const descendantState = descendantCandidates.length > 0
         ? ` Live descendant candidates from the recorded child process: ${formatProcessCandidates(descendantCandidates)}.`
-        : interruptedRun.processScanWarning
-            ? ` No descendant process candidates were listed because process scanning failed: ${redactDiagnosticText(interruptedRun.processScanWarning)}.`
+        : interruptedRun.processScanWarning || interruptedRun.processCheckWarning
+            ? ` No descendant process candidates were listed because process verification failed: ${redactDiagnosticText(interruptedRun.processScanWarning || interruptedRun.processCheckWarning || '')}.`
             : ' No live descendant process candidates were discovered from the recorded child pid; do not kill generic node.exe or IDE/Codex Node processes without separate task-owned command-line or working-directory evidence.';
     const actionCommand = hasLiveChildTree
         ? options.runMarkerRecoveryCommand
@@ -352,7 +366,7 @@ function buildInterruptedRunRecoveryRoute(
         title,
         reason:
             `A previous full-suite validation run started at ${interruptedRun.startedAtUtc}, but no terminal full-suite artifact was materialized for the current compiled scope. ` +
-            `The run marker is ${interruptedRun.markerPath}; gate pid ${interruptedRun.gatePid} is no longer alive; ${childState}.${childCommand}${descendantState} ` +
+            `The run marker is ${interruptedRun.markerPath}; gate pid ${interruptedRun.gatePid} is no longer alive; ${childState}.${markerStateDetail}${childCommand}${descendantState} ` +
             `Inspect and terminate only task-owned processes confirmed by the marker, descendant scan, command line, or working-directory evidence, then rerun full-suite-validation. ${retryInstruction} ` +
             `Interrupted command: ${redactDiagnosticText(interruptedRun.command)}. Retry command: ${redactDiagnosticText(options.commandText)}. Timeout configured for the interrupted run: ${interruptedRun.timeoutMs} ms. ${options.timeoutForecastLine || ''}`.trim(),
         commands: [

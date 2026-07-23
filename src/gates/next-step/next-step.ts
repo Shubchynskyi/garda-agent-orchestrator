@@ -58,7 +58,7 @@ import {
 import { buildReviewCoverageContract } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
 import {
-    readInterruptedFullSuiteValidationRunMarker,
+    readRecoverableFullSuiteValidationRunMarker,
     resolveFullSuiteValidationRunMarkerPath
 } from '../full-suite/full-suite-validation-run-marker';
 import type {
@@ -2328,7 +2328,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         summary.gates.find((gate: GateOutcome) => gate.gate === 'compile-gate')?.timestamp_utc || ''
     ).trim() || null;
     const interruptedFullSuiteRun = fullSuiteConfig.enabled && !fullSuiteGatePassed && !fullSuiteNotRequiredForCurrentScope
-        ? readInterruptedFullSuiteValidationRunMarker(
+        ? readRecoverableFullSuiteValidationRunMarker(
             repoRoot,
             taskId,
             preflightPath,

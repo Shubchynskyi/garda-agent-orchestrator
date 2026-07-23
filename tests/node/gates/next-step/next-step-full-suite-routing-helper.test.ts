@@ -179,6 +179,33 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.runMarkerRecoveryCommand);
     });
 
+    it('keeps stale markers without a recorded child pid in recovery', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            interruptedRun: {
+                markerPath: 'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-run-marker.json',
+                startedAtUtc: '2026-06-07T01:02:03.000Z',
+                command: 'npm test',
+                timeoutMs: 600000,
+                gatePid: 12345,
+                gateProcessAlive: false,
+                childPid: null,
+                childProcessAlive: null,
+                childCommand: null,
+                descendantProcessCandidates: [],
+                processScanWarning: null,
+                markerState: 'STALE',
+                markerStateReason: 'preflight_sha256 mismatch'
+            }
+        });
+
+        assert.match(route?.reason || '', /marker is stale for the current cycle: preflight_sha256 mismatch/u);
+        assert.match(route?.reason || '', /no child PID was recorded/u);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.runMarkerRecoveryCommand);
+    });
+
     it('routes active interrupted markers to wait instead of starting a duplicate full-suite run', () => {
         const route = resolveNextStepFullSuiteValidationRoute({
             ...BASE_OPTIONS,
@@ -203,6 +230,32 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.title, 'Wait for active full-suite validation run.');
         assert.match(route?.reason || '', /Do not start a second full-suite run/);
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.navigatorCommand);
+    });
+
+    it('blocks cleanup when the recorded gate process cannot be verified', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            interruptedRun: {
+                markerPath: 'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-run-marker.json',
+                startedAtUtc: '2026-06-07T01:02:03.000Z',
+                command: 'npm test',
+                timeoutMs: 600000,
+                gatePid: 12345,
+                gateProcessAlive: null,
+                childPid: null,
+                childProcessAlive: null,
+                childCommand: null,
+                descendantProcessCandidates: [],
+                processScanWarning: null,
+                processCheckWarning: 'Unable to verify one or more recorded process identifiers'
+            }
+        });
+
+        assert.match(route?.title || '', /unverifiable full-suite validation process state/u);
+        assert.match(route?.reason || '', /Do not start a second full-suite run or clear this marker/u);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.runMarkerRecoveryCommand);
     });
 
     it('redacts secret-looking process and command text in interrupted recovery output', () => {

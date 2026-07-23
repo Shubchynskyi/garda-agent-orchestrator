@@ -636,7 +636,7 @@ describe('gates/next-step', () => {
 
     });
 
-    it('routes unresolved stale run markers to recovery before starting a fresh after-compile full-suite run', () => {
+    it('routes dead stale run markers directly to confirmed cleanup before starting a fresh full-suite run', () => {
 
         const repoRoot = makeTempRepo();
 
@@ -707,9 +707,12 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'full-suite-validation');
-        assert.match(result.title, /Inspect unresolved full-suite run marker/);
-        assert.match(result.reason, /would overwrite the diagnostic marker/);
+        assert.match(result.title, /Recover interrupted full-suite validation run/);
+        assert.match(result.reason, /marker is stale for the current cycle/);
+        assert.match(result.reason, /preflight_sha256 mismatch/);
         assert.ok(result.commands[0].command.includes('gate full-suite-run-marker-recovery'));
+        assert.ok(!result.commands[0].command.includes('--clear-dead-marker'));
+        assert.ok(!result.commands[0].command.includes('--operator-confirmed yes'));
         assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
     });
 
