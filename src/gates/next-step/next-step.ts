@@ -128,9 +128,6 @@ import {
 import {
     selectTaskEntryRulePackFileNames
 } from '../rule-pack/rule-pack-selection';
-import {
-    resolveNextStepStartupRoute
-} from './next-step-startup-routing';
 import { readTaskModeProtectedManifestRecoveryRoute } from './next-step-startup-routing';
 import {
     readCompileReadiness,
@@ -233,13 +230,11 @@ import {
     timelineHasReviewReuseRecordedAfterCompile
 } from './next-step-review-evidence';
 import {
-    resolveCompletedCloseoutRouteFromState,
     resolvePostReviewCloseoutRouteFromState
 } from './next-step-closeout-routing';
 import {
     resolveNextStepCompileGateRoute,
-    resolveNextStepQualityChecklistRoute,
-    resolveNextStepPreGuardRoute
+    resolveNextStepQualityChecklistRoute
 } from './next-step-pre-review-routing';
 import {
     buildBaselineOnlyPreImplementationRoute
@@ -269,9 +264,17 @@ import {
     type SplitRequiredLatchResult
 } from './next-step-split-required-latch';
 import {
+    resolveClassifyDecisionRoute,
+    resolveCompletedCloseoutDecisionRoute,
     resolveDelegatedReviewDecisionRoute,
     resolveFullSuiteDecisionRoute,
-    resolveTaskQueueTerminalDecisionRoute
+    resolveOptionalSkillSelectionDecisionRoute,
+    resolvePendingOptionalSkillDecisionRoute,
+    resolvePreGuardDecisionRoute,
+    resolveStartupDecisionRoute,
+    resolveTaskIdCaseMismatchDecisionRoute,
+    resolveTaskQueueTerminalDecisionRoute,
+    type NextStepDecisionRoutePayload
 } from './next-step-decision-route-groups';
 import {
     buildReviewCycleContinuationCommand,
@@ -2515,6 +2518,21 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         warnings: [] as string[],
         sourceRuntimeStaleness
     };
+    const buildDecisionRouteResult = (
+        route: NextStepDecisionRoutePayload,
+        overrides: { qualityChecklist?: NextStepQualityChecklistSummary | null } = {}
+    ): NextStepResult => buildResult({
+        ...resultBase,
+        status: route.status,
+        nextGate: route.nextGate,
+        title: route.title,
+        reason: route.reason,
+        commands: route.commands,
+        missingArtifacts: route.missingArtifacts ?? resultBase.missingArtifacts,
+        presentArtifacts: route.presentArtifacts ?? coreArtifacts.present,
+        finalReport: route.finalReport ?? null,
+        ...overrides
+    });
     let noPreflightCurrentSnapshot: CurrentGitWorkspaceSnapshot | null | undefined;
     const readNoPreflightCurrentSnapshot = (): CurrentGitWorkspaceSnapshot | null => {
         if (noPreflightCurrentSnapshot === undefined) {
@@ -2522,7 +2540,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         }
         return noPreflightCurrentSnapshot;
     };
-    const buildCurrentProtectedScopeTaskModeRestartRoute = () => {
+    const buildCurrentProtectedScopeTaskModeRestartRoute = (): NextStepDecisionRoutePayload | null => {
         const currentProtectedScope = readCurrentProtectedScopeBeforePreflight(
             repoRoot,
             readNoPreflightCurrentSnapshot(),
@@ -2541,8 +2559,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             ? '--orchestrator-work --workflow-config-work'
             : '--orchestrator-work';
         if (isGardaSelfGuardDenyAgentEntry(repoRoot)) {
-            return buildResult({
-                ...resultBase,
+            return {
                 status: 'BLOCKED',
                 nextGate: 'operator-maintenance',
                 title: 'Garda self-guard blocks agent-owned protected control-plane work.',
@@ -2552,10 +2569,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 commands: [
                     buildCommand('Operator policy change', buildGardaSelfGuardPolicyChangeCommand(cliPrefix))
                 ]
-            });
+            };
         }
-        return buildResult({
-            ...resultBase,
+        return {
             status: 'BLOCKED',
             nextGate: 'enter-task-mode',
             title: 'Restart task mode for protected scope before classify.',
@@ -2577,29 +2593,17 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     )
                 )
             ]
-        });
+        };
     };
 
-    if (taskIdCaseMismatch) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'task-id-casing',
-            title: 'Task ID casing does not match TASK.md.',
-            reason:
-                `Requested task id ${formatNextStepInlineValue(taskId)} matches TASK.md row ` +
-                `${formatNextStepInlineValue(taskIdCaseMismatch)} only by case. ` +
-                'Use the exact TASK.md task id before any lifecycle gate so artifacts cannot fork into a parallel casing namespace.',
-            commands: [
-                buildCommand(
-                    'Rerun navigator with TASK.md casing',
-                    `${cliPrefix} next-step "${taskIdCaseMismatch}" --repo-root "."`
-                )
-            ],
-            missingArtifacts: [],
-            presentArtifacts: coreArtifacts.present,
-            finalReport: null
-        });
+    const taskIdCaseMismatchRoute = resolveTaskIdCaseMismatchDecisionRoute({
+        requestedTaskId: taskId,
+        taskIdCaseMismatch,
+        cliPrefix,
+        presentArtifacts: coreArtifacts.present
+    });
+    if (taskIdCaseMismatchRoute) {
+        return buildDecisionRouteResult(taskIdCaseMismatchRoute);
     }
 
     let splitRequiredReviewCycleContinuationAssessment:
@@ -2653,19 +2657,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         reviewCycleContinuationAssessment: splitRequiredReviewCycleContinuationAssessment
     });
     if (taskQueueTerminalRoute) {
-        return buildResult({
-            ...resultBase,
-            status: taskQueueTerminalRoute.status,
-            nextGate: taskQueueTerminalRoute.nextGate,
-            title: taskQueueTerminalRoute.title,
-            reason: taskQueueTerminalRoute.reason,
-            commands: taskQueueTerminalRoute.commands,
-            missingArtifacts: taskQueueTerminalRoute.missingArtifacts ?? resultBase.missingArtifacts,
-            presentArtifacts: taskQueueTerminalRoute.presentArtifacts ?? coreArtifacts.present,
-            finalReport: taskQueueTerminalRoute.finalReport ?? null
-        });
+        return buildDecisionRouteResult(taskQueueTerminalRoute);
     }
 
+    let completedCloseoutDecisionRoute: NextStepDecisionRoutePayload | null = null;
     if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
         const hasFinalCloseoutArtifact = fs.existsSync(readinessArtifacts.paths.finalCloseoutJsonPath)
             || fs.existsSync(readinessArtifacts.paths.finalCloseoutMarkdownPath);
@@ -2678,28 +2673,23 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             )
             : { blocked: false, reason: 'No materialized final closeout artifact exists yet.' };
         const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
-        const completedCloseoutRoute = resolveCompletedCloseoutRouteFromState({
+        completedCloseoutDecisionRoute = resolveCompletedCloseoutDecisionRoute({
+            completionGatePassed: true,
+            latestCompletionCurrent: true,
             postDoneDriftBlocked: postDoneDrift.blocked,
             postDoneDriftReason: postDoneDrift.reason,
             finalReportContractReady: summary.final_report_contract.status === 'READY',
             finalReportContractBlocker: summary.final_report_contract.blocker || '',
             finalReport,
-            taskAuditCommand: `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
+            taskAuditCommand: `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`,
+            missingArtifacts: buildFinalCloseoutMissingArtifacts(repoRoot, reviewsRoot, taskId, {
+                finalCloseoutJsonPath: readinessArtifacts.paths.finalCloseoutJsonPath,
+                finalCloseoutMarkdownPath: readinessArtifacts.paths.finalCloseoutMarkdownPath
+            })
         });
-        const finalCloseoutMissingArtifacts = buildFinalCloseoutMissingArtifacts(repoRoot, reviewsRoot, taskId, {
-            finalCloseoutJsonPath: readinessArtifacts.paths.finalCloseoutJsonPath,
-            finalCloseoutMarkdownPath: readinessArtifacts.paths.finalCloseoutMarkdownPath
-        });
-        return buildResult({
-            ...resultBase,
-            status: completedCloseoutRoute.status,
-            nextGate: completedCloseoutRoute.nextGate,
-            title: completedCloseoutRoute.title,
-            reason: completedCloseoutRoute.reason,
-            commands: completedCloseoutRoute.commands,
-            missingArtifacts: completedCloseoutRoute.status === 'DONE' ? [] : finalCloseoutMissingArtifacts,
-            finalReport: completedCloseoutRoute.finalReport as NextStepFinalReportSummary | null
-        });
+    }
+    if (completedCloseoutDecisionRoute) {
+        return buildDecisionRouteResult(completedCloseoutDecisionRoute);
     }
 
     const docImpactPath = readinessArtifacts.paths.docImpactPath;
@@ -2768,7 +2758,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         enforceLateRulePackAfterReviewPhase:
             !preflight || !preflightCycleReadiness.ready || !effectivePreflightWorkspaceReadiness.ready
     });
-    const startupRoute = resolveNextStepStartupRoute({
+    const startupRoute = resolveStartupDecisionRoute({
         enterTaskModePassed: isGatePassed(summary, 'enter-task-mode'),
         protectedManifestRecovery: readTaskModeProtectedManifestRecoveryRoute(repoRoot, taskId, cliPrefix),
         defaultExecutionProvider,
@@ -2784,14 +2774,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         shellSmokePreflightCommand: `${cliPrefix} gate shell-smoke-preflight --task-id "${taskId}" --repo-root "."`
     });
     if (startupRoute) {
-        return buildResult({
-            ...resultBase,
-            status: startupRoute.status,
-            nextGate: startupRoute.nextGate,
-            title: startupRoute.title,
-            reason: startupRoute.reason,
-            commands: startupRoute.commands
-        });
+        return buildDecisionRouteResult(startupRoute);
     }
 
     const strictDecompositionRequirement = buildStrictDecompositionDecisionRequirement({
@@ -2802,7 +2785,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         profileSummary,
         requiredReviewTypes
     });
-    const buildStrictDecompositionContinuationBlock = (): NextStepResult | null => {
+    const buildStrictDecompositionContinuationBlock = (): NextStepDecisionRoutePayload | null => {
         const strictRoute = resolveStrictDecompositionContinuationRoute({
             repoRoot,
             eventsRoot,
@@ -2817,8 +2800,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         if (!strictRoute) {
             return null;
         }
-        return buildResult({
-            ...resultBase,
+        return {
             status: strictRoute.status,
             nextGate: strictRoute.nextGate,
             title: strictRoute.title,
@@ -2827,161 +2809,81 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             missingArtifacts: strictRoute.missingArtifacts ?? resultBase.missingArtifacts,
             presentArtifacts: strictRoute.presentArtifacts ?? coreArtifacts.present,
             finalReport: strictRoute.finalReport
-        });
+        };
     };
 
-    if (!preflight || !isGatePassed(summary, 'classify-change')) {
-        const failedGateRecovery = readFailedGateRecovery(repoRoot, eventsRoot, taskId, cliPrefix, taskMode, taskModePath, preflightCommandPath);
-        if (failedGateRecovery) {
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: failedGateRecovery.nextGate,
-                title: failedGateRecovery.title,
-                reason: failedGateRecovery.reason,
-                commands: failedGateRecovery.command
-                    ? [
-                        buildCommand(failedGateRecovery.label || failedGateRecovery.nextGate, failedGateRecovery.command)
-                    ]
-                    : []
-            });
-        }
-
-        const strictDecompositionBlock = buildStrictDecompositionContinuationBlock();
-        if (strictDecompositionBlock) {
-            return strictDecompositionBlock;
-        }
-
-        const currentProtectedScopeRoute = buildCurrentProtectedScopeTaskModeRestartRoute();
-        if (currentProtectedScopeRoute) {
-            return currentProtectedScopeRoute;
-        }
-
-        const filteredNoPreflightChangedFiles = getFilteredNoPreflightClassifyChangedFiles(
+    const classifyDecisionRoute = resolveClassifyDecisionRoute({
+        preflightExists: Boolean(preflight),
+        classifyChangePassed: isGatePassed(summary, 'classify-change'),
+        readFailedGateRecovery: () => readFailedGateRecovery(
             repoRoot,
-            taskMode,
-            readNoPreflightCurrentSnapshot()
-        );
-        const classifyCommand = buildAuthenticatedScopeClassifyChangeCommand({
-            repoRoot,
-            cliPrefix,
+            eventsRoot,
             taskId,
+            cliPrefix,
             taskMode,
             taskModePath,
-            preflightCommandPath,
-            includePlannedScope: !filteredNoPreflightChangedFiles,
-            changedFiles: filteredNoPreflightChangedFiles,
-            taskQueueEntries: taskEntries
-        });
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'classify-change',
-            title: 'Classify the task scope.',
-            reason: 'No current preflight artifact exists, so required reviews and compile scope are unknown.',
-            commands: [
-                buildCommand(
-                    'Classify changed files',
-                    classifyCommand
-                )
-            ]
-        });
-    }
-
-    if (optionalSkillSelectionSummary?.artifact_violations.length) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'classify-change',
-            title: 'Refresh invalid optional-skill selection artifact.',
-            reason:
-                'The current optional-skill selection artifact is invalid for navigator use. ' +
-                `${optionalSkillSelectionSummary.artifact_violations.join(' ')} ` +
-                'Rerun classify-change so phase/source evidence is regenerated before activation, review, or closeout.',
-            commands: [
-                buildCommand(
-                    'Refresh preflight and optional-skill selection',
-                    buildAuthenticatedScopeClassifyChangeCommand({
-                        repoRoot,
-                        cliPrefix,
-                        taskId,
-                        taskMode,
-                        taskModePath,
-                        preflightCommandPath,
-                        includePlannedScope: false,
-                        taskQueueEntries: taskEntries,
-                        changedFiles: getPreflightRefreshCommandChangedFiles({
-                            repoRoot,
-                            taskMode,
-                            preflight,
-                            fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
-                        })
-                    })
-                )
-            ]
-        });
-    }
-
-    const mandatoryOptionalSkillRemediation = getMandatoryOptionalSkillRemediationCommand(
-        optionalSkillSelectionSummary,
-        cliPrefix,
-        taskEntry?.title || taskId,
-        {
-            repoRoot,
-            reclassifyCommand: buildAuthenticatedScopeClassifyChangeCommand({
+            preflightCommandPath
+        ),
+        resolveStrictDecompositionRoute: buildStrictDecompositionContinuationBlock,
+        resolveProtectedScopeRoute: buildCurrentProtectedScopeTaskModeRestartRoute,
+        buildClassifyCommand: () => {
+            const filteredNoPreflightChangedFiles = getFilteredNoPreflightClassifyChangedFiles(
+                repoRoot,
+                taskMode,
+                readNoPreflightCurrentSnapshot()
+            );
+            return buildAuthenticatedScopeClassifyChangeCommand({
                 repoRoot,
                 cliPrefix,
                 taskId,
                 taskMode,
                 taskModePath,
                 preflightCommandPath,
-                includePlannedScope: false,
-                taskQueueEntries: taskEntries,
-                changedFiles: getPreflightRefreshCommandChangedFiles({
-                    repoRoot,
-                    taskMode,
-                    preflight,
-                    fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
-                })
-            })
+                includePlannedScope: !filteredNoPreflightChangedFiles,
+                changedFiles: filteredNoPreflightChangedFiles,
+                taskQueueEntries: taskEntries
+            });
         }
-    );
-    if (mandatoryOptionalSkillRemediation) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'optional-skill-remediation',
-            title: 'Resolve mandatory optional-skill selection before implementation.',
-            reason: mandatoryOptionalSkillRemediation.reason,
-            commands: [
-                buildCommand(
-                    mandatoryOptionalSkillRemediation.label,
-                    mandatoryOptionalSkillRemediation.command
-                )
-            ]
-        });
+    });
+    if (classifyDecisionRoute) {
+        return buildDecisionRouteResult(classifyDecisionRoute);
     }
 
-    if (
-        optionalSkillSelectionSummary?.decision === 'selected_installed_skills'
-        && optionalSkillSelectionSummary.timeline_invalid_json
-        && isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillSelectionSummary.policy_mode)
-    ) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'task-events-summary',
-            title: 'Repair malformed task timeline before optional-skill activation.',
-            reason:
-                'The current task timeline JSONL is malformed, so current-cycle optional-skill activation evidence cannot be read reliably. ' +
-                'Do not run activate-optional-skill until task-event integrity is repaired; otherwise newly appended SKILL_SELECTED events may remain invisible to the navigator.',
-            commands: [
-                buildCommand(
-                    'Inspect task timeline integrity',
-                    `${cliPrefix} gate task-events-summary --task-id ${quoteCommandValue(taskId)} --as-json --repo-root "."`
-                )
-            ]
-        });
+    const optionalSkillRefreshCommand = buildAuthenticatedScopeClassifyChangeCommand({
+        repoRoot,
+        cliPrefix,
+        taskId,
+        taskMode,
+        taskModePath,
+        preflightCommandPath,
+        includePlannedScope: false,
+        taskQueueEntries: taskEntries,
+        changedFiles: getPreflightRefreshCommandChangedFiles({
+            repoRoot,
+            taskMode,
+            preflight,
+            fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
+        })
+    });
+    const mandatoryOptionalSkillRemediation = getMandatoryOptionalSkillRemediationCommand(
+        optionalSkillSelectionSummary,
+        cliPrefix,
+        taskEntry?.title || taskId,
+        {
+            repoRoot,
+            reclassifyCommand: optionalSkillRefreshCommand
+        }
+    );
+    const optionalSkillSelectionDecisionRoute = resolveOptionalSkillSelectionDecisionRoute({
+        optionalSkillSelection: optionalSkillSelectionSummary,
+        mandatoryRemediation: mandatoryOptionalSkillRemediation,
+        mandatoryPolicyMode: isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillSelectionSummary?.policy_mode),
+        refreshCommand: optionalSkillRefreshCommand,
+        timelineIntegrityCommand:
+            `${cliPrefix} gate task-events-summary --task-id ${quoteCommandValue(taskId)} --as-json --repo-root "."`
+    });
+    if (optionalSkillSelectionDecisionRoute) {
+        return buildDecisionRouteResult(optionalSkillSelectionDecisionRoute);
     }
 
     const coherentCycleReadiness = readCoherentCycleReadiness(
@@ -3021,10 +2923,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const pendingOptionalSkillActivation = getPendingOptionalSkillActivationCommand(optionalSkillSelectionSummary);
     const currentProtectedScopeRoute = buildCurrentProtectedScopeTaskModeRestartRoute();
     if (currentProtectedScopeRoute) {
-        return currentProtectedScopeRoute;
+        return buildDecisionRouteResult(currentProtectedScopeRoute);
     }
 
-    const preGuardRoute = resolveNextStepPreGuardRoute({
+    const preGuardRoute = resolvePreGuardDecisionRoute({
         preflightCycleReadiness,
         preflightCycleRefreshCommand: buildAuthenticatedScopeClassifyChangeCommand({
             repoRoot,
@@ -3122,15 +3024,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 markQualityChecklistReadinessStaleForWorkspace(qualityChecklistReadiness, preGuardRoute.reason)
             )
             : resultBase.qualityChecklist;
-        return buildResult({
-            ...resultBase,
-            status: preGuardRoute.status,
-            nextGate: preGuardRoute.nextGate,
-            title: preGuardRoute.title,
-            reason: preGuardRoute.reason,
-            commands: preGuardRoute.commands,
-            qualityChecklist
-        });
+        return buildDecisionRouteResult(preGuardRoute, { qualityChecklist });
     }
 
     let scopeBudgetGuardEvaluation: ScopeBudgetGuardEvaluation | null = null;
@@ -3394,26 +3288,14 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
 
     const strictDecompositionBlock = buildStrictDecompositionContinuationBlock();
     if (strictDecompositionBlock) {
-        return strictDecompositionBlock;
+        return buildDecisionRouteResult(strictDecompositionBlock);
     }
 
-    if (pendingOptionalSkillActivation) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'activate-optional-skill',
-            title: 'Activate the selected optional skill.',
-            reason:
-                `Current preflight selected optional skill ${formatNextStepInlineValue(pendingOptionalSkillActivation.skillId)}, ` +
-                'but the current task cycle has no matching activation evidence yet. ' +
-                'Record activation before restart-coherent-cycle, compile, review, implementation, or closeout so selected-skill diagnostics and final audit describe the same current-cycle state.',
-            commands: [
-                buildCommand(
-                    `Activate optional skill ${pendingOptionalSkillActivation.skillId}`,
-                    pendingOptionalSkillActivation.command
-                )
-            ]
-        });
+    const pendingOptionalSkillDecisionRoute = resolvePendingOptionalSkillDecisionRoute(
+        pendingOptionalSkillActivation
+    );
+    if (pendingOptionalSkillDecisionRoute) {
+        return buildDecisionRouteResult(pendingOptionalSkillDecisionRoute);
     }
 
     const qualityChecklistRoute = qualityChecklistReadiness ? resolveNextStepQualityChecklistRoute({
@@ -3869,7 +3751,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             const focusedRecoveryCoverageContractSha256 = state.failureKind === 'missing-focused-validation-evidence'
                 ? buildReviewCoverageContract({
                     reviewType,
-                    changedFiles: resolveReviewCoverageChangedFiles({ reviewType, preflight, repoRoot })
+                    changedFiles: resolveReviewCoverageChangedFiles({
+                        reviewType,
+                        preflight: preflight as Record<string, unknown>,
+                        repoRoot
+                    })
                 }).contract_sha256
                 : null;
             const focusedIntermediateEvidence = state.failureKind === 'missing-focused-validation-evidence'

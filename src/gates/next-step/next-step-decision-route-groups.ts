@@ -14,6 +14,7 @@ import {
 } from './next-step-task-queue';
 import {
     buildCommand,
+    formatNextStepInlineValue,
     toRepoDisplayPath
 } from './next-step-command-formatters';
 import {
@@ -50,10 +51,23 @@ import {
     resolveDelegatedReviewReadinessRoute,
     type DelegatedReviewReadinessRouteOptions
 } from './next-step-review-readiness-routing';
+import {
+    resolveNextStepStartupRoute,
+    type NextStepStartupRouteOptions
+} from './next-step-startup-routing';
+import {
+    resolveNextStepPreGuardRoute,
+    type NextStepOptionalSkillActivationRoutingOptions,
+    type NextStepPreGuardRoutingOptions
+} from './next-step-pre-review-routing';
+import {
+    resolveCompletedCloseoutRouteFromState
+} from './next-step-closeout-routing';
 import type {
     NextStepArtifactState,
     NextStepCommand,
     NextStepFinalReportSummary,
+    NextStepOptionalSkillSelectionSummary,
     NextStepStatus
 } from './next-step';
 
@@ -66,6 +80,238 @@ export interface NextStepDecisionRoutePayload {
     missingArtifacts?: NextStepArtifactState[];
     presentArtifacts?: NextStepArtifactState[];
     finalReport?: NextStepFinalReportSummary | null;
+}
+
+export function resolveTaskIdCaseMismatchDecisionRoute(options: {
+    requestedTaskId: string;
+    taskIdCaseMismatch: string | null;
+    cliPrefix: string;
+    presentArtifacts: NextStepArtifactState[];
+}): NextStepDecisionRoutePayload | null {
+    if (!options.taskIdCaseMismatch) {
+        return null;
+    }
+    return {
+        status: 'BLOCKED',
+        nextGate: 'task-id-casing',
+        title: 'Task ID casing does not match TASK.md.',
+        reason:
+            `Requested task id ${formatNextStepInlineValue(options.requestedTaskId)} matches TASK.md row ` +
+            `${formatNextStepInlineValue(options.taskIdCaseMismatch)} only by case. ` +
+            'Use the exact TASK.md task id before any lifecycle gate so artifacts cannot fork into a parallel casing namespace.',
+        commands: [
+            buildCommand(
+                'Rerun navigator with TASK.md casing',
+                `${options.cliPrefix} next-step "${options.taskIdCaseMismatch}" --repo-root "."`
+            )
+        ],
+        missingArtifacts: [],
+        presentArtifacts: options.presentArtifacts,
+        finalReport: null
+    };
+}
+
+export function resolveCompletedCloseoutDecisionRoute(options: {
+    completionGatePassed: boolean;
+    latestCompletionCurrent: boolean;
+    postDoneDriftBlocked: boolean;
+    postDoneDriftReason: string;
+    finalReportContractReady: boolean;
+    finalReportContractBlocker: string;
+    finalReport: NextStepFinalReportSummary | null;
+    taskAuditCommand: string;
+    missingArtifacts: NextStepArtifactState[];
+}): NextStepDecisionRoutePayload | null {
+    if (!options.completionGatePassed || !options.latestCompletionCurrent) {
+        return null;
+    }
+    const route = resolveCompletedCloseoutRouteFromState({
+        postDoneDriftBlocked: options.postDoneDriftBlocked,
+        postDoneDriftReason: options.postDoneDriftReason,
+        finalReportContractReady: options.finalReportContractReady,
+        finalReportContractBlocker: options.finalReportContractBlocker,
+        finalReport: options.finalReport,
+        taskAuditCommand: options.taskAuditCommand
+    });
+    return {
+        status: route.status,
+        nextGate: route.nextGate,
+        title: route.title,
+        reason: route.reason,
+        commands: route.commands,
+        missingArtifacts: route.status === 'DONE' ? [] : options.missingArtifacts,
+        finalReport: route.finalReport as NextStepFinalReportSummary | null
+    };
+}
+
+export function resolveStartupDecisionRoute(
+    options: NextStepStartupRouteOptions
+): NextStepDecisionRoutePayload | null {
+    const route = resolveNextStepStartupRoute(options);
+    return route
+        ? {
+            status: route.status,
+            nextGate: route.nextGate,
+            title: route.title,
+            reason: route.reason,
+            commands: route.commands
+        }
+        : null;
+}
+
+interface FailedGateRecoveryDecision {
+    nextGate: string;
+    title: string;
+    reason: string;
+    command?: string | null;
+    label?: string | null;
+}
+
+export function resolveClassifyDecisionRoute(options: {
+    preflightExists: boolean;
+    classifyChangePassed: boolean;
+    readFailedGateRecovery: () => FailedGateRecoveryDecision | null;
+    resolveStrictDecompositionRoute: () => NextStepDecisionRoutePayload | null;
+    resolveProtectedScopeRoute: () => NextStepDecisionRoutePayload | null;
+    buildClassifyCommand: () => string;
+}): NextStepDecisionRoutePayload | null {
+    if (options.preflightExists && options.classifyChangePassed) {
+        return null;
+    }
+    const failedGateRecovery = options.readFailedGateRecovery();
+    if (failedGateRecovery) {
+        return {
+            status: 'BLOCKED',
+            nextGate: failedGateRecovery.nextGate,
+            title: failedGateRecovery.title,
+            reason: failedGateRecovery.reason,
+            commands: failedGateRecovery.command
+                ? [
+                    buildCommand(
+                        failedGateRecovery.label || failedGateRecovery.nextGate,
+                        failedGateRecovery.command
+                    )
+                ]
+                : []
+        };
+    }
+    const strictDecompositionRoute = options.resolveStrictDecompositionRoute();
+    if (strictDecompositionRoute) {
+        return strictDecompositionRoute;
+    }
+    const protectedScopeRoute = options.resolveProtectedScopeRoute();
+    if (protectedScopeRoute) {
+        return protectedScopeRoute;
+    }
+    return {
+        status: 'BLOCKED',
+        nextGate: 'classify-change',
+        title: 'Classify the task scope.',
+        reason: 'No current preflight artifact exists, so required reviews and compile scope are unknown.',
+        commands: [
+            buildCommand('Classify changed files', options.buildClassifyCommand())
+        ]
+    };
+}
+
+export function resolveOptionalSkillSelectionDecisionRoute(options: {
+    optionalSkillSelection: NextStepOptionalSkillSelectionSummary | null;
+    mandatoryRemediation: { label: string; command: string; reason: string } | null;
+    mandatoryPolicyMode: boolean;
+    refreshCommand: string;
+    timelineIntegrityCommand: string;
+}): NextStepDecisionRoutePayload | null {
+    const optionalSkillSelection = options.optionalSkillSelection;
+    if (optionalSkillSelection?.artifact_violations.length) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'classify-change',
+            title: 'Refresh invalid optional-skill selection artifact.',
+            reason:
+                'The current optional-skill selection artifact is invalid for navigator use. ' +
+                `${optionalSkillSelection.artifact_violations.join(' ')} ` +
+                'Rerun classify-change so phase/source evidence is regenerated before activation, review, or closeout.',
+            commands: [
+                buildCommand(
+                    'Refresh preflight and optional-skill selection',
+                    options.refreshCommand
+                )
+            ]
+        };
+    }
+    if (options.mandatoryRemediation) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'optional-skill-remediation',
+            title: 'Resolve mandatory optional-skill selection before implementation.',
+            reason: options.mandatoryRemediation.reason,
+            commands: [
+                buildCommand(
+                    options.mandatoryRemediation.label,
+                    options.mandatoryRemediation.command
+                )
+            ]
+        };
+    }
+    if (
+        optionalSkillSelection?.decision === 'selected_installed_skills'
+        && optionalSkillSelection.timeline_invalid_json
+        && options.mandatoryPolicyMode
+    ) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'task-events-summary',
+            title: 'Repair malformed task timeline before optional-skill activation.',
+            reason:
+                'The current task timeline JSONL is malformed, so current-cycle optional-skill activation evidence cannot be read reliably. ' +
+                'Do not run activate-optional-skill until task-event integrity is repaired; otherwise newly appended SKILL_SELECTED events may remain invisible to the navigator.',
+            commands: [
+                buildCommand(
+                    'Inspect task timeline integrity',
+                    options.timelineIntegrityCommand
+                )
+            ]
+        };
+    }
+    return null;
+}
+
+export function resolvePreGuardDecisionRoute(
+    options: NextStepPreGuardRoutingOptions
+): NextStepDecisionRoutePayload | null {
+    const route = resolveNextStepPreGuardRoute(options);
+    return route
+        ? {
+            status: route.status,
+            nextGate: route.nextGate,
+            title: route.title,
+            reason: route.reason,
+            commands: route.commands
+        }
+        : null;
+}
+
+export function resolvePendingOptionalSkillDecisionRoute(
+    optionalSkillActivation: NextStepOptionalSkillActivationRoutingOptions | null
+): NextStepDecisionRoutePayload | null {
+    if (!optionalSkillActivation) {
+        return null;
+    }
+    return {
+        status: 'BLOCKED',
+        nextGate: 'activate-optional-skill',
+        title: 'Activate the selected optional skill.',
+        reason:
+            `Current preflight selected optional skill ${formatNextStepInlineValue(optionalSkillActivation.skillId)}, ` +
+            'but the current task cycle has no matching activation evidence yet. ' +
+            'Record activation before restart-coherent-cycle, compile, review, implementation, or closeout so selected-skill diagnostics and final audit describe the same current-cycle state.',
+        commands: [
+            buildCommand(
+                `Activate optional skill ${optionalSkillActivation.skillId}`,
+                optionalSkillActivation.command
+            )
+        ]
+    };
 }
 
 export function resolveFullSuiteDecisionRoute(
