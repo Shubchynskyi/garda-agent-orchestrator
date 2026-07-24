@@ -1536,13 +1536,29 @@ describe('gates/next-step preflight routing', () => {
         seedShellSmoke(repoRoot, TASK_ID);
         fs.appendFileSync(path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts'), 'export const plannedNextStep = true;\n', 'utf8');
         fs.appendFileSync(path.join(repoRoot, 'tests', 'node', 'gates', 'next-step', 'next-step-preflight-routing.test.ts'), 'export const relatedTest = true;\n', 'utf8');
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            seedPostPreflight: false,
             changedFiles: [
                 'src/gates/next-step/next-step.ts',
                 'src/gates/next-step/next-step-helper.ts',
                 'tests/node/gates/next-step/next-step-preflight-routing.test.ts'
             ]
         });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const actualChangedFiles = [
+            'src/gates/next-step/next-step.ts',
+            'tests/node/gates/next-step/next-step-preflight-routing.test.ts'
+        ];
+        preflight.authorized_files = [
+            'src/gates/next-step/next-step.ts',
+            'src/gates/next-step/next-step-helper.ts',
+            'tests/node/gates/next-step/next-step-preflight-routing.test.ts'
+        ];
+        (preflight.metrics as Record<string, unknown>).actual_changed_files = actualChangedFiles;
+        (preflight.metrics as Record<string, unknown>).actual_changed_files_sha256 =
+            sha256Text(actualChangedFiles.join('\n'));
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
