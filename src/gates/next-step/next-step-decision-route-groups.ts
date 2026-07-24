@@ -1,4 +1,5 @@
 import {
+    isTaskQueueActiveStatus,
     isTaskQueueDecomposedStatus,
     isTaskQueueDoneStatus,
     isTaskQueueSplitRequiredStatus
@@ -18,6 +19,7 @@ import {
 import {
     restoreSplitRequiredParentFromPermanentLatch,
     transitionDecomposedParentsToDone,
+    transitionSplitRequiredParentToReviewCycleContinuation,
     transitionSplitRequiredParentToDecomposed
 } from './next-step-task-queue-transitions';
 import {
@@ -27,11 +29,16 @@ import {
     resolveSplitRequiredTaskQueueRoute
 } from './next-step-terminal-status-routing';
 import {
+    assessReviewCycleContinuationSplitLatchClearance,
     hasCompletedDecomposedParentAfterSplitRequiredClear,
     hasGateOwnedDecomposedParentCompletionEvidence,
+    hasReviewCycleContinuationClearedEvidence,
     hasSplitRequiredClearedEvidence,
     readSplitRequiredLatchEvidence
 } from './next-step-split-required-latch';
+import type {
+    ReviewCycleContinuationAssessment
+} from '../review-cycle/review-cycle-continuation';
 import {
     readFullSuiteRepairTaskMaterializationEvidence
 } from '../full-suite/full-suite-repair-task';
@@ -185,6 +192,7 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
     filteredMissingArtifacts: NextStepArtifactState[];
     corePresentArtifacts: NextStepArtifactState[];
     fullSuiteArtifactPath?: string;
+    reviewCycleContinuationAssessment?: ReviewCycleContinuationAssessment | null;
 }): NextStepDecisionRoutePayload | null {
     const taskQueueStatus = options.taskEntry?.status || null;
     const splitRequiredStatusInTaskQueue = isTaskQueueSplitRequiredStatus(taskQueueStatus);
@@ -219,11 +227,21 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
         });
     const doneStatusHasGateOwnedCompletionEvidence = doneStatusHasCompletedClearedLatchEvidence
         || doneStatusHasGateOwnedDecomposedParentCompletionEvidence;
+    const activeStatusHasClearedReviewCycleLatchEvidence =
+        isTaskQueueActiveStatus(taskQueueStatus)
+        && permanentSplitRequiredLatchEvidence?.valid === true
+        && hasReviewCycleContinuationClearedEvidence({
+            eventsRoot: options.eventsRoot,
+            taskId: options.taskId,
+            currentStatus: taskQueueStatus || '',
+            latchEvidence: permanentSplitRequiredLatchEvidence
+        });
 
     if (
         !splitRequiredStatusInTaskQueue
         && !decomposedStatusHasClearedLatchEvidence
         && !doneStatusHasGateOwnedCompletionEvidence
+        && !activeStatusHasClearedReviewCycleLatchEvidence
         && permanentSplitRequiredLatchEvidence?.valid
     ) {
         const restoreResult = restoreSplitRequiredParentFromPermanentLatch({
@@ -290,6 +308,42 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
             extractExplicitLinkedChildTaskIds
         );
         const hasChildren = hasLinkedChildTasks(options.taskEntries, options.taskId);
+        if (!hasChildren) {
+            const continuationClearance = assessReviewCycleContinuationSplitLatchClearance({
+                eventsRoot: options.eventsRoot,
+                taskId: options.taskId,
+                latchEvidence,
+                continuationAssessment: options.reviewCycleContinuationAssessment || null
+            });
+            if (continuationClearance.valid && continuationClearance.resume_status) {
+                const continuationTransition = transitionSplitRequiredParentToReviewCycleContinuation({
+                    repoRoot: options.repoRoot,
+                    eventsRoot: options.eventsRoot,
+                    taskId: options.taskId,
+                    resumeStatus: continuationClearance.resume_status,
+                    latchEvidence,
+                    continuationAssessment: options.reviewCycleContinuationAssessment!
+                });
+                if (
+                    continuationTransition.outcome === 'updated'
+                    || continuationTransition.outcome === 'already_synced'
+                ) {
+                    return null;
+                }
+                return {
+                    status: 'BLOCKED',
+                    nextGate: 'split-required-latch',
+                    title: 'Review-cycle continuation could not clear the split-required latch.',
+                    reason:
+                        `${continuationClearance.reason}, but TASK.md status recovery failed with outcome ` +
+                        `${continuationTransition.outcome}. ${continuationTransition.error_message || ''}`.trim(),
+                    commands: [],
+                    missingArtifacts: [],
+                    presentArtifacts: options.corePresentArtifacts,
+                    finalReport: null
+                };
+            }
+        }
         if (hasChildren && !childRoute) {
             const repairRestoreRoute = resolveCompletedFullSuiteRepairWipRestoreRoute({
                 repoRoot: options.repoRoot,

@@ -170,7 +170,8 @@ import {
     type TaskQueueStatusContract
 } from '../../core/task-queue-status-contract';
 import {
-    isTaskQueueActiveStatus
+    isTaskQueueActiveStatus,
+    isTaskQueueSplitRequiredStatus
 } from '../../core/active-task-state';
 import {
     buildNextStepCoreArtifactSpecs,
@@ -259,6 +260,7 @@ import {
 import {
     isSuccessfulSplitRequiredStatusSync,
     materializeSplitRequiredLatch,
+    readSplitRequiredLatchEvidence,
     sanitizeScopeBudgetGuardSummary,
     type SplitRequiredLatchResult
 } from './next-step-split-required-latch';
@@ -2551,6 +2553,38 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         });
     }
 
+    let splitRequiredReviewCycleContinuationAssessment:
+        ReturnType<typeof assessReviewCycleContinuationEvidence> | null = null;
+    if (isTaskQueueSplitRequiredStatus(taskEntry?.status || null)) {
+        const splitRequiredLatch = readSplitRequiredLatchEvidence({
+            reviewsRoot,
+            eventsRoot,
+            taskId
+        });
+        if (splitRequiredLatch.valid && splitRequiredLatch.guard_kind === 'review_cycle') {
+            try {
+                const reviewCycleGuardResult = readReviewCycleGuardEvaluation(repoRoot, eventsRoot, taskId);
+                const pendingRequiredReviewTypes = requiredReviewTypes.filter((reviewType) => {
+                    const state = reviewStates.find((candidate) => candidate.reviewType === reviewType);
+                    return !state || !reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state);
+                });
+                splitRequiredReviewCycleContinuationAssessment = assessReviewCycleContinuationEvidence({
+                    repoRoot,
+                    reviewsRoot,
+                    eventsRoot,
+                    taskId,
+                    evaluation: reviewCycleGuardResult.evaluation,
+                    reviewPhase: {
+                        required_review_types: requiredReviewTypes,
+                        pending_required_review_types: pendingRequiredReviewTypes
+                    }
+                });
+            } catch {
+                splitRequiredReviewCycleContinuationAssessment = null;
+            }
+        }
+    }
+
     const taskQueueTerminalRoute = resolveTaskQueueTerminalDecisionRoute({
         repoRoot,
         reviewsRoot,
@@ -2566,7 +2600,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         summaryBlockers: summary.blockers.map((blocker) => `${blocker.gate}: ${blocker.reason}`),
         filteredMissingArtifacts,
         corePresentArtifacts: coreArtifacts.present,
-        fullSuiteArtifactPath: readinessArtifacts.paths.fullSuiteValidationPath
+        fullSuiteArtifactPath: readinessArtifacts.paths.fullSuiteValidationPath,
+        reviewCycleContinuationAssessment: splitRequiredReviewCycleContinuationAssessment
     });
     if (taskQueueTerminalRoute) {
         return buildResult({

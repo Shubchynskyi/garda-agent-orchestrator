@@ -10,6 +10,12 @@ import {
 import {
     SPLIT_REQUIRED_STATUS
 } from './next-step-task-queue';
+import type {
+    ReviewCycleContinuationAssessment
+} from '../review-cycle/review-cycle-continuation';
+import type {
+    SplitRequiredLatchEvidence
+} from './next-step-split-required-latch';
 import {
     rollbackDecomposedParentStatusSync,
     syncDecomposedParentsToDone,
@@ -63,6 +69,79 @@ export function transitionSplitRequiredParentToDecomposed(params: {
             },
             { actor: 'orchestrator' }
         );
+    }
+    return syncResult;
+}
+
+export function transitionSplitRequiredParentToReviewCycleContinuation(params: {
+    repoRoot: string;
+    eventsRoot: string;
+    taskId: string;
+    resumeStatus: 'IN_PROGRESS' | 'IN_REVIEW';
+    latchEvidence: SplitRequiredLatchEvidence;
+    continuationAssessment: ReviewCycleContinuationAssessment;
+}): TaskQueueStatusSyncResult {
+    const syncResult = syncTaskQueueStatusDetailed(params.repoRoot, params.taskId, params.resumeStatus);
+    if (syncResult.outcome === 'updated') {
+        const orchestratorRoot = getOrchestratorRootFromEventsRoot(params.eventsRoot);
+        try {
+            appendMandatoryTaskEvent(
+                orchestratorRoot,
+                params.taskId,
+                'SPLIT_REQUIRED_CLEARED',
+                'INFO',
+                'Review-cycle split-required latch cleared by an authenticated one-shot continuation.',
+                {
+                    previous_status: syncResult.previous_status || SPLIT_REQUIRED_STATUS,
+                    new_status: params.resumeStatus,
+                    reason: 'review_cycle_continuation_approved',
+                    guard_kind: 'review_cycle',
+                    latch_artifact_path: params.latchEvidence.artifact_path,
+                    latch_artifact_sha256: params.latchEvidence.artifact_sha256,
+                    continuation_artifact_path: params.continuationAssessment.artifact_path,
+                    continuation_artifact_sha256: params.continuationAssessment.artifact_sha256
+                },
+                { actor: 'orchestrator' }
+            );
+        } catch (error: unknown) {
+            const rollback = syncTaskQueueStatusDetailed(
+                params.repoRoot,
+                params.taskId,
+                syncResult.previous_status || SPLIT_REQUIRED_STATUS
+            );
+            return {
+                ...syncResult,
+                outcome: 'write_failed',
+                error_message:
+                    `Mandatory SPLIT_REQUIRED_CLEARED append failed after TASK.md status sync: ` +
+                    `${error instanceof Error ? error.message : String(error)}; ` +
+                    `rollback=${rollback.outcome}${rollback.error_message ? ` (${rollback.error_message})` : ''}`
+            };
+        }
+        try {
+            appendMandatoryTaskEvent(
+                orchestratorRoot,
+                params.taskId,
+                'STATUS_CHANGED',
+                'INFO',
+                `Task status changed: ${syncResult.previous_status || SPLIT_REQUIRED_STATUS} -> ${params.resumeStatus}.`,
+                {
+                    previous_status: syncResult.previous_status || SPLIT_REQUIRED_STATUS,
+                    new_status: params.resumeStatus,
+                    reason: 'review_cycle_continuation_approved'
+                },
+                { actor: 'orchestrator' }
+            );
+        } catch (error: unknown) {
+            return {
+                ...syncResult,
+                outcome: 'write_failed',
+                error_message:
+                    'Mandatory STATUS_CHANGED append failed after authoritative review-cycle latch clearance; ' +
+                    `the recovered TASK.md status was preserved because SPLIT_REQUIRED_CLEARED is committed: ` +
+                    `${error instanceof Error ? error.message : String(error)}`
+            };
+        }
     }
     return syncResult;
 }

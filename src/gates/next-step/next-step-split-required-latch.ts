@@ -27,6 +27,9 @@ import {
 import {
     collectOrderedTimelineEvents
 } from '../completion/completion-evidence';
+import type {
+    ReviewCycleContinuationAssessment
+} from '../review-cycle/review-cycle-continuation';
 import {
     safeReadJson
 } from '../task-audit/task-audit-summary-collectors';
@@ -52,6 +55,12 @@ export interface SplitRequiredLatchEvidence {
     artifact_path: string;
     artifact_sha256: string | null;
     guard_kind: string | null;
+}
+
+export interface ReviewCycleContinuationSplitLatchClearance {
+    valid: boolean;
+    reason: string;
+    resume_status: 'IN_PROGRESS' | 'IN_REVIEW' | null;
 }
 
 function getOrchestratorRootFromEventsRoot(eventsRoot: string): string {
@@ -285,6 +294,193 @@ export function hasSplitRequiredClearedEvidence(params: {
             && String(details.previous_status || '') === SPLIT_REQUIRED_STATUS
             && String(details.new_status || '') === 'DECOMPOSED'
             && String(details.reason || '') === 'child_tasks_linked';
+    });
+}
+
+function normalizeReviewTypeList(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value
+            .map((entry) => typeof entry === 'string' ? entry.trim().toLowerCase() : '')
+            .filter(Boolean)
+            .sort()
+        : [];
+}
+
+export function assessReviewCycleContinuationSplitLatchClearance(params: {
+    eventsRoot: string;
+    taskId: string;
+    latchEvidence: SplitRequiredLatchEvidence;
+    continuationAssessment: ReviewCycleContinuationAssessment | null;
+}): ReviewCycleContinuationSplitLatchClearance {
+    const invalid = (reason: string): ReviewCycleContinuationSplitLatchClearance => ({
+        valid: false,
+        reason,
+        resume_status: null
+    });
+    const continuation = params.continuationAssessment;
+    if (
+        !params.latchEvidence.valid
+        || params.latchEvidence.guard_kind !== 'review_cycle'
+        || !params.latchEvidence.artifact_sha256
+    ) {
+        return invalid('split-required latch is not a valid review-cycle latch');
+    }
+    if (
+        continuation?.status !== 'ACTIVE'
+        || !continuation.artifact
+        || !continuation.artifact_sha256
+    ) {
+        return invalid('review-cycle continuation evidence is not active');
+    }
+
+    const latchArtifact = safeReadJson(params.latchEvidence.artifact_path);
+    const statusSync = isPlainRecord(latchArtifact?.status_sync) ? latchArtifact.status_sync : null;
+    const guardDetails = isPlainRecord(latchArtifact?.guard_details) ? latchArtifact.guard_details : null;
+    if (!statusSync || !guardDetails) {
+        return invalid('review-cycle latch status or guard details are missing');
+    }
+    const previousStatus = String(statusSync.previous_status || '').trim().toUpperCase();
+    if (previousStatus !== 'IN_PROGRESS' && previousStatus !== 'IN_REVIEW') {
+        return invalid(`review-cycle latch previous active status is invalid (${previousStatus || 'missing'})`);
+    }
+
+    const baseline = continuation.artifact.baseline;
+    if (
+        guardDetails.total_non_test_review_count !== baseline.total_non_test_review_count
+        || guardDetails.failed_non_test_review_count !== baseline.failed_non_test_review_count
+    ) {
+        return invalid('review-cycle continuation baseline does not match the latched review counts');
+    }
+    const latchedExcludedReviewTypes = normalizeReviewTypeList(guardDetails.excluded_review_types);
+    const continuationExcludedReviewTypes = normalizeReviewTypeList(baseline.excluded_review_types);
+    if (latchedExcludedReviewTypes.join('\n') !== continuationExcludedReviewTypes.join('\n')) {
+        return invalid('review-cycle continuation excluded review types do not match the latch');
+    }
+
+    const violations = Array.isArray(guardDetails.violations)
+        ? guardDetails.violations.filter(isPlainRecord)
+        : [];
+    if (violations.length === 0) {
+        return invalid('review-cycle latch has no authenticated guard violations');
+    }
+    for (const violation of violations) {
+        const metric = String(violation.metric || '').trim();
+        const expectedLimit = metric === 'total_non_test_review_count'
+            ? baseline.max_total_non_test_reviews
+            : metric === 'failed_non_test_review_count'
+                ? baseline.max_failed_non_test_reviews
+                : null;
+        if (expectedLimit == null || violation.limit !== expectedLimit) {
+            return invalid(`review-cycle continuation limit does not match latched violation ${metric || 'unknown'}`);
+        }
+    }
+
+    const timelineErrors: string[] = [];
+    const timeline = collectOrderedTimelineEvents(
+        path.join(params.eventsRoot, `${params.taskId}.jsonl`),
+        timelineErrors
+    );
+    if (timelineErrors.length > 0) {
+        return invalid(`review-cycle latch timeline is unreadable (${timelineErrors.join('; ')})`);
+    }
+    const normalizedLatchPath = normalizePath(params.latchEvidence.artifact_path);
+    const latchEvent = [...timeline].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === 'SPLIT_REQUIRED_LATCHED'
+            && String(details.guard_kind || '') === 'review_cycle'
+            && String(details.artifact_sha256 || '').toLowerCase() === params.latchEvidence.artifact_sha256
+            && normalizePath(String(details.artifact_path || '')) === normalizedLatchPath;
+    });
+    if (!latchEvent) {
+        return invalid('review-cycle latch event is missing');
+    }
+    const normalizedContinuationPath = normalizePath(continuation.artifact_path);
+    const approvalEvent = timeline.find((event) => {
+        const details = event.details || {};
+        return event.sequence > latchEvent.sequence
+            && event.event_type === 'REVIEW_CYCLE_CONTINUATION_APPROVED'
+            && String(details.artifact_sha256 || '').toLowerCase() === continuation.artifact_sha256
+            && normalizePath(String(details.artifact_path || '')) === normalizedContinuationPath;
+    });
+    if (!approvalEvent) {
+        return invalid('review-cycle continuation approval does not follow the bound split-required latch');
+    }
+    const continuationAlreadyConsumed = timeline.some((event) => {
+        const details = event.details || {};
+        const nextStatus = String(details.new_status || '').trim();
+        return event.sequence > approvalEvent.sequence
+            && event.event_type === 'SPLIT_REQUIRED_CLEARED'
+            && String(details.previous_status || '') === SPLIT_REQUIRED_STATUS
+            && (nextStatus === 'IN_PROGRESS' || nextStatus === 'IN_REVIEW')
+            && String(details.reason || '') === 'review_cycle_continuation_approved'
+            && String(details.guard_kind || '') === 'review_cycle'
+            && String(details.latch_artifact_sha256 || '').toLowerCase() === params.latchEvidence.artifact_sha256
+            && normalizePath(String(details.latch_artifact_path || '')) === normalizedLatchPath
+            && String(details.continuation_artifact_sha256 || '').toLowerCase() === continuation.artifact_sha256
+            && normalizePath(String(details.continuation_artifact_path || '')) === normalizedContinuationPath;
+    });
+    if (continuationAlreadyConsumed) {
+        return invalid('review-cycle continuation was already consumed for the current split-required latch');
+    }
+
+    return {
+        valid: true,
+        reason: 'active one-shot continuation is bound to the current review-cycle latch',
+        resume_status: previousStatus
+    };
+}
+
+export function hasReviewCycleContinuationClearedEvidence(params: {
+    eventsRoot: string;
+    taskId: string;
+    currentStatus: string;
+    latchEvidence: SplitRequiredLatchEvidence;
+}): boolean {
+    if (
+        !params.latchEvidence.valid
+        || params.latchEvidence.guard_kind !== 'review_cycle'
+        || !params.latchEvidence.artifact_sha256
+    ) {
+        return false;
+    }
+    const currentStatus = String(params.currentStatus || '').trim().toUpperCase();
+    if (currentStatus !== 'IN_PROGRESS' && currentStatus !== 'IN_REVIEW') {
+        return false;
+    }
+    const timelineErrors: string[] = [];
+    const timeline = collectOrderedTimelineEvents(
+        path.join(params.eventsRoot, `${params.taskId}.jsonl`),
+        timelineErrors
+    );
+    if (timelineErrors.length > 0) {
+        return false;
+    }
+    const normalizedLatchPath = normalizePath(params.latchEvidence.artifact_path);
+    const latchEvent = [...timeline].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === 'SPLIT_REQUIRED_LATCHED'
+            && String(details.guard_kind || '') === 'review_cycle'
+            && String(details.artifact_sha256 || '').toLowerCase() === params.latchEvidence.artifact_sha256
+            && normalizePath(String(details.artifact_path || '')) === normalizedLatchPath;
+    });
+    if (!latchEvent) {
+        return false;
+    }
+    return timeline.some((event) => {
+        const details = event.details || {};
+        const nextStatus = String(details.new_status || '').trim();
+        return event.sequence > latchEvent.sequence
+            && event.event_type === 'SPLIT_REQUIRED_CLEARED'
+            && String(details.previous_status || '') === SPLIT_REQUIRED_STATUS
+            && nextStatus === currentStatus
+            && String(details.reason || '') === 'review_cycle_continuation_approved'
+            && String(details.guard_kind || '') === 'review_cycle'
+            && String(details.latch_artifact_sha256 || '').toLowerCase() === params.latchEvidence.artifact_sha256
+            && normalizePath(String(details.latch_artifact_path || '')) === normalizedLatchPath
+            && typeof details.continuation_artifact_sha256 === 'string'
+            && String(details.continuation_artifact_sha256).length > 0
+            && typeof details.continuation_artifact_path === 'string'
+            && String(details.continuation_artifact_path).length > 0;
     });
 }
 

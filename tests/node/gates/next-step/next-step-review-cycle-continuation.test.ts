@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 
 import { formatNextStepText, resolveNextStep } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
@@ -19,8 +20,14 @@ import {
 import {
     runRecordReviewCycleContinuationCommand
 } from '../../../../src/cli/commands/gates';
+import {
+    assessReviewCycleContinuationSplitLatchClearance,
+    materializeSplitRequiredLatch,
+    readSplitRequiredLatchEvidence
+} from '../../../../src/gates/next-step/next-step-split-required-latch';
 
 const TASK_ID = 'T-NEXT-1';
+const requireFromTest = createRequire(__filename);
 const ALL_REVIEW_FLAGS = Object.freeze({
     code: false,
     db: false,
@@ -43,6 +50,331 @@ afterEach(() => {
 });
 
 describe('gates/next-step review cycle continuation', () => {
+    it('clears a bound review-cycle split latch and restores the prior active status exactly once', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot);
+
+        const splitResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(splitResult.status, 'SPLIT_REQUIRED', splitResult.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+
+        const continuedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const continuedText = formatNextStepText(continuedResult);
+        assert.notEqual(continuedResult.status, 'SPLIT_REQUIRED', continuedResult.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.ok(continuedText.includes('Review cycle one-shot continuation active'));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
+
+        const repeatedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.notEqual(repeatedResult.status, 'SPLIT_REQUIRED', repeatedResult.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_RESTORED'), 0);
+    });
+
+    it('does not replay a consumed continuation when the same latch is observed as split-required again', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot);
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+        assert.notEqual(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
+
+        setTaskStatus(repoRoot, 'SPLIT_REQUIRED');
+        const replayResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(replayResult.status, 'SPLIT_REQUIRED', replayResult.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
+    });
+
+    it('restores split-required when the mutable active status differs from the authenticated clear event', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot);
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+        assert.notEqual(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
+
+        setTaskStatus(repoRoot, 'IN_PROGRESS');
+        const tamperedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(tamperedResult.status, 'SPLIT_REQUIRED', tamperedResult.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_RESTORED'), 1);
+    });
+
+    it('restores an IN_PROGRESS review-cycle split latch to IN_PROGRESS', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot, 'IN_PROGRESS');
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.status, 'SPLIT_REQUIRED', result.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_PROGRESS |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
+    });
+
+    it('rolls TASK.md back when authoritative continuation-clear evidence cannot be appended', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot);
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+        const targetEventPath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+        const mutableFs = requireFromTest('node:fs') as typeof fs;
+        const originalAppendFileSync = mutableFs.appendFileSync;
+        mutableFs.appendFileSync = ((
+            filePath: fs.PathOrFileDescriptor,
+            data: string | Uint8Array,
+            options?: unknown
+        ): void => {
+            if (
+                typeof filePath === 'string'
+                && path.resolve(filePath) === path.resolve(targetEventPath)
+                && String(data).includes('"event_type":"SPLIT_REQUIRED_CLEARED"')
+            ) {
+                throw new Error('forced continuation clear append failure');
+            }
+            return (originalAppendFileSync as unknown as (...args: unknown[]) => void)(filePath, data, options);
+        }) as typeof fs.appendFileSync;
+
+        try {
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.status, 'BLOCKED', result.reason);
+            assert.ok(result.reason.includes('rollback=updated'), result.reason);
+            assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+            assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 0);
+        } finally {
+            mutableFs.appendFileSync = originalAppendFileSync;
+        }
+    });
+
+    it('preserves a recovered status when generic status telemetry fails after authoritative clearance', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot);
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+        const targetEventPath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+        const mutableFs = requireFromTest('node:fs') as typeof fs;
+        const originalAppendFileSync = mutableFs.appendFileSync;
+        mutableFs.appendFileSync = ((
+            filePath: fs.PathOrFileDescriptor,
+            data: string | Uint8Array,
+            options?: unknown
+        ): void => {
+            if (
+                typeof filePath === 'string'
+                && path.resolve(filePath) === path.resolve(targetEventPath)
+                && String(data).includes('"event_type":"STATUS_CHANGED"')
+                && String(data).includes('"reason":"review_cycle_continuation_approved"')
+            ) {
+                throw new Error('forced continuation status telemetry failure');
+            }
+            return (originalAppendFileSync as unknown as (...args: unknown[]) => void)(filePath, data, options);
+        }) as typeof fs.appendFileSync;
+
+        let failedResult: ReturnType<typeof resolveNextStep> | null = null;
+        try {
+            failedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        } finally {
+            mutableFs.appendFileSync = originalAppendFileSync;
+        }
+
+        assert.ok(failedResult);
+        assert.equal(failedResult.status, 'BLOCKED', failedResult.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
+
+        const retriedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.notEqual(retriedResult.status, 'SPLIT_REQUIRED', retriedResult.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_RESTORED'), 0);
+    });
+
+    it('keeps a review-cycle split latch when forged continuation baseline does not match the latch', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot);
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 2,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 0);
+    });
+
+    it('keeps a review-cycle split latch when the stale one-shot continuation is expired', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot);
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`))
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 0);
+    });
+
+    it('fails closed when the review-cycle latch timeline is malformed', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot);
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+        const latchEvidence = readSplitRequiredLatchEvidence({
+            reviewsRoot: reviewsRoot(repoRoot),
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: TASK_ID
+        });
+        const continuationAssessment = assessReviewCycleContinuationEvidence({
+            repoRoot,
+            reviewsRoot: reviewsRoot(repoRoot),
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: TASK_ID,
+            evaluation: {
+                active: true,
+                action: 'BLOCK_FOR_OPERATOR_DECISION',
+                auto_split_enabled: true,
+                max_failed_non_test_reviews: 15,
+                max_total_non_test_reviews: 2,
+                total_non_test_review_count: 3,
+                failed_non_test_review_count: 1,
+                counts_by_review_type: {},
+                excluded_review_types: ['test'],
+                violations: [
+                    {
+                        metric: 'total_non_test_review_count',
+                        actual: 3,
+                        limit: 2
+                    }
+                ],
+                should_block: true,
+                summary_line: 'Review cycle guard blocked after total non-test review limit.'
+            },
+            reviewPhase: {
+                required_review_types: ['code', 'test'],
+                pending_required_review_types: ['code', 'test']
+            }
+        });
+        assert.equal(continuationAssessment.status, 'ACTIVE', continuationAssessment.reason);
+        fs.appendFileSync(
+            path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`),
+            '{malformed-review-cycle-event\n',
+            'utf8'
+        );
+
+        const clearance = assessReviewCycleContinuationSplitLatchClearance({
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: TASK_ID,
+            latchEvidence,
+            continuationAssessment
+        });
+
+        assert.equal(clearance.valid, false);
+        assert.ok(clearance.reason.includes('timeline is unreadable'), clearance.reason);
+    });
+
+    it('does not clear a foreign scope-budget split latch with review-cycle continuation evidence', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        setTaskStatus(repoRoot, 'IN_REVIEW');
+        const latch = materializeSplitRequiredLatch({
+            repoRoot,
+            reviewsRoot: reviewsRoot(repoRoot),
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: TASK_ID,
+            guardKind: 'scope_budget',
+            guardReason: 'scope budget exceeded',
+            rawGuardSummary: 'Scope budget guard: BLOCK',
+            preflightPath,
+            guardDetails: {
+                action: 'SPLIT_TASK',
+                violations: [{ metric: 'changed_files_count', actual: 10, limit: 5 }]
+            }
+        });
+        assert.equal(latch.status_sync.outcome, 'updated');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 0,
+            baselineFailedNonTestReviewCount: 0
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
+        assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 0);
+    });
+
+    it('preserves linked-child decomposition instead of reopening a review-cycle parent', () => {
+        const repoRoot = makeTempRepo();
+        seedReviewCycleAutoSplit(repoRoot);
+        assert.equal(resolveNextStep({ taskId: TASK_ID, repoRoot }).status, 'SPLIT_REQUIRED');
+        addLinkedChildTasks(repoRoot, [`${TASK_ID}-1`, `${TASK_ID}-2`]);
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 1,
+            maxTotalNonTestReviews: 2
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.status, 'SPLIT_REQUIRED');
+        assert.ok(
+            readTaskMd(repoRoot).includes(`| ${TASK_ID} | DECOMPOSED |`),
+            `${result.status}: ${result.reason}\n${readTaskMd(repoRoot)}`
+        );
+        assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
+        assert.equal(readTaskEvents(repoRoot).includes('review_cycle_continuation_approved'), false);
+    });
+
     it('uses an active one-shot continuation without changing workflow-config.json', () => {
         const repoRoot = makeTempRepo();
         const workflowConfig = buildDefaultWorkflowConfig();
@@ -227,9 +559,14 @@ function makeTempRepo(): string {
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'template', 'docs', 'prompts'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+    fs.copyFileSync(
+        path.join(process.cwd(), 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
+        path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md')
+    );
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '# TASK.md',
         '',
@@ -360,6 +697,83 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
     seedRulePack(repoRoot, taskId, 'TASK_ENTRY');
     appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+}
+
+function seedReviewCycleAutoSplit(
+    repoRoot: string,
+    activeStatus: 'IN_PROGRESS' | 'IN_REVIEW' = 'IN_REVIEW'
+): void {
+    const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.full_suite_validation.enabled = false;
+    workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+    workflowConfig.review_cycle_guard.auto_split_enabled = true;
+    workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+    writeJson(
+        path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+        workflowConfig
+    );
+    seedStartedTask(repoRoot, TASK_ID);
+    writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+    setTaskStatus(repoRoot, activeStatus);
+    for (let index = 0; index < 2; index += 1) {
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+            review_type: 'code',
+            reviewer_identity: `agent:code-auto-split-${index}`,
+            review_context_sha256: sha256Text(`code-auto-split-${index}`)
+        });
+    }
+    appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+        review_type: 'code',
+        reviewer_identity: 'agent:code-auto-split-fail',
+        review_context_sha256: sha256Text('code-auto-split-fail'),
+        summary: 'failed after reaching the review-cycle total limit'
+    });
+}
+
+function readTaskMd(repoRoot: string): string {
+    return fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+}
+
+function setTaskStatus(repoRoot: string, status: string): void {
+    const taskMdPath = path.join(repoRoot, 'TASK.md');
+    const lines = readTaskMd(repoRoot).split('\n');
+    const taskLineIndex = lines.findIndex((line) => line.startsWith(`| ${TASK_ID} |`));
+    assert.notEqual(taskLineIndex, -1);
+    const cells = lines[taskLineIndex].split('|');
+    cells[2] = ` ${status} `;
+    lines[taskLineIndex] = cells.join('|');
+    fs.writeFileSync(taskMdPath, lines.join('\n'), 'utf8');
+}
+
+function addLinkedChildTasks(repoRoot: string, childTaskIds: string[]): void {
+    const taskMdPath = path.join(repoRoot, 'TASK.md');
+    const lines = readTaskMd(repoRoot).split('\n');
+    const parentLineIndex = lines.findIndex((line) => line.startsWith(`| ${TASK_ID} |`));
+    assert.notEqual(parentLineIndex, -1);
+    const parentCells = lines[parentLineIndex].split('|');
+    parentCells[9] = ` Child tasks: ${childTaskIds.map((childTaskId) => `\`${childTaskId}\``).join(', ')}. `;
+    lines[parentLineIndex] = parentCells.join('|');
+    lines.splice(
+        parentLineIndex + 1,
+        0,
+        ...childTaskIds.map((childTaskId, index) => (
+            `| ${childTaskId} | TODO | P1 | workflow/review-cycle-${index + 1} | Child review fix ${index + 1} | gpt-5.4 | 2026-04-25 | strict | Child of \`${TASK_ID}\`. |`
+        ))
+    );
+    fs.writeFileSync(taskMdPath, lines.join('\n'), 'utf8');
+}
+
+function readTaskEvents(repoRoot: string): string {
+    return fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
+}
+
+function countEvents(repoRoot: string, eventType: string): number {
+    return readTaskEvents(repoRoot)
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((event) => event.event_type === eventType)
+        .length;
 }
 
 function seedRulePack(repoRoot: string, taskId: string, stage: 'TASK_ENTRY' | 'POST_PREFLIGHT', preflightPath = ''): void {
