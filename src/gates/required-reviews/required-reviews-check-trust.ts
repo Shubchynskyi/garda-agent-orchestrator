@@ -101,6 +101,7 @@ export function validateReviewArtifactGateEligibility(options: {
     executionProviderSource?: string | null;
     allowLegacyReviewContextIdentityFallback?: boolean;
     allowLaneDomainPreflightBinding?: boolean;
+    requireFindingsDispositionEvidence?: boolean;
     timelineEvents?: readonly ReviewDependencyTimelineEvent[];
     treeStateFreshnessCache?: ReviewTreeStateFreshnessCache | null;
 }): ReviewArtifactGateEligibilityResult {
@@ -442,7 +443,12 @@ export function validateReviewArtifactGateEligibility(options: {
                             validationArtifact.artifact,
                             policyResolution
                         );
-                        if (validationArtifact.valid && validationArtifact.artifact && validationArtifact.reference) {
+                        if (
+                            options.requireFindingsDispositionEvidence !== false
+                            && validationArtifact.valid
+                            && validationArtifact.artifact
+                            && validationArtifact.reference
+                        ) {
                             if (!repoRoot || !validationArtifact.artifact_sha256) {
                                 errors.push(
                                     `Required review '${reviewKey}' cannot validate findings dispositions without ` +

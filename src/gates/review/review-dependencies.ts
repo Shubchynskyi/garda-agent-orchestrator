@@ -390,6 +390,7 @@ export function assessUpstreamReviewDependencyStatus(options: {
         },
         allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled,
         allowLaneDomainPreflightBinding: false,
+        requireFindingsDispositionEvidence: false,
         timelineEvents: options.timelineEvents,
         repoRoot
     });
