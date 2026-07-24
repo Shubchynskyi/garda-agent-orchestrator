@@ -1038,6 +1038,8 @@ describe('gates/next-step startup routing', () => {
     it('keeps stale preflight refresh scoped to planned files when dirty baseline contains older task files', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'older-task.md'), 'older task dirty file\n', 'utf8');
         const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
         writeJson(taskModePath, buildTaskModeArtifact({
             taskId: TASK_ID,
@@ -1056,24 +1058,24 @@ describe('gates/next-step startup routing', () => {
                 detection_source: 'git_auto',
                 include_untracked: true,
                 changed_files: [
-                    'docs/older-task.md',
-                    'src/app.ts'
+                    'docs/older-task.md'
                 ],
                 changed_files_sha256: sha256Text('older-task-baseline'),
                 scope_sha256: sha256Text('older-task-baseline'),
-                file_hashes: {}
+                file_hashes: {
+                    'docs/older-task.md': sha256Text('older task dirty file\n')
+                }
             }
         }));
         appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
         seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY', taskModePath);
         seedHandshake(repoRoot, TASK_ID);
         seedShellSmoke(repoRoot, TASK_ID);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
             changedFiles: ['src/app.ts'],
             seedPostPreflight: false
         });
-        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, 'docs', 'older-task.md'), 'older task dirty file\n', 'utf8');
         appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
             restarted: true
         });
