@@ -207,7 +207,7 @@ describe('gates/next-step', () => {
             }
         });
         initGitRepo(repoRoot);
-        seedStartedTask(repoRoot, TASK_ID);
+        seedStartedTask(repoRoot, TASK_ID, 'Audit-only: verify zero-diff closeout');
         const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         preflight.scope_category = 'empty';
@@ -240,7 +240,7 @@ describe('gates/next-step', () => {
     it('routes zero-diff with completed required reviews to audited no-op before review gate retry', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
-        seedStartedTask(repoRoot, TASK_ID);
+        seedStartedTask(repoRoot, TASK_ID, 'Audit-only: verify zero-diff closeout');
         const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, {
             ...ALL_REVIEW_FLAGS,
             code: true,
@@ -272,7 +272,7 @@ describe('gates/next-step', () => {
     it('routes zero-diff required-review children to audited no-op before review context preparation', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
-        seedStartedTask(repoRoot, TASK_ID);
+        seedStartedTask(repoRoot, TASK_ID, 'Audit-only: verify zero-diff closeout');
         const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, {
             ...ALL_REVIEW_FLAGS,
             code: true
@@ -296,7 +296,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('build-review-context'));
     });
 
-    it('routes zero-diff dependency lockfile split children to audited no-op before review context preparation', () => {
+    it('requires planned dependency lockfile scope to materialize before audited no-op', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'package.json'), '{ "dependencies": {} }\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'package-lock.json'), '{ "lockfileVersion": 3 }\n', 'utf8');
@@ -326,12 +326,9 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'record-no-op');
-        assert.ok(result.reason.includes('audited no-op evidence'));
-        assert.ok(result.commands[0].command.includes('gate record-no-op'));
-        assert.ok(result.commands[0].command.includes('--classification "AUDIT_ONLY"'));
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
+        assert.equal(result.next_gate, 'materialize-planned-scope');
+        assert.ok(result.reason.includes('package-lock.json'));
+        assert.equal(result.commands.length, 0);
     });
 
     it('continues to required reviews check after current zero-diff no-op evidence exists', () => {
@@ -443,7 +440,7 @@ describe('gates/next-step', () => {
     it('routes stale zero-diff no-op evidence back to record-no-op', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
-        seedStartedTask(repoRoot, TASK_ID);
+        seedStartedTask(repoRoot, TASK_ID, 'Audit-only: verify zero-diff closeout');
         const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         preflight.scope_category = 'empty';
@@ -473,7 +470,7 @@ describe('gates/next-step', () => {
     it('routes foreign zero-diff no-op evidence back to record-no-op', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
-        seedStartedTask(repoRoot, TASK_ID);
+        seedStartedTask(repoRoot, TASK_ID, 'Audit-only: verify zero-diff closeout');
         const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         preflight.scope_category = 'empty';

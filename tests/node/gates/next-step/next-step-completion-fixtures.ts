@@ -299,13 +299,17 @@ export function appendEvent(
     };
 }
 
-export function seedStartedTask(repoRoot: string, taskId: string): void {
+export function seedStartedTask(
+    repoRoot: string,
+    taskId: string,
+    taskSummary = 'Seeded next-step task'
+): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
         requestedDepth: 2,
         effectiveDepth: 2,
-        taskSummary: 'Seeded next-step task',
+        taskSummary,
         startBanner: 'Garda captures my mind',
         provider: 'Codex',
         canonicalSourceOfTruth: 'Codex',
