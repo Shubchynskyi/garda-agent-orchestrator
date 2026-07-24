@@ -1,7 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as crypto from 'node:crypto';
 import { writeFileAtomically } from '../../core/filesystem';
+import {
+    computeProtectedSnapshotDigest,
+    resolveProtectedControlPlaneManifestPath,
+    type ProtectedControlPlaneManifest,
+    type ProtectedControlPlaneManifestEvidence
+} from '../../core/protected-control-plane-contracts';
 import {
     ALL_AGENT_ENTRYPOINT_FILES,
     DEFAULT_BUNDLE_NAME,
@@ -16,26 +21,16 @@ import {
     getProviderOrchestratorProfileDefinitions
 } from '../../materialization/common';
 import { scanProtectedPathHashesIncremental, type ProtectedHashScanOptions } from './protected-hash-cache';
-import { normalizePath, joinOrchestratorPath } from '../shared/path-utils';
+import { normalizePath } from '../shared/path-utils';
 
-export interface ProtectedControlPlaneManifest {
-    schema_version: 1;
-    event_source: 'refresh-protected-control-plane-manifest';
-    timestamp_utc: string;
-    workspace_root: string;
-    orchestrator_root: string;
-    protected_roots: string[];
-    protected_snapshot: Record<string, string>;
-    protected_snapshot_sha256?: string;
-    is_source_checkout: boolean;
-}
-
-export interface ProtectedControlPlaneManifestEvidence {
-    status: 'MISSING' | 'INVALID' | 'MATCH' | 'DRIFT';
-    manifest_path: string;
-    changed_files: string[];
-    manifest: ProtectedControlPlaneManifest | null;
-}
+export {
+    computeProtectedSnapshotDigest,
+    resolveProtectedControlPlaneManifestPath
+} from '../../core/protected-control-plane-contracts';
+export type {
+    ProtectedControlPlaneManifest,
+    ProtectedControlPlaneManifestEvidence
+} from '../../core/protected-control-plane-contracts';
 
 /**
  * Detect whether repoRoot is the orchestrator source checkout itself.
@@ -155,13 +150,6 @@ export function scanProtectedPathHashes(
     readOnlyOrOptions: boolean | ProtectedHashScanOptions = false
 ): Record<string, string> {
     return scanProtectedPathHashesIncremental(repoRoot, protectedRoots, readOnlyOrOptions);
-}
-
-/**
- * Resolve the persisted protected control-plane manifest path.
- */
-export function resolveProtectedControlPlaneManifestPath(repoRoot: string): string {
-    return joinOrchestratorPath(repoRoot, path.join('runtime', 'protected-control-plane-manifest.json'));
 }
 
 /**
@@ -305,20 +293,4 @@ export function normalizeProtectedControlPlaneRoots(roots: unknown[] | null | un
         set.add(value);
     }
     return [...set].sort();
-}
-
-/**
- * Build a deterministic aggregate digest for a protected snapshot.
- * Used as a compact pre/post-task integrity token.
- */
-export function computeProtectedSnapshotDigest(snapshot: Record<string, string> | null | undefined): string {
-    const normalizedEntries = Object.entries(snapshot || {})
-        .map(([protectedPath, sha256]) => [normalizePath(protectedPath), String(sha256 || '').trim().toLowerCase()] as const)
-        .filter(([protectedPath]) => protectedPath !== '')
-        .sort(([a], [b]) => a.localeCompare(b));
-    return crypto
-        .createHash('sha256')
-        .update(JSON.stringify(normalizedEntries), 'utf8')
-        .digest('hex')
-        .toLowerCase();
 }

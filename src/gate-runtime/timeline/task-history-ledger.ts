@@ -1,9 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import type { TaskAuditSummaryResult } from '../../gates/task-audit/task-audit-summary';
-import type { EvidenceArtifact } from '../../gates/task-audit/task-audit-summary-collectors';
-import { fileSha256, toPosix } from '../../gates/shared/helpers';
+import { fileSha256 } from '../../core/file-hashing';
+import { toPosix } from '../../core/orchestrator-paths';
+import type {
+    EvidenceArtifactContract,
+    TaskAuditSummaryContract
+} from '../../core/task-audit-contracts';
 import {
     buildRuntimeRetentionPreview,
     type RuntimeRetentionHealthState,
@@ -24,7 +27,7 @@ export interface TaskHistoryLedgerArtifact {
     event_source: 'task-history-ledger';
     task_id: string;
     generated_utc: string;
-    audit_status: TaskAuditSummaryResult['status'];
+    audit_status: TaskAuditSummaryContract['status'];
     verification: {
         status: TaskHistoryLedgerVerificationStatus;
         issues: string[];
@@ -118,11 +121,11 @@ function buildArtifactRef(artifactPath: string): TaskHistoryLedgerArtifactRef {
     };
 }
 
-function findEvidenceArtifact(evidence: EvidenceArtifact[], kind: string): EvidenceArtifact | null {
+function findEvidenceArtifact(evidence: EvidenceArtifactContract[], kind: string): EvidenceArtifactContract | null {
     return evidence.find((artifact) => artifact.kind === kind) || null;
 }
 
-function resolveEvidencePath(summary: TaskAuditSummaryResult, kind: string, fallbackPath: string): string {
+function resolveEvidencePath(summary: TaskAuditSummaryContract, kind: string, fallbackPath: string): string {
     const artifact = findEvidenceArtifact(summary.evidence, kind);
     return artifact ? path.resolve(artifact.path) : path.resolve(fallbackPath);
 }
@@ -138,12 +141,12 @@ function readArtifactJson(artifactPath: string): Record<string, unknown> | null 
     }
 }
 
-function normalizeCompileGateTimestamp(summary: TaskAuditSummaryResult): string | null {
+function normalizeCompileGateTimestamp(summary: TaskAuditSummaryContract): string | null {
     const compileGate = summary.gates.find((gate) => gate.gate === 'compile-gate' && gate.status === 'PASS');
     return compileGate?.timestamp_utc || null;
 }
 
-function summarizeReusedAttempts(summary: TaskAuditSummaryResult): number | null {
+function summarizeReusedAttempts(summary: TaskAuditSummaryContract): number | null {
     const reviewTypes = summary.review_attempt_summary?.review_types || [];
     if (reviewTypes.length === 0) {
         return null;
@@ -152,7 +155,7 @@ function summarizeReusedAttempts(summary: TaskAuditSummaryResult): number | null
 }
 
 function determineVerificationStatus(
-    summary: TaskAuditSummaryResult,
+    summary: TaskAuditSummaryContract,
     refs: TaskHistoryLedgerArtifact['artifact_refs'],
     requiredReviewTypes: string[],
     fullSuiteRequired: boolean
@@ -289,7 +292,7 @@ export function scanTaskHistoryLedgerRoot(bundleRoot: string): TaskHistoryLedger
     return summary;
 }
 
-export function buildTaskHistoryLedger(summary: TaskAuditSummaryResult, repoRoot: string): TaskHistoryLedgerArtifact {
+export function buildTaskHistoryLedger(summary: TaskAuditSummaryContract, repoRoot: string): TaskHistoryLedgerArtifact {
     const finalCloseoutJsonPath = path.resolve(summary.final_closeout.artifact_paths.json);
     const bundleRoot = inferBundleRootFromArtifactPath(finalCloseoutJsonPath);
     const reviewsRoot = path.dirname(finalCloseoutJsonPath);

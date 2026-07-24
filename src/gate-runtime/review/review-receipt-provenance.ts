@@ -1,4 +1,4 @@
-import type { DomainScopeFingerprints } from '../../gates/scope/domain-scope-fingerprints';
+import type { DomainScopeFingerprints } from '../../core/domain-scope-contracts';
 import type { TaskEventIntegrity } from '../task-events';
 
 export interface ReviewReceipt {

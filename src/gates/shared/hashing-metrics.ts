@@ -1,9 +1,9 @@
 import * as fs from 'node:fs';
-import * as crypto from 'node:crypto';
 import {
     BOOLEAN_FALSE_VALUES,
     BOOLEAN_TRUE_VALUES
 } from '../../core/constants';
+import { fileSha256, stringSha256 } from '../../core/file-hashing';
 import {
     appendMetricJsonLines,
     recordToxinMetricsSnapshot,
@@ -35,27 +35,7 @@ export function parseBool(value: unknown, defaultValue = false): boolean {
     return !!defaultValue;
 }
 
-/**
- * SHA-256 hash of a string.
- */
-export function stringSha256(value: unknown): string | null {
-    if (value == null) return null;
-    return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex').toLowerCase();
-}
-
-/**
- * SHA-256 hash of a file.
- */
-export function fileSha256(filePath: string): string | null {
-    if (!filePath) return null;
-    try {
-        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return null;
-        const content = fs.readFileSync(filePath);
-        return crypto.createHash('sha256').update(content).digest('hex').toLowerCase();
-    } catch {
-        return null;
-    }
-}
+export { fileSha256, stringSha256 };
 
 /**
  * Count non-empty lines in a file.

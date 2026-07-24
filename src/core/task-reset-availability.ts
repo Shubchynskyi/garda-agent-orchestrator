@@ -3,11 +3,11 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { buildDefaultWorkflowConfig } from './workflow-config';
-import { joinOrchestratorPath } from '../gates/shared/helpers';
+import { joinOrchestratorPath } from './orchestrator-paths';
 import {
     computeProtectedSnapshotDigest,
     resolveProtectedControlPlaneManifestPath
-} from '../gates/protected-control-plane/protected-control-plane';
+} from './protected-control-plane-contracts';
 import { validateWorkflowConfig } from '../schemas/config-artifacts';
 import { isPlainRecord } from './records';
 

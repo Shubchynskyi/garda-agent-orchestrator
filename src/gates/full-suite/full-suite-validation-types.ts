@@ -1,24 +1,14 @@
 import type { FullSuiteValidationPlacement } from '../../core/workflow-config';
 import type { RawOutputRetentionEvidence } from '../../gate-runtime/output-log-retention';
+import type { OutOfScopeFailurePolicy } from '../../core/full-suite-validation-config';
 
-export const OUT_OF_SCOPE_FAILURE_POLICIES = Object.freeze([
-    'AUDIT_AND_BLOCK',
-    'AUDIT_AND_WARN'
-] as const);
-
-export type OutOfScopeFailurePolicy = (typeof OUT_OF_SCOPE_FAILURE_POLICIES)[number];
-
-export interface FullSuiteValidationConfig {
-    readonly enabled: boolean;
-    readonly command: string;
-    readonly timeout_ms: number;
-    readonly timeout_blocker?: boolean;
-    readonly timeout_retry_count?: number;
-    readonly green_summary_max_lines: number;
-    readonly red_failure_chunk_lines: number;
-    readonly out_of_scope_failure_policy: OutOfScopeFailurePolicy;
-    readonly placement: FullSuiteValidationPlacement;
-}
+export {
+    OUT_OF_SCOPE_FAILURE_POLICIES
+} from '../../core/full-suite-validation-config';
+export type {
+    FullSuiteValidationConfig,
+    OutOfScopeFailurePolicy
+} from '../../core/full-suite-validation-config';
 
 export interface FullSuiteValidationCycleBinding {
     task_id: string;

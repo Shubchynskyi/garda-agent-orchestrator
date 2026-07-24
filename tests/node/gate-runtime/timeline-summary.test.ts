@@ -157,11 +157,10 @@ function writeWorkflowConfig(dirPath: string, enabled: boolean): void {
 
 describe('gate-runtime/timeline-summary', () => {
 
-    it('uses the direct lightweight preflight code-change helper instead of broader gate barrels', () => {
+    it('uses the dependency-safe core code-change helper instead of gate modules', () => {
         const source = fs.readFileSync(path.resolve(process.cwd(), 'src/gate-runtime/timeline-summary.ts'), 'utf8');
-        assert.match(source, /from\s+['"]\.\.\/gates\/preflight\/preflight-code-change['"]/);
-        assert.doesNotMatch(source, /from\s+['"]\.\.\/gates\/preflight['"]/);
-        assert.doesNotMatch(source, /from\s+['"]\.\.\/gates\/completion['"]/);
+        assert.match(source, /from\s+['"]\.\.\/core\/preflight-code-change['"]/);
+        assert.doesNotMatch(source, /from\s+['"][^'"]*\/gates\//);
     });
 
     describe('getTimelineSummaryPath', () => {

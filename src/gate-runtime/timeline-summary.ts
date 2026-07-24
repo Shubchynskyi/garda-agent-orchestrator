@@ -8,10 +8,10 @@ import {
 } from './lifecycle-events';
 import { inspectTaskEventFile } from './task-events';
 import { withFilesystemLock } from './task-events-locking';
-// Keep this direct helper import; the preflight barrel loads classification modules into status/report paths.
+// Keep this dependency-safe helper import; gate barrels load classification modules into status/report paths.
 // noinspection ES6PreferShortImport
-import { detectCodeChanged } from '../gates/preflight/preflight-code-change';
-import { loadFullSuiteValidationConfig } from '../gates/full-suite';
+import { detectCodeChanged } from '../core/preflight-code-change';
+import { loadFullSuiteValidationConfig } from '../core/full-suite-validation-config';
 import { parseTaskIdJsonlFileName, RESERVED_TASK_EVENT_TIMELINE_NAMES } from '../core/task-ids';
 
 // Root module retained for source-contract tests; timeline exports re-route grouped imports.
