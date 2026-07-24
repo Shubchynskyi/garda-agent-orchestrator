@@ -68,6 +68,7 @@ import type {
     NextStepCommand,
     NextStepFinalReportSummary,
     NextStepOptionalSkillSelectionSummary,
+    NextStepReviewCycleBlock,
     NextStepStatus
 } from './next-step';
 
@@ -79,6 +80,7 @@ export interface NextStepDecisionRoutePayload {
     commands: NextStepCommand[];
     missingArtifacts?: NextStepArtifactState[];
     presentArtifacts?: NextStepArtifactState[];
+    reviewCycleBlock?: NextStepReviewCycleBlock | null;
     finalReport?: NextStepFinalReportSummary | null;
 }
 
@@ -590,7 +592,7 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
                 };
             }
         }
-        if (hasChildren && !childRoute) {
+        if (!childRoute) {
             const repairRestoreRoute = resolveCompletedFullSuiteRepairWipRestoreRoute({
                 repoRoot: options.repoRoot,
                 reviewsRoot: options.reviewsRoot,

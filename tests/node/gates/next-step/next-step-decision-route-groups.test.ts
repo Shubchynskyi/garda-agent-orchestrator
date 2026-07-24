@@ -16,6 +16,21 @@ import {
     resolveTaskIdCaseMismatchDecisionRoute,
     resolveTaskQueueTerminalDecisionRoute
 } from '../../../../src/gates/next-step/next-step-decision-route-groups';
+import {
+    resolveReviewCycleGuardDecisionRoute,
+    resolveScopeBudgetGuardDecisionRoute,
+    resolveValidationDecisionRoute
+} from '../../../../src/gates/next-step/next-step-validation-routes';
+import type {
+    ScopeBudgetGuardEvaluation
+} from '../../../../src/core/scope-budget-guard';
+import type {
+    NextStepReviewCycleBlock,
+    ReviewCycleGuardEvaluation
+} from '../../../../src/gates/next-step/next-step-review-cycle-guard';
+import type {
+    SplitRequiredLatchResult
+} from '../../../../src/gates/next-step/next-step-split-required-latch';
 
 function makeTempRuntime(): { repoRoot: string; reviewsRoot: string; eventsRoot: string } {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-route-groups-'));
@@ -24,6 +39,60 @@ function makeTempRuntime(): { repoRoot: string; reviewsRoot: string; eventsRoot:
     fs.mkdirSync(reviewsRoot, { recursive: true });
     fs.mkdirSync(eventsRoot, { recursive: true });
     return { repoRoot, reviewsRoot, eventsRoot };
+}
+
+const noopCommand = (): never => {
+    throw new Error('Lower-priority callback must not run.');
+};
+
+function makeReviewCycleEvaluation(overrides: Record<string, unknown> = {}): ReviewCycleGuardEvaluation {
+    return {
+        active: true,
+        action: 'BLOCK_FOR_OPERATOR_DECISION',
+        should_block: true,
+        summary_line: 'Review cycle limit exceeded.',
+        total_non_test_review_count: 2,
+        failed_non_test_review_count: 1,
+        excluded_review_types: ['test'],
+        violations: [],
+        ...overrides
+    } as unknown as ReviewCycleGuardEvaluation;
+}
+
+function makeReviewCycleBlock(autoSplitEnabled: boolean): NextStepReviewCycleBlock {
+    return {
+        kind: 'review_cycle_guard',
+        operator_decision_required: true,
+        wait_for_operator: !autoSplitEnabled,
+        auto_split_enabled: autoSplitEnabled,
+        reason: 'Review cycle limit exceeded.',
+        choices: ['allow_one_more_cycle', 'split_task'],
+        operator_choice_guidance: [
+            'allow_one_more_cycle: Continue once.',
+            'split_task: Split the task.'
+        ],
+        auto_split_prompt: null
+    } as unknown as NextStepReviewCycleBlock;
+}
+
+function makeSplitRequiredLatch(
+    outcome: 'updated' | 'already_synced' | 'write_failed'
+): SplitRequiredLatchResult {
+    return {
+        artifact_path: 'runtime/reviews/T-1-split-required.json',
+        artifact_sha256: 'abc',
+        status_sync: {
+            outcome,
+            task_id: 'T-1',
+            previous_status: 'IN_PROGRESS',
+            next_status: 'SPLIT_REQUIRED',
+            task_path: 'TASK.md',
+            error_message: outcome === 'write_failed' ? 'status update failed' : null
+        },
+        status_event_recorded: outcome === 'updated',
+        latch_event_recorded: true,
+        wip_capture: null
+    } as SplitRequiredLatchResult;
 }
 
 test('resolveTaskQueueTerminalDecisionRoute preserves DONE conflict routing through task-reset', () => {
@@ -54,6 +123,426 @@ test('resolveTaskQueueTerminalDecisionRoute preserves DONE conflict routing thro
     assert.equal(route.nextGate, 'task-reset');
     assert.equal(route.commands[0]?.label, 'Preview explicit operator reopen');
     assert.match(route.reason, /completion-gate: missing or not passed/);
+});
+
+test('resolveScopeBudgetGuardDecisionRoute materializes a blocking latch and preserves sync failure', () => {
+    const evaluation = {
+        active: true,
+        action: 'BLOCK_FOR_SPLIT',
+        status: 'BLOCK',
+        profile_name: 'balanced',
+        violations: [],
+        should_warn: true,
+        should_block: true,
+        continuation_allowed: false,
+        summary_line: 'Scope budget exceeded.'
+    } satisfies ScopeBudgetGuardEvaluation;
+    const decision = resolveScopeBudgetGuardDecisionRoute({
+        evaluation,
+        guardReason: 'Sanitized scope budget guard reason',
+        materializeLatch: () => ({
+            artifact_path: 'runtime/reviews/T-1-split-required.json',
+            artifact_sha256: 'abc',
+            status_sync: {
+                outcome: 'write_failed',
+                task_id: 'T-1',
+                previous_status: 'IN_PROGRESS',
+                next_status: 'SPLIT_REQUIRED',
+                task_path: 'TASK.md',
+                error_message: 'status update failed'
+            },
+            status_event_recorded: true,
+            latch_event_recorded: true,
+            wip_capture: null
+        } as SplitRequiredLatchResult),
+        formatArtifactPath: (artifactPath: string) => artifactPath,
+        presentArtifacts: []
+    });
+
+    assert.equal(decision.route?.status, 'BLOCKED');
+    assert.equal(decision.route?.nextGate, 'split-required-latch');
+    assert.match(decision.route?.reason || '', /status update failed/);
+    assert.equal(decision.warnings.length, 1);
+});
+
+test('resolveScopeBudgetGuardDecisionRoute returns SPLIT_REQUIRED after successful latch sync', () => {
+    const options = {
+        evaluation: {
+            active: true,
+            action: 'BLOCK_FOR_SPLIT',
+            status: 'BLOCK',
+            profile_name: 'balanced',
+            violations: [],
+            should_warn: false,
+            should_block: true,
+            continuation_allowed: false,
+            summary_line: 'Scope budget exceeded.'
+        } satisfies ScopeBudgetGuardEvaluation,
+        guardReason: null,
+        formatArtifactPath: (artifactPath: string) => artifactPath,
+        presentArtifacts: [{
+            key: 'preflight',
+            path: 'runtime/reviews/T-1-preflight.json',
+            exists: true
+        }]
+    };
+    const decision = resolveScopeBudgetGuardDecisionRoute({
+        ...options,
+        materializeLatch: () => makeSplitRequiredLatch('updated')
+    });
+    const idempotentDecision = resolveScopeBudgetGuardDecisionRoute({
+        ...options,
+        materializeLatch: () => makeSplitRequiredLatch('already_synced')
+    });
+
+    assert.equal(decision.route?.status, 'SPLIT_REQUIRED');
+    assert.equal(decision.route?.nextGate, 'split-required-latch');
+    assert.deepEqual(decision.route?.missingArtifacts, []);
+    assert.equal(decision.route?.presentArtifacts?.length, 1);
+    assert.equal(idempotentDecision.route?.status, 'SPLIT_REQUIRED');
+});
+
+test('resolveReviewCycleGuardDecisionRoute accepts one active continuation without building a block', () => {
+    const evaluation = makeReviewCycleEvaluation();
+    const decision = resolveReviewCycleGuardDecisionRoute({
+        evaluation,
+        getPendingRequiredReviewTypes: () => ['code'],
+        assessContinuation: () => ({
+            status: 'ACTIVE',
+            reason: 'One additional review attempt remains.',
+            artifact_path: 'runtime/reviews/T-1-review-cycle-continuation.json',
+            artifact_sha256: 'abc',
+            artifact: null,
+            remaining_total_non_test_review_attempts: 1,
+            remaining_failed_non_test_reviews: 1
+        }),
+        buildOperatorBlock: noopCommand,
+        materializeLatch: noopCommand,
+        materializeAutoSplitPrompt: noopCommand,
+        buildContinuationCommand: noopCommand,
+        buildSplitDecisionCommand: noopCommand,
+        formatArtifactPath: (artifactPath) => artifactPath,
+        presentArtifacts: [],
+        defaultMissingArtifacts: []
+    });
+
+    assert.equal(decision.route, null);
+    assert.equal(decision.warnings.length, 1);
+    assert.match(decision.warnings[0] || '', /one-shot continuation active/);
+});
+
+test('resolveReviewCycleGuardDecisionRoute does not read review evidence for a nonblocking guard', () => {
+    let pendingReviewReads = 0;
+    const decision = resolveReviewCycleGuardDecisionRoute({
+        evaluation: makeReviewCycleEvaluation({
+            action: 'WARN_ONLY',
+            should_block: false,
+            violations: ['review cycle warning']
+        }),
+        getPendingRequiredReviewTypes: () => {
+            pendingReviewReads += 1;
+            return ['code'];
+        },
+        assessContinuation: noopCommand,
+        buildOperatorBlock: noopCommand,
+        materializeLatch: noopCommand,
+        materializeAutoSplitPrompt: noopCommand,
+        buildContinuationCommand: noopCommand,
+        buildSplitDecisionCommand: noopCommand,
+        formatArtifactPath: (artifactPath) => artifactPath,
+        presentArtifacts: [],
+        defaultMissingArtifacts: []
+    });
+
+    assert.equal(decision.route, null);
+    assert.equal(pendingReviewReads, 0);
+    assert.equal(decision.warnings.length, 1);
+    assert.match(decision.warnings[0] || '', /Review cycle limit exceeded/);
+});
+
+test('resolveReviewCycleGuardDecisionRoute offers continuation and split for missing evidence', () => {
+    const decision = resolveReviewCycleGuardDecisionRoute({
+        evaluation: makeReviewCycleEvaluation(),
+        getPendingRequiredReviewTypes: () => ['code'],
+        assessContinuation: () => ({
+            status: 'MISSING',
+            reason: 'No continuation was recorded.',
+            artifact_path: 'runtime/reviews/T-1-review-cycle-continuation.json',
+            artifact_sha256: null,
+            artifact: null,
+            remaining_total_non_test_review_attempts: null,
+            remaining_failed_non_test_reviews: null
+        }),
+        buildOperatorBlock: () => makeReviewCycleBlock(false),
+        materializeLatch: noopCommand,
+        materializeAutoSplitPrompt: noopCommand,
+        buildContinuationCommand: () => 'record-continuation',
+        buildSplitDecisionCommand: () => 'record-split',
+        formatArtifactPath: (artifactPath) => artifactPath,
+        presentArtifacts: [],
+        defaultMissingArtifacts: []
+    });
+
+    assert.equal(decision.route?.status, 'BLOCKED');
+    assert.equal(decision.route?.nextGate, 'review-cycle-attempt-guard');
+    assert.deepEqual(
+        decision.route?.commands.map((command) => command.command),
+        ['record-continuation', 'record-split']
+    );
+});
+
+test('resolveReviewCycleGuardDecisionRoute preserves auto-split success and sync failure', () => {
+    const common = {
+        evaluation: makeReviewCycleEvaluation(),
+        getPendingRequiredReviewTypes: () => ['code'],
+        assessContinuation: () => ({
+            status: 'EXPIRED' as const,
+            reason: 'The prior continuation expired.',
+            artifact_path: 'runtime/reviews/T-1-review-cycle-continuation.json',
+            artifact_sha256: 'abc',
+            artifact: null,
+            remaining_total_non_test_review_attempts: 0,
+            remaining_failed_non_test_reviews: 0
+        }),
+        materializeAutoSplitPrompt: () => ({
+            kind: 'review_cycle_auto_split_prompt' as const,
+            artifact_path: 'runtime/reviews/T-1-auto-split.json',
+            artifact_sha256: 'def',
+            current_state: 'checkpoint' as const,
+            latch_artifact_path: 'runtime/reviews/T-1-split-required.json',
+            latch_artifact_sha256: 'abc',
+            wip_capture_status: 'CAPTURED' as const,
+            wip_manifest_path: 'runtime/reviews/T-1-wip.json',
+            work_package_contract_path: 'runtime/reviews/T-1-work-package.json',
+            next_action: 'Create child tasks.',
+            state_next_action: 'inspect_checkpoint_scope' as const,
+            next_action_command: 'inspect-checkpoint',
+            instructions: ['Create child tasks.'],
+            constraints: ['Do not continue the parent.']
+        }),
+        buildContinuationCommand: noopCommand,
+        buildSplitDecisionCommand: noopCommand,
+        formatArtifactPath: (artifactPath: string) => artifactPath,
+        presentArtifacts: [],
+        defaultMissingArtifacts: []
+    };
+    const successful = resolveReviewCycleGuardDecisionRoute({
+        ...common,
+        buildOperatorBlock: () => makeReviewCycleBlock(true),
+        materializeLatch: () => makeSplitRequiredLatch('updated')
+    });
+    const failed = resolveReviewCycleGuardDecisionRoute({
+        ...common,
+        buildOperatorBlock: () => makeReviewCycleBlock(true),
+        materializeLatch: () => makeSplitRequiredLatch('write_failed')
+    });
+
+    assert.equal(successful.route?.status, 'SPLIT_REQUIRED');
+    assert.equal(successful.route?.reviewCycleBlock?.auto_split_prompt?.next_action, 'Create child tasks.');
+    assert.equal(failed.route?.status, 'BLOCKED');
+    assert.match(failed.route?.reason || '', /status update failed/);
+});
+
+test('resolveReviewCycleGuardDecisionRoute suppresses another continuation after expiry', () => {
+    const decision = resolveReviewCycleGuardDecisionRoute({
+        evaluation: makeReviewCycleEvaluation(),
+        getPendingRequiredReviewTypes: () => ['code'],
+        assessContinuation: () => ({
+            status: 'EXPIRED',
+            reason: 'The prior continuation expired.',
+            artifact_path: 'runtime/reviews/T-1-review-cycle-continuation.json',
+            artifact_sha256: 'abc',
+            artifact: null,
+            remaining_total_non_test_review_attempts: 0,
+            remaining_failed_non_test_reviews: 0
+        }),
+        buildOperatorBlock: () => makeReviewCycleBlock(false),
+        materializeLatch: noopCommand,
+        materializeAutoSplitPrompt: noopCommand,
+        buildContinuationCommand: noopCommand,
+        buildSplitDecisionCommand: () => 'record-split',
+        formatArtifactPath: (artifactPath) => artifactPath,
+        presentArtifacts: [],
+        defaultMissingArtifacts: []
+    });
+
+    assert.equal(decision.route?.status, 'BLOCKED');
+    assert.deepEqual(decision.route?.commands.map((command) => command.command), ['record-split']);
+    assert.deepEqual(decision.route?.reviewCycleBlock?.choices, ['split_task']);
+    assert.match(
+        decision.route?.reviewCycleBlock?.operator_choice_guidance.at(-1) || '',
+        /continuation_already_recorded/
+    );
+});
+
+test('resolveValidationDecisionRoute preserves quality, baseline implementation, compile, no-op, then full-suite precedence', () => {
+    const qualityRoute = {
+        status: 'BLOCKED' as const,
+        nextGate: 'quality-checklist',
+        title: 'Complete quality checklist.',
+        reason: 'Checklist is pending.',
+        commands: []
+    };
+    const compileRoute = {
+        status: 'BLOCKED' as const,
+        nextGate: 'compile-gate',
+        title: 'Run compile gate.',
+        reason: 'Compile is pending.',
+        commands: []
+    };
+    const fullSuiteRoute = {
+        status: 'BLOCKED' as const,
+        nextGate: 'full-suite-validation',
+        title: 'Run full suite.',
+        reason: 'Full suite is pending.',
+        commands: []
+    };
+    const common = {
+        resolveBaselineOnlyPreImplementationRoute: () => null,
+        resolveAuditedNoOpState: () => ({
+            required: true,
+            passed: false,
+            evidenceStatus: 'EVIDENCE_FILE_MISSING',
+            command: 'record-no-op'
+        }),
+        resolveFullSuiteValidationRoute: () => fullSuiteRoute
+    };
+
+    assert.equal(resolveValidationDecisionRoute({
+        ...common,
+        resolveQualityChecklistRoute: () => qualityRoute,
+        resolveCompileGateRoute: () => compileRoute
+    })?.nextGate, 'quality-checklist');
+    assert.equal(resolveValidationDecisionRoute({
+        ...common,
+        resolveQualityChecklistRoute: () => null,
+        resolveBaselineOnlyPreImplementationRoute: () => ({
+            nextGate: 'implementation',
+            title: 'Implement changes.',
+            reason: 'Materialize the planned diff.'
+        }),
+        resolveCompileGateRoute: () => compileRoute
+    })?.nextGate, 'implementation');
+    assert.equal(resolveValidationDecisionRoute({
+        ...common,
+        resolveQualityChecklistRoute: () => null,
+        resolveBaselineOnlyPreImplementationRoute: () => ({
+            nextGate: 'implementation',
+            title: 'Implement changes.',
+            reason: 'Materialize the planned diff.'
+        }),
+        resolveCompileGateRoute: () => null
+    })?.nextGate, 'implementation');
+    assert.equal(resolveValidationDecisionRoute({
+        ...common,
+        resolveQualityChecklistRoute: () => null,
+        resolveCompileGateRoute: () => compileRoute
+    })?.nextGate, 'compile-gate');
+    assert.equal(resolveValidationDecisionRoute({
+        ...common,
+        resolveQualityChecklistRoute: () => null,
+        resolveCompileGateRoute: () => null
+    })?.nextGate, 'record-no-op');
+    assert.equal(resolveValidationDecisionRoute({
+        ...common,
+        resolveQualityChecklistRoute: () => null,
+        resolveCompileGateRoute: () => null,
+        resolveAuditedNoOpState: () => ({
+            required: true,
+            passed: true,
+            evidenceStatus: 'PASS',
+            command: 'record-no-op'
+        })
+    })?.nextGate, 'full-suite-validation');
+});
+
+test('resolveValidationDecisionRoute does not evaluate lower-priority resolvers', () => {
+    let lowerPriorityReads = 0;
+    const route = resolveValidationDecisionRoute({
+        resolveQualityChecklistRoute: () => ({
+            status: 'BLOCKED',
+            nextGate: 'quality-checklist',
+            title: 'Complete quality checklist.',
+            reason: 'Checklist is pending.',
+            commands: []
+        }),
+        resolveBaselineOnlyPreImplementationRoute: () => {
+            lowerPriorityReads += 1;
+            return null;
+        },
+        resolveCompileGateRoute: () => {
+            lowerPriorityReads += 1;
+            return null;
+        },
+        resolveAuditedNoOpState: () => {
+            lowerPriorityReads += 1;
+            return {
+                required: false,
+                passed: false,
+                evidenceStatus: 'NOT_REQUIRED',
+                command: 'record-no-op'
+            };
+        },
+        resolveFullSuiteValidationRoute: () => {
+            lowerPriorityReads += 1;
+            return null;
+        }
+    });
+
+    assert.equal(route?.nextGate, 'quality-checklist');
+    assert.equal(lowerPriorityReads, 0);
+});
+
+test('resolveValidationDecisionRoute short-circuits after baseline, compile, and audited no-op winners', () => {
+    let lowerPriorityReads = 0;
+    const lowerPriority = () => {
+        lowerPriorityReads += 1;
+        return null;
+    };
+    const baselineRoute = resolveValidationDecisionRoute({
+        resolveQualityChecklistRoute: () => null,
+        resolveBaselineOnlyPreImplementationRoute: () => ({
+            nextGate: 'implementation',
+            title: 'Implement changes.',
+            reason: 'Materialize the planned diff.'
+        }),
+        resolveCompileGateRoute: lowerPriority,
+        resolveAuditedNoOpState: noopCommand,
+        resolveFullSuiteValidationRoute: lowerPriority
+    });
+    assert.equal(baselineRoute?.nextGate, 'implementation');
+    assert.equal(lowerPriorityReads, 0);
+
+    const compileRoute = resolveValidationDecisionRoute({
+        resolveQualityChecklistRoute: () => null,
+        resolveBaselineOnlyPreImplementationRoute: () => null,
+        resolveCompileGateRoute: () => ({
+            status: 'BLOCKED',
+            nextGate: 'compile-gate',
+            title: 'Run compile gate.',
+            reason: 'Compile is pending.',
+            commands: []
+        }),
+        resolveAuditedNoOpState: noopCommand,
+        resolveFullSuiteValidationRoute: lowerPriority
+    });
+    assert.equal(compileRoute?.nextGate, 'compile-gate');
+    assert.equal(lowerPriorityReads, 0);
+
+    const noOpRoute = resolveValidationDecisionRoute({
+        resolveQualityChecklistRoute: () => null,
+        resolveBaselineOnlyPreImplementationRoute: () => null,
+        resolveCompileGateRoute: () => null,
+        resolveAuditedNoOpState: () => ({
+            required: true,
+            passed: false,
+            evidenceStatus: 'EVIDENCE_FILE_MISSING',
+            command: 'record-no-op'
+        }),
+        resolveFullSuiteValidationRoute: lowerPriority
+    });
+    assert.equal(noOpRoute?.nextGate, 'record-no-op');
+    assert.equal(lowerPriorityReads, 0);
 });
 
 test('resolveTaskIdCaseMismatchDecisionRoute preserves terminal casing recovery before startup', () => {
