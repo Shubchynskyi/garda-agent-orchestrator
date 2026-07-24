@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 
 import type { ReviewFindingDispositionAction } from '../../policy/profile-resolver';
+import type { TaskQueueEntry } from '../../core/task-queue-read';
 import type { ReviewReuseTelemetryEventLike } from '../review-reuse/review-reuse-telemetry';
 import {
     resolveLockedReviewFindingPolicyFromPreflight,
@@ -187,6 +188,7 @@ function buildCurrentFindingsLane(options: {
     taskId: string;
     reviewType: string;
     currentPreflight: Record<string, unknown> | null;
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>;
 }): ReviewFindingsAuditLane | null {
     const receiptPath = path.join(options.reviewsRoot, `${options.taskId}-${options.reviewType}-receipt.json`);
     const receipt = safeReadJson(receiptPath);
@@ -257,7 +259,10 @@ function buildCurrentFindingsLane(options: {
             policyResolution,
             expectedReceiptPath: reused ? stringValue(receipt.reused_from_receipt_path) : null,
             expectedReceiptSha256: reused ? stringValue(receipt.reused_from_receipt_sha256) : null,
-            preferSnapshot: reused
+            preferSnapshot: reused,
+            taskQueueRows: options.taskQueueEntries
+                ? [...options.taskQueueEntries.values()]
+                : undefined
         })
         : null;
     const dispositionItems = new Map((disposition?.artifact?.items || []).map((item) => [item.id, item]));
@@ -359,6 +364,7 @@ export function buildReviewFindingsAuditSummary(options: {
     currentPreflight: Record<string, unknown> | null;
     timelineEvents: readonly ReviewReuseTelemetryEventLike[];
     reviewAttemptSummary: ReviewAttemptSummary | null;
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>;
 }): ReviewFindingsAuditSummary | null {
     const validationFailures = collectValidationFailures(options.timelineEvents);
     const remediationCycles = collectRemediationCycles(options.timelineEvents);

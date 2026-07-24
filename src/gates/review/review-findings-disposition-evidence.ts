@@ -62,6 +62,28 @@ export interface ReviewFindingsDispositionEvidenceCheckOptions {
     expectedReceiptPath?: string | null;
     expectedReceiptSha256?: string | null;
     preferSnapshot?: boolean;
+    taskQueueRows?: readonly {
+        taskId: string;
+        notes?: string | null;
+    }[];
+}
+
+export interface ReviewFindingsTaskQueueRow {
+    taskId: string;
+    notes?: string | null;
+}
+
+export function resolveReviewFindingsTaskQueueRows(options: {
+    repoRoot: string;
+    taskQueueRows?: readonly ReviewFindingsTaskQueueRow[];
+}): ReviewFindingsTaskQueueRow[] {
+    if (options.taskQueueRows !== undefined) {
+        return [...options.taskQueueRows];
+    }
+    const taskPath = path.join(options.repoRoot, 'TASK.md');
+    return fs.existsSync(taskPath)
+        ? parseCanonicalActiveTaskQueue(fs.readFileSync(taskPath, 'utf8')).rows
+        : [];
 }
 
 function normalizeHash(value: unknown): string | null {
@@ -201,6 +223,10 @@ function validateFollowUpSatisfaction(options: {
     reviewType: string;
     expectedReceiptPath?: string | null;
     expectedReceiptSha256?: string | null;
+    taskQueueRows?: readonly {
+        taskId: string;
+        notes?: string | null;
+    }[];
 }): { artifactPath: string | null; violations: string[] } {
     const followUpCount = options.dispositionArtifact.summary.follow_up_pending_count;
     if (followUpCount === 0) {
@@ -301,10 +327,7 @@ function validateFollowUpSatisfaction(options: {
         assertEqual(violations, 'Review findings follow-up source item policy', materializedItem.source_policy, expectedItem.policy_source);
         assertEqual(violations, 'Review findings follow-up source item blocking', materializedItem.blocking, expectedItem.blocking);
     }
-    const taskPath = path.join(options.repoRoot, 'TASK.md');
-    const taskRows = fs.existsSync(taskPath)
-        ? parseCanonicalActiveTaskQueue(fs.readFileSync(taskPath, 'utf8')).rows
-        : [];
+    const taskRows = resolveReviewFindingsTaskQueueRows(options);
     const taskRowsById = new Map(taskRows.map((row) => [row.taskId, row]));
     const materializationPolicy = toPlainRecord(artifact.materialization_policy);
     const materializationMode = materializationPolicy?.mode;
@@ -326,19 +349,20 @@ function validateFollowUpSatisfaction(options: {
             violations.push(`Review findings follow-up materialized task '${taskId}' does not resolve in TASK.md.`);
             continue;
         }
+        const taskNotes = taskRow.notes || '';
         const fingerprint = normalizeHash(item?.fingerprint);
         if (materializationMode === 'grouped_by_parent') {
             if (
                 !groupFingerprint
-                || !taskRow.notes.includes(`review_follow_up_group_fingerprint=${groupFingerprint}`)
+                || !taskNotes.includes(`review_follow_up_group_fingerprint=${groupFingerprint}`)
                 || !groupedLaneBindingPrefix
-                || !taskRow.notes.includes(groupedLaneBindingPrefix)
+                || !taskNotes.includes(groupedLaneBindingPrefix)
             ) {
                 violations.push(
                     `Review findings follow-up materialized task '${taskId}' is not bound to the expected grouped disposition lane.`
                 );
             }
-        } else if (!fingerprint || !taskRow.notes.includes(`review_follow_up_fingerprint=${fingerprint}`)) {
+        } else if (!fingerprint || !taskNotes.includes(`review_follow_up_fingerprint=${fingerprint}`)) {
             violations.push(
                 `Review findings follow-up materialized task '${taskId}' is not bound to fingerprint '${fingerprint || 'missing'}'.`
             );
@@ -502,7 +526,8 @@ function validateReviewFindingsDispositionEvidenceUnlocked(
         taskId: options.expectedTaskId,
         reviewType: options.expectedReviewType,
         expectedReceiptPath: options.expectedReceiptPath,
-        expectedReceiptSha256: options.expectedReceiptSha256
+        expectedReceiptSha256: options.expectedReceiptSha256,
+        taskQueueRows: options.taskQueueRows
     });
     violations.push(...followUp.violations);
     return {

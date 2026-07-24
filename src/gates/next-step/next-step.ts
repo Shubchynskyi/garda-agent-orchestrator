@@ -200,10 +200,7 @@ import {
     timelineHasDelegatedReviewRoutingAfterCompile
 } from './next-step-reviewer-launch-evidence';
 import {
-    resolveDownstreamDependencyRebindRoute,
     resolveFailedReviewRemediationRoute,
-    resolveReviewGateStaleContextPrecheckRecoveryRoute,
-    resolveReviewGateStaleUpstreamRecoveryRoute,
     resolveStrictSequentialUpstreamReuseRoute,
     type ReviewReuseCandidateHint
 } from './next-step-review-reuse-routing';
@@ -214,9 +211,6 @@ import {
 } from './next-step-focused-intermediate-evidence';
 import {
     buildReviewGateChainStatusSummary,
-    findDownstreamReviewNeedingDependencyRebind,
-    findReviewGateStaleContextPrecheckRecovery,
-    findReviewGateStaleUpstreamRecovery,
     findStrictSequentialUpstreamNeedingCurrentCycleReuse,
     getHiddenReviewTimingTrustRemediation,
     reviewStateHasCurrentRecordedEvidence,
@@ -225,8 +219,8 @@ import {
     timelineHasReviewReuseRecordedAfterCompile
 } from './next-step-review-evidence';
 import {
-    resolvePostReviewCloseoutRouteFromState
-} from './next-step-closeout-routing';
+    resolvePostReviewLifecycleDecisionRouteFromState
+} from './next-step-post-review-routes';
 import {
     resolveNextStepCompileGateRoute,
     resolveNextStepQualityChecklistRoute
@@ -334,7 +328,6 @@ import {
     buildPostPreflightRulePackBindCommand,
     buildPostPreflightRulePackCommandForFiles,
     buildQualityChecklistCommand,
-    buildRequiredReviewsCheckCommand,
     buildReviewContextCommand,
     getEffectiveDepthForPostPreflightRules,
     getPostPreflightRuleFileNames,
@@ -4036,350 +4029,62 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         }
     }
 
-    const downstreamDependencyRebind = reviewGateAlreadyPassed
-        ? null
-        : findDownstreamReviewNeedingDependencyRebind({
-            eventsRoot,
-            taskId,
-            requiredReviewTypes,
-            requiredReviews: summary.required_reviews,
-            policyMode: reviewPolicy.mode,
-            reviewStates
-        });
-    if (downstreamDependencyRebind) {
-        const reviewType = downstreamDependencyRebind.downstreamState.reviewType;
-        const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
-        const reviewerReadinessChain = buildReviewerReadinessChainSummary(
-            repoRoot,
-            eventsRoot,
-            taskId,
-            reviewType,
-            downstreamDependencyRebind.downstreamState,
-            (candidateState) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, candidateState)
-        );
-        const reviewContextChain = buildReviewGateChainStatusSummary({
-            repoRoot,
-            eventsRoot,
-            taskId,
-            reviewType,
-            edgeId: 'compile-to-review-context',
-            reason: `latest upstream '${downstreamDependencyRebind.upstreamReviewType}' review evidence is recorded before re-binding '${reviewType}' review context`,
-            preflightPath: preflightCommandPath,
-            reviewContextPath: downstreamDependencyRebind.downstreamState.contextPath
-                ? toRepoDisplayPath(repoRoot, downstreamDependencyRebind.downstreamState.contextPath)
-                : undefined,
-            depth: reviewDepth
-        });
-        const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`);
-        const scopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.diff`);
-        const scopedDiffReadiness = scopedDiffExpectedForReview({
-            preflight,
-            reviewType
-        })
-            ? getScopedDiffMetadataReadiness({
-                metadataPath: scopedDiffMetadataPath,
+    const postReviewLifecycleDecisionRoute = resolvePostReviewLifecycleDecisionRouteFromState({
+        repoRoot,
+        eventsRoot,
+        reviewsRoot,
+        taskId,
+        cliPrefix,
+        preflight,
+        preflightPath,
+        preflightCommandPath,
+        preflightSha256,
+        taskMode,
+        taskModePath,
+        reviewGateAlreadyPassed,
+        requiredReviewTypes,
+        requiredReviews: summary.required_reviews,
+        reviewPolicyMode: reviewPolicy.mode,
+        reviewStates,
+        closeoutState: {
+            requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
+            zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),
+            docImpactGatePassed: isGatePassed(summary, 'doc-impact-gate'),
+            docImpactCompatibilityHint: buildDocImpactCompatibilityHint(),
+            docImpactCommand: buildDocImpactCommand(
+                cliPrefix,
+                taskId,
+                preflightCommandPath,
                 preflight,
-                preflightPath,
-                preflightSha256,
-                reviewType
-            })
-            : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
-        const downstreamRebindRoute = resolveDownstreamDependencyRebindRoute({
-            reviewPolicyMode: reviewPolicy.mode,
-            downstreamReviewType: reviewType,
-            upstreamReviewType: downstreamDependencyRebind.upstreamReviewType,
-            scopedDiffReadiness,
-            reviewerReadinessChain,
-            reviewContextChain,
-            commands: {
-                buildScopedDiff: buildCommand(
-                    'Build scoped diff',
-                    buildScopedDiffCommand({
-                        cliPrefix,
-                        reviewType,
-                        preflightCommandPath,
-                        outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
-                        metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
-                    })
-                ),
-                buildReviewContext: buildCommand(
-                    'Build review context',
-                    buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
-                )
-            }
-        });
-        return buildResult({
-            ...resultBase,
-            status: downstreamRebindRoute.status,
-            nextGate: downstreamRebindRoute.nextGate,
-            title: downstreamRebindRoute.title,
-            reason: downstreamRebindRoute.reason,
-            commands: downstreamRebindRoute.commands
-        });
-    }
-
-    const reviewGateStaleUpstreamRecovery = reviewGateAlreadyPassed
-        ? null
-        : findReviewGateStaleUpstreamRecovery({
-            repoRoot,
-            eventsRoot,
-            taskId,
-            requiredReviewTypes,
-            requiredReviews: summary.required_reviews,
-            policyMode: reviewPolicy.mode,
-            reviewStates
-        });
-    if (reviewGateStaleUpstreamRecovery) {
-        const reviewType = reviewGateStaleUpstreamRecovery.upstreamReviewType;
-        const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
-        const reviewerReadinessChain = buildReviewerReadinessChainSummary(
-            repoRoot,
-            eventsRoot,
-            taskId,
-            reviewType,
-            reviewGateStaleUpstreamRecovery.upstreamState,
-            (candidateState) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, candidateState)
-        );
-        const reviewContextChain = buildReviewGateChainStatusSummary({
-            repoRoot,
-            eventsRoot,
-            taskId,
-            reviewType,
-            edgeId: 'compile-to-review-context',
-            reason:
-                `latest review gate failure seq ${reviewGateStaleUpstreamRecovery.latestReviewGateFailureSequence} ` +
-                `rejected stale upstream '${reviewType}' context/routing before downstream ` +
-                `'${reviewGateStaleUpstreamRecovery.downstreamReviewType}' closeout validation`,
-            preflightPath: preflightCommandPath,
-            reviewContextPath: reviewGateStaleUpstreamRecovery.upstreamState.contextPath
-                ? toRepoDisplayPath(repoRoot, reviewGateStaleUpstreamRecovery.upstreamState.contextPath)
-                : undefined,
-            depth: reviewDepth
-        });
-        const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`);
-        const scopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.diff`);
-        const scopedDiffReadiness = scopedDiffExpectedForReview({
-            preflight,
-            reviewType
-        })
-            ? getScopedDiffMetadataReadiness({
-                metadataPath: scopedDiffMetadataPath,
-                preflight,
-                preflightPath,
-                preflightSha256,
-                reviewType
-            })
-            : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
-        const staleUpstreamRecoveryRoute = resolveReviewGateStaleUpstreamRecoveryRoute({
-            upstreamReviewType: reviewType,
-            reuseCandidateHint: getBuildReviewContextReuseCandidateHint(eventsRoot, taskId, reviewGateStaleUpstreamRecovery.upstreamState),
-            scopedDiffReadiness,
-            reviewerReadinessChain,
-            reviewContextChain,
-            commands: {
-                buildScopedDiff: buildCommand(
-                    'Build scoped diff',
-                    buildScopedDiffCommand({
-                        cliPrefix,
-                        reviewType,
-                        preflightCommandPath,
-                        outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
-                        metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
-                    })
-                ),
-                buildReviewContext: buildCommand(
-                    'Build upstream review context',
-                    buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
-                )
-            }
-        });
-        return buildResult({
-            ...resultBase,
-            status: staleUpstreamRecoveryRoute.status,
-            nextGate: staleUpstreamRecoveryRoute.nextGate,
-            title: staleUpstreamRecoveryRoute.title,
-            reason: staleUpstreamRecoveryRoute.reason,
-            commands: staleUpstreamRecoveryRoute.commands
-        });
-    }
-
-    const reviewGateStaleContextPrecheckRecovery = reviewGateAlreadyPassed
-        ? null
-        : findReviewGateStaleContextPrecheckRecovery({
-            repoRoot,
-            eventsRoot,
-            taskId,
-            requiredReviewTypes,
-            reviewStates
-        });
-    if (reviewGateStaleContextPrecheckRecovery) {
-        const reviewType = reviewGateStaleContextPrecheckRecovery.reviewType;
-        const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
-        const reviewerReadinessChain = buildReviewerReadinessChainSummary(
-            repoRoot,
-            eventsRoot,
-            taskId,
-            reviewType,
-            reviewGateStaleContextPrecheckRecovery.state,
-            (candidateState) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, candidateState)
-        );
-        const reviewContextChain = buildReviewGateChainStatusSummary({
-            repoRoot,
-            eventsRoot,
-            taskId,
-            reviewType,
-            edgeId: 'compile-to-review-context',
-            reason: `current '${reviewType}' review context must be rebound before required-reviews-check`,
-            preflightPath: preflightCommandPath,
-            reviewContextPath: reviewGateStaleContextPrecheckRecovery.state.contextPath
-                ? toRepoDisplayPath(repoRoot, reviewGateStaleContextPrecheckRecovery.state.contextPath)
-                : undefined,
-            depth: reviewDepth
-        });
-        const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`);
-        const scopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.diff`);
-        const scopedDiffReadiness = scopedDiffExpectedForReview({
-            preflight,
-            reviewType
-        })
-            ? getScopedDiffMetadataReadiness({
-                metadataPath: scopedDiffMetadataPath,
-                preflight,
-                preflightPath,
-                preflightSha256,
-                reviewType
-            })
-            : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
-        const staleContextPrecheckRecoveryRoute = resolveReviewGateStaleContextPrecheckRecoveryRoute({
-            reviewType,
-            scopedDiffReadiness,
-            reviewerReadinessChain,
-            reviewContextChain,
-            commands: {
-                buildScopedDiff: buildCommand(
-                    'Build scoped diff',
-                    buildScopedDiffCommand({
-                        cliPrefix,
-                        reviewType,
-                        preflightCommandPath,
-                        outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
-                        metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
-                    })
-                ),
-                buildReviewContext: buildCommand(
-                    'Build review context',
-                    buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
-                )
-            }
-        });
-        return buildResult({
-            ...resultBase,
-            status: staleContextPrecheckRecoveryRoute.status,
-            nextGate: staleContextPrecheckRecoveryRoute.nextGate,
-            title: staleContextPrecheckRecoveryRoute.title,
-            reason: staleContextPrecheckRecoveryRoute.reason,
-            commands: staleContextPrecheckRecoveryRoute.commands
-        });
-    }
-
-    const reviewAuthorshipAttestationDefaults = Object.fromEntries(requiredReviewTypes.map((reviewType) => {
-        const state = reviewStates.find((candidate) => candidate.reviewType === reviewType);
-        return [
-            reviewType,
-            state ? reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state) : false
-        ];
-    }));
-    // Grouped follow-ups intentionally remain non-blocking while required review lanes are
-    // still running: the materializer needs the complete lane set before it can create the
-    // cycle-wide child. Route to materialization only after every required lane has current,
-    // independently attested review evidence, and always before required-review closeout.
-    const allRequiredReviewLanesSatisfied = Object.values(reviewAuthorshipAttestationDefaults).every(Boolean);
-    const groupedFollowUpState = allRequiredReviewLanesSatisfied
-        ? reviewStates.find((state) => (
-            state.reviewFollowUpMaterializationMode === 'grouped_by_parent'
-            && state.ready
-            && state.reviewFindingsDisposition
-            && state.reviewFindingsDisposition.counts_by_action.create_follow_up > 0
-            && !state.reviewFindingsFollowUpSatisfied
-        ))
-        : null;
-    if (groupedFollowUpState) {
-        const reviewType = groupedFollowUpState.reviewType;
-        const groupedDisposition = groupedFollowUpState.reviewFindingsDisposition;
-        if (!groupedDisposition) {
-            throw new Error(`Grouped follow-up state '${reviewType}' is missing disposition evidence.`);
+                repoRoot,
+                effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
+            ),
+            fullSuiteEnabled: fullSuiteConfig.enabled,
+            fullSuiteGatePassed,
+            fullSuiteTimeoutBlockerResolvedByRepairTask: fullSuiteTimeoutBlockerExhausted && fullSuiteTimeoutRepairTaskMaterialized,
+            fullSuiteNotRequiredForDocsOnly,
+            fullSuitePlacement: fullSuiteConfig.placement,
+            fullSuiteConfigPath: fullSuiteSummary.config_path,
+            fullSuiteCommandText: fullSuiteConfig.command,
+            fullSuiteTimeoutForecastLine,
+            fullSuiteCommand,
+            projectMemoryRequired: projectMemoryEvidence.required,
+            projectMemoryEvidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT',
+            projectMemoryVisibleSummaryLine: projectMemoryEvidence.visible_summary_line,
+            projectMemoryAffectedMemoryFiles: projectMemoryEvidence.affected_memory_files,
+            projectMemoryViolations: projectMemoryEvidence.violations,
+            projectMemoryCommand: buildProjectMemoryImpactCommand(cliPrefix, taskId, preflightCommandPath, projectMemorySummary),
+            completionGatePassed: isGatePassed(summary, 'completion-gate'),
+            completionCommand: buildCompletionGateCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
         }
-        const dispositionArtifactPath = groupedFollowUpState.reviewFindingsDispositionArtifactPath
-            || path.join(reviewsRoot, `${taskId}-${reviewType}-findings-disposition.json`);
-        const followUpArtifactPath = groupedFollowUpState.reviewFindingsFollowUpArtifactPath
-            || dispositionArtifactPath.replace(/-findings-disposition\.json$/u, '-findings-follow-ups.json');
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'materialize-review-follow-up-tasks',
-            title: `Add '${reviewType}' deferred items to the grouped follow-up task.`,
-            reason:
-                `All currently required review lanes are complete. Add ${groupedDisposition.counts_by_action.create_follow_up} ` +
-                `'${reviewType}' deferred item(s) to the snapshot-bound grouped child before required-review closeout.`,
-            commands: [buildCommand(
-                'Update grouped review follow-up task',
-                `${cliPrefix} gate materialize-review-follow-up-tasks ` +
-                `--task-id "${taskId}" ` +
-                `--review-type "${reviewType}" ` +
-                `--disposition-artifact-path "${toRepoDisplayPath(repoRoot, dispositionArtifactPath)}" ` +
-                `--receipt-path "${toRepoDisplayPath(repoRoot, groupedFollowUpState.receiptPath)}" ` +
-                `--artifact-path "${toRepoDisplayPath(repoRoot, followUpArtifactPath)}" ` +
-                '--repo-root "."'
-            )]
-        });
-    }
-    const postReviewCloseoutRoute = resolvePostReviewCloseoutRouteFromState({
-        requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
-        zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),
-        requiredReviewsCommand: buildRequiredReviewsCheckCommand(
-            repoRoot,
-            cliPrefix,
-            taskId,
-            preflightCommandPath,
-            taskModePath,
-            reviewAuthorshipAttestationDefaults
-        ),
-        docImpactGatePassed: isGatePassed(summary, 'doc-impact-gate'),
-        docImpactCompatibilityHint: buildDocImpactCompatibilityHint(),
-        docImpactCommand: buildDocImpactCommand(
-            cliPrefix,
-            taskId,
-            preflightCommandPath,
-            preflight,
-            repoRoot,
-            effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
-        ),
-        fullSuiteEnabled: fullSuiteConfig.enabled,
-        fullSuiteGatePassed,
-        fullSuiteTimeoutBlockerResolvedByRepairTask: fullSuiteTimeoutBlockerExhausted && fullSuiteTimeoutRepairTaskMaterialized,
-        fullSuiteNotRequiredForDocsOnly,
-        fullSuitePlacement: fullSuiteConfig.placement,
-        fullSuiteConfigPath: fullSuiteSummary.config_path,
-        fullSuiteCommandText: fullSuiteConfig.command,
-        fullSuiteTimeoutForecastLine,
-        fullSuiteCommand,
-        projectMemoryRequired: projectMemoryEvidence.required,
-        projectMemoryEvidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT',
-        projectMemoryVisibleSummaryLine: projectMemoryEvidence.visible_summary_line,
-        projectMemoryAffectedMemoryFiles: projectMemoryEvidence.affected_memory_files,
-        projectMemoryViolations: projectMemoryEvidence.violations,
-        projectMemoryCommand: buildProjectMemoryImpactCommand(cliPrefix, taskId, preflightCommandPath, projectMemorySummary),
-        completionGatePassed: isGatePassed(summary, 'completion-gate'),
-        completionCommand: buildCompletionGateCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
     });
-
     return buildResult({
         ...resultBase,
-        status: postReviewCloseoutRoute.status,
-        nextGate: postReviewCloseoutRoute.nextGate,
-        title: postReviewCloseoutRoute.title,
-        reason: postReviewCloseoutRoute.reason,
-        commands: postReviewCloseoutRoute.commands
+        status: postReviewLifecycleDecisionRoute.status,
+        nextGate: postReviewLifecycleDecisionRoute.nextGate,
+        title: postReviewLifecycleDecisionRoute.title,
+        reason: postReviewLifecycleDecisionRoute.reason,
+        commands: postReviewLifecycleDecisionRoute.commands
     });
 }
 

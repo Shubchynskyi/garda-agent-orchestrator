@@ -444,7 +444,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             requiredReviews,
             currentPreflight: preflight,
             timelineEvents: events,
-            reviewAttemptSummary
+            reviewAttemptSummary,
+            taskQueueEntries: options.taskQueueEntries
         });
         const reviewTimingAudit = buildReviewTimingAuditSummary(reviewsRoot, safeTaskId, events, repoRoot);
         const reviewCoverageSummary = buildReviewCoverageAuditSummary({
