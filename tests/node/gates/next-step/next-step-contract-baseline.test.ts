@@ -1250,7 +1250,7 @@ describe('next-step refactor contract baseline', () => {
         assert.doesNotMatch(text, /^Title:/mu);
     });
 
-    it('routes mandatory as_is with available installed suggestion to classify-change rematerialization', () => {
+    it('rejects stale mandatory as_is loops when installed suggestion requires rematerialization', () => {
         const repoRoot = makeContractRepo();
         const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
         const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
@@ -1314,7 +1314,222 @@ describe('next-step refactor contract baseline', () => {
         assert.equal(result.commands[0]?.label, 'Rematerialize optional skill selection');
         assert.match(result.commands[0]?.command || '', /gate classify-change/u);
         assert.doesNotMatch(result.commands[0]?.command || '', /skills suggest/u);
+        assert.doesNotMatch(result.commands[0]?.command || '', /skills add/u);
         assert.match(result.reason, /devops-k8s/u);
+        assert.match(result.reason, /Do not treat the current as_is\/missing-pack decision as activation/u);
+    });
+
+    it('rejects replaced recommended_missing_packs when the pack is already installed', () => {
+        const repoRoot = makeContractRepo();
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        seedDevopsSuggestionSurface(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'docker-compose.yml'), 'services: {}\n', 'utf8');
+        const optionalSkillArtifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: TASK_ID,
+            timestamp_utc: '2026-01-01T00:00:04.000Z',
+            policy_mode: 'mandatory',
+            decision: 'recommended_missing_packs',
+            selection_phase: 'pre_implementation',
+            path_evidence_source: 'explicit_scope',
+            selected_installed_skills: [],
+            recommended_missing_packs: [
+                {
+                    id: 'devops-k8s',
+                    pack: 'devops-k8s',
+                    reason_codes: ['stack_signals'],
+                    matches: { task_signals: [], changed_path_signals: [], stack_signals: ['docker-compose.yml'] }
+                }
+            ],
+            as_is_reason: 'no_relevant_installed_skill',
+            task_text_present: true,
+            task_text_sha256: 'fixture-task-text',
+            changed_paths: ['src/main/kotlin/App.kt'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: 'fixture-preflight',
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: 'fixture-headlines',
+            visible_summary_line: 'Optional skills: recommended_missing_packs (packs: devops-k8s, reason: project_discovery)'
+        };
+        writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            scope_category: 'code',
+            changed_files: ['src/main/kotlin/App.kt'],
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            optional_skill_selection: {
+                artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
+                policy_mode: 'mandatory',
+                decision: 'recommended_missing_packs',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
+                visible_summary_line: 'Optional skills: recommended_missing_packs (packs: devops-k8s, reason: project_discovery)'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
+            output_path: normalizeForTimeline(preflightPath)
+        }, '2026-01-01T00:00:04.500Z');
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'optional-skill-remediation');
+        assert.equal(result.commands.length, 1);
+        assert.equal(result.commands[0]?.label, 'Rematerialize optional skill selection');
+        assert.match(result.commands[0]?.command || '', /gate classify-change/u);
+        assert.doesNotMatch(result.commands[0]?.command || '', /skills add/u);
+        assert.doesNotMatch(result.commands[0]?.command || '', /skills suggest/u);
+        assert.match(result.reason, /devops-k8s/u);
+    });
+
+    it('blocks optional-policy as_is decisions from mandatory remediation', () => {
+        const repoRoot = makeContractRepo();
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const optionalSkillArtifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: TASK_ID,
+            timestamp_utc: '2026-01-01T00:00:04.000Z',
+            policy_mode: 'optional',
+            decision: 'as_is',
+            selected_installed_skills: [],
+            recommended_missing_packs: [],
+            as_is_reason: 'generic_context_sufficient',
+            task_text_present: true,
+            task_text_sha256: 'fixture-task-text',
+            changed_paths: ['src/bot/telegram.ts'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: 'fixture-preflight',
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: 'fixture-headlines',
+            visible_summary_line: 'Optional skills: as_is (reason: generic_context_sufficient)'
+        };
+        writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            scope_category: 'code',
+            changed_files: ['src/bot/telegram.ts'],
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            optional_skill_selection: {
+                artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
+                policy_mode: 'optional',
+                decision: 'as_is',
+                visible_summary_line: 'Optional skills: as_is (reason: generic_context_sufficient)'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
+            output_path: normalizeForTimeline(preflightPath)
+        }, '2026-01-01T00:00:04.500Z');
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'optional-skill-remediation', result.reason);
+        assert.ok(!result.commands.some((entry) => entry.command.includes('skills suggest')));
+        assert.ok(!result.commands.some((entry) => entry.command.includes('skills add')));
+        assert.equal(result.optional_skill_selection?.policy_mode, 'optional');
+    });
+
+    it('does not route optional-policy missing-pack decisions to remediation', () => {
+        const repoRoot = makeContractRepo();
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const optionalSkillArtifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: TASK_ID,
+            timestamp_utc: '2026-01-01T00:00:04.000Z',
+            policy_mode: 'optional',
+            decision: 'recommended_missing_packs',
+            selection_phase: 'pre_implementation',
+            path_evidence_source: 'explicit_scope',
+            selected_installed_skills: [],
+            recommended_missing_packs: [
+                {
+                    id: 'telegram-bot',
+                    pack: 'telegram-bot',
+                    reason_codes: ['task_signals'],
+                    matches: { task_signals: ['telegram bot'], changed_path_signals: [] }
+                }
+            ],
+            as_is_reason: 'no_relevant_installed_skill',
+            task_text_present: true,
+            task_text_sha256: 'fixture-task-text',
+            changed_paths: ['src/bot/telegram.ts'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: 'fixture-preflight',
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: 'fixture-headlines',
+            visible_summary_line: 'Optional skills: recommended_missing_packs (packs: telegram-bot, reason: task_text)'
+        };
+        writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            scope_category: 'code',
+            changed_files: ['src/bot/telegram.ts'],
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            optional_skill_selection: {
+                artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
+                policy_mode: 'optional',
+                decision: 'recommended_missing_packs',
+                selection_phase: 'pre_implementation',
+                path_evidence_source: 'explicit_scope',
+                visible_summary_line: 'Optional skills: recommended_missing_packs (packs: telegram-bot, reason: task_text)'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
+            output_path: normalizeForTimeline(preflightPath)
+        }, '2026-01-01T00:00:04.500Z');
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'optional-skill-remediation', result.reason);
+        assert.ok(!result.commands.some((entry) => entry.command.includes('skills add')));
+        assert.equal(result.optional_skill_selection?.policy_mode, 'optional');
     });
 
     it('does not route mandatory baseline-only as_is selection to skills suggest remediation', () => {

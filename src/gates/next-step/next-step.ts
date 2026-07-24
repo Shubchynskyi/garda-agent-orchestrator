@@ -116,6 +116,7 @@ import {
     readOptionalSkillSelectionTimelineEvidence
 } from '../../runtime/optional-skill-selection';
 import {
+    readInstalledSkillPacks,
     suggestSkills
 } from '../../runtime/skills';
 import {
@@ -1551,6 +1552,15 @@ function getAvailableRelevantOptionalSkillSuggestions(input: {
     }
 }
 
+function isOptionalSkillPackInstalled(repoRoot: string, packId: string): boolean {
+    try {
+        const bundleRoot = path.join(repoRoot, resolveBundleNameForTarget(repoRoot));
+        return readInstalledSkillPacks(bundleRoot).installedPackIds.includes(packId);
+    } catch {
+        return false;
+    }
+}
+
 function getMandatoryOptionalSkillRemediationCommand(
     optionalSkillSelection: NextStepOptionalSkillSelectionSummary | null,
     cliPrefix: string,
@@ -1572,23 +1582,37 @@ function getMandatoryOptionalSkillRemediationCommand(
     if (optionalSkillSelection.decision === 'as_is' && optionalSkillSelection.changed_paths_count === 0) {
         return null;
     }
+
     const recommendedPackId = optionalSkillSelection.recommended_missing_pack_ids[0] || null;
     if (recommendedPackId) {
+        // Cheap inventory check avoids suggestSkills discovery I/O on the missing-pack path.
+        if (isOptionalSkillPackInstalled(options.repoRoot, recommendedPackId)) {
+            return {
+                label: 'Rematerialize optional skill selection',
+                command: options.reclassifyCommand,
+                reason:
+                    `Mandatory optional skill selection recommended missing pack ${formatNextStepInlineValue(recommendedPackId)}, ` +
+                    `but pack ${formatNextStepInlineValue(recommendedPackId)} is already installed. ` +
+                    'Rerun classify-change to materialize selected_installed_skills evidence, then activate the selected skill before implementation. ' +
+                    'Do not treat the current as_is/missing-pack decision as activation; choose the installed specialist through rematerialization.'
+            };
+        }
         return {
             label: `Install optional skill pack ${recommendedPackId}`,
             command: `${cliPrefix} skills add ${quoteCommandValue(recommendedPackId)} --target-root "."`,
             reason:
                 `Mandatory optional skill selection recommended missing pack ${formatNextStepInlineValue(recommendedPackId)}, ` +
-            'but no installed specialist skill is selected. Install or create an appropriate specialist skill, then rerun classify-change and activate the selected skill before implementation.'
+                'but no installed specialist skill is selected. Install or create an appropriate specialist skill, then rerun classify-change and activate the selected skill before implementation.'
         };
     }
-    const relevantInstalledSuggestionIds = optionalSkillSelection.decision === 'as_is'
-        ? getAvailableRelevantOptionalSkillSuggestions({
-            repoRoot: options.repoRoot,
-            taskText,
-            changedPaths: optionalSkillSelection.changed_paths
-        })
-        : [];
+
+    // For as_is (and other non-missing-pack decisions), probe installed relevant suggestions
+    // so the navigator rematerializes instead of looping on skills suggest.
+    const relevantInstalledSuggestionIds = getAvailableRelevantOptionalSkillSuggestions({
+        repoRoot: options.repoRoot,
+        taskText,
+        changedPaths: optionalSkillSelection.changed_paths
+    });
     if (relevantInstalledSuggestionIds.length > 0) {
         return {
             label: 'Rematerialize optional skill selection',
@@ -1596,9 +1620,11 @@ function getMandatoryOptionalSkillRemediationCommand(
             reason:
                 `Mandatory optional skill selection produced decision ${formatNextStepInlineValue(optionalSkillSelection.decision || 'unknown')}, ` +
                 `but installed relevant skill suggestion(s) are already available: ${formatNextStepInlineList(relevantInstalledSuggestionIds)}. ` +
-                'Rerun classify-change to materialize selected_installed_skills evidence, then activate the selected skill before implementation.'
+                'Rerun classify-change to materialize selected_installed_skills evidence, then activate the selected skill before implementation. ' +
+                'Do not treat the current as_is/missing-pack decision as activation; choose the installed specialist through rematerialization.'
         };
     }
+
     return {
         label: 'Inspect specialist skill suggestions',
         command: `${cliPrefix} skills suggest --task-text ${quoteCommandValue(taskText)} --target-root "."`,
