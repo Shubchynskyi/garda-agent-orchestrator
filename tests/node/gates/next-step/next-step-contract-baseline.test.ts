@@ -213,6 +213,16 @@ function seedStrictDecompositionDecision(repoRoot: string, taskId: string): void
     );
 }
 
+function seedOptionalSkillSelectionPolicy(
+    repoRoot: string,
+    mode: 'off' | 'optional' | 'mandatory'
+): void {
+    writeJson(
+        path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'optional-skill-selection-policy.json'),
+        { version: 1, mode }
+    );
+}
+
 function seedOptionalSkillSelectionPreflight(
     repoRoot: string,
     taskId: string,
@@ -1591,5 +1601,113 @@ describe('next-step refactor contract baseline', () => {
         assert.notEqual(result.next_gate, 'optional-skill-remediation', result.reason);
         assert.ok(!result.commands.some((entry) => entry.command.includes('skills suggest')));
         assert.equal(result.optional_skill_selection?.changed_paths_count, 0);
+    });
+
+    it('rejects stale mandatory artifact after policy switches to optional without activation commands', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'mandatory' });
+        seedOptionalSkillSelectionPolicy(repoRoot, 'optional');
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'classify-change');
+        assert.equal(result.optional_skill_selection?.current_policy_mode, 'optional');
+        assert.equal(result.optional_skill_selection?.policy_mode, 'optional');
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.activation_commands, []);
+        assert.ok(
+            result.optional_skill_selection?.artifact_violations.some((entry) => (
+                entry.includes("must match the current policy mode 'optional'")
+            ))
+        );
+        assert.match(result.commands[0]?.command || '', /gate classify-change/u);
+        assert.doesNotMatch(result.commands[0]?.command || '', /activate-optional-skill/u);
+        assert.match(text, /^OptionalSkillCurrentPolicyMode: optional$/mu);
+        assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
+        assert.doesNotMatch(text, /gate activate-optional-skill/u);
+    });
+
+    it('rejects stale optional artifact after policy switches to mandatory instead of activation', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'optional' });
+        seedOptionalSkillSelectionPolicy(repoRoot, 'mandatory');
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'classify-change');
+        assert.equal(result.optional_skill_selection?.current_policy_mode, 'mandatory');
+        assert.equal(result.optional_skill_selection?.policy_mode, 'mandatory');
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.activation_commands, []);
+        assert.ok(
+            result.optional_skill_selection?.artifact_violations.some((entry) => (
+                entry.includes("must match the current policy mode 'mandatory'")
+            ))
+        );
+        assert.match(result.commands[0]?.command || '', /gate classify-change/u);
+        assert.doesNotMatch(result.commands[0]?.command || '', /activate-optional-skill/u);
+        assert.match(text, /^OptionalSkillCurrentPolicyMode: mandatory$/mu);
+        assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
+    });
+
+    it('rejects forged pending activation when live policy no longer matches the artifact', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'mandatory' });
+        seedOptionalSkillSelectionPolicy(repoRoot, 'optional');
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+        const optionalSkillArtifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-optional-skill-selection.json`);
+        const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
+        appendEvent(repoRoot, TASK_ID, 'SKILL_ACTIVATED', {
+            skill_id: 'node-backend',
+            trigger_reason: 'optional_skill_selection',
+            optional_skill_selection_fingerprint_sha256: optionalSkillArtifact.selection_fingerprint_sha256,
+            skill_path: 'garda-agent-orchestrator/live/skills/node-backend/SKILL.md'
+        }, '2026-01-01T00:00:06.000Z');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.deepEqual(result.optional_skill_selection?.activated_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.activation_commands, []);
+        assert.doesNotMatch(result.commands[0]?.command || '', /activate-optional-skill/u);
+        assert.match(text, /^OptionalSkillCurrentPolicyMode: optional$/mu);
+        assert.doesNotMatch(text, /^OptionalSkillActivatedCurrentCycle:/mu);
+        assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
+    });
+
+    it('keeps mandatory activation when live policy config still matches the artifact', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'mandatory' });
+        seedOptionalSkillSelectionPolicy(repoRoot, 'mandatory');
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'activate-optional-skill');
+        assert.equal(result.optional_skill_selection?.current_policy_mode, 'mandatory');
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, ['node-backend']);
+        assert.match(result.commands[0]?.command || '', /gate activate-optional-skill/u);
+        assert.match(text, /^OptionalSkillCurrentPolicyMode: mandatory$/mu);
     });
 });

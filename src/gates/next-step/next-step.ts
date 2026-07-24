@@ -108,11 +108,14 @@ import {
     buildCurrentCycleOptionalSkillDeclineIndex,
     buildMandatoryCurrentCycleOptionalSkillActivationIndex,
     getOptionalSkillSelectionArtifactViolations,
+    getOptionalSkillSelectionConfigPath,
     isMandatoryOptionalSkillSelectionPolicyMode,
+    isOptionalSkillSelectionPolicyConfigured,
     normalizeOptionalSkillPathEvidenceSource,
     normalizeOptionalSkillSelectionPolicyMode,
     normalizeOptionalSkillSelectionPhase,
     readOptionalSkillSelectionArtifact,
+    readOptionalSkillSelectionPolicyConfig,
     readOptionalSkillSelectionTimelineEvidence
 } from '../../runtime/optional-skill-selection';
 import {
@@ -444,6 +447,7 @@ export interface NextStepOptionalSkillSelectionSummary {
     artifact_present: boolean;
     artifact_violations: string[];
     timeline_invalid_json: boolean;
+    current_policy_mode: string | null;
     policy_mode: string | null;
     decision: string | null;
     selection_phase: string;
@@ -1402,11 +1406,18 @@ function buildOptionalSkillSelectionSummary(
         taskId
     );
     const artifactPayload = artifact?.payload || null;
+    const policyConfigPath = getOptionalSkillSelectionConfigPath(bundleRoot);
+    const hasCurrentPolicyConfig = fs.existsSync(policyConfigPath)
+        || isOptionalSkillSelectionPolicyConfigured(bundleRoot);
+    const currentPolicyMode = hasCurrentPolicyConfig
+        ? readOptionalSkillSelectionPolicyConfig(bundleRoot).mode
+        : null;
     const artifactViolations = artifact
         ? getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact, {
             requireMaterializedArtifact: false,
             validateAgainstCurrentHeadlines: false,
-            validateAgainstCurrentInventory: false
+            validateAgainstCurrentInventory: false,
+            ...(currentPolicyMode ? { expectedPolicyMode: currentPolicyMode } : {})
         })
         : [];
     const artifactValid = artifactViolations.length === 0;
@@ -1415,7 +1426,9 @@ function buildOptionalSkillSelectionSummary(
     const selectedSkillDetails = readOptionalSkillSelectionDetails(artifactPayload?.selected_installed_skills);
     const recommendedMissingPackIds = readStringArrayFromObjects(artifactPayload?.recommended_missing_packs, 'id');
     const rawPolicyMode = String(preflightOptionalRecord.policy_mode || artifactPayload?.policy_mode || '').trim();
-    const policyMode = rawPolicyMode ? normalizeOptionalSkillSelectionPolicyMode(rawPolicyMode) : null;
+    const snapshotPolicyMode = rawPolicyMode ? normalizeOptionalSkillSelectionPolicyMode(rawPolicyMode) : null;
+    // Prefer live config when present so policy switches invalidate stale selection routing.
+    const policyMode = currentPolicyMode ?? snapshotPolicyMode;
     const decision = String(preflightOptionalRecord.decision || artifactPayload?.decision || '').trim() || null;
     const selectionPhase = normalizeOptionalSkillSelectionPhase(
         artifactPayload?.selection_phase || preflightOptionalRecord.selection_phase,
@@ -1471,6 +1484,7 @@ function buildOptionalSkillSelectionSummary(
         artifact_present: resolvedArtifactPath ? fs.existsSync(resolvedArtifactPath) : false,
         artifact_violations: artifactViolations,
         timeline_invalid_json: timelineInvalidJson,
+        current_policy_mode: currentPolicyMode,
         policy_mode: policyMode,
         decision,
         selection_phase: selectionPhase,
@@ -1511,6 +1525,9 @@ function getPendingOptionalSkillActivationCommand(
     optionalSkillSelection: NextStepOptionalSkillSelectionSummary | null
 ): { skillId: string; command: string } | null {
     if (!optionalSkillSelection || optionalSkillSelection.decision !== 'selected_installed_skills') {
+        return null;
+    }
+    if (optionalSkillSelection.artifact_violations.length > 0) {
         return null;
     }
     if (optionalSkillSelection.timeline_invalid_json) {
@@ -1571,6 +1588,9 @@ function getMandatoryOptionalSkillRemediationCommand(
     }
 ): { label: string; command: string; reason: string } | null {
     if (!optionalSkillSelection || !isMandatoryOptionalSkillSelectionPolicyMode(optionalSkillSelection.policy_mode)) {
+        return null;
+    }
+    if (optionalSkillSelection.artifact_violations.length > 0) {
         return null;
     }
     if (optionalSkillSelection.selection_phase === 'post_diff') {

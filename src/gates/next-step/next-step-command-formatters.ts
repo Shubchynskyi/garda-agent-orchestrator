@@ -262,6 +262,9 @@ export function formatNextStepText(result: NextStepResult): string {
             `decision=${optionalSkills.decision || 'unknown'}; artifact=${optionalSkills.artifact_path || 'none'}; ` +
             `present=${optionalSkills.artifact_present}`
         );
+        if (optionalSkills.current_policy_mode) {
+            lines.push(`OptionalSkillCurrentPolicyMode: ${optionalSkills.current_policy_mode}`);
+        }
         lines.push(
             `OptionalSkillPhase: ${optionalSkills.selection_phase}; ` +
             `path_evidence_source=${optionalSkills.path_evidence_source}`
