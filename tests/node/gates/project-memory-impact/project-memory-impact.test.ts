@@ -80,6 +80,31 @@ describe('routeProjectMemoryImpact', () => {
         assert.deepEqual(routed.affectedFileNames, []);
         assert.deepEqual(routed.reasons, []);
     });
+
+    it('treats direct live project-memory file changes as affected memory evidence', () => {
+        const routed = routeProjectMemoryImpact(['garda-agent-orchestrator/live/docs/project-memory/commands.md']);
+
+        assert.deepEqual(routed.affectedFileNames, ['commands.md']);
+        assert.deepEqual(routed.reasons[0]?.suggested_memory_files, ['commands.md']);
+    });
+
+    it('ignores nested mirror project-memory paths outside the canonical live roots', () => {
+        const routed = routeProjectMemoryImpact([
+            'tests/fixtures/garda-agent-orchestrator/live/docs/project-memory/commands.md'
+        ]);
+
+        assert.deepEqual(routed.affectedFileNames, []);
+        assert.deepEqual(routed.reasons, []);
+    });
+
+    it('rejects noncanonical single-prefix project-memory paths', () => {
+        const routed = routeProjectMemoryImpact([
+            'scratch/live/docs/project-memory/commands.md'
+        ]);
+
+        assert.deepEqual(routed.affectedFileNames, []);
+        assert.deepEqual(routed.reasons, []);
+    });
 });
 
 describe('assessProjectMemoryImpact', () => {
@@ -105,6 +130,55 @@ describe('assessProjectMemoryImpact', () => {
                 taskId: 'T-101',
                 modeOverride: 'check',
                 changedFiles: ['tests/node/gates/project-memory-impact.test.ts']
+            });
+
+            assert.equal(result.artifact.status, 'NO_UPDATE_NEEDED');
+            assert.equal(result.artifact.update_needed, false);
+            assert.deepEqual(result.artifact.affected_memory_files, []);
+        });
+    });
+
+    it('treats directly scoped ignored project-memory files as updated evidence instead of no-update-needed', () => {
+        withTempRepo((repoRoot) => {
+            const commandsPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'commands.md');
+            fs.appendFileSync(commandsPath, '\nScoped project-memory update.\n', 'utf8');
+
+            const blocked = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-101a',
+                modeOverride: 'strict',
+                changedFiles: ['garda-agent-orchestrator/live/docs/project-memory/commands.md']
+            });
+
+            assert.equal(blocked.artifact.status, 'BLOCKED');
+            assert.equal(blocked.artifact.update_needed, true);
+            assert.deepEqual(blocked.artifact.affected_memory_files, [
+                'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+            ]);
+
+            const updated = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-101a',
+                modeOverride: 'strict',
+                changedFiles: ['garda-agent-orchestrator/live/docs/project-memory/commands.md'],
+                confirmUpdated: true,
+                updatedMemoryFiles: ['garda-agent-orchestrator/live/docs/project-memory/commands.md']
+            });
+
+            assert.equal(updated.artifact.status, 'UPDATED');
+            assert.deepEqual(updated.artifact.update_evidence.updated_memory_files, [
+                'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+            ]);
+        });
+    });
+
+    it('does not treat nested mirror project-memory paths as update-needed evidence', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-101b',
+                modeOverride: 'check',
+                changedFiles: ['tests/fixtures/garda-agent-orchestrator/live/docs/project-memory/commands.md']
             });
 
             assert.equal(result.artifact.status, 'NO_UPDATE_NEEDED');

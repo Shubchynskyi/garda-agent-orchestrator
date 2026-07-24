@@ -529,7 +529,9 @@ describe('gates/next-step preflight routing', () => {
             'Correct navigator no-op intent classification',
             'Prevent docs only wording from bypassing the implementation gate',
             'Avoid no changes required wording from bypassing the implementation gate',
-            'Prevent audit-only: update next-step gate docs from bypassing implementation'
+            'Prevent audit-only: update next-step gate docs from bypassing implementation',
+            'Update project memory map before compile',
+            'Refresh ignored project-memory scope before compile'
         ]) {
             const repoRoot = makeTempRepo();
             initGitRepo(repoRoot);

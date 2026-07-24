@@ -6,12 +6,16 @@ import {
 import {
     type ProjectMemoryImpactEvidenceStatus,
     type ProjectMemoryImpactStatus,
+    assessProjectMemoryImpact,
     getProjectMemoryImpactLifecycleEvidence,
     routeProjectMemoryImpact
 } from '../project-memory-impact/project-memory-impact';
 import {
     collectChangedProjectMemoryFiles
 } from '../project-memory-impact/project-memory-impact-update-evidence';
+import {
+    collectScopedChangedProjectMemoryFiles
+} from '../project-memory-impact/project-memory-impact-routing';
 import {
     getClassificationConfig,
     isDocumentationLikePath,
@@ -451,18 +455,32 @@ export function buildDocImpactCompatibilityHint(): string {
 
 function resolveProjectMemoryCommandUpdateSplit(
     repoRoot: string,
-    evidence: ReturnType<typeof getProjectMemoryImpactLifecycleEvidence>
+    evidence: ReturnType<typeof getProjectMemoryImpactLifecycleEvidence>,
+    currentArtifact: ReturnType<typeof assessProjectMemoryImpact>['artifact'] | null = null
 ): { updated: string[]; skipped: string[]; error: string | null } {
-    const affected = [...evidence.affected_memory_files].map(normalizePath).filter(Boolean).sort();
-    if (evidence.update_needed !== true || affected.length === 0) {
+    const affected = [...(currentArtifact?.affected_memory_files || evidence.affected_memory_files)]
+        .map(normalizePath)
+        .filter(Boolean)
+        .sort();
+    const updateNeeded = currentArtifact?.update_needed ?? evidence.update_needed;
+    if (updateNeeded !== true || affected.length === 0) {
         return {
-            updated: [...evidence.updated_memory_files].map(normalizePath).filter(Boolean).sort(),
+            updated: [...(currentArtifact?.update_evidence.updated_memory_files || evidence.updated_memory_files)]
+                .map(normalizePath)
+                .filter(Boolean)
+                .sort(),
             skipped: [],
             error: null
         };
     }
-    const evidenceUpdated = [...evidence.updated_memory_files].map(normalizePath).filter(Boolean).sort();
-    if (evidence.evidence_status === 'CURRENT' && evidence.status === 'UPDATED' && evidenceUpdated.length > 0) {
+    const evidenceUpdated = [...(currentArtifact?.update_evidence.updated_memory_files || evidence.updated_memory_files)]
+        .map(normalizePath)
+        .filter(Boolean)
+        .sort();
+    const updateEvidenceAccepted = currentArtifact
+        ? currentArtifact.status === 'UPDATED' && currentArtifact.update_evidence.status === 'VALID'
+        : evidence.evidence_status === 'CURRENT' && evidence.status === 'UPDATED';
+    if (updateEvidenceAccepted && evidenceUpdated.length > 0) {
         const updatedSet = new Set(evidenceUpdated);
         return {
             updated: evidenceUpdated,
@@ -470,20 +488,38 @@ function resolveProjectMemoryCommandUpdateSplit(
             error: null
         };
     }
-    const bundleRoot = path.join(repoRoot, resolveBundleNameForTarget(repoRoot));
+    const affectedSet = new Set(affected);
+    const bundleName = resolveBundleNameForTarget(repoRoot);
+    const scopedChangedMemoryFiles = currentArtifact
+        ? collectScopedChangedProjectMemoryFiles(currentArtifact.changed_files, bundleName)
+            .map(normalizePath)
+            .filter(Boolean)
+            .filter((file) => affectedSet.has(file))
+            .sort()
+        : [];
+    const bundleRoot = path.join(repoRoot, bundleName);
     const changed = collectChangedProjectMemoryFiles(repoRoot, bundleRoot);
     if (changed.error) {
+        if (scopedChangedMemoryFiles.length > 0) {
+            const updatedSet = new Set(scopedChangedMemoryFiles);
+            return {
+                updated: scopedChangedMemoryFiles,
+                skipped: affected.filter((candidate) => !updatedSet.has(candidate)),
+                error: null
+            };
+        }
         return {
             updated: [],
             skipped: affected,
             error: changed.error
         };
     }
-    const affectedSet = new Set(affected);
-    const changedProjectMemoryFiles = changed.files
-        .map(normalizePath)
-        .filter(Boolean)
-        .sort();
+    const changedProjectMemoryFiles = Array.from(new Set([
+        ...scopedChangedMemoryFiles,
+        ...changed.files
+            .map(normalizePath)
+            .filter(Boolean)
+    ])).sort();
     const extraChangedFiles = changedProjectMemoryFiles.filter((file) => !affectedSet.has(file));
     if (extraChangedFiles.length > 0) {
         return {
@@ -505,18 +541,29 @@ function resolveProjectMemoryCommandUpdateSplit(
 
 export function buildProjectMemoryNextStepSummary(
     repoRoot: string,
-    evidence: ReturnType<typeof getProjectMemoryImpactLifecycleEvidence>
+    evidence: ReturnType<typeof getProjectMemoryImpactLifecycleEvidence>,
+    context?: {
+        taskId: string;
+        preflightPath?: string | null;
+    }
 ): NextStepProjectMemorySummary {
-    const commandUpdateSplit = resolveProjectMemoryCommandUpdateSplit(repoRoot, evidence);
+    const currentArtifact = context
+        ? assessProjectMemoryImpact({
+            repoRoot,
+            taskId: context.taskId,
+            preflightPath: context.preflightPath
+        }).artifact
+        : null;
+    const commandUpdateSplit = resolveProjectMemoryCommandUpdateSplit(repoRoot, evidence, currentArtifact);
     return {
         enabled: evidence.enabled,
         required: evidence.required,
         mode: evidence.mode,
         evidence_status: evidence.evidence_status,
         status: evidence.status,
-        update_needed: evidence.update_needed,
-        affected_memory_files: [...evidence.affected_memory_files],
-        updated_memory_files: [...evidence.updated_memory_files],
+        update_needed: currentArtifact?.update_needed ?? evidence.update_needed,
+        affected_memory_files: [...(currentArtifact?.affected_memory_files || evidence.affected_memory_files)],
+        updated_memory_files: [...(currentArtifact?.update_evidence.updated_memory_files || evidence.updated_memory_files)],
         command_updated_memory_files: commandUpdateSplit.updated,
         command_skipped_memory_files: commandUpdateSplit.skipped,
         command_update_inference_error: commandUpdateSplit.error,

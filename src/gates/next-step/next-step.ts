@@ -2327,7 +2327,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         taskId,
         preflightPath
     });
-    const projectMemorySummary = buildProjectMemoryNextStepSummary(repoRoot, projectMemoryEvidence);
+    const projectMemorySummary = buildProjectMemoryNextStepSummary(repoRoot, projectMemoryEvidence, {
+        taskId,
+        preflightPath
+    });
     const reviewPolicy = resolveReviewPolicy(preflight, workflowReviewPolicy);
     const taskQueueFollowUpFingerprintIndex = buildTaskQueueFollowUpFingerprintIndex(taskEntries, taskId);
     const reviewStates = requiredReviewTypes.map((reviewType) => (

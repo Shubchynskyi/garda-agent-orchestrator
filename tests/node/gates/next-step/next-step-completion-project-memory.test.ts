@@ -369,6 +369,176 @@ describe('gates/next-step', () => {
 
     });
 
+    it('treats directly scoped ignored project-memory files as updated command inputs instead of skipped candidates', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'update' });
+
+        seedProjectMemory(repoRoot);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const changedFiles = [
+            'src/gates/project-memory-impact.ts',
+            'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+        ];
+
+        const impactedSourcePath = path.join(repoRoot, 'src', 'gates', 'project-memory-impact.ts');
+
+        fs.mkdirSync(path.dirname(impactedSourcePath), { recursive: true });
+
+        fs.writeFileSync(impactedSourcePath, 'export const impacted = true;\n', 'utf8');
+
+        const memoryCommandsPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'commands.md');
+
+        fs.appendFileSync(memoryCommandsPath, '\nIgnored-scope command guidance changed.\n', 'utf8');
+
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles });
+
+        const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId: TASK_ID, preflightPath });
+
+        const summary = buildProjectMemoryNextStepSummary(repoRoot, evidence, { taskId: TASK_ID, preflightPath });
+
+        const command = buildProjectMemoryImpactCommand(
+            'node bin/garda.js',
+            TASK_ID,
+            'garda-agent-orchestrator/runtime/reviews/T-001-preflight.json',
+            summary
+        );
+
+        const formatted = formatProjectMemorySummaryForTest(summary);
+
+        assert.deepEqual(summary.command_updated_memory_files, [
+            'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+        ]);
+
+        assert.match(command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
+
+        assert.doesNotMatch(command, /--skipped-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
+
+        assert.match(command, /--skipped-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md"/);
+
+        assert.match(formatted, /ProjectMemoryCommandUpdatedFiles: .*garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md/);
+
+        assert.match(formatted, /ProjectMemoryCommandSkippedFiles: .*garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md/);
+
+    });
+
+    it('canonicalizes unprefixed scoped project-memory files before building updated command inputs', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'update' });
+
+        seedProjectMemory(repoRoot);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const changedFiles = [
+            'src/gates/project-memory-impact.ts',
+            'live/docs/project-memory/commands.md'
+        ];
+
+        const impactedSourcePath = path.join(repoRoot, 'src', 'gates', 'project-memory-impact.ts');
+
+        fs.mkdirSync(path.dirname(impactedSourcePath), { recursive: true });
+
+        fs.writeFileSync(impactedSourcePath, 'export const impacted = true;\n', 'utf8');
+
+        const memoryCommandsPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'commands.md');
+
+        fs.appendFileSync(memoryCommandsPath, '\nUnprefixed ignored-scope command guidance changed.\n', 'utf8');
+
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles });
+
+        const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId: TASK_ID, preflightPath });
+
+        const summary = buildProjectMemoryNextStepSummary(repoRoot, evidence, { taskId: TASK_ID, preflightPath });
+
+        const command = buildProjectMemoryImpactCommand(
+            'node bin/garda.js',
+            TASK_ID,
+            'garda-agent-orchestrator/runtime/reviews/T-001-preflight.json',
+            summary
+        );
+
+        assert.deepEqual(summary.command_updated_memory_files, [
+            'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+        ]);
+
+        assert.match(command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
+
+        assert.doesNotMatch(command, /--skipped-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
+
+    });
+
+    it('does not reuse stale lifecycle updates when the freshly assessed memory artifact is blocked', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'update' });
+
+        seedProjectMemory(repoRoot);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const changedFiles = ['src/gates/project-memory-impact.ts'];
+
+        const impactedSourcePath = path.join(repoRoot, changedFiles[0]);
+
+        fs.mkdirSync(path.dirname(impactedSourcePath), { recursive: true });
+
+        fs.writeFileSync(impactedSourcePath, 'export const impacted = true;\n', 'utf8');
+
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles });
+
+        const initialImpact = assessProjectMemoryImpact({ repoRoot, taskId: TASK_ID, preflightPath });
+
+        writeJson(initialImpact.artifactPath, initialImpact.artifact);
+
+        const confirmedImpact = assessProjectMemoryImpact({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            confirmUpdated: true,
+            updatedMemoryFiles: initialImpact.artifact.affected_memory_files
+        });
+
+        assert.ok(confirmedImpact.updateEvidenceToWrite);
+
+        writeJson(confirmedImpact.updateArtifactPath, confirmedImpact.updateEvidenceToWrite);
+
+        writeJson(confirmedImpact.artifactPath, confirmedImpact.artifact);
+
+        const lifecycleEvidence = getProjectMemoryImpactLifecycleEvidence({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath
+        });
+
+        assert.equal(lifecycleEvidence.evidence_status, 'CURRENT');
+
+        assert.equal(lifecycleEvidence.status, 'UPDATED');
+
+        const updatedMemoryPath = path.join(repoRoot, initialImpact.artifact.affected_memory_files[0]);
+
+        fs.appendFileSync(updatedMemoryPath, '\nChanged after lifecycle evidence was read.\n', 'utf8');
+
+        const summary = buildProjectMemoryNextStepSummary(
+            repoRoot,
+            lifecycleEvidence,
+            { taskId: TASK_ID, preflightPath }
+        );
+
+        assert.deepEqual(summary.command_updated_memory_files, []);
+
+        assert.deepEqual(summary.command_skipped_memory_files, initialImpact.artifact.affected_memory_files);
+
+        assert.ok(summary.command_update_inference_error);
+
+    });
+
     it('does not print an accepting project-memory confirmation command when update inference fails', () => {
 
         const repoRoot = makeTempRepo();

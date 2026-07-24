@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isRecognizedBundleName } from '../../core/constants';
 import {
     PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH,
     PROJECT_MEMORY_REQUIRED_FILE_NAMES,
@@ -127,6 +128,57 @@ function appendTemplateCorrespondingFile(repoPath: string, files: Set<string>): 
     }
 }
 
+function resolveDirectProjectMemoryFileName(repoPath: string): string | null {
+    const segments = repoPath.split('/').filter(Boolean);
+    const liveSegments = PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH.split('/');
+    const expectedDirectLengths = new Set([
+        liveSegments.length + 1,
+        liveSegments.length + 2
+    ]);
+    if (!expectedDirectLengths.has(segments.length)) {
+        return null;
+    }
+    const liveStartIndex = segments.length - (liveSegments.length + 1);
+    if (liveStartIndex !== 0 && liveStartIndex !== 1) {
+        return null;
+    }
+    if (liveStartIndex === 1 && !isRecognizedBundleName(segments[0])) {
+        return null;
+    }
+    if (!liveSegments.every((segment, index) => segments[liveStartIndex + index] === segment)) {
+        return null;
+    }
+    const fileName = segments.at(-1) || '';
+    return (PROJECT_MEMORY_REQUIRED_FILE_NAMES as readonly string[]).includes(fileName)
+        ? fileName
+        : null;
+}
+
+function isInsideLiveProjectMemory(repoPath: string): boolean {
+    const livePrefix = `${PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH}/`;
+    return repoPath.startsWith(livePrefix) || repoPath.includes(`/${livePrefix}`);
+}
+
+export function collectScopedChangedProjectMemoryFiles(
+    changedFiles: readonly string[],
+    bundleName: string
+): string[] {
+    const directPaths = new Set<string>();
+    for (const rawFile of changedFiles) {
+        const repoPath = toRepoPath(rawFile);
+        const fileName = repoPath ? resolveDirectProjectMemoryFileName(repoPath) : null;
+        if (!fileName) {
+            continue;
+        }
+        directPaths.add(toRepoPath(path.posix.join(
+            bundleName,
+            PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH,
+            fileName
+        )));
+    }
+    return uniqueSorted(directPaths);
+}
+
 export function routeProjectMemoryImpact(changedFiles: readonly string[]): {
     affectedFileNames: string[];
     reasons: ProjectMemoryImpactReason[];
@@ -139,7 +191,17 @@ export function routeProjectMemoryImpact(changedFiles: readonly string[]): {
         if (!repoPath || repoPath.startsWith(`${PROJECT_MEMORY_RUNTIME_DIRECTORY_RELATIVE_PATH}/`)) {
             continue;
         }
-        if (repoPath.startsWith(PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH + '/')) {
+        const directProjectMemoryFileName = resolveDirectProjectMemoryFileName(repoPath);
+        if (directProjectMemoryFileName) {
+            affected.add(directProjectMemoryFileName);
+            reasons.push({
+                changed_file: repoPath,
+                reason: 'Changed project-memory map file directly.',
+                suggested_memory_files: [directProjectMemoryFileName]
+            });
+            continue;
+        }
+        if (isInsideLiveProjectMemory(repoPath)) {
             continue;
         }
         if (repoPath.startsWith('tests/') || repoPath.includes('/fixtures/')) {
