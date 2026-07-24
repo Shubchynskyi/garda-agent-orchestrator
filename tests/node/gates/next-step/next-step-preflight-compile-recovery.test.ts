@@ -1170,7 +1170,7 @@ describe('gates/next-step preflight compile recovery', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'classify-change');
-        assert.ok(result.reason.includes('stale preflight file set [src/app.ts] differs from current git snapshot [src/app.ts, src/extra.ts]'));
+        assert.ok(result.reason.includes('stale preflight authorized file set [src/app.ts] differs from current git snapshot [src/app.ts, src/extra.ts]'));
         assert.ok(result.reason.includes('missing from preflight: [src/extra.ts]'));
         assert.ok(!result.commands[0].command.includes('full-suite-validation'));
         assert.ok(result.commands[0].command.includes('--changed-file "src/app.ts"'));
