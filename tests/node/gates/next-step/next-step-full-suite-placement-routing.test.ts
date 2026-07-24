@@ -31,7 +31,9 @@ import {
     seedDocImpactPass,
     seedFullSuiteValidation,
     seedTimedOutFullSuiteFailure,
-    seedFullSuiteRetryEvidence} from './next-step-full-suite-fixtures';
+    seedFullSuiteRetryEvidence,
+    seedSplitRequiredLatchEvidence
+} from './next-step-full-suite-fixtures';
 import {
     buildFullSuiteValidationEvidence
 } from '../../../../src/gates/review-context/review-context-validation-evidence';
@@ -996,6 +998,7 @@ describe('gates/next-step', () => {
         seedFullSuiteValidation(repoRoot, TASK_ID);
         writeRepairTaskMaterializationEvidence(repoRoot);
         writeCompletedRepairTaskRows(repoRoot);
+        seedSplitRequiredLatchEvidence(repoRoot, TASK_ID);
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
@@ -2398,13 +2401,13 @@ describe('gates/next-step', () => {
 
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
 
-        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:01.000Z');
+        seedCompilePass(repoRoot, TASK_ID, '2026-04-27T00:00:01.000Z');
 
         writeReviewEvidence(repoRoot, TASK_ID, 'code');
 
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED', '2099-01-01T00:00:02.000Z');
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED', '2026-04-27T00:00:02.000Z');
 
-        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:03.000Z');
+        seedCompilePass(repoRoot, TASK_ID, '2026-04-27T00:00:03.000Z');
 
         writeReviewEvidence(repoRoot, TASK_ID, 'code');
 
@@ -2428,7 +2431,7 @@ describe('gates/next-step', () => {
 
 
 
-    it('routes full-suite refresh before test review when newer compile has unchanged scope binding', () => {
+    it('keeps current-cycle code review recovery ahead of test-lane full-suite refresh after a newer compile', () => {
 
         const repoRoot = makeTempRepo();
 
@@ -2522,15 +2525,10 @@ describe('gates/next-step', () => {
 
 
 
-        assert.equal(result.next_gate, 'full-suite-validation');
-
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-
-        assert.match(result.title, /before test review/);
-
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-
-        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.equal(result.next_gate, 'record-review-routing');
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.ok(result.commands[0].command.includes('record-review-routing'));
+        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
 
     });
 

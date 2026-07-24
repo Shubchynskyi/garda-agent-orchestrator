@@ -723,13 +723,13 @@ describe('gates/next-step split-required latch status', () => {
         const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
         const events = fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-649.jsonl'), 'utf8');
 
-        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.status, 'SPLIT_REQUIRED');
         assert.notEqual(result.status, 'DONE');
-        assert.equal(result.next_gate, null);
-        assert.ok(result.reason.includes('stayed permanent after later status/config/scope drift'));
-        assert.ok(taskMd.includes('| T-649 | DECOMPOSED |'));
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.ok(result.reason.includes('permanent for this task attempt'));
+        assert.ok(taskMd.includes('| T-649 | SPLIT_REQUIRED |'));
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
-        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
+        assert.equal(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'), false);
         assert.equal(events.includes('"event_type":"DECOMPOSED_PARENT_COMPLETED"'), false);
     });
 
@@ -742,9 +742,9 @@ describe('gates/next-step split-required latch status', () => {
             '',
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
-            '| T-980 | 🟫 SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-981` through `T-982`; do not continue the parent. |',
-            '| T-981 | 🟩 DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
-            '| T-982 | 🟦 TODO | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            '| T-980 | 🟫 SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-980-1` and `T-980-2`; do not continue the parent. |',
+            '| T-980-1 | 🟦 TODO | P1 | workflow/parser | Implement parser boundary | gpt-5.4 | 2026-05-05 | strict | Parse the bounded child contract. |',
+            '| T-980-2 | 🟦 TODO | P1 | workflow/validation | Validate routing boundary | gpt-5.4 | 2026-05-05 | strict | Validate the independent routing contract. |',
             ''
         ].join('\n'), 'utf8');
         seedSplitRequiredLatchEvidence(repoRoot, 'T-980');
