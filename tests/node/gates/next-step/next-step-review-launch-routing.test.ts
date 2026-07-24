@@ -406,6 +406,7 @@ function buildReviewContextScopeFixture(repoRoot: string, taskId: string, review
         ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
     return {
+        schema_version: 2,
         tree_state: {
             schema_version: 1,
             detection_source: String(preflight.detection_source || 'explicit_changed_files'),

@@ -14,11 +14,6 @@ import {
     type TaskQueueEntry
 } from '../../core/task-queue-read';
 import {
-    DELEGATED_REVIEWER_IDENTITY_FROM_PROVIDER_PLACEHOLDER,
-    isPlannedReviewerIdentity,
-    isResolvedReviewerIdentity
-} from '../../gate-runtime/review/reviewer-identity-contract';
-import {
     resolveReviewerResultRecoveryIdentity
 } from '../review/security/reviewer-result-recovery-identity';
 import {
@@ -264,7 +259,6 @@ import {
 import {
     resolveClassifyDecisionRoute,
     resolveCompletedCloseoutDecisionRoute,
-    resolveDelegatedReviewDecisionRoute,
     resolveFullSuiteDecisionRoute,
     resolveOptionalSkillSelectionDecisionRoute,
     resolvePendingOptionalSkillDecisionRoute,
@@ -279,6 +273,14 @@ import {
     resolveScopeBudgetGuardDecisionRoute,
     resolveValidationDecisionRoute
 } from './next-step-validation-routes';
+import {
+    resolveActiveReviewLifecycleDecisionRoute,
+    resolveContextPreparationLifecycleRoute,
+    resolveCurrentCycleReviewReuseRoute,
+    resolveDelegatedReadinessLifecycleRoute,
+    resolveDelegatedReviewerIdentityBinding,
+    resolveFindingsFollowUpLifecycleRoute
+} from './next-step-review-lifecycle-routes';
 import {
     buildReviewCycleContinuationCommand,
     buildReviewCycleOperatorBlock,
@@ -3379,154 +3381,137 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             state,
             (candidateState) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, candidateState)
         );
-        if (
-            state?.reviewFindingsDisposition
-            && state.ready
-            && currentReviewRecordedEvidenceCurrent
-            && state.reviewFindingsDisposition.counts_by_action.create_follow_up > 0
-            && !state.reviewFindingsFollowUpSatisfied
-            && state.reviewFollowUpMaterializationMode !== 'grouped_by_parent'
-        ) {
-            const dispositionArtifactPath = state.reviewFindingsDispositionArtifactPath
+        const resolveFindingsFollowUpRoute = (): NextStepDecisionRoutePayload | null => {
+            const dispositionArtifactPath = state?.reviewFindingsDispositionArtifactPath
                 || path.join(reviewsRoot, `${taskId}-${reviewType}-findings-disposition.json`);
-            const followUpArtifactPath = state.reviewFindingsFollowUpArtifactPath
+            const followUpArtifactPath = state?.reviewFindingsFollowUpArtifactPath
                 || dispositionArtifactPath.replace(/-findings-disposition\.json$/u, '-findings-follow-ups.json');
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'materialize-review-follow-up-tasks',
-                title: `Materialize '${reviewType}' review follow-up tasks.`,
-                reason:
-                    `Accepted '${reviewType}' findings disposition requires ` +
-                    `${state.reviewFindingsDisposition.counts_by_action.create_follow_up} follow-up item(s). ` +
-                    `Materialize TASK.md follow-up rows before downstream review, reuse, required-review, or completion decisions treat this review as satisfied. ` +
-                    `Validation artifact: ${state.reviewFindingsValidationArtifactPath ? formatNextStepInlineValue(toRepoDisplayPath(repoRoot, state.reviewFindingsValidationArtifactPath)) : 'unknown'}.`,
-                commands: [buildCommand(
+            return resolveFindingsFollowUpLifecycleRoute({
+                reviewType,
+                findingsDispositionReady: Boolean(
+                    state?.reviewFindingsDisposition
+                    && state.ready
+                    && currentReviewRecordedEvidenceCurrent
+                ),
+                followUpCount: state?.reviewFindingsDisposition?.counts_by_action.create_follow_up || 0,
+                followUpSatisfied: Boolean(state?.reviewFindingsFollowUpSatisfied),
+                groupedByParent: state?.reviewFollowUpMaterializationMode === 'grouped_by_parent',
+                validationArtifactDisplayPath: state?.reviewFindingsValidationArtifactPath
+                    ? formatNextStepInlineValue(toRepoDisplayPath(repoRoot, state.reviewFindingsValidationArtifactPath))
+                    : null,
+                materializeFollowUpsCommand: buildCommand(
                     'Materialize review follow-up tasks',
                     `${cliPrefix} gate materialize-review-follow-up-tasks ` +
                     `--task-id "${taskId}" ` +
                     `--review-type "${reviewType}" ` +
                     `--disposition-artifact-path "${toRepoDisplayPath(repoRoot, dispositionArtifactPath)}" ` +
-                    `--receipt-path "${toRepoDisplayPath(repoRoot, state.receiptPath)}" ` +
+                    `--receipt-path "${toRepoDisplayPath(repoRoot, state?.receiptPath || path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`))}" ` +
                     `--artifact-path "${toRepoDisplayPath(repoRoot, followUpArtifactPath)}" ` +
-                    '--repo-root "."'
-                )]
+                        '--repo-root "."'
+                )
             });
-        }
-        if (
-            state
-            && state.ready
-            && state.contextExists
-            && state.domainScopeCurrent
-            && !state.failed
-            && !currentReviewEvidenceSatisfied
-        ) {
-            const reuseRecoveryTrigger = postReviewGateFreshnessRecoveryActive
-                ? `Review gate already passed, but ${postReviewGateFreshnessRecoveryReason}`
-                : `Current '${reviewType}' PASS evidence is lane-domain current but not bound as current-cycle review evidence after the latest compile`;
-            const reviewContextChain = buildReviewGateChainStatusSummary({
+        };
+        const resolveCurrentCycleReuseDecisionRoute = (): NextStepDecisionRoutePayload | null => {
+            const currentCycleReuseCandidate = Boolean(
+                state
+                && state.ready
+                && state.contextExists
+                && state.domainScopeCurrent
+                && !state.failed
+                && !currentReviewEvidenceSatisfied
+            );
+            return resolveCurrentCycleReviewReuseRoute({
+                reviewType,
+                stateReady: Boolean(state?.ready),
+                contextExists: Boolean(state?.contextExists),
+                domainScopeCurrent: Boolean(state?.domainScopeCurrent),
+                reviewFailed: Boolean(state?.failed),
+                currentReviewEvidenceSatisfied,
+                postReviewGateFreshnessRecoveryActive,
+                postReviewGateFreshnessRecoveryReason,
+                scopedDiffReadiness,
+                reviewerReadinessChain,
+                reviewContextChain: currentCycleReuseCandidate
+                    ? buildReviewGateChainStatusSummary({
+                        repoRoot,
+                        eventsRoot,
+                        taskId,
+                        reviewType,
+                        edgeId: postReviewGateFreshnessRecoveryActive
+                            ? 'post-review-gate-to-review-reuse'
+                            : 'compile-to-review-reuse',
+                        reason: postReviewGateFreshnessRecoveryActive
+                            ? `post-review gate freshness recovery must materialize '${reviewType}' current-cycle reuse before closeout`
+                            : `latest compile evidence is current before materializing '${reviewType}' current-cycle review reuse`,
+                        preflightPath: preflightCommandPath,
+                        reviewContextPath: state?.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
+                        depth: reviewDepth
+                    })
+                    : '',
+                commands: {
+                    buildScopedDiff: buildCommand(
+                        'Build scoped diff',
+                        buildScopedDiffCommand({
+                            cliPrefix,
+                            reviewType,
+                            preflightCommandPath,
+                            outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                            metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                        })
+                    ),
+                    buildReviewContext: buildCommand(
+                        'Build review context',
+                        buildReviewContextCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewDepth,
+                            preflightCommandPath,
+                            taskModePath
+                        )
+                    )
+                }
+            });
+        };
+        const resolveDependencyPreparationRoute = (): NextStepDecisionRoutePayload | null =>
+            resolveReviewLaunchableLanePreparationRoute({
+                reviewPolicyMode: reviewPolicy.mode,
+                reviewType,
+                dependencies,
+                dependencyDetails: dependencies.length > 0
+                    ? describeBlockedReviewDependencies(dependencies, reviewStates)
+                    : '',
+                reviewerReadinessChain,
+                reviewContextChain: '',
+                scopedDiffReadiness: { ready: true, reason: '' },
+                stateExists: true,
+                contextExists: true,
+                contextCurrent: true,
+                contextDetailsSuffix: '',
+                commands: {
+                    finishUpstreamReview: buildCommand(
+                        'Finish upstream review first',
+                        navigatorCommand
+                    ),
+                    buildScopedDiff: buildCommand('Build scoped diff', navigatorCommand),
+                    buildReviewContext: buildCommand('Build review context', navigatorCommand)
+                }
+            });
+        const resolveStrictSequentialUpstreamReuseDecisionRoute =
+            (): NextStepDecisionRoutePayload | null => {
+            const strictSequentialUpstreamReuse = findStrictSequentialUpstreamNeedingCurrentCycleReuse({
                 repoRoot,
                 eventsRoot,
                 taskId,
-                reviewType,
-                edgeId: postReviewGateFreshnessRecoveryActive
-                    ? 'post-review-gate-to-review-reuse'
-                    : 'compile-to-review-reuse',
-                reason: postReviewGateFreshnessRecoveryActive
-                    ? `post-review gate freshness recovery must materialize '${reviewType}' current-cycle reuse before closeout`
-                    : `latest compile evidence is current before materializing '${reviewType}' current-cycle review reuse`,
-                preflightPath: preflightCommandPath,
-                reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
-                depth: reviewDepth
+                targetReviewType: reviewType,
+                requiredReviews: summary.required_reviews,
+                policyMode: reviewPolicy.mode,
+                reviewStates
             });
-            if (!scopedDiffReadiness.ready) {
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'build-scoped-diff',
-                    title: postReviewGateFreshnessRecoveryActive
-                        ? `Prepare '${reviewType}' scoped diff metadata for post-review reuse.`
-                        : `Prepare '${reviewType}' scoped diff metadata for review reuse.`,
-                    reason:
-                        `${scopedDiffReadiness.reason} ${reuseRecoveryTrigger}; ` +
-                        `Prepare scoped metadata so build-review-context can materialize reuse instead of launching a fresh reviewer. ` +
-                        `${reviewerReadinessChain} ${reviewContextChain}`,
-                    commands: [
-                        buildCommand(
-                            'Build scoped diff',
-                            buildScopedDiffCommand({
-                                cliPrefix,
-                                reviewType,
-                                preflightCommandPath,
-                                outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
-                                metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
-                            })
-                        )
-                    ]
-                });
+            if (!strictSequentialUpstreamReuse) {
+                return null;
             }
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'build-review-context',
-                title: postReviewGateFreshnessRecoveryActive
-                    ? `Materialize '${reviewType}' review reuse before closeout.`
-                    : `Materialize '${reviewType}' review reuse before continuing.`,
-                reason:
-                    `${reuseRecoveryTrigger}. Rebuild the review context to materialize reuse before rerunning ` +
-                    `required-reviews-check or continuing dependent review work, without launching a fresh reviewer. ` +
-                    `${reviewerReadinessChain} ${reviewContextChain}`,
-                commands: [
-                    buildCommand(
-                        'Build review context',
-                        buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
-                    )
-                ]
-            });
-        }
-        const blockedDependencyRoute = resolveReviewLaunchableLanePreparationRoute({
-            reviewPolicyMode: reviewPolicy.mode,
-            reviewType,
-            dependencies,
-            dependencyDetails: dependencies.length > 0
-                ? describeBlockedReviewDependencies(dependencies, reviewStates)
-                : '',
-            reviewerReadinessChain,
-            reviewContextChain: '',
-            scopedDiffReadiness: { ready: true, reason: '' },
-            stateExists: true,
-            contextExists: true,
-            contextCurrent: true,
-            contextDetailsSuffix: '',
-            commands: {
-                finishUpstreamReview: buildCommand(
-                    'Finish upstream review first',
-                    navigatorCommand
-                ),
-                buildScopedDiff: buildCommand('Build scoped diff', navigatorCommand),
-                buildReviewContext: buildCommand('Build review context', navigatorCommand)
-            }
-        });
-        if (blockedDependencyRoute) {
-            return buildResult({
-                ...resultBase,
-                status: blockedDependencyRoute.status,
-                nextGate: blockedDependencyRoute.nextGate,
-                title: blockedDependencyRoute.title,
-                reason: blockedDependencyRoute.reason,
-                commands: blockedDependencyRoute.commands
-            });
-        }
-        const strictSequentialUpstreamReuse = findStrictSequentialUpstreamNeedingCurrentCycleReuse({
-            repoRoot,
-            eventsRoot,
-            taskId,
-            targetReviewType: reviewType,
-            requiredReviews: summary.required_reviews,
-            policyMode: reviewPolicy.mode,
-            reviewStates
-        });
-        if (strictSequentialUpstreamReuse) {
             const upstreamReviewType = strictSequentialUpstreamReuse.upstreamReviewType;
             const upstreamState = strictSequentialUpstreamReuse.upstreamState;
             const upstreamScopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${upstreamReviewType}-scoped.json`);
@@ -3566,7 +3551,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     : undefined,
                 depth: reviewDepth
             });
-            const upstreamReuseRoute = resolveStrictSequentialUpstreamReuseRoute({
+            return resolveStrictSequentialUpstreamReuseRoute({
                 reviewPolicyMode: reviewPolicy.mode,
                 downstreamReviewType: reviewType,
                 upstreamReviewType,
@@ -3591,16 +3576,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     )
                 }
             });
-            return buildResult({
-                ...resultBase,
-                status: upstreamReuseRoute.status,
-                nextGate: upstreamReuseRoute.nextGate,
-                title: upstreamReuseRoute.title,
-                reason: upstreamReuseRoute.reason,
-                commands: upstreamReuseRoute.commands
-            });
-        }
-        if (state?.failed) {
+        };
+        const resolveFailedReviewDecisionRoute = (): NextStepDecisionRoutePayload | null => {
+            if (!state?.failed) {
+                return null;
+            }
             const taskIntent = getStringField(taskMode, 'task_summary', taskEntry?.title || taskId);
             const downstreamReviewTypes = getDownstreamReviewTypesFor(
                 reviewType,
@@ -3663,7 +3643,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     receivingGateCanResolveCurrentAttempt: false
                 })
                 : null;
-            const failedReviewRoute = resolveFailedReviewRemediationRoute({
+            return resolveFailedReviewRemediationRoute({
                 taskId,
                 reviewType,
                 verdictToken: state.verdictToken || state.failToken || 'FAILED',
@@ -3759,18 +3739,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     )
                 }
             });
-            if (failedReviewRoute) {
-                return buildResult({
-                    ...resultBase,
-                    status: failedReviewRoute.status,
-                    nextGate: failedReviewRoute.nextGate,
-                    title: failedReviewRoute.title,
-                    reason: failedReviewRoute.reason,
-                    commands: failedReviewRoute.commands
-                });
-            }
-        }
-        if (!state || !state.contextExists || !state.contextCurrent) {
+        };
+        const resolveContextPreparationRoute = (): NextStepDecisionRoutePayload | null => {
             const reviewContextChain = buildReviewGateChainStatusSummary({
                 repoRoot,
                 eventsRoot,
@@ -3785,6 +3755,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             const contextDetails = state?.violations
                 .filter((violation) => violation.includes('review context'))
                 .join(' ');
+            const buildContextCommand = buildCommand(
+                'Build review context',
+                buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
+            );
             const preparationRoute = resolveReviewLaunchableLanePreparationRoute({
                 reviewPolicyMode: reviewPolicy.mode,
                 reviewType,
@@ -3812,36 +3786,22 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
                         })
                     ),
-                    buildReviewContext: buildCommand(
-                        'Build review context',
-                        buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
-                    )
+                    buildReviewContext: buildContextCommand
                 }
             });
-            if (!preparationRoute) {
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'build-review-context',
-                    title: `Prepare '${reviewType}' review context.`,
-                    reason: `Required review '${reviewType}' review-context state is inconsistent for the current preflight. ${reviewerReadinessChain} ${reviewContextChain}`,
-                    commands: [
-                        buildCommand(
-                            'Build review context',
-                            buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
-                        )
-                    ]
-                });
-            }
-            return buildResult({
-                ...resultBase,
-                status: preparationRoute.status,
-                nextGate: preparationRoute.nextGate,
-                title: preparationRoute.title,
-                reason: preparationRoute.reason,
-                commands: preparationRoute.commands
+            return resolveContextPreparationLifecycleRoute({
+                contextReady: Boolean(state?.contextExists && state.contextCurrent),
+                reviewType,
+                reviewerReadinessChain,
+                reviewContextChain,
+                preparationRoute,
+                buildReviewContextCommand: buildContextCommand
             });
-        }
+        };
+        const resolveDelegatedReadinessDecisionRoute = (): NextStepDecisionRoutePayload | null => {
+            if (!state || !state.contextExists || !state.contextCurrent) {
+                return null;
+            }
         const contextReviewerIdentity = state.contextReviewerIdentity || '';
         const providerLaunchTargetSummary = buildProviderNativeReviewerLaunchTargetSummary(taskMode);
         const routingCurrent = (
@@ -3850,14 +3810,13 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         );
         const launchArtifactEvidence = currentReviewerLaunchArtifactEvidence
             || getCurrentReviewerLaunchArtifactEvidenceForInvocation(repoRoot, eventsRoot, taskId, state);
-        const resolvedLaunchReviewerIdentity = String(launchArtifactEvidence.reviewerIdentity || '').trim();
-        const delegatedReviewerIdentity = launchArtifactEvidence.state !== 'prepared'
-            && isResolvedReviewerIdentity(resolvedLaunchReviewerIdentity)
-            ? resolvedLaunchReviewerIdentity
-            : DELEGATED_REVIEWER_IDENTITY_FROM_PROVIDER_PLACEHOLDER;
-        const reviewerIdentity = isResolvedReviewerIdentity(contextReviewerIdentity)
-            ? contextReviewerIdentity
-            : delegatedReviewerIdentity;
+        const reviewerIdentityBinding = resolveDelegatedReviewerIdentityBinding({
+            contextReviewerIdentity,
+            launchArtifactState: launchArtifactEvidence.state,
+            launchReviewerIdentity: launchArtifactEvidence.reviewerIdentity
+        });
+        const delegatedReviewerIdentity = reviewerIdentityBinding.delegatedReviewerIdentity;
+        const reviewerIdentity = reviewerIdentityBinding.reviewerIdentity;
         const routingReviewerIdentity = null;
         const launchArtifactPath = buildDefaultReviewScratchCommandPath(
             repoRoot,
@@ -3865,19 +3824,6 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             reviewType,
             'reviewer-launch.json'
         );
-        const oneShotLaunchHint = launchArtifactEvidence.state === 'prepared'
-            && launchArtifactEvidence.launchInputArtifactPath
-            && launchArtifactEvidence.launchInputArtifactSha256
-            ? (
-                `ReviewerOneShotLaunchHint: launch a fresh delegated reviewer once with the exact opaque handoff ` +
-                `ReviewerLaunchInputArtifactPath: ${normalizePath(launchArtifactEvidence.launchInputArtifactPath)} ` +
-                `(launch_input_sha256=${launchArtifactEvidence.launchInputArtifactSha256}) ` +
-                `or CopyPasteReviewerLaunchPrompt from prepare-reviewer-launch. ` +
-                `ReviewerLaunchArtifactPath is main-agent control metadata, not the clean-context reviewer prompt. ` +
-                `Then run record-reviewer-delegation-started immediately after provider launch.`
-            )
-            : null;
-        const reviewerIdentityIsPlanned = isPlannedReviewerIdentity(contextReviewerIdentity);
         const reviewRoutingChain = buildReviewGateChainStatusSummary({
             repoRoot,
             eventsRoot,
@@ -3940,41 +3886,44 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             ? state.violations.join('; ')
             : 'review artifact or receipt is missing';
         const reviewCycleTaskIntent = getStringField(taskMode, 'task_summary', taskEntry?.title || taskId);
-        const delegatedReadinessRoute = resolveDelegatedReviewDecisionRoute({
-            reviewType,
-            currentReviewReuseRecorded,
-            currentReviewEvidenceSatisfied,
-            currentReviewContextInvocationAttested,
-            routingCurrent,
-            artifactExists: state.artifactExists,
-            receiptExists: state.receiptExists,
-            reviewFailed: state.failed,
-            stateReady: state.ready,
-            stateViolationsText: stateViolations,
-            reviewerIdentity: state.reviewerIdentity || '',
+        return resolveDelegatedReadinessLifecycleRoute({
+            contextReady: true,
             contextReviewerIdentity,
-            reviewerIdentityIsPlanned,
+            recordedReviewerIdentity: state.reviewerIdentity || '',
             launchArtifactState: launchArtifactEvidence.state,
-            launchArtifactOrphanedReason: launchArtifactEvidence.orphanedReason,
-            providerLaunchTargetSummary,
-            reviewerReadinessChain,
-            reviewRoutingChain,
-            launchPreparationChain,
-            launchCompletionChain,
-            reviewInvocationChain,
-            reviewResultChain,
-            acceptedVerdictTokens,
-            hiddenTimingTrustRemediation: getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state),
-            reusedExistingReview: state.reusedExistingReview,
-            oneShotLaunchHint,
-            instructions: {
+            identityBinding: reviewerIdentityBinding,
+            launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
+            launchInputArtifactSha256: launchArtifactEvidence.launchInputArtifactSha256,
+            decision: {
+                reviewType,
+                currentReviewReuseRecorded,
+                currentReviewEvidenceSatisfied,
+                currentReviewContextInvocationAttested,
+                routingCurrent,
+                artifactExists: state.artifactExists,
+                receiptExists: state.receiptExists,
+                reviewFailed: state.failed,
+                stateReady: state.ready,
+                stateViolationsText: stateViolations,
+                launchArtifactOrphanedReason: launchArtifactEvidence.orphanedReason,
+                providerLaunchTargetSummary,
+                reviewerReadinessChain,
+                reviewRoutingChain,
+                launchPreparationChain,
+                launchCompletionChain,
+                reviewInvocationChain,
+                reviewResultChain,
+                acceptedVerdictTokens,
+                hiddenTimingTrustRemediation: getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state),
+                reusedExistingReview: state.reusedExistingReview,
+                instructions: {
                 opaqueHandoff: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
                 freshContextLaunch: REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
                 sessionReuseBoundary: REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION,
                 realSubagentOrStop: REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION,
                 cleanupAfterReceipt: REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
-            },
-            commands: {
+                },
+                commands: {
                 recordRouting: buildCommand(
                     'Record fresh delegated review routing',
                     buildReviewRoutingCommand(repoRoot, cliPrefix, taskId, reviewType, routingReviewerIdentity, taskModePath)
@@ -4061,16 +4010,28 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         launchArtifactEvidence.reviewOutputPath
                     )
                 )
+                }
             }
         });
-        if (delegatedReadinessRoute) {
+        };
+        const activeReviewLifecycleDecisionRoute = resolveActiveReviewLifecycleDecisionRoute({
+            resolveFindingsFollowUpRoute,
+            resolveCurrentCycleReuseRoute: resolveCurrentCycleReuseDecisionRoute,
+            resolveDependencyPreparationRoute,
+            resolveStrictSequentialUpstreamReuseRoute:
+                resolveStrictSequentialUpstreamReuseDecisionRoute,
+            resolveFailedReviewRemediationRoute: resolveFailedReviewDecisionRoute,
+            resolveContextPreparationRoute,
+            resolveDelegatedReadinessRoute: resolveDelegatedReadinessDecisionRoute
+        });
+        if (activeReviewLifecycleDecisionRoute) {
             return buildResult({
                 ...resultBase,
-                status: delegatedReadinessRoute.status,
-                nextGate: delegatedReadinessRoute.nextGate,
-                title: delegatedReadinessRoute.title,
-                reason: delegatedReadinessRoute.reason,
-                commands: delegatedReadinessRoute.commands
+                status: activeReviewLifecycleDecisionRoute.status,
+                nextGate: activeReviewLifecycleDecisionRoute.nextGate,
+                title: activeReviewLifecycleDecisionRoute.title,
+                reason: activeReviewLifecycleDecisionRoute.reason,
+                commands: activeReviewLifecycleDecisionRoute.commands
             });
         }
     }
