@@ -603,6 +603,53 @@ describe('gate-flow preflight pipeline', () => {
         });
     }
 
+    it('fails closed when a synchronous callback returns a callable thenable', () => {
+        const events: string[] = [];
+        const pipeline = createSynchronousTestPipeline(events);
+        const callableThenable = Object.assign(
+            () => undefined,
+            { then() {} }
+        );
+        pipeline.parse =
+            (() => callableThenable) as unknown as TestSynchronousPipeline['parse'];
+
+        assert.throws(
+            () => runGateFlowPreflightPipelineSync(
+                { rawTaskId: 'T-932-3-F1-F1' },
+                pipeline
+            ),
+            /parse callback returned a Promise-like value/
+        );
+        assert.deepEqual(events, []);
+    });
+
+    it('accepts null as a valid synchronous callback result', () => {
+        const events: string[] = [];
+        const pipeline: GateFlowSynchronousPreflightPipeline<
+            TestInput,
+            TestParsed,
+            TestTaskModeEvidence,
+            TestPreflight,
+            TestTimelineReadiness,
+            null
+        > = {
+            ...createSynchronousTestPipeline(events),
+            emit(context) {
+                events.push('emit');
+                assert.equal(context.timelineReadiness.ready, true);
+                return null;
+            }
+        };
+
+        const output = runGateFlowPreflightPipelineSync(
+            { rawTaskId: 'T-932-3-F1-F1' },
+            pipeline
+        );
+
+        assert.equal(output, null);
+        assert.deepEqual(events, ['parse', 'task-mode', 'preflight', 'timeline', 'emit']);
+    });
+
     it('observes a rejected Promise before reporting a synchronous contract violation', async () => {
         const events: string[] = [];
         const pipeline = createSynchronousTestPipeline(events);
