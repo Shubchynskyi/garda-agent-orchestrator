@@ -8,7 +8,9 @@ import {
     GATE_FLOW_PREFLIGHT_PIPELINE_STAGES,
     runGateFlowPreflightPipeline,
     runGateFlowPreflightPipelineSync,
-    type GateFlowPreflightPipeline
+    type GateFlowPreflightPipeline,
+    type GateFlowSynchronousPreflightPipelineExtension,
+    type GateFlowSynchronousPreflightPipeline
 } from '../../../../src/cli/commands/gate-flows/support/gate-flow-preflight-pipeline';
 import {
     runReviewFlowPreflightPipeline
@@ -67,6 +69,23 @@ type TestPipeline = GateFlowPreflightPipeline<
     string
 >;
 
+type TestSynchronousPipeline = GateFlowSynchronousPreflightPipeline<
+    TestInput,
+    TestParsed,
+    TestTaskModeEvidence,
+    TestPreflight,
+    TestTimelineReadiness,
+    string
+>;
+
+type TestSynchronousExtension = GateFlowSynchronousPreflightPipelineExtension<
+    TestInput,
+    TestParsed,
+    TestTaskModeEvidence,
+    TestPreflight,
+    TestTimelineReadiness
+>;
+
 function createTestPipeline(events: string[]): TestPipeline {
     return {
         parse(input) {
@@ -95,6 +114,151 @@ function createTestPipeline(events: string[]): TestPipeline {
         }
     };
 }
+
+function createSynchronousTestPipeline(events: string[]): TestSynchronousPipeline {
+    return {
+        parse(input) {
+            events.push('parse');
+            return { taskId: input.rawTaskId.trim() };
+        },
+        loadTaskModeEvidence(context) {
+            events.push('task-mode');
+            assert.ok(context.parsed.taskId);
+            return { status: 'PASS' };
+        },
+        loadPreflight(context) {
+            events.push('preflight');
+            assert.equal(context.taskModeEvidence.status, 'PASS');
+            return { mode: 'FULL_PATH' };
+        },
+        evaluateTimelineReadiness(context) {
+            events.push('timeline');
+            assert.equal(context.preflight.mode, 'FULL_PATH');
+            return { ready: true };
+        },
+        emit(context) {
+            events.push('emit');
+            assert.equal(context.timelineReadiness.ready, true);
+            return `${context.parsed.taskId}:${context.preflight.mode}`;
+        }
+    };
+}
+
+function assertSynchronousPipelineRejectsPromiseCallbacks(
+    pipeline: TestSynchronousPipeline
+): void {
+    // @ts-expect-error Synchronous pipelines must reject Promise-returning callbacks.
+    pipeline.parse = async (input) => ({ taskId: input.rawTaskId.trim() });
+    // @ts-expect-error Synchronous pipelines must reject Promise-returning callbacks.
+    pipeline.loadTaskModeEvidence = async () => ({ status: 'PASS' });
+    // @ts-expect-error Synchronous pipelines must reject Promise-returning callbacks.
+    pipeline.loadPreflight = async () => ({ mode: 'FULL_PATH' });
+    // @ts-expect-error Synchronous pipelines must reject Promise-returning callbacks.
+    pipeline.evaluateTimelineReadiness = async () => ({ ready: true });
+    // @ts-expect-error Synchronous pipelines must reject Promise-returning callbacks.
+    pipeline.emit = async () => 'T-932-3-F1:FULL_PATH';
+}
+
+void assertSynchronousPipelineRejectsPromiseCallbacks;
+
+function assertPretypedSynchronousExtensionRejectsPromiseHooks(
+    extension: TestSynchronousExtension
+): void {
+    // @ts-expect-error Pre-typed synchronous extensions must reject asynchronous hooks.
+    extension.afterParse = async () => {};
+    // @ts-expect-error Pre-typed synchronous extensions must reject asynchronous hooks.
+    extension.afterTaskModeEvidence = async () => {};
+    // @ts-expect-error Pre-typed synchronous extensions must reject asynchronous hooks.
+    extension.afterPreflight = async () => {};
+    // @ts-expect-error Pre-typed synchronous extensions must reject asynchronous hooks.
+    extension.afterTimelineReadiness = async () => {};
+    // @ts-expect-error Pre-typed synchronous extensions must reject asynchronous hooks.
+    extension.beforeEmit = async () => {};
+}
+
+void assertPretypedSynchronousExtensionRejectsPromiseHooks;
+
+function assertSynchronousCallRejectsInferredPromiseCallbacks(): void {
+    const input = { rawTaskId: 'T-932-3-F1' };
+    const coreCallbacks = createSynchronousTestPipeline([]);
+
+    // @ts-expect-error Inline inference must not admit Promise-returning core callbacks.
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        parse: async (value: TestInput) => ({ taskId: value.rawTaskId.trim() })
+    });
+    // @ts-expect-error Inline inference must not admit Promise-returning core callbacks.
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        loadTaskModeEvidence: async () => ({ status: 'PASS' as const })
+    });
+    // @ts-expect-error Inline inference must not admit Promise-returning core callbacks.
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        loadPreflight: async () => ({ mode: 'FULL_PATH' as const })
+    });
+    // @ts-expect-error Inline inference must not admit Promise-returning core callbacks.
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        evaluateTimelineReadiness: async () => ({ ready: true })
+    });
+    // @ts-expect-error Inline inference must not admit Promise-returning core callbacks.
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        emit: async () => 'T-932-3-F1:FULL_PATH'
+    });
+}
+
+void assertSynchronousCallRejectsInferredPromiseCallbacks;
+
+function assertSynchronousCallRejectsInferredPromiseExtensionHooks(): void {
+    const input = { rawTaskId: 'T-932-3-F1' };
+    const coreCallbacks = {
+        parse: (value: TestInput) => ({ taskId: value.rawTaskId.trim() }),
+        loadTaskModeEvidence: () => ({ status: 'PASS' as const }),
+        loadPreflight: () => ({ mode: 'FULL_PATH' as const }),
+        evaluateTimelineReadiness: () => ({ ready: true }),
+        emit: () => 'T-932-3-F1:FULL_PATH'
+    };
+
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        extensions: [{
+            // @ts-expect-error Inline inference must reject an asynchronous afterParse hook.
+            async afterParse() {}
+        }]
+    });
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        extensions: [{
+            // @ts-expect-error Inline inference must reject an asynchronous afterTaskModeEvidence hook.
+            async afterTaskModeEvidence() {}
+        }]
+    });
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        extensions: [{
+            // @ts-expect-error Inline inference must reject an asynchronous afterPreflight hook.
+            async afterPreflight() {}
+        }]
+    });
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        extensions: [{
+            // @ts-expect-error Inline inference must reject an asynchronous afterTimelineReadiness hook.
+            async afterTimelineReadiness() {}
+        }]
+    });
+    runGateFlowPreflightPipelineSync(input, {
+        ...coreCallbacks,
+        extensions: [{
+            // @ts-expect-error Inline inference must reject an asynchronous beforeEmit hook.
+            async beforeEmit() {}
+        }]
+    });
+}
+
+void assertSynchronousCallRejectsInferredPromiseExtensionHooks;
 
 function normalizeCompileOutputContract(outputLines: string[]): string[] {
     return outputLines.map((line) => line
@@ -283,32 +447,249 @@ describe('gate-flow preflight pipeline', () => {
         const events: string[] = [];
         const output = runGateFlowPreflightPipelineSync(
             { rawTaskId: ' T-932-3 ' },
-            {
-                parse(input) {
-                    events.push('parse');
-                    return { taskId: input.rawTaskId.trim() };
-                },
-                loadTaskModeEvidence() {
-                    events.push('task-mode');
-                    return { status: 'PASS' as const };
-                },
-                loadPreflight() {
-                    events.push('preflight');
-                    return { mode: 'FULL_PATH' as const };
-                },
-                evaluateTimelineReadiness() {
-                    events.push('timeline');
-                    return { ready: true };
-                },
-                emit(context) {
-                    events.push('emit');
-                    return `${context.parsed.taskId}:${context.preflight.mode}`;
-                }
-            }
+            createSynchronousTestPipeline(events)
         );
 
         assert.equal(output, 'T-932-3:FULL_PATH');
         assert.deepEqual(events, ['parse', 'task-mode', 'preflight', 'timeline', 'emit']);
+    });
+
+    it('runs synchronous extension hooks in registration order with accumulated context', () => {
+        const events: string[] = [];
+        const pipeline = createSynchronousTestPipeline(events);
+        const statefulExtension = {
+            events,
+            afterParse(context: { parsed: TestParsed }): void {
+                this.events.push(`extension-a:parse:${context.parsed.taskId}`);
+            },
+            afterTaskModeEvidence(context: { taskModeEvidence: TestTaskModeEvidence }): void {
+                this.events.push(`extension-a:task-mode:${context.taskModeEvidence.status}`);
+            },
+            afterPreflight(context: { preflight: TestPreflight }): void {
+                this.events.push(`extension-a:preflight:${context.preflight.mode}`);
+            },
+            afterTimelineReadiness(context: { timelineReadiness: TestTimelineReadiness }): void {
+                this.events.push(`extension-a:timeline:${context.timelineReadiness.ready}`);
+            },
+            beforeEmit(context: { parsed: TestParsed }): void {
+                this.events.push(`extension-a:emit:${context.parsed.taskId}`);
+            }
+        };
+        pipeline.extensions = [
+            statefulExtension,
+            {
+                afterParse(context) {
+                    events.push(`extension-b:parse:${context.parsed.taskId}`);
+                },
+                beforeEmit(context) {
+                    events.push(`extension-b:emit:${context.preflight.mode}`);
+                }
+            }
+        ];
+        const output = runGateFlowPreflightPipelineSync(
+            { rawTaskId: ' T-932-3-F1 ' },
+            pipeline
+        );
+
+        assert.equal(output, 'T-932-3-F1:FULL_PATH');
+        assert.deepEqual(events, [
+            'parse',
+            'extension-a:parse:T-932-3-F1',
+            'extension-b:parse:T-932-3-F1',
+            'task-mode',
+            'extension-a:task-mode:PASS',
+            'preflight',
+            'extension-a:preflight:FULL_PATH',
+            'timeline',
+            'extension-a:timeline:true',
+            'extension-a:emit:T-932-3-F1',
+            'extension-b:emit:FULL_PATH',
+            'emit'
+        ]);
+    });
+
+    it('rejects Promise-returning synchronous extension hooks before downstream stages', () => {
+        const events: string[] = [];
+        const pipeline = createSynchronousTestPipeline(events);
+        const promiseReturningExtension = {
+            async afterTaskModeEvidence() {
+                events.push('extension:promise');
+            }
+        };
+        pipeline.extensions = [
+            promiseReturningExtension as unknown as TestSynchronousExtension
+        ];
+
+        assert.throws(
+            () => runGateFlowPreflightPipelineSync(
+                { rawTaskId: 'T-932-3-F1' },
+                pipeline
+            ),
+            /extension hook returned a Promise-like value/
+        );
+        assert.deepEqual(events, ['parse', 'task-mode', 'extension:promise']);
+    });
+
+    const returnStructuralThenable = () => ({ then() {} });
+    const coreThenableCases: Array<{
+        name: string;
+        configure: (pipeline: TestSynchronousPipeline) => void;
+        expectedError: RegExp;
+        expectedEvents: string[];
+    }> = [
+        {
+            name: 'parse',
+            configure(pipeline) {
+                pipeline.parse =
+                    returnStructuralThenable as unknown as TestSynchronousPipeline['parse'];
+            },
+            expectedError: /parse callback returned a Promise-like value/,
+            expectedEvents: []
+        },
+        {
+            name: 'task-mode evidence',
+            configure(pipeline) {
+                pipeline.loadTaskModeEvidence =
+                    returnStructuralThenable as unknown as
+                    TestSynchronousPipeline['loadTaskModeEvidence'];
+            },
+            expectedError: /task-mode callback returned a Promise-like value/,
+            expectedEvents: ['parse']
+        },
+        {
+            name: 'preflight',
+            configure(pipeline) {
+                pipeline.loadPreflight =
+                    returnStructuralThenable as unknown as TestSynchronousPipeline['loadPreflight'];
+            },
+            expectedError: /preflight callback returned a Promise-like value/,
+            expectedEvents: ['parse', 'task-mode']
+        },
+        {
+            name: 'timeline readiness',
+            configure(pipeline) {
+                pipeline.evaluateTimelineReadiness =
+                    returnStructuralThenable as unknown as
+                    TestSynchronousPipeline['evaluateTimelineReadiness'];
+            },
+            expectedError: /timeline-readiness callback returned a Promise-like value/,
+            expectedEvents: ['parse', 'task-mode', 'preflight']
+        },
+        {
+            name: 'emit',
+            configure(pipeline) {
+                pipeline.emit =
+                    returnStructuralThenable as unknown as TestSynchronousPipeline['emit'];
+            },
+            expectedError: /emit callback returned a Promise-like value/,
+            expectedEvents: ['parse', 'task-mode', 'preflight', 'timeline']
+        }
+    ];
+
+    for (const coreThenableCase of coreThenableCases) {
+        it(`fails closed when ${coreThenableCase.name} returns a structural thenable`, () => {
+            const events: string[] = [];
+            const pipeline = createSynchronousTestPipeline(events);
+            coreThenableCase.configure(pipeline);
+
+            assert.throws(
+                () => runGateFlowPreflightPipelineSync(
+                    { rawTaskId: 'T-932-3-F1' },
+                    pipeline
+                ),
+                coreThenableCase.expectedError
+            );
+            assert.deepEqual(events, coreThenableCase.expectedEvents);
+        });
+    }
+
+    it('observes a rejected Promise before reporting a synchronous contract violation', async () => {
+        const events: string[] = [];
+        const pipeline = createSynchronousTestPipeline(events);
+        const rejection = new Error('async parse rejection');
+        const matchingUnhandledRejections: unknown[] = [];
+        const recordUnhandledRejection = (reason: unknown): void => {
+            if (reason === rejection) {
+                matchingUnhandledRejections.push(reason);
+            }
+        };
+        const promiseReturningParse = () => Promise.reject(rejection);
+        pipeline.parse = promiseReturningParse as unknown as TestSynchronousPipeline['parse'];
+        process.on('unhandledRejection', recordUnhandledRejection);
+
+        try {
+            assert.throws(
+                () => runGateFlowPreflightPipelineSync(
+                    { rawTaskId: 'T-932-3-F1' },
+                    pipeline
+                ),
+                /parse callback returned a Promise-like value/
+            );
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            assert.deepEqual(matchingUnhandledRejections, []);
+        } finally {
+            process.off('unhandledRejection', recordUnhandledRejection);
+        }
+    });
+
+    it('stops synchronous downstream stages when a core step throws', () => {
+        const events: string[] = [];
+        const pipeline = createSynchronousTestPipeline(events);
+        pipeline.loadPreflight = () => {
+            events.push('preflight:rejected');
+            throw new Error('synchronous preflight rejected');
+        };
+        pipeline.extensions = [{
+            afterPreflight() {
+                events.push('extension:preflight');
+            },
+            afterTimelineReadiness() {
+                events.push('extension:timeline');
+            }
+        }];
+
+        assert.throws(
+            () => runGateFlowPreflightPipelineSync(
+                { rawTaskId: 'T-932-3-F1' },
+                pipeline
+            ),
+            /synchronous preflight rejected/
+        );
+        assert.deepEqual(events, ['parse', 'task-mode', 'preflight:rejected']);
+    });
+
+    it('prevents synchronous hooks and downstream stages when an extension fails', () => {
+        const events: string[] = [];
+        const pipeline = createSynchronousTestPipeline(events);
+        pipeline.extensions = [
+            {
+                afterTaskModeEvidence() {
+                    events.push('extension-a:task-mode:rejected');
+                    throw new Error('synchronous extension rejected');
+                }
+            },
+            {
+                afterTaskModeEvidence() {
+                    events.push('extension-b:task-mode');
+                },
+                afterPreflight() {
+                    events.push('extension-b:preflight');
+                }
+            }
+        ];
+
+        assert.throws(
+            () => runGateFlowPreflightPipelineSync(
+                { rawTaskId: 'T-932-3-F1' },
+                pipeline
+            ),
+            /synchronous extension rejected/
+        );
+        assert.deepEqual(events, [
+            'parse',
+            'task-mode',
+            'extension-a:task-mode:rejected'
+        ]);
     });
 });
 

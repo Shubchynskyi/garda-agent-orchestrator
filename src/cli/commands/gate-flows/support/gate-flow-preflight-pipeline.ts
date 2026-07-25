@@ -103,19 +103,19 @@ export interface GateFlowSynchronousPreflightPipelineExtension<
     TPreflight,
     TTimelineReadiness
 > {
-    afterParse?(context: GateFlowParsedContext<TInput, TParsed>): void;
+    afterParse?(context: GateFlowParsedContext<TInput, TParsed>): void | undefined;
     afterTaskModeEvidence?(
         context: GateFlowTaskModeContext<TInput, TParsed, TTaskModeEvidence>
-    ): void;
+    ): void | undefined;
     afterPreflight?(
         context: GateFlowPreflightContext<TInput, TParsed, TTaskModeEvidence, TPreflight>
-    ): void;
+    ): void | undefined;
     afterTimelineReadiness?(
         context: GateFlowTimelineContext<TInput, TParsed, TTaskModeEvidence, TPreflight, TTimelineReadiness>
-    ): void;
+    ): void | undefined;
     beforeEmit?(
         context: GateFlowTimelineContext<TInput, TParsed, TTaskModeEvidence, TPreflight, TTimelineReadiness>
-    ): void;
+    ): void | undefined;
 }
 
 export interface GateFlowSynchronousPreflightPipeline<
@@ -124,7 +124,20 @@ export interface GateFlowSynchronousPreflightPipeline<
     TTaskModeEvidence,
     TPreflight,
     TTimelineReadiness,
-    TOutput
+    TOutput,
+    TExtensions extends ReadonlyArray<GateFlowSynchronousPreflightPipelineExtension<
+        TInput,
+        TParsed,
+        TTaskModeEvidence,
+        TPreflight,
+        TTimelineReadiness
+    >> = ReadonlyArray<GateFlowSynchronousPreflightPipelineExtension<
+        TInput,
+        TParsed,
+        TTaskModeEvidence,
+        TPreflight,
+        TTimelineReadiness
+    >>
 > {
     parse(input: TInput): TParsed;
     loadTaskModeEvidence(
@@ -139,13 +152,7 @@ export interface GateFlowSynchronousPreflightPipeline<
     emit(
         context: GateFlowTimelineContext<TInput, TParsed, TTaskModeEvidence, TPreflight, TTimelineReadiness>
     ): TOutput;
-    extensions?: ReadonlyArray<GateFlowSynchronousPreflightPipelineExtension<
-        TInput,
-        TParsed,
-        TTaskModeEvidence,
-        TPreflight,
-        TTimelineReadiness
-    >>;
+    extensions?: TExtensions;
 }
 
 async function runExtensionHooks<TExtension, TContext>(
@@ -158,13 +165,73 @@ async function runExtensionHooks<TExtension, TContext>(
     }
 }
 
+type GateFlowSynchronousPromiseGuard<
+    TParsed,
+    TTaskModeEvidence,
+    TPreflight,
+    TTimelineReadiness,
+    TOutput,
+    TExtensionCallbackResult
+> = [
+    Extract<
+        | TParsed
+        | TTaskModeEvidence
+        | TPreflight
+        | TTimelineReadiness
+        | TOutput
+        | TExtensionCallbackResult,
+        PromiseLike<unknown>
+    >
+] extends [never]
+    ? []
+    : [synchronousCallbacksMustNotReturnPromises: never];
+
+type GateFlowSynchronousExtensionHookName =
+    | 'afterParse'
+    | 'afterTaskModeEvidence'
+    | 'afterPreflight'
+    | 'afterTimelineReadiness'
+    | 'beforeEmit';
+
+type GateFlowSynchronousExtensionHookResult<
+    TExtension,
+    THookName extends GateFlowSynchronousExtensionHookName
+> = TExtension extends unknown
+    ? THookName extends keyof TExtension
+        ? NonNullable<TExtension[THookName]> extends (...args: never[]) => infer TResult
+            ? TResult
+            : never
+        : never
+    : never;
+
+type GateFlowSynchronousExtensionCallbackResult<
+    TExtensions extends ReadonlyArray<unknown>
+> = GateFlowSynchronousExtensionHookResult<
+    TExtensions[number],
+    GateFlowSynchronousExtensionHookName
+>;
+
+function assertSynchronousCallbackResult(value: unknown, callbackKind: string): void {
+    if (
+        value !== null
+        && (typeof value === 'object' || typeof value === 'function')
+        && typeof (value as { then?: unknown }).then === 'function'
+    ) {
+        void Promise.resolve(value).catch(() => undefined);
+        throw new TypeError(
+            `Synchronous gate-flow preflight ${callbackKind} returned a Promise-like value.`
+        );
+    }
+}
+
 function runSynchronousExtensionHooks<TExtension, TContext>(
     extensions: ReadonlyArray<TExtension>,
     context: TContext,
-    invokeHook: (extension: TExtension, context: TContext) => void
+    invokeHook: (extension: TExtension, context: TContext) => unknown
 ): void {
     for (const extension of extensions) {
-        invokeHook(extension, context);
+        const result = invokeHook(extension, context);
+        assertSynchronousCallbackResult(result, 'extension hook');
     }
 }
 
@@ -174,7 +241,20 @@ export function runGateFlowPreflightPipelineSync<
     TTaskModeEvidence,
     TPreflight,
     TTimelineReadiness,
-    TOutput
+    TOutput,
+    const TExtensions extends ReadonlyArray<GateFlowSynchronousPreflightPipelineExtension<
+        TInput,
+        TParsed,
+        TTaskModeEvidence,
+        TPreflight,
+        TTimelineReadiness
+    >> = ReadonlyArray<GateFlowSynchronousPreflightPipelineExtension<
+        TInput,
+        TParsed,
+        TTaskModeEvidence,
+        TPreflight,
+        TTimelineReadiness
+    >>
 >(
     input: TInput,
     pipeline: GateFlowSynchronousPreflightPipeline<
@@ -183,11 +263,22 @@ export function runGateFlowPreflightPipelineSync<
         TTaskModeEvidence,
         TPreflight,
         TTimelineReadiness,
-        TOutput
+        TOutput,
+        TExtensions
+    >,
+    ...promiseGuard: GateFlowSynchronousPromiseGuard<
+        TParsed,
+        TTaskModeEvidence,
+        TPreflight,
+        TTimelineReadiness,
+        TOutput,
+        GateFlowSynchronousExtensionCallbackResult<TExtensions>
     >
 ): TOutput {
+    void promiseGuard;
     const extensions = pipeline.extensions || [];
     const parsed = pipeline.parse(input);
+    assertSynchronousCallbackResult(parsed, 'parse callback');
     const parsedContext: GateFlowParsedContext<TInput, TParsed> = { input, parsed };
     runSynchronousExtensionHooks(
         extensions,
@@ -196,6 +287,7 @@ export function runGateFlowPreflightPipelineSync<
     );
 
     const taskModeEvidence = pipeline.loadTaskModeEvidence(parsedContext);
+    assertSynchronousCallbackResult(taskModeEvidence, 'task-mode callback');
     const taskModeContext: GateFlowTaskModeContext<TInput, TParsed, TTaskModeEvidence> = {
         ...parsedContext,
         taskModeEvidence
@@ -207,6 +299,7 @@ export function runGateFlowPreflightPipelineSync<
     );
 
     const preflight = pipeline.loadPreflight(taskModeContext);
+    assertSynchronousCallbackResult(preflight, 'preflight callback');
     const preflightContext: GateFlowPreflightContext<TInput, TParsed, TTaskModeEvidence, TPreflight> = {
         ...taskModeContext,
         preflight
@@ -218,6 +311,7 @@ export function runGateFlowPreflightPipelineSync<
     );
 
     const timelineReadiness = pipeline.evaluateTimelineReadiness(preflightContext);
+    assertSynchronousCallbackResult(timelineReadiness, 'timeline-readiness callback');
     const timelineContext: GateFlowTimelineContext<
         TInput,
         TParsed,
@@ -239,7 +333,9 @@ export function runGateFlowPreflightPipelineSync<
         (extension, context) => extension.beforeEmit?.(context)
     );
 
-    return pipeline.emit(timelineContext);
+    const output = pipeline.emit(timelineContext);
+    assertSynchronousCallbackResult(output, 'emit callback');
+    return output;
 }
 
 export async function runGateFlowPreflightPipeline<
