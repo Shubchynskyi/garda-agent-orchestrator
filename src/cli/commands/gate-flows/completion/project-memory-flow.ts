@@ -11,8 +11,8 @@ import {
 } from '../../../../gates/project-memory-impact/project-memory-impact';
 import type { ProjectMemoryMaintenanceMode } from '../../../../core/workflow-config';
 import { isOrchestratorSourceCheckout, normalizePath } from '../../../../gates/shared/helpers';
-import { writeJsonArtifact } from '../../gates/gates-artifacts';
-import { expandValueList, parseBooleanOption } from '../../gates/gates-parser';
+import { writeJsonArtifact } from '../../../gate-cli/gates-artifacts';
+import { expandValueList, parseBooleanOption } from '../../../gate-cli/gates-parser';
 import { getErrorMessage, resolveOrchestratorRoot } from '../compile/gate-flow-helpers';
 
 export interface ProjectMemoryImpactCommandOptions {

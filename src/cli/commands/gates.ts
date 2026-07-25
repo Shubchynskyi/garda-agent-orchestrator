@@ -8,6 +8,9 @@
  *   - review-flow.ts      (required-reviews-check, doc-impact-gate)
  *   - completion-flow.ts  (log-task-event, human-commit)
  *
+ * Shared parsing, artifact, formatting, and subprocess support lives in the
+ * sibling `../gate-cli/` owner directory.
+ *
  * This file preserves the public API so existing consumers (handler modules,
  * tests) continue to import from './gates' without changes.
  */
@@ -95,4 +98,4 @@ export {
     executeCommandAsync,
     resolveExecutablePath,
     splitCommandLine
-} from './gates/gates-subprocess';
+} from '../gate-cli/gates-subprocess';

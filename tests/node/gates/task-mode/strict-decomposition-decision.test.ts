@@ -10,7 +10,7 @@ import {
     getStrictDecompositionDecisionEvidence,
     resolveStrictDecompositionDecisionArtifactPath
 } from '../../../../src/gates/task-mode/strict-decomposition-decision';
-import { writeJsonArtifact } from '../../../../src/cli/commands/gates/gates-artifacts';
+import { writeJsonArtifact } from '../../../../src/cli/gate-cli/gates-artifacts';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);

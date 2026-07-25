@@ -5,7 +5,7 @@ import {
     normalizePath,
     type ReviewDependencyTimelineEvent
 } from './review-launch-entrypoints';
-import { isTaskOwnedReviewTempPath } from '../../gates/gates-artifacts';
+import { isTaskOwnedReviewTempPath } from '../../../gate-cli/gates-artifacts';
 import {
     resolveLaunchBindingReviewerIdentity
 } from '../../../../gate-runtime/review/reviewer-identity-contract';

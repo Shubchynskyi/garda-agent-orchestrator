@@ -52,10 +52,10 @@ import {
     resolveDefaultMetricsPath,
     resolvePathForWrite,
     writeJsonArtifact
-} from '../../gates/gates-artifacts';
+} from '../../../gate-cli/gates-artifacts';
 import {
     parseBooleanOption
-} from '../../gates/gates-parser';
+} from '../../../gate-cli/gates-parser';
 import { requireResolvedPath } from '../../shared-command-utils';
 import {
     getErrorMessage,

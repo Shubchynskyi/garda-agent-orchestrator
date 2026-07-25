@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import type { FullSuiteCommandProvenance } from '../../../../gates/full-suite/full-suite-validation';
-import { splitCommandLine } from '../../gates/gates-subprocess';
+import { splitCommandLine } from '../../../gate-cli/gates-subprocess';
 
 export interface FullSuiteCommandContractResult {
     supported: boolean;

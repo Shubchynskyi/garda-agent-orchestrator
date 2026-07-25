@@ -19,7 +19,7 @@ import {
 } from '../../../../gates/workflow-config/workflow-config-work';
 import { resolveGateExecutionPath } from '../../../../gates/isolation/isolation-sandbox';
 import * as gateHelpers from '../../../../gates/shared/helpers';
-import { resolveDefaultReviewsPath, resolvePathForWrite } from '../../gates/gates-artifacts';
+import { resolveDefaultReviewsPath, resolvePathForWrite } from '../../../gate-cli/gates-artifacts';
 import { splitOutputLines } from './gate-flow-helpers';
 
 type ClassificationResult = ReturnType<typeof classifyChange>;

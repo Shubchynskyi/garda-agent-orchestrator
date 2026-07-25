@@ -15,8 +15,8 @@ import * as gateHelpers from '../../../../gates/shared/helpers';
 import {
     resolveDefaultMetricsPath,
     writeJsonArtifact
-} from '../../gates/gates-artifacts';
-import { parseBooleanOption } from '../../gates/gates-parser';
+} from '../../../gate-cli/gates-artifacts';
+import { parseBooleanOption } from '../../../gate-cli/gates-parser';
 import { requireResolvedPath } from '../../shared-command-utils';
 import {
     appendMetricsIfEnabled,

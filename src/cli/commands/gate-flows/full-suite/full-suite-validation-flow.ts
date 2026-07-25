@@ -30,7 +30,7 @@ import {
     getCurrentWorkflowConfigChanges,
     getWorkflowConfigWorkViolations
 } from '../../../../gates/workflow-config/workflow-config-work';
-import { executeCommandAsync } from '../../gates/gates-subprocess';
+import { executeCommandAsync } from '../../../gate-cli/gates-subprocess';
 import { EXIT_GATE_FAILURE, EXIT_GENERAL_FAILURE } from '../../../exit-codes';
 import {
     normalizePathValue,

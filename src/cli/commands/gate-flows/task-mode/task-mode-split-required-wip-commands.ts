@@ -9,7 +9,7 @@ import {
 } from '../../../exit-codes';
 import {
     expandValueList
-} from '../../gates/gates-parser';
+} from '../../../gate-cli/gates-parser';
 
 export interface SplitRequiredWipCommandResult {
     outputLines: string[];

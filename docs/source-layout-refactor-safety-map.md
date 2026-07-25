@@ -111,12 +111,13 @@ re-export at the old import path until the affected source and test imports are
 updated in the same child task.
 
 Internal-only source helper paths are not public compatibility contracts by
-default. For example, `src/cli/commands/gates-*.ts` helper modules may move to
-`src/cli/commands/gates/**` and the old root files may be deleted when the same
-child task migrates all in-repository source imports, tests, and documentation
-path hints to the canonical owner path. The preserved contract is CLI/gate
-behavior, output, exit codes, artifact schemas, and documented public entrypoints,
-not arbitrary historical source file locations.
+default. Gate CLI parsing, artifact, formatting, and subprocess helpers use the
+canonical `src/cli/gate-cli/**` owner path. The former
+`src/cli/commands/gates/**` helper paths are one-release compatibility
+re-exports only; new source and test imports must use `src/cli/gate-cli/**`.
+The preserved contract is CLI/gate behavior, output, exit codes, artifact
+schemas, and documented public entrypoints, not arbitrary historical source
+file locations.
 
 ## Move Order
 

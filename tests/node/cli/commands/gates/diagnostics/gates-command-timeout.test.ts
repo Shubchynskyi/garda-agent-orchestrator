@@ -14,7 +14,7 @@ import {
 import {
     runCliMainWithHandling
 } from '../../../../../../src/cli/main';
-import { formatCompileOutputEntry } from '../../../../../../src/cli/commands/gates/gates-formatter';
+import { formatCompileOutputEntry } from '../../../../../../src/cli/gate-cli/gates-formatter';
 
 import {
     createTempRepo,

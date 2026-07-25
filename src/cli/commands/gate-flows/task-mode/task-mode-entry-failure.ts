@@ -7,7 +7,7 @@ import { fileSha256, getProtectedControlPlaneRoots, normalizePath, testPathPrefi
 import { computeProtectedSnapshotDigest, evaluateProtectedControlPlaneManifest, scanProtectedPathHashes } from '../../../../gates/protected-control-plane/protected-control-plane';
 import { runRepairProtectedManifest } from '../../repair-command';
 import { resolveOrchestratorRoot } from '../compile/gate-flow-helpers';
-import { writeJsonArtifact } from '../../gates/gates-artifacts';
+import { writeJsonArtifact } from '../../../gate-cli/gates-artifacts';
 import { buildGateCommandPrefix, quotePowerShellCliValue } from './task-mode-command-format';
 import { TaskModeProtectedManifestEntryError } from './task-mode-entry-protection';
 

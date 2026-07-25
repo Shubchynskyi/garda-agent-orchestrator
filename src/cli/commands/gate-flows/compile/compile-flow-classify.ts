@@ -69,8 +69,8 @@ import {
 import { readTaskQueueMetadata } from '../../../../gates/task-audit/task-audit-summary-collectors';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from '../../../../gates/rule-pack/rule-pack';
 import * as gateHelpers from '../../../../gates/shared/helpers';
-import { normalizeOptionalPath, removeArtifactIfExists, resolvePathForWrite, writeTextArtifact } from '../../gates/gates-artifacts';
-import { expandValueList, parseBooleanOption, parseIntOption } from '../../gates/gates-parser';
+import { normalizeOptionalPath, removeArtifactIfExists, resolvePathForWrite, writeTextArtifact } from '../../../gate-cli/gates-artifacts';
+import { expandValueList, parseBooleanOption, parseIntOption } from '../../../gate-cli/gates-parser';
 import { getErrorMessage, resolveOrchestratorRoot, appendMetricsIfEnabled } from './gate-flow-helpers';
 import { getTaskOwnedManifestChangedFiles } from './compile-flow-scope-guards';
 import {

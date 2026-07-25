@@ -8,7 +8,7 @@ import {
 } from '../../../../gates/review/review-scratch-paths';
 import {
     isTaskOwnedReviewTempPath
-} from '../../gates/gates-artifacts';
+} from '../../../gate-cli/gates-artifacts';
 import {
     type ParsedOptionsRecord
 } from '../../shared-command-utils';

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { splitCommandLine } from '../../cli/commands/gates/gates-subprocess';
+import { splitCommandLine } from '../../cli/gate-cli/gates-subprocess';
 import { isPlainRecord } from '../../core/records';
 import { inspectTaskEventFile } from '../../gate-runtime/task-events';
 import {

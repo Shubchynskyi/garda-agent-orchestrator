@@ -53,7 +53,7 @@ import { SKILL_TELEMETRY_ACTOR } from '../../../../runtime/skill-telemetry';
 import {
     resolveDefaultReviewsPath,
     writeJsonArtifact
-} from '../../gates/gates-artifacts';
+} from '../../../gate-cli/gates-artifacts';
 import {
     resolveOrchestratorRoot
 } from '../compile/gate-flow-helpers';

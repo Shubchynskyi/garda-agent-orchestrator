@@ -9,7 +9,7 @@ import {
 import { EXIT_GATE_FAILURE, EXIT_SUCCESS } from '../../../exit-codes';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import { isFocusedIntermediateCommand } from '../../../../gates/shared/focused-intermediate-command-grammar';
-import { executeCommandAsync, splitCommandLine } from '../../gates/gates-subprocess';
+import { executeCommandAsync, splitCommandLine } from '../../../gate-cli/gates-subprocess';
 
 const ALLOWED_COMMAND_SOURCES = ['node-test', 'targeted-test', 'typecheck', 'validation'] as const;
 const DEFAULT_TIMEOUT_MS = 120_000;
