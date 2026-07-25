@@ -33,12 +33,12 @@ import {
     runRecoverTaskModeProtectedManifestCommand
 } from './gate-flows/task-mode/task-mode-entry-failure';
 import {
-    parseOptions,
     normalizePathValue,
     ensureDirectoryExists,
     parseRequiredText
 } from './cli-helpers';
 import type { ParsedOptionsRecord } from './shared-command-utils';
+import { runGateCliHandler } from './gate-cli-handler';
 import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/completion/completion-finalization';
 import { runFullSuiteValidationCommand } from './gate-flows/full-suite/full-suite-validation-flow';
 import { runFullSuiteRunMarkerRecoveryCommand } from './gate-flows/full-suite/full-suite-run-marker-recovery';
@@ -77,31 +77,19 @@ export async function handleEnterTaskMode(gateArgv: string[]): Promise<void> {
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    let result;
-    try {
-        result = runEnterTaskModeCommand(options);
-    } catch (error: unknown) {
-        recordTaskModeProtectedManifestFailure(options, error);
-        throw error;
-    }
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runEnterTaskModeCommand, {
+        onCommandError: (error, { options }) => recordTaskModeProtectedManifestFailure(options, error)
+    });
 }
 
 export async function handleRecoverTaskModeProtectedManifest(gateArgv: string[]): Promise<void> {
-    const { options } = parseOptions(gateArgv, {
+    return runGateCliHandler(gateArgv, {
         '--task-id': { key: 'taskId', type: 'string' },
         '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
         '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' },
         '--inspected-protected-snapshot-sha256': { key: 'inspectedProtectedSnapshotSha256', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
-    });
-    const result = runRecoverTaskModeProtectedManifestCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) process.exitCode = result.exitCode;
+    }, runRecoverTaskModeProtectedManifestCommand);
 }
 
 export async function handleLoadRulePack(gateArgv: string[]): Promise<void> {
@@ -118,12 +106,7 @@ export async function handleLoadRulePack(gateArgv: string[]): Promise<void> {
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runLoadRulePackCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runLoadRulePackCommand);
 }
 
 export async function handleBindRulePackToPreflight(gateArgv: string[]): Promise<void> {
@@ -137,12 +120,7 @@ export async function handleBindRulePackToPreflight(gateArgv: string[]): Promise
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runBindRulePackToPreflightCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runBindRulePackToPreflightCommand);
 }
 
 export async function handleRestartCoherentCycle(gateArgv: string[]): Promise<void> {
@@ -164,12 +142,7 @@ export async function handleRestartCoherentCycle(gateArgv: string[]): Promise<vo
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = await runRestartCoherentCycleCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runRestartCoherentCycleCommand);
 }
 
 export async function handleRestartReviewCycle(gateArgv: string[]): Promise<void> {
@@ -191,12 +164,7 @@ export async function handleRestartReviewCycle(gateArgv: string[]): Promise<void
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = await runRestartReviewCycleCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runRestartReviewCycleCommand);
 }
 
 export async function handleRecordNoOp(gateArgv: string[]): Promise<void> {
@@ -211,12 +179,7 @@ export async function handleRecordNoOp(gateArgv: string[]): Promise<void> {
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runRecordNoOpCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runRecordNoOpCommand);
 }
 
 export async function handleRecordStrictDecompositionDecision(gateArgv: string[]): Promise<void> {
@@ -240,12 +203,7 @@ export async function handleRecordStrictDecompositionDecision(gateArgv: string[]
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runRecordStrictDecompositionDecisionCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runRecordStrictDecompositionDecisionCommand);
 }
 
 export async function handleRecordReviewCycleContinuation(gateArgv: string[]): Promise<void> {
@@ -266,12 +224,7 @@ export async function handleRecordReviewCycleContinuation(gateArgv: string[]): P
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runRecordReviewCycleContinuationCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runRecordReviewCycleContinuationCommand);
 }
 
 export async function handleRecordReviewCycleSplitDecision(gateArgv: string[]): Promise<void> {
@@ -293,12 +246,7 @@ export async function handleRecordReviewCycleSplitDecision(gateArgv: string[]): 
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runRecordReviewCycleSplitDecisionCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runRecordReviewCycleSplitDecisionCommand);
 }
 
 export async function handleListSplitRequiredWip(gateArgv: string[]): Promise<void> {
@@ -306,12 +254,7 @@ export async function handleListSplitRequiredWip(gateArgv: string[]): Promise<vo
         '--task-id': { key: 'taskId', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runListSplitRequiredWipCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runListSplitRequiredWipCommand);
 }
 
 export async function handleRestoreSplitRequiredWip(gateArgv: string[]): Promise<void> {
@@ -323,12 +266,7 @@ export async function handleRestoreSplitRequiredWip(gateArgv: string[]): Promise
         '--dry-run': { key: 'dryRun', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runRestoreSplitRequiredWipCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runRestoreSplitRequiredWipCommand);
 }
 
 export async function handleRetireSplitRequiredWip(gateArgv: string[]): Promise<void> {
@@ -338,12 +276,7 @@ export async function handleRetireSplitRequiredWip(gateArgv: string[]): Promise<
         '--reason': { key: 'reason', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runRetireSplitRequiredWipCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runRetireSplitRequiredWipCommand);
 }
 
 export async function handleHandshakeDiagnostics(gateArgv: string[]): Promise<void> {
@@ -360,12 +293,7 @@ export async function handleHandshakeDiagnostics(gateArgv: string[]): Promise<vo
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runHandshakeDiagnosticsCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runHandshakeDiagnosticsCommand);
 }
 
 export async function handleShellSmokePreflight(gateArgv: string[]): Promise<void> {
@@ -380,12 +308,7 @@ export async function handleShellSmokePreflight(gateArgv: string[]): Promise<voi
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runShellSmokePreflightCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runShellSmokePreflightCommand);
 }
 
 export async function handleCommandTimeoutDiagnostics(gateArgv: string[]): Promise<void> {
@@ -400,12 +323,7 @@ export async function handleCommandTimeoutDiagnostics(gateArgv: string[]): Promi
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runCommandTimeoutDiagnosticsCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runCommandTimeoutDiagnosticsCommand);
 }
 
 export async function handleQualityChecklist(gateArgv: string[]): Promise<void> {
@@ -424,12 +342,7 @@ export async function handleQualityChecklist(gateArgv: string[]): Promise<void> 
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runQualityChecklistCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runQualityChecklistCommand);
 }
 
 export async function handleRunIntermediateCommand(gateArgv: string[]): Promise<void> {
@@ -446,12 +359,7 @@ export async function handleRunIntermediateCommand(gateArgv: string[]): Promise<
         '--repo-root': { key: 'repoRoot', type: 'string' },
         '--events-root': { key: 'eventsRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = await runIntermediateCommandCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runIntermediateCommandCommand);
 }
 
 export async function handleProjectMemoryImpact(gateArgv: string[]): Promise<void> {
@@ -471,12 +379,7 @@ export async function handleProjectMemoryImpact(gateArgv: string[]): Promise<voi
         '--update-artifact-path': { key: 'updateArtifactPath', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runProjectMemoryImpactCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runProjectMemoryImpactCommand);
 }
 
 export async function handleLogTaskEvent(gateArgv: string[]): Promise<void> {
@@ -490,12 +393,10 @@ export async function handleLogTaskEvent(gateArgv: string[]): Promise<void> {
         '--repo-root': { key: 'repoRoot', type: 'string' },
         '--events-root': { key: 'eventsRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runLogTaskEventCommand(options);
-    process.stdout.write(result.outputText);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runLogTaskEventCommand, {
+        formatOutput: (result) => result.outputText,
+        resolveExitCode: (result) => result.exitCode
+    });
 }
 
 export async function handleTaskEventsSummary(gateArgv: string[]): Promise<void> {
@@ -509,12 +410,16 @@ export async function handleTaskEventsSummary(gateArgv: string[]): Promise<void>
         '--include-details': { key: 'includeDetails', type: 'boolean' },
         '--compact-latest-cycle': { key: 'compactLatestCycle', type: 'boolean' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runTaskEventsSummaryCommand(options);
-    const shouldColorHumanStdout = options.asJson !== true
-        && options.compactLatestCycle !== true
-        && !options.outputPath;
-    process.stdout.write(shouldColorHumanStdout ? colorizeTaskEventsSummaryText(result.rendered) : result.rendered);
+    return runGateCliHandler(gateArgv, defs, runTaskEventsSummaryCommand, {
+        formatOutput: (result, { options }) => (
+            options.asJson !== true
+            && options.compactLatestCycle !== true
+            && !options.outputPath
+                ? colorizeTaskEventsSummaryText(result.rendered)
+                : result.rendered
+        ),
+        resolveExitCode: () => 0
+    });
 }
 
 export async function handleTaskAuditSummary(gateArgv: string[]): Promise<void> {
@@ -527,14 +432,14 @@ export async function handleTaskAuditSummary(gateArgv: string[]): Promise<void> 
         '--output-path': { key: 'outputPath', type: 'string' },
         '--as-json': { key: 'asJson', type: 'boolean' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runTaskAuditSummaryCommand(options);
-    const shouldColorHumanStdout = options.asJson !== true
-        && !options.outputPath;
-    process.stdout.write(shouldColorHumanStdout ? colorizeTaskAuditSummaryText(result.rendered) : result.rendered);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runTaskAuditSummaryCommand, {
+        formatOutput: (result, { options }) => (
+            options.asJson !== true && !options.outputPath
+                ? colorizeTaskAuditSummaryText(result.rendered)
+                : result.rendered
+        ),
+        resolveExitCode: (result) => result.exitCode
+    });
 }
 
 export async function handleNextStep(gateArgv: string[]): Promise<void> {
@@ -547,11 +452,16 @@ export async function handleNextStep(gateArgv: string[]): Promise<void> {
         '--reviews-root': { key: 'reviewsRoot', type: 'string' },
         '--as-json': { key: 'asJson', type: 'boolean' }
     };
-    const { options, positionals } = parseOptions(gateArgv, defs, { allowPositionals: true, maxPositionals: 1 });
-    const result = resolveNextStepFromCliOptions({ ...options, positionals });
-    process.stdout.write(options.asJson === true
-        ? `${JSON.stringify(result, null, 2)}\n`
-        : formatNextStepText(result));
+    return runGateCliHandler(gateArgv, defs, resolveNextStepFromCliOptions, {
+        parseConfig: { allowPositionals: true, maxPositionals: 1 },
+        mapOptions: ({ options, positionals }) => ({ ...options, positionals: [...positionals] }),
+        formatOutput: (result, { options }) => (
+            options.asJson === true
+                ? `${JSON.stringify(result, null, 2)}\n`
+                : formatNextStepText(result)
+        ),
+        resolveExitCode: () => 0
+    });
 }
 
 export async function handleFullSuiteValidation(gateArgv: string[]): Promise<void> {
@@ -560,12 +470,10 @@ export async function handleFullSuiteValidation(gateArgv: string[]): Promise<voi
         '--preflight-path': { key: 'preflightPath', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = await runFullSuiteValidationCommand(options);
-    process.stdout.write(result.outputText);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runFullSuiteValidationCommand, {
+        formatOutput: (result) => result.outputText,
+        resolveExitCode: (result) => result.exitCode
+    });
 }
 
 export async function handleFullSuiteRunMarkerRecovery(gateArgv: string[]): Promise<void> {
@@ -577,12 +485,7 @@ export async function handleFullSuiteRunMarkerRecovery(gateArgv: string[]): Prom
         '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = await runFullSuiteRunMarkerRecoveryCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runFullSuiteRunMarkerRecoveryCommand);
 }
 
 export async function handleMaterializeFullSuiteRepairTask(gateArgv: string[]): Promise<void> {
@@ -593,12 +496,7 @@ export async function handleMaterializeFullSuiteRepairTask(gateArgv: string[]): 
         '--reviews-root': { key: 'reviewsRoot', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runMaterializeFullSuiteRepairTaskCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runMaterializeFullSuiteRepairTaskCommand);
 }
 
 export async function handleRestoreFullSuiteRepairWip(gateArgv: string[]): Promise<void> {
@@ -611,12 +509,7 @@ export async function handleRestoreFullSuiteRepairWip(gateArgv: string[]): Promi
         '--dry-run': { key: 'dryRun', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runRestoreFullSuiteRepairWipCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, runRestoreFullSuiteRepairWipCommand);
 }
 
 export async function handleCompletionGate(gateArgv: string[]): Promise<void> {
@@ -635,101 +528,104 @@ export async function handleCompletionGate(gateArgv: string[]): Promise<void> {
         '--shell-smoke-path': { key: 'shellSmokePath', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options: rawOptions } = parseOptions(gateArgv, defs);
-    const options = rawOptions as ParsedOptionsRecord;
-    const repoRoot = normalizePathValue(options.repoRoot || '.');
-    ensureDirectoryExists(repoRoot, 'Repo root');
-    const completionTaskId = parseRequiredText(options.taskId, 'TaskId');
-    const reviewsRoot = gateHelpers.resolvePathInsideRepo(String(options.reviewsRoot || ''), repoRoot, { allowMissing: true })
-        || gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
-    const { result } = await withCompletionGateFinalizationLockAsync(reviewsRoot, completionTaskId, async () => {
-        const completionResult = runCompletionGate({
-            repoRoot,
-            preflightPath: parseRequiredText(options.preflightPath, 'PreflightPath'),
-            taskId: completionTaskId,
-            taskModePath: String(options.taskModePath || ''),
-            rulePackPath: String(options.rulePackPath || ''),
-            timelinePath: String(options.timelinePath || ''),
-            reviewsRoot: String(options.reviewsRoot || ''),
-            compileEvidencePath: String(options.compileEvidencePath || ''),
-            reviewEvidencePath: String(options.reviewEvidencePath || ''),
-            docImpactPath: String(options.docImpactPath || ''),
-            noOpArtifactPath: String(options.noOpArtifactPath || ''),
-            handshakePath: String(options.handshakePath || ''),
-            shellSmokePath: String(options.shellSmokePath || '')
-        });
+    return runGateCliHandler(gateArgv, defs, async (options: ParsedOptionsRecord) => {
+        const repoRoot = normalizePathValue(options.repoRoot || '.');
+        ensureDirectoryExists(repoRoot, 'Repo root');
+        const completionTaskId = parseRequiredText(options.taskId, 'TaskId');
+        const reviewsRoot = gateHelpers.resolvePathInsideRepo(String(options.reviewsRoot || ''), repoRoot, { allowMissing: true })
+            || gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
+        const { result } = await withCompletionGateFinalizationLockAsync(reviewsRoot, completionTaskId, async () => {
+            const completionResult = runCompletionGate({
+                repoRoot,
+                preflightPath: parseRequiredText(options.preflightPath, 'PreflightPath'),
+                taskId: completionTaskId,
+                taskModePath: String(options.taskModePath || ''),
+                rulePackPath: String(options.rulePackPath || ''),
+                timelinePath: String(options.timelinePath || ''),
+                reviewsRoot: String(options.reviewsRoot || ''),
+                compileEvidencePath: String(options.compileEvidencePath || ''),
+                reviewEvidencePath: String(options.reviewEvidencePath || ''),
+                docImpactPath: String(options.docImpactPath || ''),
+                noOpArtifactPath: String(options.noOpArtifactPath || ''),
+                handshakePath: String(options.handshakePath || ''),
+                shellSmokePath: String(options.shellSmokePath || '')
+            });
 
-        const resolvedCompletionTaskId = String(completionResult.task_id || '').trim();
-        if (resolvedCompletionTaskId) {
-            const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-            if (completionResult.outcome === 'PASS') {
-                try {
-                    await reconcileSuccessfulCompletionFinalizationAsync({
-                        repoRoot,
-                        taskId: resolvedCompletionTaskId,
-                        preflightPath: String(completionResult.preflight_path || ''),
-                        previousStatusHint: 'IN_REVIEW',
-                        completionEventDetails: {
+            const resolvedCompletionTaskId = String(completionResult.task_id || '').trim();
+            if (resolvedCompletionTaskId) {
+                const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
+                if (completionResult.outcome === 'PASS') {
+                    try {
+                        await reconcileSuccessfulCompletionFinalizationAsync({
+                            repoRoot,
+                            taskId: resolvedCompletionTaskId,
+                            preflightPath: String(completionResult.preflight_path || ''),
+                            previousStatusHint: 'IN_REVIEW',
+                            completionEventDetails: {
+                                status: completionResult.status,
+                                outcome: completionResult.outcome,
+                                preflight_path: completionResult.preflight_path,
+                                timeline_path: completionResult.timeline_path,
+                                violations: completionResult.violations
+                            }
+                        });
+                    } catch (error: unknown) {
+                        try {
+                            await emitMandatoryCompletionGateEventAsync(orchestratorRoot, resolvedCompletionTaskId, false, {
+                                status: completionResult.status,
+                                outcome: 'FINALIZATION_FAILED',
+                                preflight_path: completionResult.preflight_path,
+                                timeline_path: completionResult.timeline_path,
+                                violations: completionResult.violations,
+                                finalization_error: error instanceof Error ? error.message : String(error)
+                            });
+                        } catch (eventError: unknown) {
+                            throw new Error(
+                                `completion-gate finalization failed after validation PASS, and mandatory lifecycle event `
+                                + `'COMPLETION_GATE_FAILED' could not be appended. FinalizationError: `
+                                + `${error instanceof Error ? error.message : String(error)} EventError: `
+                                + `${eventError instanceof Error ? eventError.message : String(eventError)}`
+                            );
+                        }
+                        throw new Error(
+                            `completion-gate finalization failed after validation PASS. ${error instanceof Error ? error.message : String(error)}`
+                        );
+                    }
+                } else {
+                    try {
+                        await emitMandatoryCompletionGateEventAsync(orchestratorRoot, resolvedCompletionTaskId, false, {
                             status: completionResult.status,
                             outcome: completionResult.outcome,
                             preflight_path: completionResult.preflight_path,
                             timeline_path: completionResult.timeline_path,
                             violations: completionResult.violations
-                        }
-                    });
-                } catch (error: unknown) {
-                    try {
-                        await emitMandatoryCompletionGateEventAsync(orchestratorRoot, resolvedCompletionTaskId, false, {
-                            status: completionResult.status,
-                            outcome: 'FINALIZATION_FAILED',
-                            preflight_path: completionResult.preflight_path,
-                            timeline_path: completionResult.timeline_path,
-                            violations: completionResult.violations,
-                            finalization_error: error instanceof Error ? error.message : String(error)
                         });
-                    } catch (eventError: unknown) {
+                    } catch (error: unknown) {
                         throw new Error(
-                            `completion-gate finalization failed after validation PASS, and mandatory lifecycle event `
-                            + `'COMPLETION_GATE_FAILED' could not be appended. FinalizationError: `
-                            + `${error instanceof Error ? error.message : String(error)} EventError: `
-                            + `${eventError instanceof Error ? eventError.message : String(eventError)}`
+                            `completion-gate failed because mandatory lifecycle event 'COMPLETION_GATE_FAILED' could not be appended. ${error instanceof Error ? error.message : String(error)}`
                         );
                     }
-                    throw new Error(
-                        `completion-gate finalization failed after validation PASS. ${error instanceof Error ? error.message : String(error)}`
-                    );
-                }
-            } else {
-                try {
-                    await emitMandatoryCompletionGateEventAsync(orchestratorRoot, resolvedCompletionTaskId, false, {
-                        status: completionResult.status,
-                        outcome: completionResult.outcome,
-                        preflight_path: completionResult.preflight_path,
-                        timeline_path: completionResult.timeline_path,
-                        violations: completionResult.violations
-                    });
-                } catch (error: unknown) {
-                    throw new Error(
-                        `completion-gate failed because mandatory lifecycle event 'COMPLETION_GATE_FAILED' could not be appended. ${error instanceof Error ? error.message : String(error)}`
-                    );
                 }
             }
-        }
 
-        return completionResult;
+            return completionResult;
+        });
+        return result;
+    }, {
+        formatOutput: (result) => `${formatCompletionGateResult(result)}\n`,
+        resolveExitCode: (result) => result.outcome === 'PASS' ? 0 : EXIT_GATE_FAILURE
     });
-
-    process.stdout.write(`${formatCompletionGateResult(result)}\n`);
-    if (result.outcome !== 'PASS') {
-        process.exitCode = EXIT_GATE_FAILURE;
-    }
 }
 
 export async function handleHumanCommit(gateArgv: string[]): Promise<void> {
-    const exitCode = await runHumanCommitCommand(gateArgv, { cwd: process.cwd() });
-    if (exitCode !== 0) {
-        process.exitCode = exitCode;
-    }
+    return runGateCliHandler(gateArgv, {}, (
+        argv: string[]
+    ) => runHumanCommitCommand(argv, { cwd: process.cwd() }), {
+        skipParsing: true,
+        mapOptions: ({ argv }) => [...argv],
+        formatOutput: () => undefined,
+        resolveExitCode: (exitCode) => exitCode
+    });
 }
 
 export async function handleTaskReset(gateArgv: string[]): Promise<void> {
@@ -745,13 +641,10 @@ export async function handleTaskReset(gateArgv: string[]): Promise<void> {
         '--as-json': { key: 'asJson', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    if (!options.taskId) {
-        throw new Error(buildTaskResetMissingTaskIdMessage());
-    }
-    const result = runTaskResetCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
+    return runGateCliHandler(gateArgv, defs, (options: ParsedOptionsRecord) => {
+        if (!options.taskId) {
+            throw new Error(buildTaskResetMissingTaskIdMessage());
+        }
+        return runTaskResetCommand(options);
+    });
 }
