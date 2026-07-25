@@ -20,7 +20,6 @@ import {
     checkRequiredReviews,
     parseSkipReviews,
     resolveExpectedReviewVerdicts,
-    validatePreflightForReview,
     validateZeroDiffForReviewGate
 } from '../../../../gates/required-reviews/required-reviews-check';
 import { resolveRuntimeReviewerIdentity } from '../../../../gates/review/reviewer-routing';
@@ -29,11 +28,9 @@ import {
     getProtectedDirtyWorkspaceScopeFromPreflight
 } from '../../../../gates/workspace/dirty-worktree-protection';
 import {
-    getRulePackEvidence,
     getRulePackEvidenceViolations
 } from '../../../../gates/rule-pack/rule-pack';
 import {
-    getTaskModeEvidence,
     getTaskModeEvidenceViolations
 } from '../../../../gates/task-mode/task-mode';
 import { getReviewLifecycleGuard } from '../../../../gates/review/review-lifecycle-guard';
@@ -59,9 +56,7 @@ import {
     appendMetricsIfEnabled
 } from '../compile/gate-flow-helpers';
 import {
-    evaluateGateFlowOptionalSkillSelection,
-    evaluateGateFlowTimelineReadiness,
-    resolveGateFlowTimelinePath
+    evaluateGateFlowOptionalSkillSelection
 } from '../support/gate-flow-runtime';
 import { resolveBudgetTokensFromForecast, resolveOutputFiltersPath } from '../compile/output-budget-filter';
 import { readTaskQueueStatus, syncTaskQueueStatus } from '../task/task-queue-sync';
@@ -75,6 +70,10 @@ import {
     type CompileScopeDriftResult,
     type ReviewArtifactsAuditResult
 } from './review-flow-support';
+import {
+    ReviewFlowPreflightPathEscapeError,
+    runReviewFlowPreflightPipeline
+} from './review-flow-preflight-pipeline';
 
 type OutputTelemetry = ReturnType<typeof buildOutputTelemetry>;
 
@@ -254,24 +253,29 @@ export function runDocImpactGateCommand(options: DocImpactGateCommandOptions): {
 export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckCommandOptions): { outputLines: string[]; exitCode: number } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
-    const resolvedPreflightPath = requireResolvedPath(
-        gateHelpers.resolvePathInsideRepo(String(options.preflightPath || '').trim(), repoRoot),
-        'PreflightPath'
-    );
-    if (!gateHelpers.isPathRealpathInsideRoot(resolvedPreflightPath, repoRoot)) {
-        return failPreflightPathEscapedRepo(resolvedPreflightPath);
+    let preflightPipeline;
+    try {
+        preflightPipeline = runReviewFlowPreflightPipeline({
+            repoRoot,
+            orchestratorRoot,
+            taskId: String(options.taskId || ''),
+            preflightPath: options.preflightPath,
+            taskModePath: options.taskModePath,
+            rulePackPath: options.rulePackPath
+        });
+    } catch (error: unknown) {
+        if (error instanceof ReviewFlowPreflightPathEscapeError) {
+            return failPreflightPathEscapedRepo(error.resolvedPreflightPath);
+        }
+        throw error;
     }
-    const validatedBase = validatePreflightForReview(resolvedPreflightPath, String(options.taskId || ''));
-    const preflight = isPlainObject(validatedBase.preflight) ? validatedBase.preflight : {};
-    const preflightMetrics = isPlainObject(preflight.metrics) ? preflight.metrics : null;
-    const validatedPreflight = {
-        ...validatedBase,
-        mode: String(preflight.mode || 'FULL_PATH').trim() || 'FULL_PATH',
-        changed_files_count: Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0,
-        changed_lines_total: preflightMetrics && typeof preflightMetrics.changed_lines_total === 'number'
-            ? preflightMetrics.changed_lines_total
-            : 0
-    };
+    const {
+        preflight,
+        validatedPreflight,
+        taskModeEvidence,
+        rulePackEvidence,
+        timelineReadiness
+    } = preflightPipeline;
     const reviewBudgetTokens = resolveBudgetTokensFromForecast(preflight.budget_forecast);
 
     const resolvedTaskId = validatedPreflight.resolved_task_id;
@@ -337,12 +341,6 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         validatedPreflight.preflight_hash,
         options.compileEvidencePath || ''
     );
-    const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
-    const rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'POST_PREFLIGHT', {
-        artifactPath: String(options.rulePackPath || ''),
-        preflightPath: validatedPreflight.preflight_path,
-        taskModePath: String(options.taskModePath || '')
-    });
     const scopeDrift = compileGateEvidence.status === 'PASS'
         ? testCompileScopeDrift(repoRoot, compileGateEvidence)
         : null;
@@ -415,20 +413,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         errors.push(...dirtyWorkspaceProtectionDrift.violations);
     }
 
-    const timelinePath = resolvedTaskId ? resolveGateFlowTimelinePath(repoRoot, resolvedTaskId) : null;
-    if (timelinePath && resolvedTaskId) {
-        const timelineReadiness = evaluateGateFlowTimelineReadiness({
-            orchestratorRoot,
-            repoRoot,
-            taskId: resolvedTaskId,
-            timelinePath,
-            requirements: [
-                { eventType: 'TASK_MODE_ENTERED', recoveryInstruction: 'Run enter-task-mode before review gate.' },
-                { eventType: 'RULE_PACK_LOADED', recoveryInstruction: 'Run load-rule-pack before review gate.' },
-                { eventType: 'HANDSHAKE_DIAGNOSTICS_RECORDED', recoveryInstruction: 'Run handshake-diagnostics before review gate.' },
-                { eventType: 'SHELL_SMOKE_PREFLIGHT_RECORDED', recoveryInstruction: 'Run shell-smoke-preflight before review gate.' }
-            ]
-        });
+    if (timelineReadiness && resolvedTaskId) {
         const optionalSkillSelectionViolations = evaluateGateFlowOptionalSkillSelection({
             orchestratorRoot,
             taskId: resolvedTaskId,

@@ -12,8 +12,8 @@ export type GateFlowPreflightPipelineStage = typeof GATE_FLOW_PREFLIGHT_PIPELINE
 
 export const GATE_FLOW_PREFLIGHT_PIPELINE_MIGRATION_CHECKLIST = {
     compile: 'pilot-migrated',
-    review: 'pending',
-    'full-suite': 'pending',
+    review: 'migrated',
+    'full-suite': 'migrated',
     recovery: 'pending-after-recovery-decomposition'
 } as const;
 
@@ -96,6 +96,58 @@ export interface GateFlowPreflightPipeline<
     >>;
 }
 
+export interface GateFlowSynchronousPreflightPipelineExtension<
+    TInput,
+    TParsed,
+    TTaskModeEvidence,
+    TPreflight,
+    TTimelineReadiness
+> {
+    afterParse?(context: GateFlowParsedContext<TInput, TParsed>): void;
+    afterTaskModeEvidence?(
+        context: GateFlowTaskModeContext<TInput, TParsed, TTaskModeEvidence>
+    ): void;
+    afterPreflight?(
+        context: GateFlowPreflightContext<TInput, TParsed, TTaskModeEvidence, TPreflight>
+    ): void;
+    afterTimelineReadiness?(
+        context: GateFlowTimelineContext<TInput, TParsed, TTaskModeEvidence, TPreflight, TTimelineReadiness>
+    ): void;
+    beforeEmit?(
+        context: GateFlowTimelineContext<TInput, TParsed, TTaskModeEvidence, TPreflight, TTimelineReadiness>
+    ): void;
+}
+
+export interface GateFlowSynchronousPreflightPipeline<
+    TInput,
+    TParsed,
+    TTaskModeEvidence,
+    TPreflight,
+    TTimelineReadiness,
+    TOutput
+> {
+    parse(input: TInput): TParsed;
+    loadTaskModeEvidence(
+        context: GateFlowParsedContext<TInput, TParsed>
+    ): TTaskModeEvidence;
+    loadPreflight(
+        context: GateFlowTaskModeContext<TInput, TParsed, TTaskModeEvidence>
+    ): TPreflight;
+    evaluateTimelineReadiness(
+        context: GateFlowPreflightContext<TInput, TParsed, TTaskModeEvidence, TPreflight>
+    ): TTimelineReadiness;
+    emit(
+        context: GateFlowTimelineContext<TInput, TParsed, TTaskModeEvidence, TPreflight, TTimelineReadiness>
+    ): TOutput;
+    extensions?: ReadonlyArray<GateFlowSynchronousPreflightPipelineExtension<
+        TInput,
+        TParsed,
+        TTaskModeEvidence,
+        TPreflight,
+        TTimelineReadiness
+    >>;
+}
+
 async function runExtensionHooks<TExtension, TContext>(
     extensions: ReadonlyArray<TExtension>,
     context: TContext,
@@ -104,6 +156,90 @@ async function runExtensionHooks<TExtension, TContext>(
     for (const extension of extensions) {
         await invokeHook(extension, context);
     }
+}
+
+function runSynchronousExtensionHooks<TExtension, TContext>(
+    extensions: ReadonlyArray<TExtension>,
+    context: TContext,
+    invokeHook: (extension: TExtension, context: TContext) => void
+): void {
+    for (const extension of extensions) {
+        invokeHook(extension, context);
+    }
+}
+
+export function runGateFlowPreflightPipelineSync<
+    TInput,
+    TParsed,
+    TTaskModeEvidence,
+    TPreflight,
+    TTimelineReadiness,
+    TOutput
+>(
+    input: TInput,
+    pipeline: GateFlowSynchronousPreflightPipeline<
+        TInput,
+        TParsed,
+        TTaskModeEvidence,
+        TPreflight,
+        TTimelineReadiness,
+        TOutput
+    >
+): TOutput {
+    const extensions = pipeline.extensions || [];
+    const parsed = pipeline.parse(input);
+    const parsedContext: GateFlowParsedContext<TInput, TParsed> = { input, parsed };
+    runSynchronousExtensionHooks(
+        extensions,
+        parsedContext,
+        (extension, context) => extension.afterParse?.(context)
+    );
+
+    const taskModeEvidence = pipeline.loadTaskModeEvidence(parsedContext);
+    const taskModeContext: GateFlowTaskModeContext<TInput, TParsed, TTaskModeEvidence> = {
+        ...parsedContext,
+        taskModeEvidence
+    };
+    runSynchronousExtensionHooks(
+        extensions,
+        taskModeContext,
+        (extension, context) => extension.afterTaskModeEvidence?.(context)
+    );
+
+    const preflight = pipeline.loadPreflight(taskModeContext);
+    const preflightContext: GateFlowPreflightContext<TInput, TParsed, TTaskModeEvidence, TPreflight> = {
+        ...taskModeContext,
+        preflight
+    };
+    runSynchronousExtensionHooks(
+        extensions,
+        preflightContext,
+        (extension, context) => extension.afterPreflight?.(context)
+    );
+
+    const timelineReadiness = pipeline.evaluateTimelineReadiness(preflightContext);
+    const timelineContext: GateFlowTimelineContext<
+        TInput,
+        TParsed,
+        TTaskModeEvidence,
+        TPreflight,
+        TTimelineReadiness
+    > = {
+        ...preflightContext,
+        timelineReadiness
+    };
+    runSynchronousExtensionHooks(
+        extensions,
+        timelineContext,
+        (extension, context) => extension.afterTimelineReadiness?.(context)
+    );
+    runSynchronousExtensionHooks(
+        extensions,
+        timelineContext,
+        (extension, context) => extension.beforeEmit?.(context)
+    );
+
+    return pipeline.emit(timelineContext);
 }
 
 export async function runGateFlowPreflightPipeline<

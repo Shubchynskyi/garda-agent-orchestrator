@@ -18,10 +18,9 @@ import {
     loadFullSuiteValidationConfig,
     persistFullSuiteFailureEvidence,
     recordFullSuiteValidationDuration,
-    type FullSuiteTimeoutAttemptEvidence,
-    type FullSuiteValidationCycleBinding
+    type FullSuiteValidationResult,
+    type FullSuiteTimeoutAttemptEvidence
 } from '../../../../gates/full-suite/full-suite-validation';
-import { getTaskModeEvidence } from '../../../../gates/task-mode/task-mode';
 import {
     buildRawOutputRetentionEvidence,
     serializeCapturedOutputLines
@@ -33,18 +32,10 @@ import {
 import { executeCommandAsync } from '../../../gate-cli/gates-subprocess';
 import { EXIT_GATE_FAILURE, EXIT_GENERAL_FAILURE } from '../../../exit-codes';
 import {
-    normalizePathValue,
-    ensureDirectoryExists,
-    parseRequiredText
-} from '../../cli-helpers';
-import { requireResolvedPath } from '../../shared-command-utils';
-import {
     type FullSuiteValidationCommandOptions,
     type FullSuiteValidationCommandResult
 } from './full-suite-validation-flow-types';
 import {
-    readFullSuiteScopeBinding,
-    readLatestCompileGatePassedTimestamp,
     tryReadRebindableFullSuiteValidationArtifact
 } from './full-suite-validation-cycle-binding';
 import { writeArtifactThenEmitMandatoryFullSuiteEvent } from './full-suite-validation-lifecycle';
@@ -63,6 +54,9 @@ import {
     updateFullSuiteValidationRunMarkerChildProcess,
     writeFullSuiteValidationRunMarker
 } from '../../../../gates/full-suite/full-suite-validation-run-marker';
+import {
+    runFullSuiteValidationPreflightPipeline
+} from './full-suite-validation-preflight-pipeline';
 
 export { shouldOmitSuccessfulFullSuiteOutput } from './full-suite-validation-output-retention';
 export type {
@@ -114,28 +108,41 @@ function resolveEffectiveFullSuiteValidationConfig(
         : { ...config, timeout_ms: effectiveTimeoutMs };
 }
 
+function buildCompileReadinessBlockedResult(
+    config: ReturnType<typeof loadFullSuiteValidationConfig>,
+    cycleBinding: FullSuiteValidationResult['cycle_binding'],
+    violations: readonly string[]
+): FullSuiteValidationResult {
+    return {
+        status: 'FAILED',
+        enabled: true,
+        command: config.command,
+        placement: config.placement,
+        exit_code: null,
+        timed_out: false,
+        output_artifact_path: null,
+        compact_summary: ['Full-suite validation requires current compile evidence.'],
+        failure_chunks: [],
+        out_of_scope_failure_policy: config.out_of_scope_failure_policy,
+        out_of_scope_failure_detected: false,
+        out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+        violations: [...violations],
+        warnings: [],
+        cycle_binding: cycleBinding
+    };
+}
+
 export async function runFullSuiteValidationCommand(
     options: FullSuiteValidationCommandOptions
 ): Promise<FullSuiteValidationCommandResult> {
-    const repoRoot = normalizePathValue(options.repoRoot || '.');
-    ensureDirectoryExists(repoRoot, 'Repo root');
-
-    const taskId = parseRequiredText(options.taskId, 'TaskId');
-    const preflightPath = requireResolvedPath(
-        gateHelpers.resolvePathInsideRepo(String(options.preflightPath || ''), repoRoot, { allowMissing: true }),
-        'PreflightPath'
-    );
-    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
-        throw new Error(`Preflight artifact not found: ${gateHelpers.normalizePath(preflightPath)}`);
-    }
-
-    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-    const preflightTaskId = String(preflight.task_id || '').trim();
-    if (preflightTaskId && preflightTaskId !== taskId) {
-        throw new Error(
-            `Preflight task_id '${preflightTaskId}' does not match requested task '${taskId}'.`
-        );
-    }
+    const {
+        repoRoot,
+        taskId,
+        preflight,
+        cycleBinding,
+        taskModeEvidence,
+        timelineReadiness
+    } = runFullSuiteValidationPreflightPipeline(options);
 
     const config = loadFullSuiteValidationConfig(repoRoot);
     const reviewsRoot = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
@@ -146,15 +153,6 @@ export async function runFullSuiteValidationCommand(
     const changedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
-    const cycleBinding: FullSuiteValidationCycleBinding = {
-        task_id: taskId,
-        preflight_path: gateHelpers.normalizePath(preflightPath),
-        preflight_sha256: gateHelpers.fileSha256(preflightPath) || '',
-        compile_gate_timestamp: readLatestCompileGatePassedTimestamp(repoRoot, taskId),
-        scope_binding: readFullSuiteScopeBinding(repoRoot, taskId, preflight)
-    };
-
-    const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId);
     let workflowConfigBaseline = taskModeEvidence.workflow_config_file_hashes;
     const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline, {
         allowProtectedManifestFallback: false
@@ -256,6 +254,7 @@ export async function runFullSuiteValidationCommand(
         ? null
         : validateFullSuiteCommandContract(config.command);
     const reboundResult = commandContract?.supported === true
+        && timelineReadiness.compileEvidenceCurrent
         ? tryReadRebindableFullSuiteValidationArtifact({
             artifactPath,
             repoRoot,
@@ -377,6 +376,39 @@ export async function runFullSuiteValidationCommand(
         );
         return {
             outputText: `${formatFullSuiteValidationResult(invalidCommandResult)}\n`,
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
+
+    if (!timelineReadiness.compileEvidenceCurrent) {
+        const readinessBlockedResult = buildCompileReadinessBlockedResult(
+            config,
+            cycleBinding,
+            timelineReadiness.violations
+        );
+        await writeArtifactThenEmitMandatoryFullSuiteEvent(
+            repoRoot,
+            eventsRoot,
+            taskId,
+            artifactPath,
+            readinessBlockedResult.status,
+            readinessBlockedResult,
+            {
+                status: readinessBlockedResult.status,
+                enabled: readinessBlockedResult.enabled,
+                command: readinessBlockedResult.command,
+                placement: readinessBlockedResult.placement,
+                exit_code: readinessBlockedResult.exit_code,
+                timed_out: readinessBlockedResult.timed_out,
+                preflight_path: cycleBinding.preflight_path,
+                artifact_path: gateHelpers.normalizePath(artifactPath),
+                cycle_binding: readinessBlockedResult.cycle_binding,
+                violations: readinessBlockedResult.violations,
+                warnings: readinessBlockedResult.warnings
+            }
+        );
+        return {
+            outputText: `${formatFullSuiteValidationResult(readinessBlockedResult)}\n`,
             exitCode: EXIT_GATE_FAILURE
         };
     }

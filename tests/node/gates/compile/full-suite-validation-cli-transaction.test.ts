@@ -13,7 +13,10 @@ import {
 } from '../../../../src/gates/full-suite/full-suite-validation';
 import { getCurrentWorkflowConfigFileHashes } from '../../../../src/gates/workflow-config/workflow-config-work';
 import { buildTaskModeArtifact } from '../../../../src/gates/task-mode';
-import { runCliWithCapturedOutput } from '../../cli/commands/gate-test-helpers';
+import {
+    runCliWithCapturedOutput,
+    writeCompilePassEvidence
+} from '../../cli/commands/gate-test-helpers';
 import {
     classifyChange,
     getClassificationConfig
@@ -25,12 +28,16 @@ import {
 function writeFullSuitePreflight(
     repoRoot: string,
     preflightPath: string,
-    preflight: Record<string, unknown>
+    preflight: Record<string, unknown>,
+    options: { seedCompileEvidence?: boolean } = {}
 ): void {
     fs.writeFileSync(preflightPath, JSON.stringify(preflight), 'utf8');
     const taskId = String(preflight.task_id || '').trim();
     if (taskId) {
         writeFullSuiteTaskModeBaseline(repoRoot, taskId);
+        if (options.seedCompileEvidence !== false) {
+            writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+        }
     }
 }
 
@@ -73,7 +80,7 @@ describe('gates/full-suite-validation', () => {
             writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-SKIP',
                 changed_files: ['src/changed.ts']
-            });
+            }, { seedCompileEvidence: false });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -128,7 +135,7 @@ describe('gates/full-suite-validation', () => {
                     refactor: false
                 },
                 required_reviews: {}
-            });
+            }, { seedCompileEvidence: false });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -198,7 +205,7 @@ describe('gates/full-suite-validation', () => {
             writeFullSuitePreflight(tempDir, preflightPath, {
                 ...classification,
                 task_id: taskId
-            });
+            }, { seedCompileEvidence: false });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
