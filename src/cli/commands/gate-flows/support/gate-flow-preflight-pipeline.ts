@@ -10,6 +10,13 @@ export const GATE_FLOW_PREFLIGHT_PIPELINE_STAGES = [
 
 export type GateFlowPreflightPipelineStage = typeof GATE_FLOW_PREFLIGHT_PIPELINE_STAGES[number];
 
+export const GATE_FLOW_PREFLIGHT_PIPELINE_MIGRATION_CHECKLIST = {
+    compile: 'pilot-migrated',
+    review: 'pending',
+    'full-suite': 'pending',
+    recovery: 'pending-after-recovery-decomposition'
+} as const;
+
 export interface GateFlowParsedContext<TInput, TParsed> {
     readonly input: TInput;
     readonly parsed: TParsed;

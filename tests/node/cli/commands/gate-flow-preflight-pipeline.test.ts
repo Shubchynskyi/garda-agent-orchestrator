@@ -1,11 +1,30 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import {
+    GATE_FLOW_PREFLIGHT_PIPELINE_MIGRATION_CHECKLIST,
     GATE_FLOW_PREFLIGHT_PIPELINE_STAGES,
     runGateFlowPreflightPipeline,
     type GateFlowPreflightPipeline
 } from '../../../../src/cli/commands/gate-flows/support/gate-flow-preflight-pipeline';
+import { runCompileGateCommand } from '../../../../src/cli/commands/gates';
+import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
+import {
+    createTempRepo,
+    getOrchestratorRoot,
+    getReviewsRoot,
+    loadPostPreflightRulePack,
+    loadTaskEntryRulePack,
+    runEnterTaskMode,
+    runHandshakeForTask,
+    runShellSmokeForTask,
+    seedInitAnswers,
+    seedTaskQueue,
+    writeBudgetOutputFilters,
+    writePreflight
+} from './gate-test-helpers';
 
 interface TestInput {
     rawTaskId: string;
@@ -65,6 +84,12 @@ function createTestPipeline(events: string[]): TestPipeline {
     };
 }
 
+function normalizeCompileOutputContract(outputLines: string[]): string[] {
+    return outputLines.map((line) => line
+        .replace(/duration_ms=\d+/u, 'duration_ms=<duration>')
+        .replace(/sha256=[a-f0-9]{64}/u, 'sha256=<sha256>'));
+}
+
 describe('gate-flow preflight pipeline', () => {
     it('publishes the canonical stage order', () => {
         assert.deepEqual(GATE_FLOW_PREFLIGHT_PIPELINE_STAGES, [
@@ -74,6 +99,15 @@ describe('gate-flow preflight pipeline', () => {
             'timeline-readiness',
             'emit'
         ]);
+    });
+
+    it('tracks the compile pilot and remaining flow migrations', () => {
+        assert.deepEqual(GATE_FLOW_PREFLIGHT_PIPELINE_MIGRATION_CHECKLIST, {
+            compile: 'pilot-migrated',
+            review: 'pending',
+            'full-suite': 'pending',
+            recovery: 'pending-after-recovery-decomposition'
+        });
     });
 
     it('runs the canonical parse to emit sequence', async () => {
@@ -223,5 +257,137 @@ describe('gate-flow preflight pipeline', () => {
             'extension-a:task-mode:start',
             'extension-a:task-mode:rejected'
         ]);
+    });
+});
+
+describe('compile gate shared preflight pipeline pilot', () => {
+    it('preserves compile success output and task-bound evidence wiring', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-932-2-compile-pilot';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
+            const preflightPath = writePreflight(repoRoot, taskId);
+            const commandsPath = path.join(repoRoot, 'commands.md');
+            fs.writeFileSync(commandsPath, [
+                '### Compile Gate (Mandatory)',
+                '```bash',
+                'node -e "console.log(\'build ok\')"',
+                '```'
+            ].join('\n'), 'utf8');
+
+            assert.equal(runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Exercise the compile shared preflight pipeline pilot'
+            }).exitCode, 0);
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+            assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+            const result = await runCompileGateCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                commandsPath,
+                outputFiltersPath,
+                emitMetrics: false
+            });
+            const evidence = JSON.parse(fs.readFileSync(
+                path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`),
+                'utf8'
+            )) as {
+                preflight_path: string;
+                task_mode: { task_id: string };
+                rule_pack: { stage: string };
+                post_preflight_sequence: { timeline_path: string };
+            };
+
+            assert.equal(result.exitCode, 0);
+            assert.deepEqual(normalizeCompileOutputContract(result.outputLines), [
+                'COMPILE_GATE_PASSED',
+                'CompileSummary: PASSED | duration_ms=<duration> | exit_code=0 | errors=0 | warnings=0',
+                'CompileOutputRetention: retained=false reason=SUCCESS_LOG_OMITTED '
+                    + 'sha256=<sha256> lines=7 chars=166'
+            ]);
+            assert.equal(evidence.preflight_path, path.resolve(preflightPath).replace(/\\/g, '/'));
+            assert.equal(evidence.task_mode.task_id, taskId);
+            assert.equal(evidence.rule_pack.stage, 'POST_PREFLIGHT');
+            assert.equal(
+                evidence.post_preflight_sequence.timeline_path,
+                path.join(
+                    getOrchestratorRoot(repoRoot),
+                    'runtime',
+                    'task-events',
+                    `${taskId}.jsonl`
+                ).replace(/\\/g, '/')
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves missing shell-smoke failure and recovery output', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-932-2-compile-pilot-missing-shell-smoke';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
+            const preflightPath = writePreflight(repoRoot, taskId);
+            const commandsPath = path.join(repoRoot, 'commands.md');
+            fs.writeFileSync(commandsPath, [
+                '### Compile Gate (Mandatory)',
+                '```bash',
+                'node -e "console.log(\'build must not run\')"',
+                '```'
+            ].join('\n'), 'utf8');
+
+            assert.equal(runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Reject compile pilot without shell-smoke evidence'
+            }).exitCode, 0);
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+            const result = await runCompileGateCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                commandsPath,
+                outputFiltersPath,
+                emitMetrics: false
+            });
+            const timelinePath = path.join(
+                getOrchestratorRoot(repoRoot),
+                'runtime',
+                'task-events',
+                `${taskId}.jsonl`
+            ).replace(/\\/g, '/');
+            const compileOutputPath = path.join(
+                getReviewsRoot(repoRoot),
+                `${taskId}-compile-output.log`
+            ).replace(/\\/g, '/');
+            const failureReason = `Task timeline '${timelinePath}' is missing `
+                + 'SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before compile gate. '
+                + `NextStep: run node garda-agent-orchestrator/bin/garda.js next-step "${taskId}" `
+                + '--repo-root "." and follow its single recommended command before retrying compile-gate.';
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.deepEqual(normalizeCompileOutputContract(result.outputLines), [
+                'COMPILE_GATE_FAILED',
+                'CompileSummary: FAILED | duration_ms=<duration> | exit_code=3 | errors=0 | warnings=0',
+                `CompileOutputPath: ${compileOutputPath}`,
+                'CompileOutputRetention: retained=true reason=FULL_OUTPUT_RETAINED '
+                    + 'sha256=null lines=0 chars=0',
+                `Reason: ${failureReason}`
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 });

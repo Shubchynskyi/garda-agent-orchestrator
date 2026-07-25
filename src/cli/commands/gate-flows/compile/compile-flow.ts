@@ -55,7 +55,6 @@ import {
     resolveDefaultMetricsPath,
     resolveDefaultReviewsPath,
     resolvePathForWrite,
-    resolvePreflightPath,
     writeCompileEvidence,
     writeTextArtifact
 } from '../../../gate-cli/gates-artifacts';
@@ -95,10 +94,9 @@ import {
 } from './compile-flow-shared-evidence';
 import {
     evaluateGateFlowOptionalSkillSelection,
-    evaluateGateFlowStartupDiagnostics,
-    evaluateGateFlowTimelineReadiness,
-    resolveGateFlowTimelinePath
+    evaluateGateFlowStartupDiagnostics
 } from '../support/gate-flow-runtime';
+import { runCompileFlowPreflightPipeline } from './compile-flow-preflight-pipeline';
 
 export { runClassifyChangeCommand } from './compile-flow-classify';
 export type { ClassifyChangeCommandOptions } from './compile-flow-classify';
@@ -200,13 +198,21 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 configuredCompileGateCommand.configPath
             );
         }
-        resolvedPreflightPath = resolvePreflightPath(repoRoot, options.preflightPath || '', resolvedTaskId);
-        preflightContext = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
-        rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'POST_PREFLIGHT', {
-            artifactPath: String(options.rulePackPath || ''),
-            preflightPath: resolvedPreflightPath,
-            taskModePath: String(options.taskModePath || '')
+        const sharedPreflight = await runCompileFlowPreflightPipeline({
+            repoRoot,
+            orchestratorRoot,
+            taskId: resolvedTaskId,
+            taskModePath: String(options.taskModePath || ''),
+            rulePackPath: String(options.rulePackPath || ''),
+            preflightPath: options.preflightPath,
+            taskModeEvidence
         });
+        resolvedPreflightPath = sharedPreflight.resolvedPreflightPath;
+        preflightContext = sharedPreflight.preflightContext;
+        rulePackEvidence = sharedPreflight.rulePackEvidence;
+        taskModeEvidence = sharedPreflight.taskModeEvidence;
+        const timelinePath = sharedPreflight.timelinePath;
+        const timelineReadiness = sharedPreflight.timelineReadiness;
         const taskModeViolations = getTaskModeEvidenceViolations(taskModeEvidence);
         const rulePackViolations = getRulePackEvidenceViolations(rulePackEvidence);
         if (taskModeViolations.length > 0) {
@@ -268,18 +274,6 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             getProtectedDirtyWorkspaceScopeFromPreflight(preflightContext.preflight)
         );
 
-        const timelinePath = resolveGateFlowTimelinePath(repoRoot, resolvedTaskId);
-        const timelineReadiness = evaluateGateFlowTimelineReadiness({
-            orchestratorRoot,
-            repoRoot,
-            taskId: resolvedTaskId,
-            timelinePath,
-            requirements: [
-                { eventType: 'RULE_PACK_LOADED', recoveryInstruction: 'Run load-rule-pack before compile gate.' },
-                { eventType: 'HANDSHAKE_DIAGNOSTICS_RECORDED', recoveryInstruction: 'Run handshake-diagnostics before compile gate.' },
-                { eventType: 'SHELL_SMOKE_PREFLIGHT_RECORDED', recoveryInstruction: 'Run shell-smoke-preflight before compile gate.' }
-            ]
-        });
         if (!exceptionMessage && timelineReadiness.violations.length > 0) {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = timelineReadiness.violations.join(' ');
