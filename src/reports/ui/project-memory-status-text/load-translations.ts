@@ -1,4 +1,4 @@
-import type { LocalUiLocalizedText } from '../ui-language-pack-loader';
+import { createLocalUiTranslationLoader, type LocalUiTranslationPacks } from '../ui-i18n-loader-factory';
 import ar from './lang/ar.json';
 import bn from './lang/bn.json';
 import de from './lang/de.json';
@@ -20,31 +20,11 @@ import uk from './lang/uk.json';
 import vi from './lang/vi.json';
 import zhCn from './lang/zh-CN.json';
 
-type ProjectMemoryStatusTextPack = Readonly<Record<string, LocalUiLocalizedText>>;
+const loadTranslations = createLocalUiTranslationLoader({
+    ar, bn, de, es, fr, hi, id, it, ja, ko,
+    nl, pl, pt, 'pt-BR': ptBr, ru, sv, tr, uk, vi, 'zh-CN': zhCn
+});
 
-const PROJECT_MEMORY_STATUS_TEXT_BY_LANGUAGE = Object.freeze({
-    ar: Object.freeze(ar as ProjectMemoryStatusTextPack),
-    bn: Object.freeze(bn as ProjectMemoryStatusTextPack),
-    de: Object.freeze(de as ProjectMemoryStatusTextPack),
-    es: Object.freeze(es as ProjectMemoryStatusTextPack),
-    fr: Object.freeze(fr as ProjectMemoryStatusTextPack),
-    hi: Object.freeze(hi as ProjectMemoryStatusTextPack),
-    id: Object.freeze(id as ProjectMemoryStatusTextPack),
-    it: Object.freeze(it as ProjectMemoryStatusTextPack),
-    ja: Object.freeze(ja as ProjectMemoryStatusTextPack),
-    ko: Object.freeze(ko as ProjectMemoryStatusTextPack),
-    nl: Object.freeze(nl as ProjectMemoryStatusTextPack),
-    pl: Object.freeze(pl as ProjectMemoryStatusTextPack),
-    pt: Object.freeze(pt as ProjectMemoryStatusTextPack),
-    'pt-BR': Object.freeze(ptBr as ProjectMemoryStatusTextPack),
-    ru: Object.freeze(ru as ProjectMemoryStatusTextPack),
-    sv: Object.freeze(sv as ProjectMemoryStatusTextPack),
-    tr: Object.freeze(tr as ProjectMemoryStatusTextPack),
-    uk: Object.freeze(uk as ProjectMemoryStatusTextPack),
-    vi: Object.freeze(vi as ProjectMemoryStatusTextPack),
-    'zh-CN': Object.freeze(zhCn as ProjectMemoryStatusTextPack)
-} satisfies Readonly<Record<string, ProjectMemoryStatusTextPack>>);
-
-export function loadProjectMemoryStatusTextTranslations(): Readonly<Record<string, ProjectMemoryStatusTextPack>> {
-    return PROJECT_MEMORY_STATUS_TEXT_BY_LANGUAGE;
+export function loadProjectMemoryStatusTextTranslations(): LocalUiTranslationPacks {
+    return loadTranslations();
 }

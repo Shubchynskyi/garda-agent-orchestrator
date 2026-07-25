@@ -17,6 +17,7 @@ import {
     getLocalUiText,
     normalizeLocalUiLanguage
 } from '../../../src/reports/ui';
+import { createLocalUiTranslationLoader } from '../../../src/reports/ui/ui-i18n-loader-factory';
 
 function collectTypeScriptFiles(root: string): string[] {
     const entries = fs.readdirSync(root, { withFileTypes: true });
@@ -42,6 +43,18 @@ test('imported UI language packs are registered beside built-in English', () => 
     assert.ok(languageIds.includes('uk'));
     assert.equal(getLocalUiText('de').tasksTab, 'Aufgaben');
     assert.equal(getLocalUiText('de').backupsTab, 'Sicherungen');
+});
+
+test('UI translation loader factory freezes and reuses imported pack maps', () => {
+    const germanPack = { greeting: { label: 'Hallo' } };
+    const loadTranslations = createLocalUiTranslationLoader({ de: germanPack });
+    const translations = loadTranslations();
+
+    assert.strictEqual(loadTranslations(), translations);
+    assert.strictEqual(translations.de, germanPack);
+    assert.equal(Object.isFrozen(translations), true);
+    assert.equal(Object.isFrozen(germanPack), true);
+    assert.equal(translations.de.greeting.label, 'Hallo');
 });
 
 test('Russian UI language is loaded from the language pack without source-embedded translations', () => {

@@ -1,4 +1,4 @@
-import type { LocalUiLocalizedText } from '../ui-language-pack-loader';
+import { createLocalUiTranslationLoader, type LocalUiTranslationPacks } from '../ui-i18n-loader-factory';
 import ar from './lang/ar.json';
 import bn from './lang/bn.json';
 import de from './lang/de.json';
@@ -20,31 +20,11 @@ import uk from './lang/uk.json';
 import vi from './lang/vi.json';
 import zhCn from './lang/zh-CN.json';
 
-type BackupsTabTextPack = Readonly<Record<string, LocalUiLocalizedText>>;
+const loadTranslations = createLocalUiTranslationLoader({
+    ar, bn, de, es, fr, hi, id, it, ja, ko,
+    nl, pl, pt, 'pt-BR': ptBr, ru, sv, tr, uk, vi, 'zh-CN': zhCn
+});
 
-const BACKUPS_TAB_TEXT_BY_LANGUAGE = Object.freeze({
-    ar: Object.freeze(ar as BackupsTabTextPack),
-    bn: Object.freeze(bn as BackupsTabTextPack),
-    de: Object.freeze(de as BackupsTabTextPack),
-    es: Object.freeze(es as BackupsTabTextPack),
-    fr: Object.freeze(fr as BackupsTabTextPack),
-    hi: Object.freeze(hi as BackupsTabTextPack),
-    id: Object.freeze(id as BackupsTabTextPack),
-    it: Object.freeze(it as BackupsTabTextPack),
-    ja: Object.freeze(ja as BackupsTabTextPack),
-    ko: Object.freeze(ko as BackupsTabTextPack),
-    nl: Object.freeze(nl as BackupsTabTextPack),
-    pl: Object.freeze(pl as BackupsTabTextPack),
-    pt: Object.freeze(pt as BackupsTabTextPack),
-    'pt-BR': Object.freeze(ptBr as BackupsTabTextPack),
-    ru: Object.freeze(ru as BackupsTabTextPack),
-    sv: Object.freeze(sv as BackupsTabTextPack),
-    tr: Object.freeze(tr as BackupsTabTextPack),
-    uk: Object.freeze(uk as BackupsTabTextPack),
-    vi: Object.freeze(vi as BackupsTabTextPack),
-    'zh-CN': Object.freeze(zhCn as BackupsTabTextPack)
-} satisfies Readonly<Record<string, BackupsTabTextPack>>);
-
-export function loadBackupsTabTextTranslations(): Readonly<Record<string, BackupsTabTextPack>> {
-    return BACKUPS_TAB_TEXT_BY_LANGUAGE;
+export function loadBackupsTabTextTranslations(): LocalUiTranslationPacks {
+    return loadTranslations();
 }

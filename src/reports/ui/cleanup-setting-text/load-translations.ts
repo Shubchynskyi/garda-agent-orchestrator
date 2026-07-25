@@ -1,4 +1,4 @@
-import type { LocalUiLocalizedText } from '../ui-language-pack-loader';
+import { createLocalUiTranslationLoader, type LocalUiTranslationPacks } from '../ui-i18n-loader-factory';
 import ar from './lang/ar.json';
 import bn from './lang/bn.json';
 import de from './lang/de.json';
@@ -20,31 +20,11 @@ import uk from './lang/uk.json';
 import vi from './lang/vi.json';
 import zhCn from './lang/zh-CN.json';
 
-type CleanupSettingTextPack = Readonly<Record<string, LocalUiLocalizedText>>;
+const loadTranslations = createLocalUiTranslationLoader({
+    ar, bn, de, es, fr, hi, id, it, ja, ko,
+    nl, pl, pt, 'pt-BR': ptBr, ru, sv, tr, uk, vi, 'zh-CN': zhCn
+});
 
-const CLEANUP_SETTING_TEXT_BY_LANGUAGE = Object.freeze({
-    ar: Object.freeze(ar as CleanupSettingTextPack),
-    bn: Object.freeze(bn as CleanupSettingTextPack),
-    de: Object.freeze(de as CleanupSettingTextPack),
-    es: Object.freeze(es as CleanupSettingTextPack),
-    fr: Object.freeze(fr as CleanupSettingTextPack),
-    hi: Object.freeze(hi as CleanupSettingTextPack),
-    id: Object.freeze(id as CleanupSettingTextPack),
-    it: Object.freeze(it as CleanupSettingTextPack),
-    ja: Object.freeze(ja as CleanupSettingTextPack),
-    ko: Object.freeze(ko as CleanupSettingTextPack),
-    nl: Object.freeze(nl as CleanupSettingTextPack),
-    pl: Object.freeze(pl as CleanupSettingTextPack),
-    pt: Object.freeze(pt as CleanupSettingTextPack),
-    'pt-BR': Object.freeze(ptBr as CleanupSettingTextPack),
-    ru: Object.freeze(ru as CleanupSettingTextPack),
-    sv: Object.freeze(sv as CleanupSettingTextPack),
-    tr: Object.freeze(tr as CleanupSettingTextPack),
-    uk: Object.freeze(uk as CleanupSettingTextPack),
-    vi: Object.freeze(vi as CleanupSettingTextPack),
-    'zh-CN': Object.freeze(zhCn as CleanupSettingTextPack)
-} satisfies Readonly<Record<string, CleanupSettingTextPack>>);
-
-export function loadCleanupSettingTextTranslations(): Readonly<Record<string, CleanupSettingTextPack>> {
-    return CLEANUP_SETTING_TEXT_BY_LANGUAGE;
+export function loadCleanupSettingTextTranslations(): LocalUiTranslationPacks {
+    return loadTranslations();
 }

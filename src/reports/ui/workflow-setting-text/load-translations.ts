@@ -1,4 +1,4 @@
-import type { LocalUiLocalizedText } from '../ui-language-pack-loader';
+import { createLocalUiTranslationLoader, type LocalUiTranslationPacks } from '../ui-i18n-loader-factory';
 import ar from './lang/ar.json';
 import bn from './lang/bn.json';
 import de from './lang/de.json';
@@ -20,31 +20,11 @@ import uk from './lang/uk.json';
 import vi from './lang/vi.json';
 import zhCn from './lang/zh-CN.json';
 
-type WorkflowSettingTextPack = Readonly<Record<string, LocalUiLocalizedText>>;
+const loadTranslations = createLocalUiTranslationLoader({
+    ar, bn, de, es, fr, hi, id, it, ja, ko,
+    nl, pl, pt, 'pt-BR': ptBr, ru, sv, tr, uk, vi, 'zh-CN': zhCn
+});
 
-const WORKFLOW_SETTING_TEXT_BY_LANGUAGE = Object.freeze({
-    ar: Object.freeze(ar as WorkflowSettingTextPack),
-    bn: Object.freeze(bn as WorkflowSettingTextPack),
-    de: Object.freeze(de as WorkflowSettingTextPack),
-    es: Object.freeze(es as WorkflowSettingTextPack),
-    fr: Object.freeze(fr as WorkflowSettingTextPack),
-    hi: Object.freeze(hi as WorkflowSettingTextPack),
-    id: Object.freeze(id as WorkflowSettingTextPack),
-    it: Object.freeze(it as WorkflowSettingTextPack),
-    ja: Object.freeze(ja as WorkflowSettingTextPack),
-    ko: Object.freeze(ko as WorkflowSettingTextPack),
-    nl: Object.freeze(nl as WorkflowSettingTextPack),
-    pl: Object.freeze(pl as WorkflowSettingTextPack),
-    pt: Object.freeze(pt as WorkflowSettingTextPack),
-    'pt-BR': Object.freeze(ptBr as WorkflowSettingTextPack),
-    ru: Object.freeze(ru as WorkflowSettingTextPack),
-    sv: Object.freeze(sv as WorkflowSettingTextPack),
-    tr: Object.freeze(tr as WorkflowSettingTextPack),
-    uk: Object.freeze(uk as WorkflowSettingTextPack),
-    vi: Object.freeze(vi as WorkflowSettingTextPack),
-    'zh-CN': Object.freeze(zhCn as WorkflowSettingTextPack)
-} satisfies Readonly<Record<string, WorkflowSettingTextPack>>);
-
-export function loadWorkflowSettingTextTranslations(): Readonly<Record<string, WorkflowSettingTextPack>> {
-    return WORKFLOW_SETTING_TEXT_BY_LANGUAGE;
+export function loadWorkflowSettingTextTranslations(): LocalUiTranslationPacks {
+    return loadTranslations();
 }

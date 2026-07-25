@@ -1,4 +1,4 @@
-import type { LocalUiLocalizedText } from '../ui-language-pack-loader';
+import { createLocalUiTranslationLoader, type LocalUiTranslationPacks } from '../ui-i18n-loader-factory';
 import ar from './lang/ar.json';
 import bn from './lang/bn.json';
 import de from './lang/de.json';
@@ -20,31 +20,11 @@ import uk from './lang/uk.json';
 import vi from './lang/vi.json';
 import zhCn from './lang/zh-CN.json';
 
-type InitSettingTextPack = Readonly<Record<string, LocalUiLocalizedText>>;
+const loadTranslations = createLocalUiTranslationLoader({
+    ar, bn, de, es, fr, hi, id, it, ja, ko,
+    nl, pl, pt, 'pt-BR': ptBr, ru, sv, tr, uk, vi, 'zh-CN': zhCn
+});
 
-const INIT_SETTING_TEXT_BY_LANGUAGE = Object.freeze({
-    ar: Object.freeze(ar as InitSettingTextPack),
-    bn: Object.freeze(bn as InitSettingTextPack),
-    de: Object.freeze(de as InitSettingTextPack),
-    es: Object.freeze(es as InitSettingTextPack),
-    fr: Object.freeze(fr as InitSettingTextPack),
-    hi: Object.freeze(hi as InitSettingTextPack),
-    id: Object.freeze(id as InitSettingTextPack),
-    it: Object.freeze(it as InitSettingTextPack),
-    ja: Object.freeze(ja as InitSettingTextPack),
-    ko: Object.freeze(ko as InitSettingTextPack),
-    nl: Object.freeze(nl as InitSettingTextPack),
-    pl: Object.freeze(pl as InitSettingTextPack),
-    pt: Object.freeze(pt as InitSettingTextPack),
-    'pt-BR': Object.freeze(ptBr as InitSettingTextPack),
-    ru: Object.freeze(ru as InitSettingTextPack),
-    sv: Object.freeze(sv as InitSettingTextPack),
-    tr: Object.freeze(tr as InitSettingTextPack),
-    uk: Object.freeze(uk as InitSettingTextPack),
-    vi: Object.freeze(vi as InitSettingTextPack),
-    'zh-CN': Object.freeze(zhCn as InitSettingTextPack)
-} satisfies Readonly<Record<string, InitSettingTextPack>>);
-
-export function loadInitSettingTextTranslations(): Readonly<Record<string, InitSettingTextPack>> {
-    return INIT_SETTING_TEXT_BY_LANGUAGE;
+export function loadInitSettingTextTranslations(): LocalUiTranslationPacks {
+    return loadTranslations();
 }
