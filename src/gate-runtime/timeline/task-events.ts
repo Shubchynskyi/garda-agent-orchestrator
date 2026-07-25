@@ -23,19 +23,19 @@ export {
     type TaskEventLockHealth,
     type TaskEventLockScanResult,
     type TaskEventLockStatus
-} from '../task-events-locking';
+} from './task-events-locking';
 export {
     assertValidTaskId,
     buildEventIntegrityHash,
     forEachJsonlLine,
     toTrimmedLowerCaseString,
     toTrimmedString,
-} from '../task-events-helpers';
+} from './task-events-helpers';
 export {
     inspectTaskEventFile,
     normalizeIntegrityValue,
     type InspectTaskEventResult
-} from '../task-events-integrity';
+} from './task-events-integrity';
 export {
     TASK_EVENT_LEGACY_SCHEMA_VERSION,
     TASK_EVENT_PUBLIC_EVENT_SOURCE,
@@ -54,7 +54,7 @@ export {
     type TaskEventPublicRecord,
     type TaskEventStatusSignal,
     type TaskEventTerminalOutcome
-} from '../task-event-public-contract';
+} from './task-event-public-contract';
 export {
     appendMandatoryTaskEvent,
     appendMandatoryTaskEventAsync,
@@ -69,12 +69,12 @@ export {
     type TaskEventAppendState,
     type TaskEventCommitStatus,
     type TaskEventIntegrity
-} from '../task-events-io';
-export type { AppendTaskEventResult as TaskEventAppendResult } from '../task-events-io';
+} from './task-events-io';
+export type { AppendTaskEventResult as TaskEventAppendResult } from './task-events-io';
 export {
     pruneAggregateLog,
     pruneAggregateLogLocked,
     pruneAggregateTaskRecordsLocked,
     type AggregateAppendMode,
     type AggregateRetentionResult
-} from '../task-events-retention';
+} from './task-events-retention';

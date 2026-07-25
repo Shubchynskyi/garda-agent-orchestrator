@@ -17,7 +17,7 @@ import {
     auditReviewArtifactCompaction,
     buildReviewContextSections,
     normalizeReviewReceiptReviewerProvenance
-} from '../../../src/gate-runtime/review-context';
+} from '../../../src/gate-runtime/review/review-context';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
 

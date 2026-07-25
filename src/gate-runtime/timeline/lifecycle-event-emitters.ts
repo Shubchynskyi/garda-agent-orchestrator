@@ -1,12 +1,12 @@
-import { appendTaskEvent } from '../task-events';
-import type { AutoEmitOptions } from '../lifecycle-event-core';
+import { appendTaskEvent } from './task-events';
+import type { AutoEmitOptions } from './lifecycle-event-core';
 import {
     emitLifecycleEvent,
     emitLifecycleEventAsync,
     emitMandatoryLifecycleEvent,
     emitMandatoryLifecycleEventAsync
-} from '../lifecycle-event-core';
-import { LIFECYCLE_EVENT_TYPES } from '../lifecycle-event-types';
+} from './lifecycle-event-core';
+import { LIFECYCLE_EVENT_TYPES } from './lifecycle-event-types';
 
 interface ReviewerInvocationAttestedOptions extends AutoEmitOptions {
     launchDetails?: Record<string, unknown>;

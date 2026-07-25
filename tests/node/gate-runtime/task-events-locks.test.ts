@@ -11,7 +11,7 @@ import {
     appendMandatoryTaskEvent,
     scanTaskEventLocks,
     cleanupStaleTaskEventLocks
-} from '../../../src/gate-runtime/task-events';
+} from '../../../src/gate-runtime/timeline/task-events';
 import { holdTaskEventLockInChildProcess } from './task-events-test-helpers';
 
 
@@ -386,8 +386,8 @@ test('appendTaskEvent timeout includes retry count in diagnostic', () => {
 
 
 test('task-events module avoids Atomics.wait and uses async timer-based waiting', () => {
-    const facadePath = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'gate-runtime', 'task-events.ts');
-    const lockingSupportPath = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'gate-runtime', 'task-events-locking-support.ts');
+    const facadePath = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'gate-runtime', 'timeline', 'task-events.ts');
+    const lockingSupportPath = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'gate-runtime', 'timeline', 'task-events-locking-support.ts');
     const strippedFacade = fs.readFileSync(facadePath, 'utf8')
         .replace(/\/\/.*$/gm, '')
         .replace(/\/\*[\s\S]*?\*\//g, '');

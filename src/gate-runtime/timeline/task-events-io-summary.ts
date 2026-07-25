@@ -1,6 +1,6 @@
-import { LIFECYCLE_EVENT_TYPES } from '../lifecycle-event-types';
-import { buildAppendWarning, recordDerivedAppendWarning } from '../task-events-io-result';
-import type { AppendTaskEventResult, TaskEvent } from '../task-events-io-types';
+import { LIFECYCLE_EVENT_TYPES } from './lifecycle-event-types';
+import { buildAppendWarning, recordDerivedAppendWarning } from './task-events-io-result';
+import type { AppendTaskEventResult, TaskEvent } from './task-events-io-types';
 
 const SUMMARY_REFRESH_EVENT_TYPES = new Set<string>([
     LIFECYCLE_EVENT_TYPES.TASK_MODE_ENTERED,
@@ -47,7 +47,7 @@ function shouldRefreshTimelineSummary(event: TaskEvent): boolean {
 
 function updateTimelineSummaryBestEffortForEvent(eventsRoot: string, taskId: string, event: TaskEvent | null): string | null {
     try {
-        const { updateTimelineSummaryForTask } = require('../timeline-summary') as typeof import('../timeline-summary');
+        const { updateTimelineSummaryForTask } = require('./timeline-summary') as typeof import('./timeline-summary');
         updateTimelineSummaryForTask(eventsRoot, taskId, getCodeChangedHintFromEvent(event));
         return null;
     } catch (error: unknown) {

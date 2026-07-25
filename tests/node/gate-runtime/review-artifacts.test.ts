@@ -17,16 +17,16 @@ import {
     writeReviewArtifactJson,
     writeReviewArtifactsWithRollback,
     writeReviewArtifactText
-} from '../../../src/gate-runtime/review-artifacts';
+} from '../../../src/gate-runtime/review/review-artifacts';
 import {
     loadIndex,
     resolveIndexPath,
     resolveIndexLockPath
-} from '../../../src/gate-runtime/reviews-index';
+} from '../../../src/gate-runtime/review/reviews-index';
 import {
     acquireFilesystemLock,
     releaseFilesystemLock
-} from '../../../src/gate-runtime/task-events';
+} from '../../../src/gate-runtime/timeline/task-events';
 
 function listTempArtifacts(directoryPath: string): string[] {
     return fs.readdirSync(directoryPath).filter((entry) => entry.includes('.tmp-'));

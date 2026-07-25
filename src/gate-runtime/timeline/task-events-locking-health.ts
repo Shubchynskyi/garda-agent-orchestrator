@@ -2,11 +2,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { redactHostname as redactHostnameValue } from '../../core/redaction';
-import { DEFAULT_LOCK_STALE_MS, FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV } from '../task-events-locking-types';
-import type { LockInspectionResult, LockOptions, TaskEventLockCleanupResult, TaskEventLockHealth, TaskEventLockScanResult } from '../task-events-locking-types';
-import { getErrorMessage, toPositiveInteger } from '../task-events-locking-support';
-import { allowForeignHostStaleRecovery, requiresExplicitAgeRecovery } from '../task-events-locking-metadata';
-import { inspectLock, tryRemoveStaleLock } from '../task-events-locking-inspection';
+import { DEFAULT_LOCK_STALE_MS, FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV } from './task-events-locking-types';
+import type { LockInspectionResult, LockOptions, TaskEventLockCleanupResult, TaskEventLockHealth, TaskEventLockScanResult } from './task-events-locking-types';
+import { getErrorMessage, toPositiveInteger } from './task-events-locking-support';
+import { allowForeignHostStaleRecovery, requiresExplicitAgeRecovery } from './task-events-locking-metadata';
+import { inspectLock, tryRemoveStaleLock } from './task-events-locking-inspection';
 
 export function classifyLockName(entryName: string): { scope: 'aggregate' | 'task'; taskId: string | null } | null {
     if (entryName === '.all-tasks.lock') {

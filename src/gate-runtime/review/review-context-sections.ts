@@ -1,6 +1,6 @@
 import { stringSha256 } from '../hash';
 import { DEFAULT_TOKEN_ESTIMATOR, estimateTokenCount, LEGACY_TOKEN_ESTIMATOR } from '../token-telemetry';
-import { compactMarkdownContent, type CompactMarkdownOptions } from '../review-context-compaction';
+import { compactMarkdownContent, type CompactMarkdownOptions } from './review-context-compaction';
 
 /**
  * Build a rule context artifact, matching Python build_rule_context_artifact.

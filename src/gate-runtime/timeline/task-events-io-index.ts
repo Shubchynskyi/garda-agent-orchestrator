@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { forEachJsonlLine, toTrimmedLowerCaseString, toTrimmedString } from '../task-events-helpers';
-import type { TaskEvent, TaskEventAppendState } from '../task-events-io-types';
+import { forEachJsonlLine, toTrimmedLowerCaseString, toTrimmedString } from './task-events-helpers';
+import type { TaskEvent, TaskEventAppendState } from './task-events-io-types';
 
 const TAIL_READ_CHUNK_SIZE = 4096;
 const TASK_EVENT_APPEND_INDEX_CACHE_MAX_ENTRIES = 128;

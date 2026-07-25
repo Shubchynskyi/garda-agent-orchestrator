@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 
 export function resolveTaskEventsModulePath() {
-    return path.resolve(__dirname, '../../../src/gate-runtime/task-events.js');
+    return path.resolve(__dirname, '../../../src/gate-runtime/timeline/task-events.js');
 }
 
 export function runConcurrentAppendWorker(

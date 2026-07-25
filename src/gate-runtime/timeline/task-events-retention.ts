@@ -9,7 +9,7 @@ import {
     withFilesystemLockAsync,
     type AcquireLockTelemetry,
     type LockOptions
-} from '../task-events-locking';
+} from './task-events-locking';
 
 export const DEFAULT_AGGREGATE_MAX_LINES = 10000;
 export const AGGREGATE_BYTES_PER_LINE_ESTIMATE = 512;

@@ -1,6 +1,6 @@
-import type { AggregateAppendMode } from '../task-events-retention';
-import type { LockContentionLevel } from '../task-events-locking';
-import type { AppendTaskEventResult, TaskEvent, TaskEventPaths } from '../task-events-io-types';
+import type { AggregateAppendMode } from './task-events-retention';
+import type { LockContentionLevel } from './task-events-locking';
+import type { AppendTaskEventResult, TaskEvent, TaskEventPaths } from './task-events-io-types';
 
 export function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);

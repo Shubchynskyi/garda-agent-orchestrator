@@ -438,7 +438,7 @@ function getOrchestratorRoot(repoRoot: string): string {
 }
 
 function loadTaskEventsIoModule(): { appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>; } {
-    const taskEventsIoModule = require(path.join(__dirname, '../../../../../../src/gate-runtime/task-events-io.js')) as {
+    const taskEventsIoModule = require(path.join(__dirname, '../../../../../../src/gate-runtime/timeline/task-events-io.js')) as {
         appendMandatoryTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
     };
     const lifecycleAppendProxy = {} as { appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>; };
@@ -456,7 +456,7 @@ function loadTaskEventsIoModule(): { appendTaskEventAsync: (...args: unknown[]) 
 }
 
 function loadTimelineSummaryModule(): { reconcileTimelineSummaryForTask: (...args: unknown[]) => void; } {
-    return require(path.join(__dirname, '../../../../../../src/gate-runtime/timeline-summary.js')) as {
+    return require(path.join(__dirname, '../../../../../../src/gate-runtime/timeline/timeline-summary.js')) as {
         reconcileTimelineSummaryForTask: (...args: unknown[]) => void;
     };
 }

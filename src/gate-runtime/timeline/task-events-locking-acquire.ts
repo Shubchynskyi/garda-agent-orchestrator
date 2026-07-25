@@ -2,12 +2,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { redactHostname as redactHostnameValue } from '../../core/redaction';
-import { DEFAULT_LOCK_RETRY_MS, DEFAULT_LOCK_STALE_MS, DEFAULT_LOCK_TIMEOUT_MS, LOCK_CONTENTION_WARN_THRESHOLD } from '../task-events-locking-types';
-import type { AcquireLockTelemetry, LockHandle, LockInspectionResult, LockOptions } from '../task-events-locking-types';
-import { classifyLockContention, createLockId, redactLockPath, resolveMaxLockRetries, sleepMsAsync, sleepMsSync, toPositiveInteger } from '../task-events-locking-support';
-import { allowForeignHostStaleRecovery, isCurrentHostOwner, requiresExplicitAgeRecovery, startLockHeartbeat, writeLockMetadata } from '../task-events-locking-metadata';
-import { claimOwnedLockForRelease, isRetryableLockAcquireError, removeLockPath, removeLockPathWithRetry } from '../task-events-locking-release';
-import { formatLockDiagnostic, inspectLock, tryRemoveStaleLock } from '../task-events-locking-inspection';
+import { DEFAULT_LOCK_RETRY_MS, DEFAULT_LOCK_STALE_MS, DEFAULT_LOCK_TIMEOUT_MS, LOCK_CONTENTION_WARN_THRESHOLD } from './task-events-locking-types';
+import type { AcquireLockTelemetry, LockHandle, LockInspectionResult, LockOptions } from './task-events-locking-types';
+import { classifyLockContention, createLockId, redactLockPath, resolveMaxLockRetries, sleepMsAsync, sleepMsSync, toPositiveInteger } from './task-events-locking-support';
+import { allowForeignHostStaleRecovery, isCurrentHostOwner, requiresExplicitAgeRecovery, startLockHeartbeat, writeLockMetadata } from './task-events-locking-metadata';
+import { claimOwnedLockForRelease, isRetryableLockAcquireError, removeLockPath, removeLockPathWithRetry } from './task-events-locking-release';
+import { formatLockDiagnostic, inspectLock, tryRemoveStaleLock } from './task-events-locking-inspection';
 
 export function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { handle: LockHandle; telemetry: AcquireLockTelemetry } {
     const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);

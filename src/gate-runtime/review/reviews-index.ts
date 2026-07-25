@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../../core/filesystem';
 import { KNOWN_REVIEW_ARTIFACT_SUFFIXES } from '../../core/task-ids';
-import { inspectFilesystemLock, withFilesystemLock } from '../task-events-locking';
+import { inspectFilesystemLock, withFilesystemLock } from '../timeline/task-events-locking';
 import { isLowNoiseRuntimeWritesEnabled } from '../derived-runtime-writes';
 
 // Bounded metadata cache for runtime/reviews artifacts.

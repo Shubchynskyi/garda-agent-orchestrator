@@ -1,4 +1,4 @@
-import type { LockContentionLevel, LockWaitDiagnostics, LockWaitEntry } from '../task-events-locking-types';
+import type { LockContentionLevel, LockWaitDiagnostics, LockWaitEntry } from './task-events-locking-types';
 
 export function pickHigherContention(a: LockContentionLevel, b: LockContentionLevel): LockContentionLevel {
     const order: LockContentionLevel[] = ['none', 'low', 'moderate', 'high'];

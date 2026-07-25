@@ -1,6 +1,6 @@
-import type { AggregateAppendMode, AggregateRetentionResult } from '../task-events-retention';
-import type { LockContentionLevel } from '../task-events-locking';
-import type { TaskEventPublicMetadata } from '../task-event-public-contract';
+import type { AggregateAppendMode, AggregateRetentionResult } from './task-events-retention';
+import type { LockContentionLevel } from './task-events-locking';
+import type { TaskEventPublicMetadata } from './task-event-public-contract';
 
 export interface TaskEventAppendState {
     matching_events: number;

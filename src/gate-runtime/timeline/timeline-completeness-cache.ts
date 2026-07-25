@@ -5,7 +5,7 @@ import {
     isTaskBoundFullSuiteValidationRequirement,
     validateTimelineCompleteness,
     type TimelineCompletenessResult
-} from '../lifecycle-events';
+} from './lifecycle-events';
 
 const CACHE_VERSION = 2;
 

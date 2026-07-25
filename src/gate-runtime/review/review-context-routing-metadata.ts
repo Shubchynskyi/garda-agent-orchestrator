@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import { stringSha256 } from '../hash';
-import { withReviewArtifactLock, writeArtifactFileAtomically } from '../review-artifacts';
+import { withReviewArtifactLock, writeArtifactFileAtomically } from './review-artifacts';
 
 export interface ReviewContextRoutingMetadataUpdate {
     actualExecutionMode: string | null;

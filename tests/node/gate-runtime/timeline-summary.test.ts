@@ -19,9 +19,9 @@ import {
     collectTimelineSummaryForDoctor,
     type TimelineSummaryIndex,
     type TimelineSummaryEntry
-} from '../../../src/gate-runtime/timeline-summary';
-import { acquireFilesystemLock, releaseFilesystemLock } from '../../../src/gate-runtime/task-events-locking';
-import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
+} from '../../../src/gate-runtime/timeline/timeline-summary';
+import { acquireFilesystemLock, releaseFilesystemLock } from '../../../src/gate-runtime/timeline/task-events-locking';
+import { buildEventIntegrityHash } from '../../../src/gate-runtime/timeline/task-events';
 
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-summary-test-'));
@@ -158,8 +158,8 @@ function writeWorkflowConfig(dirPath: string, enabled: boolean): void {
 describe('gate-runtime/timeline-summary', () => {
 
     it('uses the dependency-safe core code-change helper instead of gate modules', () => {
-        const source = fs.readFileSync(path.resolve(process.cwd(), 'src/gate-runtime/timeline-summary.ts'), 'utf8');
-        assert.match(source, /from\s+['"]\.\.\/core\/preflight-code-change['"]/);
+        const source = fs.readFileSync(path.resolve(process.cwd(), 'src/gate-runtime/timeline/timeline-summary.ts'), 'utf8');
+        assert.match(source, /from\s+['"]\.\.\/\.\.\/core\/preflight-code-change['"]/);
         assert.doesNotMatch(source, /from\s+['"][^'"]*\/gates\//);
     });
 
@@ -551,7 +551,7 @@ describe('gate-runtime/timeline-summary', () => {
             const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
             const timelinePath = path.join(eventsRoot, 'T-001.jsonl');
             const lockPath = getTimelineSummaryLockPath(eventsRoot);
-            const modulePath = path.resolve(__dirname, '../../../src/gate-runtime/timeline-summary.js');
+            const modulePath = path.resolve(__dirname, '../../../src/gate-runtime/timeline/timeline-summary.js');
             const { handle } = acquireFilesystemLock(lockPath, {
                 timeoutMs: 2_000,
                 retryMs: 10

@@ -3,7 +3,7 @@ import {
     appendMandatoryTaskEventAsync,
     appendTaskEvent,
     appendTaskEventAsync
-} from '../task-events';
+} from './task-events';
 
 export interface AutoEmitOptions {
     actor?: string;

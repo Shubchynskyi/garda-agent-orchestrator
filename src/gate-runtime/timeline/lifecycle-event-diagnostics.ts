@@ -1,6 +1,6 @@
-import { appendTaskEvent, appendTaskEventAsync } from '../task-events';
-import type { AutoEmitOptions } from '../lifecycle-event-core';
-import { LIFECYCLE_EVENT_TYPES } from '../lifecycle-event-types';
+import { appendTaskEvent, appendTaskEventAsync } from './task-events';
+import type { AutoEmitOptions } from './lifecycle-event-core';
+import { LIFECYCLE_EVENT_TYPES } from './lifecycle-event-types';
 
 function emitDiagnosticWarning(label: string, error: unknown): null {
     const msg = error instanceof Error ? error.message : String(error);

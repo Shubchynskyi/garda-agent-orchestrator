@@ -2,9 +2,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { DEFAULT_LOCK_HEARTBEAT_INTERVAL_MS, FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV } from '../task-events-locking-types';
-import type { LockFreshness, LockInspectionResult, LockOptions, LockOwnerMetadata } from '../task-events-locking-types';
-import { getErrorMessage, getLockOwnerCommand, parseBooleanLike, redactLockPath, toOptionalPositiveInteger } from '../task-events-locking-support';
+import { DEFAULT_LOCK_HEARTBEAT_INTERVAL_MS, FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV } from './task-events-locking-types';
+import type { LockFreshness, LockInspectionResult, LockOptions, LockOwnerMetadata } from './task-events-locking-types';
+import { getErrorMessage, getLockOwnerCommand, parseBooleanLike, redactLockPath, toOptionalPositiveInteger } from './task-events-locking-support';
 
 export function writeLockMetadata(lockPath: string, lockId: string, options: LockOptions | undefined): void {
     const metadataPath = path.join(lockPath, 'owner.json');

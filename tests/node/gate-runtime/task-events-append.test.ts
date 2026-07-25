@@ -18,11 +18,11 @@ import {
     readTaskEventAppendState,
     taskEventAppendHasBlockingFailure,
     forEachJsonlLine
-} from '../../../src/gate-runtime/task-events';
+} from '../../../src/gate-runtime/timeline/task-events';
 import {
     __setTimelineSummaryTestHooks,
     collectTimelineSummaryForDoctor
-} from '../../../src/gate-runtime/timeline-summary';
+} from '../../../src/gate-runtime/timeline/timeline-summary';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
 const requireFromTest = createRequire(__filename);
@@ -1452,7 +1452,7 @@ test('readLastNonEmptyLine (via readTaskEventAppendStateFast) handles Cyrillic a
 
 
 test('task-event modules keep helper-only shared dependencies', () => {
-    const taskEventsRoot = path.resolve(process.cwd(), 'src/gate-runtime');
+    const taskEventsRoot = path.resolve(process.cwd(), 'src/gate-runtime/timeline');
     const helperSource = fs.readFileSync(path.join(taskEventsRoot, 'task-events-helpers.ts'), 'utf8');
     const ioSource = fs.readFileSync(path.join(taskEventsRoot, 'task-events-io.ts'), 'utf8');
     const integritySource = fs.readFileSync(path.join(taskEventsRoot, 'task-events-integrity.ts'), 'utf8');

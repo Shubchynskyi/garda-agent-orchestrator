@@ -12,7 +12,7 @@ The current crowded source areas are:
 | Area | Current shape | Safe refactor direction |
 |---|---:|---|
 | `src/cli/commands` | 60 top-level files, plus owner directories such as `gate-flows/**`, `gate-review-handlers/**`, `workflow/**`, `profile/**`, `stats/**`, `workspace/**`, and `preprompt/**` | Group durable command families under owner directories and keep public command facades stable. |
-| `src/gate-runtime` | 46 top-level files, plus `review/**` and `timeline/**` owner directories | Group by evidence IO, timeline summaries, review artifacts/indexes, locks, and retention/runtime indexes. |
+| `src/gate-runtime` | Stable top-level compatibility facades plus `review/**` and `timeline/**` owner directories | Keep runtime implementations under the owner directories while preserving the flat materialized-bundle paths as compatibility-only re-exports. |
 | `src/lifecycle` | 37 top-level files, plus owner directories such as `agent-init/**`, `cleanup/**`, `lock/**`, `runtime-policy/**`, and `update/**` | Group by update/apply, rollback, cleanup/removal, locks, retention policy, and update-source checks. |
 | `src/validators` | 24 top-level files, plus owner directories such as `doctor/**`, `status/**`, and `workspace-layout/**` | Group by doctor/status/workspace/verify diagnostics only where imports can stay stable. |
 | `src/materialization` | 19 top-level files with init/install facades plus `install/**` phase helpers | Split scenario phases behind existing init/install facades before introducing directories. |
@@ -45,6 +45,29 @@ Keep these imports stable unless a child task explicitly changes the public API:
   `src/core/provider-registry.ts`, `src/core/subprocess.ts`, and
   `src/core/dependent-validation-chains.ts`.
 
+## Canonical Gate-Runtime Imports
+
+Runtime implementation ownership is complete under two subpackages:
+
+- Timeline, lifecycle, task-event, lock, ledger, and summary code:
+  `src/gate-runtime/timeline/**`.
+- Review context, review artifacts, receipts, indexes, reviewer contracts, and
+  scoped diffs: `src/gate-runtime/review/**`.
+
+New gate-runtime implementation code and implementation-coupled tests must use
+the canonical subpackage paths, for example
+`gate-runtime/timeline/task-events`,
+`gate-runtime/timeline/timeline-summary`,
+`gate-runtime/review/review-context`, and
+`gate-runtime/review/review-artifacts`. The `timeline/index.ts` and
+`review/index.ts` barrels are the canonical grouped entrypoints.
+
+Flat paths such as `gate-runtime/task-events`,
+`gate-runtime/timeline-summary`, and `gate-runtime/review-context` are
+deprecated for new imports. They remain one-line compatibility facades for
+existing cross-domain callers and materialized bundles during the transition;
+they must not become implementation owners again.
+
 ## Facade Classification
 
 The current one-line compatibility re-exports fall into two classes:
@@ -68,7 +91,9 @@ The current one-line compatibility re-exports fall into two classes:
   gate code, or external consumers import them. New same-domain gateway barrels
   should prefer the canonical `src/gate-runtime/review/**` and
   `src/gate-runtime/timeline/**` owner paths when the root file is only a
-  facade.
+  facade. All task-event helpers, integrity, IO, lock support, and timeline
+  summary implementations are owned by `timeline/**`; their root files are
+  deprecated compatibility facades only.
 - Gate-runtime real root modules: `hash.ts`, `output-filters.ts`,
   `output-log-retention.ts`, `output-compaction-reporting.ts`, `text-utils.ts`,
   and `token-telemetry.ts` remain root-owned source modules until a focused

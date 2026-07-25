@@ -1,9 +1,9 @@
 import * as fs from 'node:fs';
 
-import { DEFAULT_LOCK_RELEASE_RETRIES, DEFAULT_LOCK_RELEASE_RETRY_MS, MAX_LOCK_RELEASE_RETRY_MS, TRANSIENT_LOCK_ACQUIRE_ERROR_CODES, TRANSIENT_LOCK_RELEASE_ERROR_CODES } from '../task-events-locking-types';
-import type { LockOwnerMetadata } from '../task-events-locking-types';
-import { getErrorCode, getErrorMessage, createLockId, redactLockPath, sanitizeLockIdForPath, sleepMsSync } from '../task-events-locking-support';
-import { lockMetadataMatchesLockId, normalizeHostname, readLockMetadata } from '../task-events-locking-metadata';
+import { DEFAULT_LOCK_RELEASE_RETRIES, DEFAULT_LOCK_RELEASE_RETRY_MS, MAX_LOCK_RELEASE_RETRY_MS, TRANSIENT_LOCK_ACQUIRE_ERROR_CODES, TRANSIENT_LOCK_RELEASE_ERROR_CODES } from './task-events-locking-types';
+import type { LockOwnerMetadata } from './task-events-locking-types';
+import { getErrorCode, getErrorMessage, createLockId, redactLockPath, sanitizeLockIdForPath, sleepMsSync } from './task-events-locking-support';
+import { lockMetadataMatchesLockId, normalizeHostname, readLockMetadata } from './task-events-locking-metadata';
 
 export function isRetryableLockReleaseError(error: unknown): boolean {
     return TRANSIENT_LOCK_RELEASE_ERROR_CODES.has(getErrorCode(error));

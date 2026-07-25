@@ -1,11 +1,11 @@
 import * as fs from 'node:fs';
 
 import { redactHostname as redactHostnameValue } from '../../core/redaction';
-import { DEFAULT_LOCK_STALE_MS, FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV, LOCK_METADATA_GRACE_MS } from '../task-events-locking-types';
-import type { LockInspectionResult, LockOptions } from '../task-events-locking-types';
-import { redactLockPath, toPositiveInteger } from '../task-events-locking-support';
-import { allowForeignHostStaleRecovery, isCurrentHostOwner, isProcessLikelyAlive, readLockFreshness, readLockMetadata, requiresExplicitAgeRecovery } from '../task-events-locking-metadata';
-import { createTransientLockPath, lockMetadataMatchesCandidate, removeLockPath, restoreMismatchedClaimedLock } from '../task-events-locking-release';
+import { DEFAULT_LOCK_STALE_MS, FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV, LOCK_METADATA_GRACE_MS } from './task-events-locking-types';
+import type { LockInspectionResult, LockOptions } from './task-events-locking-types';
+import { redactLockPath, toPositiveInteger } from './task-events-locking-support';
+import { allowForeignHostStaleRecovery, isCurrentHostOwner, isProcessLikelyAlive, readLockFreshness, readLockMetadata, requiresExplicitAgeRecovery } from './task-events-locking-metadata';
+import { createTransientLockPath, lockMetadataMatchesCandidate, removeLockPath, restoreMismatchedClaimedLock } from './task-events-locking-release';
 
 export function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
     const metadata = readLockMetadata(lockPath);

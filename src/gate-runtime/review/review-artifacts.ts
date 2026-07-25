@@ -13,7 +13,7 @@ import {
     isForeignHostFilesystemLockRecoveryAllowed,
     reclaimStaleFilesystemLock,
     releaseFilesystemLock
-} from '../task-events';
+} from '../timeline/task-events';
 import {
     beginInProcessReviewTransactionSnapshot,
     currentProcessOwnsReviewTransactionLock,
@@ -23,7 +23,7 @@ import {
     resolveReviewTransactionLockPath,
     type ReviewsIndexMutationStatus,
     upsertEntry
-} from '../reviews-index';
+} from './reviews-index';
 import { isLowNoiseRuntimeWritesEnabled } from '../derived-runtime-writes';
 
 const DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS = 5000;

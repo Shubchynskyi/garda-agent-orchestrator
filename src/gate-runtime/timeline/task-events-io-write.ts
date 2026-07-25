@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 
-import { buildEventIntegrityHash } from '../task-events-helpers';
-import { readTaskEventAppendReadiness, refreshTaskEventAppendIndexAfterAppend } from '../task-events-io-index';
-import type { TaskEvent } from '../task-events-io-types';
+import { buildEventIntegrityHash } from './task-events-helpers';
+import { readTaskEventAppendReadiness, refreshTaskEventAppendIndexAfterAppend } from './task-events-io-index';
+import type { TaskEvent } from './task-events-io-types';
 
 function sleepMsAsync(milliseconds: number): Promise<void> {
     if (!milliseconds || milliseconds <= 0) {

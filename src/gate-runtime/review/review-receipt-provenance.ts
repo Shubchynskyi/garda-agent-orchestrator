@@ -1,5 +1,5 @@
 import type { DomainScopeFingerprints } from '../../core/domain-scope-contracts';
-import type { TaskEventIntegrity } from '../task-events';
+import type { TaskEventIntegrity } from '../timeline/task-events';
 
 export interface ReviewReceipt {
     schema_version: number;
