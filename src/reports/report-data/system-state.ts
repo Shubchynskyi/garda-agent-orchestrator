@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveTaskResetAvailability } from '../../core/task-reset-availability';
@@ -247,7 +248,7 @@ function buildTaskQueueSignal(rows: ReportTaskRow[]): ReportSystemState['task_qu
                     : 'No executable TODO or active task is visible in the queue.',
             counts.blocked > 0 ? 'Open the blocked task detail and run why-blocked or next-step diagnostics.' : null,
             counts,
-            'TASK.md'
+            TASK_QUEUE_FILENAME
         ),
         counts,
         next_task_id: nextTask?.task_id ?? null

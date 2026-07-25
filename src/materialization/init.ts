@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ensureDirectory, pathExists, readTextFile } from '../core/filesystem';
@@ -830,7 +831,7 @@ function collectMarkdownFiles(rootPath: string, targetRoot: string): string[] {
 export function collectSourceInventory(targetRoot: string): SourceInventory {
     const entrypointCandidates = new Set([
         ...ALL_AGENT_ENTRYPOINT_FILES,
-        'TASK.md',
+        TASK_QUEUE_FILENAME,
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
         '.qwen/settings.json',
         ...getLegacyManagedGitignoreEntries()

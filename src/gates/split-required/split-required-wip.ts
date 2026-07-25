@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -233,7 +234,7 @@ function collectTrackedChangeFiles(repoRoot: string): TrackedChangeFiles {
 }
 
 function excludeGateOwnedQueueFiles(changes: TrackedChangeFiles): TrackedChangeFiles {
-    const isImplementationWip = (relativePath: string): boolean => normalizeGitPath(relativePath) !== 'TASK.md';
+    const isImplementationWip = (relativePath: string): boolean => normalizeGitPath(relativePath) !== TASK_QUEUE_FILENAME;
     const staged = new Set([...changes.staged].filter(isImplementationWip));
     const unstaged = new Set([...changes.unstaged].filter(isImplementationWip));
     return {

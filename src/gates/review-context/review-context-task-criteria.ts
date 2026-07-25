@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseTaskMdTableRow } from '../../core/task-md-table';
@@ -77,7 +78,7 @@ export interface ReviewContextTaskCriteria {
 }
 
 function readTaskQueueRowForReviewContext(repoRoot: string, taskId: string | null): ReviewContextTaskRow {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     const unavailable = (sourcePath: string): ReviewContextTaskRow => ({
         available: false,
         source_path: normalizePath(sourcePath),

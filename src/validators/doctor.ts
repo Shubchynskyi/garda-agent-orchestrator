@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveInitAnswersRelativePath } from '../core/constants';
@@ -287,7 +288,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         allowSourceCheckoutInfo: true
     });
 
-    const taskPath = path.join(targetRoot, 'TASK.md');
+    const taskPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
     const taskStatuses = readTaskQueueStatusMap(taskPath, pathExists(taskPath));
     const timelineScan = collectTimelineSummaryForDoctor(bundlePath, { taskStatuses });
 

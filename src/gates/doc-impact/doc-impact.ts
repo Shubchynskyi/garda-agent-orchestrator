@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildBundleRelativePath } from '../../core/constants';
@@ -134,7 +135,7 @@ function isInternalCloseoutEvidencePath(input: string, repoRoot?: string): boole
 
 function describeInternalCloseoutEvidencePath(input: string, repoRoot?: string): string {
     const normalized = normalizeDocImpactInputPath(input, repoRoot);
-    if (normalized === 'TASK.md') {
+    if (normalized === TASK_QUEUE_FILENAME) {
         return `${normalized} (task queue closeout evidence)`;
     }
     if (normalized.toLowerCase() === INTERNAL_CHANGELOG_PATH.toLowerCase()) {

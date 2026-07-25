@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -727,7 +728,7 @@ function materializeTaskQueueRows(params: {
     proposal: FullSuiteRepairTaskProposal;
     manifestPath: string;
 }): TaskQueueRowsMaterializationResult {
-    const taskPath = path.join(params.repoRoot, 'TASK.md');
+    const taskPath = path.join(params.repoRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return {
             outcome: 'task_file_missing',
@@ -1172,7 +1173,7 @@ function isParentResumeStatus(status: string | null): boolean {
 }
 
 function resumeParentTaskAfterWipRestore(repoRoot: string, taskId: string): ParentResumeStatusResult {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return {
             outcome: 'task_file_missing',
@@ -1257,7 +1258,7 @@ function resumeParentTaskAfterWipRestore(repoRoot: string, taskId: string): Pare
 }
 
 function validateParentCanResumeAfterWipRestore(repoRoot: string, taskId: string): string[] {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return [`parent status sync precheck failed: task_file_missing (${normalizePath(taskPath)}).`];
     }
@@ -1273,7 +1274,7 @@ function validateParentCanResumeAfterWipRestore(repoRoot: string, taskId: string
 }
 
 function validateRepairChildDone(repoRoot: string, childTaskId: string): string[] {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     const normalizedChildTaskId = childTaskId.trim();
     if (!normalizedChildTaskId) {
         return ['Repair child task id is missing from the WIP manifest.'];

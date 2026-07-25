@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -1219,7 +1220,7 @@ function materializeTaskQueueRows(params: {
     receiptSha256: string;
     materializationContext: FollowUpMaterializationContext;
 }): TaskQueueMaterializationResult {
-    const taskPath = path.join(params.repoRoot, 'TASK.md');
+    const taskPath = path.join(params.repoRoot, TASK_QUEUE_FILENAME);
     if (params.obligations.length === 0) {
         return {
             outcome: 'not_required',
@@ -2253,7 +2254,7 @@ export function materializeReviewFindingsFollowUpTasks(
     const queueResult: TaskQueueMaterializationResult = hasFixNowItems
         ? {
             outcome: 'not_required',
-            task_path: normalizePath(path.join(repoRoot, 'TASK.md')),
+            task_path: normalizePath(path.join(repoRoot, TASK_QUEUE_FILENAME)),
             created: [],
             reused: [],
             blocked_fingerprints: built.obligations.map((obligation) => obligation.fingerprint),

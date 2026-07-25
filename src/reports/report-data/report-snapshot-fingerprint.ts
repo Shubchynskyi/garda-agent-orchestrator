@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveBundleNameForTarget } from '../../core/constants';
@@ -47,7 +48,7 @@ export function buildReportSnapshotFingerprint(repoRoot: string): string {
     const bundleRoot = path.join(resolvedRoot, resolveBundleNameForTarget(resolvedRoot));
     const runtimeRoot = path.join(bundleRoot, 'runtime');
     return [
-        statFingerprint(path.join(resolvedRoot, 'TASK.md')),
+        statFingerprint(path.join(resolvedRoot, TASK_QUEUE_FILENAME)),
         statFingerprint(path.join(resolvedRoot, 'AGENTS.md')),
         statFingerprint(path.join(bundleRoot, 'live', 'config', 'workflow-config.json')),
         statFingerprint(path.join(bundleRoot, 'live', 'config', 'profiles.json')),

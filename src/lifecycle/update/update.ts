@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -69,7 +70,7 @@ interface RunUpdateOptions {
 export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath: string): string[] {
     const items = [
         ...ALL_AGENT_ENTRYPOINT_FILES,
-        'TASK.md',
+        TASK_QUEUE_FILENAME,
         '.claude/settings.local.json',
         '.qwen/settings.json',
         ...getProviderBridgeDirectoryPaths(),

@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildBundleRelativePath } from '../../core/constants';
@@ -652,7 +653,7 @@ export function isLocalControlPlaneCommitPath(filePath: string): boolean {
     if (!normalized) {
         return false;
     }
-    return normalized === 'TASK.md'
+    return normalized === TASK_QUEUE_FILENAME
         || normalized.startsWith(BUNDLE_RUNTIME_ROOT)
         || normalized.startsWith(BUNDLE_LIVE_ROOT)
         || normalized === INTERNAL_CHANGELOG_PATH;

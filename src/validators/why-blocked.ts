@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists } from '../core/filesystem';
@@ -349,7 +350,7 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
     const resolvedRoot = path.resolve(targetRoot);
     const bundlePath = path.join(resolvedRoot, resolveBundleName());
     const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(bundlePath).enabled;
-    const taskMdPath = path.join(resolvedRoot, 'TASK.md');
+    const taskMdPath = path.join(resolvedRoot, TASK_QUEUE_FILENAME);
 
     const allTasks = parseTaskMd(taskMdPath);
     const lockObservations = pathExists(bundlePath)

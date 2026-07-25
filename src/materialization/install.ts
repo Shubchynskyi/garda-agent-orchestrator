@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
@@ -368,7 +369,7 @@ export function runInstall(options: RunInstallOptions) {
         let content = readTextFile(sourcePath);
         if (!content || !content.trim()) return null;
         const norm = relativePath.replace(/\\/g, '/');
-        if (norm === 'TASK.md') {
+        if (norm === TASK_QUEUE_FILENAME) {
             content = content.replaceAll('{{DEPLOYMENT_DATE}}', deploymentDate);
             content = content.replaceAll('{{CANONICAL_ENTRYPOINT}}', canonicalEntryFile);
         }
@@ -376,7 +377,7 @@ export function runInstall(options: RunInstallOptions) {
     }
 
     // Deploy exact files
-    const exactFiles = ['TASK.md'];
+    const exactFiles = [TASK_QUEUE_FILENAME];
     if (!answerDependentOnly) {
         for (const relPath of exactFiles) {
             const sourcePath = path.join(sourceRoot, relPath);
@@ -388,7 +389,7 @@ export function runInstall(options: RunInstallOptions) {
             }
 
             if (pathExists(destPath)) {
-                if (relPath === 'TASK.md') {
+                if (relPath === TASK_QUEUE_FILENAME) {
                     const templateContent = getTemplateContent(sourcePath, relPath);
                     if (templateContent !== null) {
                         const existingContent = readTextFile(destPath);
@@ -420,21 +421,21 @@ export function runInstall(options: RunInstallOptions) {
         }
     } else {
         // Answer-dependent only: just sync TASK.md managed block
-        const taskSourcePath = path.join(sourceRoot, 'TASK.md');
-        const taskDestPath = path.join(targetRoot, 'TASK.md');
+        const taskSourcePath = path.join(sourceRoot, TASK_QUEUE_FILENAME);
+        const taskDestPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
 
         if (pathExists(taskSourcePath)) {
             if (pathExists(taskDestPath)) {
-                const templateContent = getTemplateContent(taskSourcePath, 'TASK.md');
+                const templateContent = getTemplateContent(taskSourcePath, TASK_QUEUE_FILENAME);
                 if (templateContent !== null) {
-                    if (syncTaskFileOnDisk(taskDestPath, 'TASK.md', templateContent)) {
+                    if (syncTaskFileOnDisk(taskDestPath, TASK_QUEUE_FILENAME, templateContent)) {
                         aligned++;
                     }
                 }
             } else {
                 if (!dryRun) {
                     ensureDirectory(path.dirname(taskDestPath));
-                    const content = getTemplateContent(taskSourcePath, 'TASK.md');
+                    const content = getTemplateContent(taskSourcePath, TASK_QUEUE_FILENAME);
                     if (content) {
                         writeTextFileStage(taskDestPath, content);
                     }
@@ -464,7 +465,7 @@ export function runInstall(options: RunInstallOptions) {
         qwenExisting = readTextFile(qwenPath);
     }
     const qwenPlan = qwenExists
-        ? buildQwenSettingsContent(qwenExisting, ['TASK.md', canonicalEntryFile])
+        ? buildQwenSettingsContent(qwenExisting, [TASK_QUEUE_FILENAME, canonicalEntryFile])
         : { content: null, needsUpdate: false, parseMode: 'not-present' };
     let qwenUpdated = false;
 

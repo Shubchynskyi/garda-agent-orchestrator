@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { DEFAULT_BUNDLE_NAME } from '../core/constants';
@@ -167,7 +168,7 @@ function collectScannedFiles(targetRoot: string): FileScanEntry[] {
 }
 
 function parseTaskQueue(targetRoot: string): TaskQueueEntry[] {
-    const taskPath = path.join(targetRoot, 'TASK.md');
+    const taskPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath)) return [];
     const content = fs.readFileSync(taskPath, 'utf8');
     const tasks: TaskQueueEntry[] = [];

@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import { buildBundleRelativePath } from '../../core/constants';
 import { normalizePath } from '../shared/helpers';
 
@@ -15,7 +16,7 @@ export function isCloseoutEvidencePath(filePath: string): boolean {
     if (!normalizedPath) {
         return false;
     }
-    if (normalizedPath === 'TASK.md') {
+    if (normalizedPath === TASK_QUEUE_FILENAME) {
         return true;
     }
     if (normalizedPath.startsWith('.agents/')) {
@@ -28,5 +29,5 @@ export function isCloseoutEvidencePath(filePath: string): boolean {
 }
 
 export function isReviewReuseNeutralCloseoutEvidencePath(filePath: string): boolean {
-    return normalizePath(filePath) === 'TASK.md';
+    return normalizePath(filePath) === TASK_QUEUE_FILENAME;
 }

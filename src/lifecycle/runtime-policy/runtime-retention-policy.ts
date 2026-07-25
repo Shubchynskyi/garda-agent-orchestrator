@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -439,7 +440,7 @@ function classifyTaskPreview(
     policy: RuntimeRetentionPolicy,
     runtimeState: ReturnType<typeof collectRuntimeTaskState>
 ): RuntimeRetentionTaskPreview {
-    const taskPath = path.join(targetRoot, 'TASK.md');
+    const taskPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
     let queueStatus: string | null = null;
     if (fs.existsSync(taskPath)) {
         try {

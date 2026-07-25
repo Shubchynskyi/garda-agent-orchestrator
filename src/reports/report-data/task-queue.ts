@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readTaskQueueStatusToken } from '../../core/active-task-state';
@@ -18,7 +19,7 @@ export function readCanonicalActiveQueueRows(repoRoot: string): {
     rows: ReportTaskQueueRow[];
     unavailable: ReportDataUnavailableEntry[];
 } {
-    const taskPath = path.join(path.resolve(repoRoot), 'TASK.md');
+    const taskPath = path.join(path.resolve(repoRoot), TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return {
             source_path: toPosix(taskPath),

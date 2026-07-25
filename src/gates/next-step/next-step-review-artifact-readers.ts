@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -286,7 +287,7 @@ function readTaskQueueFollowUpFingerprintIndex(
     repoRoot: string,
     parentTaskId: string
 ): TaskQueueFollowUpFingerprintIndex | null {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (!fileExists(taskPath)) {
         return null;
     }

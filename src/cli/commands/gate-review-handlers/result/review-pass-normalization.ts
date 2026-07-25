@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import { REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE } from '../../../../core/orchestration-constants';
 import { normalizePath } from '../../../../gates/shared/helpers';
 import {
     extractMarkdownSectionLines,
@@ -107,7 +108,7 @@ export function analyzeEarlyReviewMaterialization(options: {
     if (isTrivialReview(reviewContent)) {
         violations.push(
             `Review artifact '${normalizedArtifactPath}' is trivial or obviously synthetic. ` +
-            'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
+            REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE
         );
     }
     violations.push(...getPassValidationNotesViolations(options));

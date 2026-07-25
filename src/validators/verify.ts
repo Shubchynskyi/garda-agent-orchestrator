@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
 import * as path from 'node:path';
 import {
     BOOLEAN_FALSE_VALUES,
@@ -427,7 +428,7 @@ export function detectCoreRuleViolations(
 
 export function detectTaskViolations(targetRoot: string, canonicalEntrypoint: string | null): string[] {
     const violations: string[] = [];
-    const taskPath = path.join(targetRoot, 'TASK.md');
+    const taskPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
     if (!pathExists(taskPath)) {
         violations.push('TASK.md missing.');
         return violations;
@@ -506,7 +507,7 @@ export function detectQwenSettingsViolations(targetRoot: string, canonicalEntryp
     if (canonicalEntrypoint && !uniqueFileNames.includes(canonicalEntrypoint)) {
         violations.push(`.qwen/settings.json must include context.fileName entry \`${canonicalEntrypoint}\`.`);
     }
-    if (!uniqueFileNames.includes('TASK.md')) {
+    if (!uniqueFileNames.includes(TASK_QUEUE_FILENAME)) {
         violations.push('.qwen/settings.json must include context.fileName entry `TASK.md`.');
     }
     return violations;

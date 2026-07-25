@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { stringSha256 } from '../../gate-runtime/hash';
@@ -54,7 +55,7 @@ function isValidIsoDate(value: string): boolean {
 }
 
 export function readTaskOperatorDecisions(repoRoot: string, taskId: string | null): ReviewContextOperatorDecisions {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (!taskId || !fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return buildUnavailableDecisions(
             taskPath,

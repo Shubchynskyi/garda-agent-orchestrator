@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseTaskMdTableRow } from '../../../../core/task-md-table';
@@ -147,7 +148,7 @@ interface ReviewEvidenceContext extends Record<string, unknown> {
 }
 
 function readCurrentTaskSummary(repoRoot: string, taskId: string, fallbackTaskSummary: string | null): string | null {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (fs.existsSync(taskPath) && fs.statSync(taskPath).isFile()) {
         for (const line of fs.readFileSync(taskPath, 'utf8').split('\n')) {
             const cells = parseTaskMdTableRow(line);

@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -238,7 +239,7 @@ export function resolveActiveTaskIds(
 
     mergeRuntimeTaskIds(false);
 
-    const taskPath = path.join(targetRoot, 'TASK.md');
+    const taskPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath)) {
         mergeRuntimeTaskIds(includeAmbiguousRuntimeTasks);
         return activeTaskIds;

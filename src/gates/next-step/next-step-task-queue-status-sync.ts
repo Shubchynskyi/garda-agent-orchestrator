@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -60,7 +61,7 @@ function syncTaskQueueStatusToDecomposed(repoRoot: string, taskId: string, optio
     allowedPreviousStatuses: string[];
     validate: (taskEntries: ReturnType<typeof parseTaskQueueEntriesFromContent>) => string | null;
 }): TaskQueueStatusSyncResult {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     const statusContract = buildTaskQueueStatusContract(taskId);
     if (!fileExists(taskPath)) {
         return {
@@ -267,7 +268,7 @@ export function rollbackDecomposedParentStatusSync(
     if (taskIds.length === 0) {
         return null;
     }
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (!fileExists(taskPath)) {
         return 'TASK.md is missing.';
     }
@@ -317,7 +318,7 @@ export function syncDecomposedParentsToDone(
     rootTaskId: string,
     requestedTaskIds: string[]
 ): DecomposedParentBatchStatusSyncResult {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     const uniqueRequestedTaskIds = [...new Set(requestedTaskIds)];
     if (!fileExists(taskPath)) {
         return buildDecomposedParentBatchStatusSyncResult({

@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -40,7 +41,7 @@ function resolveExistingCliPath(rootPath: string, bundleName?: string): string {
 export function getBaseRequiredPaths(): readonly string[] {
     const bundleName = DEFAULT_BUNDLE_NAME;
     return Object.freeze([
-        'TASK.md',
+        TASK_QUEUE_FILENAME,
         `${bundleName}/.gitattributes`,
         `${bundleName}/VERSION`,
         `${bundleName}/package.json`,

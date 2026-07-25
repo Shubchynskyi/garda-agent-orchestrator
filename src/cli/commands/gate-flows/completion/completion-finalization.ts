@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -939,7 +940,7 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
     const repoRoot = path.resolve(options.repoRoot);
     const taskId = String(options.taskId || '').trim();
     const orchestratorRoot = joinOrchestratorPath(repoRoot, '');
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     const taskEventsRoot = joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
     const reviewsRoot = joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
     const timelinePath = joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));

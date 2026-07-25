@@ -1,9 +1,10 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import {
     normalizePath
 } from '../shared/helpers';
 
 const TASK_OWNED_METADATA_REFRESH_FILES = new Set([
-    'TASK.md'
+    TASK_QUEUE_FILENAME
 ]);
 
 export function isTaskOwnedMetadataRefreshFile(changedFile: string): boolean {

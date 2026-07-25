@@ -1,3 +1,8 @@
+import {
+    REVIEW_TRIVIAL_CONTENT_LENGTH_THRESHOLD,
+    REVIEW_TRIVIAL_FINDINGS_WORD_THRESHOLD,
+    REVIEW_TRIVIAL_NO_REFERENCE_WORD_THRESHOLD
+} from '../../core/orchestration-constants';
 import { normalizePath } from '../shared/helpers';
 import {
     validateReviewFindingsReport,
@@ -87,7 +92,7 @@ function jsonResidualRiskEntries(report: ReviewFindingsReport): string[] {
 
 export function isTrivialReview(content: string): boolean {
     const text = (content || '').trim();
-    if (text.length < 100) return true;
+    if (text.length < REVIEW_TRIVIAL_CONTENT_LENGTH_THRESHOLD) return true;
     const hasImplementationReference = text.includes('`')
         || /\b[A-Za-z0-9_./-]+\.[A-Za-z0-9]+(?::\d+)?\b/.test(text);
 
@@ -99,8 +104,8 @@ export function isTrivialReview(content: string): boolean {
     // but we only block if total length is very low or no implementation details are mentioned.
     if (findings.length === 0 && risks.length === 0) {
         const wordCount = text.split(/\s+/).length;
-        if (wordCount < 30) return true;
-        if (!hasImplementationReference && wordCount < 60) return true;
+        if (wordCount < REVIEW_TRIVIAL_FINDINGS_WORD_THRESHOLD) return true;
+        if (!hasImplementationReference && wordCount < REVIEW_TRIVIAL_NO_REFERENCE_WORD_THRESHOLD) return true;
     }
 
     return false;

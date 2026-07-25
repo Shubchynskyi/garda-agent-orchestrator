@@ -1,4 +1,5 @@
 ﻿import * as fs from 'node:fs';
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as path from 'node:path';
 import { parseTaskMdTableRow } from '../../core/task-md-table';
 import { buildScopedDiff, resolveMetadataPath, resolveOutputPath } from '../../gates/preflight/build-scoped-diff';
@@ -233,7 +234,7 @@ async function runActivateOptionalSkillCommand(options: ParsedOptionsRecord) {
 }
 
 function readCurrentTaskText(repoRoot: string, taskId: string): string | null {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return null;
     }

@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -128,7 +129,7 @@ function buildReviewArtifactBaseNames(taskId: string): string[] {
 }
 
 function assertTaskExistsInTaskMd(repoRoot: string, taskId: string): void {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         throw new Error(`TASK.md not found at: ${gateHelpers.normalizePath(taskPath)}`);
     }

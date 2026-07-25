@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import { buildBundleRelativePath, resolveBundleName } from '../../core/constants';
 import {
     getProviderEnvironmentDetectionMarkers,
@@ -146,7 +147,7 @@ export const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([...new Set([
 ])]);
 
 export const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
-    ...getProviderEntrypointFiles(), 'TASK.md',
+    ...getProviderEntrypointFiles(), TASK_QUEUE_FILENAME,
     '.qwen/settings.json', '.claude/settings.local.json',
     '.vscode/settings.json',
     '.git/hooks/pre-commit', '.gitignore', '.agentignore',

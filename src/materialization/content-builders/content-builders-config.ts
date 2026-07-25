@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import { normalizeLineEndings } from '../../core/line-endings';
 import { resolveBundleName } from '../../core/constants';
 import { getManagedGitignoreEntries, getManagedGitignoreCleanupEntries } from '../common';
@@ -81,7 +82,7 @@ export function buildQwenSettingsContent(
     existingContent: string | null | undefined,
     requiredEntries: string[] | null | undefined
 ): SettingsBuildResult {
-    const entries = (requiredEntries || ['TASK.md', 'AGENTS.md']).filter((entry: string) => Boolean(entry && entry.trim()));
+    const entries = (requiredEntries || [TASK_QUEUE_FILENAME, 'AGENTS.md']).filter((entry: string) => Boolean(entry && entry.trim()));
     const unique = [...new Set(entries)];
     let settingsMap: Record<string, unknown> = {};
     let needsUpdate = false;

@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { formatTaskQueueStatusCell, normalizeTaskQueueStatusCell, readTaskQueueStatusToken } from '../../../../core/active-task-state';
@@ -74,7 +75,7 @@ function readTaskQueueStatusRows(content: string): TaskQueueStatusRow[] {
 }
 
 export function readTaskQueueStatus(repoRoot: string, taskId: string): string | null {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return null;
     }
@@ -132,7 +133,7 @@ export function withTaskQueueStatusSyncLock<T>(
 }
 
 export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, nextStatus: string): TaskQueueStatusSyncResult {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     const statusContract = buildTaskQueueStatusContract(taskId);
     const normalizedNextStatus = normalizeTaskQueueStatusCell(nextStatus);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {

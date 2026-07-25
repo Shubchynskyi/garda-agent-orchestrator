@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveBundleName } from '../../core/constants';
@@ -559,7 +560,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             detectedActiveAgentFiles = [canonicalEntrypoint];
         }
 
-        const qwenManagedEntries = [...new Set(['TASK.md', ...detectedActiveAgentFiles])].sort();
+        const qwenManagedEntries = [...new Set([TASK_QUEUE_FILENAME, ...detectedActiveAgentFiles])].sort();
 
         let keepPrimaryEntrypointValue = false;
         if (canonicalEntrypoint && pathExists(path.join(normalizedTarget, canonicalEntrypoint))) {
@@ -569,7 +570,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
         }
 
         let keepTaskFileValue = false;
-        const taskPath = path.join(normalizedTarget, 'TASK.md');
+        const taskPath = path.join(normalizedTarget, TASK_QUEUE_FILENAME);
         if (pathExists(taskPath)) {
             if (keepTaskFile !== undefined && keepTaskFile !== null && String(keepTaskFile).trim()) {
                 keepTaskFileValue = parseBooleanAnswer(keepTaskFile, 'KeepTaskFile');
@@ -618,8 +619,8 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             currentPhase = 'CLEANUP_FILES';
 
             if (!keepTaskFileValue) {
-                if (!restoreItemFromInitializationBackup('TASK.md')) {
-                    removeManagedFile('TASK.md');
+                if (!restoreItemFromInitializationBackup(TASK_QUEUE_FILENAME)) {
+                    removeManagedFile(TASK_QUEUE_FILENAME);
                 }
             }
 

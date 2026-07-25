@@ -1,4 +1,5 @@
 // Extracted from required-reviews-check.ts; keep behavior changes in the facade tests.
+import { REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE } from '../../core/orchestration-constants';
 import {
     auditReviewArtifactCompaction,
     normalizeCompatibilityReviewerExecutionMode,
@@ -187,7 +188,7 @@ export function validateReviewArtifactGateEligibility(options: {
             if (trivialReview) {
                 errors.push(
                     `Review artifact '${normalizePath(artifactPath)}' is trivial or obviously synthetic. ` +
-                    'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
+                    REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE
                 );
             }
             if (!requiresFindingsOnlyArtifact) {

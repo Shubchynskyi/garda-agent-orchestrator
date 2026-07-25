@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -925,7 +926,7 @@ export function inferCurrentStage(eventTypes: string[]): string {
 }
 
 export function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPath?: string): Record<string, unknown> {
-    const taskPath = path.join(targetRoot, 'TASK.md');
+    const taskPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
     const taskRow = normalizeTaskRow(taskPath, taskId);
     if (!taskRow) {
         throw new Error(`Task '${taskId}' was not found in TASK.md.`);

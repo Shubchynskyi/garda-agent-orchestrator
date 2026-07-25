@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from './orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -45,7 +46,7 @@ export function readTaskQueueEntries(
     repoRoot: string,
     options: ReadTaskQueueEntriesOptions = {}
 ): Map<string, TaskQueueEntry> {
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (options.missingFile !== 'throw' && !fileExists(taskPath)) {
         return new Map<string, TaskQueueEntry>();
     }

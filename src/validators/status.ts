@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -384,7 +385,7 @@ export function getAgentInitializationReadinessSnapshot(
     const bundlePath = getBundlePath(resolvedTargetRoot);
     const bundlePresent = pathExists(bundlePath) && fs.lstatSync(bundlePath).isDirectory();
     const livePath = path.join(bundlePath, 'live');
-    const taskPath = path.join(resolvedTargetRoot, 'TASK.md');
+    const taskPath = path.join(resolvedTargetRoot, TASK_QUEUE_FILENAME);
     const usagePath = path.join(livePath, 'USAGE.md');
     const commandsRulePath = getCommandsRulePath(bundlePath);
     const commandsContent = readUtf8IfExists(commandsRulePath);
@@ -564,7 +565,7 @@ export function getStatusSnapshot(
     const resolvedTargetRoot = path.resolve(targetRoot);
     const bundlePath = getBundlePath(resolvedTargetRoot);
     const bundlePresent = pathExists(bundlePath) && fs.lstatSync(bundlePath).isDirectory();
-    const taskPath = path.join(resolvedTargetRoot, 'TASK.md');
+    const taskPath = path.join(resolvedTargetRoot, TASK_QUEUE_FILENAME);
     const livePath = path.join(bundlePath, 'live');
     const usagePath = path.join(livePath, 'USAGE.md');
     const commandsRulePath = getCommandsRulePath(bundlePath);

@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -80,7 +81,7 @@ export function resolveReviewFindingsTaskQueueRows(options: {
     if (options.taskQueueRows !== undefined) {
         return [...options.taskQueueRows];
     }
-    const taskPath = path.join(options.repoRoot, 'TASK.md');
+    const taskPath = path.join(options.repoRoot, TASK_QUEUE_FILENAME);
     return fs.existsSync(taskPath)
         ? parseCanonicalActiveTaskQueue(fs.readFileSync(taskPath, 'utf8')).rows
         : [];

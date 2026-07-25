@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { allocateNextParentDerivedTaskId } from '../../core/task-id-allocation';
@@ -185,7 +186,7 @@ export function validateStrictDeferredReviewFollowups(options: {
         };
     }
 
-    const taskPath = path.join(options.repoRoot, 'TASK.md');
+    const taskPath = path.join(options.repoRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return {
             required: true,

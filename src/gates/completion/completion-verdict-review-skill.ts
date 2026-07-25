@@ -12,6 +12,7 @@ import {
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
 import { getReviewSkillCandidates } from '../../core/review-capabilities';
+import { REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE } from '../../core/orchestration-constants';
 import { fileSha256, normalizePath } from '../shared';
 import {
     normalizeTimelineDetailString,
@@ -909,7 +910,7 @@ export function validateReviewSkillEvidence(
                 if (isTrivialReview(content)) {
                     result.violations.push(
                         `Review artifact '${normalizePath(artifactPath)}' is trivial or obviously synthetic. ` +
-                        'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
+                        REVIEW_TRIVIAL_OUTPUT_THRESHOLD_MESSAGE
                     );
                 }
             }

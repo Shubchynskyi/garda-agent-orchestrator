@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
 import { resolveBundleName, ALL_AGENT_ENTRYPOINT_FILES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
 import {
     getDirectoryScopedProviderEntrypointFiles,
@@ -139,7 +140,7 @@ export function getManagedGitignoreEntries(
     const selected = new Set<string>([
         resolveBundleName() + '/',
         '.agentignore',
-        'TASK.md',
+        TASK_QUEUE_FILENAME,
         '.qwen/',
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
     ]);

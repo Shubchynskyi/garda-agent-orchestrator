@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId, inspectTaskEventFile } from '../../gate-runtime/task-events';
@@ -260,7 +261,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const liveReviewExecutionPolicyMode = loadReviewExecutionPolicyConfig(repoRoot).mode;
     const reviewCycleExcludedReviewTypes = readReviewCycleExcludedReviewTypes(repoRoot);
     const taskMetadata = readTaskQueueMetadata(repoRoot, safeTaskId, options.taskQueueEntries);
-    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     const taskFileExists = fs.existsSync(taskPath) && fs.statSync(taskPath).isFile();
     const taskEventFile = path.join(eventsRoot, `${safeTaskId}.jsonl`);
     const orderedEvents = readOrderedTaskEvents(taskEventFile);

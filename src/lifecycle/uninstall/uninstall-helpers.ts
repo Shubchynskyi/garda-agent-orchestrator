@@ -1,3 +1,4 @@
+import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -272,7 +273,7 @@ export function looksLikeManagedFileWithoutMarkers(relativePath: string, content
 
 export function getUninstallRollbackItems(): string[] {
     return [
-        'TASK.md',
+        TASK_QUEUE_FILENAME,
         ...ENTRYPOINT_FILES,
         ...PROVIDER_AGENT_FILES,
         ...GITHUB_SKILL_BRIDGE_FILES,
