@@ -829,6 +829,22 @@ describe('cli/commands/gates — task-start', () => {
         assert.equal(typeof artifact.dirty_workspace_baseline.file_hashes['AGENTS.md'], 'string');
         assert.equal(typeof artifact.dirty_workspace_baseline.file_hashes['src/app.ts'], 'string');
         assert.equal(typeof artifact.dirty_workspace_baseline.file_hashes['src/unrelated.ts'], 'string');
+        assert.deepEqual(
+            artifact.dirty_workspace_baseline.git_change_classification.effective_changed_files,
+            ['AGENTS.md', 'src/app.ts', 'src/unrelated.ts']
+        );
+        assert.deepEqual(
+            artifact.dirty_workspace_baseline.git_change_classification.unstaged_files,
+            ['AGENTS.md', 'src/app.ts']
+        );
+        assert.deepEqual(
+            artifact.dirty_workspace_baseline.git_change_classification.untracked_files,
+            ['src/unrelated.ts']
+        );
+        assert.match(
+            artifact.dirty_workspace_baseline.git_change_classification.normalization_rationale,
+            /Git porcelain reported/
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

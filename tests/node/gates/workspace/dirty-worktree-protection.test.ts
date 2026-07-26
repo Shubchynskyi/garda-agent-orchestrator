@@ -105,6 +105,12 @@ describe('gates/workspace/dirty-worktree-protection', () => {
 
             assert.deepEqual(baseline.entry_authorized_files, ['src/app.ts', 'src/ignored-local.ts']);
             assert.ok(baseline.changed_files.includes('src/ignored-local.ts'));
+            assert.ok(baseline.git_change_classification);
+            assert.deepEqual(
+                baseline.git_change_classification.effective_changed_files,
+                baseline.changed_files.filter((entry) => entry !== 'src/ignored-local.ts')
+            );
+            assert.deepEqual(baseline.git_change_classification.ignored_eol_only_files, []);
 
             fs.renameSync(
                 path.join(repoRoot, 'src/renamed-source.ts'),

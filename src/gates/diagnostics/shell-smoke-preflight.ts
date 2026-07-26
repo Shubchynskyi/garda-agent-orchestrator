@@ -6,6 +6,11 @@ import {
     buildGateChainLaunchDecision,
     formatGateChainLaunchDecision
 } from '../../core/dependent-validation-chains';
+import {
+    buildGitChangeClassificationEvidence,
+    classifyGitChanges,
+    type GitChangeClassificationEvidence
+} from '../../core/git-change-classification';
 
 import { redactPath } from '../../core/redaction';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
@@ -42,6 +47,7 @@ export interface ShellSmokePreflightArtifact {
     effective_cwd: string;
     workspace_root: string;
 
+    git_change_classification?: GitChangeClassificationEvidence | null;
     probes: ShellSmokeProbe[];
     violations: string[];
 }
@@ -167,14 +173,29 @@ function probeNodeVersion(cwd: string, timeoutMs: number): ShellSmokeProbe {
     });
 }
 
-function probeGitState(cwd: string, timeoutMs: number): ShellSmokeProbe {
-    return runProbe('git_state', () => {
+function probeGitState(cwd: string, timeoutMs: number): {
+    probe: ShellSmokeProbe;
+    evidence: GitChangeClassificationEvidence | null;
+} {
+    let evidence: GitChangeClassificationEvidence | null = null;
+    const probe = runProbe('git_state', () => {
+        const deadlineMs = Date.now() + timeoutMs;
         const branch = spawnProbe('git', ['rev-parse', '--abbrev-ref', 'HEAD'], cwd, timeoutMs);
-        const statusOutput = spawnProbe('git', ['status', '--short', '--branch', '--porcelain'], cwd, timeoutMs);
-        const lines = statusOutput.split('\n').filter(l => l.trim().length > 0);
-        const fileCount = Math.max(0, lines.length - 1);
-        return `branch=${branch}, changed_files=${fileCount}`;
+        const remainingMs = deadlineMs - Date.now();
+        if (remainingMs <= 0) {
+            throw new Error(`Git-state probe exceeded its ${timeoutMs}ms timeout.`);
+        }
+        evidence = buildGitChangeClassificationEvidence(classifyGitChanges(cwd, {
+            timeoutMs: remainingMs
+        }));
+        return (
+            `branch=${branch}, changed_files=${evidence.effective_changed_files.length}, ` +
+            `staged=${evidence.staged_files.length}, unstaged=${evidence.unstaged_files.length}, ` +
+            `untracked=${evidence.untracked_files.length}, eol_only=${evidence.eol_only_files.length}; ` +
+            `normalization=${evidence.normalization_rationale}`
+        );
     });
+    return { probe, evidence };
 }
 
 function probeFileRead(repoRoot: string, isSourceCheckout: boolean): ShellSmokeProbe {
@@ -271,11 +292,14 @@ export function buildShellSmokePreflight(options: BuildShellSmokePreflightOption
 
     const probes: ShellSmokeProbe[] = [];
     const violations: string[] = [...precheckViolations];
+    let gitChangeClassification: GitChangeClassificationEvidence | null = null;
 
     if (precheckViolations.length === 0) {
         probes.push(probeCwd(repoRoot));
         probes.push(probeNodeVersion(repoRoot, timeoutMs));
-        probes.push(probeGitState(repoRoot, timeoutMs));
+        const gitState = probeGitState(repoRoot, timeoutMs);
+        probes.push(gitState.probe);
+        gitChangeClassification = gitState.evidence;
         probes.push(probeFileRead(repoRoot, isSourceCheckout));
         probes.push(probeTempFileWriteDelete(repoRoot));
         probes.push(probeCliLaunchability(repoRoot, isSourceCheckout, timeoutMs));
@@ -299,6 +323,7 @@ export function buildShellSmokePreflight(options: BuildShellSmokePreflightOption
         execution_context: isSourceCheckout ? 'source-checkout' : 'materialized-bundle',
         effective_cwd: redactPath(effectiveCwd, repoRoot),
         workspace_root: redactPath(toPosix(repoRoot)),
+        git_change_classification: gitChangeClassification,
         probes,
         violations
     };
@@ -517,6 +542,20 @@ export function formatShellSmokePreflightResult(artifact: ShellSmokePreflightArt
         `EffectiveCwd: ${artifact.effective_cwd}`,
         `WorkspaceRoot: ${artifact.workspace_root}`
     ];
+
+    const gitChanges = artifact.git_change_classification;
+    if (gitChanges) {
+        const formatFiles = (files: string[]): string => files.length > 0 ? files.join(', ') : 'none';
+        lines.push(
+            `GitChangedFiles: ${formatFiles(gitChanges.effective_changed_files)}`,
+            `GitChangeLayers: staged=${formatFiles(gitChanges.staged_files)}; ` +
+                `unstaged=${formatFiles(gitChanges.unstaged_files)}; ` +
+                `untracked=${formatFiles(gitChanges.untracked_files)}`,
+            `GitEolAudit: policy=${gitChanges.policy_id}; eol_only=${formatFiles(gitChanges.eol_only_files)}; ` +
+                `ignored_eol_only=${formatFiles(gitChanges.ignored_eol_only_files)}`,
+            `GitNormalizationRationale: ${gitChanges.normalization_rationale}`
+        );
+    }
 
     if (artifact.probes.length > 0) {
         lines.push('Probes:');

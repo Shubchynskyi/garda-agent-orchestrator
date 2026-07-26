@@ -2,8 +2,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
+import {
+    buildGitChangeClassificationEvidence,
+    classifyGitChanges,
+    normalizeGitChangeClassificationEvidence,
+    type GitChangeClassificationEvidence
+} from '../../core/git-change-classification';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
-import { getWorkspaceSnapshot } from '../compile/compile-gate';
 import {
     fileSha256,
     isPathRealpathInsideRoot,
@@ -22,6 +27,7 @@ export interface DirtyWorkspaceBaseline {
     entry_authorized_files?: string[];
     staged_files?: string[];
     staged_trust?: StagedBaselineTrustEvidence | null;
+    git_change_classification?: GitChangeClassificationEvidence | null;
 }
 
 export interface StagedBaselineTrustEvidence {
@@ -613,43 +619,34 @@ export function captureDirtyWorkspaceBaseline(
     repoRoot: string,
     plannedChangedFiles: string[] = []
 ): DirtyWorkspaceBaseline {
-    let snapshot: ReturnType<typeof getWorkspaceSnapshot>;
-    try {
-        snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
-    } catch {
-        return {
-            detection_source: 'git_auto',
-            include_untracked: true,
-            changed_files: [],
-            changed_files_sha256: stringSha256(''),
-            scope_sha256: null,
-            file_hashes: {},
-            entry_authorized_files: [],
-            staged_files: [],
-            staged_trust: null
-        };
-    }
-    const snapshotChangedFiles = normalizeWorkspaceRelativePaths(repoRoot, snapshot.changed_files);
+    const gitChangeClassification = buildGitChangeClassificationEvidence(classifyGitChanges(repoRoot));
+    const snapshotChangedFiles = normalizeWorkspaceRelativePaths(
+        repoRoot,
+        gitChangeClassification.effective_changed_files
+    );
     const changedFiles = [...new Set([
         ...snapshotChangedFiles,
-        ...collectExplicitlyAuthorizedDirtyPaths(repoRoot, snapshot.changed_files, plannedChangedFiles)
+        ...collectExplicitlyAuthorizedDirtyPaths(repoRoot, snapshotChangedFiles, plannedChangedFiles)
     ])].sort();
     const changedFileSet = new Set(changedFiles);
     const entryAuthorizedFiles = normalizeWorkspaceRelativePaths(repoRoot, plannedChangedFiles)
         .filter((relativePath) => changedFileSet.has(relativePath));
-    const stagedFiles = getStagedChangedFiles(repoRoot, changedFiles);
+    const stagedFiles = normalizeWorkspaceRelativePaths(repoRoot, gitChangeClassification.staged_files)
+        .filter((relativePath) => changedFileSet.has(relativePath));
+    const classificationScopeSha256 = stringSha256(JSON.stringify(gitChangeClassification));
     return {
-        detection_source: snapshot.detection_source,
-        include_untracked: !!snapshot.include_untracked,
+        detection_source: 'git_auto',
+        include_untracked: true,
         changed_files: changedFiles,
         changed_files_sha256: stringSha256(changedFiles.join('\n')),
         scope_sha256: changedFiles.length === snapshotChangedFiles.length
-            ? snapshot.scope_sha256
-            : stringSha256(`${snapshot.scope_sha256 || ''}|${changedFiles.join('\n')}`),
+            ? classificationScopeSha256
+            : stringSha256(`${classificationScopeSha256 || ''}|${changedFiles.join('\n')}`),
         file_hashes: buildFileHashMap(repoRoot, changedFiles),
         entry_authorized_files: entryAuthorizedFiles,
         staged_files: stagedFiles,
-        staged_trust: buildStagedBaselineTrustEvidence(repoRoot, stagedFiles)
+        staged_trust: buildStagedBaselineTrustEvidence(repoRoot, stagedFiles),
+        git_change_classification: gitChangeClassification
     };
 }
 
@@ -678,7 +675,10 @@ export function normalizeDirtyWorkspaceBaseline(value: unknown, repoRoot?: strin
             ? normalizeWorkspaceRelativePaths(repoRoot, baseline.staged_files)
             : normalizeRelativePaths(baseline.staged_files))
             .filter((relativePath) => changedFiles.includes(relativePath)),
-        staged_trust: normalizeStagedTrustEvidence(baseline.staged_trust, changedFiles)
+        staged_trust: normalizeStagedTrustEvidence(baseline.staged_trust, changedFiles),
+        git_change_classification: normalizeGitChangeClassificationEvidence(
+            baseline.git_change_classification
+        )
     };
 }
 

@@ -60,6 +60,41 @@ export interface GitChangeClassificationResult {
     eolOnlyFiles: string[];
 }
 
+export interface GitChangeClassificationOptions {
+    timeoutMs?: number;
+}
+
+export interface GitChangeClassificationEvidence {
+    schema_version: 1;
+    policy_id: typeof GIT_EOL_CHANGE_POLICY.id;
+    eol_only_treatment: typeof GIT_EOL_CHANGE_POLICY.eolOnlyTreatment;
+    git_normalized_clean_treatment: typeof GIT_EOL_CHANGE_POLICY.gitNormalizedCleanTreatment;
+    policy_rationale: string;
+    git_config: {
+        autocrlf: string;
+        eol: string;
+        safecrlf: string;
+    };
+    effective_dirty: boolean;
+    normalization_rationale: string;
+    effective_changed_files: string[];
+    staged_files: string[];
+    unstaged_files: string[];
+    untracked_files: string[];
+    eol_only_files: string[];
+    ignored_eol_only_files: string[];
+    file_classifications: Array<{
+        path: string;
+        previous_path: string | null;
+        layer: GitChangeLayer;
+        status: string;
+        change_kind: GitChangeKind;
+        content_classification: GitContentClassification;
+        included_in_effective_scope: true;
+        reason: string;
+    }>;
+}
+
 interface ParsedNameStatus {
     status: string;
     path: string;
@@ -88,12 +123,76 @@ const LAYER_ORDER: Record<GitChangeLayer, number> = {
     untracked: 2
 };
 
+interface GitCommandBudget {
+    deadlineMs: number | null;
+    configuredTimeoutMs: number | null;
+}
+
+function createGitCommandBudget(options: GitChangeClassificationOptions): GitCommandBudget {
+    if (options.timeoutMs === undefined) {
+        return { deadlineMs: null, configuredTimeoutMs: null };
+    }
+    if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0) {
+        throw new Error('Git change classification timeoutMs must be a positive integer.');
+    }
+    return {
+        deadlineMs: Date.now() + options.timeoutMs,
+        configuredTimeoutMs: options.timeoutMs
+    };
+}
+
+function remainingGitCommandTimeoutMs(budget: GitCommandBudget): number | undefined {
+    if (budget.deadlineMs === null || budget.configuredTimeoutMs === null) {
+        return undefined;
+    }
+    const remainingMs = budget.deadlineMs - Date.now();
+    if (remainingMs <= 0) {
+        throw new Error(
+            `Git change classification exceeded its ${budget.configuredTimeoutMs}ms command budget.`
+        );
+    }
+    return remainingMs;
+}
+const EVIDENCE_LAYERS = new Set<GitChangeLayer>(['staged', 'unstaged', 'untracked']);
+const EVIDENCE_CHANGE_KINDS = new Set<GitChangeKind>([
+    'added',
+    'copied',
+    'deleted',
+    'modified',
+    'renamed',
+    'type_changed',
+    'unmerged',
+    'untracked',
+    'unknown'
+]);
+const EVIDENCE_CONTENT_CLASSIFICATIONS = new Set<GitContentClassification>([
+    'binary',
+    'content',
+    'eol_only',
+    'metadata'
+]);
+
 function literalPathspec(filePath: string): string {
     return `:(literal)${filePath}`;
 }
 
 function uniqueSorted(values: Iterable<string>): string[] {
     return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeEvidenceStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return uniqueSorted(
+        value
+            .map((entry) => String(entry || '').trim())
+            .filter(Boolean)
+    );
 }
 
 function mapChangeKind(status: string): GitChangeKind {
@@ -169,28 +268,39 @@ function parsePorcelainStatus(output: Buffer): ParsedPorcelainStatus {
 function readBlobSnapshot(
     repoRoot: string,
     objectId: string,
-    kind: Extract<ContentSnapshot['kind'], 'file' | 'symlink'>
+    kind: Extract<ContentSnapshot['kind'], 'file' | 'symlink'>,
+    budget: GitCommandBudget
 ): ContentSnapshot {
     if (!/^[0-9a-f]{40,64}$/iu.test(objectId)) {
         return { kind: 'unavailable', content: null };
     }
-    const size = Number.parseInt(runGit(repoRoot, ['cat-file', '-s', objectId]).trim(), 10);
+    const size = Number.parseInt(runGit(repoRoot, ['cat-file', '-s', objectId], {
+        timeoutMs: remainingGitCommandTimeoutMs(budget)
+    }).trim(), 10);
     if (!Number.isSafeInteger(size) || size < 0 || size > MAX_CLASSIFICATION_CONTENT_BYTES) {
         return { kind: 'unavailable', content: null };
     }
     const content = runGitBinary(repoRoot, ['cat-file', 'blob', objectId], {
-        maxBuffer: GIT_CONTENT_MAX_BUFFER_BYTES
+        maxBuffer: GIT_CONTENT_MAX_BUFFER_BYTES,
+        timeoutMs: remainingGitCommandTimeoutMs(budget)
     });
     return content.length <= MAX_CLASSIFICATION_CONTENT_BYTES
         ? { kind, content }
         : { kind: 'unavailable', content: null };
 }
 
-function readHeadSnapshot(repoRoot: string, filePath: string): ContentSnapshot {
+function readHeadSnapshot(
+    repoRoot: string,
+    filePath: string,
+    budget: GitCommandBudget
+): ContentSnapshot {
     const output = runGitBinary(
         repoRoot,
         ['ls-tree', '-z', 'HEAD', '--', literalPathspec(filePath)],
-        { allowFailure: true }
+        {
+            allowFailure: true,
+            timeoutMs: remainingGitCommandTimeoutMs(budget)
+        }
     );
     const record = output.toString('utf8').split('\0').find(Boolean);
     if (!record) {
@@ -202,14 +312,21 @@ function readHeadSnapshot(repoRoot: string, filePath: string): ContentSnapshot {
     if (type !== 'blob') {
         return { kind: 'other', content: null };
     }
-    return readBlobSnapshot(repoRoot, objectId, mode === '120000' ? 'symlink' : 'file');
+    return readBlobSnapshot(repoRoot, objectId, mode === '120000' ? 'symlink' : 'file', budget);
 }
 
-function readIndexSnapshot(repoRoot: string, filePath: string): ContentSnapshot {
+function readIndexSnapshot(
+    repoRoot: string,
+    filePath: string,
+    budget: GitCommandBudget
+): ContentSnapshot {
     const output = runGitBinary(
         repoRoot,
         ['ls-files', '--stage', '-z', '--', literalPathspec(filePath)],
-        { allowFailure: true }
+        {
+            allowFailure: true,
+            timeoutMs: remainingGitCommandTimeoutMs(budget)
+        }
     );
     const record = output.toString('utf8').split('\0').find((entry) => /\s0\t/u.test(entry));
     if (!record) {
@@ -221,7 +338,7 @@ function readIndexSnapshot(repoRoot: string, filePath: string): ContentSnapshot 
     const kind = mode === '120000' ? 'symlink' : mode.startsWith('100') ? 'file' : 'other';
     return kind === 'other'
         ? { kind, content: null }
-        : readBlobSnapshot(repoRoot, objectId, kind);
+        : readBlobSnapshot(repoRoot, objectId, kind, budget);
 }
 
 function readWorktreeSnapshot(repoRoot: string, filePath: string): ContentSnapshot {
@@ -336,14 +453,15 @@ function classifySnapshots(
 function classifyLayerChange(
     repoRoot: string,
     layer: Exclude<GitChangeLayer, 'untracked'>,
-    change: ParsedNameStatus
+    change: ParsedNameStatus,
+    budget: GitCommandBudget
 ): GitLayerChangeClassification {
     const beforePath = change.previousPath || change.path;
     const before = layer === 'staged'
-        ? readHeadSnapshot(repoRoot, beforePath)
-        : readIndexSnapshot(repoRoot, beforePath);
+        ? readHeadSnapshot(repoRoot, beforePath, budget)
+        : readIndexSnapshot(repoRoot, beforePath, budget);
     const after = layer === 'staged'
-        ? readIndexSnapshot(repoRoot, change.path)
+        ? readIndexSnapshot(repoRoot, change.path, budget)
         : readWorktreeSnapshot(repoRoot, change.path);
     return {
         path: change.path,
@@ -356,7 +474,7 @@ function classifyLayerChange(
     };
 }
 
-function readPorcelainStatus(repoRoot: string): ParsedPorcelainStatus {
+function readPorcelainStatus(repoRoot: string, budget: GitCommandBudget): ParsedPorcelainStatus {
     return parsePorcelainStatus(runGitBinary(repoRoot, [
         '--no-pager',
         'status',
@@ -365,19 +483,29 @@ function readPorcelainStatus(repoRoot: string): ParsedPorcelainStatus {
         '--untracked-files=all',
         '--ignore-submodules=none',
         '--renames'
-    ], { maxBuffer: GIT_STATUS_MAX_BUFFER_BYTES }));
+    ], {
+        maxBuffer: GIT_STATUS_MAX_BUFFER_BYTES,
+        timeoutMs: remainingGitCommandTimeoutMs(budget)
+    }));
 }
 
-function readConfig(repoRoot: string, key: string): string {
-    return runGit(repoRoot, ['config', '--get', key], { allowFailure: true }).trim() || 'unset';
+function readConfig(repoRoot: string, key: string, budget: GitCommandBudget): string {
+    return runGit(repoRoot, ['config', '--get', key], {
+        allowFailure: true,
+        timeoutMs: remainingGitCommandTimeoutMs(budget)
+    }).trim() || 'unset';
 }
 
-export function classifyGitChanges(repoRoot: string): GitChangeClassificationResult {
-    const porcelain = readPorcelainStatus(repoRoot);
+export function classifyGitChanges(
+    repoRoot: string,
+    options: GitChangeClassificationOptions = {}
+): GitChangeClassificationResult {
+    const budget = createGitCommandBudget(options);
+    const porcelain = readPorcelainStatus(repoRoot, budget);
     const staged = porcelain.staged
-        .map((change) => classifyLayerChange(repoRoot, 'staged', change));
+        .map((change) => classifyLayerChange(repoRoot, 'staged', change, budget));
     const unstaged = porcelain.unstaged
-        .map((change) => classifyLayerChange(repoRoot, 'unstaged', change));
+        .map((change) => classifyLayerChange(repoRoot, 'unstaged', change, budget));
     const untracked = porcelain.untracked.map((filePath): GitLayerChangeClassification => {
         return {
             path: filePath,
@@ -397,9 +525,9 @@ export function classifyGitChanges(repoRoot: string): GitChangeClassificationRes
         left.path.localeCompare(right.path) || LAYER_ORDER[left.layer] - LAYER_ORDER[right.layer]
     );
     const gitConfig = {
-        autocrlf: readConfig(repoRoot, 'core.autocrlf'),
-        eol: readConfig(repoRoot, 'core.eol'),
-        safecrlf: readConfig(repoRoot, 'core.safecrlf')
+        autocrlf: readConfig(repoRoot, 'core.autocrlf', budget),
+        eol: readConfig(repoRoot, 'core.eol', budget),
+        safecrlf: readConfig(repoRoot, 'core.safecrlf', budget)
     };
 
     return {
@@ -421,5 +549,111 @@ export function classifyGitChanges(repoRoot: string): GitChangeClassificationRes
                 .filter((change) => change.contentClassification === 'eol_only')
                 .map((change) => change.path)
         )
+    };
+}
+
+export function buildGitChangeClassificationEvidence(
+    classification: GitChangeClassificationResult
+): GitChangeClassificationEvidence {
+    return {
+        schema_version: 1,
+        policy_id: classification.policy.id,
+        eol_only_treatment: classification.policy.eolOnlyTreatment,
+        git_normalized_clean_treatment: classification.policy.gitNormalizedCleanTreatment,
+        policy_rationale: classification.policy.rationale,
+        git_config: { ...classification.gitConfig },
+        effective_dirty: classification.audit.effectiveDirty,
+        normalization_rationale: classification.audit.reason,
+        effective_changed_files: [...classification.effectiveChangedFiles],
+        staged_files: [...classification.stagedFiles],
+        unstaged_files: [...classification.unstagedFiles],
+        untracked_files: [...classification.untrackedFiles],
+        eol_only_files: [...classification.eolOnlyFiles],
+        ignored_eol_only_files: [],
+        file_classifications: classification.changes.map((change) => ({
+            path: change.path,
+            previous_path: change.previousPath,
+            layer: change.layer,
+            status: change.status,
+            change_kind: change.changeKind,
+            content_classification: change.contentClassification,
+            included_in_effective_scope: change.includedInEffectiveScope,
+            reason: change.reason
+        }))
+    };
+}
+
+export function normalizeGitChangeClassificationEvidence(
+    value: unknown
+): GitChangeClassificationEvidence | null {
+    if (!isRecord(value) || value.schema_version !== 1) {
+        return null;
+    }
+    if (
+        value.policy_id !== GIT_EOL_CHANGE_POLICY.id
+        || value.eol_only_treatment !== GIT_EOL_CHANGE_POLICY.eolOnlyTreatment
+        || value.git_normalized_clean_treatment !== GIT_EOL_CHANGE_POLICY.gitNormalizedCleanTreatment
+    ) {
+        return null;
+    }
+    const gitConfig = isRecord(value.git_config) ? value.git_config : {};
+    const fileClassifications = Array.isArray(value.file_classifications)
+        ? value.file_classifications.flatMap((entry) => {
+            if (!isRecord(entry)) {
+                return [];
+            }
+            const layer = String(entry.layer || '') as GitChangeLayer;
+            const changeKind = String(entry.change_kind || '') as GitChangeKind;
+            const contentClassification = String(entry.content_classification || '') as GitContentClassification;
+            const filePath = String(entry.path || '').trim();
+            if (
+                !filePath
+                || !EVIDENCE_LAYERS.has(layer)
+                || !EVIDENCE_CHANGE_KINDS.has(changeKind)
+                || !EVIDENCE_CONTENT_CLASSIFICATIONS.has(contentClassification)
+                || entry.included_in_effective_scope !== true
+            ) {
+                return [];
+            }
+            const previousPath = entry.previous_path == null
+                ? null
+                : String(entry.previous_path || '').trim() || null;
+            return [{
+                path: filePath,
+                previous_path: previousPath,
+                layer,
+                status: String(entry.status || '').trim(),
+                change_kind: changeKind,
+                content_classification: contentClassification,
+                included_in_effective_scope: true as const,
+                reason: String(entry.reason || '').trim()
+            }];
+        })
+        : [];
+    const ignoredEolOnlyFiles = normalizeEvidenceStringList(value.ignored_eol_only_files);
+    if (ignoredEolOnlyFiles.length > 0) {
+        return null;
+    }
+
+    return {
+        schema_version: 1,
+        policy_id: GIT_EOL_CHANGE_POLICY.id,
+        eol_only_treatment: GIT_EOL_CHANGE_POLICY.eolOnlyTreatment,
+        git_normalized_clean_treatment: GIT_EOL_CHANGE_POLICY.gitNormalizedCleanTreatment,
+        policy_rationale: String(value.policy_rationale || GIT_EOL_CHANGE_POLICY.rationale).trim(),
+        git_config: {
+            autocrlf: String(gitConfig.autocrlf || 'unset').trim() || 'unset',
+            eol: String(gitConfig.eol || 'unset').trim() || 'unset',
+            safecrlf: String(gitConfig.safecrlf || 'unset').trim() || 'unset'
+        },
+        effective_dirty: value.effective_dirty === true,
+        normalization_rationale: String(value.normalization_rationale || '').trim(),
+        effective_changed_files: normalizeEvidenceStringList(value.effective_changed_files),
+        staged_files: normalizeEvidenceStringList(value.staged_files),
+        unstaged_files: normalizeEvidenceStringList(value.unstaged_files),
+        untracked_files: normalizeEvidenceStringList(value.untracked_files),
+        eol_only_files: normalizeEvidenceStringList(value.eol_only_files),
+        ignored_eol_only_files: [],
+        file_classifications: fileClassifications
     };
 }
