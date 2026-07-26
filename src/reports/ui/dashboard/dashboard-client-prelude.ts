@@ -12,6 +12,7 @@ import {
     LOCAL_UI_TEXT,
     type LocalUiLanguage
 } from '../ui-i18n';
+import { INSTRUCTIONS_REPORT_UI_TAB_CONTRACT } from './instructions-report-ui-tab';
 
 export interface DashboardClientPreludeOptions {
     actionToken: string;
@@ -56,7 +57,7 @@ const projectMemoryConfigPathNode = document.getElementById('project-memory-conf
 const backupsConfigPathNode = document.getElementById('backups-config-path');
 const cleanupConfigPathNode = document.getElementById('cleanup-config-path');
 const settingsEditorNode = document.getElementById('settings-editor');
-const instructionsNode = document.getElementById('instructions');
+const instructionsNode = document.getElementById(${JSON.stringify(INSTRUCTIONS_REPORT_UI_TAB_CONTRACT.id)});
 const initSettingsNode = document.getElementById('init-settings');
 const projectMemoryNode = document.getElementById('project-memory');
 const actionsNode = document.getElementById('actions');

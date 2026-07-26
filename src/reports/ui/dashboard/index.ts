@@ -3,6 +3,13 @@ export { UI_DASHBOARD_POLISH_STYLES } from './dashboard-polish-styles';
 export { buildDashboardClientScript } from './build-dashboard-client-script';
 export { renderDashboardBodyMarkup, renderDashboardPlanModalMarkup } from './render-dashboard-markup';
 export {
+    INSTRUCTIONS_REPORT_UI_TAB_CONTRACT,
+    REPORT_UI_TAB_CONTRACT_MIGRATION_CHECKLIST,
+    REPORT_UI_TAB_CONTRACT_MIGRATION_STEPS,
+    buildInstructionsReportUiTabMetadata
+} from './instructions-report-ui-tab';
+export type { InstructionsReportUiTabStatus } from './instructions-report-ui-tab';
+export {
     REPORT_UI_TAB_PATH_KINDS,
     buildReportUiTabMetadata,
     defineReportUiTabContract,

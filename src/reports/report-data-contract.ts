@@ -65,6 +65,13 @@ export {
 } from './report-data/task-detail';
 export { buildReportDataContract } from './report-data/contract';
 export {
+    INSTRUCTIONS_REPORT_UI_TAB_CONTRACT,
+    REPORT_UI_TAB_CONTRACT_MIGRATION_CHECKLIST,
+    REPORT_UI_TAB_CONTRACT_MIGRATION_STEPS,
+    buildInstructionsReportUiTabMetadata
+} from './ui/dashboard/instructions-report-ui-tab';
+export type { InstructionsReportUiTabStatus } from './ui/dashboard/instructions-report-ui-tab';
+export {
     REPORT_UI_TAB_PATH_KINDS,
     buildReportUiTabMetadata,
     defineReportUiTabContract,

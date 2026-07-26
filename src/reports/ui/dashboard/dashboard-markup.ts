@@ -1,3 +1,9 @@
+import { INSTRUCTIONS_REPORT_UI_TAB_CONTRACT } from './instructions-report-ui-tab';
+
+const instructionsTabId = `${INSTRUCTIONS_REPORT_UI_TAB_CONTRACT.id}-tab`;
+const instructionsLabelKey = INSTRUCTIONS_REPORT_UI_TAB_CONTRACT.label.key;
+const instructionsLabelPlaceholder = `\${text.${instructionsLabelKey}}`;
+
 /** Static dashboard body markup; placeholders are filled at render time. */
 export const UI_DASHBOARD_MARKUP = `<header>
 <div class="header-row">
@@ -32,7 +38,7 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <button type="button" data-tab="project-memory-tab" data-i18n="projectMemoryTab">\${text.projectMemoryTab}</button>
 <button type="button" data-tab="backups-tab" data-i18n="backupsTab">\${text.backupsTab}</button>
 <button type="button" data-tab="cleanup-settings-tab" data-i18n="cleanupSettingsTab">\${text.cleanupSettingsTab}</button>
-<button type="button" data-tab="instructions-tab" data-i18n="instructionsTab">\${text.instructionsTab}</button>
+<button type="button" data-tab="${instructionsTabId}" data-i18n="${instructionsLabelKey}">${instructionsLabelPlaceholder}</button>
 <button type="button" data-tab="actions-tab" data-i18n="actionsTab">\${text.actionsTab}</button>
 </div>
 </nav>
@@ -107,9 +113,9 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <section id="cleanup-settings" class="cleanup-settings"><p class="empty" data-i18n="loading">\${text.loading}</p></section>
 </div>
 </section>
-<section class="panel tab" id="instructions-tab" hidden>
-<div class="panel-head tab-head"><h2 data-i18n="instructionsTab">\${text.instructionsTab}</h2></div>
-<div class="detail tab-body" id="instructions"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
+<section class="panel tab" id="${instructionsTabId}" hidden>
+<div class="panel-head tab-head"><h2 data-i18n="${instructionsLabelKey}">${instructionsLabelPlaceholder}</h2></div>
+<div class="detail tab-body" id="${INSTRUCTIONS_REPORT_UI_TAB_CONTRACT.id}"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
 </section>
 <section class="panel tab" id="actions-tab" hidden>
 <div class="panel-head tab-head"><h2 data-i18n="actionsTab">\${text.actionsTab}</h2></div>

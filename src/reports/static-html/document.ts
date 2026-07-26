@@ -8,6 +8,7 @@ import { renderQualityGatePanel } from './quality-gate-tab';
 import { STATIC_HTML_REPORT_STYLES } from './styles';
 import { renderTaskDetailTemplate, renderTasksPanel, STATIC_HTML_TASK_CLIENT_SCRIPT } from './tasks-tab';
 import { renderWorkflowPanel } from './workflow-tab';
+import { INSTRUCTIONS_REPORT_UI_TAB_CONTRACT } from '../ui/dashboard/instructions-report-ui-tab';
 
 export const STATIC_HTML_REPORT_TABS = [
     { id: 'tasks', label: 'Tasks' },
@@ -16,7 +17,10 @@ export const STATIC_HTML_REPORT_TABS = [
     { id: 'init-settings', label: 'Init Settings' },
     { id: 'project-memory', label: 'Project Memory' },
     { id: 'backups', label: 'Backups' },
-    { id: 'instructions', label: 'Instructions' }
+    {
+        id: INSTRUCTIONS_REPORT_UI_TAB_CONTRACT.id,
+        label: INSTRUCTIONS_REPORT_UI_TAB_CONTRACT.label.fallback
+    }
 ] as const;
 
 function renderTabButtons(): string {
