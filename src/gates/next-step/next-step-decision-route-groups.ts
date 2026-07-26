@@ -5,6 +5,7 @@ import {
     isTaskQueueSplitRequiredStatus
 } from '../../core/active-task-state';
 import {
+    describeDecomposedTaskProvenance,
     extractExplicitLinkedChildTaskIds,
     hasLinkedChildTasks,
     isDecomposedParentTask,
@@ -701,6 +702,7 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
         const decomposedReason = isTaskQueueDecomposedStatus(taskQueueStatus)
             ? 'Task queue marks this parent as DECOMPOSED.'
             : 'Task queue marks this parent as a legacy BLOCKED split umbrella.';
+        const decomposedProvenanceReason = describeDecomposedTaskProvenance(options.taskEntry?.notes || null);
         const tasksToComplete = completionState?.hasLinkedChildren && completionState.complete
             ? [...new Set([...completionState.completedDecomposedTaskIds, options.taskId])]
             : [];
@@ -731,7 +733,7 @@ export function resolveTaskQueueTerminalDecisionRoute(options: {
             : null;
         const decomposedRoute = resolveDecomposedParentTerminalRoute({
             taskId: options.taskId,
-            decomposedReason,
+            decomposedReason: `${decomposedReason} ${decomposedProvenanceReason}`,
             childRoute,
             continueChildCommand: buildContinueChildCommand(options.cliPrefix, childRoute),
             hasLinkedChildren: completionState?.hasLinkedChildren || false,

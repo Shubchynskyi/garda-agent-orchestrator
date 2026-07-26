@@ -309,7 +309,8 @@ export function resolveDecomposedParentTerminalRoute(options: {
         title: 'Parent task is decomposed and has no unfinished child.',
         reason:
             `${options.decomposedReason} No unfinished child task could be resolved from its notes. ` +
-            'Do not run classify, compile, review, full-suite, or completion gates on the parent; add or reopen a child task if the parent objective is not complete.',
+            'Do not execute the parent directly or run classify, compile, review, full-suite, or completion gates on it. ' +
+            'Add or reopen a child task when the parent objective is not complete, and record an explicit child task list or child range in Notes; do not infer candidates from unrelated task IDs.',
         commands: []
     };
 }

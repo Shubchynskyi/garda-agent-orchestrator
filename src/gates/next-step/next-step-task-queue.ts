@@ -35,6 +35,19 @@ export interface DecomposedParentCompletionState {
     missingChildTaskIds: string[];
 }
 
+export const DECOMPOSED_TASK_PROVENANCE_SOURCES = [
+    'orchestrator',
+    'manual-agent',
+    'manual-operator'
+] as const;
+
+export type DecomposedTaskProvenanceSource = typeof DECOMPOSED_TASK_PROVENANCE_SOURCES[number];
+
+export interface DecomposedTaskProvenance {
+    source: DecomposedTaskProvenanceSource | 'unrecorded';
+    evidence: 'structured-note' | 'legacy-manual-note' | 'none';
+}
+
 interface ChildTaskIdMention {
     taskId: string;
     index: number;
@@ -75,10 +88,14 @@ export interface SplitRequiredDecompositionState {
 
 const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+into|continue\s+via\s+child\s+tasks)\b/i;
 const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
-    /\b(?:split\s+into|continue\s+via|execute|created?|linked)\b[^.;\n|]*\b(?:child(?:ren)?|leaf)\s+tasks?\b|\b(?:child(?:ren)?|leaf)\s+tasks?\s*:|\breview\s+follow-up\s+tasks?\s+materialized\s*:/igu;
+    /\b(?:split\s+into|continue\s+via|execute|created?|linked)\b[^.;\n|]*\b(?:child(?:ren)?|leaf)\s+tasks?\b|\b(?:child(?:ren)?|leaf)\s+tasks?\s*:|\breview\s+follow-up\s+tasks?\s+materialized\s*:|\bchild\s+range\b/igu;
 const TASK_QUEUE_REVIEW_FOLLOW_UP_LINK_MARKER_PATTERN = /\breview\s+follow-up\s+tasks?\s+materialized\s*:/iu;
 const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
 const TASK_QUEUE_TASK_ID_REFERENCE_PATTERN = /(^|[^A-Za-z0-9-])([Tt]-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)(?=$|[^A-Za-z0-9-])/gu;
+const TASK_QUEUE_DECOMPOSITION_SOURCE_PATTERN =
+    /\bdecomposition\s+source\s*:\s*(orchestrator|manual-agent|manual-operator)(?=\s*(?:\([^)\r\n]*\)\s*)?(?:[;|]|\.(?=\s|$)|$))/iu;
+const TASK_QUEUE_LEGACY_MANUAL_DECOMPOSITION_PATTERN =
+    /\bmanual\s+(operator|agent)(?:-requested)?\s+decomposition\b/iu;
 export const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
 const PLACEHOLDER_CHILD_ORDINAL_PATTERN = '(?:#?\\d+(?:st|nd|rd|th)?|one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)';
 const PLACEHOLDER_CHILD_TITLE_PATTERN = new RegExp(
@@ -96,6 +113,44 @@ function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
     return TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN.test(String(entry.notes || ''));
 }
 
+export function readDecomposedTaskProvenance(notes: string | null): DecomposedTaskProvenance {
+    const text = String(notes || '');
+    const structuredMatch = TASK_QUEUE_DECOMPOSITION_SOURCE_PATTERN.exec(text);
+    if (structuredMatch) {
+        return {
+            source: structuredMatch[1].toLowerCase() as DecomposedTaskProvenanceSource,
+            evidence: 'structured-note'
+        };
+    }
+    const legacyManualMatch = TASK_QUEUE_LEGACY_MANUAL_DECOMPOSITION_PATTERN.exec(text);
+    if (legacyManualMatch) {
+        return {
+            source: legacyManualMatch[1].toLowerCase() === 'operator'
+                ? 'manual-operator'
+                : 'manual-agent',
+            evidence: 'legacy-manual-note'
+        };
+    }
+    return {
+        source: 'unrecorded',
+        evidence: 'none'
+    };
+}
+
+export function describeDecomposedTaskProvenance(notes: string | null): string {
+    const provenance = readDecomposedTaskProvenance(notes);
+    if (provenance.source === 'manual-operator') {
+        return 'TASK.md Notes record manual operator decomposition provenance; gate-owned decomposition artifacts are not required for this parent.';
+    }
+    if (provenance.source === 'manual-agent') {
+        return 'TASK.md Notes record manual agent decomposition provenance; gate-owned decomposition artifacts are not required for this parent.';
+    }
+    if (provenance.source === 'orchestrator') {
+        return 'TASK.md Notes record orchestrator-owned decomposition provenance.';
+    }
+    return 'TASK.md Notes do not record decomposition provenance; only explicit child links may be used and unrelated task IDs must not be inferred.';
+}
+
 export function isDecomposedParentTask(entry: TaskQueueEntry | null): boolean {
     return Boolean(entry && (isTaskQueueDecomposedStatus(entry.status) || isLegacySplitParentTask(entry)));
 }
@@ -107,7 +162,7 @@ function appendTaskMentionIfMissing(taskMentions: ChildTaskIdMention[], taskId: 
 }
 
 function isExplicitChildListMentionPosition(text: string, index: number): boolean {
-    const introPattern = /\b(?:(?:child(?:ren)?|leaf)\s+tasks?|review\s+follow-up\s+tasks?\s+materialized)\b\s*:*/igu;
+    const introPattern = /\b(?:(?:child(?:ren)?|leaf)\s+tasks?|child\s+range|review\s+follow-up\s+tasks?\s+materialized)\b\s*:*/igu;
     let introMatch: RegExpExecArray | null;
     let introEnd: number | null = null;
     while ((introMatch = introPattern.exec(text)) !== null) {
@@ -145,6 +200,33 @@ function parseNumericTaskIdRangeEndpoint(taskId: string): NumericTaskIdRangeEndp
         rawNumber,
         value
     };
+}
+
+export function formatDecomposedTaskProvenanceNote(options: {
+    source: DecomposedTaskProvenanceSource;
+    childTaskIds: readonly string[];
+    recordedOn?: string | null;
+}): string {
+    const childTaskIds = [...new Set(options.childTaskIds.map((taskId) => String(taskId).trim()))]
+        .filter((taskId) => isCanonicalTaskId(taskId));
+    if (childTaskIds.length === 0) {
+        throw new Error('At least one canonical child task id is required for decomposition provenance.');
+    }
+    const endpoints = childTaskIds.map(parseNumericTaskIdRangeEndpoint);
+    const firstEndpoint = endpoints[0];
+    const isContiguousNumericRange = childTaskIds.length > 1
+        && Boolean(firstEndpoint)
+        && endpoints.every((endpoint, index) => Boolean(
+            endpoint
+            && endpoint.prefix === firstEndpoint!.prefix
+            && endpoint.value === firstEndpoint!.value + index
+        ));
+    const recordedOn = String(options.recordedOn || '').trim();
+    const sourceClause = `Decomposition source: ${options.source}${recordedOn ? ` (${recordedOn})` : ''}`;
+    const childClause = isContiguousNumericRange
+        ? `child range \`${childTaskIds[0]}\` through \`${childTaskIds[childTaskIds.length - 1]}\``
+        : `child tasks: ${childTaskIds.map((taskId) => `\`${taskId}\``).join(', ')}`;
+    return `${sourceClause}; ${childClause}; execute sequentially.`;
 }
 
 function extractChildTaskMentions(notes: string | null, knownTaskIds: Iterable<string>): ChildTaskIdMention[] {

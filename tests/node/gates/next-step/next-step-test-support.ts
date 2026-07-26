@@ -23,7 +23,11 @@ export {
     resolveNextStep,
     resolveNextStepDecisionRoute
 } from '../../../../src/gates/next-step';
-export { extractExplicitLinkedChildTaskIds } from '../../../../src/gates/next-step/next-step-task-queue';
+export {
+    extractExplicitLinkedChildTaskIds,
+    formatDecomposedTaskProvenanceNote,
+    readDecomposedTaskProvenance
+} from '../../../../src/gates/next-step/next-step-task-queue';
 export { assessProjectMemoryImpact, getProjectMemoryImpactLifecycleEvidence } from '../../../../src/gates/project-memory-impact';
 export { buildRulePackArtifact } from '../../../../src/gates/rule-pack';
 export { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
