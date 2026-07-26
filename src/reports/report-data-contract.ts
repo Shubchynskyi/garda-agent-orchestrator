@@ -64,3 +64,19 @@ export {
     selectDetailedTaskIds
 } from './report-data/task-detail';
 export { buildReportDataContract } from './report-data/contract';
+export {
+    REPORT_UI_TAB_PATH_KINDS,
+    buildReportUiTabMetadata,
+    defineReportUiTabContract,
+    getReportUiTabActionHook
+} from './ui/dashboard/report-ui-tab-contract';
+export type {
+    ReportUiTabActionHook,
+    ReportUiTabActionHooks,
+    ReportUiTabContract,
+    ReportUiTabLabel,
+    ReportUiTabMetadata,
+    ReportUiTabPathContract,
+    ReportUiTabPathKind,
+    ReportUiTabPathMetadata
+} from './ui/dashboard/report-ui-tab-contract';
