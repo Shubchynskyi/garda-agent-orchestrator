@@ -152,6 +152,43 @@ test('report UI tab metadata preserves an explicit empty path status', () => {
     assert.equal(buildReportUiTabMetadata(contract, {}).paths[0]?.status, '');
 });
 
+test('report UI tab metadata normalizes nullable and blank paths to null', () => {
+    const contract = defineReportUiTabContract({
+        id: 'instructions',
+        label: { key: 'instructionsTab', fallback: 'Instructions' },
+        status: () => 'present',
+        paths: [
+            {
+                id: 'null-source',
+                label: 'Null source',
+                kind: 'source',
+                path: () => null
+            },
+            {
+                id: 'undefined-config',
+                label: 'Undefined config',
+                kind: 'config',
+                path: () => undefined
+            },
+            {
+                id: 'blank-artifact',
+                label: 'Blank artifact',
+                kind: 'artifact',
+                path: () => '   '
+            }
+        ]
+    });
+
+    assert.deepEqual(
+        buildReportUiTabMetadata(contract, {}).paths.map(({ id, path }) => ({ id, path })),
+        [
+            { id: 'null-source', path: null },
+            { id: 'undefined-config', path: null },
+            { id: 'blank-artifact', path: null }
+        ]
+    );
+});
+
 test('report UI tab contract rejects ambiguous empty and duplicate metadata', () => {
     assert.throws(
         () => defineReportUiTabContract({
