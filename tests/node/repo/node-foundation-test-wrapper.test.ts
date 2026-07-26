@@ -17,7 +17,7 @@ const mutableChildProcess = require('node:child_process') as typeof childProcess
     spawn: typeof childProcess.spawn;
     spawnSync: typeof childProcess.spawnSync;
 };
-const DEFAULT_SHARDED_NODE_TEST_ARGS = ['--test'];
+const DEFAULT_SHARDED_NODE_TEST_ARGS = ['--test', '--test-concurrency=2'];
 const EXPECTED_MAX_GROUPED_SHARD_FILES = 32;
 
 function createBuildResultFixture(extraTestCount = 0): { buildResult: BuildResult; cleanup: () => void; } {
@@ -183,7 +183,7 @@ test('runNodeFoundationTests fails fast when an explicit test target cannot be r
     }
 });
 
-test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shards and aggregates failures', async () => {
+test('runNodeFoundationTests bounds inner concurrency while running deterministic shards and aggregating failures', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalShardEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
@@ -327,6 +327,7 @@ test('runNodeFoundationTests preserves explicit node test concurrency for shards
         assert.equal(observedShardArgs.length, 2);
         assert.ok(observedShardArgs.every((args) => args.includes('--test-concurrency')));
         assert.ok(observedShardArgs.every((args) => args.includes('3')));
+        assert.ok(observedShardArgs.every((args) => !args.includes('--test-concurrency=2')));
     } finally {
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
@@ -1484,7 +1485,9 @@ test('runNodeFoundationTests auto-shards when the compiled test command would be
         assert.ok(observedShardArgs.length > 1, `Expected auto-sharding, got ${observedShardArgs.length} shard(s).`);
         assert.ok(observedShardArgs.every((args) => args[0] === '--test'));
         assert.ok(
-            observedShardArgs.every((args) => args.length <= EXPECTED_MAX_GROUPED_SHARD_FILES + 1),
+            observedShardArgs.every(
+                (args) => args.length <= EXPECTED_MAX_GROUPED_SHARD_FILES + DEFAULT_SHARDED_NODE_TEST_ARGS.length
+            ),
             `Expected grouped shards to contain at most ${EXPECTED_MAX_GROUPED_SHARD_FILES} files.`
         );
     } finally {
