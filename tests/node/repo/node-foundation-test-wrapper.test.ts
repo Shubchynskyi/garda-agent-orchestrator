@@ -1047,7 +1047,7 @@ test('runNodeFoundationTests times out a hung single-process run and records cle
         );
         assert.match(timeoutLog, /single process started/);
         assert.match(timeoutLog, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT 1\/1/);
-        assert.match(timeoutLog, /command="[^"]*node(?:\.exe)?"/);
+        assert.match(timeoutLog, /command="[^"]*node(?:\.exe)?"/i);
         assert.match(timeoutLog, /argv=\["--test"/);
         assert.match(timeoutLog, /gates\.test\.js/);
     } finally {
