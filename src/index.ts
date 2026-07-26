@@ -1,6 +1,7 @@
 import * as cli from './cli/index';
 import * as constants from './core/constants';
 import * as coreFs from './core/filesystem';
+import * as gitChanges from './core/git-change-classification';
 import * as json from './core/json';
 import * as lineEndings from './core/line-endings';
 import * as managedBlocks from './core/managed-blocks';
@@ -17,6 +18,7 @@ import * as validators from './validators/index';
 export const core = {
     constants,
     fs: coreFs,
+    gitChanges,
     json,
     lineEndings,
     managedBlocks,

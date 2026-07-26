@@ -47,5 +47,13 @@ describe('git helpers', () => {
 
         assert.deepEqual(splitNulList(output), ['untracked.txt']);
         assert.deepEqual(splitNulList(' a\0\0 b \0'), ['a', 'b']);
+        assert.deepEqual(
+            runGitBinary(repoRoot, ['not-a-real-command'], { allowFailure: true }),
+            Buffer.alloc(0)
+        );
+        assert.throws(
+            () => runGitBinary(repoRoot, ['not-a-real-command']),
+            /git not-a-real-command failed:/
+        );
     });
 });

@@ -130,6 +130,18 @@ All generated directories are both gitignored and excluded from IDE indexing by 
 | `runtime/bundle-backups/**` | Saved bundle copies created during applied updates |
 | `runtime/update-reports/**` | Update and rollback reports |
 
+## Git And EOL Change Classification
+
+`src/core/git-change-classification.ts` is the canonical low-level primitive for
+classifying the staged/unstaged bits and untracked entries from one
+`git status --porcelain=v1 -z` snapshot. Its
+`eol_only_is_dirty_v1` policy keeps LF/CRLF-only changes in effective dirty
+scope and records an explicit reason; content, binary, path/metadata, and
+unavailable comparisons remain distinct. If Git attributes or
+`core.autocrlf` normalize a working-tree representation so Git reports it as
+clean, the classifier also reports it as clean. Classification never rewrites
+working-tree files or changes Git configuration.
+
 ## Task Lifecycle
 
 ```text
