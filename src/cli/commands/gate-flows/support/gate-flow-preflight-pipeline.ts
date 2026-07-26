@@ -14,7 +14,7 @@ export const GATE_FLOW_PREFLIGHT_PIPELINE_MIGRATION_CHECKLIST = {
     compile: 'pilot-migrated',
     review: 'migrated',
     'full-suite': 'migrated',
-    recovery: 'pending-after-recovery-decomposition'
+    recovery: 'migrated'
 } as const;
 
 export interface GateFlowParsedContext<TInput, TParsed> {

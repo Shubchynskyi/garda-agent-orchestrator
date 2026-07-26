@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../../exit-codes';
 import { getReviewExecutionPreparationBatches, resolveReviewExecutionPolicyModeFromPreflight } from '../../../../core/review-execution-policy';
-import { assertValidTaskId } from '../../../../gate-runtime/task-events';
 import { type TokenEconomyConfig } from '../../../../gates/review-context/review-context-token-economy';
 import { resolveTaskProfileReviewTriggerPolicy } from '../../../../policy/task-profile-policy-snapshot';
 import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../../gates/preflight/build-scoped-diff';
@@ -13,7 +12,6 @@ import {
     type IgnoredRemediationTargetAssessment
 } from '../../../../gates/review-remediation/ignored-remediation-targets';
 import { buildReviewContextPreflightDiffExpectations } from '../../../../gates/review-context/review-context-contract';
-import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../../../../gates/task-mode/task-mode';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import {
     runClassifyChangeCommand,
@@ -73,6 +71,7 @@ import {
     requireRestartArtifactSha256 as requireArtifactSha256,
     resolveRecoveryPreflightPath
 } from './recovery-flow-restart-evidence';
+import { runRecoveryFlowPreflightPipeline } from './recovery-flow-preflight-pipeline';
 function getDependencyBlockReason(error: unknown, reviewType: string): string | null {
     const message = error instanceof Error ? error.message : String(error);
     const isUpstreamReviewBlock = message.includes(
@@ -91,22 +90,14 @@ export async function runRestartReviewCycleCommand(
     options: RestartReviewCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
     const startedAt = Date.now();
-    const repoRoot = path.resolve(String(options.repoRoot || '.'));
-    const resolvedTaskId = assertValidTaskId(String(options.taskId || '').trim());
-    const previousTaskMode = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
-    const taskModeViolations = getTaskModeEvidenceViolations(previousTaskMode);
-    if (taskModeViolations.length > 0) {
-        throw new Error(taskModeViolations.join(' '));
-    }
-
-    const resolvedTaskModePath = String(options.taskModePath || previousTaskMode.evidence_path || '').trim();
-    const resolvedPreflightPath = resolveRecoveryPreflightPath(
+    const {
         repoRoot,
         resolvedTaskId,
-        options.preflightPath,
-        'PreflightPath'
-    );
-    const previousPreflight = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
+        previousTaskMode,
+        resolvedTaskModePath,
+        resolvedPreflightPath,
+        previousPreflight
+    } = runRecoveryFlowPreflightPipeline(options);
     const replayScope = resolveReviewCycleReplayScope(options, previousPreflight, previousTaskMode);
     const previousChangedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
     let currentRemediationChangedFiles = resolveCurrentRemediationChangedFiles(repoRoot, replayScope);

@@ -19,6 +19,9 @@ import {
     runFullSuiteValidationPreflightPipeline
 } from '../../../../src/cli/commands/gate-flows/full-suite/full-suite-validation-preflight-pipeline';
 import {
+    runRecoveryFlowPreflightPipeline
+} from '../../../../src/cli/commands/gate-flows/recovery/recovery-flow-preflight-pipeline';
+import {
     runCompileGateCommand,
     runFullSuiteValidationCommand,
     runRequiredReviewsCheckCommand
@@ -290,7 +293,7 @@ describe('gate-flow preflight pipeline', () => {
             compile: 'pilot-migrated',
             review: 'migrated',
             'full-suite': 'migrated',
-            recovery: 'pending-after-recovery-decomposition'
+            recovery: 'migrated'
         });
     });
 
@@ -1219,5 +1222,107 @@ describe('review and full-suite shared preflight pipeline migration', () => {
             fs.rmSync(outsideRoot, { recursive: true, force: true });
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
+    });
+});
+
+describe('recovery shared preflight pipeline migration', () => {
+    it('preserves task-bound recovery evidence and preflight paths', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-932-4-recovery-migration';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            const preflightPath = writePreflight(repoRoot, taskId);
+
+            assert.equal(runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Exercise recovery shared preflight adapter'
+            }).exitCode, 0);
+
+            const recovery = runRecoveryFlowPreflightPipeline({
+                repoRoot,
+                taskId,
+                preflightPath
+            });
+            const normalizedPreflightPath = path.resolve(preflightPath).replace(/\\/g, '/');
+            const normalizedTimelinePath = path.join(
+                getOrchestratorRoot(repoRoot),
+                'runtime',
+                'task-events',
+                `${taskId}.jsonl`
+            ).replace(/\\/g, '/');
+
+            assert.equal(recovery.resolvedTaskId, taskId);
+            assert.equal(recovery.previousTaskMode.task_id, taskId);
+            assert.equal(recovery.previousPreflight.preflight.task_id, taskId);
+            assert.equal(recovery.resolvedPreflightPath.replace(/\\/g, '/'), normalizedPreflightPath);
+            assert.equal(
+                recovery.timelineReadiness.timelinePath.replace(/\\/g, '/'),
+                normalizedTimelinePath
+            );
+            assert.deepEqual(recovery.timelineReadiness.violations, []);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects recovery preflight paths outside the repository root', (t) => {
+        const repoRoot = createTempRepo();
+        const outsideRoot = fs.mkdtempSync(path.join(path.dirname(repoRoot), 'garda-recovery-preflight-outside-'));
+        const taskId = 'T-932-4-recovery-preflight-outside';
+        const outsidePreflightPath = path.join(outsideRoot, `${taskId}-preflight.json`);
+        t.after(() => {
+            fs.rmSync(outsideRoot, { recursive: true, force: true });
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(outsidePreflightPath, JSON.stringify({
+            task_id: taskId,
+            changed_files: ['src/app.ts']
+        }, null, 2), 'utf8');
+        assert.equal(runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject recovery preflight outside repository root'
+        }).exitCode, 0);
+
+        assert.throws(
+            () => runRecoveryFlowPreflightPipeline({
+                repoRoot,
+                taskId,
+                preflightPath: outsidePreflightPath
+            }),
+            /PreflightPath must resolve inside repo root without symlink or junction escape/
+        );
+    });
+
+    it('fails closed when recovery timeline readiness reports invalid JSON', (t) => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-932-4-recovery-invalid-timeline';
+        t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        assert.equal(runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject recovery when timeline readiness is invalid'
+        }).exitCode, 0);
+        fs.appendFileSync(
+            path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`),
+            '{invalid-json}\n',
+            'utf8'
+        );
+
+        assert.throws(
+            () => runRecoveryFlowPreflightPipeline({
+                repoRoot,
+                taskId,
+                preflightPath
+            }),
+            /Task timeline contains invalid JSON line:/
+        );
     });
 });

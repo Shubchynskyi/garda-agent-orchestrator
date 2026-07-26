@@ -1,8 +1,5 @@
-import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../../exit-codes';
-import { assertValidTaskId } from '../../../../gate-runtime/task-events';
 import { getPreflightContext } from '../../../../gates/compile/compile-gate';
-import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../../../../gates/task-mode/task-mode';
 import {
     runClassifyChangeCommand,
     runCompileGateCommand,
@@ -40,27 +37,20 @@ import {
     resolveRestartAllowedDirtyWorkflowConfigFiles,
     toNonNegativeRestartCount
 } from './recovery-flow-restart-evidence';
+import { runRecoveryFlowPreflightPipeline } from './recovery-flow-preflight-pipeline';
 
 export async function runRestartCoherentCycleCommand(
     options: RestartCoherentCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
     const startedAt = Date.now();
-    const repoRoot = path.resolve(String(options.repoRoot || '.'));
-    const resolvedTaskId = assertValidTaskId(String(options.taskId || '').trim());
-    const previousTaskMode = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
-    const taskModeViolations = getTaskModeEvidenceViolations(previousTaskMode);
-    if (taskModeViolations.length > 0) {
-        throw new Error(taskModeViolations.join(' '));
-    }
-
-    const resolvedTaskModePath = String(options.taskModePath || previousTaskMode.evidence_path || '').trim();
-    const resolvedPreflightPath = resolveRecoveryPreflightPath(
+    const {
         repoRoot,
         resolvedTaskId,
-        options.preflightPath,
-        'PreflightPath'
-    );
-    const previousPreflight = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
+        previousTaskMode,
+        resolvedTaskModePath,
+        resolvedPreflightPath,
+        previousPreflight
+    } = runRecoveryFlowPreflightPipeline(options);
     const replayScope = resolveReplayScope(options, previousPreflight);
     const taskSummary = String(options.taskIntent || previousTaskMode.task_summary || '').trim();
     if (!taskSummary) {
