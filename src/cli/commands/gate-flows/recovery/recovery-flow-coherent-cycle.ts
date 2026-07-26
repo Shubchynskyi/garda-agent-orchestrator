@@ -1,0 +1,234 @@
+import * as path from 'node:path';
+import { EXIT_GATE_FAILURE } from '../../../exit-codes';
+import { assertValidTaskId } from '../../../../gate-runtime/task-events';
+import { getPreflightContext } from '../../../../gates/compile/compile-gate';
+import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../../../../gates/task-mode/task-mode';
+import {
+    runClassifyChangeCommand,
+    runCompileGateCommand,
+    type CompileGateCommandOptions
+} from '../compile/compile-flow';
+import { buildNextStepRecoveryCommand } from '../compile/compile-flow-shared-evidence';
+import { resolveDefaultReviewsPath } from '../../../gate-cli/gates-artifacts';
+import { resolveOrchestratorRoot } from '../compile/gate-flow-helpers';
+import {
+    runEnterTaskModeCommand,
+    runHandshakeDiagnosticsCommand,
+    runLoadRulePackCommand,
+    runShellSmokePreflightCommand
+} from '../task-mode/task-mode-flow';
+import {
+    getEffectiveDepthFromPreflight,
+    getTaskEntryRuleFilesForDepth,
+    normalizeRuleFileList,
+    resolveReplayScope
+} from './recovery-flow-replay-scope';
+import { buildCoherentCycleRestartedOutput } from './recovery-flow-rendering';
+import type { RestartCoherentCycleCommandOptions } from './recovery-flow-types';
+import {
+    buildOptionalSkillRebindDetails,
+    readRestartOptionalSkillActivationSnapshot,
+    readRestartOptionalSkillDeclineSnapshot,
+    rebindRestartOptionalSkillActivationsForCurrentCycle,
+    rebindRestartOptionalSkillDeclinesForCurrentCycle
+} from './recovery-flow-optional-skills';
+import {
+    appendRestartCompletedEvidence,
+    collectRequiredRestartReviewTypes,
+    ensureRestartStepPassed,
+    resolveRecoveryPreflightPath,
+    resolveRestartAllowedDirtyWorkflowConfigFiles,
+    toNonNegativeRestartCount
+} from './recovery-flow-restart-evidence';
+
+export async function runRestartCoherentCycleCommand(
+    options: RestartCoherentCycleCommandOptions
+): Promise<{ outputLines: string[]; exitCode: number }> {
+    const startedAt = Date.now();
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const resolvedTaskId = assertValidTaskId(String(options.taskId || '').trim());
+    const previousTaskMode = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
+    const taskModeViolations = getTaskModeEvidenceViolations(previousTaskMode);
+    if (taskModeViolations.length > 0) {
+        throw new Error(taskModeViolations.join(' '));
+    }
+
+    const resolvedTaskModePath = String(options.taskModePath || previousTaskMode.evidence_path || '').trim();
+    const resolvedPreflightPath = resolveRecoveryPreflightPath(
+        repoRoot,
+        resolvedTaskId,
+        options.preflightPath,
+        'PreflightPath'
+    );
+    const previousPreflight = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
+    const replayScope = resolveReplayScope(options, previousPreflight);
+    const taskSummary = String(options.taskIntent || previousTaskMode.task_summary || '').trim();
+    if (!taskSummary) {
+        throw new Error('Task intent could not be resolved for coherent-cycle restart.');
+    }
+    const allowedDirtyWorkflowConfigFiles = previousTaskMode.orchestrator_work === true
+        && previousTaskMode.workflow_config_work === true
+        ? resolveRestartAllowedDirtyWorkflowConfigFiles(repoRoot, previousPreflight, replayScope.plannedChangedFiles)
+        : [];
+
+    try {
+        const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+        const optionalSkillActivationSnapshot = readRestartOptionalSkillActivationSnapshot(
+            orchestratorRoot,
+            resolvedTaskId
+        );
+        const optionalSkillDeclineSnapshot = readRestartOptionalSkillDeclineSnapshot(
+            orchestratorRoot,
+            resolvedTaskId
+        );
+
+        ensureRestartStepPassed('enter-task-mode', runEnterTaskModeCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            artifactPath: resolvedTaskModePath,
+            entryMode: previousTaskMode.entry_mode || 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: previousTaskMode.requested_depth || 2,
+            effectiveDepth: previousTaskMode.effective_depth || previousTaskMode.requested_depth || 2,
+            taskSummary,
+            startBanner: previousTaskMode.start_banner,
+            plannedChangedFiles: replayScope.plannedChangedFiles,
+            orchestratorWork: previousTaskMode.orchestrator_work === true,
+            workflowConfigWork: previousTaskMode.workflow_config_work === true,
+            operatorConfirmed: options.operatorConfirmed,
+            operatorConfirmedAtUtc: options.operatorConfirmedAtUtc,
+            allowedDirtyWorkflowConfigFiles,
+            workflowConfigFileHashesOverride: previousTaskMode.workflow_config_file_hashes,
+            workflowConfigCompatibilityBaselineFilesOverride: previousTaskMode.workflow_config_compatibility_baseline_files,
+            provider: previousTaskMode.provider || undefined,
+            routedTo: previousTaskMode.routed_to || undefined,
+            planPath: previousTaskMode.plan?.plan_path || undefined,
+            emitMetrics: options.emitMetrics
+        }));
+
+        ensureRestartStepPassed('load-rule-pack (TASK_ENTRY)', runLoadRulePackCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            taskModePath: resolvedTaskModePath,
+            stage: 'TASK_ENTRY',
+            loadedRuleFiles: getTaskEntryRuleFilesForDepth(
+                previousTaskMode.effective_depth || previousTaskMode.requested_depth || 2
+            ),
+            emitMetrics: options.emitMetrics
+        }));
+
+        ensureRestartStepPassed('handshake-diagnostics', runHandshakeDiagnosticsCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            provider: previousTaskMode.provider || undefined,
+            emitMetrics: options.emitMetrics
+        }));
+
+        ensureRestartStepPassed('shell-smoke-preflight', runShellSmokePreflightCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            provider: previousTaskMode.provider || undefined,
+            emitMetrics: options.emitMetrics
+        }));
+
+        const refreshedPreflightPath = resolveRecoveryPreflightPath(
+            repoRoot,
+            resolvedTaskId,
+            options.preflightOutputPath || resolvedPreflightPath,
+            'PreflightOutputPath'
+        );
+        runClassifyChangeCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            taskModePath: resolvedTaskModePath,
+            outputPath: refreshedPreflightPath,
+            taskIntent: taskSummary,
+            changedFiles: replayScope.changedFiles,
+            useStaged: replayScope.useStaged,
+            includeUntracked: replayScope.includeUntracked,
+            emitMetrics: options.emitMetrics
+        });
+        const refreshedPreflight = getPreflightContext(refreshedPreflightPath, resolvedTaskId);
+        const refreshedRequiredReviews = refreshedPreflight.preflight.required_reviews as Record<string, boolean>;
+        const effectiveDepth = getEffectiveDepthFromPreflight(previousTaskMode, refreshedPreflight);
+
+        ensureRestartStepPassed('load-rule-pack (POST_PREFLIGHT)', runLoadRulePackCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            taskModePath: resolvedTaskModePath,
+            stage: 'POST_PREFLIGHT',
+            preflightPath: refreshedPreflightPath,
+            loadedRuleFiles: normalizeRuleFileList(refreshedRequiredReviews, effectiveDepth),
+            emitMetrics: options.emitMetrics
+        }));
+
+        const optionalSkillActivationRebind = await rebindRestartOptionalSkillActivationsForCurrentCycle({
+            orchestratorRoot,
+            taskId: resolvedTaskId,
+            snapshot: optionalSkillActivationSnapshot
+        });
+        const optionalSkillDeclineRebind = await rebindRestartOptionalSkillDeclinesForCurrentCycle({
+            orchestratorRoot,
+            taskId: resolvedTaskId,
+            snapshot: optionalSkillDeclineSnapshot
+        });
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            taskModePath: resolvedTaskModePath,
+            preflightPath: refreshedPreflightPath,
+            commandsPath: options.commandsPath,
+            outputFiltersPath: options.outputFiltersPath,
+            failTailLines: options.failTailLines,
+            emitMetrics: options.emitMetrics
+        } as CompileGateCommandOptions);
+        ensureRestartStepPassed('compile-gate', compileResult);
+        const nextStepSummary = 'materialize review artifacts for the new compile cycle, then rerun required-reviews-check, doc-impact-gate, and completion-gate.';
+        const restartArtifactPath = appendRestartCompletedEvidence({
+            repoRoot,
+            taskId: resolvedTaskId,
+            eventType: 'COHERENT_CYCLE_RESTARTED',
+            artifactSuffix: '-coherent-cycle-restart.json',
+            message: 'Coherent task cycle restarted after compile gate pass.',
+            taskModePath: resolvedTaskModePath,
+            preflightPath: refreshedPreflightPath,
+            compileEvidencePath: resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`),
+            detectionSource: replayScope.detectionSource,
+            plannedChangedFilesCount: replayScope.plannedChangedFiles.length,
+            detectedChangedFilesCount: toNonNegativeRestartCount(
+                refreshedPreflight.changed_files_count,
+                refreshedPreflight.changed_files.length
+            ),
+            elapsedMs: Date.now() - startedAt,
+            restartReason: 'coherent_cycle_restart_after_downstream_boundary_or_invalid_preflight_order',
+            nextStepSummary,
+            extraDetails: buildOptionalSkillRebindDetails(optionalSkillActivationRebind, optionalSkillDeclineRebind)
+        });
+
+        return {
+            outputLines: buildCoherentCycleRestartedOutput({
+                taskId: resolvedTaskId,
+                navigatorCommand: buildNextStepRecoveryCommand(repoRoot, resolvedTaskId),
+                taskModePath: resolvedTaskModePath,
+                preflightPath: refreshedPreflightPath,
+                restartArtifactPath,
+                detectionSource: replayScope.detectionSource,
+                plannedChangedFilesCount: replayScope.plannedChangedFiles.length,
+                changedFilesCount: refreshedPreflight.changed_files_count,
+                preflightMode: refreshedPreflight.preflight.mode,
+                preflightScopeCategory: refreshedPreflight.preflight.scope_category,
+                preflightChangedFilesCount: refreshedPreflight.changed_files_count,
+                preflightRequiredReviewTypes: collectRequiredRestartReviewTypes(refreshedRequiredReviews)
+            }),
+            exitCode: 0
+        };
+    } catch (error: unknown) {
+        return {
+            outputLines: [
+                'COHERENT_CYCLE_RESTART_FAILED',
+                `TaskId: ${resolvedTaskId}`,
+                error instanceof Error ? error.message : String(error)
+            ],
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
+}

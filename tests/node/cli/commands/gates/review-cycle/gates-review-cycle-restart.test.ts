@@ -34,7 +34,7 @@ import {
     runRestartReviewCycleCommandRaw,
     runShellSmokeForTask,
     seedInitAnswers,
-    seedRemediationRepoBase,
+    seedRemediationRepoBase as seedRemediationRepoBaseWithoutProfiles,
     seedNodeBackendOptionalSkillFixture,
     seedReusableReviewEvidence,
     seedTaskQueue,
@@ -43,6 +43,7 @@ import {
     writeOptionalSkillSelectionArtifact,
     writePreflight,
     writeProtectedControlPlaneManifest,
+    writeProfilesConfig,
     writeReceiptBackedReviewArtifact,
     writeReviewCapabilitiesConfig,
     writeSimpleCompileCommandsFile,
@@ -60,10 +61,90 @@ import {
     runFullSuiteValidationCommand,
     runQualityChecklistCommand
 } from '../../../../../../src/cli/commands/gates';
+import { buildTaskProfilePolicySnapshot } from '../../../../../../src/policy/task-profile-policy-snapshot';
 import { resolveNextStep } from '../../../../gates/next-step/next-step-test-support';
 
 describe('cli/commands/gates – review-cycle restart suite', () => {
     const OPTIONAL_SKILL_HEADLINES_PATH = 'garda-agent-orchestrator/live/config/skills-headlines.json';
+    const TRUST_BOUNDARY_QUALITY_RULE_IDS = [
+        'code_simplification',
+        'project_style_fit',
+        'unnecessary_abstraction',
+        'size_growth',
+        'hardcoded_values_contracts',
+        'duplicated_logic_contracts',
+        'test_verification_scope',
+        'trust_boundary_adversarial_analysis'
+    ];
+
+    function seedRemediationRepoBase(repoRoot: string): void {
+        seedRemediationRepoBaseWithoutProfiles(repoRoot);
+        const profilesPath = writeProfilesConfig(repoRoot);
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: {
+                balanced: {
+                    review_policy: Record<string, boolean | string>;
+                };
+            };
+        };
+        profiles.built_in_profiles.balanced.review_policy = {
+            code: true,
+            db: false,
+            security: false,
+            refactor: false
+        };
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2) + '\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'tests', 'trust-boundary-recovery.test.ts'),
+            'it("rejects stale review recovery evidence", () => { assert.equal(true, true); });\n',
+            'utf8'
+        );
+    }
+
+    function runPassingTrustBoundaryQualityChecklist(options: {
+        repoRoot: string;
+        taskId: string;
+        preflightPath: string;
+        evidenceFiles: string[];
+    }): void {
+        const result = runQualityChecklistCommand({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            preflightPath: options.preflightPath,
+            answersJson: JSON.stringify(TRUST_BOUNDARY_QUALITY_RULE_IDS.map((ruleId) => ({
+                rule_id: ruleId,
+                status: 'PASS',
+                answer: `Reviewed ${ruleId} for the focused restart-recovery fixture; no action is required.`,
+                evidence_files: options.evidenceFiles,
+                actions_taken: [],
+                actions_required: [],
+                ...(ruleId === 'trust_boundary_adversarial_analysis'
+                    ? {
+                        trust_boundary_matrix: [{
+                            boundary_id: 'review-recovery-evidence',
+                            boundary: 'Review recovery evidence',
+                            authority_source: 'Gate-owned task timeline and authenticated preflight',
+                            mutable_inputs: ['Reviewer output', 'Remediation impact analysis'],
+                            integrity_evidence: ['Preflight hash', 'Quality-checklist timeline binding'],
+                            canonical_reconstruction: 'Recompute current preflight and checklist hashes from repository state.',
+                            toctou_replay: 'Reject stale or replayed evidence before review-context preparation.',
+                            negative_paths: [{
+                                kind: 'stale',
+                                scenario: 'rejects stale review recovery evidence',
+                                expected_behavior: 'Reject stale review recovery evidence before preparing review contexts.',
+                                evidence_files: [
+                                    'tests/trust-boundary-recovery.test.ts#rejects stale review recovery evidence'
+                                ]
+                            }]
+                        }]
+                    }
+                    : {})
+            }))),
+            emitMetrics: false
+        });
+        assert.equal(result.exitCode, 0, result.outputLines.join('\n'));
+    }
 
     function copyWorkflowConfig(repoRoot: string, sourcePath: string, targetRelativePath: string): void {
         const targetPath = path.join(repoRoot, ...targetRelativePath.split('/'));
@@ -1364,6 +1445,15 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
 
         fs.mkdirSync(getReviewsRoot(repoRoot), { recursive: true });
         const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+            getOrchestratorRoot(repoRoot),
+            'balanced',
+            {
+                reviewExecutionPolicyMode: 'legacy_test_downstream',
+                reviewExecutionPolicyConfigured: false,
+                lockTimestampUtc: '2026-04-16T09:00:00.000Z'
+            }
+        );
         fs.writeFileSync(taskModePath, JSON.stringify({
             timestamp_utc: '2026-04-16T09:00:00.000Z',
             event_source: 'enter-task-mode',
@@ -1375,6 +1465,8 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             effective_depth: 2,
             task_summary: 'Restart the review cycle after a coherent restart from a legacy task-mode artifact',
             workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(repoRoot),
+            profile_policy_snapshot_required: true,
+            profile_policy_snapshot: profilePolicySnapshot,
             provider: 'Codex',
             routed_to: 'AGENTS.md'
         }, null, 2) + '\n', 'utf8');
@@ -1385,7 +1477,10 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             effective_depth: 2,
             task_summary: 'Restart the review cycle after a coherent restart from a legacy task-mode artifact',
             provider: 'Codex',
-            routed_to: 'AGENTS.md'
+            routed_to: 'AGENTS.md',
+            profile_policy_snapshot_required: true,
+            profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash,
+            profile_policy_snapshot_config_hash: profilePolicySnapshot.config_hash
         });
 
         loadTaskEntryRulePack(repoRoot, taskId, taskModePath);
@@ -1445,8 +1540,10 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const output = reviewRestartResult.outputLines.join('\n');
         assert.equal(reviewRestartResult.outputLines[0], 'Next action:');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
-        assert.match(output, /PreparedReviewTypes: code/);
-        assert.match(output, /LaunchRequiredReviewTypes: code/);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /LaunchRequiredReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const taskModeEnteredEvents = events.filter((event) => event.event_type === 'TASK_MODE_ENTERED');
@@ -1484,7 +1581,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.ok(reviewGateIndex > taskEntryRulePackIndexes[0]);
         assert.ok(taskEntryRulePackIndexes[1] > reviewGateIndex);
         assert.ok(lastCompileIndex > shellSmokeIndexes[1]);
-        assert.ok(lastCodeReviewPhaseIndex > lastCompileIndex);
+        assert.equal(lastCodeReviewPhaseIndex, -1);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1750,29 +1847,12 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
-        const qualityChecklistResult = runQualityChecklistCommand({
+        runPassingTrustBoundaryQualityChecklist({
             repoRoot,
             taskId,
             preflightPath,
-            answersJson: JSON.stringify([
-                'code_simplification',
-                'project_style_fit',
-                'unnecessary_abstraction',
-                'size_growth',
-                'hardcoded_values_contracts',
-                'duplicated_logic_contracts',
-                'test_verification_scope'
-            ].map((ruleId) => ({
-                rule_id: ruleId,
-                status: 'PASS',
-                answer: `Reviewed ${ruleId} for the focused restart-recovery fixture; no action is required.`,
-                evidence_files: ['src/app.ts', 'tests/app.test.ts'],
-                actions_taken: [],
-                actions_required: []
-            }))),
-            emitMetrics: false
+            evidenceFiles: ['src/app.ts', 'tests/app.test.ts']
         });
-        assert.equal(qualityChecklistResult.exitCode, 0, qualityChecklistResult.outputLines.join('\n'));
 
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -1872,8 +1952,81 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         ) as Record<string, unknown>;
         assert.equal(rejectedLaunchArtifact.attestation_state, 'launch_failed');
         assert.equal(rejectedLaunchArtifact.launch_failure_stage, 'review_findings_validation');
+        const reportCorrectionRoute = resolveNextStep({ taskId, repoRoot });
+        assert.equal(reportCorrectionRoute.next_gate, 'record-review-result', reportCorrectionRoute.reason);
+
+        const currentReviewContext = JSON.parse(fs.readFileSync(codeReviewContextPath, 'utf8')) as {
+            coverage_contract: {
+                contract_sha256: string;
+                obligations: Array<{ id: string; kind: string; target: string }>;
+            };
+            tree_state: {
+                tree_state_sha256: string;
+            };
+        };
+        const coverageObligationIds = currentReviewContext.coverage_contract.obligations.map(
+            (obligation) => obligation.id
+        );
+        const defaultEvidenceFile = currentReviewContext.coverage_contract.obligations.find(
+            (obligation) => obligation.kind === 'file'
+        )?.target || 'src/app.ts';
+        const correctedFinding = {
+            id: 'F-001',
+            title: 'Fixture active finding',
+            description: 'Seeded failed-review fixture finding for review-cycle recovery behavior.',
+            evidence: [{
+                location: `${defaultEvidenceFile}:1`,
+                observation: 'The fixture intentionally records an active finding.'
+            }],
+            coverage_obligation_ids: coverageObligationIds
+        };
+        fs.writeFileSync(rejectedReviewOutputPath, JSON.stringify({
+            schema_version: 1,
+            task_id: taskId,
+            review_type: 'code',
+            review_context_sha256: fileSha256(codeReviewContextPath),
+            tree_state_sha256: currentReviewContext.tree_state.tree_state_sha256,
+            validation_notes: [{
+                id: 'N-001',
+                topic: 'fixture-scope',
+                note: 'Validated the complete code fixture scope and every generated coverage obligation.',
+                evidence: [{
+                    location: `${defaultEvidenceFile}:1`,
+                    observation: 'Concrete fixture evidence covers the code review scope.'
+                }]
+            }],
+            coverage_ledger: {
+                coverage_contract_sha256: currentReviewContext.coverage_contract.contract_sha256,
+                entries: currentReviewContext.coverage_contract.obligations.map((obligation) => ({
+                    obligation_id: obligation.id,
+                    evidence: [{
+                        location: `${obligation.kind === 'file' ? obligation.target : defaultEvidenceFile}:1`,
+                        observation: `Concrete fixture evidence covers ${obligation.kind} ${obligation.target}.`
+                    }],
+                    finding_ids: ['F-001']
+                }))
+            },
+            findings: {
+                critical: [],
+                high: [correctedFinding],
+                medium: [],
+                low: []
+            },
+            residual_risks: [],
+            reviewer_notes: []
+        }, null, 2) + '\n', 'utf8');
+        await handleRecordReviewResult([
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', preflightPath,
+            '--review-context-path', codeReviewContextPath,
+            '--review-output-path', rejectedReviewOutputPath,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', rejectedReviewerIdentity,
+            '--repo-root', repoRoot
+        ]);
         const rejectedRecoveryRoute = resolveNextStep({ taskId, repoRoot });
-        assert.equal(rejectedRecoveryRoute.next_gate, 'restart-review-cycle', rejectedRecoveryRoute.reason);
+        assert.equal(rejectedRecoveryRoute.next_gate, 'record-review-result', rejectedRecoveryRoute.reason);
 
         const restartResult = await runRestartReviewCycleCommand({
             repoRoot,
@@ -1898,10 +2051,24 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const output = restartResult.outputLines.join('\n');
         assert.equal(restartResult.outputLines[0], 'Next action:');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
-        assert.match(output, /PreparedReviewTypes: code/);
-        assert.match(output, /LaunchRequiredReviewTypes: code/);
-        assert.match(output, /PendingReviewTypes: test/);
-        assert.match(output, /PendingReason: ReviewType 'test' is blocked until upstream reviews pass for the current cycle: code\./);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /LaunchRequiredReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
+
+        runPassingTrustBoundaryQualityChecklist({
+            repoRoot,
+            taskId,
+            preflightPath,
+            evidenceFiles: ['src/app.ts', 'tests/app.test.ts']
+        });
+        const refreshedContextResult = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: '2',
+            preflightPath
+        });
+        assert.equal(refreshedContextResult.reusedReviewEvidence, false);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)),
             true
@@ -2046,13 +2213,13 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /ReviewExecutionPolicy: code_first_optional/);
-        assert.match(output, /PreparedReviewTypes: code/);
-        assert.match(output, /LaunchRequiredReviewTypes: code/);
-        assert.match(output, /PendingReviewTypes: api/);
-        assert.match(output, /PendingReason: ReviewType 'api' is blocked until upstream reviews pass for the current cycle: code\./);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /LaunchRequiredReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, api/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)),
-            true
+            false
         );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-api-review-context.json`)),
@@ -2138,17 +2305,17 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /ReviewExecutionPolicy: legacy_test_downstream/);
-        assert.match(output, /PreparedReviewTypes: code, api/);
-        assert.match(output, /LaunchRequiredReviewTypes: code, api/);
-        assert.match(output, /PendingReviewTypes: test/);
-        assert.match(output, /PendingReason: ReviewType 'test' is blocked until upstream reviews pass for the current cycle: code, api\./);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /LaunchRequiredReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)),
-            true
+            false
         );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-api-review-context.json`)),
-            true
+            false
         );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-test-review-context.json`)),
@@ -2158,7 +2325,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('restart-review-cycle prepares code, API, and test together under parallel_all policy', { concurrency: false }, async () => {
+    it('restart-review-cycle defers code, API, and test preparation until trust-boundary analysis under parallel_all policy', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-parallel-all';
         seedRemediationRepoBase(repoRoot);
@@ -2217,44 +2384,39 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /ReviewExecutionPolicy: parallel_all/);
-        assert.match(output, /PreparedReviewTypes: code, api, test/);
-        assert.match(output, /LaunchRequiredReviewTypes: code, api, test/);
-        assert.doesNotMatch(output, /PendingReviewTypes:/);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /LaunchRequiredReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)),
-            true
+            false
         );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-api-review-context.json`)),
-            true
+            false
         );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-test-review-context.json`)),
-            true
+            false
         );
         const timelineEvents = readTaskTimelineEvents(repoRoot, taskId);
         const reviewPhaseEvents = timelineEvents.filter((event) => event.event_type === 'REVIEW_PHASE_STARTED');
         const selectedEvents = timelineEvents.filter((event) => event.event_type === 'SKILL_SELECTED');
         const referenceEvents = timelineEvents.filter((event) => event.event_type === 'SKILL_REFERENCE_LOADED');
-        assert.deepEqual(
-            reviewPhaseEvents.map((event) => String((event.details as Record<string, unknown>).review_type)).sort(),
-            ['api', 'code', 'test']
-        );
-        assert.deepEqual(
-            selectedEvents.map((event) => String((event.details as Record<string, unknown>).skill_id)).sort(),
-            ['api-review', 'code-review', 'test-review']
-        );
+        assert.deepEqual(reviewPhaseEvents, []);
+        assert.deepEqual(selectedEvents, []);
         assert.equal(
             referenceEvents.filter((event) => (
                 String((event.details as Record<string, unknown>).trigger_reason) === 'review_context_artifact'
             )).length,
-            3
+            0
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('restart-review-cycle includes performance review preparation when parallel_all scope crosses the heuristic threshold', { concurrency: false }, async () => {
+    it('restart-review-cycle defers performance review preparation until trust-boundary analysis under parallel_all', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-parallel-all-performance';
         seedRemediationRepoBase(repoRoot);
@@ -2316,11 +2478,13 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
 
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /ReviewExecutionPolicy: parallel_all/);
-        assert.match(output, /PreparedReviewTypes: code, api, performance, test/);
-        assert.match(output, /LaunchRequiredReviewTypes: code, api, performance, test/);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /LaunchRequiredReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-performance-review-context.json`)),
-            true
+            false
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -2385,17 +2549,17 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /ReviewExecutionPolicy: test_after_code/);
-        assert.match(output, /PreparedReviewTypes: code, api/);
-        assert.match(output, /LaunchRequiredReviewTypes: code, api/);
-        assert.match(output, /PendingReviewTypes: test/);
-        assert.match(output, /PendingReason: ReviewType 'test' is blocked until upstream reviews pass for the current cycle: code\./);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /LaunchRequiredReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)),
-            true
+            false
         );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-api-review-context.json`)),
-            true
+            false
         );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-test-review-context.json`)),
@@ -2464,13 +2628,13 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /ReviewExecutionPolicy: strict_sequential/);
-        assert.match(output, /PreparedReviewTypes: code/);
-        assert.match(output, /LaunchRequiredReviewTypes: code/);
-        assert.match(output, /PendingReviewTypes: api, test/);
-        assert.match(output, /PendingReason: ReviewType 'api' is blocked until upstream reviews pass for the current cycle: code\./);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /LaunchRequiredReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)),
-            true
+            false
         );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-api-review-context.json`)),
@@ -2703,12 +2867,14 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
-        assert.match(output, /PreparedReviewTypes: code/);
-        assert.match(output, /LaunchRequiredReviewTypes: code/);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /LaunchRequiredReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
         assert.match(output, /PreflightSummary: mode=/);
         assert.match(output, /scope_category=/);
         assert.match(output, /changed_files=2/);
-        assert.match(output, /required_reviews=code, test/);
+        assert.match(output, /required_reviews=code, refactor, security, test/);
         assert.match(output, /\(full detail: see PreflightPath\)/);
         assert.doesNotMatch(output, /PreflightSummary: \{/);
         const events = readTaskTimelineEvents(repoRoot, taskId);
@@ -2727,8 +2893,8 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.equal(restartDetails.compile_evidence_sha256, fileSha256(compileEvidencePath));
         assert.equal(restartDetails.restart_artifact_sha256, fileSha256(restartArtifactPath));
         assert.equal(restartDetails.remediation_artifact_sha256, fileSha256(remediationArtifactPath));
-        assert.deepEqual(restartDetails.prepared_review_types, ['code']);
-        assert.deepEqual(restartDetails.launch_required_review_types, ['code']);
+        assert.deepEqual(restartDetails.prepared_review_types, []);
+        assert.deepEqual(restartDetails.launch_required_review_types, []);
         assert.equal(fs.existsSync(restartArtifactPath), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -2776,6 +2942,13 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         });
         assert.equal(compileResult.exitCode, 0);
 
+        runPassingTrustBoundaryQualityChecklist({
+            repoRoot,
+            taskId,
+            preflightPath,
+            evidenceFiles: ['src/app.ts']
+        });
+
         const codeReviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`);
         seedReusableReviewEvidence(
             repoRoot,
@@ -2786,13 +2959,33 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             codeReviewContextPath,
             'agent:code-reviewer'
         );
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'security',
+            'SECURITY REVIEW PASSED',
+            preflightPath,
+            path.join(getReviewsRoot(repoRoot), `${taskId}-security-review-context.json`),
+            'agent:security-reviewer'
+        );
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'refactor',
+            'REFACTOR REVIEW PASSED',
+            preflightPath,
+            path.join(getReviewsRoot(repoRoot), `${taskId}-refactor-review-context.json`),
+            'agent:refactor-reviewer'
+        );
 
         const reviewGateResult = runRequiredReviewsCheckCommand({
             repoRoot,
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
-            reviewAuthorshipAttestationJson: '{"code":true}',
+            securityReviewVerdict: 'SECURITY REVIEW PASSED',
+            refactorReviewVerdict: 'REFACTOR REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true,"security":true,"refactor":true}',
             emitMetrics: false
         });
         assert.equal(reviewGateResult.exitCode, 0, reviewGateResult.outputLines.join('\n'));
@@ -3026,11 +3219,12 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /DetectionSource: git_auto_current_workspace/);
         assert.match(output, /ReviewRemediationCycleArtifact:/);
-        assert.match(output, /RemediationFixClassification: test_coverage_only; invalidated_review_types=test; preserved_review_types=code/);
+        assert.match(output, /RemediationFixClassification: test_coverage_only; invalidated_review_types=refactor, test; preserved_review_types=code, security/);
         assert.match(output, /ScopeBoundary: OK; previous=1; current=2; expanded_non_test=none/);
         assert.match(output, /RefreshPoints: preflight=refreshed; post_preflight_rule_pack=reloaded; compile=rerun/);
         assert.match(output, /ReuseBoundaries: non_test_changes_must_stay_within_previous_preflight_scope/);
-        assert.match(output, /PendingReviewTypes: test/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
 
         const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts', 'tests/app.test.ts']);
@@ -3052,11 +3246,11 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         );
         assert.deepEqual(
             (remediationArtifact.remediation_fix_classification as Record<string, unknown>).invalidated_review_types,
-            ['test']
+            ['refactor', 'test']
         );
         assert.deepEqual(
             (remediationArtifact.remediation_fix_classification as Record<string, unknown>).preserved_review_types,
-            ['code']
+            ['code', 'security']
         );
         assert.deepEqual(
             (remediationArtifact.remediation_scope as Record<string, unknown>).allowed_test_only_expansion_files,
