@@ -4,7 +4,10 @@ import {
     ALL_BUNDLE_NAMES,
     resolveBundleNameForTarget
 } from './constants';
-import { isPathInsideRoot as isCorePathInsideRoot } from './paths';
+import {
+    isPathInsideRoot as isCorePathInsideRoot,
+    isPathRealpathInsideRoot as isCorePathRealpathInsideRoot
+} from './paths';
 
 export interface ResolvePathOptions {
     allowMissing?: boolean;
@@ -104,39 +107,7 @@ export function isPathRealpathInsideRoot(
     rootPath: string,
     options: { allowMissing?: boolean } = {}
 ): boolean {
-    const resolvedRoot = path.resolve(rootPath);
-    const resolvedPath = path.resolve(pathValue);
-    if (!isPathInsideRoot(resolvedPath, resolvedRoot)) {
-        return false;
-    }
-    if (!fs.existsSync(resolvedRoot)) {
-        return options.allowMissing === true && !fs.existsSync(resolvedPath);
-    }
-    let rootRealPath: string;
-    try {
-        rootRealPath = fs.realpathSync(resolvedRoot);
-    } catch {
-        return false;
-    }
-    let probePath = resolvedPath;
-    while (!fs.existsSync(probePath)) {
-        if (options.allowMissing !== true) {
-            return false;
-        }
-        if (path.resolve(probePath) === resolvedRoot) {
-            return true;
-        }
-        const parentPath = path.dirname(probePath);
-        if (parentPath === probePath) {
-            return false;
-        }
-        probePath = parentPath;
-    }
-    try {
-        return isPathInsideRoot(fs.realpathSync(probePath), rootRealPath);
-    } catch {
-        return false;
-    }
+    return isCorePathRealpathInsideRoot(rootPath, pathValue, options);
 }
 
 /**
@@ -145,7 +116,7 @@ export function isPathRealpathInsideRoot(
  */
 export function resolvePathInsideRepo(pathValue: string, repoRoot: string, options: ResolvePathOptions = {}): string | null {
     const allowMissing = options.allowMissing || false;
-    const enforceInside = options.enforceInside || false;
+    const enforceInside = options.enforceInside ?? allowMissing;
     const text = String(pathValue).trim();
     if (!text) return null;
 
@@ -156,8 +127,11 @@ export function resolvePathInsideRepo(pathValue: string, repoRoot: string, optio
         resolved = path.resolve(repoRoot, text);
     }
 
-    if (enforceInside && !isPathInsideRoot(resolved, repoRoot)) {
-        throw new Error(`Path must stay inside repo root: ${resolved}`);
+    if (
+        enforceInside
+        && !isPathRealpathInsideRoot(resolved, repoRoot, { allowMissing })
+    ) {
+        throw new Error(`Path must resolve inside repo root without symlink or junction escapes: ${resolved}`);
     }
 
     if (!allowMissing && !fs.existsSync(resolved)) {

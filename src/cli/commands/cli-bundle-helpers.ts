@@ -1,7 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveBundleNameForTarget } from '../../core/constants';
-import { isPathInsideRoot } from '../../core/paths';
+import {
+    isPathInsideRoot,
+    isPathRealpathInsideRoot
+} from '../../core/paths';
 import {
     COMPILED_RUNTIME_DEPLOY_CANDIDATES,
     DEPLOY_ITEMS,
@@ -39,6 +42,12 @@ export function resolvePathInsideRoot(
     const fullPath = path.resolve(candidatePath);
     if (!isPathInsideRoot(rootPath, fullPath)) {
         throw new Error(`${label} must resolve inside target root '${rootPath}'. Resolved path: ${fullPath}`);
+    }
+    if (!isPathRealpathInsideRoot(rootPath, fullPath, { allowMissing })) {
+        throw new Error(
+            `${label} must resolve inside target root without symlink or junction escapes '${rootPath}'. ` +
+            `Resolved path: ${fullPath}`
+        );
     }
     if (!fs.existsSync(fullPath)) {
         if (allowMissing) return fullPath;

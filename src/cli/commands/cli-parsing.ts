@@ -12,6 +12,7 @@ import {
     normalizeAgentEntrypointToken as normalizeCommonAgentEntrypointToken
 } from '../../materialization/common';
 import { normalizeProviderId } from '../../core/provider-registry';
+import { validateParsedCliPathInputs } from '../../core/cli-path-input-policy';
 import { getAgentInitPromptPath, resolvePathInsideRoot } from './cli-bundle-helpers';
 
 type ParsedOptionValue = string | boolean | string[] | undefined;
@@ -101,6 +102,7 @@ export function parseOptions(
         }
     }
 
+    validateParsedCliPathInputs(definitions, options);
     return { options, positionals };
 }
 

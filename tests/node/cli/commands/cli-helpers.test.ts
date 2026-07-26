@@ -675,6 +675,41 @@ test('resolvePathInsideRoot throws for path escape', () => {
     }
 });
 
+test('replaced resolvePathInsideRoot rejects a directory symlink or junction escape', (t) => {
+    const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-link-root-'));
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-link-outside-'));
+    try {
+        const linkPath = path.join(targetRoot, 'linked');
+        try {
+            fs.symlinkSync(
+                outsideRoot,
+                linkPath,
+                process.platform === 'win32' ? 'junction' : 'dir'
+            );
+        } catch (error: unknown) {
+            const code = String((error as NodeJS.ErrnoException)?.code || '');
+            if (['EPERM', 'EACCES', 'ENOTSUP'].includes(code)) {
+                t.skip(`filesystem links unavailable: ${code}`);
+                return;
+            }
+            throw error;
+        }
+
+        assert.throws(
+            () => resolvePathInsideRoot(
+                targetRoot,
+                path.join('linked', 'answers.json'),
+                'AnswersPath',
+                { allowMissing: true }
+            ),
+            /without symlink or junction escapes/u
+        );
+    } finally {
+        fs.rmSync(targetRoot, { recursive: true, force: true });
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
+});
+
 test('resolvePathInsideRoot throws for empty path', () => {
     assert.throws(
         () => resolvePathInsideRoot('/tmp', '', 'TestPath'),
