@@ -6,7 +6,8 @@ import * as path from 'node:path';
 
 import {
     GIT_EOL_CHANGE_POLICY,
-    classifyGitChanges
+    classifyGitChanges,
+    selectGitChangeClassificationLayers
 } from '../../../src/core/git-change-classification';
 import { runGit } from '../../../src/core/git-helpers';
 
@@ -74,6 +75,32 @@ describe('Git change classification', () => {
         assert.deepEqual(result.unstagedFiles, ['tracked.txt']);
     });
 
+    it('projects canonical classifications by workflow layer without reclassifying content', () => {
+        const repoRoot = makeRepo();
+        fs.writeFileSync(path.join(repoRoot, 'tracked.txt'), 'alpha\r\nbeta\r\n', 'utf8');
+        runGit(repoRoot, ['add', 'tracked.txt']);
+        fs.writeFileSync(path.join(repoRoot, 'tracked.txt'), 'alpha\r\nchanged\r\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'new.txt'), 'new\n', 'utf8');
+
+        const complete = classifyGitChanges(repoRoot);
+        const stagedOnly = selectGitChangeClassificationLayers(complete, {
+            layers: ['staged'],
+            context: 'staged workflow scope'
+        });
+        const worktree = selectGitChangeClassificationLayers(complete, {
+            layers: ['unstaged', 'untracked'],
+            context: 'worktree workflow scope'
+        });
+
+        assert.deepEqual(stagedOnly.effectiveChangedFiles, ['tracked.txt']);
+        assert.deepEqual(stagedOnly.stagedFiles, ['tracked.txt']);
+        assert.deepEqual(stagedOnly.eolOnlyFiles, ['tracked.txt']);
+        assert.deepEqual(worktree.effectiveChangedFiles, ['new.txt', 'tracked.txt']);
+        assert.deepEqual(worktree.unstagedFiles, ['tracked.txt']);
+        assert.deepEqual(worktree.untrackedFiles, ['new.txt']);
+        assert.match(stagedOnly.audit.reason, /staged workflow scope selected 1 canonical Git layer change/);
+    });
+
     it('classifies mixed EOL and text edits as content changes', () => {
         const repoRoot = makeRepo();
         fs.writeFileSync(path.join(repoRoot, 'tracked.txt'), 'alpha\r\nchanged\r\n', 'utf8');
@@ -122,6 +149,24 @@ describe('Git change classification', () => {
         assert.equal(change?.contentClassification, 'content');
         assert.deepEqual(result.untrackedFiles, ['new.txt']);
         assert.deepEqual(result.effectiveChangedFiles, ['new.txt']);
+    });
+
+    it('adds an explicitly scoped ignored file without widening the default Git scope', () => {
+        const repoRoot = makeRepo();
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'ignored.txt\n', 'utf8');
+        runGit(repoRoot, ['add', '.gitignore']);
+        runGit(repoRoot, ['commit', '-m', 'ignore explicit fixture']);
+        fs.writeFileSync(path.join(repoRoot, 'ignored.txt'), 'task owned\n', 'utf8');
+
+        const automatic = classifyGitChanges(repoRoot);
+        const explicit = classifyGitChanges(repoRoot, {
+            explicitUntrackedPaths: ['nested/../ignored.txt', '../outside.txt']
+        });
+
+        assert.deepEqual(automatic.effectiveChangedFiles, []);
+        assert.deepEqual(explicit.effectiveChangedFiles, ['ignored.txt']);
+        assert.deepEqual(explicit.untrackedFiles, ['ignored.txt']);
+        assert.equal(explicit.changes[0]?.contentClassification, 'content');
     });
 
     it('respects core.autocrlf=true normalization that Git itself considers clean', () => {

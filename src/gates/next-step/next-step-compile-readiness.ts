@@ -34,11 +34,23 @@ import {
     onlyNeutralCloseoutDomainChanged
 } from './next-step-readiness-domain-scope';
 import { isPlainRecord } from '../../core/records';
+import {
+    normalizeGitChangeClassificationEvidence
+} from '../../core/git-change-classification';
 
 export interface CompileReadiness {
     ready: boolean;
     reason: string;
     recoveryGate?: 'classify-change';
+}
+
+function sameSortedStringList(left: readonly string[], right: readonly string[]): boolean {
+    if (left.length !== right.length) {
+        return false;
+    }
+    const sortedLeft = [...left].sort();
+    const sortedRight = [...right].sort();
+    return sortedLeft.every((entry, index) => entry === sortedRight[index]);
 }
 
 export function readCompileReadiness(
@@ -136,6 +148,15 @@ export function readCompileReadiness(
     const changedFiles = Array.isArray(evidence.scope_changed_files)
         ? evidence.scope_changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
+    const compileGitClassification = normalizeGitChangeClassificationEvidence(
+        evidence.scope_git_change_classification
+    );
+    if (evidence.scope_git_change_classification != null && !compileGitClassification) {
+        return {
+            ready: false,
+            reason: 'Compile scope canonical Git/EOL classification evidence is invalid; rerun compile-gate.'
+        };
+    }
     const scopeSha256 = String(evidence.scope_sha256 || '').trim();
     const scopeContentSha256 = String(evidence.scope_content_sha256 || '').trim().toLowerCase();
     const changedFilesSha256 = String(evidence.scope_changed_files_sha256 || '').trim();
@@ -160,6 +181,29 @@ export function readCompileReadiness(
         changedFiles,
         { noCache: true, readOnly: true }
     );
+    const currentGitClassification = normalizeGitChangeClassificationEvidence(
+        currentScope.git_change_classification
+    );
+    if (currentScope.git_change_classification != null && !currentGitClassification) {
+        return {
+            ready: false,
+            reason: 'Current workspace canonical Git/EOL classification evidence is invalid; rerun compile-gate.'
+        };
+    }
+    const currentChangedFiles = currentGitClassification
+        ? currentGitClassification.effective_changed_files
+        : currentScope.changed_files;
+    if (
+        (compileGitClassification
+            && !sameSortedStringList(compileGitClassification.effective_changed_files, changedFiles))
+        || (currentGitClassification
+            && !sameSortedStringList(currentGitClassification.effective_changed_files, currentScope.changed_files))
+    ) {
+        return {
+            ready: false,
+            reason: 'Compile scope canonical Git/EOL classification does not match its scope snapshot; rerun compile-gate.'
+        };
+    }
     if (
         currentScope.scope_sha256 !== scopeSha256
         || currentScope.changed_files_sha256 !== changedFilesSha256
@@ -170,7 +214,7 @@ export function readCompileReadiness(
                 repoRoot,
                 detectionSource,
                 includeUntracked: evidence.scope_include_untracked == null ? true : !!evidence.scope_include_untracked,
-                changedFiles: currentScope.changed_files
+                changedFiles: currentChangedFiles
             })
             : null;
         if (onlyNeutralCloseoutDomainChanged(expectedDomainScopeFingerprints, currentDomainScopeFingerprints)) {
@@ -275,4 +319,3 @@ function fileExists(filePath: string): boolean {
         return false;
     }
 }
-

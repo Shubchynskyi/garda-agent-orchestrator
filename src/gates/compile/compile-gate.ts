@@ -3,6 +3,13 @@ import * as path from 'node:path';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../core/constants';
 import { stringSha256, normalizePath, joinOrchestratorPath } from '../shared/helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
+import {
+    buildGitChangeClassificationEvidence,
+    classifyGitChanges,
+    normalizeGitRepoRelativePath,
+    selectGitChangeClassificationLayers,
+    type GitChangeLayer
+} from '../../core/git-change-classification';
 import { isGeneratedOrchestratorLockPath } from '../locks/generated-lock-paths';
 import { splitGeneratedRuntimeControlPlaneArtifacts } from '../shared/generated-runtime-artifacts';
 import { isOrchestratorSourceCheckout } from '../protected-control-plane/protected-control-plane';
@@ -485,6 +492,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         const snapshot = getSplitCheckpointWorkspaceSnapshot(repoRoot, source, explicitChangedFiles);
         return {
             ...snapshot,
+            git_change_classification: null,
             authorized_files: snapshot.changed_files,
             authorized_files_count: snapshot.changed_files_count,
             authorized_files_sha256: snapshot.changed_files_sha256
@@ -526,7 +534,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     }
 
     const allNormalizedExplicit = [...new Set(
-        (explicitChangedFiles || []).map((f: string) => normalizePath(f)).filter(Boolean)
+        (explicitChangedFiles || [])
+            .map((f: string) => normalizeGitRepoRelativePath(f))
+            .filter((f): f is string => f !== null)
     )]
         .filter((item: string) => !isIgnoredWorkspaceSnapshotPath(item))
         .sort();
@@ -536,7 +546,34 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     const changedFileStats: Record<string, { additions: number; deletions: number; changed_lines: number }> = {};
 
     if (source === 'explicit_changed_files') {
-        const changedFromDiff: string[] = [];
+        const selectedGitLayers: GitChangeLayer[] = [
+            'staged',
+            'unstaged',
+            ...(includeUntracked ? ['untracked' as const] : [])
+        ];
+        const completeGitClassification = classifyGitChanges(repoRoot, {
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+            explicitUntrackedPaths: includeUntracked ? normalizedExplicit : []
+        });
+        const explicitLayerClassification = selectGitChangeClassificationLayers(completeGitClassification, {
+            layers: selectedGitLayers,
+            paths: normalizedExplicit,
+            context: `workspace snapshot detection_source=${source}`
+        });
+        const canonicalSplit = splitGeneratedRuntimeControlPlaneArtifacts(
+            explicitLayerClassification.effectiveChangedFiles
+                .filter((item) => !isIgnoredWorkspaceSnapshotPath(item)),
+            generatedRuntimeSplitOptions
+        );
+        ignoredGeneratedRuntimeFiles.push(...canonicalSplit.ignoredGeneratedRuntimeFiles);
+        const normalizedChanged = [...new Set(canonicalSplit.reviewableFiles)].sort();
+        const normalizedChangedSet = new Set(normalizedChanged);
+        const gitChangeClassification = selectGitChangeClassificationLayers(completeGitClassification, {
+            layers: selectedGitLayers,
+            paths: normalizedChanged,
+            context: `workspace snapshot detection_source=${source}`
+        });
+
         let additionsTotal = 0, deletionsTotal = 0;
         if (normalizedExplicit.length > 0) {
             try {
@@ -545,9 +582,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
                     if (parts.length >= 3) {
                         const changedPath = normalizePath(extractNewPathFromNumstat(parts.slice(2).join('\t')));
                         if (!changedPath || isIgnoredWorkspaceSnapshotPath(changedPath)) continue;
+                        if (!normalizedChangedSet.has(changedPath)) continue;
                         const additions = /^\d+$/.test(parts[0]) ? parseInt(parts[0], 10) : 0;
                         const deletions = /^\d+$/.test(parts[1]) ? parseInt(parts[1], 10) : 0;
-                        changedFromDiff.push(changedPath);
                         additionsTotal += additions;
                         deletionsTotal += deletions;
                         changedFileStats[changedPath] = {
@@ -560,24 +597,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
             } catch { /* best effort */ }
         }
 
-        const trackedExplicit = new Set<string>();
-        if (normalizedExplicit.length > 0) {
-            try {
-                for (const item of gitLines(['ls-files', '--cached', '--', ...normalizedExplicit], 'Failed tracked-file lookup.')) {
-                    const normalized = normalizePath(item);
-                    if (normalized) trackedExplicit.add(normalized);
-                }
-            } catch { /* best effort */ }
-        }
-
-        const changedPathSet = new Set(changedFromDiff);
         if (includeUntracked) {
-            for (const item of normalizedExplicit) {
-                if (changedPathSet.has(item) || trackedExplicit.has(item)) continue;
+            for (const item of gitChangeClassification.untrackedFiles) {
                 const additions = countWorktreeFileLines(repoRoot, item);
-                if (additions === 0 && getSafeWorktreePathState(repoRoot, item).status !== 'file') continue;
-                changedFromDiff.push(item);
-                changedPathSet.add(item);
                 additionsTotal += additions;
                 changedFileStats[item] = {
                     additions,
@@ -587,7 +609,6 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
             }
         }
 
-        const normalizedChanged = [...new Set(changedFromDiff)].sort();
         const changedLinesTotal = additionsTotal + deletionsTotal;
         const filesFingerprint = stringSha256(normalizedChanged.join('\n'));
         const authorizedFilesFingerprint = stringSha256(normalizedExplicit.join('\n'));
@@ -599,12 +620,13 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
 
         return {
             detection_source: source, use_staged: false, include_untracked: !!includeUntracked,
+            git_change_classification: buildGitChangeClassificationEvidence(gitChangeClassification),
             authorized_files: normalizedExplicit,
             authorized_files_count: normalizedExplicit.length,
             authorized_files_sha256: authorizedFilesFingerprint,
             changed_files: normalizedChanged, changed_files_count: normalizedChanged.length,
-            ignored_generated_runtime_files: ignoredGeneratedRuntimeFiles,
-            ignored_generated_runtime_files_count: ignoredGeneratedRuntimeFiles.length,
+            ignored_generated_runtime_files: [...new Set(ignoredGeneratedRuntimeFiles)].sort(),
+            ignored_generated_runtime_files_count: new Set(ignoredGeneratedRuntimeFiles).size,
             additions_total: additionsTotal, deletions_total: deletionsTotal,
             changed_lines_total: changedLinesTotal,
             changed_file_stats: changedFileStats,
@@ -614,12 +636,36 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         };
     }
 
+    const selectedGitLayers: GitChangeLayer[] = useStaged
+        ? ['staged', ...(includeUntracked ? ['untracked' as const] : [])]
+        : ['staged', 'unstaged', ...(includeUntracked ? ['untracked' as const] : [])];
+    const completeGitClassification = classifyGitChanges(repoRoot, {
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS
+    });
+    const layerClassification = selectGitChangeClassificationLayers(completeGitClassification, {
+        layers: selectedGitLayers,
+        context: `workspace snapshot detection_source=${source}`
+    });
+    const canonicalCandidates = layerClassification.effectiveChangedFiles
+        .filter((item) => !isIgnoredWorkspaceSnapshotPath(item));
+    const canonicalSplit = splitGeneratedRuntimeControlPlaneArtifacts(
+        canonicalCandidates,
+        generatedRuntimeSplitOptions
+    );
+    ignoredGeneratedRuntimeFiles.push(...canonicalSplit.ignoredGeneratedRuntimeFiles);
+    const normalizedChanged = [...new Set(canonicalSplit.reviewableFiles)].sort();
+    const normalizedChangedSet = new Set(normalizedChanged);
+    const gitChangeClassification = selectGitChangeClassificationLayers(completeGitClassification, {
+        layers: selectedGitLayers,
+        paths: normalizedChanged,
+        context: `workspace snapshot detection_source=${source}`
+    });
+
     const diffArgs = ['diff', '--numstat', '--diff-filter=ACDMRTUXB'];
     diffArgs.push(useStaged ? '--cached' : 'HEAD');
     const numstatOutput = gitLines(diffArgs, 'Failed to collect changed files snapshot.');
 
     // Extract both file names and line counts from the single numstat call
-    const changedFromDiff: string[] = [];
     const diffFileStats: Record<string, { additions: number; deletions: number; changed_lines: number }> = {};
     let additionsTotal = 0, deletionsTotal = 0;
     for (const row of numstatOutput) {
@@ -628,11 +674,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         const filePath = extractNewPathFromNumstat(parts.slice(2).join('\t'));
         const normalizedFilePath = normalizePath(filePath);
         if (!normalizedFilePath || isIgnoredWorkspaceSnapshotPath(normalizedFilePath)) continue;
-        if (splitGeneratedRuntimeControlPlaneArtifacts([normalizedFilePath], generatedRuntimeSplitOptions).ignoredGeneratedRuntimeFiles.length > 0) {
-            ignoredGeneratedRuntimeFiles.push(normalizedFilePath);
-            continue;
-        }
-        changedFromDiff.push(normalizedFilePath);
+        if (!normalizedChangedSet.has(normalizedFilePath)) continue;
         const additions = /^\d+$/.test(parts[0]) ? parseInt(parts[0], 10) : 0;
         const deletions = /^\d+$/.test(parts[1]) ? parseInt(parts[1], 10) : 0;
         additionsTotal += additions;
@@ -644,24 +686,8 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         };
     }
 
-    let untracked: string[] = [];
     if (includeUntracked) {
-        untracked = gitLines(['ls-files', '--others', '--exclude-standard'], 'Failed to collect untracked files snapshot.')
-            .map((item: string) => normalizePath(item))
-            .filter((item: string) => !!item && !isIgnoredWorkspaceSnapshotPath(item));
-        const untrackedSplit = splitGeneratedRuntimeControlPlaneArtifacts(untracked, generatedRuntimeSplitOptions);
-        untracked = untrackedSplit.reviewableFiles;
-        ignoredGeneratedRuntimeFiles.push(...untrackedSplit.ignoredGeneratedRuntimeFiles);
-    }
-
-    const normalizedChanged = [...new Set(
-        [...changedFromDiff, ...untracked]
-            .map((item: string) => normalizePath(item))
-            .filter((item: string) => !!item && !isIgnoredWorkspaceSnapshotPath(item))
-    )].sort();
-
-    if (includeUntracked) {
-        for (const item of untracked) {
+        for (const item of gitChangeClassification.untrackedFiles) {
             const additions = countWorktreeFileLines(repoRoot, item);
             additionsTotal += additions;
             diffFileStats[item] = {
@@ -681,6 +707,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
 
     return {
         detection_source: source, use_staged: useStaged, include_untracked: !!includeUntracked,
+        git_change_classification: buildGitChangeClassificationEvidence(gitChangeClassification),
         authorized_files: normalizedChanged,
         authorized_files_count: normalizedChanged.length,
         authorized_files_sha256: filesFingerprint,

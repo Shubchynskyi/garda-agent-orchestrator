@@ -62,6 +62,13 @@ export interface GitChangeClassificationResult {
 
 export interface GitChangeClassificationOptions {
     timeoutMs?: number;
+    explicitUntrackedPaths?: readonly string[];
+}
+
+export interface GitChangeLayerSelectionOptions {
+    layers: readonly GitChangeLayer[];
+    paths?: readonly string[];
+    context?: string;
 }
 
 export interface GitChangeClassificationEvidence {
@@ -178,6 +185,27 @@ function literalPathspec(filePath: string): string {
 
 function uniqueSorted(values: Iterable<string>): string[] {
     return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+export function normalizeGitRepoRelativePath(filePath: string): string | null {
+    const normalizedInput = String(filePath || '')
+        .replace(/\\/gu, '/')
+        .replace(/^\.\/+/u, '')
+        .replace(/\/+/gu, '/')
+        .trim();
+    const normalized = path.posix.normalize(normalizedInput);
+    if (
+        !normalized
+        || normalized === '.'
+        || normalized.includes('\0')
+        || normalized === '..'
+        || normalized.startsWith('../')
+        || path.posix.isAbsolute(normalized)
+        || path.win32.isAbsolute(normalized)
+    ) {
+        return null;
+    }
+    return normalized;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -496,6 +524,41 @@ function readConfig(repoRoot: string, key: string, budget: GitCommandBudget): st
     }).trim() || 'unset';
 }
 
+function classifyUntrackedPath(repoRoot: string, filePath: string): GitLayerChangeClassification {
+    return {
+        path: filePath,
+        previousPath: null,
+        layer: 'untracked',
+        status: '?',
+        changeKind: 'untracked',
+        includedInEffectiveScope: true,
+        ...classifySnapshots(
+            { kind: 'missing', content: null },
+            readWorktreeSnapshot(repoRoot, filePath),
+            'untracked'
+        )
+    };
+}
+
+function readTrackedExplicitPaths(
+    repoRoot: string,
+    explicitPaths: readonly string[],
+    budget: GitCommandBudget
+): Set<string> {
+    if (explicitPaths.length === 0) {
+        return new Set();
+    }
+    const output = runGitBinary(
+        repoRoot,
+        ['ls-files', '--cached', '-z', '--', ...explicitPaths.map(literalPathspec)],
+        {
+            maxBuffer: GIT_STATUS_MAX_BUFFER_BYTES,
+            timeoutMs: remainingGitCommandTimeoutMs(budget)
+        }
+    );
+    return new Set(output.toString('utf8').split('\0').filter(Boolean));
+}
+
 export function classifyGitChanges(
     repoRoot: string,
     options: GitChangeClassificationOptions = {}
@@ -506,8 +569,23 @@ export function classifyGitChanges(
         .map((change) => classifyLayerChange(repoRoot, 'staged', change, budget));
     const unstaged = porcelain.unstaged
         .map((change) => classifyLayerChange(repoRoot, 'unstaged', change, budget));
-    const untracked = porcelain.untracked.map((filePath): GitLayerChangeClassification => {
-        return {
+    const untracked = porcelain.untracked.map((filePath) => classifyUntrackedPath(repoRoot, filePath));
+    const explicitUntrackedPaths = uniqueSorted(
+        (options.explicitUntrackedPaths || [])
+            .map(normalizeGitRepoRelativePath)
+            .filter((filePath): filePath is string => filePath !== null)
+    );
+    const trackedExplicitPaths = readTrackedExplicitPaths(repoRoot, explicitUntrackedPaths, budget);
+    const porcelainUntrackedPaths = new Set(porcelain.untracked);
+    for (const filePath of explicitUntrackedPaths) {
+        if (trackedExplicitPaths.has(filePath) || porcelainUntrackedPaths.has(filePath)) {
+            continue;
+        }
+        const worktree = readWorktreeSnapshot(repoRoot, filePath);
+        if (worktree.kind !== 'file') {
+            continue;
+        }
+        untracked.push({
             path: filePath,
             previousPath: null,
             layer: 'untracked',
@@ -516,11 +594,11 @@ export function classifyGitChanges(
             includedInEffectiveScope: true,
             ...classifySnapshots(
                 { kind: 'missing', content: null },
-                readWorktreeSnapshot(repoRoot, filePath),
+                worktree,
                 'untracked'
             )
-        };
-    });
+        });
+    }
     const changes = [...staged, ...unstaged, ...untracked].sort((left, right) =>
         left.path.localeCompare(right.path) || LAYER_ORDER[left.layer] - LAYER_ORDER[right.layer]
     );
@@ -538,6 +616,45 @@ export function classifyGitChanges(
             reason: changes.length > 0
                 ? `Git porcelain reported ${changes.length} staged, unstaged, or untracked layer change(s); all remain in effective dirty scope.`
                 : `Git porcelain reported no effective changes under core.autocrlf=${gitConfig.autocrlf}, core.eol=${gitConfig.eol}, core.safecrlf=${gitConfig.safecrlf}.`
+        },
+        changes,
+        effectiveChangedFiles: uniqueSorted(changes.map((change) => change.path)),
+        stagedFiles: uniqueSorted(staged.map((change) => change.path)),
+        unstagedFiles: uniqueSorted(unstaged.map((change) => change.path)),
+        untrackedFiles: uniqueSorted(untracked.map((change) => change.path)),
+        eolOnlyFiles: uniqueSorted(
+            changes
+                .filter((change) => change.contentClassification === 'eol_only')
+                .map((change) => change.path)
+        )
+    };
+}
+
+export function selectGitChangeClassificationLayers(
+    classification: GitChangeClassificationResult,
+    options: GitChangeLayerSelectionOptions
+): GitChangeClassificationResult {
+    const selectedLayers = new Set(options.layers);
+    const selectedPaths = options.paths ? new Set(options.paths) : null;
+    const changes = classification.changes.filter((change) =>
+        selectedLayers.has(change.layer) && (!selectedPaths || selectedPaths.has(change.path))
+    );
+    const staged = changes.filter((change) => change.layer === 'staged');
+    const unstaged = changes.filter((change) => change.layer === 'unstaged');
+    const untracked = changes.filter((change) => change.layer === 'untracked');
+    const layerSummary = [...selectedLayers].sort(
+        (left, right) => LAYER_ORDER[left] - LAYER_ORDER[right]
+    ).join(', ') || 'none';
+    const context = String(options.context || 'selected Git scope').trim() || 'selected Git scope';
+
+    return {
+        policy: classification.policy,
+        gitConfig: { ...classification.gitConfig },
+        audit: {
+            effectiveDirty: changes.length > 0,
+            reason: changes.length > 0
+                ? `${context} selected ${changes.length} canonical Git layer change(s) from layers ${layerSummary}; all remain in effective dirty scope.`
+                : `${context} selected no canonical Git changes from layers ${layerSummary} under core.autocrlf=${classification.gitConfig.autocrlf}, core.eol=${classification.gitConfig.eol}, core.safecrlf=${classification.gitConfig.safecrlf}.`
         },
         changes,
         effectiveChangedFiles: uniqueSorted(changes.map((change) => change.path)),

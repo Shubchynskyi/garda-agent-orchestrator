@@ -1,10 +1,12 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
+import * as gitChangeClassification from '../../../../src/core/git-change-classification';
+import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate';
 import {
     computeSnapshotFingerprint,
     getWorkspaceSnapshotCached,
@@ -208,30 +210,11 @@ describe('gates/workspace-snapshot-cache', () => {
     describe('readSnapshotCache / writeSnapshotCache', () => {
         it('round-trips a valid cache entry', () => {
             const cachePath = path.join(tempDir, 'cache.json');
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
             const entry: WorkspaceSnapshotCacheEntry = {
-                cache_version: 3,
+                cache_version: 4,
                 fingerprint: 'abc123',
-                snapshot: {
-                    detection_source: 'git_auto',
-                    use_staged: false,
-                    include_untracked: true,
-                    authorized_files: ['file.ts'],
-                    authorized_files_count: 1,
-                    authorized_files_sha256: 'deadbeef',
-                    changed_files: ['file.ts'],
-                    changed_files_count: 1,
-                    ignored_generated_runtime_files: [],
-                    ignored_generated_runtime_files_count: 0,
-                    additions_total: 1,
-                    deletions_total: 0,
-                    changed_lines_total: 1,
-                    changed_file_stats: {
-                        'file.ts': { additions: 1, deletions: 0, changed_lines: 1 }
-                    },
-                    changed_files_sha256: 'deadbeef',
-                    scope_content_sha256: 'feedface',
-                    scope_sha256: 'cafebabe'
-                },
+                snapshot: getWorkspaceSnapshot(repoRoot, 'git_auto', true, []),
                 timestamp_utc: new Date().toISOString(),
                 params: {
                     repo_root: '/repo',
@@ -272,7 +255,7 @@ describe('gates/workspace-snapshot-cache', () => {
         it('returns null for current-version snapshots without changed file stats', () => {
             const cachePath = path.join(tempDir, 'missing-stats.json');
             fs.writeFileSync(cachePath, JSON.stringify({
-                cache_version: 3,
+                cache_version: 4,
                 fingerprint: 'abc123',
                 snapshot: {
                     detection_source: 'git_auto',
@@ -461,9 +444,10 @@ describe('gates/workspace-snapshot-cache', () => {
 
         it('handles explicit_changed_files detection source', () => {
             fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
-            const result = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', false, ['file.ts']);
+            const result = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', false, ['nested/../file.ts']);
             assert.equal(result.cache_hit, false);
             assert.ok(result.changed_files.includes('file.ts'));
+            assert.ok((result.changed_file_stats['file.ts']?.changed_lines || 0) > 0);
             assert.equal(result.detection_source, 'explicit_changed_files');
         });
 
@@ -549,6 +533,22 @@ describe('gates/workspace-snapshot-cache', () => {
             assert.equal(fromCache.changed_lines_total, fresh.changed_lines_total);
             assert.equal(fromCache.scope_sha256, fresh.scope_sha256);
             assert.equal(fromCache.changed_files_sha256, fresh.changed_files_sha256);
+        });
+
+        it('does not rerun the full canonical classifier on a cache hit', () => {
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+            const first = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
+            assert.equal(first.cache_hit, false);
+
+            mock.method(gitChangeClassification, 'classifyGitChanges', () => {
+                throw new Error('full classifier must not run while validating a cache hit');
+            });
+            try {
+                const second = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
+                assert.equal(second.cache_hit, true);
+            } finally {
+                mock.restoreAll();
+            }
         });
     });
 
@@ -680,7 +680,7 @@ describe('gates/workspace-snapshot-cache', () => {
             fs.renameSync(path.join(repoRoot, '.git'), path.join(repoRoot, '.git-offline'));
             assert.throws(
                 () => getWorkspaceSnapshotCached(repoRoot, 'git_staged_plus_untracked', true, []),
-                /Unable to compute workspace snapshot cache fingerprint: git -C .* status --porcelain=v1 --untracked-files=all/
+                /git --no-pager status .* failed/
             );
         });
 

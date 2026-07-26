@@ -4,9 +4,10 @@ import { writeFileAtomically } from '../../core/filesystem';
 import { isPathRealpathInsideRoot, stringSha256, joinOrchestratorPath, normalizePath } from '../shared/helpers';
 import { getWorkspaceSnapshot } from '../compile/compile-gate';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
+import { normalizeGitRepoRelativePath } from '../../core/git-change-classification';
 import { getSafeWorktreePathState } from './worktree-path-state';
 
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 const CACHE_RELATIVE_PATH = path.join('runtime', 'cache', 'workspace-snapshot.json');
 
 export type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;
@@ -34,6 +35,14 @@ export interface WorkspaceSnapshotCacheOptions {
     noCache?: boolean;
     /** Skip writing the cache file after a fresh computation. Default: false. */
     readOnly?: boolean;
+}
+
+function normalizeExplicitChangedFiles(explicitChangedFiles: string[]): string[] {
+    return [...new Set(
+        (explicitChangedFiles || [])
+            .map((filePath) => normalizeGitRepoRelativePath(filePath))
+            .filter((filePath): filePath is string => filePath !== null)
+    )].sort();
 }
 
 /**
@@ -91,25 +100,37 @@ function computeParamsHash(
     includeUntracked: boolean,
     explicitChangedFiles: string[]
 ): string {
-    const normalizedExplicit = [...new Set(
-        (explicitChangedFiles || []).map((f: string) => normalizePath(f)).filter(Boolean)
-    )].sort();
+    const normalizedExplicit = normalizeExplicitChangedFiles(explicitChangedFiles);
     const key = `${path.resolve(repoRoot)}|${detectionSource}|${includeUntracked}|${normalizedExplicit.join(',')}`;
     return stringSha256(key) || '';
 }
 
+interface GitFingerprintStatusEntry {
+    statusCode: string;
+    path: string;
+    previousPath: string | null;
+    untracked: boolean;
+}
+
 /**
- * Read git porcelain status lines for the repo.
- * Throws on probe failure so cache fingerprinting never treats an unreadable
- * working tree as an empty working tree and reuses stale snapshots.
+ * Read only the porcelain candidates required for cache invalidation.
+ * This intentionally avoids the canonical content classifier: a cache hit
+ * must not pay the full snapshot-discovery cost that the cache exists to skip.
  */
-function readGitStatusLines(repoRoot: string, includeUntracked: boolean): string[] {
+function readGitFingerprintStatusEntries(
+    repoRoot: string,
+    includeUntracked: boolean
+): GitFingerprintStatusEntry[] {
     const args = [
         '-C',
         String(repoRoot),
+        '--no-pager',
         'status',
         '--porcelain=v1',
-        `--untracked-files=${includeUntracked ? 'all' : 'no'}`
+        '-z',
+        `--untracked-files=${includeUntracked ? 'all' : 'no'}`,
+        '--ignore-submodules=none',
+        '--renames'
     ];
     const result = spawnSyncWithTimeout('git', args, {
         encoding: 'utf8',
@@ -120,52 +141,37 @@ function readGitStatusLines(repoRoot: string, includeUntracked: boolean): string
     if (result.status !== 0 || result.timedOut || result.error) {
         throw new Error(formatGitFingerprintProbeFailure(repoRoot, args, result));
     }
-    return String(result.stdout || '')
-        .split('\n')
-        .map((line: string) => line.trimEnd())
-        .filter(Boolean);
-}
 
-interface GitStatusEntry {
-    statusCode: string;
-    path: string;
-    originalPath: string | null;
-    untracked: boolean;
-}
-
-/**
- * Parse a porcelain-v1 line into a compact status entry.
- * The parser is intentionally conservative; unparsable lines are ignored.
- */
-function parseGitStatusLine(line: string): GitStatusEntry | null {
-    if (!line) return null;
-    if (line.startsWith('?? ')) {
-        const untrackedPath = normalizePath(line.slice(3));
-        if (!untrackedPath) return null;
-        return {
-            statusCode: '??',
-            path: untrackedPath,
-            originalPath: null,
-            untracked: true
-        };
+    const fields = String(result.stdout || '').split('\0');
+    const entries: GitFingerprintStatusEntry[] = [];
+    let index = 0;
+    while (index < fields.length) {
+        const record = String(fields[index++] || '');
+        if (!record) continue;
+        if (record.length < 4 || record.charAt(2) !== ' ') {
+            throw new Error('Unable to compute workspace snapshot cache fingerprint: malformed git porcelain record.');
+        }
+        const xStatus = record.charAt(0);
+        const yStatus = record.charAt(1);
+        const currentPath = normalizeGitRepoRelativePath(record.slice(3));
+        if (!currentPath) {
+            throw new Error('Unable to compute workspace snapshot cache fingerprint: git porcelain path is invalid.');
+        }
+        const renameOrCopy = /[RC]/u.test(xStatus) || /[RC]/u.test(yStatus);
+        const previousPath = renameOrCopy
+            ? normalizeGitRepoRelativePath(String(fields[index++] || ''))
+            : null;
+        if (renameOrCopy && !previousPath) {
+            throw new Error('Unable to compute workspace snapshot cache fingerprint: git porcelain rename source is invalid.');
+        }
+        entries.push({
+            statusCode: `${xStatus}${yStatus}`,
+            path: currentPath,
+            previousPath,
+            untracked: xStatus === '?' && yStatus === '?'
+        });
     }
-    if (line.length < 4) return null;
-
-    const statusCode = `${line[0] || ' '}${line[1] || ' '}`;
-    const payload = line.slice(3).trim();
-    if (!payload) return null;
-
-    const renameMatch = /^(.*) -> (.*)$/.exec(payload);
-    const originalPath = renameMatch ? normalizePath(renameMatch[1]) : null;
-    const currentPath = normalizePath(renameMatch ? renameMatch[2] : payload);
-    if (!currentPath) return null;
-
-    return {
-        statusCode,
-        path: currentPath,
-        originalPath,
-        untracked: false
-    };
+    return entries;
 }
 
 function resolveSnapshotCacheRepoRelativePath(repoRoot: string): string {
@@ -238,12 +244,13 @@ function buildPathStateToken(repoRoot: string, relativePath: string, repoRealPat
 }
 
 function formatGitFingerprintProbeFailure(repoRoot: string, args: string[], result: ReturnType<typeof spawnSyncWithTimeout>): string {
+    const displayArgs = args[0] === '-C' ? args.slice(2) : args;
     const reason = result.timedOut
         ? `timed out after ${DEFAULT_GIT_TIMEOUT_MS}ms`
         : result.error
             ? String(result.error)
             : String(result.stderr || result.stdout || `exit status ${result.status}`).trim();
-    return `Unable to compute workspace snapshot cache fingerprint: git ${args.join(' ')} failed in '${normalizePath(repoRoot)}' (${reason}).`;
+    return `Unable to compute workspace snapshot cache fingerprint: git ${displayArgs.join(' ')} failed in '${normalizePath(repoRoot)}' (${reason}).`;
 }
 
 function readGitCachedRawDiff(repoRoot: string): string {
@@ -286,17 +293,6 @@ export function parseGitCachedRawDiffDeletedPaths(repoRoot: string, rawDiff: str
     return [...deletedPaths].sort();
 }
 
-function buildUntrackedFingerprintDescriptors(repoRoot: string, repoRealPath: string | null): string[] {
-    const descriptors: string[] = [];
-    for (const line of readGitStatusLines(repoRoot, true)) {
-        const entry = parseGitStatusLine(line);
-        if (!entry || !entry.untracked) continue;
-        if (isInternalSnapshotCachePath(repoRoot, entry.path)) continue;
-        descriptors.push(`U|${entry.path}|${buildPathStateToken(repoRoot, entry.path, repoRealPath)}`);
-    }
-    return descriptors;
-}
-
 function buildGitStatusFingerprintHash(
     repoRoot: string,
     detectionSource: string,
@@ -305,41 +301,43 @@ function buildGitStatusFingerprintHash(
     const normalizedSource = (detectionSource || 'git_auto').trim().toLowerCase();
     const stagedOnly = normalizedSource === 'git_staged_only' || normalizedSource === 'git_staged_plus_untracked';
     const repoRealPath = readRepoRealPath(repoRoot);
+    const descriptors: string[] = [];
+    let hasStagedChanges = false;
 
-    if (stagedOnly) {
-        const descriptors = includeUntracked
-            ? buildUntrackedFingerprintDescriptors(repoRoot, repoRealPath)
-            : [];
+    for (const entry of readGitFingerprintStatusEntries(repoRoot, includeUntracked)) {
+        if (
+            isInternalSnapshotCachePath(repoRoot, entry.path)
+            || isInternalSnapshotCachePath(repoRoot, entry.previousPath)
+        ) {
+            continue;
+        }
+
+        if (entry.untracked) {
+            if (includeUntracked) {
+                descriptors.push(`U|${entry.path}|${buildPathStateToken(repoRoot, entry.path, repoRealPath)}`);
+            }
+            continue;
+        }
+
+        const indexStatus = entry.statusCode.charAt(0) || ' ';
+        const worktreeStatus = entry.statusCode.charAt(1) || ' ';
+        if (indexStatus !== ' ' && indexStatus !== '?') {
+            hasStagedChanges = true;
+            descriptors.push(`S|${indexStatus}|${entry.previousPath || ''}|${entry.path}`);
+        }
+        if (!stagedOnly && worktreeStatus !== ' ' && worktreeStatus !== '?') {
+            descriptors.push(
+                `W|${worktreeStatus}|${entry.previousPath || ''}|${entry.path}|${buildPathStateToken(repoRoot, entry.path, repoRealPath)}`
+            );
+        }
+    }
+
+    if (stagedOnly || hasStagedChanges) {
         const cachedRawDiff = readGitCachedRawDiff(repoRoot);
         descriptors.unshift(cachedRawDiff);
         for (const deletedPath of parseGitCachedRawDiffDeletedPaths(repoRoot, cachedRawDiff)) {
             descriptors.push(`D|${deletedPath}|${buildPathStateToken(repoRoot, deletedPath, repoRealPath)}`);
         }
-        return stringSha256(descriptors.join('\n')) || '';
-    }
-
-    const descriptors: string[] = [];
-
-    for (const line of readGitStatusLines(repoRoot, includeUntracked)) {
-        const entry = parseGitStatusLine(line);
-        if (!entry) continue;
-        if (isInternalSnapshotCachePath(repoRoot, entry.path) || isInternalSnapshotCachePath(repoRoot, entry.originalPath)) {
-            continue;
-        }
-
-        if (entry.untracked) {
-            if (!includeUntracked) continue;
-            descriptors.push(`U|${entry.path}|${buildPathStateToken(repoRoot, entry.path, repoRealPath)}`);
-            continue;
-        }
-
-        const indexStatus = entry.statusCode[0] || ' ';
-        const worktreeStatus = entry.statusCode[1] || ' ';
-
-        if (indexStatus === ' ' && worktreeStatus === ' ') continue;
-        descriptors.push(
-            `W|${entry.statusCode}|${entry.originalPath || ''}|${entry.path}|${buildPathStateToken(repoRoot, entry.path, repoRealPath)}`
-        );
     }
 
     return stringSha256(descriptors.join('\n')) || '';
@@ -347,9 +345,7 @@ function buildGitStatusFingerprintHash(
 
 function buildExplicitPathFingerprintHash(repoRoot: string, explicitChangedFiles: string[]): string {
     const repoRealPath = readRepoRealPath(repoRoot);
-    const normalizedExplicit = [...new Set(
-        (explicitChangedFiles || []).map((filePath: string) => normalizePath(filePath)).filter(Boolean)
-    )]
+    const normalizedExplicit = normalizeExplicitChangedFiles(explicitChangedFiles)
         .filter((relativePath: string) => !isInternalSnapshotCachePath(repoRoot, relativePath))
         .sort();
 
@@ -504,9 +500,7 @@ export function getWorkspaceSnapshotCached(
     const fresh = getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, explicitChangedFiles);
 
     if (!options.readOnly && cachePathSafe) {
-        const normalizedExplicit = [...new Set(
-            (explicitChangedFiles || []).map((f: string) => normalizePath(f)).filter(Boolean)
-        )].sort();
+        const normalizedExplicit = normalizeExplicitChangedFiles(explicitChangedFiles);
 
         const entry: WorkspaceSnapshotCacheEntry = {
             cache_version: CACHE_VERSION,

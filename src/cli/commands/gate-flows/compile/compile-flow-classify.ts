@@ -429,6 +429,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     });
     (result as unknown as Record<string, unknown>).authorized_files = authorizedFiles;
     result.changed_files = workspaceSnapshot.changed_files;
+    result.git_change_classification = workspaceSnapshot.git_change_classification;
     (result.metrics as unknown as Record<string, unknown>).authorized_files_count = authorizedFiles.length;
     (result.metrics as unknown as Record<string, unknown>).authorized_files_sha256 = workspaceSnapshot.authorized_files_sha256;
     result.metrics.changed_files_count = workspaceSnapshot.changed_files_count;

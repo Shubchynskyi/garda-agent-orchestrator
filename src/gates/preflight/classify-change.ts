@@ -202,6 +202,7 @@ export interface ClassifyChangeResult {
     };
     workspace_hygiene_warnings: string[];
     changed_files: string[];
+    git_change_classification?: unknown;
     task_id?: string;
     isolation_mode_violation?: string;
     profile_selection?: unknown;

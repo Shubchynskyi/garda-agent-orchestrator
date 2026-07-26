@@ -33,6 +33,9 @@ import {
     buildScopeContentFingerprint
 } from '../compile/compile-gate';
 import {
+    normalizeGitChangeClassificationEvidence
+} from '../../core/git-change-classification';
+import {
     buildDocsOnlyDeltaReadiness,
     describePathList,
     getDocImpactDeclaredDocsUpdated,
@@ -158,11 +161,19 @@ export function readPreflightWorkspaceReadiness(
     const dirtyWorkspaceBaselineFileHashes = options.dirtyWorkspaceBaselineFileHashes || {};
     const failedReviewType = String(options.failedReviewType || '').trim();
     const hasActualChangedFiles = Array.isArray(metrics.actual_changed_files);
-    const expectedActualChangedFiles = hasActualChangedFiles
+    const legacyExpectedActualChangedFiles = hasActualChangedFiles
         ? [...new Set((metrics.actual_changed_files as unknown[])
             .map((entry) => normalizePath(String(entry || '')))
             .filter(Boolean))].sort()
         : changedFiles;
+    const preflightGitClassification = normalizeGitChangeClassificationEvidence(
+        preflight.git_change_classification
+    );
+    const preflightGitClassificationInvalid = preflight.git_change_classification != null
+        && !preflightGitClassification;
+    const expectedActualChangedFiles = preflightGitClassification
+        ? preflightGitClassification.effective_changed_files
+        : legacyExpectedActualChangedFiles;
     const expectedActualChangedFilesSha256 = typeof metrics.actual_changed_files_sha256 === 'string'
         ? metrics.actual_changed_files_sha256.trim().toLowerCase()
         : stringSha256(expectedActualChangedFiles.join('\n'));
@@ -179,9 +190,17 @@ export function readPreflightWorkspaceReadiness(
         authorizedFiles,
         { noCache: true, readOnly: true }
     );
-    const currentScopeFiles = Array.isArray(currentScope.changed_files)
+    const currentScopeGitClassification = normalizeGitChangeClassificationEvidence(
+        currentScope.git_change_classification
+    );
+    const currentScopeGitClassificationInvalid = currentScope.git_change_classification != null
+        && !currentScopeGitClassification;
+    const snapshotChangedFiles = Array.isArray(currentScope.changed_files)
         ? currentScope.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
+    const currentScopeFiles = currentScopeGitClassification
+        ? currentScopeGitClassification.effective_changed_files
+        : snapshotChangedFiles;
     const currentScopeFileSet = new Set(currentScopeFiles);
     const ignoredWorkflowConfigPreflightFiles = changedFiles.filter((entry) => (
         isWorkflowConfigControlPlanePath(entry) && !currentScopeFileSet.has(entry)
@@ -199,6 +218,31 @@ export function readPreflightWorkspaceReadiness(
         ? currentScope.changed_lines_total
         : expectedChangedLinesTotal;
     const violations: string[] = [];
+    if (preflightGitClassificationInvalid) {
+        violations.push('preflight canonical Git/EOL classification evidence is invalid');
+    }
+    if (currentScopeGitClassificationInvalid) {
+        violations.push('current workspace snapshot canonical Git/EOL classification evidence is invalid');
+    }
+    if (
+        preflightGitClassification
+        && (
+            !sameSortedStringList(preflightGitClassification.effective_changed_files, changedFiles)
+            || !sameSortedStringList(preflightGitClassification.effective_changed_files, legacyExpectedActualChangedFiles)
+        )
+    ) {
+        violations.push(
+            'preflight canonical Git/EOL classification does not match its changed_files and metrics.actual_changed_files scope'
+        );
+    }
+    if (
+        currentScopeGitClassification
+        && !sameSortedStringList(currentScopeGitClassification.effective_changed_files, snapshotChangedFiles)
+    ) {
+        violations.push(
+            'current workspace snapshot canonical Git/EOL classification does not match its changed_files scope'
+        );
+    }
     if (currentScope.changed_files_sha256 !== expectedComparableChangedFilesSha256) {
         const expectedSet = new Set(expectedActualChangedFiles);
         const currentSet = new Set(currentScopeFiles);

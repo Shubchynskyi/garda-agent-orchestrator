@@ -522,6 +522,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         scope_changed_files_sha256: workspaceSnapshot ? workspaceSnapshot.changed_files_sha256 : null,
         scope_content_sha256: workspaceSnapshot ? workspaceSnapshot.scope_content_sha256 : null,
         scope_sha256: workspaceSnapshot ? workspaceSnapshot.scope_sha256 : null,
+        scope_git_change_classification: workspaceSnapshot ? workspaceSnapshot.git_change_classification : null,
         domain_scope_fingerprints: workspaceSnapshot ? buildDomainScopeFingerprints({
             repoRoot,
             detectionSource: workspaceSnapshot.detection_source,
