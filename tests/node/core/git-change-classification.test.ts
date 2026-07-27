@@ -13,12 +13,14 @@ import {
 import { runGit } from '../../../src/core/git-helpers';
 
 const tempRoots: string[] = [];
-const DELETE_SIDE_CONFLICT_STAGES_BY_STATUS = Object.freeze({
+const CONFLICT_STAGES_BY_STATUS = Object.freeze({
     DD: [1],
     AU: [2],
     UD: [1, 2],
     UA: [3],
-    DU: [1, 3]
+    DU: [1, 3],
+    AA: [2, 3],
+    UU: [1, 2, 3]
 } as const);
 
 function makeRepo(autocrlf: 'false' | 'input' | 'true' = 'false'): string {
@@ -55,9 +57,9 @@ function writeGitBlob(repoRoot: string, label: string): string {
     }
 }
 
-function configureDeleteSideConflict(
+function configureUnmergedStatus(
     repoRoot: string,
-    statusPair: keyof typeof DELETE_SIDE_CONFLICT_STAGES_BY_STATUS
+    statusPair: keyof typeof CONFLICT_STAGES_BY_STATUS
 ): string {
     runGit(repoRoot, ['reset', '--hard', 'HEAD']);
     const filePath = `conflict-${statusPair}.txt`;
@@ -67,7 +69,7 @@ function configureDeleteSideConflict(
         2: writeGitBlob(repoRoot, `${statusPair}-ours`),
         3: writeGitBlob(repoRoot, `${statusPair}-theirs`)
     };
-    const conflictStages: readonly (1 | 2 | 3)[] = DELETE_SIDE_CONFLICT_STAGES_BY_STATUS[statusPair];
+    const conflictStages: readonly (1 | 2 | 3)[] = CONFLICT_STAGES_BY_STATUS[statusPair];
     const indexInfo = conflictStages
         .map((stage) => `100644 ${stageBlobs[stage]} ${stage}\t${filePath}`)
         .join('\n') + '\n';
@@ -266,13 +268,13 @@ describe('Git change classification', () => {
         assert.match(change?.reason || '', /bytes are identical/);
     });
 
-    it('classifies every delete and one-sided unmerged status pair in both conflict layers', () => {
+    it('classifies every porcelain unmerged status pair in both conflict layers', () => {
         const repoRoot = makeRepo();
 
-        for (const statusPair of Object.keys(DELETE_SIDE_CONFLICT_STAGES_BY_STATUS) as Array<
-            keyof typeof DELETE_SIDE_CONFLICT_STAGES_BY_STATUS
+        for (const statusPair of Object.keys(CONFLICT_STAGES_BY_STATUS) as Array<
+            keyof typeof CONFLICT_STAGES_BY_STATUS
         >) {
-            const filePath = configureDeleteSideConflict(repoRoot, statusPair);
+            const filePath = configureUnmergedStatus(repoRoot, statusPair);
             const result = classifyGitChanges(repoRoot);
             const conflicts = result.changes.filter((change) => change.path === filePath);
 

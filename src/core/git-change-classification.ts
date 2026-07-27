@@ -129,7 +129,7 @@ const LAYER_ORDER: Record<GitChangeLayer, number> = {
     unstaged: 1,
     untracked: 2
 };
-const UNMERGED_STATUS_PAIRS = new Set(['DD', 'AU', 'UD', 'UA', 'DU']);
+const UNMERGED_STATUS_PAIRS = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
 
 interface GitCommandBudget {
     deadlineMs: number | null;
