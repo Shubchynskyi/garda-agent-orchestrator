@@ -2,6 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeBudgetOutputFilters } from '../../gate-test-helpers';
 
 import { syncTaskQueueStatus } from '../../../../../../src/cli/commands/gate-flows/task/task-queue-sync';
 import { handleCompletionGate } from '../../../../../../src/cli/commands/gate-task-handlers';
@@ -39,7 +40,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-pass-rollback.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -159,7 +160,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-pass-cross-task-rollback.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -331,7 +332,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-pass-same-task-guard.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -435,7 +436,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-pass-unsequenced-same-task-guard.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -535,7 +536,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-status-same-task-guard.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -644,7 +645,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-status-same-type-guard.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -749,7 +750,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-pre-pass-same-task-guard.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -858,7 +859,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-version-skew-summary-rollback.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -968,7 +969,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-aggregate-rollback-temp-write-failure.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1077,7 +1078,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-aggregate-missing-integrity-rollback.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1175,7 +1176,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-aggregate-baseline-missing-integrity-preserved.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1283,7 +1284,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-missing-sequence-status-dedup.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1396,7 +1397,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-completion-summary-rollback-failure.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',

@@ -43,6 +43,7 @@ import {
     buildNoFindingsJsonReviewReport,
     buildFailedJsonReviewReport,
     seedPromptBoundReviewFixture} from './gates-command-review-result-fixtures';
+import { writeBudgetOutputFilters } from '../../gate-test-helpers';
 
 describe('gates command review receipt - routing', () => {
 
@@ -640,7 +641,7 @@ describe('gates command review receipt - routing', () => {
                 dependency: false
             }
         });
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
 
         runEnterTaskMode({
             repoRoot,
@@ -1446,7 +1447,7 @@ describe('gates command review receipt - routing', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-record-review-blocked.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1584,7 +1585,7 @@ describe('gates command review receipt - routing', () => {
                 dependency: false
             }
         });
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
 
         runEnterTaskMode({
             repoRoot,

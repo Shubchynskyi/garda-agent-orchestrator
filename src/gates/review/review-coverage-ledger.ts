@@ -493,11 +493,144 @@ export function formatReviewEvidenceLineCountSource(source: ReviewEvidenceLineCo
         : 'current file';
 }
 
+const REVIEW_STATUS_PREFIX_PATTERNS = Object.freeze([
+    /^(?:reviewed|checked|validated|inspected)\s+(?:the\s+)?(?:whole\s+)?(?:file|scope|code)\b/u,
+    /^(?:(?:after|following|during)\s+(?:the\s+)?(?:review|inspection|validation|check),?\s+)?(?:(?:the|all)\s+)?(?:(?:changed|entire|whole)\s+)?(?:files?|scope|code|implementation|changes?)\s+(?:was|were|is|are|has\s+been|have\s+been)\s+(?:(?:carefully|fully|thoroughly|completely)\s+)*(?:reviewed|checked|validated|inspected)\b/u,
+    /^(?:we|i)\s+(?:(?:carefully|fully|thoroughly|completely)\s+)*(?:reviewed|checked|validated|inspected)\s+(?:the\s+)?(?:changed\s+)?(?:file|scope|code|implementation|changes?)\b/u
+]);
+const GENERIC_REVIEW_STATUS_WORDS = new Set([
+    'a',
+    'after',
+    'all',
+    'and',
+    'as',
+    'api',
+    'been',
+    'behavior',
+    'by',
+    'carefully',
+    'change',
+    'changed',
+    'changes',
+    'check',
+    'checked',
+    'code',
+    'complete',
+    'completed',
+    'completely',
+    'compatibility',
+    'correct',
+    'correctly',
+    'correctness',
+    'coverage',
+    'during',
+    'entire',
+    'everything',
+    'expected',
+    'for',
+    'file',
+    'files',
+    'fine',
+    'following',
+    'fully',
+    'good',
+    'has',
+    'have',
+    'i',
+    'implementation',
+    'inspection',
+    'inspected',
+    'is',
+    'it',
+    'looks',
+    'manually',
+    'maintainability',
+    'no',
+    'none',
+    'ok',
+    'okay',
+    'overall',
+    'passed',
+    'passes',
+    'performance',
+    'problem',
+    'problems',
+    'quality',
+    'reliability',
+    'review',
+    'reviewed',
+    'reviewer',
+    'robustness',
+    'scope',
+    'security',
+    'safety',
+    'style',
+    'successfully',
+    'that',
+    'the',
+    'these',
+    'this',
+    'those',
+    'thoroughly',
+    'test',
+    'testing',
+    'validated',
+    'validation',
+    'was',
+    'we',
+    'were',
+    'whole',
+    'without',
+    'work',
+    'worked',
+    'works'
+]);
+const GENERIC_NO_DEFECT_SUFFIX_PATTERN =
+    /^(?:(?:(?:and|with)\s+)?no(?:\s+[a-z0-9_-]+){0,4}\s+(?:defects?|findings?|issues?|problems?)(?:\s+(?:were\s+)?(?:detected|found|identified))?|(?:and\s+)?(?:detected|found|identified)\s+no(?:\s+[a-z0-9_-]+){0,4}\s+(?:defects?|findings?|issues?|problems?)|(?:and\s+)?there\s+(?:was|were)\s+no(?:\s+[a-z0-9_-]+){0,4}\s+(?:defects?|findings?|issues?|problems?)(?:\s+(?:detected|found|identified))?|without(?:\s+any)?(?:\s+[a-z0-9_-]+){0,4}\s+(?:defects?|findings?|issues?|problems?))$/u;
+const GENERIC_NO_DEFECT_DECLARATION_PATTERN =
+    /^(?:no(?:\s+[a-z0-9_-]+){0,4}\s+(?:defects?|findings?|issues?|problems?)(?:\s+(?:were\s+)?(?:detected|found|identified))?|(?:we|i)\s+(?:detected|found|identified)\s+no(?:\s+[a-z0-9_-]+){0,4}\s+(?:defects?|findings?|issues?|problems?)|there\s+(?:was|were)\s+no(?:\s+[a-z0-9_-]+){0,4}\s+(?:defects?|findings?|issues?|problems?)(?:\s+(?:detected|found|identified))?)(?:\s+(?:(?:after|following)\s+(?:(?:the\s+)?(?:review|inspection|validation|check)|(?:reviewing|checking|inspecting|validating)(?:\s+(?:the\s+)?(?:file|scope|code|implementation|changes?))?)|during\s+(?:the\s+)?(?:review|inspection|validation|check)))?$/u;
+
+function extractReviewStatusWords(value: string): string[] {
+    return value
+        .replace(/^[\s,;:—–-]+|[.!?]+$/gu, '')
+        .split(/[^a-z0-9_-]+/u)
+        .filter(Boolean);
+}
+
+function usesOnlyGenericReviewStatusVocabulary(normalized: string): boolean {
+    const words = extractReviewStatusWords(normalized);
+    return words.length > 0
+        && words.every((word) => GENERIC_REVIEW_STATUS_WORDS.has(word));
+}
+
+function isGenericReviewStatusDeclaration(normalized: string): boolean {
+    const normalizedDeclaration = normalized.replace(/^[\s,;:—–-]+|[.!?]+$/gu, '');
+    if (
+        usesOnlyGenericReviewStatusVocabulary(normalized)
+        || GENERIC_NO_DEFECT_DECLARATION_PATTERN.test(normalizedDeclaration)
+    ) {
+        return true;
+    }
+    const prefix = REVIEW_STATUS_PREFIX_PATTERNS
+        .map((pattern) => normalized.match(pattern))
+        .find((match): match is RegExpMatchArray => match !== null);
+    if (!prefix) {
+        return false;
+    }
+    const normalizedSuffix = normalized
+        .slice(prefix[0].length)
+        .replace(/^[\s,;:—–-]+|[.!?]+$/gu, '');
+    const suffixWords = extractReviewStatusWords(normalizedSuffix);
+    return suffixWords.length === 0
+        || suffixWords.every((word) => GENERIC_REVIEW_STATUS_WORDS.has(word))
+        || GENERIC_NO_DEFECT_SUFFIX_PATTERN.test(normalizedSuffix);
+}
+
 function isGenericObservation(observation: string): boolean {
     const normalized = String(observation || '').trim().toLowerCase();
     return normalized.length < 24
         || normalized.split(/\s+/u).length < 4
-        || /^(?:reviewed|checked|validated|inspected)\s+(?:the\s+)?(?:whole\s+)?(?:file|scope|code)\b/u.test(normalized)
+        || isGenericReviewStatusDeclaration(normalized)
         || /\b(?:no issues|looks good|full scope|all files|everything)\b/u.test(normalized);
 }
 

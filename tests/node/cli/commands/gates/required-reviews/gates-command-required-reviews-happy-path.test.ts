@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeBudgetOutputFilters } from '../../gate-test-helpers';
 import { createHash } from 'node:crypto';
 
 import {
@@ -427,7 +428,7 @@ describe('gates command required reviews', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -469,7 +470,7 @@ describe('gates command required reviews', () => {
 
         const evidencePath = path.join(reviewsRoot, `${taskId}-review-gate.json`);
         const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
-        assert.equal(result.exitCode, 0);
+        assert.equal(result.exitCode, 0, result.outputLines.join('\n'));
         assert.equal(result.outputLines[0], 'REVIEW_GATE_PASSED');
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'required-reviews-check');
@@ -494,7 +495,7 @@ describe('gates command required reviews', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-no-delegate-required-reviews.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -577,7 +578,7 @@ describe('gates command required reviews', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-defaulted-verdicts.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -618,7 +619,7 @@ describe('gates command required reviews', () => {
 
         const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`);
         const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
-        assert.equal(result.exitCode, 0);
+        assert.equal(result.exitCode, 0, result.outputLines.join('\n'));
         assert.equal(result.outputLines[0], 'REVIEW_GATE_PASSED');
         assert.equal(evidence.verdicts.code, 'REVIEW PASSED');
         assert.equal(evidence.verdicts.test, 'TEST REVIEW PASSED');
@@ -648,7 +649,7 @@ describe('gates command required reviews', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -816,6 +817,9 @@ describe('gates command required reviews', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: {
+                changed_lines_total: 3
+            },
             required_reviews: {
                 code: true,
                 db: false,
@@ -830,7 +834,7 @@ describe('gates command required reviews', () => {
         });
         prepareReviewDiffFixture(repoRoot, preflightPath);
         const commandsPath = path.join(repoRoot, 'commands-canonical-review-context-preferred.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1034,7 +1038,7 @@ describe('gates command required reviews', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { writeBudgetOutputFilters } from '../../gate-test-helpers';
 import { createHash } from 'node:crypto';
 
 import {
@@ -473,7 +474,7 @@ async function seedFindingsDispositionConsumerFixture(options: {
     seedInitAnswers(options.repoRoot);
     const preflightPath = writePreflight(options.repoRoot, options.taskId, options.preflightOverrides);
     const commandsPath = path.join(options.repoRoot, 'commands-findings-disposition-consumer.md');
-    const outputFiltersPath = path.resolve('live/config/output-filters.json');
+    const outputFiltersPath = writeBudgetOutputFilters(options.repoRoot);
     fs.writeFileSync(commandsPath, [
         '### Compile Gate (Mandatory)',
         '```bash',
@@ -555,7 +556,7 @@ async function seedReusedFindingsDispositionConsumerFixture(options: {
 
     return {
         preflightPath,
-        outputFiltersPath: path.resolve('live/config/output-filters.json'),
+        outputFiltersPath: writeBudgetOutputFilters(options.repoRoot),
         receiptPath: path.join(reviewsRoot, `${options.taskId}-code-receipt.json`)
     };
 }
@@ -704,7 +705,7 @@ describe('gates command required reviews', () => {
             const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
             assert.equal(receipt.reused_existing_review, true);
             const disposition = receipt.review_findings_disposition as Record<string, unknown>;
-            assert.equal(disposition.policy_source, 'receipt_review_findings_disposition');
+            assert.equal(disposition.policy_source, 'preflight_profile_policy_snapshot');
             if (scenario.tamperReceipt) {
                 const findings = disposition.findings as Record<string, Record<string, unknown>>;
                 findings.low.action = 'ignore';
@@ -849,7 +850,7 @@ describe('gates command required reviews', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-false-authorship-attestation.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -906,7 +907,7 @@ describe('gates command required reviews', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-missing-authorship-attestation.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -962,7 +963,7 @@ describe('gates command required reviews', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-skip-authorship-attestation.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1034,7 +1035,7 @@ describe('gates command required reviews', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-defaulted-verdicts-missing-artifact.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1088,7 +1089,7 @@ describe('gates command required reviews', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-invalid-sections.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1135,7 +1136,8 @@ describe('gates command required reviews', () => {
                 '',
                 '## Verdict',
                 'REVIEW PASSED'
-            ]
+            ],
+            { rawArtifactContent: true }
         );
 
         const result = runRequiredReviewsCheckCommand({
@@ -1143,6 +1145,7 @@ describe('gates command required reviews', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });
@@ -1162,7 +1165,7 @@ describe('gates command required reviews', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-trivial-review.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1207,7 +1210,8 @@ describe('gates command required reviews', () => {
                 '',
                 '## Verdict',
                 'REVIEW PASSED'
-            ]
+            ],
+            { rawArtifactContent: true }
         );
 
         const result = runRequiredReviewsCheckCommand({
@@ -1215,6 +1219,7 @@ describe('gates command required reviews', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
+            reviewAuthorshipAttestationJson: '{"code":true}',
             outputFiltersPath,
             emitMetrics: false
         });
@@ -1261,7 +1266,7 @@ describe('gates command required reviews', () => {
                     }
                 });
                 const commandsPath = path.join(repoRoot, 'commands-tree-state-receipt.md');
-                const outputFiltersPath = path.resolve('live/config/output-filters.json');
+                const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
                 fs.writeFileSync(commandsPath, [
                     '### Compile Gate (Mandatory)',
                     '```bash',
@@ -1426,7 +1431,7 @@ describe('gates command required reviews', () => {
             taskId,
             preflightPath: fixture.preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
-            outputFiltersPath: path.resolve('live/config/output-filters.json'),
+            outputFiltersPath: writeBudgetOutputFilters(repoRoot),
             emitMetrics: false
         });
 
@@ -1534,7 +1539,7 @@ describe('gates command required reviews', () => {
             taskId,
             preflightPath,
             codeReviewVerdict: 'REVIEW PASSED',
-            outputFiltersPath: path.resolve('live/config/output-filters.json'),
+            outputFiltersPath: writeBudgetOutputFilters(repoRoot),
             emitMetrics: false
         });
 
@@ -1573,7 +1578,7 @@ describe('gates command required reviews', () => {
             }
         });
         prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
 
@@ -1709,7 +1714,7 @@ describe('gates command required reviews', () => {
                 dependency: false
             }
         });
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
 
         runEnterTaskMode({
             repoRoot,
@@ -1774,7 +1779,7 @@ describe('gates command required reviews', () => {
                 dependency: false
             }
         });
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
 
         runEnterTaskMode({
             repoRoot,

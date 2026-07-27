@@ -140,6 +140,82 @@ test('validateReviewCoverageLedger accepts reviewed as an adjective in concrete 
     assert.deepEqual(result.violations, []);
 });
 
+test('validateReviewCoverageLedger rejects passive and prefixed review-status declarations', () => {
+    const contract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/example.ts'],
+        categoryIds: ['documentation-impact']
+    });
+    for (const observation of [
+        'The changed code was reviewed carefully during review.',
+        'After inspection, the file was checked carefully by the reviewer.',
+        'We thoroughly validated the implementation during the review.',
+        'All changes were validated successfully and work as expected.',
+        'The entire scope was reviewed successfully and works as expected.',
+        'It was thoroughly reviewed.',
+        'This was checked carefully and works as expected.',
+        'Review completed successfully without problems.',
+        'Reviewed code with no defects found.',
+        'Reviewed code and found no defects.',
+        'Reviewed code; no defects were found.',
+        'Reviewed code; there were no defects identified.',
+        'Reviewed code without any defects.',
+        'Checked scope; no blocking findings identified.',
+        'All changes were reviewed and no security issues were detected.',
+        'No blocking defects were found after reviewing the code.',
+        'No defects found after review.',
+        'No issues were identified following the inspection.',
+        'No API findings were identified during review.',
+        'We found no defects during review.',
+        'The changed code was reviewed carefully for correctness.',
+        'The changed code was reviewed thoroughly for security and correctness.',
+        'We inspected the scope for API compatibility.',
+        'Reviewed code for test coverage and maintainability.'
+    ]) {
+        const lines = contract.obligations.map((obligation, index) => ledgerLine(
+            obligation.id,
+            `src/example.ts:${index + 1}`,
+            observation
+        ));
+
+        const result = validateReviewCoverageLedger(buildReviewOutput(lines), contract);
+
+        assert.equal(result.status, 'FAIL', observation);
+        assert.ok(
+            result.violations.some((entry) => entry.includes('generic evidence')),
+            observation
+        );
+    }
+});
+
+test('validateReviewCoverageLedger accepts concrete evidence after review-status prefixes', () => {
+    const contract = buildReviewCoverageContract({
+        reviewType: 'code',
+        changedFiles: ['src/example.ts'],
+        categoryIds: ['documentation-impact']
+    });
+    const observations = [
+        'The changed code was reviewed; parseExample rejects malformed identifiers before state mutation.',
+        'After inspection, the file was checked: evidence validation preserves CRLF line numbers.',
+        'We thoroughly validated the implementation; exact target matching rejects unrelated F-000 evidence.',
+        'All changes were validated; parseExample rejects malformed identifiers before state mutation.',
+        'It was thoroughly reviewed; parseExample rejects malformed identifiers before state mutation.',
+        'Reviewed code; parseExample emits no diagnostics after exact identifier validation.',
+        'No parser defects occur because parseExample rejects malformed identifiers before state mutation.'
+    ];
+    const results = observations.map((observation) => {
+        const lines = contract.obligations.map((obligation, index) => ledgerLine(
+            obligation.id,
+            `src/example.ts:${index + 1}`,
+            observation
+        ));
+        return validateReviewCoverageLedger(buildReviewOutput(lines), contract);
+    });
+
+    assert.ok(results.every((result) => result.status === 'PASS'));
+    assert.deepEqual(results.flatMap((result) => result.violations), []);
+});
+
 test('validateReviewCoverageLedger explains the review evidence domain and file-target rule', () => {
     const contract = buildReviewCoverageContract({
         reviewType: 'test',
@@ -424,21 +500,21 @@ test('authenticated snapshot binding is propagated through result, trust, and re
             preflight: 'preflight',
             validator: 'contract',
             validatesSnapshotCommit: true,
-            buildsValidationArtifact: false
+            validatesPersistedArtifactSnapshot: false
         },
         {
             path: 'src/gates/required-reviews/required-reviews-check-trust.ts',
             preflight: 'preflightPayload',
             validator: 'validation_artifact',
             validatesSnapshotCommit: false,
-            buildsValidationArtifact: false
+            validatesPersistedArtifactSnapshot: false
         },
         {
             path: 'src/gates/review-reuse/review-reuse-materialization.ts',
             preflight: 'options.preflightPayload',
             validator: 'validation_artifact',
             validatesSnapshotCommit: false,
-            buildsValidationArtifact: true
+            validatesPersistedArtifactSnapshot: true
         }
     ] as const;
     for (const consumer of consumers) {
@@ -460,8 +536,10 @@ test('authenticated snapshot binding is propagated through result, trust, and re
         } else {
             assert.match(source, /expectedPreflightSha256:/u);
             assert.match(source, /expectedScopeSha256:/u);
-            if (consumer.buildsValidationArtifact) {
-                assert.match(source, /buildReviewFindingsValidationArtifact\(/u);
+            if (consumer.validatesPersistedArtifactSnapshot) {
+                assert.match(source, /expectedCoverageContractSha256:/u);
+                assert.match(source, /preferSnapshot:\s*true/u);
+                assert.doesNotMatch(source, /buildReviewFindingsValidationArtifact\(/u);
             }
         }
     }

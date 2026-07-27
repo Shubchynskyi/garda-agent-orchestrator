@@ -522,8 +522,8 @@ function validateFocusedValidationNoteCommand(
             'Reviewer focused self-validation must execute a focused test or validation command rather than only inspect or print a prospective target.'
         );
     } else if (
-        fields.commandOutcome === 'failed'
-        && !focusedEvidenceNamesTarget(fields.evidence, commandTargets[0])
+        fields.commandOutcome !== 'passed'
+        && !focusedEvidenceExplainsTargetRelevance(fields.evidence, commandTargets[0])
     ) {
         violations.push(
             'Reviewer focused self-validation authenticated changed-file evidence must name the exact focused command target and why it is relevant.'
@@ -1121,7 +1121,12 @@ function focusedCommandExecutesMarkerTarget(command: string, markerTarget: strin
     ).test(normalizedCommand);
 }
 
-function focusedEvidenceNamesTarget(
+const FOCUSED_EVIDENCE_CHANGED_BEHAVIOR_PATTERN =
+    /\b(?:affected|changed|modified|new|updated)\b/u;
+const FOCUSED_EVIDENCE_RELATIONSHIP_PATTERN =
+    /\b(?:consume(?:s|d|ing)?|cover(?:s|ed|ing)?|exercise(?:s|d|ing)?|guard(?:s|ed|ing)?|motivat(?:e|es|ed|ing)|own(?:s|ed|ing)?|validat(?:e|es|ed|ing)|verif(?:y|ies|ied|ying))\b/u;
+
+function focusedEvidenceExplainsTargetRelevance(
     evidence: readonly ReviewFindingsEvidence[],
     markerTarget: string
 ): boolean {
@@ -1132,16 +1137,28 @@ function focusedEvidenceNamesTarget(
         'u'
     );
     return evidence.some((entry) => {
-        const location = parseReviewEvidenceLocation(entry.location);
-        return normalizeFocusedTargetPath(location?.filePath || '') === normalizedTarget
-            || exactTargetPattern.test(entry.observation.replace(/\\/gu, '/'));
+        const normalizedObservation = entry.observation.replace(/\\/gu, '/');
+        const targetMarker = '\u0000focused-target\u0000';
+        const observationWithTargetMarker = normalizedObservation.replace(exactTargetPattern, targetMarker);
+        if (observationWithTargetMarker === normalizedObservation) {
+            return false;
+        }
+        const clauses = observationWithTargetMarker.split(
+            /(?:[\n.;!?]+|,?\s+\b(?:but|however|whereas|while)\b\s+)/u
+        );
+        return clauses.some((clause) => {
+            if (!clause.includes(targetMarker)) {
+                return false;
+            }
+            const rationale = clause.replace(targetMarker, ' ').toLowerCase();
+            return FOCUSED_EVIDENCE_CHANGED_BEHAVIOR_PATTERN.test(rationale)
+                && FOCUSED_EVIDENCE_RELATIONSHIP_PATTERN.test(rationale);
+        });
     });
 }
 
 function focusedAttemptBindsTargetToEvidence(note: ReviewFindingsValidationNote, markerTarget: string): boolean {
-    return note.command_outcome === 'unavailable'
-        || note.command_outcome === 'prohibited'
-        || focusedEvidenceNamesTarget(note.evidence, markerTarget);
+    return focusedEvidenceExplainsTargetRelevance(note.evidence, markerTarget);
 }
 
 function isSafeRepositoryRelativeFocusedTarget(markerTarget: string): boolean {
@@ -1473,20 +1490,16 @@ function validateConcreteReviewEvidenceLocations(
         ? createChangedFileLineCountResolver(lineValidationOptions)
         : null;
 
-    const hasFindingsOrResidualRisks = getAllFindings(reportParts.findings).length > 0
-        || reportParts.residualRisks.length > 0;
-    if (hasFindingsOrResidualRisks) {
-        for (const [noteIndex, note] of reportParts.validationNotes.entries()) {
-            validateEvidenceLocations(
-                note.evidence,
-                `validation_notes[${noteIndex}]`,
-                changedFiles,
-                expectedReviewType,
-                admissiblePaths,
-                getChangedFileLineCount,
-                violations
-            );
-        }
+    for (const [noteIndex, note] of reportParts.validationNotes.entries()) {
+        validateEvidenceLocations(
+            note.evidence,
+            `validation_notes[${noteIndex}]`,
+            changedFiles,
+            expectedReviewType,
+            admissiblePaths,
+            getChangedFileLineCount,
+            violations
+        );
     }
     if (reportParts.coverageLedger) {
         for (const [entryIndex, entry] of reportParts.coverageLedger.entries.entries()) {

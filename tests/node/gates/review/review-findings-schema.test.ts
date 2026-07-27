@@ -1181,7 +1181,7 @@ test('validateReviewFindingsReport rejects traversal in focused marker targets a
     assert.ok(result.violations.some((entry) => entry.includes('repository-relative path without dot segments')));
 });
 
-test('validateReviewFindingsReport accepts an exact unavailable F-000 attempt without redundant evidence target text', () => {
+test('validateReviewFindingsReport rejects unavailable F-000 attempts without exact evidence-to-target binding', () => {
     for (const observation of [
         'The changed parser branch motivated a local check.',
         'The changed parser branch is covered by tests/node/example.test.ts.backup.',
@@ -1195,7 +1195,118 @@ test('validateReviewFindingsReport accepts an exact unavailable F-000 attempt wi
 
         const result = validateReviewFindingsReport(report, validationOptions);
 
-        assert.equal(result.valid, true, `${observation}\n${result.violations.join('\n')}`);
+        assert.equal(result.valid, false, observation);
+        assert.ok(
+            result.violations.some((entry) => entry.includes('name the exact focused command target')),
+            `${observation}\n${result.violations.join('\n')}`
+        );
+    }
+});
+
+test('validateReviewFindingsReport rejects unavailable F-000 evidence whose location names the target without relevance rationale', () => {
+    const report = missingFocusedValidationReport();
+    const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+    note.evidence = [evidence(
+        'tests/node/example.test.ts:1',
+        'The reviewer selected one focused repository target.'
+    )];
+
+    const result = validateReviewFindingsReport(report, {
+        ...validationOptions,
+        expectedChangedFilePaths: ['src/example.ts', 'tests/node/example.test.ts']
+    });
+
+    assert.equal(result.valid, false, result.violations.join('\n'));
+    assert.ok(result.violations.some((entry) => entry.includes(
+        'name the exact focused command target and why it is relevant'
+    )));
+});
+
+test('validateReviewFindingsReport rejects lexical-only focused target relevance claims', () => {
+    for (const observation of [
+        'tests/node/example.test.ts is the focused test target.',
+        'tests/node/example.test.ts is relevant to this check.',
+        'tests/node/example.test.ts tests changed behavior.',
+        'The changed branch targets tests/node/example.test.ts.'
+    ]) {
+        const report = missingFocusedValidationReport();
+        const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+        note.evidence = [evidence('src/example.ts:10', observation)];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, observation);
+        assert.ok(
+            result.violations.some((entry) => entry.includes(
+                'name the exact focused command target and why it is relevant'
+            )),
+            `${observation}\n${result.violations.join('\n')}`
+        );
+    }
+});
+
+test('validateReviewFindingsReport rejects focused targets disconnected from the relevance rationale', () => {
+    for (const observation of [
+        'The reviewer selected tests/node/example.test.ts. The changed parser is covered by tests/node/relevant.test.ts.',
+        'tests/node/example.test.ts is an available target; the changed parser is validated by tests/node/relevant.test.ts.',
+        'The reviewer named tests/node/example.test.ts, whereas tests/node/relevant.test.ts covers the changed parser.'
+    ]) {
+        const report = missingFocusedValidationReport();
+        const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+        note.evidence = [evidence('src/example.ts:10', observation)];
+
+        const result = validateReviewFindingsReport(report, validationOptions);
+
+        assert.equal(result.valid, false, observation);
+        assert.ok(
+            result.violations.some((entry) => entry.includes(
+                'name the exact focused command target and why it is relevant'
+            )),
+            `${observation}\n${result.violations.join('\n')}`
+        );
+    }
+});
+
+test('validateReviewFindingsReport accepts a focused target tied to changed behavior by a concrete relationship', () => {
+    const report = missingFocusedValidationReport();
+    const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+    note.evidence = [evidence(
+        'src/example.ts:10',
+        'tests/node/example.test.ts validates the changed parser branch.'
+    )];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, true, result.violations.join('\n'));
+});
+
+test('validateReviewFindingsReport rejects an existing but unrelated F-000 target with repo context', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-focused-unrelated-target-'));
+    try {
+        fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'tests', 'node'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'example.ts'),
+            Array.from({ length: 25 }, (_, index) => `// line ${index + 1}`).join('\n') + '\n',
+            'utf8'
+        );
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'node', 'example.test.ts'), 'export {};\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'node', 'relevant.test.ts'), 'export {};\n', 'utf8');
+        const report = missingFocusedValidationReport();
+        const note = (report.validation_notes as Array<Record<string, unknown>>)[0];
+        note.evidence = [evidence(
+            'src/example.ts:10',
+            'The changed parser is covered by tests/node/relevant.test.ts, which is unrelated to the attempted target.'
+        )];
+
+        const result = validateReviewFindingsReport(report, { ...validationOptions, repoRoot });
+
+        assert.equal(result.valid, false, result.violations.join('\n'));
+        assert.ok(result.violations.some((entry) => entry.includes(
+            'name the exact focused command target'
+        )));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
     }
 });
 
@@ -1321,7 +1432,7 @@ test('validateReviewFindingsReport keeps supplementary validation-note evidence 
     const report = validReport();
     (report.validation_notes as Array<Record<string, unknown>>)[0].evidence = [
         evidence(
-            'tests/example.test.ts:20',
+            'src/example.ts:20',
             'Supplementary test evidence must not turn an otherwise valid no-findings review into another review cycle.'
         )
     ];
@@ -1334,6 +1445,23 @@ test('validateReviewFindingsReport keeps supplementary validation-note evidence 
     assert.equal(result.report?.findings.medium.length, 0);
     assert.equal(result.report?.findings.low.length, 0);
     assert.equal(result.report?.residual_risks.length, 0);
+});
+
+test('validateReviewFindingsReport rejects unauthenticated validation-note evidence when no findings exist', () => {
+    const report = validReport();
+    (report.validation_notes as Array<Record<string, unknown>>)[0].evidence = [
+        evidence(
+            'tests/example.test.ts:20',
+            'Supplementary evidence must remain bound to the authenticated review domain.'
+        )
+    ];
+
+    const result = validateReviewFindingsReport(report, validationOptions);
+
+    assert.equal(result.valid, false);
+    assert.ok(result.violations.some((entry) => entry.includes(
+        "validation_notes[0].evidence[0].location 'tests/example.test.ts:20' is outside the code review evidence domain"
+    )));
 });
 
 test('validateReviewFindingsContract authenticates non-ledger evidence line numbers', () => {

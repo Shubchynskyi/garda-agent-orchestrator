@@ -37,11 +37,31 @@ import {
 } from '../../../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../../../src/gates/review/reviewer-routing';
-import { writeProtectedControlPlaneManifest } from '../../../../../../src/gates/shared/helpers';
+import {
+    fileSha256,
+    normalizePath,
+    writeProtectedControlPlaneManifest
+} from '../../../../../../src/gates/shared/helpers';
+import {
+    assessTrustBoundaryAnalysisApplicability,
+    TRUST_BOUNDARY_ANALYSIS_RULE_ID
+} from '../../../../../../src/core/trust-boundary-analysis';
+import {
+    QUALITY_CHECKLIST_ID,
+    resolveDefaultQualityChecklistArtifactPath
+} from '../../../../../../src/gates/quality-checklist';
+import {
+    initializeGitRepo as initializeCanonicalGitRepo,
+    initializeGitRepoWithMaterializedScope,
+    prepareReviewDiffFixture as prepareCanonicalReviewDiffFixture,
+    writeReceiptBackedReviewArtifact as writeCanonicalReceiptBackedReviewArtifact
+} from '../../gate-test-helpers';
 
 const GIT_INIT_RETRY_DELAYS_MS = [0, 25, 100];
 const RETRYABLE_GIT_INIT_PATTERNS = /\b(?:EACCES|EBUSY|ENOTEMPTY|EPERM|Permission denied)\b/i;
 const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
+const TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH =
+    'tests/node/gates/review-context/review-context-trust-boundary-fixture.test.ts';
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -404,10 +424,22 @@ function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: un
 }
 
 function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
-    return runEnterTaskModeCommand(withDefaultTaskModeRouting({
+    const resolvedOptions = withDefaultTaskModeRouting({
         startBanner: 'Garda captures my mind',
         ...options
-    }));
+    });
+    const repoRoot = path.resolve(String(resolvedOptions.repoRoot || '.'));
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        const taskId = String(resolvedOptions.taskId || '').trim();
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const changedFiles = fs.existsSync(preflightPath)
+            ? (
+                JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as { changed_files?: unknown[] }
+            ).changed_files?.map((entry) => String(entry || '').trim()).filter(Boolean) || []
+            : [];
+        initializeGitRepoWithMaterializedScope(repoRoot, changedFiles);
+    }
+    return runEnterTaskModeCommand(resolvedOptions);
 }
 
 function seedRuleFiles(repoRoot: string): void {
@@ -485,6 +517,19 @@ function writePreflight(
             performance: false,
             infra: false,
             dependency: false
+        },
+        profile_policy_snapshot: {
+            review_finding_policy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'fix_now',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
         },
         triggers: {},
         changed_files: ['src/app.ts'],
@@ -646,49 +691,26 @@ function resolveReviewTreeStateSha256(reviewContext: Record<string, unknown>): s
 }
 
 function prepareReviewDiffFixture(repoRoot: string, preflightPath: string): void {
-    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-    const changedFiles = Array.isArray(preflight.changed_files)
-        ? preflight.changed_files
-            .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
-            .filter(Boolean)
-        : [];
-    if (changedFiles.length === 0) {
-        return;
-    }
-
-    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
-        runGit(repoRoot, ['init']);
-    }
-    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
-    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
-    const head = childProcess.spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true
-    });
-    if (head.status !== 0) {
-        runGit(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
-    }
-
-    for (const changedFile of changedFiles) {
-        if (
-            changedFile.startsWith('/')
-            || changedFile.startsWith('../')
-            || changedFile.includes('/../')
-            || changedFile.startsWith(':')
-        ) {
-            continue;
-        }
-        const absolutePath = path.join(repoRoot, ...changedFile.split('/'));
-        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
-        if (!fs.existsSync(absolutePath)) {
-            fs.writeFileSync(absolutePath, `// review fixture for ${changedFile}\n`, 'utf8');
-        }
-    }
+    prepareCanonicalReviewDiffFixture(repoRoot, preflightPath);
 }
 
 function writeReceiptBackedReviewArtifact(
+    repoRoot: string,
+    taskId: string,
+    reviewKey: string,
+    verdict: string,
+    contentLines?: string[]
+): void {
+    writeCanonicalReceiptBackedReviewArtifact(
+        repoRoot,
+        taskId,
+        reviewKey,
+        verdict,
+        contentLines
+    );
+}
+
+function writeLegacyReceiptBackedReviewArtifact(
     repoRoot: string,
     taskId: string,
     reviewKey: string,
@@ -801,7 +823,6 @@ function writeReceiptBackedReviewArtifact(
     let reviewerProvenance: ReturnType<typeof buildReviewReceiptReviewerProvenance> | null = null;
     const writeReceipt = () => {
         const scopeSha256 = String((preflightFixture.preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null;
-        const reviewScopeSha256 = computeReviewRelevantScopeFingerprint(preflightFixture.preflight, repoRoot).review_scope_sha256;
         const codeScopeSha256 = reviewKey === 'code' && preflightFixture.preflightSha256
             ? computeCodeReviewScopeFingerprint(preflightFixture.preflight, repoRoot).code_scope_sha256
             : null;
@@ -810,7 +831,10 @@ function writeReceiptBackedReviewArtifact(
             reviewType: reviewKey,
             preflightSha256: preflightFixture.preflightSha256,
             scopeSha256,
-            reviewScopeSha256,
+            reviewScopeSha256: computeReviewRelevantScopeFingerprint(
+                preflightFixture.preflight,
+                repoRoot
+            ).review_scope_sha256,
             codeScopeSha256,
             reviewContextSha256: reviewContextHash,
             reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(reviewContextText) as Record<string, unknown>),
@@ -911,7 +935,115 @@ function writeReceiptBackedReviewArtifact(
 }
 
 function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
-    writeReceiptBackedReviewArtifact(repoRoot, taskId, reviewKey, verdict);
+    seedTrustBoundaryChecklistIfRequired(repoRoot, taskId);
+    writeCanonicalReceiptBackedReviewArtifact(repoRoot, taskId, reviewKey, verdict);
+}
+
+function seedTrustBoundaryChecklistIfRequired(repoRoot: string, taskId: string): void {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (!fs.existsSync(preflightPath)) {
+        return;
+    }
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    if (!assessTrustBoundaryAnalysisApplicability(preflight).required) {
+        return;
+    }
+    const preflightSha256 = fileSha256(preflightPath);
+    if (!preflightSha256) {
+        throw new Error(`Trust-boundary fixture preflight is unreadable: ${preflightPath}`);
+    }
+    const artifactPath = resolveDefaultQualityChecklistArtifactPath(repoRoot, taskId);
+    const evidencePath = path.join(repoRoot, TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH);
+    fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
+    if (!fs.existsSync(evidencePath)) {
+        fs.writeFileSync(
+            evidencePath,
+            "test('rejects replaced trust-boundary evidence', () => { assert.equal(true, true); });\n",
+            'utf8'
+        );
+    }
+    const artifact = {
+        task_id: taskId,
+        checklist_id: QUALITY_CHECKLIST_ID,
+        preflight_sha256: preflightSha256,
+        status: 'PASS',
+        rules: [{
+            id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+            scope_applicability: 'active'
+        }],
+        answers: [{
+            rule_id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+            trust_boundary_matrix: [{
+                boundary_id: 'TB-COMPLETION-FIXTURE-001',
+                boundary: 'Completion fixture input to protected review-context validation',
+                authority_source: 'Hash-chained QUALITY_CHECKLIST_RECORDED fixture event',
+                mutable_inputs: ['preflight evidence', 'quality-checklist artifact'],
+                integrity_evidence: ['artifact sha256', 'preflight sha256'],
+                canonical_reconstruction: 'Rebuild the fixture from current preflight evidence.',
+                toctou_replay: 'Reject stale or replaced fixture evidence.',
+                negative_paths: [{
+                    kind: 'replaced',
+                    scenario: 'rejects replaced trust-boundary evidence',
+                    expected_behavior: 'Reject review-context construction.',
+                    evidence_files: [
+                        `${TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH}#rejects replaced trust-boundary evidence`
+                    ]
+                }]
+            }]
+        }]
+    };
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+    const artifactSha256 = fileSha256(artifactPath);
+    if (!artifactSha256) {
+        throw new Error(`Trust-boundary fixture artifact is unreadable: ${artifactPath}`);
+    }
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'QUALITY_CHECKLIST_RECORDED',
+        'PASS',
+        'Quality checklist completion fixture recorded.',
+        {
+            artifact_path: normalizePath(artifactPath),
+            artifact_hash: artifactSha256,
+            status: 'PASS',
+            outcome: 'PASS',
+            checklist_id: QUALITY_CHECKLIST_ID,
+            preflight_path: normalizePath(path.resolve(preflightPath)),
+            preflight_sha256: preflightSha256
+        },
+        { actor: 'gate' }
+    );
+}
+
+function synchronizePreflightWithMaterializedScope(repoRoot: string, preflightPath: string): void {
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        return;
+    }
+    prepareCanonicalReviewDiffFixture(repoRoot, preflightPath);
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    const detectionSource = String(preflight.detection_source || 'explicit_changed_files').trim()
+        || 'explicit_changed_files';
+    const includeUntracked = preflight.include_untracked !== false;
+    const snapshot = getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, changedFiles);
+    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+        ? preflight.metrics as Record<string, unknown>
+        : {};
+    preflight.changed_files = snapshot.changed_files;
+    preflight.include_untracked = includeUntracked;
+    preflight.metrics = {
+        ...metrics,
+        changed_files_count: snapshot.changed_files_count,
+        changed_lines_total: snapshot.changed_lines_total,
+        changed_files_sha256: snapshot.changed_files_sha256,
+        scope_content_sha256: snapshot.scope_content_sha256,
+        scope_sha256: snapshot.scope_sha256
+    };
+    fs.writeFileSync(preflightPath, `${JSON.stringify(preflight, null, 2)}\n`, 'utf8');
 }
 
 function seedReusableReviewEvidence(
@@ -1336,11 +1468,7 @@ function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns
 }
 
 function initializeGitRepo(repoRoot: string): void {
-    runGit(repoRoot, ['init']);
-    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
-    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
-    runGit(repoRoot, ['add', '.']);
-    runGit(repoRoot, ['commit', '-m', 'test: baseline']);
+    initializeCanonicalGitRepo(repoRoot);
 }
 
 function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {
@@ -1377,6 +1505,7 @@ function loadPostPreflightRulePack(
     artifactPath = '',
     taskModePath = ''
 ) {
+    synchronizePreflightWithMaterializedScope(repoRoot, preflightPath);
     if (ensurePreflightClassified) {
         appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
     }

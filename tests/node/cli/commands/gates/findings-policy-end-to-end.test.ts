@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeBudgetOutputFilters } from '../gate-test-helpers';
 import { describe, it } from 'node:test';
 
 import { runDocImpactGateCommand, runRequiredReviewsCheckCommand } from '../../../../../src/cli/commands/gates';
@@ -137,7 +138,7 @@ describe('findings policy end-to-end lifecycle', () => {
                 preflightPath: fixture.preflightPath,
                 codeReviewVerdict: 'REVIEW PASSED',
                 reviewAuthorshipAttestationJson: '{"code":true}',
-                outputFiltersPath: path.resolve('live/config/output-filters.json'),
+                outputFiltersPath: writeBudgetOutputFilters(repoRoot),
                 emitMetrics: false
             });
             assert.equal(reviewGate.exitCode, 0, reviewGate.outputLines.join('\n'));
@@ -166,6 +167,103 @@ describe('findings policy end-to-end lifecycle', () => {
             const audit = buildTaskAuditSummary({ taskId, repoRoot, reviewsRoot: fixture.reviewsRoot });
             assert.equal(audit.review_findings_audit?.status, 'CLEAR');
             assert.equal(audit.review_findings_audit?.finding_count, 0);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('audits evidence-only F-000 without materializing follow-up work', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-979-44-evidence-only-e2e';
+        const focusedTarget = 'tests/node/example.test.ts';
+        try {
+            fs.mkdirSync(path.join(repoRoot, 'tests', 'node'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, focusedTarget), 'export {};\n', 'utf8');
+            const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+            await launchAuthenticatedReviewer(fixture);
+            const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as {
+                coverage_contract: { obligations: Array<{ id: string }> };
+                task_scope: { changed_files: string[] };
+            };
+            const report = buildNoFindingsJsonReviewReport(fixture.reviewContextPath, taskId);
+            const coverageLedger = report.coverage_ledger as {
+                entries: Array<{ finding_ids: string[] }>;
+            };
+            coverageLedger.entries[0].finding_ids = ['F-000'];
+            const marker =
+                `[garda:evidence-only:missing-focused-validation] test=${focusedTarget}; `
+                + 'action=run-and-record-focused-test';
+            (report.validation_notes as Array<Record<string, unknown>>).push({
+                id: 'N-002',
+                topic: 'focused-self-validation',
+                note: 'The reviewer attempted the smallest relevant focused test after prior execution evidence was unavailable.',
+                command: `node --test ${focusedTarget}`,
+                command_outcome: 'unavailable',
+                diagnostics: 'The isolated reviewer environment did not provide the runtime needed to execute the focused test.',
+                evidence: [{
+                    location: `${reviewContext.task_scope.changed_files[0]}:1`,
+                    observation: `The changed implementation is covered by ${focusedTarget}, which motivated the focused attempt.`
+                }]
+            });
+            (report.findings as { high: Array<Record<string, unknown>> }).high = [{
+                id: 'F-000',
+                title: marker,
+                description: marker,
+                evidence: [{
+                    location: `${reviewContext.task_scope.changed_files[0]}:1`,
+                    observation: 'The unavailable focused check remains audit evidence only.'
+                }],
+                coverage_obligation_ids: [reviewContext.coverage_contract.obligations[0].id]
+            }];
+
+            const outputPath = reviewOutputPath(repoRoot, taskId);
+            fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+            const recorded = await runCliWithCapturedOutput([
+                'gate', 'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', fixture.preflightPath,
+                '--review-output-path', outputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ], { cwd: repoRoot });
+            assert.equal(recorded.exitCode, 0, recorded.errors.join('\n'));
+
+            const receipt = JSON.parse(
+                fs.readFileSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+            );
+            assert.deepEqual(receipt.review_coverage.finding_ids, ['F-000']);
+            assert.equal(receipt.review_findings_disposition.verdict, 'pass_no_findings');
+            assert.equal(receipt.review_findings_disposition.total_count, 0);
+            assert.equal(receipt.review_findings_disposition.blocking_count, 0);
+
+            const disposition = JSON.parse(
+                fs.readFileSync(
+                    path.join(fixture.reviewsRoot, `${taskId}-code-findings-disposition.json`),
+                    'utf8'
+                )
+            ) as { items: unknown[] };
+            assert.deepEqual(disposition.items, []);
+            const materialized = materializeReviewFindingsFollowUpTasks({
+                repoRoot,
+                taskId,
+                reviewType: 'code'
+            });
+            assert.equal(materialized.status, 'NOT_REQUIRED', materialized.violations.join('\n'));
+            assert.deepEqual(materialized.created_task_ids, []);
+
+            const audit = buildTaskAuditSummary({ taskId, repoRoot, reviewsRoot: fixture.reviewsRoot });
+            assert.equal(audit.review_findings_audit?.status, 'CLEAR');
+            assert.equal(audit.review_findings_audit?.finding_count, 1);
+            assert.equal(audit.review_findings_audit?.remaining_blocker_count, 0);
+            const evidenceOnlyFinding = audit.review_findings_audit?.lanes
+                .flatMap((lane) => lane.findings)
+                .find((finding) => finding.id === 'F-000');
+            assert.equal(evidenceOnlyFinding?.action, null);
+            assert.equal(evidenceOnlyFinding?.materialization_status, null);
+            assert.equal(evidenceOnlyFinding?.follow_up_task_id, null);
+            assert.equal(evidenceOnlyFinding?.blocking, false);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
@@ -344,7 +442,7 @@ describe('findings policy end-to-end lifecycle', () => {
                 preflightPath: followUpPreflightPath,
                 codeReviewVerdict: 'REVIEW PASSED',
                 reviewAuthorshipAttestationJson: '{"code":true}',
-                outputFiltersPath: path.resolve('live/config/output-filters.json'),
+                outputFiltersPath: writeBudgetOutputFilters(repoRoot),
                 emitMetrics: false
             });
             assert.equal(followUpReviewGate.exitCode, 0, followUpReviewGate.outputLines.join('\n'));

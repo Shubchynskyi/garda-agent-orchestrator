@@ -478,7 +478,7 @@ export function writePreflight(
         task_id: taskId,
         detection_source: 'explicit_changed_files',
         mode: 'FULL_PATH',
-        metrics: {changed_lines_total: 3},
+        metrics: {changed_lines_total: 1},
         required_reviews: {
             code: true,
             db: false,
@@ -1211,6 +1211,7 @@ function buildFixtureFindingsReport(options: {
     reviewTreeStateSha256: string | null;
     coverageContract: ReviewCoverageContract;
     findingSeverity: 'critical' | 'high' | 'medium' | 'low' | null;
+    findingDescription?: string;
     residualRisk?: boolean;
 }): Record<string, unknown> {
     const defaultEvidenceFile = options.coverageContract.obligations.find((entry) => entry.kind === 'file')?.target
@@ -1219,7 +1220,8 @@ function buildFixtureFindingsReport(options: {
     const finding = {
         id: findingId,
         title: 'Fixture active finding',
-        description: 'Seeded failed-review fixture finding for downstream gate behavior.',
+        description: options.findingDescription
+            || 'Seeded failed-review fixture finding for downstream gate behavior.',
         evidence: [{
             location: `${defaultEvidenceFile}:1`,
             observation: 'The fixture intentionally records an active finding.'
@@ -1281,6 +1283,7 @@ function buildFixtureFindingsContent(options: {
     reviewTreeStateSha256: string | null;
     coverageContract: ReviewCoverageContract;
     verdict: string;
+    findingDescription?: string;
     findingSeverity?: 'critical' | 'high' | 'medium' | 'low' | null;
     residualRisk?: boolean;
 }): string {
@@ -1290,6 +1293,7 @@ function buildFixtureFindingsContent(options: {
         reviewContextSha256: options.reviewContextSha256,
         reviewTreeStateSha256: options.reviewTreeStateSha256,
         coverageContract: options.coverageContract,
+        findingDescription: options.findingDescription,
         findingSeverity: options.findingSeverity === undefined
             ? (/\bFAILED\b/u.test(options.verdict) ? 'high' : null)
             : options.findingSeverity,
@@ -1307,6 +1311,7 @@ export function writeReceiptBackedReviewArtifact(
     options: {
         allowLegacyManualReviewContext?: boolean;
         findingSeverity?: 'critical' | 'high' | 'medium' | 'low' | null;
+        rawArtifactContent?: boolean;
         residualRisk?: boolean;
     } = {}
 ): void {
@@ -1342,7 +1347,7 @@ export function writeReceiptBackedReviewArtifact(
     const crypto = require('node:crypto');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     const reviewTreeStateSha256 = resolveFixtureReviewTreeStateSha256(reviewContext);
-    if (Number(reviewContext.schema_version) >= 3 && !explicitContent) {
+    if (Number(reviewContext.schema_version) >= 3 && options.rawArtifactContent !== true) {
         content = buildFixtureFindingsContent({
             taskId,
             reviewKey,
@@ -1350,6 +1355,7 @@ export function writeReceiptBackedReviewArtifact(
             reviewTreeStateSha256,
             coverageContract,
             verdict,
+            findingDescription: explicitContent || undefined,
             findingSeverity: options.findingSeverity,
             residualRisk: options.residualRisk
         });
@@ -1553,7 +1559,8 @@ export function writeReceiptBackedReviewArtifact(
     fs.writeFileSync(receiptSnapshotPath, receiptPayload, 'utf8');
     fs.writeFileSync(artifactSnapshotPath, content, 'utf8');
 
-    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', {
+    const reviewOutcome = /\bFAILED\b/u.test(verdict) ? 'FAIL' : 'PASS';
+    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', reviewOutcome, 'recorded', {
         ...receipt,
         receipt_path: path.normalize(receiptPath).replace(/\\/g, '/'),
         receipt_sha256: receiptPayloadSha256,

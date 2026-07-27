@@ -1178,6 +1178,7 @@ describe('gates/next-step', () => {
 
         materializeFinalCloseout(repoRoot, TASK_ID);
 
+        fs.rmSync(path.join(repoRoot, '.git'), { recursive: true, force: true });
         fs.mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
 
 

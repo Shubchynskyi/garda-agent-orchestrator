@@ -2,6 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeBudgetOutputFilters } from '../../gate-test-helpers';
 
 import {
     runCompileGateCommand,
@@ -23,7 +24,6 @@ import {
     runHandshakeForTask,
     runShellSmokeForTask,
     seedInitAnswers,
-    seedReusableReviewEvidence,
     seedTaskQueue,
     writeCleanReviewArtifact,
     writeCompilePassEvidence,
@@ -38,7 +38,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -148,7 +148,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         const commandsPath = path.join(repoRoot, 'commands-completion-recovery.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -286,7 +286,7 @@ describe('cli/commands/gates', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-completion-recovery-negative.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -442,7 +442,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
 
         runEnterTaskMode({
             repoRoot,
@@ -543,7 +543,7 @@ describe('cli/commands/gates', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-completion-recovery-missing-prereq.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -674,7 +674,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
 
         runEnterTaskMode({
             repoRoot,
@@ -689,15 +689,7 @@ describe('cli/commands/gates', () => {
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
         writeCompilePassEvidence(repoRoot, taskId, preflightPath);
 
-        seedReusableReviewEvidence(
-            repoRoot,
-            taskId,
-            'code',
-            'REVIEW PASSED',
-            preflightPath,
-            path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`),
-            'agent:code-reviewer'
-        );
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
         const reviewResult = runRequiredReviewsCheckCommand({
             repoRoot,
@@ -758,7 +750,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
 
         runEnterTaskMode({
             repoRoot,
@@ -773,22 +765,7 @@ describe('cli/commands/gates', () => {
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
         writeCompilePassEvidence(repoRoot, taskId, preflightPath);
 
-        seedReusableReviewEvidence(
-            repoRoot,
-            taskId,
-            'code',
-            'REVIEW PASSED',
-            preflightPath,
-            path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`),
-            'agent:code-reviewer',
-            {
-                executionProviderSource: 'provider_bridge',
-                reviewerRoutingOverrides: {
-                    execution_provider: 'Antigravity',
-                    execution_provider_source: 'provider_bridge'
-                }
-            }
-        );
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
         const reviewResult = runRequiredReviewsCheckCommand({
             repoRoot,
