@@ -42,7 +42,7 @@ describe('gates/classify-change refactor triggers', () => {
         assert.equal(result.required_reviews.refactor, true);
     });
 
-    it('does not turn refactor wording into a review without runtime-code scope', () => {
+    it('rejects refactor intent for docs-only scope', () => {
         const result = classifyChange({
             normalizedFiles: ['docs/refactor-plan.md'],
             taskIntent: 'Refactor utility functions later',
@@ -57,6 +57,26 @@ describe('gates/classify-change refactor triggers', () => {
 
         assert.equal(result.triggers.refactor_intent, false);
         assert.equal(result.required_reviews.refactor, false);
+    });
+
+    it('keeps explicit refactor intent review-eligible for test-only scope', () => {
+        const result = classifyChange({
+            normalizedFiles: ['tests/node/fixtures/refactor-harness.test.ts'],
+            taskIntent: 'Refactor the test harness without changing runtime behavior',
+            changedLinesTotal: 12,
+            additionsTotal: 8,
+            deletionsTotal: 4,
+            renameCount: 0,
+            detectionSource: 'explicit_changed_files',
+            classificationConfig: makeConfig(),
+            reviewCapabilities: defaultCapabilities
+        });
+
+        assert.equal(result.scope_category, 'test-only');
+        assert.equal(result.triggers.runtime_code_changed, false);
+        assert.equal(result.triggers.refactor_intent, true);
+        assert.equal(result.required_reviews.refactor, true);
+        assert.equal(result.required_reviews.test, true);
     });
 
     it('triggers refactor review for decomposition and split task intents', () => {

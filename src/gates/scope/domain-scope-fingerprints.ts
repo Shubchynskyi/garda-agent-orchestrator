@@ -10,7 +10,8 @@ import {
     getClassificationConfig,
     isConfigLikePath,
     isRuntimeCodeLikePath,
-    isSafeOrdinaryDocumentationPath
+    isSafeOrdinaryDocumentationPath,
+    type ResolvedClassificationConfig
 } from '../preflight/classify-change';
 import { normalizePath, stringSha256, testPathPrefix } from '../shared/helpers';
 import {
@@ -38,9 +39,11 @@ function normalizeDomainScopeFiles(value: unknown): string[] {
     return [...new Set(value.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
 }
 
-function classifyDomainFile(repoRoot: string, filePath: string): DomainScopeName {
+function classifyDomainFile(
+    filePath: string,
+    classificationConfig: ResolvedClassificationConfig
+): DomainScopeName {
     const normalizedPath = normalizePath(filePath);
-    const classificationConfig = getClassificationConfig(repoRoot);
     if (isCloseoutEvidencePath(normalizedPath)) {
         return 'closeout';
     }
@@ -101,16 +104,18 @@ export function buildDomainScopeFingerprints(options: {
     detectionSource: string;
     includeUntracked: boolean;
     changedFiles: string[];
+    classificationConfig?: ResolvedClassificationConfig;
 }): DomainScopeFingerprints {
     const detectionSource = String(options.detectionSource || 'git_auto').trim().toLowerCase() || 'git_auto';
     const includeUntracked = options.includeUntracked === true;
     const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(detectionSource);
     const changedFiles = [...new Set(options.changedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
+    const classificationConfig = options.classificationConfig || getClassificationConfig(options.repoRoot);
     const byDomain = new Map<DomainScopeName, string[]>(
         DOMAIN_SCOPE_NAMES.map((domain) => [domain, []])
     );
     for (const changedFile of changedFiles) {
-        byDomain.get(classifyDomainFile(options.repoRoot, changedFile))?.push(changedFile);
+        byDomain.get(classifyDomainFile(changedFile, classificationConfig))?.push(changedFile);
     }
     const domains = Object.fromEntries(
         DOMAIN_SCOPE_NAMES.map((domain) => [
@@ -138,17 +143,20 @@ export function buildDomainScopeFingerprints(options: {
     };
     fingerprints.legacy.review_scope_sha256 = computeReviewRelevantScopeFingerprint(
         legacyPreflight,
-        options.repoRoot
+        options.repoRoot,
+        classificationConfig
     ).review_scope_sha256;
     fingerprints.legacy.non_test_review_scope_sha256 = computeReviewReuseCodeScopeFingerprint(
         'security',
         legacyPreflight,
-        options.repoRoot
+        options.repoRoot,
+        classificationConfig
     ).code_scope_sha256;
     fingerprints.legacy.code_review_scope_sha256 = computeReviewReuseCodeScopeFingerprint(
         'code',
         legacyPreflight,
-        options.repoRoot
+        options.repoRoot,
+        classificationConfig
     ).code_scope_sha256;
     fingerprints.legacy.code_scope_sha256 = fingerprints.legacy.code_review_scope_sha256;
     return fingerprints;

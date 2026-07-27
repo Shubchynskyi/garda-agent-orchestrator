@@ -315,7 +315,8 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
     const apiIntentTriggered = runtimeIntentReviewEligible && hasApiReviewIntent(taskIntent);
     const performanceIntentTriggered = runtimeIntentReviewEligible && hasPerformanceReviewIntent(taskIntent);
     const securityTriggered = pathTriggers.securityTriggered || securityIntentTriggered;
-    const refactorIntentTriggered = runtimeIntentReviewEligible && hasRefactorIntent(taskIntent);
+    const refactorIntentReviewEligible = runtimeIntentReviewEligible || testOnlyDomainReviewSuppressed;
+    const refactorIntentTriggered = refactorIntentReviewEligible && hasRefactorIntent(taskIntent);
     const refactorPathTriggeredFiles = testOnlyDomainReviewSuppressed
         ? []
         : pathTriggers.refactorPathTriggeredFiles;

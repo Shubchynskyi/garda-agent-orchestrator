@@ -3,7 +3,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { matchAnyRegex } from '../../gate-runtime/text-utils';
-import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from '../preflight/classify-change';
+import {
+    getClassificationConfig,
+    isSafeOrdinaryDocumentationPath,
+    type ResolvedClassificationConfig
+} from '../preflight/classify-change';
 import {
     normalizePath,
     stringSha256
@@ -471,9 +475,12 @@ function getScopedContentFingerprint(
 function computeCodeReviewScopeFingerprintInternal(
     preflight: Record<string, unknown>,
     repoRoot: string,
-    options: { excludeNonRuntimePerformanceSupportFiles?: boolean } = {}
+    options: {
+        excludeNonRuntimePerformanceSupportFiles?: boolean;
+        classificationConfig?: ResolvedClassificationConfig;
+    } = {}
 ): CodeReviewScopeFingerprint {
-    const classificationConfig = getClassificationConfig(repoRoot);
+    const classificationConfig = options.classificationConfig || getClassificationConfig(repoRoot);
     const allChangedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
@@ -540,19 +547,21 @@ export function computeCodeReviewScopeFingerprint(
 export function computeReviewReuseCodeScopeFingerprint(
     reviewType: string,
     preflight: Record<string, unknown>,
-    repoRoot: string
+    repoRoot: string,
+    classificationConfig?: ResolvedClassificationConfig
 ): CodeReviewScopeFingerprint {
     const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
     return computeCodeReviewScopeFingerprintInternal(preflight, repoRoot, {
-        excludeNonRuntimePerformanceSupportFiles: normalizedReviewType === 'code'
+        excludeNonRuntimePerformanceSupportFiles: normalizedReviewType === 'code',
+        classificationConfig
     });
 }
 
 export function computeReviewRelevantScopeFingerprint(
     preflight: Record<string, unknown>,
-    repoRoot: string
+    repoRoot: string,
+    classificationConfig: ResolvedClassificationConfig = getClassificationConfig(repoRoot)
 ): ReviewRelevantScopeFingerprint {
-    const classificationConfig = getClassificationConfig(repoRoot);
     const allChangedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];

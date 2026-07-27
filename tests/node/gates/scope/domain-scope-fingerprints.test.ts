@@ -12,6 +12,7 @@ import {
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint
 } from '../../../../src/gates/review-reuse';
+import { getClassificationConfig } from '../../../../src/gates/preflight/classify-change';
 
 describe('gates/domain-scope-fingerprints', () => {
     it('preserves legacy closeout-aware review scope hashes', () => {
@@ -86,6 +87,82 @@ describe('gates/domain-scope-fingerprints', () => {
             assert.deepEqual(
                 fingerprints.domains.config.changed_files,
                 ['garda-agent-orchestrator/live/config/workflow-config.json']
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects mutable classification drift across domain and legacy review hashes', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-domain-scope-locked-config-'));
+        try {
+            fs.mkdirSync(path.join(repoRoot, 'custom-specs'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'custom-notes'), { recursive: true });
+            fs.writeFileSync(
+                path.join(repoRoot, 'custom-specs', 'classification-case.ts'),
+                'export const classificationCase = true;\n',
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(repoRoot, 'custom-notes', 'classification-guide.asset'),
+                'classification guide\n',
+                'utf8'
+            );
+
+            const mutableConfig = getClassificationConfig(repoRoot);
+            const lockedConfig = {
+                ...mutableConfig,
+                source: 'task_profile_policy_snapshot',
+                test_trigger_regexes: ['(^|/)custom-specs/'],
+                ordinary_doc_paths: ['custom-notes/**']
+            };
+            const preflight = {
+                detection_source: 'explicit_changed_files',
+                include_untracked: true,
+                changed_files: [
+                    'custom-specs/classification-case.ts',
+                    'custom-notes/classification-guide.asset'
+                ]
+            };
+
+            const fingerprints = buildDomainScopeFingerprints({
+                repoRoot,
+                detectionSource: 'explicit_changed_files',
+                includeUntracked: true,
+                changedFiles: preflight.changed_files,
+                classificationConfig: lockedConfig
+            });
+            const lockedReviewScope = computeReviewRelevantScopeFingerprint(
+                preflight,
+                repoRoot,
+                lockedConfig
+            );
+            const lockedCodeScope = computeReviewReuseCodeScopeFingerprint(
+                'code',
+                preflight,
+                repoRoot,
+                lockedConfig
+            );
+
+            assert.deepEqual(
+                fingerprints.domains.test.changed_files,
+                ['custom-specs/classification-case.ts']
+            );
+            assert.deepEqual(
+                fingerprints.domains.docs.changed_files,
+                ['custom-notes/classification-guide.asset']
+            );
+            assert.deepEqual(fingerprints.domains.implementation.changed_files, []);
+            assert.equal(fingerprints.legacy.review_scope_sha256, lockedReviewScope.review_scope_sha256);
+            assert.equal(fingerprints.legacy.code_review_scope_sha256, lockedCodeScope.code_scope_sha256);
+            assert.equal(fingerprints.legacy.non_test_review_scope_sha256, lockedCodeScope.code_scope_sha256);
+            assert.notEqual(
+                lockedReviewScope.review_scope_sha256,
+                computeReviewRelevantScopeFingerprint(preflight, repoRoot, mutableConfig).review_scope_sha256
+            );
+            assert.notEqual(
+                lockedCodeScope.code_scope_sha256,
+                computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot, mutableConfig).code_scope_sha256
             );
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });

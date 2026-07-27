@@ -443,7 +443,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         repoRoot,
         detectionSource: workspaceSnapshot.detection_source,
         includeUntracked: !!workspaceSnapshot.include_untracked,
-        changedFiles: workspaceSnapshot.changed_files
+        changedFiles: workspaceSnapshot.changed_files,
+        classificationConfig
     });
     if (splitCheckpointResolution.scope) {
         result.split_checkpoint_scope = splitCheckpointResolution.scope;
