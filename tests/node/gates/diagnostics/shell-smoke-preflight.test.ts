@@ -22,7 +22,12 @@ function createTempDir(): string {
 }
 
 function removeTempDir(dirPath: string): void {
-    fs.rmSync(dirPath, { recursive: true, force: true });
+    fs.rmSync(dirPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 20,
+        retryDelay: 50
+    });
 }
 
 function scaffoldWorkspace(root: string, options: {
@@ -173,7 +178,7 @@ describe('gates/shell-smoke-preflight', () => {
             }
         });
 
-        it('fails closed when canonical Git classification exceeds the remaining git-state probe timeout', () => {
+        it('bounds canonical Git classification by the remaining git-state probe timeout', () => {
             scaffoldWorkspace(tempDir, { sourceCheckout: true });
             fs.mkdirSync(path.join(tempDir, 'bin'), { recursive: true });
             fs.writeFileSync(path.join(tempDir, 'bin', 'garda.js'), 'console.log("2.4.2");', 'utf8');

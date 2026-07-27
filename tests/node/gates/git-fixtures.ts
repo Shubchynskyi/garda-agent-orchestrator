@@ -131,17 +131,22 @@ export function initGitRepo(repoRoot: string, options: InitGitRepoOptions = {}):
         );
     }
 
-    runGitFixtureCommand(repoRoot, ['init']);
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        runGitFixtureCommand(repoRoot, ['init']);
+    }
     writeGitFixtureConfig(repoRoot, options);
 
     if (options.stageAll !== false) {
         runGitFixtureCommand(repoRoot, ['add', '.']);
     }
 
-    const commitArgs = ['commit'];
-    if (options.allowEmptyCommit) {
-        commitArgs.push('--allow-empty');
+    const stagedFiles = runGitFixtureCommand(repoRoot, ['diff', '--cached', '--name-only']).stdout.trim();
+    if (stagedFiles || options.allowEmptyCommit) {
+        const commitArgs = ['commit'];
+        if (options.allowEmptyCommit) {
+            commitArgs.push('--allow-empty');
+        }
+        commitArgs.push('-m', options.initialCommitMessage || 'baseline');
+        runGitFixtureCommand(repoRoot, commitArgs);
     }
-    commitArgs.push('-m', options.initialCommitMessage || 'baseline');
-    runGitFixtureCommand(repoRoot, commitArgs);
 }

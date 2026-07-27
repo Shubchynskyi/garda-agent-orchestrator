@@ -256,7 +256,12 @@ export function writeReviewCapabilitiesConfig(
 }
 
 export function writeBudgetOutputFilters(repoRoot: string): string {
-    const outputFiltersPath = path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'output-filters.json');
+    const outputFiltersPath = path.join(
+        getOrchestratorRoot(repoRoot),
+        'runtime',
+        'test-config',
+        'output-filters.json'
+    );
     fs.mkdirSync(path.dirname(outputFiltersPath), {recursive: true});
     fs.writeFileSync(outputFiltersPath, JSON.stringify({
         version: 2,
@@ -374,20 +379,26 @@ export function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeComm
         fs.mkdirSync(path.dirname(routedFilePath), {recursive: true});
         if (!fs.existsSync(routedFilePath)) {
             fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
+            if (fs.existsSync(path.join(repoRoot, '.git'))) {
+                runGit(repoRoot, ['add', '--', routedTo]);
+                runGit(repoRoot, ['commit', '-m', 'test: seed routed workflow fixture', '--', routedTo]);
+            }
         }
+    }
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        const taskId = String(resolvedOptions.taskId || '').trim();
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        initializeGitRepoWithMaterializedScope(
+            repoRoot,
+            taskId ? readChangedFilesFromPreflight(preflightPath) : []
+        );
     }
     const manifestPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'protected-control-plane-manifest.json');
     if (!fs.existsSync(manifestPath)) {
-        const hasGit = fs.existsSync(path.join(repoRoot, '.git'));
-        const workflowConfigBaseline = hasGit
-            ? getWorkflowConfigPreTaskBaselineState(repoRoot)
-            : {changed_files: [], compatibility_baseline_files: []};
+        const workflowConfigBaseline = getWorkflowConfigPreTaskBaselineState(repoRoot);
         if (
-            !hasGit
-            || (
-                workflowConfigBaseline.changed_files.length === 0
-                && workflowConfigBaseline.compatibility_baseline_files.length === 0
-            )
+            workflowConfigBaseline.changed_files.length === 0
+            && workflowConfigBaseline.compatibility_baseline_files.length === 0
         ) {
             writeProtectedControlPlaneManifest(repoRoot);
         }
@@ -586,16 +597,33 @@ export function runGit(
 }
 
 export function initializeGitRepo(repoRoot: string): void {
-    runGit(repoRoot, ['init'], {retryFixtureSetup: true});
+    const gitignorePath = path.join(repoRoot, '.gitignore');
+    const runtimeIgnore = 'garda-agent-orchestrator/runtime/';
+    const existingGitignore = fs.existsSync(gitignorePath)
+        ? fs.readFileSync(gitignorePath, 'utf8')
+        : '';
+    if (!existingGitignore.split(/\r?\n/u).includes(runtimeIgnore)) {
+        fs.writeFileSync(
+            gitignorePath,
+            `${existingGitignore}${existingGitignore && !existingGitignore.endsWith('\n') ? '\n' : ''}${runtimeIgnore}\n`,
+            'utf8'
+        );
+    }
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        runGit(repoRoot, ['init'], {retryFixtureSetup: true});
+    }
 
     const configPath = path.join(repoRoot, '.git', 'config');
     if (fs.existsSync(configPath)) {
-        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.com\n';
+        const userConfig = '\n[core]\n\tautocrlf = false\n\teol = lf\n\tsafecrlf = false\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.com\n';
         fs.appendFileSync(configPath, userConfig, 'utf8');
     }
 
     runGit(repoRoot, ['add', '.']);
-    runGit(repoRoot, ['commit', '-m', 'test: baseline']);
+    const status = runGit(repoRoot, ['status', '--porcelain']).stdout.trim();
+    if (status) {
+        runGit(repoRoot, ['commit', '-m', 'test: baseline']);
+    }
 }
 
 function runGitBestEffort(repoRoot: string, args: string[], options: { retryFixtureSetup?: boolean } = {}): void {
@@ -628,6 +656,148 @@ function readChangedFilesFromPreflight(preflightPath: string): string[] {
             : ['src/app.ts'];
     } catch {
         return ['src/app.ts'];
+    }
+}
+
+type MaterializedScopeEntry = {
+    absolutePath: string;
+    originalContent: Buffer | null;
+};
+
+function pathEscapesRoot(rootPath: string, candidatePath: string): boolean {
+    const relativePath = path.relative(rootPath, candidatePath);
+    return relativePath === '..'
+        || relativePath.startsWith(`..${path.sep}`)
+        || path.isAbsolute(relativePath);
+}
+
+function lstatFixturePath(candidatePath: string): fs.Stats | null {
+    try {
+        return fs.lstatSync(candidatePath);
+    } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return null;
+        }
+        throw error;
+    }
+}
+
+function assertMaterializedScopeHasNoSymlink(
+    repoRoot: string,
+    absolutePath: string,
+    relativePath: string
+): void {
+    const pathFromRoot = path.relative(repoRoot, absolutePath);
+    let currentPath = repoRoot;
+    for (const segment of pathFromRoot.split(path.sep).filter(Boolean)) {
+        currentPath = path.join(currentPath, segment);
+        const pathStat = lstatFixturePath(currentPath);
+        if (pathStat === null) {
+            return;
+        }
+        if (pathStat.isSymbolicLink()) {
+            throw new Error(`Test changed-file fixture must not traverse a symlink: ${relativePath}`);
+        }
+        if (currentPath !== absolutePath && !pathStat.isDirectory()) {
+            throw new Error(`Test changed-file fixture parent must be a directory: ${relativePath}`);
+        }
+    }
+}
+
+function resolveExistingFixtureAncestor(candidatePath: string): string {
+    let currentPath = candidatePath;
+    while (lstatFixturePath(currentPath) === null) {
+        const parentPath = path.dirname(currentPath);
+        if (parentPath === currentPath) {
+            break;
+        }
+        currentPath = parentPath;
+    }
+    return currentPath;
+}
+
+function resolveMaterializedScopeEntries(
+    repoRoot: string,
+    changedFiles: readonly string[]
+): MaterializedScopeEntry[] {
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    const realRepoRoot = fs.realpathSync(resolvedRepoRoot);
+    const gitDirectory = path.join(resolvedRepoRoot, '.git');
+    const entriesByPath = new Map<string, MaterializedScopeEntry>();
+
+    for (const rawRelativePath of changedFiles) {
+        const relativePath = String(rawRelativePath || '').trim();
+        if (!relativePath || relativePath.startsWith(':') || path.isAbsolute(relativePath)) {
+            throw new Error(`Test changed-file fixture must stay inside repo root: ${String(rawRelativePath)}`);
+        }
+        const absolutePath = path.resolve(resolvedRepoRoot, relativePath);
+        if (
+            absolutePath === resolvedRepoRoot
+            || pathEscapesRoot(resolvedRepoRoot, absolutePath)
+            || absolutePath === gitDirectory
+            || !pathEscapesRoot(gitDirectory, absolutePath)
+        ) {
+            throw new Error(`Test changed-file fixture must stay inside repo root: ${relativePath}`);
+        }
+
+        assertMaterializedScopeHasNoSymlink(resolvedRepoRoot, absolutePath, relativePath);
+        const existingAncestor = resolveExistingFixtureAncestor(absolutePath);
+        const realExistingAncestor = fs.realpathSync(existingAncestor);
+        if (pathEscapesRoot(realRepoRoot, realExistingAncestor)) {
+            throw new Error(`Test changed-file fixture must stay inside repo root: ${relativePath}`);
+        }
+
+        let originalContent: Buffer | null = null;
+        const fileStat = lstatFixturePath(absolutePath);
+        if (fileStat !== null) {
+            if (!fileStat.isFile()) {
+                throw new Error(`Test changed-file fixture must be a regular file: ${relativePath}`);
+            }
+            const realFilePath = fs.realpathSync(absolutePath);
+            if (pathEscapesRoot(realRepoRoot, realFilePath)) {
+                throw new Error(`Test changed-file fixture must stay inside repo root: ${relativePath}`);
+            }
+            originalContent = fs.readFileSync(absolutePath);
+        }
+
+        const dedupeKey = process.platform === 'win32'
+            ? absolutePath.toLocaleLowerCase('en-US')
+            : absolutePath;
+        if (!entriesByPath.has(dedupeKey)) {
+            entriesByPath.set(dedupeKey, {absolutePath, originalContent});
+        }
+    }
+
+    return [...entriesByPath.values()];
+}
+
+export function initializeGitRepoWithMaterializedScope(repoRoot: string, changedFiles: readonly string[]): void {
+    if (fs.existsSync(path.join(repoRoot, '.git'))) {
+        return;
+    }
+
+    const materializedScope = resolveMaterializedScopeEntries(repoRoot, changedFiles);
+    const preparedEntries: MaterializedScopeEntry[] = [];
+    try {
+        for (const entry of materializedScope) {
+            preparedEntries.push(entry);
+            fs.mkdirSync(path.dirname(entry.absolutePath), {recursive: true});
+            fs.writeFileSync(
+                entry.absolutePath,
+                entry.originalContent === null
+                    ? Buffer.alloc(0)
+                    : Buffer.concat([entry.originalContent, Buffer.from('\n')])
+            );
+        }
+        initializeGitRepo(repoRoot);
+    } finally {
+        for (const entry of preparedEntries) {
+            if (entry.originalContent !== null) {
+                fs.writeFileSync(entry.absolutePath, entry.originalContent);
+            } else if (lstatFixturePath(entry.absolutePath) !== null) {
+                fs.unlinkSync(entry.absolutePath);
+            }
+        }
     }
 }
 
@@ -672,6 +842,16 @@ export function prepareReviewDiffFixture(repoRoot: string, preflightPath: string
         fs.mkdirSync(path.dirname(absolutePath), {recursive: true});
         if (!fs.existsSync(absolutePath)) {
             fs.writeFileSync(absolutePath, `// review fixture for ${changedFile}\n`, 'utf8');
+            continue;
+        }
+        const pathStatus = childProcess.spawnSync('git', ['status', '--porcelain', '--', changedFile], {
+            cwd: repoRoot,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true
+        });
+        if (pathStatus.status === 0 && !String(pathStatus.stdout || '').trim()) {
+            fs.appendFileSync(absolutePath, '\n', 'utf8');
         }
     }
 }

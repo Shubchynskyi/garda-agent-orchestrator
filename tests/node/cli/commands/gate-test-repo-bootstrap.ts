@@ -248,7 +248,9 @@ export function initializeGitRepo(repoRoot: string): void {
     ];
 
     // 1. Initialize the repository with optimization parameters
-    runGit(repoRoot, [...gitArgs, 'init']);
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        runGit(repoRoot, [...gitArgs, 'init']);
+    }
 
     // 2. Direct write of user and GPG properties to .git/config to save process spawning
     const configPath = path.join(repoRoot, '.git', 'config');
@@ -259,7 +261,10 @@ export function initializeGitRepo(repoRoot: string): void {
 
     // 3. Add and commit all seeded files
     runGit(repoRoot, ['add', '.']);
-    runGit(repoRoot, ['commit', '-m', 'test: baseline']);
+    const status = runGit(repoRoot, ['status', '--porcelain']).stdout.trim();
+    if (status) {
+        runGit(repoRoot, ['commit', '-m', 'test: baseline']);
+    }
 }
 
 

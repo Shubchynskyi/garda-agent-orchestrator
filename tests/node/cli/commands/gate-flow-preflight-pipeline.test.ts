@@ -31,6 +31,7 @@ import {
     createTempRepo,
     getOrchestratorRoot,
     getReviewsRoot,
+    initializeGitRepo,
     loadPostPreflightRulePack,
     loadTaskEntryRulePack,
     runEnterTaskMode,
@@ -751,7 +752,6 @@ describe('compile gate shared preflight pipeline pilot', () => {
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
             const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-            const preflightPath = writePreflight(repoRoot, taskId);
             const commandsPath = path.join(repoRoot, 'commands.md');
             fs.writeFileSync(commandsPath, [
                 '### Compile Gate (Mandatory)',
@@ -759,6 +759,13 @@ describe('compile gate shared preflight pipeline pilot', () => {
                 'node -e "console.log(\'build ok\')"',
                 '```'
             ].join('\n'), 'utf8');
+            initializeGitRepo(repoRoot);
+            fs.writeFileSync(
+                path.join(repoRoot, 'src', 'app.ts'),
+                'const a = 3;\nconst b = 2;\nconst c = 1;\nconsole.log(a + b);\n',
+                'utf8'
+            );
+            const preflightPath = writePreflight(repoRoot, taskId);
 
             assert.equal(runEnterTaskMode({
                 repoRoot,
@@ -788,7 +795,7 @@ describe('compile gate shared preflight pipeline pilot', () => {
                 post_preflight_sequence: { timeline_path: string };
             };
 
-            assert.equal(result.exitCode, 0);
+            assert.equal(result.exitCode, 0, result.outputLines.join('\n'));
             assert.deepEqual(normalizeCompileOutputContract(result.outputLines), [
                 'COMPILE_GATE_PASSED',
                 'CompileSummary: PASSED | duration_ms=<duration> | exit_code=0 | errors=0 | warnings=0',
@@ -819,7 +826,6 @@ describe('compile gate shared preflight pipeline pilot', () => {
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
             const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-            const preflightPath = writePreflight(repoRoot, taskId);
             const commandsPath = path.join(repoRoot, 'commands.md');
             fs.writeFileSync(commandsPath, [
                 '### Compile Gate (Mandatory)',
@@ -827,6 +833,13 @@ describe('compile gate shared preflight pipeline pilot', () => {
                 'node -e "console.log(\'build must not run\')"',
                 '```'
             ].join('\n'), 'utf8');
+            initializeGitRepo(repoRoot);
+            fs.writeFileSync(
+                path.join(repoRoot, 'src', 'app.ts'),
+                'const a = 3;\nconst b = 2;\nconst c = 1;\nconsole.log(a + b);\n',
+                'utf8'
+            );
+            const preflightPath = writePreflight(repoRoot, taskId);
 
             assert.equal(runEnterTaskMode({
                 repoRoot,
@@ -984,6 +997,12 @@ describe('review and full-suite shared preflight pipeline migration', () => {
                 command: `"${process.execPath.replace(/\\/g, '/')}" -e "process.exit(0)"`
             };
             fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+            initializeGitRepo(repoRoot);
+            fs.writeFileSync(
+                path.join(repoRoot, 'src', 'app.ts'),
+                'const a = 3;\nconst b = 2;\nconsole.log(a + b);\n',
+                'utf8'
+            );
             const preflightPath = writePreflight(repoRoot, taskId);
 
             assert.equal(runEnterTaskMode({
@@ -1042,6 +1061,12 @@ describe('review and full-suite shared preflight pipeline migration', () => {
                 command
             };
             fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+            initializeGitRepo(repoRoot);
+            fs.writeFileSync(
+                path.join(repoRoot, 'src', 'app.ts'),
+                'const a = 3;\nconst b = 2;\nconsole.log(a + b);\n',
+                'utf8'
+            );
             const preflightPath = writePreflight(repoRoot, taskId);
 
             assert.equal(runEnterTaskMode({

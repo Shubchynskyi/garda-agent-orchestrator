@@ -50,6 +50,7 @@ export {
     loadPostPreflightRulePack,
     runHandshakeForTask,
     runShellSmokeForTask,
+    initializeGitRepoWithMaterializedScope,
     prepareCurrentReviewPhase,
     runExplicitPreflight,
     readTaskTimelineEvents,
