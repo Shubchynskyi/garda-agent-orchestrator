@@ -162,6 +162,44 @@ function resolveWorkspaceRoot(options: Record<string, ParsedOptionValue>): strin
     return path.resolve(String(rootValue || process.cwd()));
 }
 
+export class CliPathContainmentError extends Error {
+    constructor(
+        readonly flagName: string,
+        readonly candidatePath: string,
+        readonly workspaceRoot: string,
+        message: string
+    ) {
+        super(message);
+        this.name = 'CliPathContainmentError';
+    }
+}
+
+function buildContainmentError(flagName: string, candidatePath: string, workspaceRoot: string): CliPathContainmentError {
+    const normalizedCandidate = path.resolve(candidatePath);
+    if (flagName === '--planned-changed-files') {
+        return new CliPathContainmentError(
+            flagName,
+            normalizedCandidate,
+            workspaceRoot,
+            `PlannedChangedFile must stay inside repo root: ${normalizedCandidate}`
+        );
+    }
+    const diagnosticLabels: Readonly<Record<string, string>> = {
+        '--preflight-path': 'PreflightPath',
+        '--preflight-output-path': 'PreflightOutputPath',
+        '--review-output-path': 'ReviewOutputPath'
+    };
+    const diagnosticLabel = diagnosticLabels[flagName];
+    return new CliPathContainmentError(
+        flagName,
+        normalizedCandidate,
+        workspaceRoot,
+        diagnosticLabel
+            ? `${diagnosticLabel} must resolve inside repo root without symlink or junction escape: ${normalizedCandidate}`
+            : `${flagName} must resolve inside workspace root without symlink or junction escapes: ${workspaceRoot}; candidate=${normalizedCandidate}`
+    );
+}
+
 function validateContainedValue(flagName: string, rawValue: string, workspaceRoot: string): void {
     const value = rawValue.trim();
     if (!value) {
@@ -171,15 +209,13 @@ function validateContainedValue(flagName: string, rawValue: string, workspaceRoo
         throw new Error(`${flagName} contains an invalid null byte.`);
     }
     if (path.win32.isAbsolute(value) && process.platform !== 'win32') {
-        throw new Error(`${flagName} must resolve inside workspace root '${workspaceRoot}'.`);
+        throw buildContainmentError(flagName, value, workspaceRoot);
     }
     const resolvedPath = path.isAbsolute(value)
         ? path.resolve(value)
         : path.resolve(workspaceRoot, value);
     if (!isPathRealpathInsideRoot(workspaceRoot, resolvedPath, { allowMissing: true })) {
-        throw new Error(
-            `${flagName} must resolve inside workspace root without symlink or junction escapes: ${workspaceRoot}`
-        );
+        throw buildContainmentError(flagName, resolvedPath, workspaceRoot);
     }
 }
 

@@ -19,14 +19,32 @@ import {
     classifyErrorExitCode,
     EXIT_VALIDATION_FAILURE
 } from './exit-codes';
+import { CliPathContainmentError } from '../core/cli-path-input-policy';
 
 let resolvedCommand: string | null = null;
+let resolvedGateCommand: string | null = null;
 
 function getFailureMarker(command: string | null): string {
     if (!command || command === 'bootstrap') {
         return 'GARDA_BOOTSTRAP_FAILED';
     }
     return 'GARDA_CLI_FAILED';
+}
+
+function getPathContainmentFailureMarker(error: CliPathContainmentError): string {
+    if (error.flagName !== '--preflight-path') {
+        return getFailureMarker(resolvedCommand);
+    }
+    if (resolvedGateCommand === 'required-reviews-check') {
+        return 'REVIEW_GATE_FAILED';
+    }
+    if (resolvedGateCommand === 'full-suite-validation') {
+        return 'FULL_SUITE_VALIDATION_FAILED';
+    }
+    if (resolvedGateCommand === 'compile-gate') {
+        return 'COMPILE_GATE_FAILED';
+    }
+    return getFailureMarker(resolvedCommand);
 }
 
 export async function runCliRuntimeMain(
@@ -62,6 +80,9 @@ export async function runCliRuntimeMain(
     const commandArgv = taskResetAlias
         ? ['task-reset', ...taskResetAlias.commandArgv]
         : effectiveArgv.slice(1);
+    resolvedGateCommand = commandName === 'gate'
+        ? String(commandArgv[0] || '').trim() || null
+        : null;
 
     if (!taskResetAlias) {
         const taskResetNearMissError = buildTaskResetNearMissError(effectiveArgv);
@@ -90,6 +111,12 @@ export async function runCliRuntimeMainWithHandling(
     try {
         await runCliRuntimeMain(argv, packageRoot);
     } catch (error: unknown) {
+        if (error instanceof CliPathContainmentError) {
+            console.error(getPathContainmentFailureMarker(error));
+            console.error(error.message);
+            process.exitCode = classifyErrorExitCode(error);
+            return;
+        }
         if (error instanceof ValidationFailureError) {
             console.error(getFailureMarker(resolvedCommand));
             console.error(error.message);

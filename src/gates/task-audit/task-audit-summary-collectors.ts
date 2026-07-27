@@ -180,7 +180,15 @@ export interface ProfileReviewDecisionSummary {
 
 export function resolveReviewsRoot(repoRoot: string, explicit?: string | null): string {
     if (explicit) {
-        const resolved = resolvePathInsideRepo(explicit, repoRoot, { allowMissing: true });
+        let resolved: string | null;
+        try {
+            resolved = resolvePathInsideRepo(explicit, repoRoot, { allowMissing: true });
+        } catch {
+            const rejectedReviewsRoot = path.resolve(repoRoot, explicit);
+            throw new Error(
+                `ReviewsRoot must resolve inside repo root without symlink or junction escape: ${toPosix(rejectedReviewsRoot)}`
+            );
+        }
         if (resolved) return resolved;
     }
     return joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));

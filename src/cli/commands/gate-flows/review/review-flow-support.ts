@@ -174,12 +174,24 @@ export function testReviewArtifacts(
     skipReviewsList: string[],
     reviewsRootValue: string
 ): ReviewArtifactsAuditResult {
-    const reviewsRoot = reviewsRootValue
-        ? requireResolvedPath(
-            gateHelpers.resolvePathInsideRepo(reviewsRootValue, repoRoot, { allowMissing: true }),
-            'ReviewsRoot'
-        )
-        : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
+    let reviewsRoot: string;
+    try {
+        reviewsRoot = reviewsRootValue
+            ? requireResolvedPath(
+                gateHelpers.resolvePathInsideRepo(reviewsRootValue, repoRoot, { allowMissing: true }),
+                'ReviewsRoot'
+            )
+            : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
+    } catch {
+        const unsafeRoot = path.resolve(repoRoot, String(reviewsRootValue || ''));
+        return {
+            reviews_root: gateHelpers.normalizePath(unsafeRoot),
+            checked: [],
+            violations: [formatReviewArtifactRootEscapeViolation(unsafeRoot)],
+            compaction_warnings: [],
+            compaction_warning_count: 0
+        };
+    }
     const result: ReviewArtifactsAuditResult = {
         reviews_root: gateHelpers.normalizePath(reviewsRoot),
         checked: [],

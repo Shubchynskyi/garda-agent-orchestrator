@@ -11,6 +11,7 @@ import {
     EXIT_VALIDATION_FAILURE,
     EXIT_USAGE_ERROR
 } from '../../../src/cli/exit-codes';
+import { runCliRuntimeMainWithHandling } from '../../../src/cli/runtime-main';
 
 function isWorkspaceRoot(candidate: string): boolean {
     return fs.existsSync(path.join(candidate, 'package.json')) &&
@@ -343,6 +344,55 @@ test('gate with invalid gate name produces GARDA_CLI_FAILED with EXIT_USAGE_ERRO
     assert.equal(exitCode, EXIT_USAGE_ERROR);
     assert.ok(stderr.includes('GARDA_CLI_FAILED'), 'Expected GARDA_CLI_FAILED in stderr');
     assert.ok(!stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Should not contain GARDA_BOOTSTRAP_FAILED');
+});
+
+test('preflight containment failures preserve gate-specific markers and candidate diagnostics', async () => {
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-preflight-containment-'));
+    try {
+        const outsidePreflightPath = path.join(outsideRoot, 'T-path-containment-preflight.json');
+        fs.writeFileSync(outsidePreflightPath, '{}\n', 'utf8');
+
+        for (const [gateName, expectedMarker] of [
+            ['required-reviews-check', 'REVIEW_GATE_FAILED'],
+            ['full-suite-validation', 'FULL_SUITE_VALIDATION_FAILED'],
+            ['compile-gate', 'COMPILE_GATE_FAILED']
+        ] as const) {
+            const errors: string[] = [];
+            const originalConsoleError = console.error;
+            const originalExitCode = process.exitCode;
+            let exitCode: number | string | undefined;
+            try {
+                console.error = (...values: unknown[]) => {
+                    errors.push(values.map((value) => String(value)).join(' '));
+                };
+                process.exitCode = undefined;
+                await runCliRuntimeMainWithHandling([
+                    'gate',
+                    gateName,
+                    '--task-id', 'T-path-containment',
+                    '--preflight-path', outsidePreflightPath,
+                    '--repo-root', REPO_ROOT
+                ], REPO_ROOT);
+                exitCode = process.exitCode;
+            } finally {
+                console.error = originalConsoleError;
+                process.exitCode = originalExitCode;
+            }
+            const lines = errors.flatMap((line) => line.split(/\r?\n/u)).filter(Boolean);
+            const markerIndex = lines.indexOf(expectedMarker);
+            const expectedDiagnostic = `PreflightPath must resolve inside repo root without symlink or junction escape: ${
+                path.resolve(outsidePreflightPath)
+            }`;
+            const stderr = lines.join('\n');
+
+            assert.equal(typeof exitCode, 'number');
+            assert.notEqual(exitCode, 0);
+            assert.notEqual(markerIndex, -1, stderr);
+            assert.equal(lines[markerIndex + 1], expectedDiagnostic);
+        }
+    } finally {
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
 });
 
 test('gate validate-manifest returns EXIT_VALIDATION_FAILURE when manifest is invalid', () => {

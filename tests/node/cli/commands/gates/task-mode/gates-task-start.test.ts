@@ -678,6 +678,7 @@ describe('cli/commands/gates — task-start', () => {
             '--planned-changed-files', 'src/app.ts,../outside.ts'
         ]));
         assert.match(error.message, /PlannedChangedFile must stay inside repo root/);
+        assert.match(error.message, /outside\.ts/u);
         assert.equal(fs.existsSync(artifactPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

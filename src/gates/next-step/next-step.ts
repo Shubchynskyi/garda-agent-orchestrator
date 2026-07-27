@@ -4129,19 +4129,34 @@ export function resolveNextStepFromCliOptions(options: {
         ? options.positionals.map((value) => String(value || '').trim()).filter(Boolean)
         : [];
     const preflightPathText = String(options.preflightPath || '').trim();
-    const resolvedPreflightPath = preflightPathText
-        ? resolvePathInsideRepo(preflightPathText, repoRoot, { allowMissing: true })
-        : null;
+    let resolvedPreflightPath: string | null = null;
+    if (preflightPathText) {
+        try {
+            resolvedPreflightPath = resolvePathInsideRepo(preflightPathText, repoRoot, { allowMissing: true });
+        } catch {
+            const rejectedPreflightPath = path.resolve(repoRoot, preflightPathText);
+            throw new Error(
+                `PreflightPath must resolve inside repo root without symlink or junction escape: ${normalizePath(rejectedPreflightPath)}. ` +
+                'The derived ReviewsRoot must resolve inside repo root without symlink or junction escape.'
+            );
+        }
+    }
     const taskId = pickConsistentTaskId([
         { source: '--task-id', value: String(options.taskId || '').trim() || null },
         { source: 'positional', value: positionals[0] || null },
         { source: '--preflight-path', value: resolvedPreflightPath ? parseTaskIdFromPreflightPath(resolvedPreflightPath) : null }
     ]);
-    const reviewsRoot = options.reviewsRoot
-        ? resolvePathInsideRepo(String(options.reviewsRoot), repoRoot, { allowMissing: true })
-        : resolvedPreflightPath
-            ? path.dirname(resolvedPreflightPath)
-        : null;
+    let reviewsRoot: string | null = resolvedPreflightPath ? path.dirname(resolvedPreflightPath) : null;
+    if (options.reviewsRoot) {
+        try {
+            reviewsRoot = resolvePathInsideRepo(String(options.reviewsRoot), repoRoot, { allowMissing: true });
+        } catch {
+            const rejectedReviewsRoot = path.resolve(repoRoot, String(options.reviewsRoot));
+            throw new Error(
+                `ReviewsRoot must resolve inside repo root without symlink or junction escape: ${normalizePath(rejectedReviewsRoot)}`
+            );
+        }
+    }
     const eventsRoot = options.eventsRoot
         ? resolvePathInsideRepo(String(options.eventsRoot), repoRoot, { allowMissing: true })
         : null;

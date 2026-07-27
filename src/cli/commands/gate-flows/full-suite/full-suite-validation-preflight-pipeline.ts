@@ -94,10 +94,15 @@ export function runFullSuiteValidationPreflightPipeline(
                 gateHelpers.resolvePathInsideRepo(
                     String(currentInput.preflightPath || ''),
                     repoRoot,
-                    { allowMissing: true }
+                    { allowMissing: true, enforceInside: false }
                 ),
                 'PreflightPath'
             );
+            if (!gateHelpers.isPathRealpathInsideRoot(preflightPath, repoRoot, { allowMissing: true })) {
+                throw new Error(
+                    `Preflight path must resolve inside the repository root: ${gateHelpers.normalizePath(preflightPath)}`
+                );
+            }
             if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
                 throw new Error(`Preflight artifact not found: ${gateHelpers.normalizePath(preflightPath)}`);
             }

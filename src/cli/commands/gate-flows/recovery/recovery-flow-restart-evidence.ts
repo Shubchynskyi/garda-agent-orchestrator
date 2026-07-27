@@ -37,7 +37,10 @@ export function resolveRecoveryPreflightPath(
         path.join('runtime', 'reviews', `${taskId}-preflight.json`)
     );
     const requestedPath = String(pathValue || defaultPreflightPath).trim() || defaultPreflightPath;
-    const resolvedPath = gateHelpers.resolvePathInsideRepo(requestedPath, repoRoot, { allowMissing: true });
+    const resolvedPath = gateHelpers.resolvePathInsideRepo(requestedPath, repoRoot, {
+        allowMissing: true,
+        enforceInside: false
+    });
     if (!resolvedPath || !gateHelpers.isPathRealpathInsideRoot(resolvedPath, repoRoot, { allowMissing: true })) {
         throw new Error(
             `${label} must resolve inside repo root without symlink or junction escape: `
