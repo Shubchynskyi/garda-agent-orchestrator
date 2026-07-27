@@ -355,6 +355,19 @@ describe('Git change classification', () => {
         }
     });
 
+    it('sorts paths by stable ordinal comparison', () => {
+        const repoRoot = makeRepo();
+        for (const fileName of ['a.txt', 'Z.txt', 'ä.txt']) {
+            fs.writeFileSync(path.join(repoRoot, fileName), `${fileName}\n`, 'utf8');
+        }
+
+        const result = classifyGitChanges(repoRoot);
+
+        assert.deepEqual(result.changes.map((change) => change.path), ['Z.txt', 'a.txt', 'ä.txt']);
+        assert.deepEqual(result.untrackedFiles, ['Z.txt', 'a.txt', 'ä.txt']);
+        assert.deepEqual(result.effectiveChangedFiles, ['Z.txt', 'a.txt', 'ä.txt']);
+    });
+
     it('preserves a literal backslash in a POSIX Git pathname', {
         skip: process.platform === 'win32'
     }, () => {

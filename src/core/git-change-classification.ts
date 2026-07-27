@@ -184,8 +184,12 @@ function literalPathspec(filePath: string): string {
     return `:(literal)${filePath}`;
 }
 
+function compareOrdinal(left: string, right: string): number {
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function uniqueSorted(values: Iterable<string>): string[] {
-    return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+    return [...new Set(values)].sort(compareOrdinal);
 }
 
 export function normalizeGitRepoRelativePath(filePath: string): string | null {
@@ -623,7 +627,7 @@ export function classifyGitChanges(
         });
     }
     const changes = [...staged, ...unstaged, ...untracked].sort((left, right) =>
-        left.path.localeCompare(right.path) || LAYER_ORDER[left.layer] - LAYER_ORDER[right.layer]
+        compareOrdinal(left.path, right.path) || LAYER_ORDER[left.layer] - LAYER_ORDER[right.layer]
     );
     const gitConfig = {
         autocrlf: readConfig(repoRoot, 'core.autocrlf', budget),
