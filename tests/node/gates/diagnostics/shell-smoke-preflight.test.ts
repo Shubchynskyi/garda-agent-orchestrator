@@ -12,7 +12,10 @@ import {
     resolveShellSmokeArtifactPath,
     type ShellSmokePreflightArtifact
 } from '../../../../src/gates/diagnostics/shell-smoke-preflight';
-import { initGitRepo as initGitFixtureRepo } from '../git-fixtures';
+import {
+    initGitRepo as initGitFixtureRepo,
+    runGitFixtureCommand
+} from '../git-fixtures';
 
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-shell-smoke-test-'));
@@ -45,29 +48,23 @@ function initGitRepo(root: string): void {
     });
 }
 
-function createSlowStatusGitShim(root: string): string {
-    const shimDir = path.join(root, 'slow-git-shim');
-    fs.mkdirSync(shimDir, { recursive: true });
-    const script = [
-        "const args = process.argv.slice(2);",
-        "if (args[0] === 'rev-parse') { process.stdout.write('main\\n'); process.exit(0); }",
-        "if (args.includes('status')) { setTimeout(() => process.exit(0), 10_000); }",
-        'else { process.exit(1); }'
-    ].join('\n');
-    if (process.platform === 'win32') {
-        const scriptPath = path.join(shimDir, 'slow-git.js');
-        fs.writeFileSync(scriptPath, script, 'utf8');
-        fs.writeFileSync(
-            path.join(shimDir, 'git.cmd'),
-            `@"${process.execPath}" "${scriptPath}" %*\r\n`,
-            'utf8'
-        );
-    } else {
-        const shimPath = path.join(shimDir, 'git');
-        fs.writeFileSync(shimPath, `#!/usr/bin/env node\n${script}\n`, 'utf8');
-        fs.chmodSync(shimPath, 0o755);
-    }
-    return shimDir;
+function configureSlowStatusFsMonitor(root: string): void {
+    const scriptPath = path.join(root, '.git', 'slow-fsmonitor');
+    fs.writeFileSync(
+        scriptPath,
+        [
+            '#!/usr/bin/env node',
+            'setTimeout(() => process.exit(0), 600);'
+        ].join('\n') + '\n',
+        'utf8'
+    );
+    fs.chmodSync(scriptPath, 0o755);
+    const normalizedScriptPath = scriptPath.replace(/\\/gu, '/');
+    runGitFixtureCommand(root, [
+        'config',
+        'core.fsmonitor',
+        normalizedScriptPath
+    ]);
 }
 
 describe('gates/shell-smoke-preflight', () => {
@@ -176,32 +173,26 @@ describe('gates/shell-smoke-preflight', () => {
             }
         });
 
-        it('bounds canonical Git classification by the remaining git-state probe timeout', () => {
+        it('fails closed when canonical Git classification exceeds the remaining git-state probe timeout', () => {
             scaffoldWorkspace(tempDir, { sourceCheckout: true });
             fs.mkdirSync(path.join(tempDir, 'bin'), { recursive: true });
             fs.writeFileSync(path.join(tempDir, 'bin', 'garda.js'), 'console.log("2.4.2");', 'utf8');
-            const shimDir = createSlowStatusGitShim(tempDir);
-            const pathKey = Object.keys(process.env)
-                .find((key) => key.toLowerCase() === 'path') || 'PATH';
-            const originalPath = process.env[pathKey] || '';
-            process.env[pathKey] = `${shimDir}${path.delimiter}${originalPath}`;
+            initGitRepo(tempDir);
+            configureSlowStatusFsMonitor(tempDir);
             const startedAt = Date.now();
-            try {
-                const artifact = buildShellSmokePreflight({
-                    taskId: 'T-904',
-                    repoRoot: tempDir,
-                    probeTimeoutMs: 500
-                });
+            const artifact = buildShellSmokePreflight({
+                taskId: 'T-904',
+                repoRoot: tempDir,
+                probeTimeoutMs: 500
+            });
 
-                const gitProbe = artifact.probes.find((probe) => probe.check === 'git_state');
-                assert.ok(gitProbe);
-                assert.equal(gitProbe.status, 'error');
-                assert.match(gitProbe.detail, /ETIMEDOUT|timed out|timeout|failed/iu);
-                assert.equal(artifact.git_change_classification, null);
-                assert.ok(Date.now() - startedAt < 2_000);
-            } finally {
-                process.env[pathKey] = originalPath;
-            }
+            const gitProbe = artifact.probes.find((probe) => probe.check === 'git_state');
+            assert.ok(gitProbe);
+            assert.equal(gitProbe.status, 'error');
+            assert.match(gitProbe.detail, /ETIMEDOUT|timed out|timeout|failed/iu);
+            assert.equal(artifact.git_change_classification, null);
+            assert.ok(Date.now() - startedAt < 2_000);
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
         });
     });
 

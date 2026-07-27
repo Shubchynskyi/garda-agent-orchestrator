@@ -5,6 +5,7 @@ import { TextDecoder } from 'node:util';
 import { runGit, runGitBinary } from './git-helpers';
 import { normalizeLineEndings } from './line-endings';
 import { isPathInsideRoot, isPathRealpathInsideRoot } from './paths';
+import { DEFAULT_GIT_TIMEOUT_MS } from './subprocess';
 
 export const GIT_EOL_CHANGE_POLICY = Object.freeze({
     schemaVersion: 1,
@@ -137,15 +138,13 @@ interface GitCommandBudget {
 }
 
 function createGitCommandBudget(options: GitChangeClassificationOptions): GitCommandBudget {
-    if (options.timeoutMs === undefined) {
-        return { deadlineMs: null, configuredTimeoutMs: null };
-    }
-    if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0) {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
         throw new Error('Git change classification timeoutMs must be a positive integer.');
     }
     return {
-        deadlineMs: Date.now() + options.timeoutMs,
-        configuredTimeoutMs: options.timeoutMs
+        deadlineMs: Date.now() + timeoutMs,
+        configuredTimeoutMs: timeoutMs
     };
 }
 

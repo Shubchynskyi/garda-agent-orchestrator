@@ -1,16 +1,18 @@
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import * as gitHelpers from '../../../src/core/git-helpers';
 import {
     GIT_EOL_CHANGE_POLICY,
     classifyGitChanges,
     selectGitChangeClassificationLayers
 } from '../../../src/core/git-change-classification';
 import { runGit } from '../../../src/core/git-helpers';
+import { DEFAULT_GIT_TIMEOUT_MS } from '../../../src/core/subprocess';
 
 const tempRoots: string[] = [];
 const CONFLICT_STAGES_BY_STATUS = Object.freeze({
@@ -96,6 +98,42 @@ describe('Git change classification', () => {
     afterEach(() => {
         for (const tempRoot of tempRoots.splice(0)) {
             fs.rmSync(tempRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('applies the shared finite Git timeout when timeoutMs is omitted', () => {
+        const observedTimeouts: Array<number | undefined> = [];
+        const dateNowMock = mock.method(Date, 'now', () => 1_000);
+        const runGitBinaryMock = mock.method(
+            gitHelpers,
+            'runGitBinary',
+            ((...args: Parameters<typeof gitHelpers.runGitBinary>) => {
+                observedTimeouts.push(args[2]?.timeoutMs);
+                return Buffer.alloc(0);
+            }) as typeof gitHelpers.runGitBinary
+        );
+        const runGitMock = mock.method(
+            gitHelpers,
+            'runGit',
+            ((...args: Parameters<typeof gitHelpers.runGit>) => {
+                observedTimeouts.push(args[2]?.timeoutMs);
+                return '';
+            }) as typeof gitHelpers.runGit
+        );
+        try {
+            const result = classifyGitChanges('unused-mocked-repository');
+
+            assert.deepEqual(result.changes, []);
+            assert.deepEqual(observedTimeouts, [
+                DEFAULT_GIT_TIMEOUT_MS,
+                DEFAULT_GIT_TIMEOUT_MS,
+                DEFAULT_GIT_TIMEOUT_MS,
+                DEFAULT_GIT_TIMEOUT_MS
+            ]);
+        } finally {
+            runGitMock.mock.restore();
+            runGitBinaryMock.mock.restore();
+            dateNowMock.mock.restore();
         }
     });
 

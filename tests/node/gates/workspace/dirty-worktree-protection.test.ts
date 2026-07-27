@@ -1,10 +1,12 @@
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import * as gitChangeClassification from '../../../../src/core/git-change-classification';
+import { DEFAULT_GIT_TIMEOUT_MS } from '../../../../src/core/subprocess';
 import {
     buildStagedBaselineTrustInputFingerprint,
     captureDirtyWorkspaceBaseline,
@@ -53,6 +55,28 @@ function createBaselineRepo(): string {
 }
 
 describe('gates/workspace/dirty-worktree-protection', () => {
+    it('passes the shared finite Git timeout to mandatory baseline classification', () => {
+        const repoRoot = createBaselineRepo();
+        const observedTimeouts: Array<number | undefined> = [];
+        const originalClassifyGitChanges = gitChangeClassification.classifyGitChanges;
+        const classifyMock = mock.method(
+            gitChangeClassification,
+            'classifyGitChanges',
+            ((...args: Parameters<typeof originalClassifyGitChanges>) => {
+                observedTimeouts.push(args[1]?.timeoutMs);
+                return originalClassifyGitChanges(...args);
+            }) as typeof originalClassifyGitChanges
+        );
+        try {
+            captureDirtyWorkspaceBaseline(repoRoot);
+
+            assert.deepEqual(observedTimeouts, [DEFAULT_GIT_TIMEOUT_MS]);
+        } finally {
+            classifyMock.mock.restore();
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('reads only repo-bound task-owned and untouched baseline paths from preflight triggers', () => {
         const repoRoot = createBaselineRepo();
         const preflight = {

@@ -619,7 +619,9 @@ export function captureDirtyWorkspaceBaseline(
     repoRoot: string,
     plannedChangedFiles: string[] = []
 ): DirtyWorkspaceBaseline {
-    const gitChangeClassification = buildGitChangeClassificationEvidence(classifyGitChanges(repoRoot));
+    const gitChangeClassification = buildGitChangeClassificationEvidence(classifyGitChanges(repoRoot, {
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS
+    }));
     const snapshotChangedFiles = normalizeWorkspaceRelativePaths(
         repoRoot,
         gitChangeClassification.effective_changed_files
