@@ -268,6 +268,70 @@ describe('Git change classification', () => {
         assert.match(change?.reason || '', /bytes are identical/);
     });
 
+    it('matches rename and copy scopes by current or previous path without widening scope', () => {
+        const repoRoot = makeRepo();
+        runGit(repoRoot, ['mv', 'tracked.txt', 'renamed.txt']);
+        fs.writeFileSync(path.join(repoRoot, 'unrelated.txt'), 'unrelated\n', 'utf8');
+        runGit(repoRoot, ['add', 'unrelated.txt']);
+
+        const complete = classifyGitChanges(repoRoot);
+        const renamedChange = complete.changes.find((change) => change.path === 'renamed.txt');
+        const unrelatedChange = complete.changes.find((change) => change.path === 'unrelated.txt');
+        assert.ok(renamedChange);
+        assert.ok(unrelatedChange);
+
+        for (const scopedPath of ['tracked.txt', 'renamed.txt']) {
+            const selected = selectGitChangeClassificationLayers(complete, {
+                layers: ['staged'],
+                paths: [scopedPath],
+                context: 'rename scope'
+            });
+
+            assert.deepEqual(
+                selected.changes.map((change) => ({
+                    path: change.path,
+                    previousPath: change.previousPath,
+                    changeKind: change.changeKind
+                })),
+                [{
+                    path: 'renamed.txt',
+                    previousPath: 'tracked.txt',
+                    changeKind: 'renamed'
+                }]
+            );
+        }
+
+        const copyClassification = {
+            ...complete,
+            changes: [{
+                ...renamedChange,
+                path: 'copied.txt',
+                status: 'C100',
+                changeKind: 'copied' as const
+            }, unrelatedChange]
+        };
+        for (const scopedPath of ['tracked.txt', 'copied.txt']) {
+            const selected = selectGitChangeClassificationLayers(copyClassification, {
+                layers: ['staged'],
+                paths: [scopedPath],
+                context: 'copy scope'
+            });
+
+            assert.deepEqual(
+                selected.changes.map((change) => ({
+                    path: change.path,
+                    previousPath: change.previousPath,
+                    changeKind: change.changeKind
+                })),
+                [{
+                    path: 'copied.txt',
+                    previousPath: 'tracked.txt',
+                    changeKind: 'copied'
+                }]
+            );
+        }
+    });
+
     it('classifies every porcelain unmerged status pair in both conflict layers', () => {
         const repoRoot = makeRepo();
 

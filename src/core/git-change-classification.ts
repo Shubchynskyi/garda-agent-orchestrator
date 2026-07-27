@@ -660,7 +660,12 @@ export function selectGitChangeClassificationLayers(
     const selectedLayers = new Set(options.layers);
     const selectedPaths = options.paths ? new Set(options.paths) : null;
     const changes = classification.changes.filter((change) =>
-        selectedLayers.has(change.layer) && (!selectedPaths || selectedPaths.has(change.path))
+        selectedLayers.has(change.layer)
+        && (
+            !selectedPaths
+            || selectedPaths.has(change.path)
+            || (change.previousPath !== null && selectedPaths.has(change.previousPath))
+        )
     );
     const staged = changes.filter((change) => change.layer === 'staged');
     const unstaged = changes.filter((change) => change.layer === 'unstaged');
