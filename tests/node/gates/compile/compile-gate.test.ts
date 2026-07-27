@@ -273,6 +273,61 @@ describe('gates/compile-gate', () => {
     });
 
     describe('getWorkspaceSnapshot', () => {
+        it('recovers from adversarial absolute and traversal generated-runtime paths as ignored evidence', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-generated-runtime-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            const appPath = path.join(repoRoot, 'src', 'app.ts');
+            const ignoredPaths = [
+                '../outside/runtime/reviews/T-983-2-code-review.json',
+                '../runtime/reviews/T-983-2-traversal-prefixed.json',
+                'Z:/missing/root/runtime/task-events/T-983-2.jsonl'
+            ];
+            const explicitPaths = [
+                '../outside/runtime/reviews/T-983-2-code-review.json',
+                'src/../../runtime/reviews/T-983-2-traversal-prefixed.json',
+                'Z:/missing/root/runtime/task-events/T-983-2.jsonl'
+            ];
+
+            try {
+                fs.mkdirSync(path.dirname(appPath), { recursive: true });
+                fs.writeFileSync(appPath, 'export const value = 1;\n', 'utf8');
+                initGitRepo(repoRoot);
+                fs.writeFileSync(appPath, 'export const value = 2;\n', 'utf8');
+
+                const snapshot = getWorkspaceSnapshot(
+                    repoRoot,
+                    'explicit_changed_files',
+                    false,
+                    ['src/app.ts', ...explicitPaths]
+                );
+
+                assert.deepEqual(snapshot.authorized_files, ['src/app.ts']);
+                assert.deepEqual(snapshot.changed_files, ['src/app.ts']);
+                assert.deepEqual(snapshot.ignored_generated_runtime_files, ignoredPaths);
+                assert.equal(snapshot.ignored_generated_runtime_files_count, ignoredPaths.length);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('fails explicit snapshots closed when canonical Git classification is unavailable', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-no-git-'));
+
+            try {
+                assert.throws(
+                    () => getWorkspaceSnapshot(
+                        repoRoot,
+                        'explicit_changed_files',
+                        false,
+                        ['Z:/missing/root/runtime/task-events/T-983-2.jsonl']
+                    ),
+                    /not a git repository|git .* failed/iu
+                );
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        });
+
         it('collects changed files when repo root and file paths contain spaces', () => {
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-'));
             const repoRoot = path.join(tempDir, 'repo with spaces');

@@ -533,8 +533,15 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         return (String(result.stdout || '')).split(/\r?\n/).filter(l => l.trim());
     }
 
+    const rawExplicitSplit = splitGeneratedRuntimeControlPlaneArtifacts(
+        (explicitChangedFiles || []).map((filePath) => {
+            const normalizedPath = normalizePath(filePath);
+            return normalizedPath ? path.posix.normalize(normalizedPath) : '';
+        }),
+        generatedRuntimeSplitOptions
+    );
     const allNormalizedExplicit = [...new Set(
-        (explicitChangedFiles || [])
+        rawExplicitSplit.reviewableFiles
             .map((f: string) => normalizeGitRepoRelativePath(f))
             .filter((f): f is string => f !== null)
     )]
@@ -542,7 +549,10 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         .sort();
     const explicitSplit = splitGeneratedRuntimeControlPlaneArtifacts(allNormalizedExplicit, generatedRuntimeSplitOptions);
     const normalizedExplicit = explicitSplit.reviewableFiles;
-    const ignoredGeneratedRuntimeFiles = explicitSplit.ignoredGeneratedRuntimeFiles;
+    const ignoredGeneratedRuntimeFiles = [
+        ...rawExplicitSplit.ignoredGeneratedRuntimeFiles,
+        ...explicitSplit.ignoredGeneratedRuntimeFiles
+    ];
     const changedFileStats: Record<string, { additions: number; deletions: number; changed_lines: number }> = {};
 
     if (source === 'explicit_changed_files') {
