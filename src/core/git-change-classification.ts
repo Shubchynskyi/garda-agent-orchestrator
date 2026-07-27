@@ -129,6 +129,7 @@ const LAYER_ORDER: Record<GitChangeLayer, number> = {
     unstaged: 1,
     untracked: 2
 };
+const UNMERGED_STATUS_PAIRS = new Set(['DD', 'AU', 'UD', 'UA', 'DU']);
 
 interface GitCommandBudget {
     deadlineMs: number | null;
@@ -266,6 +267,22 @@ function parsePorcelainStatus(output: Buffer): ParsedPorcelainStatus {
         }
         if (xStatus === '?' && yStatus === '?') {
             untracked.push(filePath);
+            continue;
+        }
+        const statusPair = `${xStatus}${yStatus}`;
+        if (UNMERGED_STATUS_PAIRS.has(statusPair)) {
+            staged.push({
+                status: statusPair,
+                path: filePath,
+                previousPath: null,
+                changeKind: 'unmerged'
+            });
+            unstaged.push({
+                status: statusPair,
+                path: filePath,
+                previousPath: null,
+                changeKind: 'unmerged'
+            });
             continue;
         }
         const renameOrCopy = /[RC]/u.test(xStatus) || /[RC]/u.test(yStatus);
@@ -415,14 +432,8 @@ function decodeText(content: Buffer): string | null {
 function classifySnapshots(
     before: ContentSnapshot,
     after: ContentSnapshot,
-    changeKind: GitChangeKind
+    changeKind: Exclude<GitChangeKind, 'type_changed' | 'unmerged'>
 ): Pick<GitLayerChangeClassification, 'contentClassification' | 'reason'> {
-    if (changeKind === 'type_changed' || changeKind === 'unmerged') {
-        return {
-            contentClassification: 'metadata',
-            reason: `Git reports a ${changeKind.replace('_', ' ')} change; byte-level EOL classification is not applicable.`
-        };
-    }
     if (before.kind === 'unavailable' || after.kind === 'unavailable') {
         return {
             contentClassification: 'metadata',
@@ -484,6 +495,23 @@ function classifyLayerChange(
     change: ParsedNameStatus,
     budget: GitCommandBudget
 ): GitLayerChangeClassification {
+    const changeKind = change.changeKind;
+    const classificationBase = {
+        path: change.path,
+        previousPath: change.previousPath,
+        layer,
+        status: change.status,
+        changeKind,
+        includedInEffectiveScope: true as const
+    };
+    if (changeKind === 'type_changed' || changeKind === 'unmerged') {
+        return {
+            ...classificationBase,
+            contentClassification: 'metadata',
+            reason: `Git reports a ${changeKind.replace('_', ' ')} change; byte-level EOL classification is not applicable.`
+        };
+    }
+
     const beforePath = change.previousPath || change.path;
     const before = layer === 'staged'
         ? readHeadSnapshot(repoRoot, beforePath, budget)
@@ -492,13 +520,8 @@ function classifyLayerChange(
         ? readIndexSnapshot(repoRoot, change.path, budget)
         : readWorktreeSnapshot(repoRoot, change.path);
     return {
-        path: change.path,
-        previousPath: change.previousPath,
-        layer,
-        status: change.status,
-        changeKind: change.changeKind,
-        includedInEffectiveScope: true,
-        ...classifySnapshots(before, after, change.changeKind)
+        ...classificationBase,
+        ...classifySnapshots(before, after, changeKind)
     };
 }
 

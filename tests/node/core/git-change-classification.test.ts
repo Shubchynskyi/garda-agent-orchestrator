@@ -1,5 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -12,6 +13,13 @@ import {
 import { runGit } from '../../../src/core/git-helpers';
 
 const tempRoots: string[] = [];
+const DELETE_SIDE_CONFLICT_STAGES_BY_STATUS = Object.freeze({
+    DD: [1],
+    AU: [2],
+    UD: [1, 2],
+    UA: [3],
+    DU: [1, 3]
+} as const);
 
 function makeRepo(autocrlf: 'false' | 'input' | 'true' = 'false'): string {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-git-change-classification-'));
@@ -35,6 +43,51 @@ function findChange(
     return classifyGitChanges(repoRoot).changes.find(
         (change) => change.layer === layer && change.path === filePath
     );
+}
+
+function writeGitBlob(repoRoot: string, label: string): string {
+    const blobPath = path.join(repoRoot, '.git', `garda-${label}-blob.txt`);
+    fs.writeFileSync(blobPath, `${label}\n`, 'utf8');
+    try {
+        return runGit(repoRoot, ['hash-object', '-w', blobPath]).trim();
+    } finally {
+        fs.rmSync(blobPath, { force: true });
+    }
+}
+
+function configureDeleteSideConflict(
+    repoRoot: string,
+    statusPair: keyof typeof DELETE_SIDE_CONFLICT_STAGES_BY_STATUS
+): string {
+    runGit(repoRoot, ['reset', '--hard', 'HEAD']);
+    const filePath = `conflict-${statusPair}.txt`;
+    fs.rmSync(path.join(repoRoot, filePath), { force: true });
+    const stageBlobs = {
+        1: writeGitBlob(repoRoot, `${statusPair}-base`),
+        2: writeGitBlob(repoRoot, `${statusPair}-ours`),
+        3: writeGitBlob(repoRoot, `${statusPair}-theirs`)
+    };
+    const conflictStages: readonly (1 | 2 | 3)[] = DELETE_SIDE_CONFLICT_STAGES_BY_STATUS[statusPair];
+    const indexInfo = conflictStages
+        .map((stage) => `100644 ${stageBlobs[stage]} ${stage}\t${filePath}`)
+        .join('\n') + '\n';
+    childProcess.execFileSync(
+        'git',
+        ['-C', repoRoot, 'update-index', '--index-info'],
+        {
+            input: indexInfo,
+            stdio: ['pipe', 'pipe', 'pipe']
+        }
+    );
+    const worktreeStage = conflictStages.includes(2)
+        ? 2
+        : conflictStages.includes(3)
+            ? 3
+            : null;
+    if (worktreeStage !== null) {
+        fs.writeFileSync(path.join(repoRoot, filePath), `${statusPair}-worktree-${worktreeStage}\n`, 'utf8');
+    }
+    return filePath;
 }
 
 describe('Git change classification', () => {
@@ -211,6 +264,29 @@ describe('Git change classification', () => {
         assert.equal(change?.previousPath, 'tracked.txt');
         assert.equal(change?.contentClassification, 'metadata');
         assert.match(change?.reason || '', /bytes are identical/);
+    });
+
+    it('classifies every delete and one-sided unmerged status pair in both conflict layers', () => {
+        const repoRoot = makeRepo();
+
+        for (const statusPair of Object.keys(DELETE_SIDE_CONFLICT_STAGES_BY_STATUS) as Array<
+            keyof typeof DELETE_SIDE_CONFLICT_STAGES_BY_STATUS
+        >) {
+            const filePath = configureDeleteSideConflict(repoRoot, statusPair);
+            const result = classifyGitChanges(repoRoot);
+            const conflicts = result.changes.filter((change) => change.path === filePath);
+
+            assert.deepEqual(
+                conflicts.map((change) => change.layer),
+                ['staged', 'unstaged'],
+                `${statusPair} must remain visible in both conflict layers`
+            );
+            assert.ok(conflicts.every((change) => change.status === statusPair));
+            assert.ok(conflicts.every((change) => change.changeKind === 'unmerged'));
+            assert.ok(conflicts.every((change) => change.contentClassification === 'metadata'));
+            assert.ok(conflicts.every((change) => /unmerged/u.test(change.reason)));
+            assert.deepEqual(result.effectiveChangedFiles, [filePath]);
+        }
     });
 
     it('preserves a literal backslash in a POSIX Git pathname', {
