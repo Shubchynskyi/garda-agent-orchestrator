@@ -39,8 +39,8 @@ import {
 } from './gates-review-cycle-fixtures';
 
 describe('cli/commands/gates – review-cycle review failure suite', () => {
-    it('runBuildReviewContextCommand reuses supplied task-mode evidence and runtime identity without rereading the artifact', { concurrency: false }, async () => {
-        const repoRoot = createTempRepo();
+    it('runBuildReviewContextCommand reuses supplied task-mode evidence and runtime identity without rereading the artifact', { concurrency: false }, async (t) => {
+        const repoRoot = createTempRepo(t);
         const taskId = 'T-903b-restart-review-cycle-task-mode-cache';
         seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
@@ -105,11 +105,10 @@ describe('cli/commands/gates – review-cycle review failure suite', () => {
         assert.equal(fs.existsSync(taskModeArtifactPath), false);
         assert.ok(buildResult.outputLines.some((line) => line.startsWith('OutputPath: ')));
         assert.equal(buildResult.reusedReviewEvidence, false);
-        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('runBuildReviewContextCommand preserves the public key-value output contract', { concurrency: false }, async () => {
-        const repoRoot = createTempRepo();
+    it('runBuildReviewContextCommand preserves the public key-value output contract', { concurrency: false }, async (t) => {
+        const repoRoot = createTempRepo(t);
         const taskId = 'T-903b-build-review-context-output-contract';
         seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
@@ -171,11 +170,10 @@ describe('cli/commands/gates – review-cycle review failure suite', () => {
         assert.equal(reviewContext.task_id, taskId);
         assert.equal(reviewContext.review_type, 'code');
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('runBuildReviewContextCommand fails closed when required review telemetry cannot be appended', { concurrency: false }, async () => {
-        const repoRoot = createTempRepo();
+    it('runBuildReviewContextCommand fails closed when required review telemetry cannot be appended', { concurrency: false }, async (t) => {
+        const repoRoot = createTempRepo(t);
         const taskId = 'T-903b-build-review-context-telemetry-lock';
         seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
@@ -233,11 +231,10 @@ describe('cli/commands/gates – review-cycle review failure suite', () => {
             false
         );
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('runBuildReviewContextCommand reuses the supplied timeline summary for code-review reuse without rereading task events', { concurrency: false }, async () => {
-        const repoRoot = createTempRepo();
+    it('runBuildReviewContextCommand reuses the supplied timeline summary for code-review reuse', { concurrency: false }, async (t) => {
+        const repoRoot = createTempRepo(t);
         const taskId = 'T-903b-build-review-context-reuse-timeline-cache';
         seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
@@ -292,26 +289,35 @@ describe('cli/commands/gates – review-cycle review failure suite', () => {
             emitMetrics: false
         });
         assert.equal(refreshedCompileResult.exitCode, 0);
+        const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId, '');
+        const runtimeReviewerIdentity = resolveRuntimeReviewerIdentity({
+            repoRoot,
+            taskId,
+            taskModePath: String(taskModeEvidence.evidence_path || ''),
+            taskModeEvidence,
+            allowLegacyFallback: true
+        });
         const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
         const timelineSummary = readTimelineEventsSummary(timelinePath);
-        fs.rmSync(timelinePath, { force: true });
 
         const buildResult = await runBuildReviewContextCommand({
             repoRoot,
             reviewType: 'code',
             depth: '2',
             preflightPath,
-            timelineEventsSummary: timelineSummary
+            timelineEventsSummary: timelineSummary,
+            taskModePath: String(taskModeEvidence.evidence_path || ''),
+            taskModeEvidence,
+            runtimeReviewerIdentity
         });
 
         assert.equal(buildResult.reusedReviewEvidence, true);
         assert.ok(buildResult.reusedReceiptPath);
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('required-reviews-check rejects optional skill loads when policy mode is off', () => {
-        const repoRoot = createTempRepo();
+    it('required-reviews-check rejects optional skill loads when policy mode is off', (t) => {
+        const repoRoot = createTempRepo(t);
         const taskId = 'T-149-review-off-mode';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
@@ -389,11 +395,10 @@ describe('cli/commands/gates – review-cycle review failure suite', () => {
         assert.equal(reviewGateResult.outputLines[0], 'REVIEW_GATE_FAILED');
         assert.ok(reviewGateResult.outputLines.some((line) => line.includes("policy mode is 'off'")));
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('required-reviews-check rejects stale strict optional-skill artifacts when the current TASK.md title changes', () => {
-        const repoRoot = createTempRepo();
+    it('required-reviews-check rejects stale strict optional-skill artifacts when the current TASK.md title changes', (t) => {
+        const repoRoot = createTempRepo(t);
         const taskId = 'T-149-review-stale-task-text';
         seedTaskQueue(repoRoot, taskId);
         const taskPath = path.join(repoRoot, 'TASK.md');
@@ -476,11 +481,10 @@ describe('cli/commands/gates – review-cycle review failure suite', () => {
         assert.equal(reviewGateResult.outputLines[0], 'REVIEW_GATE_FAILED');
         assert.ok(reviewGateResult.outputLines.some((line) => line.includes('current task summary hash')));
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('required-reviews-check rejects strict optional-skill artifacts when the task row disappears from TASK.md', () => {
-        const repoRoot = createTempRepo();
+    it('required-reviews-check rejects strict optional-skill artifacts when the task row disappears from TASK.md', (t) => {
+        const repoRoot = createTempRepo(t);
         const taskId = 'T-149-review-missing-task-row';
         seedTaskQueue(repoRoot, taskId);
         const taskPath = path.join(repoRoot, 'TASK.md');
@@ -564,6 +568,5 @@ describe('cli/commands/gates – review-cycle review failure suite', () => {
         assert.equal(reviewGateResult.outputLines[0], 'REVIEW_GATE_FAILED');
         assert.ok(reviewGateResult.outputLines.some((line) => line.includes('current task summary hash')));
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 });

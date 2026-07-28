@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -143,11 +143,13 @@ function runRestartReviewCycleCommand(
 function runExplicitPreflight(
     ...args: Parameters<typeof runExplicitPreflightRaw>
 ): ReturnType<typeof runExplicitPreflightRaw> {
-    return runExplicitPreflightRaw(...args);
+    const preflightPath = runExplicitPreflightRaw(...args);
+    seedQualityChecklistIfRequired(args[0], args[1]);
+    return preflightPath;
 }
 
-function createTempRepo(): string {
-    const root = createBaseTempRepo();
+function createTempRepo(testContext?: Pick<TestContext, 'after'>): string {
+    const root = createBaseTempRepo(testContext);
     ensureSkillsHeadlinesCurrent(path.join(root, 'garda-agent-orchestrator'));
     writeProfilesConfig(root);
     initializeGitRepo(root);
@@ -181,12 +183,42 @@ function writeProfilesConfig(repoRoot: string): string {
             balanced: {
                 depth: 2,
                 review_policy: { code: true, db: 'auto', security: 'auto', refactor: 'auto' },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'balanced',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'fix_now',
+                        low: 'create_follow_up'
+                    },
+                    residual_risk: 'create_follow_up'
+                },
+                review_follow_up_policy: {
+                    schema_version: 1,
+                    materialization_mode: 'grouped_by_parent'
+                },
                 token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
                 skills: { auto_suggest: true }
             },
             strict: {
                 depth: 3,
                 review_policy: { code: true, db: 'auto', security: true, refactor: true },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'strict',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'fix_now',
+                        low: 'fix_now'
+                    },
+                    residual_risk: 'fix_now'
+                },
+                review_follow_up_policy: {
+                    schema_version: 1,
+                    materialization_mode: 'per_finding'
+                },
                 token_economy: { enabled: true, strip_examples: false, strip_code_blocks: false, scoped_diffs: true, compact_reviewer_output: false },
                 skills: { auto_suggest: true }
             }
