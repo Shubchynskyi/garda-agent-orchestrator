@@ -28,6 +28,9 @@ import {
     readReviewArtifactState
 } from '../../../../src/gates/next-step/next-step-review-artifact-readers';
 import {
+    readPostReviewFocusedIntermediateEvidence
+} from '../../../../src/gates/next-step/next-step-focused-intermediate-evidence';
+import {
     getCurrentReviewerLaunchArtifactEvidenceForInvocation
 } from '../../../../src/gates/next-step/next-step-reviewer-launch-evidence';
 import {
@@ -1104,6 +1107,7 @@ function writeFocusedIntermediateEvidence(
         command?: string;
         mutateOutputArtifactAfterRecord?: boolean;
         eventOutputArtifactHash?: string;
+        includeCurrentBindings?: boolean;
     } = {}
 ): void {
     const commandSource = options.commandSource ?? 'targeted-test';
@@ -1122,6 +1126,14 @@ function writeFocusedIntermediateEvidence(
     fs.writeFileSync(outputPath, 'focused validation passed\n', 'utf8');
     const outputArtifactSha256 = fileSha256(outputPath);
     const outputArtifactSizeBytes = fs.statSync(outputPath).size;
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const currentBindings = options.includeCurrentBindings === false
+        ? {}
+        : {
+            preflight_path: normalizeForTimeline(preflightPath),
+            preflight_sha256: fileSha256(preflightPath),
+            coverage_contract_sha256: currentReviewCoverageContractSha256(repoRoot)
+        };
     writeJson(artifactPath, {
         schema_version: 1,
         task_id: options.recordTaskId ?? taskId,
@@ -1133,6 +1145,7 @@ function writeFocusedIntermediateEvidence(
         output_artifact: outputPath,
         output_artifact_sha256: options.eventOutputArtifactHash ?? outputArtifactSha256,
         output_artifact_size_bytes: outputArtifactSizeBytes,
+        ...currentBindings,
         output_telemetry: {}
     });
     appendEvent(repoRoot, taskId, 'INTERMEDIATE_COMMAND_RUN', options.eventOutcome ?? recordStatus, {
@@ -1140,8 +1153,10 @@ function writeFocusedIntermediateEvidence(
         command,
         artifact_path: normalizeForTimeline(options.eventArtifactPath ?? artifactPath),
         artifact_sha256: options.artifactHash ?? fileSha256(artifactPath),
+        output_artifact_path: normalizeForTimeline(outputPath),
         output_artifact_sha256: outputArtifactSha256,
         output_artifact_size_bytes: outputArtifactSizeBytes,
+        ...currentBindings,
         exit_code: exitCode
     }, options.timestampUtc);
     if (options.mutateOutputArtifactAfterRecord) {
@@ -2605,7 +2620,9 @@ describe('gates/next-step', () => {
             },
             {
                 name: 'unbound preflight and coverage binding',
-                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID)
+                configureEvidence: (repoRoot) => writeFocusedIntermediateEvidence(repoRoot, TASK_ID, {
+                    includeCurrentBindings: false
+                })
             },
             {
                 name: 'required focused test mismatch',
@@ -2646,7 +2663,7 @@ describe('gates/next-step', () => {
             writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
                 changedFiles: ['tests/node/gates/focused-evidence.test.ts']
             });
-            seedCompilePass(repoRoot, TASK_ID);
+            seedCompilePass(repoRoot, TASK_ID, undefined, ['tests/node/gates/focused-evidence.test.ts']);
             writeReviewEvidence(repoRoot, TASK_ID, 'code', {
                 verdict: 'fail',
                 body: [
@@ -2661,9 +2678,33 @@ describe('gates/next-step', () => {
             scenario.configureEvidence?.(repoRoot);
             scenario.mutateScope?.(repoRoot);
 
-            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+            const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+            const receipt = JSON.parse(
+                fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`), 'utf8')
+            ) as {
+                review_result_recorded_at_utc?: string;
+                reviewer_provenance?: { task_sequence?: number };
+            };
+            const evidence = readPostReviewFocusedIntermediateEvidence({
+                repoRoot,
+                reviewsRoot: reviewsRoot(repoRoot),
+                eventsRoot: eventsRoot(repoRoot),
+                taskId: TASK_ID,
+                reviewType: 'code',
+                reviewArtifactPath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code.md`),
+                reviewResultRecordedAtUtc: receipt.review_result_recorded_at_utc ?? null,
+                reviewerProvenanceTaskSequence: receipt.reviewer_provenance?.task_sequence ?? null,
+                changedFiles: ['tests/node/gates/focused-evidence.test.ts'],
+                expectedPreflightPath: preflightPath,
+                expectedPreflightSha256: fileSha256(preflightPath),
+                expectedCoverageContractSha256: currentReviewCoverageContractSha256(repoRoot)
+            });
 
-            assert.notEqual(result.next_gate, 'restart-review-cycle', scenario.name + ': ' + result.reason);
+            assert.equal(evidence.available, false, scenario.name + ': invalid evidence was accepted');
+            if (scenario.name === 'forged hash') {
+                const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+                assert.notEqual(result.next_gate, 'restart-review-cycle', scenario.name + ': ' + result.reason);
+            }
         }
     });
 
@@ -2676,7 +2717,7 @@ describe('gates/next-step', () => {
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['tests/node/gates/focused-evidence.test.ts']
         });
-        seedCompilePass(repoRoot, TASK_ID);
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['tests/node/gates/focused-evidence.test.ts']);
         writeReviewEvidence(repoRoot, TASK_ID, 'code', {
             verdict: 'fail',
             body: [
