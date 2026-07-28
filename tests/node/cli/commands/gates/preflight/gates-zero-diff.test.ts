@@ -1,7 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { EXIT_GATE_FAILURE } from '../../../../../../src/cli/exit-codes';
@@ -19,13 +18,15 @@ import { runCompletionGate } from '../../../../../../src/gates/completion';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-config';
 import {
-    initializeGitRepo
+    initializeGitRepo,
+    writeBudgetOutputFilters
 } from '../../gate-test-seed-helpers';
+import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
 
 const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
 
 function createTempRepo(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+    const root = createManagedTestTempDirectory('repo-');
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
@@ -467,7 +468,7 @@ async function setupZeroDiffReviewGateFixture(taskId: string): Promise<{
     seedTaskQueue(repoRoot, taskId);
     seedInitAnswers(repoRoot);
     const preflightPath = writeZeroDiffNoReviewPreflight(repoRoot, taskId);
-    const outputFiltersPath = path.resolve('live/config/output-filters.json');
+    const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
 
     runEnterTaskMode({
         repoRoot,
@@ -530,7 +531,7 @@ describe('cli/commands/gates', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-zero.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
