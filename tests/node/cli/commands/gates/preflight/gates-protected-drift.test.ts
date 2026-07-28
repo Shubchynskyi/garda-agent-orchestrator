@@ -2,8 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
+import { writeBudgetOutputFilters } from '../../gate-test-helpers';
+import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
 
 import { EXIT_GATE_FAILURE } from '../../../../../../src/cli/exit-codes';
 import {
@@ -25,6 +26,7 @@ import {
 } from '../../../../../../src/gates/review-reuse';
 import {
     initializeGitRepo,
+    initializeGitRepoWithMaterializedScope,
     runGit
 } from '../../gate-test-seed-helpers';
 import {
@@ -80,7 +82,7 @@ function resolveReviewerExecutionFixture(
 }
 
 function createTempRepo(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+    const root = createManagedTestTempDirectory('repo-');
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
@@ -289,10 +291,22 @@ function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: un
 }
 
 function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
-    return runEnterTaskModeCommand(withDefaultTaskModeRouting({
+    const resolvedOptions = withDefaultTaskModeRouting({
         startBanner: 'Garda captures my mind',
         ...options
-    }));
+    });
+    const repoRoot = path.resolve(String(resolvedOptions.repoRoot || '.'));
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        const taskId = String(resolvedOptions.taskId || '').trim();
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const changedFiles = fs.existsSync(preflightPath)
+            ? (
+                JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as { changed_files?: unknown[] }
+            ).changed_files?.map((entry) => String(entry || '').trim()).filter(Boolean) || []
+            : [];
+        initializeGitRepoWithMaterializedScope(repoRoot, changedFiles);
+    }
+    return runEnterTaskModeCommand(resolvedOptions);
 }
 
 function seedRuleFiles(repoRoot: string): void {
@@ -456,6 +470,8 @@ function runExplicitPreflight(
     });
     const payload = JSON.parse(result.outputText);
     assert.equal(payload.task_id, taskId);
+    payload.review_coverage_contract_required = false;
+    fs.writeFileSync(preflightPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
     return preflightPath;
 }
 
@@ -904,6 +920,16 @@ describe('cli/commands/gates', () => {
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
+        fs.writeFileSync(
+            path.join(repoRoot, ...protectedFile.split('/')),
+            '# changed protected command rules\n',
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(repoRoot, nonProtectedFile),
+            'const a = 2;\nconst b = 2;\nconsole.log(a + b);\n',
+            'utf8'
+        );
 
         const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
         let error: Error | null = null;
@@ -1040,7 +1066,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(extraProtectedPath, 'console.log("expanded protected drift");\n', 'utf8');
 
         const commandsPath = path.join(repoRoot, 'commands-manifest-drift-expanded.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1133,7 +1159,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(extraProtectedPath, 'console.log("expanded protected drift");\n', 'utf8');
 
         const commandsPath = path.join(repoRoot, 'commands-source-checkout-manifest-drift-expanded.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1192,7 +1218,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(unrelatedPath, 'export const unrelated = "after";\n', 'utf8');
 
         const commandsPath = path.join(repoRoot, 'commands-protected.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1246,7 +1272,7 @@ describe('cli/commands/gates', () => {
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         const commandsPath = path.join(repoRoot, 'commands-dirty-completion.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1326,6 +1352,7 @@ describe('cli/commands/gates', () => {
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const app = "task change";\n', 'utf8');
         const preflightPath = runExplicitPreflight(
             repoRoot,
             taskId,
@@ -1335,7 +1362,7 @@ describe('cli/commands/gates', () => {
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         const commandsPath = path.join(repoRoot, 'commands-manifest-drift-completion.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1439,7 +1466,7 @@ describe('cli/commands/gates', () => {
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
 
         const commandsPath = path.join(repoRoot, 'commands-source-checkout-manifest-drift-unchanged.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1491,7 +1518,7 @@ describe('cli/commands/gates', () => {
         writeDriftedProtectedManifest(repoRoot, [driftedFile]);
 
         const commandsPath = path.join(repoRoot, 'commands-compile-restart.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1551,7 +1578,7 @@ describe('cli/commands/gates', () => {
         writeDriftedProtectedManifest(repoRoot, [generatedFile]);
 
         const commandsPath = path.join(repoRoot, 'commands-compile-generated-restart.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1600,6 +1627,16 @@ describe('cli/commands/gates', () => {
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
+        fs.writeFileSync(
+            path.join(repoRoot, ...protectedFile.split('/')),
+            '# changed protected command rules\n',
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(repoRoot, nonProtectedFile),
+            'const a = 2;\nconst b = 2;\nconsole.log(a + b);\n',
+            'utf8'
+        );
 
         const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
         let error: Error | null = null;
@@ -1709,6 +1746,11 @@ describe('cli/commands/gates', () => {
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'app.ts'),
+            'const a = 2;\nconst b = 2;\nconsole.log(a + b);\n',
+            'utf8'
+        );
         const preflightPath = runExplicitPreflight(repoRoot, taskId, 'Test post-compile manifest drift', ['src/app.ts']);
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
 
@@ -1717,7 +1759,7 @@ describe('cli/commands/gates', () => {
         assert.equal(triggers.protected_control_plane_manifest_status, 'MATCH');
 
         const commandsPath = path.join(repoRoot, 'commands-post-compile-drift.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
