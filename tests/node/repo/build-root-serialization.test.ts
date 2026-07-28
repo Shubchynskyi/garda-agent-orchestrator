@@ -896,7 +896,7 @@ test('build-scripts wrapper reclaims orphaned lock directory without owner metad
 });
 
 test('build-scripts wrapper fails hung child processes with timeout diagnostics', () => {
-    assert.equal(buildScriptsWrapper.DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS, 10 * 60 * 1000);
+    assert.equal(buildScriptsWrapper.DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS, 15 * 60 * 1000);
 
     assert.throws(
         () => buildScriptsWrapper.runProcess(
