@@ -32,7 +32,6 @@ import {
 } from '../../../../src/gates/review-reuse';
 import {buildReviewTreeState} from '../../../../src/gates/review/review-tree-state';
 import {
-    validateReviewCoverageLedger,
     type ReviewCoverageContract
 } from '../../../../src/gates/review/review-coverage-ledger';
 import {
@@ -299,6 +298,64 @@ export function writeBudgetOutputFilters(repoRoot: string): string {
         }
     }, null, 2), 'utf8');
     return outputFiltersPath;
+}
+
+export function writeBalancedProfilesConfig(repoRoot: string): string {
+    const configPath = path.join(
+        getOrchestratorRoot(repoRoot),
+        'live',
+        'config',
+        'profiles.json'
+    );
+    fs.mkdirSync(path.dirname(configPath), {recursive: true});
+    fs.writeFileSync(configPath, `${JSON.stringify({
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced integration-test profile.',
+                depth: 2,
+                review_policy: {
+                    code: true,
+                    db: 'auto',
+                    security: 'auto',
+                    refactor: 'auto',
+                    api: 'auto',
+                    test: 'auto',
+                    performance: 'auto',
+                    infra: 'auto',
+                    dependency: 'auto'
+                },
+                review_finding_policy: {
+                    schema_version: 1,
+                    policy_id: 'balanced',
+                    findings: {
+                        critical: 'fix_now',
+                        high: 'fix_now',
+                        medium: 'fix_now',
+                        low: 'create_follow_up'
+                    },
+                    residual_risk: 'create_follow_up'
+                },
+                review_follow_up_policy: {
+                    schema_version: 1,
+                    materialization_mode: 'grouped_by_parent'
+                },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: {
+                    auto_suggest: true
+                }
+            }
+        },
+        user_profiles: {}
+    }, null, 2)}\n`, 'utf8');
+    return configPath;
 }
 
 export function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
@@ -1302,6 +1359,33 @@ function buildFixtureFindingsContent(options: {
     return `${JSON.stringify(report, null, 2)}\n`;
 }
 
+export function writePassingReviewOutputFromContext(options: {
+    taskId: string;
+    reviewType: string;
+    reviewContextPath: string;
+    outputPath: string;
+}): void {
+    const reviewContextText = fs.readFileSync(options.reviewContextPath, 'utf8');
+    const reviewContext = JSON.parse(reviewContextText) as Record<string, unknown>;
+    const coverageContract = reviewContext.coverage_contract as ReviewCoverageContract | undefined;
+    const treeState = reviewContext.tree_state as Record<string, unknown> | undefined;
+    const reviewTreeStateSha256 = String(
+        treeState?.tree_state_sha256
+        || treeState?.treeStateSha256
+        || ''
+    ).trim() || null;
+    assert.ok(coverageContract, `Missing coverage_contract in ${options.reviewContextPath}`);
+    assert.ok(reviewTreeStateSha256, `Missing tree_state_sha256 in ${options.reviewContextPath}`);
+    fs.writeFileSync(options.outputPath, buildFixtureFindingsContent({
+        taskId: options.taskId,
+        reviewKey: options.reviewType,
+        reviewContextSha256: createHash('sha256').update(reviewContextText, 'utf8').digest('hex'),
+        reviewTreeStateSha256,
+        coverageContract,
+        verdict: 'REVIEW PASSED'
+    }), 'utf8');
+}
+
 export function writeReceiptBackedReviewArtifact(
     repoRoot: string,
     taskId: string,
@@ -1591,6 +1675,7 @@ export function seedReusableReviewEvidence(
         taskModePath?: string | null;
         omitInvocationTreeState?: boolean;
         receiptReviewContextSha256Override?: string | null;
+        sourceOfTruth?: string;
         invocationTimingOverride?: {
             launchPreparedAtUtc?: string;
             delegationStartedAtUtc?: string;
@@ -1603,7 +1688,7 @@ export function seedReusableReviewEvidence(
     const crypto = require('node:crypto');
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, {recursive: true});
-    const sourceOfTruth = readSeededSourceOfTruth(repoRoot);
+    const sourceOfTruth = options.sourceOfTruth || readSeededSourceOfTruth(repoRoot);
     const execution = resolveReviewerExecutionFixture(taskId, sourceOfTruth, reviewerIdentity);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`);
