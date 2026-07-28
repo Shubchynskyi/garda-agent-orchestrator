@@ -19,7 +19,7 @@ describe('gates/full-suite-validation', () => {
             const config = loadFullSuiteValidationConfig('/nonexistent/path');
             assert.equal(config.enabled, false);
             assert.equal(config.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
-            assert.equal(config.timeout_ms, 600_000);
+            assert.equal(config.timeout_ms, 900_000);
             assert.equal(config.timeout_blocker, true);
             assert.equal(config.timeout_retry_count, 1);
             assert.equal(config.green_summary_max_lines, 5);
@@ -113,6 +113,7 @@ describe('gates/full-suite-validation', () => {
             const config = loadFullSuiteValidationConfig(tempDir);
             assert.equal(config.enabled, false);
             assert.equal(config.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
+            assert.equal(config.timeout_ms, 900_000);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 

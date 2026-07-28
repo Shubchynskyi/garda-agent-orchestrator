@@ -26,6 +26,7 @@ import {
     MAX_OPTIONAL_QUALITY_CHECKS_REVIEW_FAILURE_CADENCE_INTERVAL,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION
 } from '../../../src/core/workflow-config';
+import { DEFAULT_FULL_SUITE_VALIDATION_CONFIG } from '../../../src/core/full-suite-validation-config';
 
 const DEPRECATED_PROJECT_ONLY_OPTIONAL_QUALITY_RULE_IDS = [
     'preflight_review_scope_regressions',
@@ -157,12 +158,30 @@ test('tracked workflow template ships current optional quality baseline', () => 
     );
 });
 
-test('materialized workflow template keeps optional quality baseline parity when present', () => {
+test('tracked workflow timeout default stays in runtime and template parity', () => {
+    const workflowConfig = readTemplateConfig('workflow-config');
+    const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
+    const defaultWorkflowConfig = buildDefaultWorkflowConfig();
+
+    assert.equal(fullSuiteValidation.timeout_ms, 900_000);
+    assert.equal(
+        defaultWorkflowConfig.full_suite_validation.timeout_ms,
+        fullSuiteValidation.timeout_ms
+    );
+    assert.equal(
+        DEFAULT_FULL_SUITE_VALIDATION_CONFIG.timeout_ms,
+        fullSuiteValidation.timeout_ms
+    );
+});
+
+test('materialized workflow template keeps tracked defaults parity when present', () => {
     const workflowConfig = readMaterializedTemplateConfigIfPresent('workflow-config');
     if (!workflowConfig) {
         return;
     }
+    const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
     const optionalQualityChecks = workflowConfig.optional_quality_checks as Record<string, unknown>;
+    assert.equal(fullSuiteValidation.timeout_ms, DEFAULT_FULL_SUITE_VALIDATION_CONFIG.timeout_ms);
     assert.equal(optionalQualityChecks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
     assert.deepEqual(
         optionalQualityChecks.rules,

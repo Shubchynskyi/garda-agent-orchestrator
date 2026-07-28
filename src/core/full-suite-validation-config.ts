@@ -32,7 +32,7 @@ export interface FullSuiteValidationConfig {
 export const DEFAULT_FULL_SUITE_VALIDATION_CONFIG: FullSuiteValidationConfig = Object.freeze({
     enabled: false,
     command: UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
-    timeout_ms: 600_000,
+    timeout_ms: 900_000,
     timeout_blocker: true,
     timeout_retry_count: 1,
     green_summary_max_lines: 5,

@@ -1026,7 +1026,7 @@ describe('runUpdate', () => {
             assert.deepEqual(workflowConfig.full_suite_validation, {
                 enabled: false,
                 command: '__FULL_SUITE_COMMAND_UNCONFIGURED__',
-                timeout_ms: 600000,
+                timeout_ms: 900000,
                 green_summary_max_lines: 5,
                 red_failure_chunk_lines: 50,
                 timeout_blocker: true,
