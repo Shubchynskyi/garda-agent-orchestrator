@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -56,6 +55,7 @@ import {
     prepareReviewDiffFixture as prepareCanonicalReviewDiffFixture,
     writeReceiptBackedReviewArtifact as writeCanonicalReceiptBackedReviewArtifact
 } from '../../gate-test-helpers';
+import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
 
 const GIT_INIT_RETRY_DELAYS_MS = [0, 25, 100];
 const RETRYABLE_GIT_INIT_PATTERNS = /\b(?:EACCES|EBUSY|ENOTEMPTY|EPERM|Permission denied)\b/i;
@@ -202,7 +202,7 @@ async function captureExpectedAsyncError(callback: () => Promise<void>): Promise
 }
 
 function createTempRepo(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+    const root = createManagedTestTempDirectory('repo-');
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
