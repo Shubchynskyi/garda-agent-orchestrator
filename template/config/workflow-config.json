@@ -167,7 +167,7 @@
         "included_changed_file_regexes": [
           "(^|/)(?:src|bin|scripts|config|template)/.*(?:auth|authori[sz]ation|permission|access|security|protected|recovery|evidence|artifact|trust|integrity|receipt|provenance|review(?:er)?-(?:context|finding|result|receipt|routing|launch|invocation|output|cycle|trust|evidence|identity|attestation)|required-review|completion|task-audit|task-mode|operator-confirmation|hash|signature|token|secret).*(?:\\.(?:ts|tsx|js|mjs|cjs|json|ya?ml|md)|$)",
           "(^|/)(?:AGENTS\\.md|template/docs/agent-rules/(?:00-core|70-security|80-task-workflow)\\.md)$",
-          "(^|/)garda-agent-orchestrator/(?:live|template)/config/workflow-config\\.json$"
+          "(^|/)(?:garda-agent-orchestrator/(?:live|template)|template)/config/workflow-config\\.json$"
         ]
       }
     ]
