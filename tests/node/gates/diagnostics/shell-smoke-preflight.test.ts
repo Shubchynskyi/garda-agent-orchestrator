@@ -21,13 +21,25 @@ function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-shell-smoke-test-'));
 }
 
-function removeTempDir(dirPath: string): void {
-    fs.rmSync(dirPath, {
-        recursive: true,
-        force: true,
-        maxRetries: 20,
-        retryDelay: 50
-    });
+async function removeTempDir(dirPath: string): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    while (true) {
+        try {
+            fs.rmSync(dirPath, {
+                recursive: true,
+                force: true
+            });
+            return;
+        } catch (error: unknown) {
+            const code = error && typeof error === 'object' && 'code' in error
+                ? String((error as NodeJS.ErrnoException).code || '')
+                : '';
+            if (!['EBUSY', 'ENOTEMPTY', 'EPERM'].includes(code) || Date.now() >= deadline) {
+                throw error;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+    }
 }
 
 function scaffoldWorkspace(root: string, options: {
@@ -79,8 +91,8 @@ describe('gates/shell-smoke-preflight', () => {
         tempDir = createTempDir();
     });
 
-    afterEach(() => {
-        removeTempDir(tempDir);
+    afterEach(async () => {
+        await removeTempDir(tempDir);
     });
 
     describe('buildShellSmokePreflight', () => {
@@ -197,7 +209,6 @@ describe('gates/shell-smoke-preflight', () => {
             assert.match(gitProbe.detail, /ETIMEDOUT|timed out|timeout|failed/iu);
             assert.equal(artifact.git_change_classification, null);
             assert.ok(Date.now() - startedAt < 2_000);
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
         });
     });
 
