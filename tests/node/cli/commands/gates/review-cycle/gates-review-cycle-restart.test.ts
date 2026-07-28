@@ -43,7 +43,6 @@ import {
     writeOptionalSkillSelectionArtifact,
     writePreflight,
     writeProtectedControlPlaneManifest,
-    writeProfilesConfig,
     writeReceiptBackedReviewArtifact,
     writeReviewCapabilitiesConfig,
     writeSimpleCompileCommandsFile,
@@ -1344,6 +1343,15 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
 
         fs.mkdirSync(getReviewsRoot(repoRoot), { recursive: true });
         const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const profilePolicySnapshot = buildTaskProfilePolicySnapshot(
+            getOrchestratorRoot(repoRoot),
+            'balanced',
+            {
+                reviewExecutionPolicyMode: 'code_first_optional',
+                reviewExecutionPolicyConfigured: true,
+                lockTimestampUtc: '2026-04-16T09:00:00.000Z'
+            }
+        );
         fs.writeFileSync(taskModePath, JSON.stringify({
             timestamp_utc: '2026-04-16T09:00:00.000Z',
             event_source: 'enter-task-mode',
@@ -1355,6 +1363,8 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             effective_depth: 2,
             task_summary: 'Restart a coherent cycle from a legacy task-mode artifact after upgrade',
             workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(repoRoot),
+            profile_policy_snapshot_required: true,
+            profile_policy_snapshot: profilePolicySnapshot,
             provider: 'Codex',
             routed_to: 'AGENTS.md'
         }, null, 2) + '\n', 'utf8');
@@ -1365,7 +1375,10 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             effective_depth: 2,
             task_summary: 'Restart a coherent cycle from a legacy task-mode artifact after upgrade',
             provider: 'Codex',
-            routed_to: 'AGENTS.md'
+            routed_to: 'AGENTS.md',
+            profile_policy_snapshot_required: true,
+            profile_policy_snapshot_hash: profilePolicySnapshot.snapshot_hash,
+            profile_policy_snapshot_config_hash: profilePolicySnapshot.config_hash
         });
 
         const preflightPath = writePreflight(repoRoot, taskId, {
@@ -1400,7 +1413,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(restartResult.exitCode, 0);
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
         assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
