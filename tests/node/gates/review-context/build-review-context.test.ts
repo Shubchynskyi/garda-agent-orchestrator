@@ -137,7 +137,7 @@ describe('gates/build-review-context core contracts', () => {
                     reviewType: 'code',
                     explicitPath: path.join(linkedDirPath, 'context.json'),
                     repoRoot
-                }), /Review context path must resolve inside (reviews|repo) root/);
+                }), /Path must resolve inside repo root without symlink or junction escapes/u);
             } finally {
                 fs.rmSync(repoRoot, { recursive: true, force: true });
                 fs.rmSync(outsideRoot, { recursive: true, force: true });

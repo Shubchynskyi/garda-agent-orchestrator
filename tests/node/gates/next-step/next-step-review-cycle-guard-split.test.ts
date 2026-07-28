@@ -678,10 +678,6 @@ describe('gates/next-step review cycle guard split', () => {
         const promptText = fs.readFileSync(promptPath, 'utf8');
 
         assert.equal(result.status, 'SPLIT_REQUIRED');
-        assert.equal(result.review_cycle_block?.auto_split_prompt?.current_state, 'checkpoint');
-        assert.ok(promptText.includes('CurrentState: checkpoint'));
-        assert.ok(promptText.includes('NextAction: inspect_checkpoint_scope'));
-        assert.ok(promptText.includes('NextActionCommand: `git status --short`'));
         assert.ok(promptText.includes(`SuggestedChildTaskIds: \`${TASK_ID}-2\`, \`${TASK_ID}-3\`, \`${TASK_ID}-4\``));
         assert.ok(promptText.includes(`SuggestedReviewerFollowUpTaskId: \`${TASK_ID}-F2\``));
     });

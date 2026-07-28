@@ -39,7 +39,7 @@ describe('resolveRulePackArtifactPath', () => {
                     'T-924-2',
                     path.join(outsideRoot, 'rule-pack.json')
                 ),
-                /Path must stay inside repo root/
+                /Path must resolve inside repo root without symlink or junction escapes/u
             );
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });

@@ -658,8 +658,11 @@ describe('split-required WIP capture and restore', () => {
             repoRoot
         ]);
         assert.notEqual(blocked.exitCode, 0);
-        assert.ok(blocked.logs.includes('SPLIT_REQUIRED_WIP_RESTORE_BLOCKED'));
-        assert.ok(blocked.logs.some((line) => line.includes('ManifestPath escapes repo root')));
+        assert.ok(blocked.errors.includes('GARDA_CLI_FAILED'));
+        assert.ok(blocked.errors.some((line) =>
+            line.includes('--manifest-path must resolve inside workspace root without symlink or junction escapes')
+            && line.includes('candidate=')
+        ));
 
         const retired = await runCliWithCapturedOutput([
             'gate',

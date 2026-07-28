@@ -152,8 +152,25 @@ async function prepareLaunch(repoRoot: string, taskId: string, launchArtifactPat
     ]);
 }
 
+function readReviewerLaunchInputArtifact(
+    launchArtifactPath: string
+): { path: string; sha256: string } {
+    const launchArtifact = JSON.parse(
+        fs.readFileSync(launchArtifactPath, 'utf8')
+    ) as Record<string, unknown>;
+    const rawInputPath = String(launchArtifact.reviewer_launch_input_artifact_path || '').trim();
+    assert.ok(rawInputPath, 'Prepared launch should include reviewer_launch_input_artifact_path');
+    const inputPath = path.isAbsolute(rawInputPath)
+        ? rawInputPath
+        : path.join(path.dirname(launchArtifactPath), rawInputPath);
+    return {
+        path: inputPath,
+        sha256: createHash('sha256').update(fs.readFileSync(inputPath)).digest('hex')
+    };
+}
+
 async function recordDelegationStarted(repoRoot: string, taskId: string, launchArtifactPath: string): Promise<void> {
-    const launchArtifactSha256 = createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex');
+    const launchInputArtifact = readReviewerLaunchInputArtifact(launchArtifactPath);
     await handleRecordReviewerDelegationStarted([
         '--task-id', taskId,
         '--review-type', 'code',
@@ -163,15 +180,15 @@ async function recordDelegationStarted(repoRoot: string, taskId: string, launchA
         '--provider-invocation-id', REVIEWER_IDENTITY.slice('agent:'.length),
         '--attestation-source', 'codex_spawn_agent',
         '--launch-input-mode', 'launch_artifact_path',
-        '--launch-input-artifact-path', launchArtifactPath,
-        '--launch-input-sha256', launchArtifactSha256,
+        '--launch-input-artifact-path', launchInputArtifact.path,
+        '--launch-input-sha256', launchInputArtifact.sha256,
         '--fork-context', 'false',
         '--repo-root', repoRoot
     ]);
 }
 
 async function completeLaunch(repoRoot: string, taskId: string, launchArtifactPath: string): Promise<void> {
-    const launchArtifactSha256 = createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex');
+    const launchInputArtifact = readReviewerLaunchInputArtifact(launchArtifactPath);
     await handleCompleteReviewerLaunch([
         '--task-id', taskId,
         '--review-type', 'code',
@@ -181,8 +198,8 @@ async function completeLaunch(repoRoot: string, taskId: string, launchArtifactPa
         '--provider-invocation-id', REVIEWER_IDENTITY.slice('agent:'.length),
         '--attestation-source', 'codex_spawn_agent',
         '--launch-input-mode', 'launch_artifact_path',
-        '--launch-input-artifact-path', launchArtifactPath,
-        '--launch-input-sha256', launchArtifactSha256,
+        '--launch-input-artifact-path', launchInputArtifact.path,
+        '--launch-input-sha256', launchInputArtifact.sha256,
         '--fork-context', 'false',
         '--repo-root', repoRoot
     ]);

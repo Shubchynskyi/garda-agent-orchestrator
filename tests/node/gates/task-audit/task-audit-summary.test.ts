@@ -407,11 +407,11 @@ describe('gates/task-audit-summary', () => {
 
             assert.deepEqual(result.changed_files, ['src/foo.ts', 'src/bar.ts']);
             assert.equal(result.changed_files_count, 2);
-            assert.equal(result.changed_lines_total, 0);
+            assert.equal(result.changed_lines_total, 42);
             assert.equal(result.final_closeout.implementation_summary.change_metrics?.preflight_changed_files_count, 2);
             assert.equal(result.final_closeout.implementation_summary.change_metrics?.preflight_changed_lines_total, 42);
             assert.equal(result.final_closeout.implementation_summary.change_metrics?.final_tracked_changed_files_count, 2);
-            assert.equal(result.final_closeout.implementation_summary.changed_lines_total, 0);
+            assert.equal(result.final_closeout.implementation_summary.changed_lines_total, 42);
             assert.equal(result.required_reviews.code, true);
             assert.equal(result.required_reviews.db, false);
         });
@@ -615,6 +615,7 @@ describe('gates/task-audit-summary', () => {
         it('surfaces task-mode workflow-config authorization in audit and closeout output', () => {
             const plannedChangedFiles = ['garda-agent-orchestrator/live/config/workflow-config.json'];
             const dirtyBaselineChangedFiles = ['src/gates/next-step/next-step.ts'];
+            initGitRepo(tmpDir);
             const workflowConfigPath = path.join(tmpDir, ...plannedChangedFiles[0].split('/'));
             const beforeWorkflowConfigText = fs.readFileSync(workflowConfigPath, 'utf8');
             const beforeWorkflowConfigSha256 = computeFileSha256(workflowConfigPath);

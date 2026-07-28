@@ -1968,7 +1968,7 @@ describe('quality-checklist gate', () => {
                 taskId: fixture.taskId,
                 preflightPath,
                 answersPath: outsideAnswersPath
-            }), /Path must stay inside repo root/u);
+            }), /Path must resolve inside repo root without symlink or junction escapes/u);
             assert.equal(fs.existsSync(outsideAnswersPath), false);
         } finally {
             fixture.cleanup();
@@ -2214,7 +2214,7 @@ describe('quality-checklist gate', () => {
                 answersJson: JSON.stringify(buildPassAnswers()),
                 artifactPath: outsideArtifactPath,
                 emitMetrics: false
-            }), /Path must stay inside repo root/);
+            }), /Path must resolve inside repo root without symlink or junction escapes/u);
             assert.equal(fs.existsSync(outsideArtifactPath), false);
         } finally {
             fixture.cleanup();
@@ -2235,7 +2235,7 @@ describe('quality-checklist gate', () => {
                 answersJson: JSON.stringify(buildPassAnswers()),
                 artifactPath,
                 metricsPath: outsideMetricsPath
-            }), /Path must stay inside repo root/);
+            }), /Path must resolve inside repo root without symlink or junction escapes/u);
             assert.equal(fs.existsSync(artifactPath), false);
             assert.equal(fs.existsSync(outsideMetricsPath), false);
         } finally {
@@ -2257,7 +2257,7 @@ describe('quality-checklist gate', () => {
                 taskId: fixture.taskId,
                 preflightPath: outsidePreflightPath,
                 answers: buildPassAnswers()
-            }), /Path must stay inside repo root/);
+            }), /Path must resolve inside repo root without symlink or junction escapes/u);
         } finally {
             fs.rmSync(outsidePreflightPath, { force: true });
             fixture.cleanup();
