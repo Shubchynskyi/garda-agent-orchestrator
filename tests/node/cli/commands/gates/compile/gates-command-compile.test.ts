@@ -9,7 +9,7 @@ import {
 } from '../../../../../../src/cli/exit-codes';
 import {
     runBindRulePackToPreflightCommand,
-    runCompileGateCommand,
+    runCompileGateCommand as runCompileGateCommandSource,
     runDocImpactGateCommand,
     runRequiredReviewsCheckCommand
 } from '../../../../../../src/cli/commands/gates';
@@ -22,6 +22,7 @@ import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../../../../src/core/co
 import {
     createTempRepo,
     writeBudgetOutputFilters,
+    writeBalancedProfilesConfig,
     seedTaskQueue,
     seedInitAnswers as seedBaseInitAnswers,
     getReviewsRoot,
@@ -39,6 +40,19 @@ import {
     readTaskQueueStatusFromTaskFile,
     assertGateChainDecision
 } from '../../gate-test-helpers';
+
+function runCompileGateCommand(
+    options: Parameters<typeof runCompileGateCommandSource>[0]
+): ReturnType<typeof runCompileGateCommandSource> {
+    const legacyOutputFiltersPath = path.resolve('live/config/output-filters.json');
+    return runCompileGateCommandSource({
+        ...options,
+        outputFiltersPath: options.outputFiltersPath
+            && path.resolve(options.outputFiltersPath) === legacyOutputFiltersPath
+            ? writeBudgetOutputFilters(path.resolve(options.repoRoot || '.'))
+            : options.outputFiltersPath
+    });
+}
 
 function assertCompileFailureIncludesNextStepHint(outputLines: string[]): void {
     assert.ok(outputLines.some((line) => line.includes('NextStep: run') && line.includes('next-step')));
@@ -641,6 +655,7 @@ describe('cli/commands/gates compile and post-preflight', () => {
         const taskId = 'T-901a';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        initializeGitRepo(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -1075,6 +1090,7 @@ describe('cli/commands/gates compile and post-preflight', () => {
         const taskId = 'T-901-post-preflight-binding-equivalent';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        writeBalancedProfilesConfig(repoRoot);
         const commandsPath = path.join(repoRoot, 'commands-post-preflight-binding-equivalent.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [

@@ -765,7 +765,9 @@ describe('compile gate shared preflight pipeline pilot', () => {
                 'const a = 3;\nconst b = 2;\nconst c = 1;\nconsole.log(a + b);\n',
                 'utf8'
             );
-            const preflightPath = writePreflight(repoRoot, taskId);
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                metrics: { changed_lines_total: 3 }
+            });
 
             assert.equal(runEnterTaskMode({
                 repoRoot,
