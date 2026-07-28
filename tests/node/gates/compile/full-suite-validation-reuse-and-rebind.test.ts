@@ -13,16 +13,93 @@ import {
 import { getCurrentWorkflowConfigFileHashes } from '../../../../src/gates/workflow-config/workflow-config-work';
 import { buildTaskModeArtifact } from '../../../../src/gates/task-mode';
 import { runCliWithCapturedOutput } from '../../cli/commands/gate-test-helpers';
+import { getWorkspaceSnapshot } from '../next-step/next-step-test-support';
 
 function writeFullSuitePreflight(
     repoRoot: string,
     preflightPath: string,
     preflight: Record<string, unknown>
 ): void {
-    fs.writeFileSync(preflightPath, JSON.stringify(preflight), 'utf8');
     const taskId = String(preflight.task_id || '').trim();
+    const declaredChangedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    for (const relativePath of declaredChangedFiles) {
+        const absolutePath = path.resolve(repoRoot, relativePath);
+        const relativeToRoot = path.relative(repoRoot, absolutePath);
+        assert.ok(
+            relativeToRoot && !relativeToRoot.startsWith('..') && !path.isAbsolute(relativeToRoot),
+            `Full-suite fixture path must stay inside the temp repo: ${relativePath}`
+        );
+        if (!fs.existsSync(absolutePath)) {
+            fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+            fs.writeFileSync(absolutePath, `export const fixture = ${JSON.stringify(taskId)};\n`, 'utf8');
+        }
+    }
+    const snapshot = getWorkspaceSnapshot(
+        repoRoot,
+        'explicit_changed_files',
+        true,
+        declaredChangedFiles
+    );
+    const materializedPreflight = {
+        ...preflight,
+        detection_source: snapshot.detection_source,
+        include_untracked: snapshot.include_untracked,
+        changed_files: snapshot.changed_files,
+        metrics: {
+            changed_lines_total: snapshot.changed_lines_total,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256
+        }
+    };
+    fs.writeFileSync(preflightPath, JSON.stringify(materializedPreflight), 'utf8');
     if (taskId) {
         writeFullSuiteTaskModeBaseline(repoRoot, taskId);
+        const preflightSha256 = createHash('sha256').update(fs.readFileSync(preflightPath, 'utf8')).digest('hex');
+        const compileTimestamp = new Date().toISOString();
+        const reviewsDir = path.dirname(preflightPath);
+        const eventsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events');
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(reviewsDir, `${taskId}-compile-gate.json`),
+            JSON.stringify({
+                task_id: taskId,
+                event_source: 'compile-gate',
+                status: 'PASSED',
+                outcome: 'PASS',
+                timestamp_utc: compileTimestamp,
+                preflight_path: preflightPath.replace(/\\/g, '/'),
+                preflight_hash_sha256: preflightSha256,
+                scope_detection_source: snapshot.detection_source,
+                scope_include_untracked: snapshot.include_untracked,
+                scope_changed_files: snapshot.changed_files,
+                scope_changed_lines_total: snapshot.changed_lines_total,
+                scope_changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256,
+                scope_git_change_classification: snapshot.git_change_classification
+            }, null, 2),
+            'utf8'
+        );
+        fs.appendFileSync(
+            path.join(eventsDir, `${taskId}.jsonl`),
+            `${JSON.stringify({
+                task_id: taskId,
+                event_type: 'COMPILE_GATE_PASSED',
+                timestamp_utc: compileTimestamp,
+                outcome: 'PASS',
+                details: {
+                    preflight_path: preflightPath.replace(/\\/g, '/'),
+                    preflight_hash_sha256: preflightSha256,
+                    preflight_changed_files_sha256: snapshot.changed_files_sha256,
+                    preflight_scope_sha256: snapshot.scope_sha256,
+                    preflight_scope_content_sha256: snapshot.scope_content_sha256
+                }
+            })}\n`,
+            'utf8'
+        );
     }
 }
 
@@ -85,18 +162,15 @@ describe('gates/full-suite-validation', () => {
                 changed_files: ['src/changed.ts']
             });
             const preflightSha256 = createHash('sha256').update(fs.readFileSync(preflightPath, 'utf8')).digest('hex');
-            const changedFilesSha = '1'.repeat(64);
-            const scopeSha = '2'.repeat(64);
-            const scopeContentSha = '3'.repeat(64);
             const currentCompileTimestamp = '2026-01-01T00:00:02.000Z';
-            fs.writeFileSync(path.join(reviewsDir, `${taskId}-compile-gate.json`), JSON.stringify({
-                status: 'PASSED',
-                timestamp_utc: currentCompileTimestamp,
-                preflight_path: preflightPath,
-                preflight_hash_sha256: preflightSha256,
-                preflight_changed_files_sha256: changedFilesSha,
-                preflight_scope_sha256: scopeSha,
-                preflight_scope_content_sha256: scopeContentSha
+            const compileArtifactPath = path.join(reviewsDir, `${taskId}-compile-gate.json`);
+            const compileArtifact = JSON.parse(fs.readFileSync(compileArtifactPath, 'utf8')) as Record<string, unknown>;
+            const changedFilesSha = String(compileArtifact.scope_changed_files_sha256);
+            const scopeSha = String(compileArtifact.scope_sha256);
+            const scopeContentSha = String(compileArtifact.scope_content_sha256);
+            fs.writeFileSync(compileArtifactPath, JSON.stringify({
+                ...compileArtifact,
+                timestamp_utc: currentCompileTimestamp
             }, null, 2), 'utf8');
             fs.writeFileSync(path.join(eventsDir, `${taskId}.jsonl`), [
                 JSON.stringify({
@@ -220,18 +294,15 @@ describe('gates/full-suite-validation', () => {
                 changed_files: ['src/changed.ts']
             });
             const preflightSha256 = createHash('sha256').update(fs.readFileSync(preflightPath, 'utf8')).digest('hex');
-            const changedFilesSha = '4'.repeat(64);
-            const scopeSha = '5'.repeat(64);
-            const scopeContentSha = '6'.repeat(64);
             const currentCompileTimestamp = '2026-01-01T00:00:02.000Z';
-            fs.writeFileSync(path.join(reviewsDir, `${taskId}-compile-gate.json`), JSON.stringify({
-                status: 'PASSED',
-                timestamp_utc: currentCompileTimestamp,
-                preflight_path: preflightPath,
-                preflight_hash_sha256: preflightSha256,
-                preflight_changed_files_sha256: changedFilesSha,
-                preflight_scope_sha256: scopeSha,
-                preflight_scope_content_sha256: scopeContentSha
+            const compileArtifactPath = path.join(reviewsDir, `${taskId}-compile-gate.json`);
+            const compileArtifact = JSON.parse(fs.readFileSync(compileArtifactPath, 'utf8')) as Record<string, unknown>;
+            const changedFilesSha = String(compileArtifact.scope_changed_files_sha256);
+            const scopeSha = String(compileArtifact.scope_sha256);
+            const scopeContentSha = String(compileArtifact.scope_content_sha256);
+            fs.writeFileSync(compileArtifactPath, JSON.stringify({
+                ...compileArtifact,
+                timestamp_utc: currentCompileTimestamp
             }, null, 2), 'utf8');
             fs.writeFileSync(path.join(eventsDir, `${taskId}.jsonl`), [
                 JSON.stringify({
@@ -352,7 +423,7 @@ describe('gates/full-suite-validation', () => {
 
             fs.writeFileSync(pendingArtifactPath, `${JSON.stringify({ status: 'FAILED', marker: 'stale-pending' }, null, 2)}\n`, 'utf8');
             fs.writeFileSync(pendingMetaPath, `${JSON.stringify({ transaction_id: 'stale-transaction-id' }, null, 2)}\n`, 'utf8');
-            fs.writeFileSync(
+            fs.appendFileSync(
                 timelinePath,
                 `${JSON.stringify({
                     event_type: 'FULL_SUITE_VALIDATION_PASSED',
