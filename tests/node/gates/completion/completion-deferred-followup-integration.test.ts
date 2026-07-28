@@ -154,12 +154,15 @@ function runDeferredFollowupIntegrationScenario(options: {
             '',
             '## Verdict',
             options.verdict
-        ]);
+        ], {
+            allowLegacyManualReviewContext: true,
+            rawArtifactContent: true
+        });
         writePassedReviewGate(repoRoot, options.taskId, preflightPath, options.reviewType, options.verdict);
         writeNoDocImpact(repoRoot, options.taskId, options.followupRationale);
 
         const missing = runCompletionGate({ repoRoot, preflightPath, taskId: options.taskId });
-        assert.equal(missing.status, 'FAILED');
+        assert.equal(missing.status, 'FAILED', JSON.stringify(missing, null, 2));
         assert.equal(missing.deferred_followup_evidence.status, 'FAILED');
         assert.equal(missing.deferred_followup_evidence.checked_count, 1);
         assert.ok(missing.violations.some((violation: string) => violation.includes('must be materialized as a separate TASK.md follow-up')));
