@@ -25,6 +25,11 @@ import {
     materializeSplitRequiredLatch,
     readSplitRequiredLatchEvidence
 } from '../../../../src/gates/next-step/next-step-split-required-latch';
+import {
+    listSplitRequiredWip,
+    restoreSplitRequiredWip
+} from '../../../../src/gates/split-required/split-required-wip';
+import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
 const requireFromTest = createRequire(__filename);
@@ -68,7 +73,10 @@ describe('gates/next-step review cycle continuation', () => {
         const continuedText = formatNextStepText(continuedResult);
         assert.notEqual(continuedResult.status, 'SPLIT_REQUIRED', continuedResult.reason);
         assert.ok(readTaskMd(repoRoot).includes(`| ${TASK_ID} | IN_REVIEW |`));
-        assert.ok(continuedText.includes('Review cycle one-shot continuation active'));
+        assert.ok(
+            continuedText.includes('Review cycle one-shot continuation active'),
+            continuedText
+        );
         assert.equal(countEvents(repoRoot, 'SPLIT_REQUIRED_CLEARED'), 1);
 
         const repeatedResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -601,6 +609,16 @@ function makeTempRepo(): string {
     workflowConfig.project_memory_maintenance.enabled = false;
     workflowConfig.project_memory_maintenance.mode = 'check';
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+    initGitRepo(repoRoot, {
+        gitignoreContent: [
+            'TASK.md',
+            'garda-agent-orchestrator/runtime/',
+            'garda-agent-orchestrator/live/config/workflow-config.json',
+            ''
+        ].join('\n')
+    });
+    runGitFixtureCommand(repoRoot, ['config', 'core.autocrlf', 'false']);
+    fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), '\n', 'utf8');
     return repoRoot;
 }
 
@@ -846,6 +864,21 @@ function writeReviewCycleContinuation(
         excludedReviewTypes?: string[];
     }
 ): void {
+    const capturedWip = [...listSplitRequiredWip({ repoRoot, taskId }).manifests]
+        .reverse()
+        .find((manifest) => manifest.status === 'suspended');
+    if (capturedWip) {
+        const restoreResult = restoreSplitRequiredWip({
+            repoRoot,
+            taskId,
+            manifestPath: capturedWip.manifest_path
+        });
+        assert.equal(
+            restoreResult.status,
+            'RESTORED',
+            restoreResult.violations.join('\n')
+        );
+    }
     const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-review-cycle-continuation.json`);
     const artifact = buildReviewCycleContinuationArtifact({
         taskId,
