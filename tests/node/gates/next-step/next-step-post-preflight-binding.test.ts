@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { initGitRepo } from '../git-fixtures';
 
-import { resolveNextStep } from './next-step-test-support';
+import { commitGitFixturePaths, resolveNextStep } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
 import { buildRulePackArtifact } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
@@ -657,10 +657,7 @@ describe('gates/next-step post preflight binding', () => {
         assert.deepEqual(getLoadedRuleFileBasenames(result.commands[0].command), [
             '00-core.md',
             '15-project-memory.md',
-            '35-strict-coding-rules.md',
             '40-commands.md',
-            '50-structure-and-docs.md',
-            '70-security.md',
             '80-task-workflow.md',
             '90-skill-catalog.md'
         ]);
@@ -911,10 +908,7 @@ describe('gates/next-step post preflight binding', () => {
         assert.deepEqual(getLoadedRuleFileBasenames(result.commands[0].command), [
             '00-core.md',
             '15-project-memory.md',
-            '35-strict-coding-rules.md',
             '40-commands.md',
-            '50-structure-and-docs.md',
-            '70-security.md',
             '80-task-workflow.md',
             '90-skill-catalog.md'
         ]);
@@ -1007,6 +1001,9 @@ describe('gates/next-step post preflight binding', () => {
         writeJson(rulePackPath, artifact);
 
         fs.writeFileSync(extraRulePath, '# Project specific rule\n\nUpdated content.\n', 'utf8');
+        commitGitFixturePaths(repoRoot, [
+            'garda-agent-orchestrator/live/docs/agent-rules/project-specific-rule.md'
+        ]);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
