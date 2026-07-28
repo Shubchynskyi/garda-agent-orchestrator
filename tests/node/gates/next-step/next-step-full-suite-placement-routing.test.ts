@@ -4,7 +4,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     buildDefaultWorkflowConfig,
+    commitGitFixturePaths,
     formatNextStepText,
+    getGitFixtureHead,
     getWorkspaceSnapshot,
     recordFullSuiteValidationDuration,
     resolveNextStep,
@@ -64,7 +66,16 @@ function writeRepairTaskMaterializationEvidence(
 ): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
     const fullSuitePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`);
-    const manifestRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'wip', TASK_ID, 'full-suite-repair', 'test');
+    const createdAtUtc = '2026-06-30T00:00:00.000Z';
+    const manifestRoot = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'wip',
+        TASK_ID,
+        'full-suite-repair',
+        '2026-06-30T00-00-00-000Z'
+    );
     const stagedPatchPath = path.join(manifestRoot, 'staged.patch');
     const unstagedPatchPath = path.join(manifestRoot, 'unstaged.patch');
     fs.mkdirSync(manifestRoot, { recursive: true });
@@ -72,13 +83,13 @@ function writeRepairTaskMaterializationEvidence(
     fs.writeFileSync(unstagedPatchPath, '', 'utf8');
     const manifestPath = path.join(manifestRoot, 'manifest.json');
     writeJson(manifestPath, {
-        schema_version: 1,
+        schema_version: 2,
         kind: 'full_suite_repair_wip',
         status: 'suspended',
         task_id: TASK_ID,
         child_task_id: childTaskId,
-        created_at_utc: '2026-06-30T00:00:00.000Z',
-        base_commit: 'test-base',
+        created_at_utc: createdAtUtc,
+        base_commit: getGitFixtureHead(repoRoot),
         preflight_path: normalizeForTimeline(preflightPath),
         preflight_sha256: fileSha256(preflightPath),
         full_suite_artifact_path: normalizeForTimeline(fullSuitePath),
@@ -447,6 +458,7 @@ describe('gates/next-step', () => {
         writeFullSuiteBoundReviewContext(repoRoot, TASK_ID, 'code');
 
         writeAfterCompileFullSuiteWorkflowConfig(repoRoot, 'npm run test:changed');
+        commitGitFixturePaths(repoRoot, ['garda-agent-orchestrator/live/config/workflow-config.json']);
 
 
 
@@ -491,6 +503,7 @@ describe('gates/next-step', () => {
         seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
 
         writeAfterCompileFullSuiteWorkflowConfig(repoRoot, 'npm run test:changed');
+        commitGitFixturePaths(repoRoot, ['garda-agent-orchestrator/live/config/workflow-config.json']);
 
 
 
@@ -557,6 +570,7 @@ describe('gates/next-step', () => {
         writeFullSuiteBoundReviewContext(repoRoot, TASK_ID, 'code');
 
         writeAfterCompileFullSuiteWorkflowConfig(repoRoot, 'npm test');
+        commitGitFixturePaths(repoRoot, ['garda-agent-orchestrator/live/config/workflow-config.json']);
 
 
 
@@ -619,6 +633,7 @@ describe('gates/next-step', () => {
             }
 
         });
+        commitGitFixturePaths(repoRoot, ['garda-agent-orchestrator/live/config/workflow-config.json']);
 
 
 
@@ -2225,6 +2240,7 @@ describe('gates/next-step', () => {
             }
 
         });
+        commitGitFixturePaths(repoRoot, ['garda-agent-orchestrator/live/config/workflow-config.json']);
 
 
 
@@ -2730,13 +2746,16 @@ describe('gates/next-step', () => {
 
         seedStartedTask(repoRoot, TASK_ID);
 
-        const preflightPath = writePreflight(repoRoot, TASK_ID, {});
-
         const docsPath = path.join(repoRoot, 'docs', 'runbook.md');
 
         fs.mkdirSync(path.dirname(docsPath), { recursive: true });
 
         fs.writeFileSync(docsPath, '# Runbook\n', 'utf8');
+
+        const preflightPath = writePreflight(repoRoot, TASK_ID, {}, {
+            changedFiles: ['docs/runbook.md'],
+            scopeCategory: 'docs-only'
+        });
 
         const docsSnapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['docs/runbook.md']);
 
@@ -2860,13 +2879,16 @@ describe('gates/next-step', () => {
 
         seedStartedTask(repoRoot, TASK_ID);
 
-        const preflightPath = writePreflight(repoRoot, TASK_ID, {});
-
         const docsPath = path.join(repoRoot, 'docs', 'runbook.md');
 
         fs.mkdirSync(path.dirname(docsPath), { recursive: true });
 
         fs.writeFileSync(docsPath, '# Runbook\n', 'utf8');
+
+        const preflightPath = writePreflight(repoRoot, TASK_ID, {}, {
+            changedFiles: ['docs/runbook.md'],
+            scopeCategory: 'docs-only'
+        });
 
         const docsSnapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['docs/runbook.md']);
 

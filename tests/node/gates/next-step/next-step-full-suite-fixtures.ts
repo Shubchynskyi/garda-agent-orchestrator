@@ -582,10 +582,14 @@ export function seedCompilePass(
     options: { qualityChecklist?: boolean } = {}
 ): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : ['src/app.ts'];
     if (options.qualityChecklist !== false) {
         seedQualityChecklistPass(repoRoot, taskId);
     }
-    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
         timestamp_utc: timestampUtc || new Date().toISOString(),
         task_id: taskId,
