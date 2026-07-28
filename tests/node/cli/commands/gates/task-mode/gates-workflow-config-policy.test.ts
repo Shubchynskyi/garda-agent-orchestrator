@@ -41,6 +41,7 @@ import {
     runShellSmokeForTask,
     seedInitAnswers,
     seedTaskQueue,
+    writeBalancedProfilesConfig,
     writeCleanReviewArtifact,
     writeCompilePassEvidence,
     writePreflight
@@ -109,6 +110,7 @@ function prepareTaskRepo(
         seedTaskQueue(repoRoot, taskId);
     }
     seedInitAnswers(repoRoot);
+    writeBalancedProfilesConfig(repoRoot);
     initializeGitRepo(repoRoot);
     if (options.ignoreBundle === true) {
         writeProtectedControlPlaneManifest(repoRoot);
@@ -1667,13 +1669,14 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
             writeCompilePassEvidence(repoRoot, taskId, preflightPath);
             writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
-            assert.equal(runRequiredReviewsCheckCommand({
+            const reviewResult = runRequiredReviewsCheckCommand({
                 repoRoot,
                 taskId,
                 preflightPath,
                 reviewAuthorshipAttestationJson: '{"code":true}',
                 emitMetrics: false
-            }).exitCode, 0);
+            });
+            assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
             assert.equal(runDocImpactGateCommand({
                 repoRoot,
                 taskId,

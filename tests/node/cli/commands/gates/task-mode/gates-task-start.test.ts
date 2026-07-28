@@ -30,6 +30,7 @@ import {
     appendPreflightClassifiedEvent,
     initializeGitRepo
 } from '../../gate-test-seed-helpers';
+import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
 import {
     buildRuleFileHashes,
     getLegacyPostPreflightRulePackFiles,
@@ -117,12 +118,14 @@ function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]
 }
 
 function createTempRepo(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+    const root = createManagedTestTempDirectory('repo-');
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
+    initializeGitRepo(root);
+    fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     return root;
 }
 
@@ -807,10 +810,12 @@ describe('cli/commands/gates — task-start', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900dirty-baseline';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# baseline routing fixture\n', 'utf8');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# changed routing fixture\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 13;\nconst b = 21;\nconsole.log(a + b);\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'src', 'unrelated.ts'), 'export const unrelated = true;\n', 'utf8');
 
