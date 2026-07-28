@@ -410,7 +410,7 @@ describe('gates/next-step', () => {
             repoRoot,
             TASK_ID,
             { ...ALL_REVIEW_FLAGS, code: true },
-            { seedPostPreflight: false }
+            { changedFiles: ['src/app.ts', 'CHANGELOG.md'], seedPostPreflight: false }
         );
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts', 'CHANGELOG.md']);

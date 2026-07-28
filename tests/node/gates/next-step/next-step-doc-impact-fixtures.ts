@@ -533,7 +533,45 @@ export function writePreflight(
 
 export function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
-    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : ['src/app.ts'];
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-quality-checklist.json`), {
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        event_source: 'quality-checklist',
+        task_id: taskId,
+        checklist_id: 'optional_quality_checks',
+        status: 'PASS',
+        outcome: 'PASS',
+        workflow_config_path: normalizeForTimeline(workflowConfigPath),
+        workflow_config_sha256: fs.existsSync(workflowConfigPath)
+            ? fileSha256(workflowConfigPath)
+            : null,
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: fileSha256(preflightPath),
+        changed_file_evidence: {
+            changed_files: snapshot.changed_files,
+            changed_files_count: snapshot.changed_files_count,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_sha256: snapshot.scope_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256
+        },
+        rules: [],
+        answers: [],
+        actions_taken: [],
+        actions_required: [],
+        violations: []
+    });
+    appendEvent(repoRoot, taskId, 'QUALITY_CHECKLIST_RECORDED', 'PASS', {
+        status: 'PASS',
+        artifact_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${taskId}-quality-checklist.json`)),
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: fileSha256(preflightPath)
+    });
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
         timestamp_utc: timestampUtc || new Date().toISOString(),
         task_id: taskId,
@@ -1394,4 +1432,3 @@ afterEach(() => {
     }
     tempRoots = [];
 });
-
