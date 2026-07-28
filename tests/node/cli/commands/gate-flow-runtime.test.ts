@@ -1,17 +1,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
     evaluateGateFlowTimelineReadiness,
     resolveGateFlowTimelinePath
 } from '../../../../src/cli/commands/gate-flows/support/gate-flow-runtime';
+import { createManagedTestTempDirectory } from './gate-test-temp-manager';
 
 describe('cli gate-flow runtime helpers', () => {
     it('reports missing task timeline with the canonical path', () => {
-        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-flow-runtime-'));
+        const repoRoot = createManagedTestTempDirectory('gate-flow-runtime-');
         const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
         const taskId = 'T-runtime-missing';
         const result = evaluateGateFlowTimelineReadiness({
@@ -30,7 +30,7 @@ describe('cli gate-flow runtime helpers', () => {
     });
 
     it('preserves gate-specific recovery text for missing timeline events', () => {
-        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-flow-runtime-'));
+        const repoRoot = createManagedTestTempDirectory('gate-flow-runtime-');
         const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
         const taskId = 'T-runtime-events';
         const timelinePath = resolveGateFlowTimelinePath(repoRoot, taskId);

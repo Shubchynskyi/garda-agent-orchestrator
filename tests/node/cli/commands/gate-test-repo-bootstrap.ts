@@ -7,22 +7,20 @@
 
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
+import type { TestContext } from 'node:test';
 
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
+import {
+    createManagedTestTempDirectory,
+    removeManagedTestTempDirectory,
+    removeTempRepoWithRetry
+} from './gate-test-temp-manager';
 
-const TRANSIENT_CLEANUP_ERROR_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY']);
-const DEFAULT_CLEANUP_RETRY_DELAYS_MS = [25, 50, 100, 200];
 const DEFAULT_GIT_SETUP_RETRY_DELAYS_MS = [0, 25, 100];
 const RETRYABLE_GIT_SETUP_PATTERN = /\b(?:EACCES|EBUSY|ENOTEMPTY|EPERM|Permission denied)\b|\.git[\\/]+config|could not set ['"]?core\./iu;
 const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
-
-interface RemoveTempRepoOptions {
-    readonly rmSync?: typeof fs.rmSync;
-    readonly retryDelaysMs?: readonly number[];
-}
 
 interface RunGitOptions {
     readonly spawnSync?: (
@@ -33,19 +31,11 @@ interface RunGitOptions {
     readonly retryDelaysMs?: readonly number[];
 }
 
-function getErrorCode(error: unknown): string {
-    return String((error as NodeJS.ErrnoException | undefined)?.code || '');
-}
-
 function sleepSync(delayMs: number): void {
     if (delayMs <= 0) {
         return;
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
-}
-
-function isTransientCleanupError(error: unknown): boolean {
-    return TRANSIENT_CLEANUP_ERROR_CODES.has(getErrorCode(error));
 }
 
 function isGitSetupCommand(args: string[]): boolean {
@@ -63,31 +53,6 @@ function formatGitOutput(result: childProcess.SpawnSyncReturns<string>): string 
 function isRetryableGitSetupFailure(args: string[], result: childProcess.SpawnSyncReturns<string>): boolean {
     return isGitSetupCommand(args) && RETRYABLE_GIT_SETUP_PATTERN.test(formatGitOutput(result));
 }
-
-export function removeTempRepoWithRetry(root: string, options: RemoveTempRepoOptions = {}): void {
-    const rmSync = options.rmSync || fs.rmSync;
-    const retryDelaysMs = options.retryDelaysMs || DEFAULT_CLEANUP_RETRY_DELAYS_MS;
-    let lastError: unknown = null;
-
-    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
-        try {
-            rmSync(root, { recursive: true, force: true });
-            return;
-        } catch (error) {
-            if (!isTransientCleanupError(error)) {
-                throw error;
-            }
-            lastError = error;
-            if (attempt === retryDelaysMs.length) {
-                break;
-            }
-            sleepSync(retryDelaysMs[attempt] || 0);
-        }
-    }
-
-    throw lastError;
-}
-
 
 export function getReviewsRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
@@ -118,8 +83,8 @@ export function seedRuleFiles(repoRoot: string): void {
 }
 
 
-export function createTempRepo(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+export function createTempRepo(testContext?: Pick<TestContext, 'after'>): string {
+    const root = createManagedTestTempDirectory('repo-', testContext);
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
@@ -146,7 +111,7 @@ export function createWindowsBatchNodeFixture(
     scriptSource: string,
     options: { forwardArgs?: boolean } = {}
 ): { batchPath: string; cleanup: () => void } {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-batch-gates-'));
+    const root = createManagedTestTempDirectory('batch-');
     const jsPath = path.join(root, 'payload.js');
     const batchPath = path.join(root, 'run-fixture.cmd');
     const forwardArgs = options.forwardArgs ? ' %*' : '';
@@ -155,7 +120,7 @@ export function createWindowsBatchNodeFixture(
     return {
         batchPath,
         cleanup() {
-            removeTempRepoWithRetry(root);
+            removeManagedTestTempDirectory(root);
         }
     };
 }
@@ -169,7 +134,7 @@ export function createDependentValidationFixture(): {
     nestedCwd: string;
     cleanup: () => void;
 } {
-    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-validation-chain-'));
+    const repoRoot = createManagedTestTempDirectory('validation-');
     const sourcePath = path.join(repoRoot, 'src', 'feature.ts');
     const consumerPath = path.join(repoRoot, '.node-build', 'tests', 'node', 'sample.test.js');
     const manifestPath = path.join(repoRoot, '.node-build', 'node-foundation-manifest.json');
@@ -193,7 +158,7 @@ export function createDependentValidationFixture(): {
         sourcePath,
         lockPath,
         nestedCwd,
-        cleanup: () => removeTempRepoWithRetry(repoRoot)
+        cleanup: () => removeManagedTestTempDirectory(repoRoot)
     };
 }
 
@@ -277,3 +242,9 @@ export function backdateFileMtime(filePath: string, secondsAgo = 5): void {
     const older = new Date(Date.now() - (secondsAgo * 1000));
     fs.utimesSync(filePath, older, older);
 }
+
+export {
+    createManagedTestTempDirectory,
+    removeManagedTestTempDirectory,
+    removeTempRepoWithRetry
+};
