@@ -13,14 +13,21 @@ import {
 export async function handleValidateManifest(gateArgv: string[]): Promise<void> {
     const defs = {
         '--manifest-path': { key: 'manifestPath', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' },
         '--compact': { key: 'compact', type: 'boolean' }
     };
     const { options: rawOptions } = parseOptions(gateArgv, defs);
     const options = rawOptions as ParsedOptionsRecord;
-    const manifestPath = typeof options.manifestPath === 'string'
+    const repoRoot = typeof options.repoRoot === 'string'
+        ? path.resolve(options.repoRoot)
+        : null;
+    const requestedManifestPath = typeof options.manifestPath === 'string'
         ? options.manifestPath
         : path.join(resolveBundleName(), 'MANIFEST.md');
-    const result = validateManifest(manifestPath);
+    const manifestPath = repoRoot && !path.isAbsolute(requestedManifestPath)
+        ? path.resolve(repoRoot, requestedManifestPath)
+        : requestedManifestPath;
+    const result = validateManifest(manifestPath, repoRoot || undefined);
     console.log(options.compact === true ? formatManifestResultCompact(result) : formatManifestResult(result));
     if (!result.passed) {
         throw new ValidationFailureError('Manifest validation failed.');

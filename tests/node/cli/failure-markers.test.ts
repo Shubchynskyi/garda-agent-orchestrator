@@ -405,13 +405,72 @@ test('gate validate-manifest returns EXIT_VALIDATION_FAILURE when manifest is in
             'gate',
             'validate-manifest',
             '--manifest-path',
-            manifestPath
-        ], tmpDir);
+            'MANIFEST.md',
+            '--repo-root',
+            tmpDir
+        ]);
         assert.equal(exitCode, EXIT_VALIDATION_FAILURE, stderr);
         assert.ok(stderr.includes('GARDA_CLI_FAILED'));
         assert.ok(stderr.includes('Manifest validation failed.'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('gate validate-manifest resolves relative and absolute manifest paths from explicit repo root', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-manifest-root-'));
+    try {
+        const nestedDir = path.join(tmpDir, 'nested');
+        const manifestPath = path.join(nestedDir, 'MANIFEST.md');
+        fs.mkdirSync(nestedDir, { recursive: true });
+        fs.writeFileSync(manifestPath, '- src/app.ts\n', 'utf8');
+
+        const relativeResult = runCli([
+            'gate',
+            'validate-manifest',
+            '--manifest-path',
+            path.join('nested', 'MANIFEST.md'),
+            '--repo-root',
+            tmpDir
+        ]);
+        assert.equal(relativeResult.exitCode, 0, relativeResult.stderr);
+        assert.ok(relativeResult.stdout.includes('MANIFEST_VALIDATION_PASSED'));
+
+        const absoluteResult = runCli([
+            'gate',
+            'validate-manifest',
+            '--manifest-path',
+            manifestPath,
+            '--repo-root',
+            tmpDir
+        ]);
+        assert.equal(absoluteResult.exitCode, 0, absoluteResult.stderr);
+        assert.ok(absoluteResult.stdout.includes('MANIFEST_VALIDATION_PASSED'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('gate validate-manifest rejects a manifest path outside explicit repo root', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-manifest-contained-root-'));
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-manifest-outside-root-'));
+    try {
+        const outsideManifestPath = path.join(outsideRoot, 'MANIFEST.md');
+        fs.writeFileSync(outsideManifestPath, '- src/app.ts\n', 'utf8');
+        const result = runCli([
+            'gate',
+            'validate-manifest',
+            '--manifest-path',
+            path.relative(repoRoot, outsideManifestPath),
+            '--repo-root',
+            repoRoot
+        ]);
+        assert.equal(result.exitCode, EXIT_GENERAL_FAILURE, result.stderr);
+        assert.ok(result.stderr.includes('GARDA_CLI_FAILED'));
+        assert.ok(result.stderr.includes('--manifest-path must resolve inside workspace root'));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
     }
 });
 
