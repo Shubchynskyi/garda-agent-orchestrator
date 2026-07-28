@@ -1211,6 +1211,7 @@ test('handleSetup preserves custom optional quality check rules across refreshes
             enabled: true
         };
         const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        const installedOptionalQualityChecks = workflowConfig.optional_quality_checks;
         workflowConfig.optional_quality_checks = {
             enabled: false,
             rules: [customRule]
@@ -1228,10 +1229,12 @@ test('handleSetup preserves custom optional quality check rules across refreshes
         const refreshedConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
         assert.deepEqual(refreshedConfig.optional_quality_checks, {
             enabled: false,
-            baseline_version: OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
+            baseline_version: installedOptionalQualityChecks.baseline_version,
+            review_failure_cadence_interval:
+                installedOptionalQualityChecks.review_failure_cadence_interval,
             rules: [
                 customRule,
-                ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
+                ...installedOptionalQualityChecks.rules
             ]
         });
         assert.equal(refreshOutput.includes(OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE), false);

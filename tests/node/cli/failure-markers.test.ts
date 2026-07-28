@@ -331,7 +331,7 @@ test('verify with validation failures returns EXIT_VALIDATION_FAILURE', () => {
         writeValidInitAnswersFixture(tmpDir);
 
         const { exitCode, stderr } = runCli(['verify', '--target-root', tmpDir]);
-        assert.equal(exitCode, EXIT_VALIDATION_FAILURE);
+        assert.equal(exitCode, EXIT_VALIDATION_FAILURE, stderr);
         assert.ok(stderr.includes('GARDA_CLI_FAILED'));
         assert.ok(stderr.includes('Workspace verification failed'));
     } finally {
@@ -401,8 +401,13 @@ test('gate validate-manifest returns EXIT_VALIDATION_FAILURE when manifest is in
         const manifestPath = path.join(tmpDir, 'MANIFEST.md');
         fs.writeFileSync(manifestPath, '- ../escape.txt\n', 'utf8');
 
-        const { exitCode, stderr } = runCli(['gate', 'validate-manifest', '--manifest-path', manifestPath]);
-        assert.equal(exitCode, EXIT_VALIDATION_FAILURE);
+        const { exitCode, stderr } = runCli([
+            'gate',
+            'validate-manifest',
+            '--manifest-path',
+            manifestPath
+        ], tmpDir);
+        assert.equal(exitCode, EXIT_VALIDATION_FAILURE, stderr);
         assert.ok(stderr.includes('GARDA_CLI_FAILED'));
         assert.ok(stderr.includes('Manifest validation failed.'));
     } finally {

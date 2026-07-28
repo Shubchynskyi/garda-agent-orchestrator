@@ -159,7 +159,7 @@ function makeStats(overrides: Partial<TaskStatsResult> = {}): TaskStatsResult {
     };
 }
 
-test('buildTaskStats includes review attempt counts from existing review evidence', () => {
+test('buildTaskStats separates fresh review attempts from reused review diagnostics', () => {
     const tmpDir = makeTmpDir();
     try {
         const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
@@ -183,11 +183,14 @@ test('buildTaskStats includes review attempt counts from existing review evidenc
         });
 
         const stats = buildTaskStats('T-454', tmpDir, eventsRoot, reviewsRoot);
-        assert.equal(stats.review_attempt_summary?.total_attempts, 3);
+        assert.equal(stats.review_attempt_summary?.total_attempts, 2);
         assert.deepEqual(stats.review_attempt_summary?.review_types, [
-            { review_type: 'code', total_attempts: 2, pass_count: 1, fail_count: 1, reused_count: 0, missing_or_invalid_count: 0 },
-            { review_type: 'test', total_attempts: 1, pass_count: 1, fail_count: 0, reused_count: 1, missing_or_invalid_count: 0 }
+            { review_type: 'code', total_attempts: 2, pass_count: 1, fail_count: 1, reused_count: 0, missing_or_invalid_count: 0 }
         ]);
+        assert.deepEqual(stats.review_attempt_summary?.fresh_reused_by_review_type, {
+            code: { fresh: 2, reused: 0 },
+            test: { fresh: 0, reused: 1 }
+        });
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -823,4 +826,3 @@ test('buildTaskStats picks up review-context savings from review artifacts', () 
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
