@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { initGitRepo } from '../git-fixtures';
 
 import { formatNextStepText, resolveNextStep } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
@@ -100,6 +101,8 @@ function makeTempRepo(): string {
         ].join('\n'),
         'utf8'
     );
+    initGitRepo(repoRoot);
+    fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
     return repoRoot;
 }
 

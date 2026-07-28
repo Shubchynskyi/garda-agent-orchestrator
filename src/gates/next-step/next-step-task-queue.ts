@@ -57,7 +57,7 @@ interface NumericTaskIdRangeEndpoint {
     taskId: string;
     prefix: string;
     rawNumber: string;
-    value: number;
+    value: bigint;
 }
 
 export interface StrictDecompositionSplitRoutingState {
@@ -92,8 +92,9 @@ const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
 const TASK_QUEUE_REVIEW_FOLLOW_UP_LINK_MARKER_PATTERN = /\breview\s+follow-up\s+tasks?\s+materialized\s*:/iu;
 const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
 const TASK_QUEUE_TASK_ID_REFERENCE_PATTERN = /(^|[^A-Za-z0-9-])([Tt]-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)(?=$|[^A-Za-z0-9-])/gu;
+const TASK_QUEUE_DECOMPOSITION_SOURCE_CLAIM_PATTERN = /\bdecomposition\s+source\s*:/iu;
 const TASK_QUEUE_DECOMPOSITION_SOURCE_PATTERN =
-    /\bdecomposition\s+source\s*:\s*(orchestrator|manual-agent|manual-operator)(?=\s*(?:\([^)\r\n]*\)\s*)?(?:[;|]|\.(?=\s|$)|$))/iu;
+    /\bdecomposition\s+source\s*:\s*(orchestrator|manual-agent|manual-operator)(?:\s*\(([^)\r\n]*)\))?(?=\s*(?:[;|]|\.(?=\s|$)|$))/iu;
 const TASK_QUEUE_LEGACY_MANUAL_DECOMPOSITION_PATTERN =
     /\bmanual\s+(operator|agent)(?:-requested)?\s+decomposition\b/iu;
 export const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
@@ -113,10 +114,32 @@ function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
     return TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN.test(String(entry.notes || ''));
 }
 
+function isValidDecompositionRecordedOn(value: string): boolean {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+    if (!match) {
+        return false;
+    }
+    const date = new Date(Date.UTC(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3])
+    ));
+    return date.getUTCFullYear() === Number(match[1])
+        && date.getUTCMonth() === Number(match[2]) - 1
+        && date.getUTCDate() === Number(match[3]);
+}
+
 export function readDecomposedTaskProvenance(notes: string | null): DecomposedTaskProvenance {
     const text = String(notes || '');
     const structuredMatch = TASK_QUEUE_DECOMPOSITION_SOURCE_PATTERN.exec(text);
+    const recordedOn = structuredMatch?.[2];
     if (structuredMatch) {
+        if (recordedOn !== undefined && !isValidDecompositionRecordedOn(recordedOn)) {
+            return {
+                source: 'unrecorded',
+                evidence: 'none'
+            };
+        }
         return {
             source: structuredMatch[1].toLowerCase() as DecomposedTaskProvenanceSource,
             evidence: 'structured-note'
@@ -135,6 +158,15 @@ export function readDecomposedTaskProvenance(notes: string | null): DecomposedTa
         source: 'unrecorded',
         evidence: 'none'
     };
+}
+
+function hasValidDecompositionChildSetForProvenance(notes: string | null, childTaskIds: readonly string[]): boolean {
+    const text = String(notes || '');
+    if (!TASK_QUEUE_DECOMPOSITION_SOURCE_CLAIM_PATTERN.test(text)) {
+        return true;
+    }
+    return readDecomposedTaskProvenance(text).evidence === 'structured-note'
+        && childTaskIds.length >= 2;
 }
 
 export function describeDecomposedTaskProvenance(notes: string | null): string {
@@ -190,8 +222,8 @@ function parseNumericTaskIdRangeEndpoint(taskId: string): NumericTaskIdRangeEndp
     }
     const prefix = match[1];
     const rawNumber = match[2];
-    const value = Number(rawNumber);
-    if (!prefix || !Number.isInteger(value)) {
+    const value = BigInt(rawNumber);
+    if (!prefix) {
         return null;
     }
     return {
@@ -207,21 +239,47 @@ export function formatDecomposedTaskProvenanceNote(options: {
     childTaskIds: readonly string[];
     recordedOn?: string | null;
 }): string {
-    const childTaskIds = [...new Set(options.childTaskIds.map((taskId) => String(taskId).trim()))]
-        .filter((taskId) => isCanonicalTaskId(taskId));
-    if (childTaskIds.length === 0) {
-        throw new Error('At least one canonical child task id is required for decomposition provenance.');
+    if (!DECOMPOSED_TASK_PROVENANCE_SOURCES.includes(options.source)) {
+        throw new Error(`Unsupported decomposition provenance source '${String(options.source)}'.`);
+    }
+    const normalizedChildTaskIds = options.childTaskIds.map((taskId) => String(taskId).trim());
+    const invalidChildIndex = normalizedChildTaskIds.findIndex((taskId) => !isCanonicalTaskId(taskId));
+    if (invalidChildIndex >= 0) {
+        throw new Error(
+            `Decomposition child task id at index ${invalidChildIndex} is not canonical: `
+            + `'${normalizedChildTaskIds[invalidChildIndex]}'.`
+        );
+    }
+    const childTaskIds = [...new Set(normalizedChildTaskIds)];
+    if (childTaskIds.length < 2) {
+        throw new Error('At least two distinct canonical child task ids are required for decomposition provenance.');
     }
     const endpoints = childTaskIds.map(parseNumericTaskIdRangeEndpoint);
     const firstEndpoint = endpoints[0];
+    const allUnpadded = endpoints.every((endpoint) => Boolean(
+        endpoint && endpoint.rawNumber === endpoint.value.toString()
+    ));
+    const fixedWidth = firstEndpoint?.rawNumber.length || 0;
+    const allFixedWidth = fixedWidth > 0 && endpoints.every((endpoint) => Boolean(
+        endpoint
+        && endpoint.rawNumber.length === fixedWidth
+        && endpoint.rawNumber === endpoint.value.toString().padStart(fixedWidth, '0')
+    ));
     const isContiguousNumericRange = childTaskIds.length > 1
+        && childTaskIds.length <= 101
         && Boolean(firstEndpoint)
+        && (allUnpadded || allFixedWidth)
         && endpoints.every((endpoint, index) => Boolean(
             endpoint
             && endpoint.prefix === firstEndpoint!.prefix
-            && endpoint.value === firstEndpoint!.value + index
+            && endpoint.value === firstEndpoint!.value + BigInt(index)
         ));
     const recordedOn = String(options.recordedOn || '').trim();
+    if (recordedOn && !isValidDecompositionRecordedOn(recordedOn)) {
+        throw new Error(
+            `Decomposition recordedOn must use a valid YYYY-MM-DD date: '${recordedOn}'.`
+        );
+    }
     const sourceClause = `Decomposition source: ${options.source}${recordedOn ? ` (${recordedOn})` : ''}`;
     const childClause = isContiguousNumericRange
         ? `child range \`${childTaskIds[0]}\` through \`${childTaskIds[childTaskIds.length - 1]}\``
@@ -244,20 +302,20 @@ function extractChildTaskMentions(notes: string | null, knownTaskIds: Iterable<s
         }
         const start = startEndpoint.value;
         const end = endEndpoint.value;
-        if (!Number.isInteger(start) || !Number.isInteger(end) || Math.abs(end - start) > 100) {
+        const distance = start <= end ? end - start : start - end;
+        if (distance > 100n) {
             continue;
         }
-        const step = start <= end ? 1 : -1;
+        const step = start <= end ? 1n : -1n;
         const width = startEndpoint.rawNumber.length === endEndpoint.rawNumber.length
             ? startEndpoint.rawNumber.length
             : 0;
         let offset = 0;
-        for (let value = start; step > 0 ? value <= end : value >= end; value += step) {
-            const valueText = width > 0 ? String(Math.abs(value)).padStart(width, '0') : String(Math.abs(value));
-            const signedValueText = value < 0 ? `-${valueText}` : valueText;
+        for (let value = start; step > 0n ? value <= end : value >= end; value += step) {
+            const valueText = width > 0 ? value.toString().padStart(width, '0') : value.toString();
             appendTaskMentionIfMissing(
                 taskMentions,
-                `${startEndpoint.prefix}${signedValueText}`,
+                `${startEndpoint.prefix}${valueText}`,
                 rangeMatch.index + leadingBoundary.length + offset
             );
             offset += 1;
@@ -396,6 +454,9 @@ export function resolveNextUnfinishedChildRoute(
     const parentEntry = taskEntries.get(parentTaskId);
     const childTaskIds = childTaskIdExtractor(parentEntry?.notes || null, taskEntries.keys(), parentTaskId)
         .filter((childTaskId) => childTaskId !== parentTaskId);
+    if (!hasValidDecompositionChildSetForProvenance(parentEntry?.notes || null, childTaskIds)) {
+        return null;
+    }
 
     for (const childTaskId of childTaskIds) {
         const childEntry = taskEntries.get(childTaskId);
@@ -489,7 +550,8 @@ export function resolveDecomposedParentCompletionState(
     const childTaskIds = childTaskIdExtractor(parentEntry?.notes || null, taskEntries.keys(), parentTaskId)
         .filter((childTaskId) => childTaskId !== parentTaskId);
 
-    if (childTaskIds.length === 0) {
+    if (childTaskIds.length === 0
+        || !hasValidDecompositionChildSetForProvenance(parentEntry?.notes || null, childTaskIds)) {
         return {
             hasLinkedChildren: false,
             complete: false,

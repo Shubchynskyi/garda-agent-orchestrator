@@ -4134,9 +4134,8 @@ export function resolveNextStepFromCliOptions(options: {
         try {
             resolvedPreflightPath = resolvePathInsideRepo(preflightPathText, repoRoot, { allowMissing: true });
         } catch {
-            const rejectedPreflightPath = path.resolve(repoRoot, preflightPathText);
             throw new Error(
-                `PreflightPath must resolve inside repo root without symlink or junction escape: ${normalizePath(rejectedPreflightPath)}. ` +
+                `PreflightPath must resolve inside repo root without symlink or junction escape: ${normalizePath(preflightPathText)}. ` +
                 'The derived ReviewsRoot must resolve inside repo root without symlink or junction escape.'
             );
         }
@@ -4151,9 +4150,8 @@ export function resolveNextStepFromCliOptions(options: {
         try {
             reviewsRoot = resolvePathInsideRepo(String(options.reviewsRoot), repoRoot, { allowMissing: true });
         } catch {
-            const rejectedReviewsRoot = path.resolve(repoRoot, String(options.reviewsRoot));
             throw new Error(
-                `ReviewsRoot must resolve inside repo root without symlink or junction escape: ${normalizePath(rejectedReviewsRoot)}`
+                `ReviewsRoot must resolve inside repo root without symlink or junction escape: ${normalizePath(options.reviewsRoot)}`
             );
         }
     }

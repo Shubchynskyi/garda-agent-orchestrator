@@ -250,6 +250,118 @@ describe('gates/next-step decomposed parent child parsing', () => {
         );
     });
 
+    it('preserves mixed-width numeric child IDs as an explicit list', () => {
+        const childTaskIds = ['T-970-1', 'T-970-02'];
+        const notes = formatDecomposedTaskProvenanceNote({
+            source: 'manual-agent',
+            childTaskIds
+        });
+
+        assert.match(notes, /child tasks: `T-970-1`, `T-970-02`/u);
+        assert.doesNotMatch(notes, /child range/u);
+        assert.deepEqual(
+            extractExplicitLinkedChildTaskIds(notes, childTaskIds, 'T-970'),
+            childTaskIds
+        );
+    });
+
+    it('preserves large child sets as an explicit list instead of an unparseable range', () => {
+        const childTaskIds = Array.from({ length: 102 }, (_, index) => `T-971-${index + 1}`);
+        const notes = formatDecomposedTaskProvenanceNote({
+            source: 'manual-operator',
+            childTaskIds
+        });
+
+        assert.doesNotMatch(notes, /child range/u);
+        assert.deepEqual(
+            extractExplicitLinkedChildTaskIds(notes, childTaskIds, 'T-971'),
+            childTaskIds
+        );
+    });
+
+    it('round-trips contiguous numeric child IDs above Number.MAX_SAFE_INTEGER', () => {
+        const childTaskIds = ['T-971-9007199254740992', 'T-971-9007199254740993'];
+        const notes = formatDecomposedTaskProvenanceNote({
+            source: 'manual-agent',
+            childTaskIds
+        });
+
+        assert.match(notes, /child range/u);
+        assert.deepEqual(
+            extractExplicitLinkedChildTaskIds(notes, childTaskIds, 'T-971'),
+            childTaskIds
+        );
+    });
+
+    it('fails closed when any provenance child ID is invalid', () => {
+        assert.throws(
+            () => formatDecomposedTaskProvenanceNote({
+                source: 'manual-agent',
+                childTaskIds: ['T-972-1', 'not a task id', 'T-972-3']
+            }),
+            /index 1.*not a task id/u
+        );
+    });
+
+    it('fails closed when provenance contains fewer than two distinct child IDs', () => {
+        assert.throws(
+            () => formatDecomposedTaskProvenanceNote({
+                source: 'manual-agent',
+                childTaskIds: ['T-972-1']
+            }),
+            /At least two distinct canonical child task ids/u
+        );
+        assert.throws(
+            () => formatDecomposedTaskProvenanceNote({
+                source: 'manual-agent',
+                childTaskIds: ['T-972-1', 'T-972-1']
+            }),
+            /At least two distinct canonical child task ids/u
+        );
+    });
+
+    it('fails closed for unsupported provenance sources and invalid dates', () => {
+        assert.throws(
+            () => formatDecomposedTaskProvenanceNote({
+                source: 'manual-agent-extra' as never,
+                childTaskIds: ['T-973-1', 'T-973-2']
+            }),
+            /Unsupported decomposition provenance source/u
+        );
+        assert.throws(
+            () => formatDecomposedTaskProvenanceNote({
+                source: 'manual-agent',
+                childTaskIds: ['T-973-1', 'T-973-2'],
+                recordedOn: '2026-02-30'
+            }),
+            /recordedOn must use a valid YYYY-MM-DD date/u
+        );
+    });
+
+    it('rejects structured provenance with impossible or malformed dates when reading notes', () => {
+        for (const recordedOn of ['2026-02-30', '2026/02/28', '']) {
+            assert.deepEqual(
+                readDecomposedTaskProvenance(
+                    `Decomposition source: manual-agent (${recordedOn}); child tasks: \`T-973-1\`, \`T-973-2\`.`
+                ),
+                {
+                    source: 'unrecorded',
+                    evidence: 'none'
+                }
+            );
+        }
+        assert.deepEqual(
+            readDecomposedTaskProvenance(
+                'Decomposition source: manual-agent (2026-02-30); manual agent decomposition; '
+                + 'child tasks: `T-973-1`, `T-973-2`.'
+            ),
+            {
+                source: 'unrecorded',
+                evidence: 'none'
+            }
+        );
+    });
+
     it('rejects structured provenance source tokens with unsupported suffixes', () => {
         assert.deepEqual(
             readDecomposedTaskProvenance(
@@ -316,7 +428,29 @@ describe('gates/next-step decomposed parent child parsing', () => {
         assert.match(result.reason, /gate-owned decomposition artifacts are not required/iu);
     });
 
-    it('routes a structured manual-agent parent to its explicit unfinished child', () => {
+    it('does not treat structured single-child provenance as a valid decomposition', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-958 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-07-24 | balanced | Decomposition source: manual-agent; child tasks: `T-958-1`; execute sequentially. |',
+            '| T-958-1 | 🟩 DONE | P1 | workflow | Child | gpt-5.5 | 2026-07-24 | balanced | Child of `T-958`. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-958', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+        assert.ok(taskMd.includes('| T-958 | 🟪 DECOMPOSED |'));
+        assert.match(result.reason, /manual agent decomposition provenance/iu);
+    });
+
+    it('does not route an unfinished child from structured single-child provenance', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
             '# TASK.md',
@@ -331,10 +465,29 @@ describe('gates/next-step decomposed parent child parsing', () => {
         const result = resolveNextStep({ taskId: 'T-958', repoRoot });
 
         assert.equal(result.status, 'DECOMPOSED');
-        assert.equal(result.next_gate, 'child-task');
-        assert.ok(result.commands[0].command.includes('next-step "T-958-1"'));
-        assert.match(result.reason, /manual agent decomposition provenance/iu);
-        assert.match(result.reason, /gate-owned decomposition artifacts are not required/iu);
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+    });
+
+    it('does not route malformed structured provenance even when legacy wording is present', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-958 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-07-24 | balanced | Decomposition source: manual-agent (2026-02-30); manual agent decomposition; child tasks: `T-958-1`, `T-958-2`. |',
+            '| T-958-1 | 🟦 TODO | P1 | workflow | First child | gpt-5.5 | 2026-07-24 | balanced | Child of `T-958`. |',
+            '| T-958-2 | 🟦 TODO | P1 | workflow | Second child | gpt-5.5 | 2026-07-24 | balanced | Child of `T-958`. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-958', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+        assert.doesNotMatch(result.reason, /gate-owned decomposition artifacts are not required/iu);
     });
 
     it('does not infer manual children when provenance lacks an explicit child list or range', () => {
