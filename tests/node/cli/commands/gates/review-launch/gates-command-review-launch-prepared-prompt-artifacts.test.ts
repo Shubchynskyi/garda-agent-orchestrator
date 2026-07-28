@@ -226,7 +226,7 @@ describe('cli/commands/gates review launch prepared prompt artifacts', () => {
 
         assert.notEqual(prepare.exitCode, 0);
         assert.ok(
-            prepare.errors.some((line) => line.includes('prepare-reviewer-launch requires reviewer prompt template artifact to stay inside repo root')),
+            prepare.errors.some((line) => line.includes('Path must resolve inside repo root without symlink or junction escapes')),
             prepare.errors.join('\n')
         );
         assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
@@ -292,7 +292,7 @@ describe('cli/commands/gates review launch prepared prompt artifacts', () => {
 
         assert.notEqual(prepare.exitCode, 0);
         assert.ok(
-            prepare.errors.some((line) => line.includes('Path must stay inside repo root')),
+            prepare.errors.some((line) => line.includes('Path must resolve inside repo root without symlink or junction escapes')),
             prepare.errors.join('\n')
         );
         assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
