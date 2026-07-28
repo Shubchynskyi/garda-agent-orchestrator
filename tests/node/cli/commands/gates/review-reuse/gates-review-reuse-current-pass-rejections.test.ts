@@ -28,6 +28,17 @@ import {
     getReviewFindingsValidationArtifactSnapshotPath
 } from '../../../../../../src/gates/review/review-findings-validation-artifact';
 import {
+    buildReviewFindingsDispositionArtifact,
+    getReviewFindingsDispositionArtifactPath,
+    getReviewFindingsDispositionArtifactSnapshotPath
+} from '../../../../../../src/gates/review/review-findings-disposition-artifact';
+import {
+    resolveLockedReviewFindingPolicyFromPreflight
+} from '../../../../../../src/gates/review/review-finding-disposition';
+import {
+    materializeReviewFindingsFollowUpTasks
+} from '../../../../../../src/gates/review/review-findings-follow-up-tasks';
+import {
     validateReviewFindingsContract
 } from '../../../../../../src/gates/review/review-findings-artifact-verdict';
 
@@ -209,6 +220,24 @@ function replaceCurrentReviewWithMissingFocusedValidation(options: {
     );
     writeJson(validationArtifactSnapshotPath, validationArtifact);
 
+    const preflight = JSON.parse(fs.readFileSync(options.preflightPath, 'utf8')) as Record<string, unknown>;
+    const dispositionArtifactPath = getReviewFindingsDispositionArtifactPath(artifactPath);
+    const dispositionArtifact = buildReviewFindingsDispositionArtifact({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        validationArtifact,
+        validationArtifactPath,
+        validationArtifactSha256,
+        policyResolution: resolveLockedReviewFindingPolicyFromPreflight(preflight)
+    });
+    writeJson(dispositionArtifactPath, dispositionArtifact);
+    const dispositionArtifactSha256 = sha256File(dispositionArtifactPath);
+    const dispositionArtifactSnapshotPath = getReviewFindingsDispositionArtifactSnapshotPath(
+        dispositionArtifactPath,
+        dispositionArtifactSha256
+    );
+    writeJson(dispositionArtifactSnapshotPath, dispositionArtifact);
+
     receipt.review_artifact_sha256 = artifactSha256;
     receipt.review_output_sha256 = artifactSha256;
     receipt.review_coverage = validation.coverage_validation;
@@ -226,12 +255,29 @@ function replaceCurrentReviewWithMissingFocusedValidation(options: {
         validation_result_sha256: validationArtifact.validation_result_sha256,
         violation_count: validationArtifact.validation_result.violations.length
     };
+    receipt.review_findings_disposition = dispositionArtifact.disposition_result;
+    receipt.review_findings_disposition_artifact = {
+        artifact_path: path.normalize(dispositionArtifactPath).replace(/\\/g, '/'),
+        artifact_sha256: dispositionArtifactSha256,
+        snapshot_path: path.normalize(dispositionArtifactSnapshotPath).replace(/\\/g, '/'),
+        snapshot_sha256: dispositionArtifactSha256,
+        disposition_result_sha256: dispositionArtifact.disposition_result_sha256,
+        policy_id: dispositionArtifact.policy.policy_id,
+        policy_source: dispositionArtifact.policy.policy_source,
+        item_count: dispositionArtifact.summary.item_count,
+        fix_now_count: dispositionArtifact.summary.fix_now_count,
+        follow_up_pending_count: dispositionArtifact.summary.follow_up_pending_count,
+        ignored_count: dispositionArtifact.summary.ignored_count,
+        blocking_count: dispositionArtifact.summary.blocking_count
+    };
     receipt.review_output_contract = {
         schema_version: 1,
         format: 'findings_json',
         report_sha256: validation.report ? sha256Text(JSON.stringify(validation.report)) : null,
         validation_artifact_sha256: validationArtifactSha256,
         validation_result_sha256: validationArtifact.validation_result_sha256,
+        disposition_artifact_sha256: dispositionArtifactSha256,
+        disposition_result_sha256: dispositionArtifact.disposition_result_sha256,
         raw_output_sha256: artifactSha256,
         review_artifact_sha256: artifactSha256,
         review_context_sha256: reviewContextSha256,
@@ -243,6 +289,20 @@ function replaceCurrentReviewWithMissingFocusedValidation(options: {
     receipt.review_result_recorded_at_utc = new Date().toISOString();
     receipt.review_output_source_mtime_utc = fs.statSync(artifactPath).mtime.toISOString();
     writeJson(receiptPath, receipt);
+    if (options.includeNonBlockingFinding) {
+        const followUpMaterialization = materializeReviewFindingsFollowUpTasks({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            dispositionArtifactPath,
+            receiptPath
+        });
+        assert.equal(
+            followUpMaterialization.status,
+            'MATERIALIZED',
+            followUpMaterialization.violations.join('\n')
+        );
+    }
     const receiptSha256 = sha256File(receiptPath);
     const receiptSnapshotPath = artifactPath.replace(/\.md$/u, `-receipt-${receiptSha256}.json`);
     const artifactSnapshotPath = artifactPath.replace(/\.md$/u, `-artifact-${artifactSha256}.md`);
