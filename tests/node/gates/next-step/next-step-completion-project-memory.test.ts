@@ -524,6 +524,7 @@ describe('gates/next-step', () => {
         const updatedMemoryPath = path.join(repoRoot, initialImpact.artifact.affected_memory_files[0]);
 
         fs.appendFileSync(updatedMemoryPath, '\nChanged after lifecycle evidence was read.\n', 'utf8');
+        fs.renameSync(path.join(repoRoot, '.git'), path.join(repoRoot, '.git-unavailable'));
 
         const summary = buildProjectMemoryNextStepSummary(
             repoRoot,
@@ -560,6 +561,7 @@ describe('gates/next-step', () => {
         const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles });
 
         const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId: TASK_ID, preflightPath });
+        fs.renameSync(path.join(repoRoot, '.git'), path.join(repoRoot, '.git-unavailable'));
 
         const summary = buildProjectMemoryNextStepSummary(repoRoot, evidence);
 

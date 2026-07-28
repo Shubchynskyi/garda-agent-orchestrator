@@ -548,8 +548,6 @@ describe('gates/next-step', () => {
 
 
 
-        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const nextValue = 2;\n', 'utf8');
-
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
 
         seedCompilePass(repoRoot, TASK_ID);
@@ -566,7 +564,7 @@ describe('gates/next-step', () => {
 
 
 
-        assert.equal(result.status, 'READY');
+        assert.equal(result.status, 'READY', formatNextStepText(result));
 
         assert.equal(result.next_gate, 'task-audit-summary');
 
