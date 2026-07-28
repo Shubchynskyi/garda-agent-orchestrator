@@ -541,7 +541,7 @@ describe('gates/next-step protected recovery', () => {
 
     it('confirmed manifest recovery does not reuse a receipt bound to an older task-mode entry failure', () => {
         const repoRoot = makeTempRepo();
-        const { failurePath } = writeTrustedFailure(repoRoot, {
+        writeTrustedFailure(repoRoot, {
             timestamp_utc: '2026-07-11T00:02:00.000Z', manifest_status: 'DRIFT',
             affected_protected_paths: ['src/gates/next-step/next-step.ts']
         });

@@ -645,7 +645,6 @@ test('preprompt task --json treats mandatory post-diff as_is outcomes as self-ch
             policyMode: 'required',
             includePersistedHeadlines: true
         });
-        const headlinesPath = path.join(bundleRoot, 'live', 'config', 'skills-headlines.json');
         const artifact = {
             schema_version: 1,
             event_source: 'optional-skill-selection',

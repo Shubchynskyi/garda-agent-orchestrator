@@ -469,7 +469,7 @@ describe('next-step reviewer launch evidence helpers', () => {
         const repoRoot = makeTempRepo();
         const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${REVIEW_TYPE}-review-context.json`);
         writeJson(contextPath, { task_id: TASK_ID, review_type: REVIEW_TYPE });
-        const { launchArtifactPath, preparedLaunchEventSha256, routingEventSha256 } = seedPreparedLaunchArtifact(repoRoot, contextPath);
+        const { launchArtifactPath, routingEventSha256 } = seedPreparedLaunchArtifact(repoRoot, contextPath);
         const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
         const contextSha256 = fileSha256(contextPath);
         const reviewerLaunchInputArtifactSha256 = String(preparedArtifact.reviewer_launch_input_artifact_sha256);
