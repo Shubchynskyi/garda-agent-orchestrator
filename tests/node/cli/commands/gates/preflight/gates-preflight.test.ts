@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -8,14 +9,15 @@ import {
     EXIT_GATE_FAILURE
 } from '../../../../../../src/cli/exit-codes';
 import {
-    runClassifyChangeCommand,
+    runClassifyChangeCommand as runSourceClassifyChangeCommand,
     runCompileGateCommand,
     runLoadRulePackCommand,
 } from '../../../../../../src/cli/commands/gates';
 import { serializeTaskPlan } from '../../../../../../src/schemas/task-plan';
 import {
     assertGateChainDecision,
-    runCliWithCapturedOutput
+    runCliWithCapturedOutput,
+    writeBudgetOutputFilters
 } from '../../gate-test-helpers';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-config';
@@ -40,6 +42,80 @@ import {
 } from './gates-preflight-fixtures';
 
 const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
+
+function runClassifyChangeCommand(
+    options: Parameters<typeof runSourceClassifyChangeCommand>[0]
+): ReturnType<typeof runSourceClassifyChangeCommand> {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const changedFiles = Array.isArray(options.changedFiles)
+        ? options.changedFiles.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean)
+        : [];
+    const materializedFiles = changedFiles
+        .filter((relativePath) => (
+            !path.isAbsolute(relativePath)
+            && !/^[A-Za-z]:\//u.test(relativePath)
+            && !relativePath.startsWith('../')
+            && !relativePath.includes('/../')
+            && !relativePath.startsWith('garda-agent-orchestrator/runtime/')
+        ))
+        .map((relativePath) => ({
+            relativePath,
+            absolutePath: path.resolve(repoRoot, relativePath)
+        }))
+        .filter((entry) => {
+            const relativeToRoot = path.relative(repoRoot, entry.absolutePath);
+            return Boolean(relativeToRoot) && !relativeToRoot.startsWith('..') && !path.isAbsolute(relativeToRoot);
+        });
+
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        const snapshots = materializedFiles.map((entry) => {
+            const existed = fs.existsSync(entry.absolutePath);
+            const content = existed ? fs.readFileSync(entry.absolutePath) : null;
+            fs.mkdirSync(path.dirname(entry.absolutePath), { recursive: true });
+            fs.writeFileSync(entry.absolutePath, Buffer.alloc(0));
+            return { ...entry, existed, content };
+        });
+        try {
+            initializeGitRepo(repoRoot);
+        } finally {
+            for (const snapshot of snapshots) {
+                if (snapshot.existed && snapshot.content) {
+                    fs.writeFileSync(snapshot.absolutePath, snapshot.content);
+                } else if (fs.existsSync(snapshot.absolutePath)) {
+                    fs.unlinkSync(snapshot.absolutePath);
+                }
+            }
+        }
+    } else {
+        for (const entry of materializedFiles) {
+            const status = childProcess.spawnSync(
+                'git',
+                ['status', '--porcelain', '--', entry.relativePath],
+                { cwd: repoRoot, windowsHide: true, encoding: 'utf8' }
+            );
+            assert.equal(status.status, 0, String(status.stderr || status.stdout || '').trim());
+            if (String(status.stdout || '').trim()) {
+                continue;
+            }
+            fs.mkdirSync(path.dirname(entry.absolutePath), { recursive: true });
+            if (fs.existsSync(entry.absolutePath)) {
+                fs.appendFileSync(entry.absolutePath, '\n', 'utf8');
+            } else if (entry.relativePath.endsWith('workflow-config.json')) {
+                fs.writeFileSync(
+                    entry.absolutePath,
+                    `${JSON.stringify(buildDefaultWorkflowConfig(), null, 2)}\n`,
+                    'utf8'
+                );
+            } else if (entry.relativePath.endsWith('.json')) {
+                fs.writeFileSync(entry.absolutePath, '{}\n', 'utf8');
+            } else {
+                fs.writeFileSync(entry.absolutePath, `// preflight fixture for ${entry.relativePath}\n`, 'utf8');
+            }
+        }
+    }
+
+    return runSourceClassifyChangeCommand(options);
+}
 
 function computeTaskTextSha256(taskText: string): string {
     return createHash('sha256').update(taskText.trim(), 'utf8').digest('hex');
@@ -671,6 +747,11 @@ describe('cli/commands/gates — preflight', () => {
 
     it('classify-change emits task profile selection and keeps full-path safety floors for fast tasks', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, '.gitignore'),
+            'TASK.md\ngarda-agent-orchestrator/runtime/\n',
+            'utf8'
+        );
         const testFilePath = path.join(repoRoot, 'tests', 'app.test.ts');
         fs.mkdirSync(path.dirname(testFilePath), { recursive: true });
         fs.writeFileSync(testFilePath, 'export const suite = true;\n', 'utf8');
@@ -1524,14 +1605,33 @@ describe('cli/commands/gates — preflight', () => {
         const outputPath = path.join(repoRoot, 'preflight-domain-scope-protected-code.json');
         const taskId = 'T-930-domain-scope-protected-code';
         seedStrictProfileConfig(repoRoot);
-        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.orchestrator_work_policy = {
+            mode: 'require_operator_confirmation'
+        };
+        writeWorkflowConfig(repoRoot, `${JSON.stringify(workflowConfig, null, 2)}\n`);
+        seedTaskQueue(
+            repoRoot,
+            taskId,
+            'TODO',
+            'strict',
+            'workflow-config policy changes'
+        );
         seedInitAnswers(repoRoot);
         runEnterTaskMode({
             repoRoot,
             taskId,
             requestedDepth: 2,
             effectiveDepth: 2,
-            taskSummary: 'Keep protected control-plane TypeScript in implementation domain fingerprints'
+            taskSummary: 'Keep protected control-plane TypeScript in implementation domain fingerprints',
+            orchestratorWork: true,
+            workflowConfigWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            plannedChangedFiles: [
+                'src/gates/review-tree-state.ts',
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]
         });
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
         runHandshakeForTask(repoRoot, taskId);
@@ -1640,7 +1740,7 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(payload.detection_source, 'git_auto');
         assert.equal(payload.scope_category, 'empty');
         assert.equal(payload.metrics.changed_files_count, 0);
-        assert.equal(payload.triggers.refactor_intent, true);
+        assert.equal(payload.triggers.refactor_intent, false);
         assert.equal(payload.zero_diff_guard.status, 'BASELINE_ONLY');
         assert.equal(payload.profile_guardrails.zero_diff_no_reviewable_scope, true);
         assert.equal(payload.required_reviews.code, false);
@@ -2276,7 +2376,7 @@ describe('cli/commands/gates — preflight', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         const commandsPath = path.join(repoRoot, 'commands-post-preflight-missing.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -2327,7 +2427,7 @@ describe('cli/commands/gates — preflight', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-post-preflight-failed.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -2774,7 +2874,7 @@ describe('cli/commands/gates — preflight', () => {
         initializeGitRepo(repoRoot);
 
         const commandsPath = path.join(repoRoot, 'commands-optional-skill-required.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',

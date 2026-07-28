@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import * as childProcess from 'node:child_process';
@@ -10,6 +9,7 @@ import {
     runLoadRulePackCommand
 } from '../../../../../../src/cli/commands/gates';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
+import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
 
 const PROVIDER_ENTRYPOINT_BY_SOURCE: Record<string, string> = {
     Claude: 'CLAUDE.md',
@@ -57,10 +57,15 @@ function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: un
 }
 
 export function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
-    return runEnterTaskModeCommand(withDefaultTaskModeRouting({
+    const resolvedOptions = withDefaultTaskModeRouting({
         startBanner: 'Garda captures my mind',
         ...options
-    }));
+    });
+    const repoRoot = path.resolve(String(resolvedOptions.repoRoot || '.'));
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        initializeGitRepo(repoRoot);
+    }
+    return runEnterTaskModeCommand(resolvedOptions);
 }
 
 export function captureExpectedError(callback: () => void): Error {
@@ -74,7 +79,7 @@ export function captureExpectedError(callback: () => void): Error {
 }
 
 export function createTempRepo(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+    const root = createManagedTestTempDirectory('repo-');
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
@@ -314,9 +319,31 @@ export function initializeGitRepo(repoRoot: string): void {
             `git ${args.join(' ')} failed: ${String(result.stderr || result.stdout || '').trim()}`
         );
     };
-    runGit(['init']);
+    const gitignorePath = path.join(repoRoot, '.gitignore');
+    const runtimeIgnore = 'garda-agent-orchestrator/runtime/';
+    const existingGitignore = fs.existsSync(gitignorePath)
+        ? fs.readFileSync(gitignorePath, 'utf8')
+        : '';
+    if (!existingGitignore.split(/\r?\n/u).includes(runtimeIgnore)) {
+        fs.writeFileSync(
+            gitignorePath,
+            `${existingGitignore}${existingGitignore && !existingGitignore.endsWith('\n') ? '\n' : ''}${runtimeIgnore}\n`,
+            'utf8'
+        );
+    }
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        runGit(['init']);
+    }
     runGit(['config', 'user.name', 'Garda Tests']);
     runGit(['config', 'user.email', 'garda-tests@example.com']);
     runGit(['add', '.']);
-    runGit(['commit', '-m', 'test: baseline']);
+    const status = childProcess.spawnSync('git', ['status', '--porcelain'], {
+        cwd: repoRoot,
+        windowsHide: true,
+        encoding: 'utf8'
+    });
+    assert.equal(status.status, 0, String(status.stderr || status.stdout || '').trim());
+    if (String(status.stdout || '').trim()) {
+        runGit(['commit', '-m', 'test: baseline']);
+    }
 }
