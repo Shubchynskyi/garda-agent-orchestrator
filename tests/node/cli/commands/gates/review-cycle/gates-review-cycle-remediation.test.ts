@@ -1,5 +1,6 @@
 import {
     EXIT_GATE_FAILURE,
+    appendTaskEvent,
     assert,
     createTempRepo,
     describe,
@@ -15,6 +16,7 @@ import {
     path,
     prepareScopedDiffFixture,
     readTaskTimelineEvents,
+    runBuildReviewContextCommand,
     runCompileGateCommand,
     runEnterTaskMode,
     runExplicitPreflight,
@@ -24,6 +26,7 @@ import {
     runRestartReviewCycleCommand,
     runShellSmokeForTask,
     seedInitAnswers,
+    seedQualityChecklistIfRequired,
     seedRemediationRepoBase,
     seedReusableReviewEvidence,
     seedTaskQueue,
@@ -81,10 +84,11 @@ async function prepareIgnoredChangelogFixture(
     seedRemediationRepoBase(repoRoot);
     appendIgnoredChangelogRule(repoRoot, changelogPath);
     writeReviewCapabilitiesConfig(repoRoot);
-    writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+    writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 0;\n');
     writeRepoFile(repoRoot, changelogPath, '# Changelog\n\n- Initial ignored release note.\n');
     const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, suffix);
     initializeGitRepo(repoRoot);
+    writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
     seedTaskQueue(repoRoot, taskId);
     seedInitAnswers(repoRoot, 'Codex');
 
@@ -209,6 +213,58 @@ function writeFailedSourceOnlyReviewRequest(repoRoot: string, taskId: string): v
     ]);
 }
 
+function replaceReceiptBoundReviewIdentity(
+    repoRoot: string,
+    taskId: string,
+    identity: { taskId?: string; reviewType?: string }
+): void {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+    const report = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+    if (identity.taskId) {
+        report.task_id = identity.taskId;
+    }
+    if (identity.reviewType) {
+        report.review_type = identity.reviewType;
+    }
+    fs.writeFileSync(artifactPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+
+    const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    receipt.review_artifact_sha256 = fileSha256(artifactPath);
+    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+}
+
+async function resumeReviewReuseAfterChecklist(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    reviewTypes: string[]
+): Promise<{ reusedReviewTypes: string[]; launchRequiredReviewTypes: string[] }> {
+    seedQualityChecklistIfRequired(repoRoot, taskId);
+    const reusedReviewTypes: string[] = [];
+    const launchRequiredReviewTypes: string[] = [];
+    for (const reviewType of reviewTypes) {
+        prepareScopedDiffFixture(repoRoot, preflightPath, reviewType);
+        const result = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType,
+            depth: 3,
+            preflightPath,
+            outputPath: path.join(
+                getReviewsRoot(repoRoot),
+                `${taskId}-${reviewType}-review-context.json`
+            )
+        });
+        if (result.reusedReviewEvidence) {
+            reusedReviewTypes.push(reviewType);
+        } else {
+            launchRequiredReviewTypes.push(reviewType);
+        }
+    }
+    return { reusedReviewTypes, launchRequiredReviewTypes };
+}
+
 describe('cli/commands/gates – review-cycle remediation suite', () => {
     it('restart-review-cycle reuses unaffected security and refactor evidence after test hook remediation invalidates code', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
@@ -310,11 +366,17 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
         assert.match(output, /RemediationFixClassification: test_hook_isolation; invalidated_review_types=code; preserved_review_types=refactor, security, test/);
-        assert.match(output, /PreparedReviewTypes: code, security, refactor/);
-        assert.match(output, /LaunchRequiredReviewTypes: code/);
-        assert.match(output, /ReusedReviewTypes: security, refactor/);
-        assert.match(output, /PendingReviewTypes: test/);
-        assert.match(output, /PendingReason:/);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor, test/);
+        assert.match(output, /PendingReason: Review context cannot be built because required trust-boundary analysis is/);
+        const resumedReuse = await resumeReviewReuseAfterChecklist(
+            repoRoot,
+            taskId,
+            preflightPath,
+            ['code', 'security', 'refactor']
+        );
+        assert.deepEqual(resumedReuse.launchRequiredReviewTypes, ['code']);
+        assert.deepEqual(resumedReuse.reusedReviewTypes, ['security', 'refactor']);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)),
             true
@@ -354,6 +416,68 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         assert.ok(lastShellSmokeIndex > lastHandshakeIndex);
         assert.ok(lastCompileIndex > lastShellSmokeIndex);
         assert.ok(lastCodeReviewPhaseIndex > lastCompileIndex);
+
+        appendTaskEvent(
+            path.join(repoRoot, 'garda-agent-orchestrator'),
+            taskId,
+            'REVIEW_RECORDED',
+            'PASS',
+            'Fresh code review with non-blocking follow-up recorded after remediation.',
+            {
+                task_id: taskId,
+                review_type: 'code',
+                preflight_sha256: fileSha256(preflightPath),
+                reused_existing_review: false,
+                review_findings_disposition: {
+                    verdict: 'pass_with_follow_up_or_ignored_findings',
+                    blocking_count: 0,
+                    follow_up_pending_count: 1
+                }
+            }
+        );
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        const freshFollowUpPassResult = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 3,
+            preflightPath,
+            outputPath: path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)
+        });
+        assert.doesNotMatch(
+            freshFollowUpPassResult.outputLines.join('\n'),
+            /review reuse blocked by persisted remediation classification/
+        );
+        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const timelinePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `${taskId}.jsonl`
+        );
+        const timelineLines = fs.readFileSync(timelinePath, 'utf8').trimEnd().split('\n');
+        const restartLineIndex = timelineLines.findIndex((line) => (
+            (JSON.parse(line) as Record<string, unknown>).event_type === 'REVIEW_CYCLE_RESTARTED'
+        ));
+        assert.ok(restartLineIndex >= 0);
+        const tamperedRestartEvent = JSON.parse(timelineLines[restartLineIndex]) as Record<string, unknown>;
+        const tamperedRestartDetails = tamperedRestartEvent.details as Record<string, unknown>;
+        tamperedRestartDetails.remediation_category = 'forged_preserved_scope';
+        timelineLines[restartLineIndex] = JSON.stringify(tamperedRestartEvent);
+        fs.writeFileSync(timelinePath, `${timelineLines.join('\n')}\n`, 'utf8');
+
+        prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+        await assert.rejects(
+            () => runBuildReviewContextCommand({
+                repoRoot,
+                reviewType: 'code',
+                depth: 3,
+                preflightPath,
+                outputPath: path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)
+            }),
+            /timeline integrity is not current: FAILED/
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -455,9 +579,19 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
 
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /RemediationFixClassification: unknown; invalidated_review_types=code, refactor, security; preserved_review_types=none/);
-        assert.match(output, /LaunchRequiredReviewTypes: code, security, refactor/);
-        assert.doesNotMatch(output, /ReusedReviewTypes: code/);
-        assert.doesNotMatch(output, /ReusedReviewTypes: security/);
+        assert.match(output, /PreparedReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: code, security, refactor/);
+        const resumedReuse = await resumeReviewReuseAfterChecklist(
+            repoRoot,
+            taskId,
+            preflightPath,
+            ['code', 'security', 'refactor']
+        );
+        assert.deepEqual(resumedReuse.reusedReviewTypes, []);
+        assert.deepEqual(
+            resumedReuse.launchRequiredReviewTypes,
+            ['code', 'security', 'refactor']
+        );
 
         const remediationArtifact = JSON.parse(fs.readFileSync(
             path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
@@ -465,7 +599,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         )) as Record<string, unknown>;
         const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
         assert.deepEqual(reviewReuse.reused_review_types, []);
-        assert.deepEqual(reviewReuse.launch_required_review_types, ['code', 'security', 'refactor']);
+        assert.deepEqual(reviewReuse.launch_required_review_types, []);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -733,7 +867,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         );
         assert.deepEqual(
             (remediationArtifact.remediation_fix_classification as Record<string, unknown>).invalidated_review_types,
-            ['test']
+            ['refactor', 'test']
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -821,7 +955,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         const evidence = classification.evidence as Record<string, unknown>;
         assert.equal(classification.category, 'test_coverage_only');
         assert.equal(classification.scope_category, 'test_only_expansion');
-        assert.deepEqual(classification.invalidated_review_types, ['test']);
+        assert.deepEqual(classification.invalidated_review_types, ['refactor', 'test']);
         assert.deepEqual(evidence.semantic_changed_files, ['tests/remediation-only.test.ts']);
         assert.equal(evidence.semantic_scope_source, 'expanded_files');
         assert.equal(evidence.test_refactor_trigger_reason, 'new_test_file');
@@ -925,6 +1059,12 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const resumedReuse = await resumeReviewReuseAfterChecklist(
+            repoRoot,
+            taskId,
+            preflightPath,
+            ['code', 'security', 'refactor']
+        );
 
         const remediationArtifact = JSON.parse(fs.readFileSync(
             path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
@@ -932,7 +1072,6 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         )) as Record<string, unknown>;
         const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
         const evidence = classification.evidence as Record<string, unknown>;
-        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
         assert.equal(classification.category, 'test_coverage_only');
         assert.equal(classification.scope_category, 'test_only_expansion');
         assert.deepEqual(classification.invalidated_review_types, ['refactor', 'test']);
@@ -942,16 +1081,12 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['code', 'security']
         );
         assert.deepEqual(
-            [...((reviewReuse.reused_review_types as string[]) || [])].sort(),
+            [...resumedReuse.reusedReviewTypes].sort(),
             ['code', 'security']
         );
         assert.deepEqual(
-            [...((reviewReuse.launch_required_review_types as string[]) || [])].sort(),
+            [...resumedReuse.launchRequiredReviewTypes].sort(),
             ['refactor']
-        );
-        assert.deepEqual(
-            [...((reviewReuse.pending_review_types as string[]) || [])].sort(),
-            ['test']
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1043,6 +1178,12 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const resumedReuse = await resumeReviewReuseAfterChecklist(
+            repoRoot,
+            taskId,
+            preflightPath,
+            ['code', 'security', 'refactor', 'api', 'performance']
+        );
 
         const remediationArtifact = JSON.parse(fs.readFileSync(
             path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
@@ -1050,7 +1191,6 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         )) as Record<string, unknown>;
         const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
         const evidence = classification.evidence as Record<string, unknown>;
-        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
         const expectedPreservedReviews = ['api', 'code', 'performance', 'refactor', 'security'];
         assert.equal(classification.category, 'test_coverage_only');
         assert.equal(classification.scope_category, 'previous_scope_only');
@@ -1062,10 +1202,11 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         assert.deepEqual(evidence.semantic_changed_files, [testFile]);
         assert.equal(evidence.semantic_scope_source, 'impact_analysis_files');
         assert.deepEqual(
-            [...((reviewReuse.reused_review_types as string[]) || [])].sort(),
-            expectedPreservedReviews
+            [...resumedReuse.reusedReviewTypes].sort(),
+            expectedPreservedReviews,
+            restartResult.outputLines.join('\n')
         );
-        assert.deepEqual(reviewReuse.launch_required_review_types, ['test']);
+        assert.deepEqual(resumedReuse.launchRequiredReviewTypes, []);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1172,6 +1313,12 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const resumedReuse = await resumeReviewReuseAfterChecklist(
+            repoRoot,
+            taskId,
+            preflightPath,
+            ['code', 'security', 'refactor', 'db', 'dependency', 'infra']
+        );
 
         const remediationArtifact = JSON.parse(fs.readFileSync(
             path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
@@ -1179,7 +1326,6 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         )) as Record<string, unknown>;
         const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
         const evidence = classification.evidence as Record<string, unknown>;
-        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
         const expectedPreservedReviews = ['code', 'db', 'dependency', 'infra', 'refactor', 'security'];
         assert.equal(classification.category, 'test_coverage_only');
         assert.equal(classification.scope_category, 'previous_scope_only');
@@ -1191,10 +1337,11 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         assert.deepEqual(evidence.semantic_changed_files, [testFile]);
         assert.equal(evidence.semantic_scope_source, 'impact_analysis_files');
         assert.deepEqual(
-            [...((reviewReuse.reused_review_types as string[]) || [])].sort(),
-            expectedPreservedReviews
+            [...resumedReuse.reusedReviewTypes].sort(),
+            expectedPreservedReviews,
+            restartResult.outputLines.join('\n')
         );
-        assert.deepEqual(reviewReuse.launch_required_review_types, ['test']);
+        assert.deepEqual(resumedReuse.launchRequiredReviewTypes, []);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1292,6 +1439,12 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const resumedReuse = await resumeReviewReuseAfterChecklist(
+            repoRoot,
+            taskId,
+            preflightPath,
+            ['code', 'security', 'refactor', 'api', 'performance']
+        );
 
         const remediationArtifact = JSON.parse(fs.readFileSync(
             path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
@@ -1299,7 +1452,6 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         )) as Record<string, unknown>;
         const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
         const evidence = classification.evidence as Record<string, unknown>;
-        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
         const expectedPreservedReviews = ['api', 'code', 'performance', 'refactor', 'security'];
         assert.equal(classification.category, 'test_coverage_only');
         assert.equal(classification.scope_category, 'previous_scope_only');
@@ -1312,10 +1464,10 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         assert.equal(evidence.semantic_scope_source, 'impact_analysis_files');
         assert.equal(evidence.test_refactor_trigger_reason, null);
         assert.deepEqual(
-            [...((reviewReuse.reused_review_types as string[]) || [])].sort(),
+            [...resumedReuse.reusedReviewTypes].sort(),
             expectedPreservedReviews
         );
-        assert.deepEqual(reviewReuse.launch_required_review_types, ['test']);
+        assert.deepEqual(resumedReuse.launchRequiredReviewTypes, []);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1406,6 +1558,12 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const resumedReuse = await resumeReviewReuseAfterChecklist(
+            repoRoot,
+            taskId,
+            preflightPath,
+            ['code', 'security', 'refactor']
+        );
 
         const remediationArtifact = JSON.parse(fs.readFileSync(
             path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
@@ -1413,7 +1571,6 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         )) as Record<string, unknown>;
         const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
         const evidence = classification.evidence as Record<string, unknown>;
-        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
         assert.equal(classification.category, 'test_coverage_only');
         assert.deepEqual(classification.invalidated_review_types, ['refactor', 'test']);
         assert.deepEqual(
@@ -1424,16 +1581,12 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         assert.equal(evidence.test_refactor_changed_lines_threshold, 20);
         assert.ok(Number(evidence.test_refactor_changed_lines_total) > 20);
         assert.deepEqual(
-            [...((reviewReuse.reused_review_types as string[]) || [])].sort(),
+            [...resumedReuse.reusedReviewTypes].sort(),
             ['code', 'security']
         );
         assert.deepEqual(
-            [...((reviewReuse.launch_required_review_types as string[]) || [])].sort(),
+            [...resumedReuse.launchRequiredReviewTypes].sort(),
             ['refactor']
-        );
-        assert.deepEqual(
-            [...((reviewReuse.pending_review_types as string[]) || [])].sort(),
-            ['test']
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1529,6 +1682,11 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             'Keep recovery trigger classification bound to the task snapshot',
             changedFiles
         );
+        const frozenPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(
+            (frozenPreflight.required_reviews as Record<string, boolean>).security,
+            true
+        );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -1578,6 +1736,12 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        const resumedReuse = await resumeReviewReuseAfterChecklist(
+            repoRoot,
+            taskId,
+            preflightPath,
+            ['code', 'security', 'refactor']
+        );
 
         const remediationArtifact = JSON.parse(fs.readFileSync(
             path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
@@ -1585,16 +1749,18 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         )) as Record<string, unknown>;
         const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
         const evidence = classification.evidence as Record<string, unknown>;
-        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
         assert.equal(classification.category, 'test_coverage_only');
         assert.deepEqual(classification.invalidated_review_types, ['refactor', 'test']);
         assert.deepEqual(classification.preserved_review_types, ['code', 'security']);
         assert.equal(evidence.test_refactor_trigger_reason, 'structural_test_domain_file');
         assert.deepEqual(evidence.test_refactor_trigger_files, [testFile]);
         assert.equal(evidence.test_refactor_changed_lines_threshold, 100);
-        assert.deepEqual(reviewReuse.reused_review_types, ['code', 'security']);
-        assert.deepEqual(reviewReuse.launch_required_review_types, ['refactor']);
-        assert.deepEqual(reviewReuse.pending_review_types, ['test']);
+        assert.deepEqual(
+            [...resumedReuse.reusedReviewTypes].sort(),
+            ['code', 'security'],
+            restartResult.outputLines.join('\n')
+        );
+        assert.deepEqual(resumedReuse.launchRequiredReviewTypes, ['refactor']);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1724,9 +1890,14 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         assert.equal(evidence.semantic_scope_source, 'impact_analysis_files');
         assert.deepEqual(
             [...((reviewReuse.reused_review_types as string[]) || [])].sort(),
-            expectedPreservedReviews
+            [],
+            restartResult.outputLines.join('\n')
         );
-        assert.deepEqual(reviewReuse.launch_required_review_types, ['test']);
+        assert.deepEqual(reviewReuse.launch_required_review_types, []);
+        assert.deepEqual(
+            [...((reviewReuse.pending_review_types as string[]) || [])].sort(),
+            ['code', 'refactor', 'security', 'test']
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1790,7 +1961,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
                 ].join(' '),
                 expectedCategory: 'api_surface',
                 expectedReuseCandidate: false,
-                expectedInvalidatedReviewTypes: ['code', 'refactor', 'security'],
+                expectedInvalidatedReviewTypes: ['api', 'code', 'refactor', 'security'],
                 expectedPreservedReviewTypes: []
             },
             {
@@ -2314,6 +2485,52 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
+
+    for (const foreignIdentity of [
+        {
+            label: 'task',
+            mutate: (taskId: string) => ({ taskId: `${taskId}-foreign` })
+        },
+        {
+            label: 'review type',
+            mutate: () => ({ reviewType: 'test' })
+        }
+    ]) {
+        it(`restart-review-cycle rejects ignored remediation approval from a foreign structured review ${foreignIdentity.label}`, { concurrency: false }, async () => {
+            const taskId = `T-940-ignored-changelog-foreign-${foreignIdentity.label.replace(/\s+/gu, '-')}`;
+            const {
+                repoRoot,
+                preflightPath,
+                commandsPath,
+                outputFiltersPath
+            } = await prepareIgnoredChangelogFixture(taskId, `ignored-changelog-foreign-${foreignIdentity.label}`);
+
+            writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+            writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Foreign review must not approve this note.\n');
+            prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
+            writeFailedIgnoredChangelogReviewRequest(repoRoot, taskId);
+            replaceReceiptBoundReviewIdentity(repoRoot, taskId, foreignIdentity.mutate(taskId));
+
+            const restartResult = await runRestartReviewCycleCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                commandsPath,
+                outputFiltersPath,
+                changedFiles: [IGNORED_CHANGELOG_PATH],
+                impactAnalysis: buildIgnoredChangelogImpactAnalysis(),
+                emitMetrics: false
+            });
+
+            assert.notEqual(restartResult.exitCode, 0);
+            assert.match(
+                restartResult.outputLines.join('\n'),
+                /ignored remediation target .* is not approved/
+            );
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+    }
 
     it('restart-review-cycle accepts a path-first ignored changelog blocker finding', { concurrency: false }, async () => {
         const taskId = 'T-940-ignored-changelog-path-first';
@@ -2954,14 +3171,13 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         void commandsPath;
         void outputFiltersPath;
         writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Added reviewer-requested note.\n');
-        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
         prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
         writeFailedIgnoredChangelogPathFirstReviewRequest(repoRoot, taskId);
-        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+        writeRepoFile(repoRoot, 'tests/remediation-only.test.ts', 'it("covers remediation", () => {});\n');
 
         const nextStep = resolveNextStep({ taskId, repoRoot });
         const commandText = nextStep.commands.map((command) => command.command).join('\n');
-        assert.match(commandText, /restart-review-cycle/);
+        assert.match(commandText, /restart-review-cycle/, JSON.stringify(nextStep, null, 2));
         assert.match(commandText, new RegExp(`--changed-file "${IGNORED_CHANGELOG_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -2978,14 +3194,13 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         void commandsPath;
         void outputFiltersPath;
         writeRepoFile(repoRoot, IGNORED_CHANGELOG_PATH, '# Changelog\n\n- Example-only reviewer note.\n');
-        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
         prepareScopedDiffFixture(repoRoot, preflightPath, 'code');
         writeFailedIgnoredChangelogExampleOnlyReviewRequest(repoRoot, taskId);
-        writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+        writeRepoFile(repoRoot, 'tests/remediation-only.test.ts', 'it("covers remediation", () => {});\n');
 
         const nextStep = resolveNextStep({ taskId, repoRoot });
         const commandText = nextStep.commands.map((command) => command.command).join('\n');
-        assert.match(commandText, /restart-review-cycle/);
+        assert.match(commandText, /restart-review-cycle/, JSON.stringify(nextStep, null, 2));
         assert.doesNotMatch(
             commandText,
             new RegExp(`--changed-file "${IGNORED_CHANGELOG_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`)

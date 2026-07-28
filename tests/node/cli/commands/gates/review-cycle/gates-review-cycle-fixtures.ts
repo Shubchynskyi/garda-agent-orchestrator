@@ -8,13 +8,26 @@ import { EXIT_GATE_FAILURE } from '../../../../../../src/cli/exit-codes';
 import { readTimelineEventsSummary, runBuildReviewContextCommand } from '../../../../../../src/cli/commands/gate-build-handlers';
 import {
     runCompileGateCommand,
+    runQualityChecklistCommand,
     runRecordReviewCycleSplitDecisionCommand,
     runRestartCoherentCycleCommand,
     runRestartReviewCycleCommand as runRestartReviewCycleCommandRaw,
     runRequiredReviewsCheckCommand
 } from '../../../../../../src/cli/commands/gates';
 import { formatCompletionGateResult, runCompletionGate } from '../../../../../../src/gates/completion';
-import { fileSha256, normalizePath, writeProtectedControlPlaneManifest } from '../../../../../../src/gates/shared/helpers';
+import {
+    fileSha256,
+    normalizePath,
+    writeProtectedControlPlaneManifest
+} from '../../../../../../src/gates/shared/helpers';
+import {
+    assessTrustBoundaryAnalysisApplicability,
+    TRUST_BOUNDARY_ANALYSIS_RULE_ID
+} from '../../../../../../src/core/trust-boundary-analysis';
+import {
+    QUALITY_CHECKLIST_ID,
+    resolveDefaultQualityChecklistArtifactPath
+} from '../../../../../../src/gates/quality-checklist';
 import { serializeTaskPlan, validateTaskPlan } from '../../../../../../src/schemas/task-plan';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { buildScopedDiff } from '../../../../../../src/gates/preflight/build-scoped-diff';
@@ -32,6 +45,10 @@ import { withFilesystemLockAsync } from '../../../../../../src/gate-runtime/task
 import { ensureSkillsHeadlinesCurrent } from '../../../../../../src/runtime/skill-headlines';
 import { writeOptionalSkillSelectionArtifact } from '../../../../../../src/runtime/optional-skill-selection';
 import {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    isOptionalQualityCheckRuleActiveForScope
+} from '../../../../../../src/core/workflow-config';
+import {
     createTempRepo as createBaseTempRepo,
     getOrchestratorRoot,
     getReviewsRoot,
@@ -41,16 +58,17 @@ import {
     prepareReviewDiffFixture,
     readTaskTimelineEvents,
     runEnterTaskMode,
-    runExplicitPreflight,
+    runExplicitPreflight as runExplicitPreflightRaw,
     runGit,
     runHandshakeForTask,
     runShellSmokeForTask,
-    seedReusableReviewEvidence,
+    seedReusableReviewEvidence as seedReusableReviewEvidenceRaw,
     writeCleanReviewArtifact,
+    writeBudgetOutputFilters,
     writeCompilePassEvidence,
     writeHandshakeArtifact,
     writePreflight,
-    writeReceiptBackedReviewArtifact,
+    writeReceiptBackedReviewArtifact as writeReceiptBackedReviewArtifactRaw,
     writeReviewCapabilitiesConfig,
     writeShellSmokeArtifact,
     appendPreflightClassifiedEvent,
@@ -58,6 +76,8 @@ import {
 } from '../../gate-test-helpers';
 
 const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
+const TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH =
+    'tests/node/gates/review-context/review-context-trust-boundary-fixture.test.ts';
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -120,9 +140,17 @@ function runRestartReviewCycleCommand(
     });
 }
 
+function runExplicitPreflight(
+    ...args: Parameters<typeof runExplicitPreflightRaw>
+): ReturnType<typeof runExplicitPreflightRaw> {
+    return runExplicitPreflightRaw(...args);
+}
+
 function createTempRepo(): string {
     const root = createBaseTempRepo();
     ensureSkillsHeadlinesCurrent(path.join(root, 'garda-agent-orchestrator'));
+    writeProfilesConfig(root);
+    initializeGitRepo(root);
     return root;
 }
 
@@ -136,7 +164,11 @@ function writeProfilesConfig(repoRoot: string): string {
             security: ['.*'],
             refactor: ['.*'],
             api: ['(^|/)api/'],
-            test: ['(^|/)tests?/'],
+            test: [
+                '(^|/)tests?/',
+                '(^|/)__tests__/',
+                '(^|/)[^/]+\\.(?:test|spec)\\.[^/]+$'
+            ],
             performance: ['(^|/)perf/'],
             infra: ['(^|/)scripts/'],
             dependency: ['(^|/)package(-lock)?\\.json$']
@@ -260,7 +292,7 @@ function seedNodeBackendOptionalSkillFixture(
     return path.join(skillRoot, 'SKILL.md');
 }
 
-function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO', profile = 'default'): void {
+function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO', profile = 'balanced'): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
@@ -289,8 +321,157 @@ function seedRemediationRepoBase(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
     fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+    fs.mkdirSync(
+        path.dirname(path.join(repoRoot, TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH)),
+        { recursive: true }
+    );
     fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+    fs.writeFileSync(
+        path.join(repoRoot, TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH),
+        "test('rejects replaced trust-boundary evidence', () => { assert.equal(true, true); });\n",
+        'utf8'
+    );
+    writeProfilesConfig(repoRoot);
+}
+
+function seedTrustBoundaryChecklistIfRequired(repoRoot: string, taskId: string): void {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (!fs.existsSync(preflightPath)) {
+        return;
+    }
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    if (!assessTrustBoundaryAnalysisApplicability(preflight).required) {
+        return;
+    }
+    const preflightSha256 = fileSha256(preflightPath);
+    if (!preflightSha256) {
+        throw new Error(`Trust-boundary fixture preflight is unreadable: ${preflightPath}`);
+    }
+    const artifactPath = resolveDefaultQualityChecklistArtifactPath(repoRoot, taskId);
+    const existingArtifact = fs.existsSync(artifactPath)
+        ? JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>
+        : null;
+    const timelinePath = path.join(
+        getOrchestratorRoot(repoRoot),
+        'runtime',
+        'task-events',
+        `${taskId}.jsonl`
+    );
+    const hasCurrentBinding = existingArtifact?.preflight_sha256 === preflightSha256
+        && fs.existsSync(timelinePath)
+        && fs.readFileSync(timelinePath, 'utf8').includes('"event_type":"QUALITY_CHECKLIST_RECORDED"');
+    if (hasCurrentBinding) {
+        return;
+    }
+    const artifact = {
+        task_id: taskId,
+        checklist_id: QUALITY_CHECKLIST_ID,
+        preflight_sha256: preflightSha256,
+        status: 'PASS',
+        rules: [{
+            id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+            scope_applicability: 'active'
+        }],
+        answers: [{
+            rule_id: TRUST_BOUNDARY_ANALYSIS_RULE_ID,
+            trust_boundary_matrix: [{
+                boundary_id: 'TB-RECOVERY-FIXTURE-001',
+                boundary: 'Recovery review fixture input to review-context validation',
+                authority_source: 'Hash-chained QUALITY_CHECKLIST_RECORDED fixture event',
+                mutable_inputs: ['preflight evidence', 'quality-checklist artifact'],
+                integrity_evidence: ['artifact sha256', 'preflight sha256'],
+                canonical_reconstruction: 'Rebuild the fixture from current preflight evidence.',
+                toctou_replay: 'Reject stale or replaced fixture evidence.',
+                negative_paths: [{
+                    kind: 'replaced',
+                    scenario: 'rejects replaced trust-boundary evidence',
+                    expected_behavior: 'Reject review-context construction.',
+                    evidence_files: [
+                        `${TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH}#rejects replaced trust-boundary evidence`
+                    ]
+                }]
+            }]
+        }]
+    };
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+    const artifactSha256 = fileSha256(artifactPath);
+    if (!artifactSha256) {
+        throw new Error(`Trust-boundary fixture artifact is unreadable: ${artifactPath}`);
+    }
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'QUALITY_CHECKLIST_RECORDED',
+        'PASS',
+        'Quality checklist recovery fixture recorded.',
+        {
+            artifact_path: normalizePath(artifactPath),
+            artifact_hash: artifactSha256,
+            status: 'PASS',
+            outcome: 'PASS',
+            checklist_id: QUALITY_CHECKLIST_ID,
+            preflight_path: normalizePath(path.resolve(preflightPath)),
+            preflight_sha256: preflightSha256
+        },
+        { actor: 'gate' }
+    );
+}
+
+function seedQualityChecklistIfRequired(repoRoot: string, taskId: string): void {
+    seedTrustBoundaryChecklistIfRequired(repoRoot, taskId);
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (!fs.existsSync(preflightPath)) {
+        return;
+    }
+    const preflightSha256 = fileSha256(preflightPath);
+    const artifactPath = resolveDefaultQualityChecklistArtifactPath(repoRoot, taskId);
+    if (
+        preflightSha256
+        && fs.existsSync(artifactPath)
+        && (JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>).preflight_sha256 === preflightSha256
+    ) {
+        return;
+    }
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const scopeCategory = String(preflight.scope_category || '').trim().toLowerCase() || null;
+    const changedFiles = Array.isArray(preflight.changed_files) ? preflight.changed_files : [];
+    const activeRuleIds = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
+        .filter((rule) => (
+            rule.enabled !== false
+            && isOptionalQualityCheckRuleActiveForScope(rule, scopeCategory, changedFiles)
+        ))
+        .map((rule) => rule.id);
+    const result = runQualityChecklistCommand({
+        repoRoot,
+        taskId,
+        preflightPath,
+        answersJson: JSON.stringify(activeRuleIds.map((ruleId) => ({
+            rule_id: ruleId,
+            status: 'PASS',
+            answer: `Reviewed ${ruleId} for the receipt-backed recovery fixture; no action is required.`,
+            evidence_files: [TRUST_BOUNDARY_FIXTURE_EVIDENCE_PATH],
+            actions_taken: [],
+            actions_required: []
+        }))),
+        emitMetrics: false
+    });
+    assert.equal(result.exitCode, 0, result.outputLines.join('\n'));
+}
+
+function seedReusableReviewEvidence(
+    ...args: Parameters<typeof seedReusableReviewEvidenceRaw>
+): ReturnType<typeof seedReusableReviewEvidenceRaw> {
+    seedQualityChecklistIfRequired(args[0], args[1]);
+    return seedReusableReviewEvidenceRaw(...args);
+}
+
+function writeReceiptBackedReviewArtifact(
+    ...args: Parameters<typeof writeReceiptBackedReviewArtifactRaw>
+): ReturnType<typeof writeReceiptBackedReviewArtifactRaw> {
+    seedQualityChecklistIfRequired(args[0], args[1]);
+    return writeReceiptBackedReviewArtifactRaw(...args);
 }
 
 function writeSimpleCompileCommandsFile(
@@ -298,7 +479,7 @@ function writeSimpleCompileCommandsFile(
     suffix: string
 ): { commandsPath: string; outputFiltersPath: string } {
     const commandsPath = path.join(repoRoot, `commands-${suffix}.md`);
-    const outputFiltersPath = path.resolve('live/config/output-filters.json');
+    const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
     fs.writeFileSync(commandsPath, [
         '### Compile Gate (Mandatory)',
         '```bash',
@@ -376,6 +557,7 @@ export {
     prepareScopedDiffFixture,
     writeWorkflowConfig,
     seedNodeBackendOptionalSkillFixture,
+    seedQualityChecklistIfRequired,
     seedTaskQueue,
     seedInitAnswers,
     seedRemediationRepoBase,

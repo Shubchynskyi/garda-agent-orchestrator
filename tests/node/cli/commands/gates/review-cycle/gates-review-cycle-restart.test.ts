@@ -49,6 +49,7 @@ import {
     writeSimpleCompileCommandsFile,
     writeWorkflowConfig
 } from './gates-review-cycle-fixtures';
+import { writeBudgetOutputFilters } from '../../gate-test-helpers';
 import {
     handleCompleteReviewerLaunch,
     handlePrepareReviewerLaunch,
@@ -79,21 +80,6 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
 
     function seedRemediationRepoBase(repoRoot: string): void {
         seedRemediationRepoBaseWithoutProfiles(repoRoot);
-        const profilesPath = writeProfilesConfig(repoRoot);
-        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
-            built_in_profiles: {
-                balanced: {
-                    review_policy: Record<string, boolean | string>;
-                };
-            };
-        };
-        profiles.built_in_profiles.balanced.review_policy = {
-            code: true,
-            db: false,
-            security: false,
-            refactor: false
-        };
-        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2) + '\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(
             path.join(repoRoot, 'tests', 'trust-boundary-recovery.test.ts'),
@@ -363,7 +349,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1398,7 +1384,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle-legacy.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1621,7 +1607,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle-git-auto.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1696,7 +1682,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             'runtime',
             'commands-restart-coherent-cycle-git-auto-zero.md'
         );
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -1761,7 +1747,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             }
         });
         const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle-plan.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -2740,7 +2726,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         seedInitAnswers(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
         const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle-custom-task-mode.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',

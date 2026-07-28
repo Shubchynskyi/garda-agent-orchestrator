@@ -8,6 +8,7 @@ import {
     isSafeOrdinaryDocumentationPath,
     type ResolvedClassificationConfig
 } from '../preflight/classify-change';
+import type { ReviewTriggerPolicy } from '../../policy/review-trigger-policy';
 import {
     normalizePath,
     stringSha256
@@ -53,6 +54,24 @@ function toRecord(value: unknown): Record<string, unknown> {
         return value as Record<string, unknown>;
     }
     return {};
+}
+
+export function resolveReviewReuseClassificationConfig(
+    preflight: Record<string, unknown>,
+    repoRoot: string,
+    explicitConfig?: ResolvedClassificationConfig
+): ResolvedClassificationConfig {
+    if (explicitConfig) {
+        return explicitConfig;
+    }
+    const profilePolicySnapshot = toRecord(preflight.profile_policy_snapshot);
+    const reviewTriggerPolicy = toRecord(profilePolicySnapshot.review_trigger_policy);
+    return getClassificationConfig(
+        repoRoot,
+        Object.keys(reviewTriggerPolicy).length > 0
+            ? { reviewTriggerPolicy: reviewTriggerPolicy as unknown as ReviewTriggerPolicy }
+            : {}
+    );
 }
 
 function toStringList(value: unknown): string[] {
@@ -480,7 +499,11 @@ function computeCodeReviewScopeFingerprintInternal(
         classificationConfig?: ResolvedClassificationConfig;
     } = {}
 ): CodeReviewScopeFingerprint {
-    const classificationConfig = options.classificationConfig || getClassificationConfig(repoRoot);
+    const classificationConfig = resolveReviewReuseClassificationConfig(
+        preflight,
+        repoRoot,
+        options.classificationConfig
+    );
     const allChangedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
@@ -560,13 +583,18 @@ export function computeReviewReuseCodeScopeFingerprint(
 export function computeReviewRelevantScopeFingerprint(
     preflight: Record<string, unknown>,
     repoRoot: string,
-    classificationConfig: ResolvedClassificationConfig = getClassificationConfig(repoRoot)
+    classificationConfig?: ResolvedClassificationConfig
 ): ReviewRelevantScopeFingerprint {
+    const resolvedClassificationConfig = resolveReviewReuseClassificationConfig(
+        preflight,
+        repoRoot,
+        classificationConfig
+    );
     const allChangedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
     const docsOnlyChangedFiles = allChangedFiles.filter((filePath) => (
-        isSafeOrdinaryDocumentationPath(filePath, classificationConfig)
+        isSafeOrdinaryDocumentationPath(filePath, resolvedClassificationConfig)
         && !isCloseoutEvidencePath(filePath)
     ));
     const docsOnlySet = new Set(docsOnlyChangedFiles);

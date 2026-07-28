@@ -2,9 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { matchAnyRegex } from '../../../../gate-runtime/text-utils';
-import {
-    getClassificationConfig
-} from '../../../../gates/preflight/classify-change';
+import type { ResolvedClassificationConfig } from '../../../../gates/preflight/classify-change';
 import {
     type ReviewDependencyTimelineEvent
 } from '../../../../gates/review/review-dependencies';
@@ -12,7 +10,8 @@ import {
     computeReviewContextReuseHash,
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint,
-    isNonTestReviewScope
+    isNonTestReviewScope,
+    resolveReviewReuseClassificationConfig
 } from '../../../../gates/review-reuse/review-reuse';
 import {
     describeHistoricalReviewRecordedSource,
@@ -73,25 +72,27 @@ function getCandidateTestDeltaFiles(
         .sort();
 }
 
-function findSensitiveTestDeltaFiles(repoRoot: string, testDeltaFiles: readonly string[]): string[] {
+function findSensitiveTestDeltaFiles(
+    classificationConfig: ResolvedClassificationConfig,
+    testDeltaFiles: readonly string[]
+): string[] {
     if (testDeltaFiles.length === 0) {
         return [];
     }
-    const config = getClassificationConfig(repoRoot);
     const sensitiveRegexes = [
-        ...config.db_trigger_regexes,
-        ...config.security_trigger_regexes,
-        ...config.api_trigger_regexes,
-        ...config.dependency_trigger_regexes,
-        ...config.infra_trigger_regexes,
-        ...config.performance_trigger_regexes,
-        ...config.fast_path_sensitive_regexes,
+        ...classificationConfig.db_trigger_regexes,
+        ...classificationConfig.security_trigger_regexes,
+        ...classificationConfig.api_trigger_regexes,
+        ...classificationConfig.dependency_trigger_regexes,
+        ...classificationConfig.infra_trigger_regexes,
+        ...classificationConfig.performance_trigger_regexes,
+        ...classificationConfig.fast_path_sensitive_regexes,
         '(Config|Settings|Options|Schema|Contract|Dto|DTO)[^/]*\\.(java|kt|ts|tsx|js|jsx|py|go|cs|rb|php|json|ya?ml|toml|xml)$',
         '(^|/)(config|configs?|schemas?|contracts?)(/|$)',
         '(^|/)[^/]*(config|settings|paths)[^/]*\\.(json|ya?ml|toml|xml)$'
     ];
     return testDeltaFiles.filter((filePath) => (
-        gateHelpers.testPathPrefix(filePath, config.protected_control_plane_roots)
+        gateHelpers.testPathPrefix(filePath, classificationConfig.protected_control_plane_roots)
         || matchAnyRegex(filePath, sensitiveRegexes, {
             skipInvalidRegex: true,
             caseInsensitive: true
@@ -107,6 +108,7 @@ function evaluateTestOnlyDeltaReuseEligibility(options: {
     preflightPayload: Record<string, unknown>;
     currentReviewContext: Record<string, unknown>;
     codeScopeFingerprint: ReturnType<typeof computeReviewReuseCodeScopeFingerprint>;
+    classificationConfig: ResolvedClassificationConfig;
     timelineEventsSummary?: TimelineEventsSummaryResult | null;
 }): { allowed: boolean; reason: string } {
     const reviewType = normalizeLowerText(options.reviewType);
@@ -123,7 +125,7 @@ function evaluateTestOnlyDeltaReuseEligibility(options: {
     if (testDeltaFiles.length === 0) {
         return { allowed: false, reason: 'current preflight has no test-only delta files' };
     }
-    const sensitiveTestDeltaFiles = findSensitiveTestDeltaFiles(options.repoRoot, testDeltaFiles);
+    const sensitiveTestDeltaFiles = findSensitiveTestDeltaFiles(options.classificationConfig, testDeltaFiles);
     if (sensitiveTestDeltaFiles.length > 0) {
         return {
             allowed: false,
@@ -260,15 +262,24 @@ export async function tryReuseReviewEvidence(options: {
         reason
     });
     const nonTestReviewScope = isNonTestReviewScope(options.reviewType);
+    const classificationConfig = resolveReviewReuseClassificationConfig(
+        options.preflightPayload,
+        options.repoRoot
+    );
     const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(
         options.reviewType,
         options.preflightPayload,
-        options.repoRoot
+        options.repoRoot,
+        classificationConfig
     );
     if (codeScopeFingerprint.missing_non_test_files.length > 0) {
         return reject(`missing non-test scope file(s): ${codeScopeFingerprint.missing_non_test_files.join(', ')}`);
     }
-    const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(options.preflightPayload, options.repoRoot);
+    const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(
+        options.preflightPayload,
+        options.repoRoot,
+        classificationConfig
+    );
     if (reviewScopeFingerprint.missing_review_relevant_files.length > 0) {
         return reject(`missing review-relevant scope file(s): ${reviewScopeFingerprint.missing_review_relevant_files.join(', ')}`);
     }
@@ -363,6 +374,7 @@ export async function tryReuseReviewEvidence(options: {
         preflightPayload: options.preflightPayload,
         currentReviewContext,
         codeScopeFingerprint,
+        classificationConfig,
         timelineEventsSummary: options.timelineEventsSummary
     });
 

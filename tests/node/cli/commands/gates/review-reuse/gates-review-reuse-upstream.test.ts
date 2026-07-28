@@ -36,6 +36,7 @@ import {
     getReviewTreeStateSha256FromFixtureContext,
     updateLatestHistoricalReviewRecordedDetails
 } from './gates-review-reuse-fixtures';
+import { writeBudgetOutputFilters } from '../../gate-test-helpers';
 import {
     buildReviewFindingsValidationArtifact,
     getReviewFindingsValidationArtifactPath,
@@ -514,7 +515,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
         const commandsPath = path.join(repoRoot, 'commands-reuse.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',

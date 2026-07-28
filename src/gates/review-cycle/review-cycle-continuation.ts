@@ -5,6 +5,7 @@ import type { ReviewCycleGuardEvaluation } from '../../core/review-cycle-guard';
 import { collectOrderedTimelineEvents } from '../completion/completion-evidence';
 import {
     fileSha256,
+    isPathInsideRoot,
     isPathRealpathInsideRoot,
     joinOrchestratorPath,
     normalizePath,
@@ -114,10 +115,21 @@ export function resolveReviewCycleContinuationArtifactPath(
     const trimmed = String(artifactPath || '').trim();
     if (trimmed) {
         const reviewEvidenceRoot = joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
-        const resolved = resolvePathInsideRepo(trimmed, repoRoot, {
-            allowMissing: true,
-            enforceInside: true
-        });
+        let resolved: string | null;
+        try {
+            resolved = resolvePathInsideRepo(trimmed, repoRoot, {
+                allowMissing: true,
+                enforceInside: true
+            });
+        } catch {
+            const lexicalPath = path.resolve(repoRoot, trimmed);
+            if (isPathInsideRoot(lexicalPath, reviewEvidenceRoot)) {
+                throw new Error(
+                    `ArtifactPath must stay inside the runtime review evidence directory after realpath resolution: ${normalizePath(lexicalPath)}`
+                );
+            }
+            throw new Error(`ArtifactPath must stay inside repo root: ${normalizePath(trimmed)}`);
+        }
         if (!resolved) {
             throw new Error('ArtifactPath must resolve inside the repository.');
         }

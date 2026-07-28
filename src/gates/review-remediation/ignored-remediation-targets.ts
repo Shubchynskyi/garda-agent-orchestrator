@@ -11,6 +11,10 @@ import {
 } from '../shared/helpers';
 import { getSafeWorktreePathState, type SafeWorktreePathState } from '../workspace/worktree-path-state';
 import { isPlainRecord } from '../../core/records';
+import {
+    jsonReviewFindingsArtifactHasActiveFindings,
+    parseJsonReviewFindingsArtifact
+} from '../review/review-findings-artifact-verdict';
 
 export interface GuardedIgnoredRemediationTarget {
     path: string;
@@ -207,7 +211,18 @@ function readJsonRecord(filePath: string): Record<string, unknown> | null {
     }
 }
 
-function reviewTextHasFailedVerdict(text: string): boolean {
+function reviewTextHasFailedVerdict(
+    text: string,
+    expectedTaskId: string,
+    expectedReviewType: string
+): boolean {
+    if (text.trimStart().startsWith('{')) {
+        const findingsReport = parseJsonReviewFindingsArtifact(text);
+        return findingsReport !== null
+            && findingsReport.task_id === expectedTaskId
+            && findingsReport.review_type.toLowerCase() === expectedReviewType.toLowerCase()
+            && jsonReviewFindingsArtifactHasActiveFindings(findingsReport);
+    }
     return /(?:^|\n)\s*(?:[A-Z]+(?:\s+[A-Z]+)*\s+)?REVIEW\s+FAILED\s*(?:\n|$)/iu.test(text);
 }
 
@@ -249,7 +264,7 @@ function resolveReceiptBoundReviewArtifactPath(
             continue;
         }
         const reviewText = readSmallTextFile(resolvedPath);
-        if (reviewTextHasFailedVerdict(reviewText)) {
+        if (reviewTextHasFailedVerdict(reviewText, taskId, reviewType)) {
             return resolvedPath;
         }
     }
