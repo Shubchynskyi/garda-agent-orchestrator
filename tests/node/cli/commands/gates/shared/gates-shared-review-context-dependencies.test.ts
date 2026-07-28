@@ -24,6 +24,9 @@ import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events'
 import {
     createTempRepo,
     removeTempRepoWithRetry,
+    writeBudgetOutputFilters,
+    writeBalancedProfilesConfig,
+    writePassingReviewOutputFromContext,
     seedTaskQueue,
     seedInitAnswers,
     getReviewsRoot,
@@ -318,7 +321,9 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-904b-sequenced-test-review';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
+        writeBalancedProfilesConfig(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
                 db: false,
@@ -333,7 +338,7 @@ describe('cli/commands/gates', () => {
         });
         prepareReviewDiffFixture(repoRoot, preflightPath);
         const commandsPath = path.join(repoRoot, 'commands-sequenced-review.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -419,24 +424,6 @@ describe('cli/commands/gates', () => {
             ]);
             codeReviewBuildExitCode = Number(process.exitCode ?? 0);
 
-            fs.writeFileSync(codeReviewOutputPath, [
-            '# Review',
-            '',
-            'Validated `src/gates/completion.ts` and `src/cli/commands/gate-build-handlers.ts`, confirming that current-cycle upstream review evidence is present before downstream test review preparation is allowed to continue.',
-            '',
-            '## Validation Notes',
-            'Reviewed `src/gates/completion.ts` and `src/cli/commands/gate-build-handlers.ts` for current-cycle upstream review evidence before downstream test review preparation is allowed.',
-            '',
-            '## Findings by Severity',
-            'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'REVIEW PASSED'
-            ].join('\n'), 'utf8');
-
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
@@ -454,6 +441,12 @@ describe('cli/commands/gates', () => {
                 reviewType: 'code',
                 reviewContextPath: codeReviewContextPath,
                 reviewerIdentity: 'agent:code-reviewer'
+            });
+            writePassingReviewOutputFromContext({
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: codeReviewContextPath,
+                outputPath: codeReviewOutputPath
             });
             await runCliMainWithHandling([
                 'gate',
@@ -541,7 +534,9 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-904b-sequenced-test-review-invalid-code';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
+        writeBalancedProfilesConfig(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
                 db: false,
@@ -556,7 +551,7 @@ describe('cli/commands/gates', () => {
         });
         prepareReviewDiffFixture(repoRoot, preflightPath);
         const commandsPath = path.join(repoRoot, 'commands-sequenced-review-invalid.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -704,7 +699,9 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-904b-custom-code-context';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
+        writeBalancedProfilesConfig(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
                 db: false,
@@ -719,7 +716,7 @@ describe('cli/commands/gates', () => {
         });
         prepareReviewDiffFixture(repoRoot, preflightPath);
         const commandsPath = path.join(repoRoot, 'commands-custom-code-context.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
@@ -774,24 +771,6 @@ describe('cli/commands/gates', () => {
             ]);
             codeReviewBuildExitCode = Number(process.exitCode ?? 0);
 
-            fs.writeFileSync(codeReviewOutputPath, [
-            '# Review',
-            '',
-            'Validated `src/cli/commands/gate-build-handlers.ts`, `src/gates/review-dependencies.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that current-cycle upstream review readiness now follows recorded review-context paths and that downstream sequencing is enforced consistently across both preparation and materialization gates.',
-            '',
-            '## Validation Notes',
-            'Reviewed `src/cli/commands/gate-build-handlers.ts`, `src/gates/review-dependencies.ts`, and `src/cli/commands/gate-review-handlers.ts` for recorded custom review-context path sequencing across preparation and materialization gates.',
-            '',
-            '## Findings by Severity',
-            'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'REVIEW PASSED'
-            ].join('\n'), 'utf8');
-
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
@@ -809,6 +788,12 @@ describe('cli/commands/gates', () => {
                 reviewType: 'code',
                 reviewContextPath: customCodeReviewContextPath,
                 reviewerIdentity: 'agent:code-reviewer'
+            });
+            writePassingReviewOutputFromContext({
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: customCodeReviewContextPath,
+                outputPath: codeReviewOutputPath
             });
             await runCliMainWithHandling([
                 'gate',
@@ -836,24 +821,6 @@ describe('cli/commands/gates', () => {
             ]);
             testReviewBuildExitCode = Number(process.exitCode ?? 0);
 
-            fs.writeFileSync(testReviewOutputPath, [
-            '# Review',
-            '',
-            'Validated `src/cli/commands/gate-review-handlers.ts`, `src/cli/gate-cli/gates-artifacts.ts`, and `src/gates/completion.ts`, confirming that downstream review validation now follows the recorded custom code review-context path through materialization, review-gate verification, and completion-gate consumption.',
-            '',
-            '## Validation Notes',
-            'Reviewed `src/cli/commands/gate-review-handlers.ts`, `src/cli/gate-cli/gates-artifacts.ts`, and `src/gates/completion.ts` for downstream validation through the recorded custom code review-context path.',
-            '',
-            '## Findings by Severity',
-            'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'TEST REVIEW PASSED'
-            ].join('\n'), 'utf8');
-
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
@@ -871,6 +838,12 @@ describe('cli/commands/gates', () => {
                 reviewType: 'test',
                 reviewContextPath: testReviewContextPath,
                 reviewerIdentity: 'agent:test-reviewer'
+            });
+            writePassingReviewOutputFromContext({
+                taskId,
+                reviewType: 'test',
+                reviewContextPath: testReviewContextPath,
+                outputPath: testReviewOutputPath
             });
             await runCliMainWithHandling([
                 'gate',
