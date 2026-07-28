@@ -348,6 +348,12 @@ describe('gates/next-step post-review navigation invariants', () => {
 
     it('routes zero-diff no-review closeout to record-no-op without review work', () => {
         const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace('| ux/test |', '| workflow/no-op |'),
+            'utf8'
+        );
         initGitRepo(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
         const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
