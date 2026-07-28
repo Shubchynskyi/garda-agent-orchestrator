@@ -538,9 +538,14 @@ export function writePreflight(
     return preflightPath;
 }
 
-export function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string): void {
+export function seedCompilePass(
+    repoRoot: string,
+    taskId: string,
+    timestampUtc?: string,
+    changedFiles: string[] = ['src/app.ts']
+): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
-    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
         timestamp_utc: timestampUtc || new Date().toISOString(),
         task_id: taskId,

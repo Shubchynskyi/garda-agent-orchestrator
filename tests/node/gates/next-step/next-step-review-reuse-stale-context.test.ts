@@ -229,7 +229,7 @@ describe('gates/next-step review reuse stale context routing', () => {
             changedFiles: ['tests/api-remediation.test.ts'],
             includeDomainScopeFingerprints: true
         });
-        seedCompilePass(repoRoot, TASK_ID);
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['tests/api-remediation.test.ts']);
         writeReviewEvidence(repoRoot, TASK_ID, 'api', {
             verdict: 'fail',
             body: 'P1: API reviewer finding was fixed by a test-only remediation.\n\n'
@@ -246,7 +246,7 @@ describe('gates/next-step review reuse stale context routing', () => {
             changedFiles: ['tests/api-remediation.test.ts'],
             includeDomainScopeFingerprints: true
         });
-        seedCompilePass(repoRoot, TASK_ID);
+        seedCompilePass(repoRoot, TASK_ID, undefined, ['tests/api-remediation.test.ts']);
         writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
