@@ -12,6 +12,7 @@ import {
     computeCodeReviewScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
+    resolveReviewContextReuseContractBindings,
     appendTaskEvent,
     createTempRepo,
     findLastTimelineEventIndex,
@@ -743,7 +744,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         ) as Record<string, unknown>;
 
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -782,6 +783,15 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
             fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
         ) as Record<string, unknown>;
         const refreshedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const refreshedContractBindings = resolveReviewContextReuseContractBindings(refreshedReviewContext);
+        assert.equal(
+            refreshedReceipt.review_coverage_contract_sha256,
+            refreshedContractBindings.coverageContractSha256
+        );
+        assert.equal(
+            refreshedReceipt.review_rule_context_sha256,
+            refreshedContractBindings.ruleContextSha256
+        );
         assert.equal(
             refreshedReceipt.review_tree_state_sha256,
             getReviewTreeStateSha256FromFixtureContext(refreshedReviewContext)
@@ -812,7 +822,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
 
         const firstReuseProvenance = refreshedReceipt.reviewer_provenance as Record<string, unknown>;
         const secondPreflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 3 },
             required_reviews: {
                 code: true,
@@ -848,7 +858,21 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         const secondRefreshedReceipt = JSON.parse(
             fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
         ) as Record<string, unknown>;
+        const secondRefreshedReviewContext = JSON.parse(
+            fs.readFileSync(reviewContextPath, 'utf8')
+        ) as Record<string, unknown>;
+        const secondRefreshedContractBindings = resolveReviewContextReuseContractBindings(
+            secondRefreshedReviewContext
+        );
         assert.equal(secondRefreshedReceipt.reused_existing_review, true);
+        assert.equal(
+            secondRefreshedReceipt.review_coverage_contract_sha256,
+            secondRefreshedContractBindings.coverageContractSha256
+        );
+        assert.equal(
+            secondRefreshedReceipt.review_rule_context_sha256,
+            secondRefreshedContractBindings.ruleContextSha256
+        );
         assert.deepEqual(secondRefreshedReceipt.reviewer_provenance, firstReuseProvenance);
         assert.equal(
             secondRefreshedReceipt.reused_from_review_context_sha256,

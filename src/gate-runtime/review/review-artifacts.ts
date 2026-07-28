@@ -30,7 +30,7 @@ const DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS = 25;
 const DEFAULT_REVIEW_ARTIFACT_LOCK_STALE_MS = 30 * 1000;
 const REVIEWS_INDEX_FILE_NAME = 'reviews-index.json';
-const inProcessReviewTransactionQueues = new Map<string, Promise<void>>();
+const inProcessReviewLockQueues = new Map<string, Promise<void>>();
 
 export interface ReviewArtifactLockOptions {
     lockTimeoutMs?: unknown;
@@ -429,6 +429,33 @@ export function withReviewArtifactLock<T>(
     }
 }
 
+export async function withReviewArtifactLockAsync<T>(
+    artifactPath: string,
+    callback: () => Promise<T>,
+    options: ReviewArtifactLockOptions = {}
+): Promise<{ result: T; lock_path: string; telemetry: ReviewArtifactLockTelemetry }> {
+    const lockPath = getReviewArtifactLockPath(artifactPath);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    return await withInProcessReviewLockQueue(lockPath, async () => {
+        const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, {
+            timeoutMs: options.lockTimeoutMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS,
+            retryMs: options.lockRetryMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS,
+            staleMs: options.lockStaleMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_STALE_MS,
+            allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery,
+            ownerLabel: 'review-artifact'
+        });
+        try {
+            return {
+                result: await callback(),
+                lock_path: lockPath,
+                telemetry
+            };
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+    });
+}
+
 function withReviewArtifactTransactionLock<T>(
     reviewsDir: string,
     callback: () => T,
@@ -478,16 +505,16 @@ export function withReviewArtifactReadBarrier<T>(
     }
 }
 
-async function withInProcessReviewTransactionQueue<T>(lockPath: string, callback: () => Promise<T>): Promise<T> {
-    const previous = inProcessReviewTransactionQueues.get(lockPath) || Promise.resolve();
+async function withInProcessReviewLockQueue<T>(lockPath: string, callback: () => Promise<T>): Promise<T> {
+    const previous = inProcessReviewLockQueues.get(lockPath) || Promise.resolve();
     const next = previous.catch(() => undefined).then(callback);
     const queueTail = next.then(() => undefined, () => undefined);
-    inProcessReviewTransactionQueues.set(lockPath, queueTail);
+    inProcessReviewLockQueues.set(lockPath, queueTail);
     try {
         return await next;
     } finally {
-        if (inProcessReviewTransactionQueues.get(lockPath) === queueTail) {
-            inProcessReviewTransactionQueues.delete(lockPath);
+        if (inProcessReviewLockQueues.get(lockPath) === queueTail) {
+            inProcessReviewLockQueues.delete(lockPath);
         }
     }
 }
@@ -499,7 +526,7 @@ async function withReviewArtifactTransactionLockAsync<T>(
 ): Promise<{ result: T; lock_path: string; telemetry: ReviewArtifactLockTelemetry }> {
     const lockPath = resolveReviewTransactionLockPath(reviewsDir);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    return await withInProcessReviewTransactionQueue(lockPath, async () => {
+    return await withInProcessReviewLockQueue(lockPath, async () => {
         const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, {
             timeoutMs: options.lockTimeoutMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS,
             retryMs: options.lockRetryMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS,

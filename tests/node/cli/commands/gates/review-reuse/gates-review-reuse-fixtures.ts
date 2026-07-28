@@ -27,7 +27,8 @@ import {
     computeReviewContextReuseHash,
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
-    isNonTestReviewScope
+    isNonTestReviewScope,
+    resolveReviewContextReuseContractBindings
 } from '../../../../../../src/gates/review-reuse';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 import {
@@ -81,6 +82,7 @@ export {
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
     isNonTestReviewScope,
+    resolveReviewContextReuseContractBindings,
     appendTaskEvent,
     createTempRepo,
     findLastTimelineEventIndex,
@@ -356,4 +358,3 @@ export function updateLatestHistoricalReviewRecordedDetails(
     assert.equal(updated, true);
     fs.writeFileSync(timelinePath, `${lines.join('\n')}\n`, 'utf8');
 }
-

@@ -45,6 +45,11 @@ export interface ReviewRelevantScopeFingerprint {
     docs_only: boolean;
 }
 
+export interface ReviewContextReuseContractBindings {
+    coverageContractSha256: string | null;
+    ruleContextSha256: string | null;
+}
+
 export function isNonTestReviewScope(reviewType: string): boolean {
     return String(reviewType || '').trim().toLowerCase() !== 'test';
 }
@@ -133,6 +138,100 @@ function toNumberOrNull(value: unknown): number | null {
 function toLowerHash(value: unknown): string | null {
     const normalized = String(value || '').trim().toLowerCase();
     return /^[0-9a-f]{64}$/.test(normalized) ? normalized : null;
+}
+
+export function computeReviewRuleContextReuseHash(
+    reviewContext: Record<string, unknown>
+): string | null {
+    const ruleContext = toRecord(reviewContext.rule_context);
+    const reviewerHandoff = toRecord(reviewContext.reviewer_handoff);
+    const rolePrompt = toRecord(reviewerHandoff.role_prompt);
+    const promptTemplate = toRecord(reviewerHandoff.prompt_template);
+    const outputTemplate = toRecord(reviewerHandoff.output_template);
+    const selectedSkill = Object.keys(toRecord(ruleContext.selected_skill)).length > 0
+        ? toRecord(ruleContext.selected_skill)
+        : toRecord(rolePrompt.selected_skill);
+    const sourceFiles = toSourceFileSummary(ruleContext.source_files);
+    const snapshot = {
+        source_file_count: typeof ruleContext.source_file_count === 'number'
+            ? ruleContext.source_file_count
+            : null,
+        strip_examples_applied: ruleContext.strip_examples_applied === true,
+        strip_code_blocks_applied: ruleContext.strip_code_blocks_applied === true,
+        source_files: sourceFiles,
+        selected_skill: {
+            skill_id: String(selectedSkill.skill_id || '').trim() || null,
+            skill_path: normalizePath(String(selectedSkill.skill_path || '').trim()) || null,
+            skill_sha256: toLowerHash(selectedSkill.skill_sha256),
+            skill_entrypoint_exists: selectedSkill.skill_entrypoint_exists === true,
+            candidate_skill_ids: toStringList(selectedSkill.candidate_skill_ids)
+        },
+        role_prompt_sha256: toLowerHash(ruleContext.role_prompt_sha256)
+            || toLowerHash(rolePrompt.artifact_sha256),
+        prompt_template_sha256: toLowerHash(ruleContext.prompt_template_sha256)
+            || toLowerHash(promptTemplate.artifact_sha256),
+        output_template_sha256: toLowerHash(ruleContext.output_template_sha256)
+            || toLowerHash(outputTemplate.artifact_sha256)
+    };
+    const hasInstructionBinding = sourceFiles.length > 0
+        || !!snapshot.selected_skill.skill_sha256
+        || !!snapshot.role_prompt_sha256
+        || !!snapshot.prompt_template_sha256
+        || !!snapshot.output_template_sha256;
+    return hasInstructionBinding ? stringSha256(JSON.stringify(snapshot)) : null;
+}
+
+export function resolveReviewContextReuseContractBindings(
+    reviewContext: Record<string, unknown>
+): ReviewContextReuseContractBindings {
+    const coverageContract = toRecord(reviewContext.coverage_contract);
+    return {
+        coverageContractSha256: toLowerHash(coverageContract.contract_sha256),
+        ruleContextSha256: computeReviewRuleContextReuseHash(reviewContext)
+    };
+}
+
+export function resolveReviewReceiptReuseContractBindings(
+    receipt: Record<string, unknown>
+): ReviewContextReuseContractBindings {
+    const reviewCoverage = toRecord(receipt.review_coverage);
+    const reviewOutputContract = toRecord(receipt.review_output_contract);
+    return {
+        coverageContractSha256: toLowerHash(receipt.review_coverage_contract_sha256)
+            || toLowerHash(reviewCoverage.coverage_contract_sha256)
+            || toLowerHash(reviewOutputContract.coverage_contract_sha256),
+        ruleContextSha256: toLowerHash(receipt.review_rule_context_sha256)
+    };
+}
+
+export function getReviewContextReuseContractBindingMismatch(
+    historicalBindings: ReviewContextReuseContractBindings,
+    currentBindings: ReviewContextReuseContractBindings
+): string | null {
+    const mismatches: string[] = [];
+    if (
+        !historicalBindings.coverageContractSha256
+        || !currentBindings.coverageContractSha256
+        || historicalBindings.coverageContractSha256 !== currentBindings.coverageContractSha256
+    ) {
+        mismatches.push(
+            'reused review coverage contract does not match the current review context: ' +
+            `historical coverage_contract_sha256=${historicalBindings.coverageContractSha256 || 'missing'}; ` +
+            `current coverage_contract_sha256=${currentBindings.coverageContractSha256 || 'missing'}`
+        );
+    }
+    if (
+        !historicalBindings.ruleContextSha256
+        || !currentBindings.ruleContextSha256
+        || historicalBindings.ruleContextSha256 !== currentBindings.ruleContextSha256
+    ) {
+        mismatches.push(
+            'reused review rule context does not match the current review context: ' +
+            `historical rule_context_sha256=${historicalBindings.ruleContextSha256 || 'missing'}; ` +
+            `current rule_context_sha256=${currentBindings.ruleContextSha256 || 'missing'}`
+        );
+    }
+    return mismatches.length > 0 ? mismatches.join('; ') : null;
 }
 
 function toNormalizedPathList(value: unknown): string[] {
@@ -641,6 +740,7 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
     const scopedDiff = toRecord(reviewContext.scoped_diff);
     const reviewerRouting = toRecord(reviewContext.reviewer_routing);
     const plan = toRecord(reviewContext.plan);
+    const contractBindings = resolveReviewContextReuseContractBindings(reviewContext);
 
     const snapshot = {
         schema_version: typeof reviewContext.schema_version === 'number' ? reviewContext.schema_version : null,
@@ -660,10 +760,14 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
             omission_reason: String(tokenEconomy.omission_reason || '').trim() || null
         },
         rule_context: {
+            reuse_contract_sha256: contractBindings.ruleContextSha256,
             source_file_count: typeof ruleContext.source_file_count === 'number' ? ruleContext.source_file_count : null,
             strip_examples_applied: ruleContext.strip_examples_applied === true,
             strip_code_blocks_applied: ruleContext.strip_code_blocks_applied === true,
             source_files: toSourceFileSummary(ruleContext.source_files)
+        },
+        coverage_contract: {
+            contract_sha256: contractBindings.coverageContractSha256
         },
         scoped_diff: {
             expected: scopedDiff.expected === true,

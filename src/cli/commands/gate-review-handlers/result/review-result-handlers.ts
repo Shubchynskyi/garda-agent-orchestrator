@@ -49,7 +49,8 @@ import {
     computeReviewContextReuseHash,
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint,
-    isNonTestReviewScope
+    isNonTestReviewScope,
+    resolveReviewContextReuseContractBindings
 } from '../../../../gates/review-reuse/review-reuse';
 import {
     resolveReviewerPromptArtifactBinding
@@ -1575,6 +1576,7 @@ async function recordReviewReceiptFromArtifacts(options: {
             policyResolution: resolveLockedReviewFindingPolicyFromPreflight(preflight)
         });
     }
+    const reviewContextContractBindings = resolveReviewContextReuseContractBindings(parsedReviewContext);
     const receipt = buildReviewReceipt({
         taskId: options.taskId,
         reviewType: options.reviewType,
@@ -1593,6 +1595,8 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewContextSha256: contextSha256,
         reviewTreeStateSha256,
         reviewContextReuseSha256: computeReviewContextReuseHash(parsedReviewContext),
+        reviewCoverageContractSha256: reviewContextContractBindings.coverageContractSha256,
+        reviewRuleContextSha256: reviewContextContractBindings.ruleContextSha256,
         reviewArtifactSha256: artifactSha256,
         reviewerExecutionMode: options.reviewerExecutionMode,
         reviewerIdentity: options.reviewerIdentity,

@@ -13,6 +13,7 @@ import {
     getReviewArtifactLockPath,
     getReviewArtifactTransactionLockPath,
     scanReviewArtifactLocks,
+    withReviewArtifactLockAsync,
     withReviewArtifactReadBarrier,
     writeReviewArtifactJson,
     writeReviewArtifactsWithRollback,
@@ -957,6 +958,136 @@ test('writeReviewArtifactsWithRollback uses an async transaction lock for concur
         assert.equal(fs.readFileSync(firstPath, 'utf8'), 'first review\n');
         assert.equal(fs.readFileSync(secondPath, 'utf8'), 'second review\n');
     } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('context lock prevents rebuild after post-write assertion until reuse transaction commits', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-context-reuse-lock-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const contextPath = path.join(reviewsDir, 'T-022-code-context.json');
+    const receiptPath = path.join(reviewsDir, 'T-022-code-receipt.json');
+    const initialContext = '{"schema_version":3,"review_type":"code"}\n';
+    const driftedContext = '{"schema_version":3,"review_type":"security"}\n';
+    let notifyPostWriteAssertion: (() => void) | null = null;
+    const transactionCommitControl = {
+        allow: (): void => undefined
+    };
+    let contextWriter: ReturnType<typeof spawn> | null = null;
+    const postWriteAssertionReached = new Promise<void>((resolve) => {
+        notifyPostWriteAssertion = resolve;
+    });
+    const transactionCommitAllowed = new Promise<void>((resolve) => {
+        transactionCommitControl.allow = resolve;
+    });
+
+    try {
+        fs.writeFileSync(contextPath, initialContext, 'utf8');
+        const expectedContextSha256 = fileSha256(contextPath);
+        const reuseTransaction = withReviewArtifactLockAsync(contextPath, async () => {
+            await writeReviewArtifactsWithRollback([
+                {
+                    artifactPath: receiptPath,
+                    contentType: 'json',
+                    payload: { task_id: 'T-022', review_type: 'code' }
+                }
+            ], async () => {
+                assertReviewArtifactFileSha256(
+                    contextPath,
+                    expectedContextSha256,
+                    'Current review context'
+                );
+                notifyPostWriteAssertion?.();
+                await transactionCommitAllowed;
+                assert.equal(
+                    fs.readFileSync(contextPath, 'utf8'),
+                    initialContext,
+                    'context writer must remain blocked until the reuse transaction commits'
+                );
+            });
+        });
+
+        await postWriteAssertionReached;
+        const reviewArtifactsModulePath = path.resolve(
+            __dirname,
+            '../../../src/gate-runtime/review/review-artifacts.js'
+        );
+        const writerScript = [
+            "const fs = require('node:fs');",
+            'const { withReviewArtifactLock } = require(process.argv[1]);',
+            'const contextPath = process.argv[2];',
+            "const content = Buffer.from(process.argv[3], 'base64').toString('utf8');",
+            "process.stdout.write('ATTEMPTING\\n');",
+            'withReviewArtifactLock(contextPath, () => {',
+            "  fs.writeFileSync(contextPath, content, 'utf8');",
+            '});',
+            "process.stdout.write('COMPLETED\\n');"
+        ].join('\n');
+        const writer = spawn(process.execPath, [
+            '--input-type=commonjs',
+            '--eval',
+            writerScript,
+            reviewArtifactsModulePath,
+            contextPath,
+            Buffer.from(driftedContext, 'utf8').toString('base64')
+        ], {
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        contextWriter = writer;
+        let writerStdout = '';
+        let writerStderr = '';
+        writer.stdout.on('data', (chunk) => {
+            writerStdout += String(chunk);
+        });
+        writer.stderr.on('data', (chunk) => {
+            writerStderr += String(chunk);
+        });
+        await new Promise<void>((resolve, reject) => {
+            const deadline = Date.now() + 2_000;
+            const timer = setInterval(() => {
+                if (writerStdout.includes('ATTEMPTING')) {
+                    clearInterval(timer);
+                    resolve();
+                    return;
+                }
+                if (Date.now() >= deadline) {
+                    clearInterval(timer);
+                    reject(new Error(writerStderr || 'Timed out waiting for synchronous context writer'));
+                }
+            }, 10);
+            writer.once('error', (error) => {
+                clearInterval(timer);
+                reject(error);
+            });
+        });
+
+        await delay(30);
+        assert.equal(fs.readFileSync(contextPath, 'utf8'), initialContext);
+        transactionCommitControl.allow();
+        await reuseTransaction;
+        if (writer.exitCode === null) {
+            await new Promise<void>((resolve, reject) => {
+                writer.once('error', reject);
+                writer.once('exit', (code) => {
+                    if (code === 0) {
+                        resolve();
+                        return;
+                    }
+                    reject(new Error(writerStderr || `Synchronous context writer exited with code ${code}`));
+                });
+            });
+        } else {
+            assert.equal(writer.exitCode, 0, writerStderr);
+        }
+
+        assert.match(writerStdout, /COMPLETED/u);
+        assert.equal(fs.readFileSync(contextPath, 'utf8'), driftedContext);
+        assert.equal(fs.existsSync(receiptPath), true);
+    } finally {
+        transactionCommitControl.allow();
+        if (contextWriter && contextWriter.exitCode === null) {
+            contextWriter.kill();
+        }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });

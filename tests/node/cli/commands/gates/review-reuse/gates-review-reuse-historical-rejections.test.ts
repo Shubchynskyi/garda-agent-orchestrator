@@ -801,6 +801,17 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         assert.ok(build.outputLines.some((line) => line.includes(
             'reused review coverage contract does not match the current review context'
         )), build.outputLines.join('\n'));
+        const repeatedBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        assert.equal(repeatedBuild.reusedReviewEvidence, false);
+        assert.ok(repeatedBuild.outputLines.some((line) => line.includes(
+            'reused review coverage contract does not match the current review context'
+        )), repeatedBuild.outputLines.join('\n'));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const latestCompileSequence = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
         assert.equal(events.slice(latestCompileSequence + 1).some((event) => (
@@ -811,12 +822,22 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('does not reuse review evidence after rule context content changes', async () => {
+    it('does not reuse review evidence after reviewer instruction content changes', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-no-reuse-rule-context-change';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Qwen');
         const reviewsRoot = getReviewsRoot(repoRoot);
+        const codeReviewSkillPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'skills',
+            'code-review',
+            'SKILL.md'
+        );
+        fs.mkdirSync(path.dirname(codeReviewSkillPath), { recursive: true });
+        fs.writeFileSync(codeReviewSkillPath, '# Code Review\n\nReview the assigned code scope.\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
         runEnterTaskMode({
@@ -844,12 +865,12 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
 
         fs.appendFileSync(
-            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '00-core.md'),
-            '\nReviewer rule content changed after the prior review.\n',
+            codeReviewSkillPath,
+            '\nReviewer instruction content changed after the prior review.\n',
             'utf8'
         );
         const preflightPath = writePreflight(repoRoot, taskId, {
-            changed_files: ['tests/app.test.ts'],
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
             metrics: { changed_lines_total: 1 },
             required_reviews: {
                 code: true,
@@ -873,6 +894,20 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
             outputPath: reviewContextPath
         });
         assert.equal(build.reusedReviewEvidence, false);
+        assert.ok(build.outputLines.some((line) => line.includes(
+            'reused review rule context does not match the current review context'
+        )), build.outputLines.join('\n'));
+        const repeatedBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        assert.equal(repeatedBuild.reusedReviewEvidence, false);
+        assert.ok(repeatedBuild.outputLines.some((line) => line.includes(
+            'reused review rule context does not match the current review context'
+        )), repeatedBuild.outputLines.join('\n'));
 
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
         const reviewerRouting = reviewContext.reviewer_routing as Record<string, unknown>;
@@ -887,6 +922,112 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         assert.equal(currentRecordedEvents.length, 0);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not reuse context-mismatch evidence with missing or incorrect receipt contract bindings', async () => {
+        const scenarios = [
+            {
+                suffix: 'coverage-mismatch',
+                seedOptions: {
+                    reviewCoverageContractSha256Override: 'f'.repeat(64)
+                },
+                expectedReason: 'reused review coverage contract does not match the current review context'
+            },
+            {
+                suffix: 'missing-rule',
+                seedOptions: {
+                    omitReviewRuleContextBinding: true
+                },
+                expectedReason: 'reused review rule context does not match the current review context'
+            }
+        ];
+
+        for (const scenario of scenarios) {
+            const repoRoot = createTempRepo();
+            const taskId = `T-904a-no-reuse-missing-binding-${scenario.suffix}`;
+            try {
+                seedTaskQueue(repoRoot, taskId);
+                seedInitAnswers(repoRoot, 'Qwen');
+                const reviewsRoot = getReviewsRoot(repoRoot);
+                runEnterTaskMode({
+                    repoRoot,
+                    taskId,
+                    taskSummary: 'Reject context-mismatch reuse without authenticated receipt contract bindings'
+                });
+
+                const priorPreflightPath = writePreflight(repoRoot, taskId, {
+                    changed_files: ['src/app.ts'],
+                    metrics: { changed_lines_total: 3 },
+                    required_reviews: {
+                        code: true,
+                        db: false,
+                        security: false,
+                        refactor: false,
+                        api: false,
+                        test: false,
+                        performance: false,
+                        infra: false,
+                        dependency: false
+                    }
+                }, `${taskId}-prior-preflight.json`);
+                const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+                seedReusableReviewEvidence(
+                    repoRoot,
+                    taskId,
+                    'code',
+                    'REVIEW PASSED',
+                    priorPreflightPath,
+                    reviewContextPath,
+                    'agent:code-reviewer',
+                    scenario.seedOptions
+                );
+                const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+                const historicalReceiptText = fs.readFileSync(receiptPath, 'utf8');
+
+                const preflightPath = writePreflight(repoRoot, taskId, {
+                    changed_files: ['src/app.ts'],
+                    metrics: { changed_lines_total: 3 },
+                    required_reviews: {
+                        code: true,
+                        db: false,
+                        security: false,
+                        refactor: false,
+                        api: false,
+                        test: false,
+                        performance: false,
+                        infra: false,
+                        dependency: false
+                    }
+                });
+                writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+                const build = await runBuildReviewContextCommand({
+                    repoRoot,
+                    reviewType: 'code',
+                    depth: 3,
+                    preflightPath,
+                    outputPath: reviewContextPath,
+                    remediationPreservedScopeMismatchReason: 'test fixture preserves code scope across depth change'
+                });
+                assert.equal(build.reusedReviewEvidence, false);
+                assert.ok(
+                    build.outputLines.some((line) => line.includes(scenario.expectedReason)),
+                    build.outputLines.join('\n')
+                );
+                assert.equal(fs.readFileSync(receiptPath, 'utf8'), historicalReceiptText);
+                const events = readTaskTimelineEvents(repoRoot, taskId);
+                const latestCompileSequence = findLastTimelineEventIndex(
+                    events,
+                    (event) => event.event_type === 'COMPILE_GATE_PASSED'
+                );
+                assert.equal(events.slice(latestCompileSequence + 1).some((event) => (
+                    event.event_type === 'REVIEW_RECORDED'
+                    && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+                )), false);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        }
     });
 
     it('does not reuse prior code-review evidence for a mixed docs plus code delta', async () => {

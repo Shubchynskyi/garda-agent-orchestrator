@@ -9,7 +9,10 @@ import {
 import * as gateHelpers from '../shared/helpers';
 import {
     computeReviewReuseCodeScopeFingerprint,
-    computeReviewRelevantScopeFingerprint
+    computeReviewRelevantScopeFingerprint,
+    getReviewContextReuseContractBindingMismatch,
+    resolveReviewReceiptReuseContractBindings,
+    type ReviewContextReuseContractBindings
 } from './';
 import type { ReviewDependencyTimelineEvent } from '../review/review-dependencies';
 import {
@@ -60,6 +63,7 @@ export interface AcceptedReviewReuseCandidateEvidence {
     artifactText: string;
     contextHashMatches: boolean;
     contextReuseHashMatches: boolean;
+    receiptContextReuseHashMatches: boolean;
     testOnlyDeltaContextMismatch: boolean;
     remediationPreservedScopeMismatch: boolean;
     remediationPreservedScopeMismatchReason: string | null;
@@ -422,6 +426,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
     currentCodeScopeSha256: string | null;
     currentReviewContextSha256: string | null;
     currentContextReuseSha256: string | null;
+    currentReviewContextContractBindings: ReviewContextReuseContractBindings;
     allowTestOnlyDeltaContextMismatch?: boolean;
     remediationPreservedScopeMismatchReason?: string | null;
 }): { accepted: true; evidence: AcceptedReviewReuseCandidateEvidence } | { accepted: false; reason: string } {
@@ -752,6 +757,9 @@ export function validateHistoricalReviewReuseCandidate(options: {
         String(options.previousReviewContextReuseSha256 || '').trim().toLowerCase() || null
     ].filter((value): value is string => !!value);
     const contextHashMatches = !!expectedContextSha256 && expectedContextSha256 === options.currentReviewContextSha256;
+    const receiptContextReuseHashMatches = !!options.currentContextReuseSha256
+        && !!expectedContextReuseSha256
+        && expectedContextReuseSha256 === options.currentContextReuseSha256;
     const contextReuseHashMatches = !!options.currentContextReuseSha256
         && acceptableContextReuseHashes.includes(options.currentContextReuseSha256);
     const currentReviewScopeSha256 = String(options.reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase() || null;
@@ -774,6 +782,18 @@ export function validateHistoricalReviewReuseCandidate(options: {
         && options.nonTestReviewScope
         && options.hasCurrentCodeScope
         && codeScopeStillMatches;
+    if (!contextHashMatches && !receiptContextReuseHashMatches) {
+        const contractBindingMismatch = getReviewContextReuseContractBindingMismatch(
+            resolveReviewReceiptReuseContractBindings(receipt as unknown as Record<string, unknown>),
+            options.currentReviewContextContractBindings
+        );
+        if (contractBindingMismatch) {
+            return {
+                accepted: false,
+                reason: contractBindingMismatch
+            };
+        }
+    }
     if (!contextHashMatches && !contextReuseHashMatches) {
         if (testOnlyDeltaContextMismatch || remediationPreservedScopeMismatch) {
             return {
@@ -796,6 +816,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
                     artifactText,
                     contextHashMatches,
                     contextReuseHashMatches,
+                    receiptContextReuseHashMatches,
                     testOnlyDeltaContextMismatch,
                     remediationPreservedScopeMismatch,
                     remediationPreservedScopeMismatchReason
@@ -830,6 +851,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
             artifactText,
             contextHashMatches,
             contextReuseHashMatches,
+            receiptContextReuseHashMatches,
             testOnlyDeltaContextMismatch,
             remediationPreservedScopeMismatch,
             remediationPreservedScopeMismatchReason

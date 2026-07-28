@@ -11,6 +11,7 @@ import {
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint,
     isNonTestReviewScope,
+    resolveReviewContextReuseContractBindings,
     resolveReviewReuseClassificationConfig
 } from '../../../../gates/review-reuse/review-reuse';
 import {
@@ -366,6 +367,7 @@ export async function tryReuseReviewEvidence(options: {
     const currentReviewContextSha256 = String(gateHelpers.fileSha256(options.reviewContextPath) || '').trim().toLowerCase() || null;
     const currentReviewTreeStateSha256 = getReviewTreeStateSha256FromContext(currentReviewContext);
     const currentContextReuseSha256 = String(computeReviewContextReuseHash(currentReviewContext) || '').trim().toLowerCase() || null;
+    const currentReviewContextContractBindings = resolveReviewContextReuseContractBindings(currentReviewContext);
     const testOnlyDeltaReuseEligibility = evaluateTestOnlyDeltaReuseEligibility({
         repoRoot: options.repoRoot,
         taskId: options.taskId,
@@ -396,6 +398,7 @@ export async function tryReuseReviewEvidence(options: {
             currentCodeScopeSha256,
             currentReviewContextSha256,
             currentContextReuseSha256,
+            currentReviewContextContractBindings,
             allowTestOnlyDeltaContextMismatch: testOnlyDeltaReuseEligibility.allowed,
             remediationPreservedScopeMismatchReason: options.remediationPreservedScopeMismatchReason || null
         });
@@ -435,6 +438,9 @@ export async function tryReuseReviewEvidence(options: {
                 expectedReviewTreeStateSha256: evidence.expectedReviewTreeStateSha256,
                 expectedReviewScopeSha256: evidence.expectedReviewScopeSha256,
                 expectedCodeScopeSha256: evidence.expectedCodeScopeSha256,
+                contextContractBindingsRequired:
+                    !evidence.contextHashMatches && !evidence.receiptContextReuseHashMatches,
+                currentReviewContextContractBindings,
                 historicalReviewArtifactSha256: evidence.historicalReviewArtifactSha256,
                 artifactText: evidence.artifactText
             })

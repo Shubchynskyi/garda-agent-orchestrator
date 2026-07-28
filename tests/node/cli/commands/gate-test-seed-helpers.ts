@@ -28,7 +28,8 @@ import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash,
     computeReviewRelevantScopeFingerprint,
-    computeReviewReuseCodeScopeFingerprint
+    computeReviewReuseCodeScopeFingerprint,
+    resolveReviewContextReuseContractBindings
 } from '../../../../src/gates/review-reuse';
 import {buildReviewTreeState} from '../../../../src/gates/review/review-tree-state';
 import {
@@ -1530,6 +1531,7 @@ export function writeReceiptBackedReviewArtifact(
         invocationDetails
     );
 
+    const reviewContextContractBindings = resolveReviewContextReuseContractBindings(reviewContext);
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -1540,6 +1542,8 @@ export function writeReceiptBackedReviewArtifact(
         reviewContextSha256: reviewContextHash,
         reviewTreeStateSha256,
         reviewContextReuseSha256,
+        reviewCoverageContractSha256: reviewContextContractBindings.coverageContractSha256,
+        reviewRuleContextSha256: reviewContextContractBindings.ruleContextSha256,
         reviewArtifactSha256: artifactHash,
         reviewerExecutionMode: reviewerEvidence.executionMode,
         reviewerIdentity: reviewerEvidence.reviewerIdentity,
@@ -1675,6 +1679,9 @@ export function seedReusableReviewEvidence(
         taskModePath?: string | null;
         omitInvocationTreeState?: boolean;
         receiptReviewContextSha256Override?: string | null;
+        reviewCoverageContractSha256Override?: string | null;
+        reviewRuleContextSha256Override?: string | null;
+        omitReviewRuleContextBinding?: boolean;
         sourceOfTruth?: string;
         invocationTimingOverride?: {
             launchPreparedAtUtc?: string;
@@ -1838,6 +1845,15 @@ export function seedReusableReviewEvidence(
     const codeScopeSha256 = reviewKey !== 'test'
         ? computeReviewReuseCodeScopeFingerprint(reviewKey, preflight, repoRoot).code_scope_sha256
         : null;
+    const reviewContextContractBindings = resolveReviewContextReuseContractBindings(reviewContext);
+    const reviewCoverageContractSha256 = options.reviewCoverageContractSha256Override !== undefined
+        ? options.reviewCoverageContractSha256Override
+        : reviewContextContractBindings.coverageContractSha256;
+    const reviewRuleContextSha256 = options.omitReviewRuleContextBinding === true
+        ? undefined
+        : options.reviewRuleContextSha256Override !== undefined
+            ? options.reviewRuleContextSha256Override
+            : reviewContextContractBindings.ruleContextSha256;
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -1848,6 +1864,8 @@ export function seedReusableReviewEvidence(
         reviewContextSha256: receiptReviewContextSha256,
         reviewTreeStateSha256,
         reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
+        reviewCoverageContractSha256,
+        reviewRuleContextSha256,
         reviewArtifactSha256: artifactHash,
         reviewerExecutionMode: executionMode,
         reviewerIdentity: resolvedReviewerIdentity,

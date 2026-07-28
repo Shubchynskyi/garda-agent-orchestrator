@@ -9,8 +9,13 @@ import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash,
     computeReviewReuseCodeScopeFingerprint,
-    computeReviewRelevantScopeFingerprint
+    computeReviewRelevantScopeFingerprint,
+    resolveReviewContextReuseContractBindings
 } from '../../../../src/gates/review-reuse';
+import { stringSha256 } from '../../../../src/gate-runtime/hash';
+import {
+    validateReviewContextMaterializationSnapshot
+} from '../../../../src/gates/review-reuse/review-reuse-materialization';
 
 function runGit(repoRoot: string, args: string[]): void {
     const result = childProcess.spawnSync('git', args, {
@@ -382,6 +387,7 @@ describe('gates/review-reuse', () => {
                 omission_reason: 'none'
             },
             rule_context: {
+                artifact_sha256: '1'.repeat(64),
                 source_file_count: 2,
                 strip_examples_applied: false,
                 strip_code_blocks_applied: false,
@@ -389,6 +395,9 @@ describe('gates/review-reuse', () => {
                     { path: '00-core.md', sha256: 'b'.repeat(64) },
                     { path: '70-security.md', sha256: 'c'.repeat(64) }
                 ]
+            },
+            coverage_contract: {
+                contract_sha256: '2'.repeat(64)
             },
             scoped_diff: {
                 expected: true,
@@ -441,6 +450,10 @@ describe('gates/review-reuse', () => {
                     metadata_path: 'runtime/reviews/T-1-security-scoped-refresh.json',
                     scope_sha256: '8'.repeat(64)
                 }
+            },
+            rule_context: {
+                ...baseContext.rule_context,
+                artifact_sha256: '7'.repeat(64)
             }
         };
         const changedDiffContext = {
@@ -453,8 +466,77 @@ describe('gates/review-reuse', () => {
                 }
             }
         };
+        const changedRuleContext = {
+            ...baseContext,
+            rule_context: {
+                ...baseContext.rule_context,
+                source_files: [
+                    { path: '00-core.md', sha256: '3'.repeat(64) },
+                    { path: '70-security.md', sha256: 'c'.repeat(64) }
+                ]
+            }
+        };
+        const changedCoverageContract = {
+            ...baseContext,
+            coverage_contract: {
+                contract_sha256: '4'.repeat(64)
+            }
+        };
 
         assert.equal(computeReviewContextReuseHash(refreshedContext), computeReviewContextReuseHash(baseContext));
         assert.notEqual(computeReviewContextReuseHash(changedDiffContext), computeReviewContextReuseHash(baseContext));
+        assert.notEqual(computeReviewContextReuseHash(changedRuleContext), computeReviewContextReuseHash(baseContext));
+        assert.notEqual(computeReviewContextReuseHash(changedCoverageContract), computeReviewContextReuseHash(baseContext));
+    });
+
+    it('rejects review-context drift between reuse validation and evidence materialization', () => {
+        const initialContext = {
+            schema_version: 3,
+            review_type: 'code',
+            tree_state: {
+                tree_state_sha256: 'a'.repeat(64)
+            },
+            rule_context: {
+                source_files: [
+                    { path: '00-core.md', sha256: 'b'.repeat(64) }
+                ]
+            },
+            coverage_contract: {
+                contract_sha256: 'c'.repeat(64)
+            }
+        };
+        const initialContextText = `${JSON.stringify(initialContext, null, 2)}\n`;
+        const expectations = {
+            currentReviewContextSha256: stringSha256(initialContextText),
+            currentReviewTreeStateSha256: initialContext.tree_state.tree_state_sha256,
+            currentContextReuseSha256: computeReviewContextReuseHash(initialContext),
+            currentReviewContextContractBindings: resolveReviewContextReuseContractBindings(initialContext)
+        };
+
+        assert.equal(
+            validateReviewContextMaterializationSnapshot(
+                expectations,
+                initialContextText,
+                initialContext
+            ),
+            null
+        );
+
+        const driftedContext = {
+            ...initialContext,
+            tree_state: {
+                tree_state_sha256: 'd'.repeat(64)
+            }
+        };
+        const driftedContextText = `${JSON.stringify(driftedContext, null, 2)}\n`;
+
+        assert.match(
+            validateReviewContextMaterializationSnapshot(
+                expectations,
+                driftedContextText,
+                driftedContext
+            ) || '',
+            /current review context changed before reused evidence materialization/u
+        );
     });
 });

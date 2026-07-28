@@ -13,6 +13,8 @@ export interface ReviewReceipt {
     review_context_sha256: string | null;
     review_tree_state_sha256?: string | null;
     review_context_reuse_sha256?: string | null;
+    review_coverage_contract_sha256?: string | null;
+    review_rule_context_sha256?: string | null;
     review_artifact_sha256: string | null;
     reviewer_execution_mode: string | null;
     reviewer_identity: string | null;
@@ -302,6 +304,8 @@ export function buildReviewReceipt(options: {
     reviewContextSha256: string | null;
     reviewTreeStateSha256?: string | null;
     reviewContextReuseSha256?: string | null;
+    reviewCoverageContractSha256?: string | null;
+    reviewRuleContextSha256?: string | null;
     reviewArtifactSha256: string | null;
     reviewerExecutionMode?: string | null;
     reviewerIdentity?: string | null;
@@ -318,7 +322,7 @@ export function buildReviewReceipt(options: {
     reusedFromCodeScopeSha256?: string | null;
     reusedFromDomainScopeFingerprints?: DomainScopeFingerprints | null;
 }): ReviewReceipt {
-    return {
+    const receipt: ReviewReceipt = {
         schema_version: 2,
         task_id: options.taskId,
         review_type: options.reviewType,
@@ -347,4 +351,11 @@ export function buildReviewReceipt(options: {
         reused_from_domain_scope_fingerprints: options.reusedFromDomainScopeFingerprints ?? null,
         recorded_at_utc: new Date().toISOString()
     };
+    if (options.reviewCoverageContractSha256 !== undefined) {
+        receipt.review_coverage_contract_sha256 = options.reviewCoverageContractSha256;
+    }
+    if (options.reviewRuleContextSha256 !== undefined) {
+        receipt.review_rule_context_sha256 = options.reviewRuleContextSha256;
+    }
+    return receipt;
 }

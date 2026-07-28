@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import { sha256RedactedJsonPayload } from '../../core/redaction';
+import { stringSha256 } from '../../gate-runtime/hash';
 import {
     buildReviewReceipt,
     normalizeReviewReceiptReviewerProvenance,
@@ -7,6 +8,7 @@ import {
 } from '../../gate-runtime/review-context';
 import {
     assertReviewArtifactFileSha256,
+    withReviewArtifactLockAsync,
     writeReviewArtifactsWithRollback
 } from '../../gate-runtime/review-artifacts';
 import {
@@ -15,8 +17,13 @@ import {
 import { taskEventAppendHasBlockingFailure } from '../../gate-runtime/task-events';
 import * as gateHelpers from '../shared/helpers';
 import {
+    computeReviewContextReuseHash,
     computeReviewReuseCodeScopeFingerprint,
-    computeReviewRelevantScopeFingerprint
+    computeReviewRelevantScopeFingerprint,
+    getReviewContextReuseContractBindingMismatch,
+    resolveReviewReceiptReuseContractBindings,
+    resolveReviewContextReuseContractBindings,
+    type ReviewContextReuseContractBindings
 } from './review-reuse';
 import {
     buildDomainScopeFingerprints,
@@ -80,6 +87,8 @@ export interface MaterializeReusedReviewEvidenceOptions {
     expectedReviewTreeStateSha256: string | null;
     expectedReviewScopeSha256: string | null;
     expectedCodeScopeSha256: string | null;
+    contextContractBindingsRequired: boolean;
+    currentReviewContextContractBindings: ReviewContextReuseContractBindings;
     historicalReviewArtifactSha256: string;
     artifactText: string;
 }
@@ -122,6 +131,87 @@ function getReceiptOutputContract(receipt: ReviewReceipt): Record<string, unknow
 function getReceiptOutputContractString(receipt: ReviewReceipt, key: string): string | null {
     const value = getReceiptOutputContract(receipt)?.[key];
     return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function validateReusedReviewContextContractBindings(
+    options: MaterializeReusedReviewEvidenceOptions,
+    currentReviewContext: Record<string, unknown>
+): string | null {
+    if (!options.contextContractBindingsRequired) {
+        return null;
+    }
+    const currentBindings = resolveReviewContextReuseContractBindings(currentReviewContext);
+    const historicalBindings = resolveReviewReceiptReuseContractBindings(
+        options.receipt as unknown as Record<string, unknown>
+    );
+    return getReviewContextReuseContractBindingMismatch(historicalBindings, currentBindings);
+}
+
+function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown>): string | null {
+    const treeState = reviewContext.tree_state
+        && typeof reviewContext.tree_state === 'object'
+        && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
+        : null;
+    return normalizeSha256(treeState?.tree_state_sha256 ?? treeState?.treeStateSha256);
+}
+
+export type ReviewContextMaterializationSnapshotExpectations = Pick<
+    MaterializeReusedReviewEvidenceOptions,
+    | 'currentReviewContextSha256'
+    | 'currentReviewTreeStateSha256'
+    | 'currentContextReuseSha256'
+    | 'currentReviewContextContractBindings'
+>;
+
+export function validateReviewContextMaterializationSnapshot(
+    expectations: ReviewContextMaterializationSnapshotExpectations,
+    currentReviewContextText: string,
+    currentReviewContext: Record<string, unknown>
+): string | null {
+    const currentReviewContextSha256 = stringSha256(currentReviewContextText);
+    if (
+        !expectations.currentReviewContextSha256
+        || currentReviewContextSha256 !== expectations.currentReviewContextSha256
+    ) {
+        return (
+            'current review context changed before reused evidence materialization: ' +
+            `expected review_context_sha256=${expectations.currentReviewContextSha256 || 'missing'}; ` +
+            `current=${currentReviewContextSha256 || 'missing'}`
+        );
+    }
+    const currentContextReuseSha256 = computeReviewContextReuseHash(currentReviewContext);
+    if (
+        !expectations.currentContextReuseSha256
+        || currentContextReuseSha256 !== expectations.currentContextReuseSha256
+    ) {
+        return (
+            'current review context reuse contract changed before reused evidence materialization: ' +
+            `expected review_context_reuse_sha256=${expectations.currentContextReuseSha256 || 'missing'}; ` +
+            `current=${currentContextReuseSha256 || 'missing'}`
+        );
+    }
+    const currentReviewTreeStateSha256 = getReviewContextTreeStateSha256(currentReviewContext);
+    if (
+        !expectations.currentReviewTreeStateSha256
+        || currentReviewTreeStateSha256 !== expectations.currentReviewTreeStateSha256
+    ) {
+        return (
+            'current review tree state changed before reused evidence materialization: ' +
+            `expected review_tree_state_sha256=${expectations.currentReviewTreeStateSha256 || 'missing'}; ` +
+            `current=${currentReviewTreeStateSha256 || 'missing'}`
+        );
+    }
+    const currentBindings = resolveReviewContextReuseContractBindings(currentReviewContext);
+    if (
+        currentBindings.coverageContractSha256
+            !== expectations.currentReviewContextContractBindings.coverageContractSha256
+        || currentBindings.ruleContextSha256
+            !== expectations.currentReviewContextContractBindings.ruleContextSha256
+    ) {
+        return 'current review context contract bindings changed before reused evidence materialization';
+    }
+    return null;
 }
 
 function summarizeReviewFindingsReport(report: ReviewFindingsReport): Record<string, unknown> {
@@ -193,14 +283,44 @@ function getReceiptBoundFindingsReviewArtifactPath(receipt: ReviewReceipt | null
 export async function materializeReusedReviewEvidence(
     options: MaterializeReusedReviewEvidenceOptions
 ): Promise<{ materialized: boolean; reason: string | null }> {
-    const currentReviewContext = JSON.parse(
-        fs.readFileSync(options.reviewContextPath, 'utf8')
-    ) as Record<string, unknown>;
+    const { result } = await withReviewArtifactLockAsync(
+        options.reviewContextPath,
+        () => materializeReusedReviewEvidenceUnderContextLock(options)
+    );
+    return result;
+}
+
+async function materializeReusedReviewEvidenceUnderContextLock(
+    options: MaterializeReusedReviewEvidenceOptions
+): Promise<{ materialized: boolean; reason: string | null }> {
+    const currentReviewContextText = fs.readFileSync(options.reviewContextPath, 'utf8');
+    const currentReviewContext = JSON.parse(currentReviewContextText) as Record<string, unknown>;
+    const currentReviewContextSnapshotViolation = validateReviewContextMaterializationSnapshot(
+        options,
+        currentReviewContextText,
+        currentReviewContext
+    );
+    if (currentReviewContextSnapshotViolation) {
+        return {
+            materialized: false,
+            reason: currentReviewContextSnapshotViolation
+        };
+    }
     const currentReviewContextSchemaVersion = Number(currentReviewContext.schema_version);
     if (!Number.isInteger(currentReviewContextSchemaVersion) || currentReviewContextSchemaVersion < 3) {
         return {
             materialized: false,
             reason: 'reused review current context must use schema_version 3 or newer; legacy contexts cannot be rematerialized'
+        };
+    }
+    const contextContractBindingViolation = validateReusedReviewContextContractBindings(
+        options,
+        currentReviewContext
+    );
+    if (contextContractBindingViolation) {
+        return {
+            materialized: false,
+            reason: contextContractBindingViolation
         };
     }
     if (currentReviewContextSchemaVersion >= 3) {
@@ -250,12 +370,12 @@ export async function materializeReusedReviewEvidence(
                 reason: `reused review coverage contract does not match the current review context: ${coverageCompatibilityViolations.join('; ')}`
             };
         }
-        const refreshedReceipt = buildReusedReviewReceipt(options);
+        const refreshedReceipt = buildReusedReviewReceipt(options, currentReviewContext);
         (refreshedReceipt as unknown as Record<string, unknown>).review_coverage = reviewCoverage;
         attachReusedReviewFindingsReceiptEvidence(refreshedReceipt, findingsValidationEvidence.evidence);
         return persistReusedReviewEvidence(options, refreshedReceipt, findingsValidationEvidence.evidence);
     }
-    return persistReusedReviewEvidence(options, buildReusedReviewReceipt(options));
+    return persistReusedReviewEvidence(options, buildReusedReviewReceipt(options, currentReviewContext));
 }
 
 async function persistReusedReviewEvidence(
@@ -318,6 +438,11 @@ async function persistReusedReviewEvidence(
                 ]
                 : [])
         ], async () => {
+            assertReviewArtifactFileSha256(
+                options.reviewContextPath,
+                options.currentReviewContextSha256,
+                'Current review context'
+            );
             assertReviewArtifactFileSha256(
                 options.artifactPath,
                 options.historicalReviewArtifactSha256,
@@ -524,7 +649,10 @@ function attachReusedReviewFindingsReceiptEvidence(
     };
 }
 
-function buildReusedReviewReceipt(options: MaterializeReusedReviewEvidenceOptions): ReviewReceipt {
+function buildReusedReviewReceipt(
+    options: MaterializeReusedReviewEvidenceOptions,
+    currentReviewContext: Record<string, unknown>
+): ReviewReceipt {
     const currentDomainScopeFingerprints = buildDomainScopeFingerprints({
         repoRoot: options.repoRoot,
         detectionSource: String(options.preflightPayload.detection_source || 'git_auto'),
@@ -533,6 +661,7 @@ function buildReusedReviewReceipt(options: MaterializeReusedReviewEvidenceOption
             ? options.preflightPayload.changed_files as string[]
             : []
     });
+    const contractBindings = resolveReviewContextReuseContractBindings(currentReviewContext);
     return buildReviewReceipt({
         taskId: options.taskId,
         reviewType: options.reviewType,
@@ -550,6 +679,8 @@ function buildReusedReviewReceipt(options: MaterializeReusedReviewEvidenceOption
         reviewContextSha256: options.currentReviewContextSha256,
         reviewTreeStateSha256: options.currentReviewTreeStateSha256,
         reviewContextReuseSha256: options.currentContextReuseSha256,
+        reviewCoverageContractSha256: contractBindings.coverageContractSha256,
+        reviewRuleContextSha256: contractBindings.ruleContextSha256,
         reviewArtifactSha256: options.historicalReviewArtifactSha256,
         reviewerExecutionMode: options.reviewerExecutionMode,
         reviewerIdentity: options.reviewerIdentity,
