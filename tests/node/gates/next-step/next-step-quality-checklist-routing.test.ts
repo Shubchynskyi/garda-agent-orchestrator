@@ -29,6 +29,9 @@ import {
     runQualityChecklistCommand
 } from '../../../../src/cli/commands/gate-flows/quality-checklist/quality-checklist-flow';
 import {
+    readQualityChecklistReadiness
+} from '../../../../src/gates/next-step/next-step-quality-checklist-readiness';
+import {
     initializeGitRepo,
     runGit
 } from '../../cli/commands/gate-test-repo-bootstrap';
@@ -64,6 +67,23 @@ const CUSTOM_GARDA_RULE_IDS = Object.freeze([
 
 function workflowConfigPath(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+}
+
+function readCurrentQualityChecklistReadiness(
+    repoRoot: string
+): ReturnType<typeof readQualityChecklistReadiness> {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+    return readQualityChecklistReadiness({
+        repoRoot,
+        reviewsRoot: reviewsRoot(repoRoot),
+        taskId: TASK_ID,
+        preflight: JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+        preflightPath,
+        preflightSha256: fileSha256(preflightPath),
+        workflowConfig: JSON.parse(
+            fs.readFileSync(workflowConfigPath(repoRoot), 'utf8')
+        ) as Record<string, unknown>
+    });
 }
 
 function qualityChecklistAnswersPath(repoRoot: string, taskId = TASK_ID): string {
@@ -917,15 +937,16 @@ describe('gates/next-step quality checklist routing', () => {
             writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
                 changedFiles: [`src/cadence-fix-${failureCount}.ts`]
             });
-            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
             if (failureCount < 3) {
-                assert.equal(result.quality_checklist?.status, 'SKIPPED_CADENCE');
-                assert.equal(result.quality_checklist?.effect, 'skipped_cadence');
+                const readiness = readCurrentQualityChecklistReadiness(repoRoot);
+                assert.equal(readiness.status, 'SKIPPED_CADENCE');
+                assert.equal(readiness.effect, 'skipped_cadence');
+                assert.equal(readiness.reviewFailureCadenceInterval, 3);
+            } else {
+                const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+                assert.equal(result.next_gate, 'quality-checklist', result.reason);
                 assert.equal(result.quality_checklist?.review_failure_cadence_interval, 3);
                 assert.match(result.quality_checklist?.visible_summary_line || '', /review_failure_cadence_interval=3/u);
-                assert.notEqual(result.next_gate, 'quality-checklist');
-            } else {
-                assert.equal(result.next_gate, 'quality-checklist', result.reason);
             }
         }
     });
@@ -972,12 +993,11 @@ describe('gates/next-step quality checklist routing', () => {
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
             changedFiles: ['src/cadence-fix-one.ts']
         });
-        const first = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const first = readCurrentQualityChecklistReadiness(repoRoot);
 
-        assert.equal(first.quality_checklist?.status, 'SKIPPED_CADENCE');
-        assert.equal(first.quality_checklist?.effect, 'skipped_cadence');
-        assert.equal(first.quality_checklist?.review_failure_cadence_interval, 2);
-        assert.match(first.quality_checklist?.visible_summary_line || '', /review_failure_cadence_interval=2/u);
+        assert.equal(first.status, 'SKIPPED_CADENCE');
+        assert.equal(first.effect, 'skipped_cadence');
+        assert.equal(first.reviewFailureCadenceInterval, 2);
 
         appendReviewFailure(repoRoot);
         restoreWorkspaceChanges(repoRoot, 'src/cadence-fix-one.ts');
@@ -1007,10 +1027,10 @@ describe('gates/next-step quality checklist routing', () => {
             changedFiles: ['src/canonical-cadence-fix.ts']
         });
 
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const readiness = readCurrentQualityChecklistReadiness(repoRoot);
 
-        assert.equal(result.quality_checklist?.status, 'SKIPPED_CADENCE');
-        assert.equal(result.quality_checklist?.effect, 'skipped_cadence');
+        assert.equal(readiness.status, 'SKIPPED_CADENCE');
+        assert.equal(readiness.effect, 'skipped_cadence');
     });
 
     it('counts every independent review lane failure toward quality-checklist cadence', () => {
@@ -1029,10 +1049,21 @@ describe('gates/next-step quality checklist routing', () => {
                 changedFiles: [`src/${reviewType}-cadence-fix.ts`]
             });
 
-            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+            const readiness = readCurrentQualityChecklistReadiness(repoRoot);
 
-            assert.equal(result.quality_checklist?.status, 'SKIPPED_CADENCE', reviewType);
-            assert.equal(result.quality_checklist?.effect, 'skipped_cadence', reviewType);
+            assert.equal(readiness.status, 'SKIPPED_CADENCE', reviewType);
+            assert.equal(readiness.effect, 'skipped_cadence', reviewType);
+            if (reviewType === 'db') {
+                const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+                assert.equal(result.quality_checklist?.status, 'SKIPPED_CADENCE', reviewType);
+                assert.equal(result.quality_checklist?.effect, 'skipped_cadence', reviewType);
+                assert.equal(result.quality_checklist?.review_failure_cadence_interval, 3);
+                assert.match(
+                    result.quality_checklist?.visible_summary_line || '',
+                    /review_failure_cadence_interval=3/u
+                );
+                assert.notEqual(result.next_gate, 'quality-checklist');
+            }
         }
     });
 
@@ -1043,10 +1074,10 @@ describe('gates/next-step quality checklist routing', () => {
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
         appendReviewFailure(repoRoot);
-        resolveNextStep({ taskId: TASK_ID, repoRoot });
+        readCurrentQualityChecklistReadiness(repoRoot);
         appendReviewFailure(repoRoot);
 
-        const second = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const second = readCurrentQualityChecklistReadiness(repoRoot);
         const skipArtifact = JSON.parse(fs.readFileSync(path.join(
             repoRoot,
             'garda-agent-orchestrator',
@@ -1055,7 +1086,7 @@ describe('gates/next-step quality checklist routing', () => {
             `${TASK_ID}-quality-checklist.json`
         ), 'utf8')) as Record<string, unknown>;
 
-        assert.equal(second.quality_checklist?.status, 'SKIPPED_CADENCE');
+        assert.equal(second.status, 'SKIPPED_CADENCE');
         assert.equal(skipArtifact.review_failure_count, 2);
 
         appendReviewFailure(repoRoot);
@@ -1071,7 +1102,7 @@ describe('gates/next-step quality checklist routing', () => {
         writeQualityChecklistArtifact(repoRoot, TASK_ID, 'PASS');
         appendReviewFailure(repoRoot);
 
-        const first = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const first = readCurrentQualityChecklistReadiness(repoRoot);
         const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-quality-checklist.json`);
         const firstArtifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
         const firstWorkflowConfigSha256 = String(firstArtifact.workflow_config_sha256 || '');
@@ -1083,12 +1114,12 @@ describe('gates/next-step quality checklist routing', () => {
         });
         const currentWorkflowConfigSha256 = fileSha256(workflowConfigPath(repoRoot));
 
-        const second = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const second = readCurrentQualityChecklistReadiness(repoRoot);
         const secondArtifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
 
-        assert.equal(first.quality_checklist?.status, 'SKIPPED_CADENCE');
-        assert.equal(second.quality_checklist?.status, 'SKIPPED_CADENCE');
-        assert.equal(second.quality_checklist?.effect, 'skipped_cadence');
+        assert.equal(first.status, 'SKIPPED_CADENCE');
+        assert.equal(second.status, 'SKIPPED_CADENCE');
+        assert.equal(second.effect, 'skipped_cadence');
         assert.equal(secondArtifact.review_failure_count, 1);
         assert.notEqual(currentWorkflowConfigSha256, firstWorkflowConfigSha256);
         assert.equal(secondArtifact.workflow_config_sha256, currentWorkflowConfigSha256);
@@ -1124,10 +1155,10 @@ describe('gates/next-step quality checklist routing', () => {
             changedFiles: ['src/non-review-remediation.ts']
         });
 
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const readiness = readCurrentQualityChecklistReadiness(repoRoot);
 
-        assert.equal(result.quality_checklist?.status, 'PASS');
-        assert.notEqual(result.quality_checklist?.effect, 'skipped_cadence');
+        assert.equal(readiness.status, 'PASS');
+        assert.notEqual(readiness.effect, 'skipped_cadence');
     });
 
     it('uses the first test-review failure as a one-time forced reset', () => {
@@ -1159,8 +1190,8 @@ describe('gates/next-step quality checklist routing', () => {
             changedFiles: ['tests/second-test-review-fix.test.ts'],
             scopeCategory: 'test-only'
         });
-        const ordinary = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        assert.equal(ordinary.quality_checklist?.status, 'SKIPPED_CADENCE');
+        const ordinary = readCurrentQualityChecklistReadiness(repoRoot);
+        assert.equal(ordinary.status, 'SKIPPED_CADENCE');
     });
 
     it('marks current PASS quality checklist evidence as helped when actions were taken', () => {
