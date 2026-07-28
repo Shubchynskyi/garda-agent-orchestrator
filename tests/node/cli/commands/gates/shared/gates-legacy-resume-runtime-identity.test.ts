@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
@@ -31,9 +30,14 @@ import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-
 import { writeProtectedControlPlaneManifest } from '../../../../../../src/gates/shared/helpers';
 import { getCurrentWorkflowConfigFileHashes } from '../../../../../../src/gates/workflow-config/workflow-config-work';
 import * as childProcess from 'node:child_process';
+import {
+    seedReusableReviewEvidence as seedCurrentReusableReviewEvidence,
+    writeBudgetOutputFilters
+} from '../../gate-test-helpers';
+import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
 
 function createTempRepo(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+    const root = createManagedTestTempDirectory('repo-');
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
@@ -276,6 +280,19 @@ function writePreflight(
             performance: false,
             infra: false,
             dependency: false
+        },
+        profile_policy_snapshot: {
+            review_finding_policy: {
+                schema_version: 1,
+                policy_id: 'balanced',
+                findings: {
+                    critical: 'fix_now',
+                    high: 'fix_now',
+                    medium: 'fix_now',
+                    low: 'create_follow_up'
+                },
+                residual_risk: 'create_follow_up'
+            }
         },
         triggers: {},
         changed_files: ['src/app.ts'],
@@ -589,7 +606,21 @@ function seedReusableReviewEvidence(
         review_artifact_snapshot_sha256: artifactHash,
         review_context_path: reviewContextPath.replace(/\\/g, '/')
     });
-    return reviewContextPath;
+    return seedCurrentReusableReviewEvidence(
+        repoRoot,
+        taskId,
+        reviewKey,
+        verdict,
+        preflightPath,
+        reviewContextPath,
+        reviewerIdentity,
+        {
+            legacyReviewContextIdentity: options.legacyReviewContextIdentity,
+            legacyReviewContextSourceOfTruth: options.legacyReviewContextSourceOfTruth,
+            taskModePath: options.taskModePath,
+            sourceOfTruth: options.sourceOfTruth
+        }
+    );
 }
 
 function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
@@ -984,7 +1015,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
@@ -1166,7 +1197,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),

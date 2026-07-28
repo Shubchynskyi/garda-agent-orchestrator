@@ -1,7 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
@@ -17,9 +16,13 @@ import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events'
 import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-config';
 import { writeProtectedControlPlaneManifest } from '../../../../../../src/gates/shared/helpers';
 import * as childProcess from 'node:child_process';
+import {
+    initializeGitRepoWithMaterializedScope
+} from '../../gate-test-helpers';
+import { createManagedTestTempDirectory } from '../../gate-test-temp-manager';
 
 function createTempRepo(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+    const root = createManagedTestTempDirectory('repo-');
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
@@ -124,6 +127,9 @@ function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]
             fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
         }
         writeProtectedControlPlaneManifest(repoRoot);
+    }
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        initializeGitRepoWithMaterializedScope(repoRoot, ['src/app.ts']);
     }
     return runEnterTaskModeCommand(resolvedOptions);
 }
