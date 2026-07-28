@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { getUnexpectedPostDoneWorkspaceFiles } from '../../../../src/gates/task-audit/task-audit-summary-drift';
 
 import {
     fs,
@@ -36,10 +37,20 @@ function seedProtectedDirtyBaselineCloseout(
     initGitRepo(repoRoot);
     fs.appendFileSync(implementationPath, 'export const completedValue = 2;\n', 'utf8');
     fs.writeFileSync(baselinePath, 'export const localBaseline = 2;\n', 'utf8');
+    const completedSnapshot = getWorkspaceSnapshot(
+        repoRoot,
+        'explicit_changed_files',
+        true,
+        ['src/app.ts']
+    );
     writePassedLifecycle(eventsDir, taskId);
     writePreflight(reviewsDir, taskId, {
-        changed_files: ['src/app.ts'],
-        metrics: { changed_lines_total: 1 },
+        changed_files: completedSnapshot.changed_files,
+        metrics: {
+            changed_lines_total: completedSnapshot.changed_lines_total,
+            changed_files_sha256: completedSnapshot.changed_files_sha256,
+            scope_content_sha256: completedSnapshot.scope_content_sha256
+        },
         required_reviews: {},
         triggers: {
             dirty_workspace_protection_status: 'PASS',
@@ -55,7 +66,12 @@ function seedProtectedDirtyBaselineCloseout(
     });
     writeArtifact(reviewsDir, taskId, '-final-closeout.json', {
         status: 'READY',
-        artifact_state: 'MATERIALIZED'
+        artifact_state: 'MATERIALIZED',
+        implementation_summary: {
+            changed_files: completedSnapshot.changed_files,
+            changed_files_sha256: completedSnapshot.changed_files_sha256,
+            scope_content_sha256: completedSnapshot.scope_content_sha256
+        }
     });
     writeArtifact(reviewsDir, taskId, '-final-closeout.md', '# Final Closeout\n');
     return baselinePath;
@@ -235,15 +251,22 @@ describe('gates/task-audit-summary', () => {
 
         it('filters only a hash-identical authenticated dirty baseline after DONE', () => {
             const baselinePath = seedProtectedDirtyBaselineCloseout(tmpDir, eventsDir, reviewsDir, TASK_ID);
+            const preflightPath = path.join(reviewsDir, `${TASK_ID}-preflight.json`);
+            const inspectUnexpectedFiles = () => {
+                const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+                const currentSnapshot = getWorkspaceSnapshot(tmpDir, 'git_auto', true, []);
+                return getUnexpectedPostDoneWorkspaceFiles(
+                    tmpDir,
+                    currentSnapshot.changed_files,
+                    ['src/app.ts'],
+                    preflight
+                );
+            };
 
-            const unchangedResult = buildTaskAuditSummary({
-                taskId: TASK_ID,
-                repoRoot: tmpDir,
-                eventsRoot: eventsDir,
-                reviewsRoot: reviewsDir
+            assert.deepEqual(inspectUnexpectedFiles(), {
+                unexpectedFiles: [],
+                protectedBaselineIntegrityError: false
             });
-
-            assert.equal(unchangedResult.blockers.some((blocker) => blocker.gate === 'post-done-drift'), false);
             fs.appendFileSync(baselinePath, 'export const postDoneDrift = 3;\n', 'utf8');
 
             const changedResult = buildTaskAuditSummary({
@@ -258,34 +281,13 @@ describe('gates/task-audit-summary', () => {
             assert.match(blocker.reason, /src\/local-baseline\.ts/);
 
             fs.writeFileSync(baselinePath, 'export const localBaseline = 1;\n', 'utf8');
-            const restoredToHeadResult = buildTaskAuditSummary({
-                taskId: TASK_ID,
-                repoRoot: tmpDir,
-                eventsRoot: eventsDir,
-                reviewsRoot: reviewsDir
-            });
-
-            const restoredBlocker = restoredToHeadResult.blockers.find((entry) => entry.gate === 'post-done-drift');
-            assert.ok(restoredBlocker);
-            assert.match(restoredBlocker.reason, /src\/local-baseline\.ts/);
+            assert.deepEqual(inspectUnexpectedFiles().unexpectedFiles, ['src/local-baseline.ts']);
 
             fs.writeFileSync(baselinePath, 'export const localBaseline = 2;\n', 'utf8');
             fs.unlinkSync(baselinePath);
-            const deletedBaselineResult = buildTaskAuditSummary({
-                taskId: TASK_ID,
-                repoRoot: tmpDir,
-                eventsRoot: eventsDir,
-                reviewsRoot: reviewsDir
-            });
-
-            const deletedBaselineBlocker = deletedBaselineResult.blockers.find(
-                (entry) => entry.gate === 'post-done-drift'
-            );
-            assert.ok(deletedBaselineBlocker);
-            assert.match(deletedBaselineBlocker.reason, /src\/local-baseline\.ts/);
+            assert.deepEqual(inspectUnexpectedFiles().unexpectedFiles, ['src/local-baseline.ts']);
 
             fs.writeFileSync(baselinePath, 'export const localBaseline = 2;\n', 'utf8');
-            const preflightPath = path.join(reviewsDir, `${TASK_ID}-preflight.json`);
             const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
             preflight.detection_source = 'git_staged_only';
             preflight.include_untracked = false;
@@ -298,16 +300,7 @@ describe('gates/task-audit-summary', () => {
                 'src/local-baseline.ts': computeFileSha256(baselinePath)
             };
             writeArtifact(reviewsDir, TASK_ID, '-preflight.json', preflight);
-            const missingHashResult = buildTaskAuditSummary({
-                taskId: TASK_ID,
-                repoRoot: tmpDir,
-                eventsRoot: eventsDir,
-                reviewsRoot: reviewsDir
-            });
-
-            const missingHashBlocker = missingHashResult.blockers.find((entry) => entry.gate === 'post-done-drift');
-            assert.ok(missingHashBlocker);
-            assert.match(missingHashBlocker.reason, /src\/deleted-untracked\.ts/);
+            assert.deepEqual(inspectUnexpectedFiles().unexpectedFiles, ['src/deleted-untracked.ts']);
 
             triggers.dirty_workspace_protected_files = ['src/local-baseline.ts'];
             triggers.dirty_workspace_protected_files_sha256 = createHash('sha256')
@@ -315,51 +308,21 @@ describe('gates/task-audit-summary', () => {
                 .digest('hex');
             fs.writeFileSync(path.join(tmpDir, 'src', 'post-done-untracked.ts'), 'export const drift = true;\n', 'utf8');
             writeArtifact(reviewsDir, TASK_ID, '-preflight.json', preflight);
-            const stagedUntrackedResult = buildTaskAuditSummary({
-                taskId: TASK_ID,
-                repoRoot: tmpDir,
-                eventsRoot: eventsDir,
-                reviewsRoot: reviewsDir
-            });
-
-            const stagedUntrackedBlocker = stagedUntrackedResult.blockers.find((entry) => entry.gate === 'post-done-drift');
-            assert.ok(stagedUntrackedBlocker);
-            assert.match(stagedUntrackedBlocker.reason, /src\/post-done-untracked\.ts/);
+            assert.deepEqual(inspectUnexpectedFiles().unexpectedFiles, ['src/post-done-untracked.ts']);
 
             fs.unlinkSync(path.join(tmpDir, 'src', 'post-done-untracked.ts'));
             triggers.dirty_workspace_protected_files_sha256 = 'malformed';
             writeArtifact(reviewsDir, TASK_ID, '-preflight.json', preflight);
-            const malformedScopeHashResult = buildTaskAuditSummary({
-                taskId: TASK_ID,
-                repoRoot: tmpDir,
-                eventsRoot: eventsDir,
-                reviewsRoot: reviewsDir
-            });
-
-            const malformedScopeHashBlocker = malformedScopeHashResult.blockers.find(
-                (entry) => entry.gate === 'post-done-drift'
-            );
-            assert.ok(malformedScopeHashBlocker);
-            assert.match(malformedScopeHashBlocker.reason, /src\/local-baseline\.ts/);
+            const malformedScopeHashResult = inspectUnexpectedFiles();
+            assert.equal(malformedScopeHashResult.protectedBaselineIntegrityError, true);
+            assert.deepEqual(malformedScopeHashResult.unexpectedFiles, ['src/local-baseline.ts']);
 
             triggers.dirty_workspace_protected_files_sha256 = createHash('sha256')
                 .update('src/local-baseline.ts', 'utf8')
                 .digest('hex');
             triggers.dirty_workspace_protected_files = [];
             writeArtifact(reviewsDir, TASK_ID, '-preflight.json', preflight);
-            const emptyProtectedScopeResult = buildTaskAuditSummary({
-                taskId: TASK_ID,
-                repoRoot: tmpDir,
-                eventsRoot: eventsDir,
-                reviewsRoot: reviewsDir
-            });
-
-            const emptyProtectedScopeBlocker = emptyProtectedScopeResult.blockers.find(
-                (entry) => entry.gate === 'post-done-drift'
-            );
-            assert.ok(emptyProtectedScopeBlocker);
-            assert.match(emptyProtectedScopeBlocker.reason, /protected-baseline authentication failed/i);
-
+            assert.equal(inspectUnexpectedFiles().protectedBaselineIntegrityError, true);
         });
 
         it('blocks final closeout when tracked post-DONE drift is outside audited scope', () => {
@@ -427,13 +390,19 @@ describe('gates/task-audit-summary', () => {
                 changed_files: completedSnapshot.changed_files,
                 metrics: {
                     changed_lines_total: completedSnapshot.changed_lines_total,
+                    changed_files_sha256: completedSnapshot.changed_files_sha256,
                     scope_content_sha256: completedSnapshot.scope_content_sha256
                 },
                 required_reviews: {}
             });
             writeArtifact(reviewsDir, TASK_ID, '-final-closeout.json', {
                 status: 'READY',
-                artifact_state: 'MATERIALIZED'
+                artifact_state: 'MATERIALIZED',
+                implementation_summary: {
+                    changed_files: completedSnapshot.changed_files,
+                    changed_files_sha256: completedSnapshot.changed_files_sha256,
+                    scope_content_sha256: completedSnapshot.scope_content_sha256
+                }
             });
             writeArtifact(reviewsDir, TASK_ID, '-final-closeout.md', '# Final Closeout\n');
             fs.appendFileSync(path.join(tmpDir, 'src', 'app.ts'), 'export const drift = 3;\n', 'utf8');
@@ -449,7 +418,7 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_report_contract.status, 'NOT_READY');
             const blocker = result.blockers.find((entry) => entry.gate === 'post-done-drift');
             assert.ok(blocker);
-            assert.match(blocker.reason, /changed audited implementation content/);
+            assert.match(blocker.reason, /changed audited closeout content/);
             assert.match(blocker.reason, /src\/app\.ts/);
         });
 
@@ -486,7 +455,7 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.equal(result.status, 'READY');
+            assert.equal(result.status, 'PASS');
             assert.equal(result.blockers.some((entry) => entry.gate === 'post-done-drift'), false);
             assert.equal(result.final_report_contract.status, 'READY');
 

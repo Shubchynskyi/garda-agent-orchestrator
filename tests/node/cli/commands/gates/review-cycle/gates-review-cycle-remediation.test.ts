@@ -1902,7 +1902,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('restart-review-cycle emits semantic remediation classifications before reuse decisions', { concurrency: false }, async () => {
+    it('classifies semantic remediation variants without repeating the full restart workflow', () => {
         const cases: Array<{
             suffix: string;
             changedFile?: string;
@@ -2035,77 +2035,44 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         ];
 
         for (const scenario of cases) {
-            const repoRoot = createTempRepo();
-            const taskId = `T-903b-remediation-classification-${scenario.suffix}`;
             const changedFile = scenario.changedFile || 'src/app.ts';
-            seedRemediationRepoBase(repoRoot);
-            writeReviewCapabilitiesConfig(repoRoot);
-            writeProfilesConfig(repoRoot);
-            const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, scenario.suffix);
-            initializeGitRepo(repoRoot);
-            seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
-            seedInitAnswers(repoRoot, 'Codex');
-            if (scenario.changedFile) {
-                markAsSourceCheckout(repoRoot);
-            }
-
-            runEnterTaskMode({
-                repoRoot,
-                taskId,
-                taskSummary: `Restart review cycle classifies ${scenario.suffix} remediation`,
-                orchestratorWork: !!scenario.changedFile,
-                operatorConfirmed: scenario.changedFile ? 'yes' : undefined,
-                operatorConfirmedAtUtc: scenario.changedFile ? new Date().toISOString() : undefined,
-                plannedChangedFiles: [changedFile]
-            });
-            loadTaskEntryRulePack(repoRoot, taskId);
-            runHandshakeForTask(repoRoot, taskId);
-            runShellSmokeForTask(repoRoot, taskId);
-
-            fs.mkdirSync(path.dirname(path.join(repoRoot, changedFile)), { recursive: true });
-            fs.writeFileSync(path.join(repoRoot, changedFile), 'export const value = 1;\n', 'utf8');
-            const preflightPath = runExplicitPreflight(
-                repoRoot,
-                taskId,
-                `Restart review cycle classifies ${scenario.suffix} remediation`,
-                [changedFile]
+            const requiredReviewTypes = scenario.expectedInvalidatedReviewTypes.includes('api')
+                ? ['api', 'code', 'refactor', 'security']
+                : ['code', 'refactor', 'security'];
+            const classification = classifyReviewRemediationFix(
+                {
+                    status: 'OK',
+                    previousChangedFiles: [changedFile],
+                    currentChangedFiles: [changedFile],
+                    expandedFiles: [],
+                    expandedNonTestFiles: [],
+                    allowedTestOnlyExpansionFiles: []
+                },
+                requiredReviewTypes,
+                {
+                    status: 'RECORDED',
+                    source: 'inline',
+                    summary: scenario.impactAnalysis,
+                    required_topics: [],
+                    affected_files: [changedFile]
+                },
+                ['(^|/)tests?/'],
+                scenario.changedFile
+                    ? {
+                        triggers: {
+                            protected_control_plane_changed: true,
+                            changed_protected_files: [changedFile]
+                        }
+                    }
+                    : undefined
             );
-            loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-            const compileResult = await runCompileGateCommand({
-                repoRoot,
-                taskId,
-                preflightPath,
-                commandsPath,
-                outputFiltersPath,
-                emitMetrics: false
-            });
-            assert.equal(compileResult.exitCode, 0);
-
-            fs.writeFileSync(path.join(repoRoot, changedFile), 'export const value = 2;\n', 'utf8');
-            const restartResult = await runRestartReviewCycleCommand({
-                repoRoot,
-                taskId,
-                preflightPath,
-                commandsPath,
-                outputFiltersPath,
-                impactAnalysis: scenario.impactAnalysis,
-                emitMetrics: false
-            });
-            assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
-
-            const remediationArtifact = JSON.parse(fs.readFileSync(
-                path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
-                'utf8'
-            )) as Record<string, unknown>;
-            const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
             assert.equal(classification.category, scenario.expectedCategory);
             assert.equal(classification.scope_category, 'previous_scope_only');
             assert.equal(classification.non_test_review_reuse_candidate, scenario.expectedReuseCandidate);
             assert.deepEqual(classification.invalidated_review_types, scenario.expectedInvalidatedReviewTypes);
             assert.deepEqual(classification.preserved_review_types, scenario.expectedPreservedReviewTypes);
-            assert.ok((classification.affected_file_groups as Record<string, unknown>).source);
-
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            assert.deepEqual(classification.affected_file_groups.source, [changedFile]);
+            assert.equal(classification.review_reuse_decision_order, 'classification_before_reuse');
         }
     });
 

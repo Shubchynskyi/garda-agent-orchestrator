@@ -104,6 +104,9 @@ export {
     formatDecomposedTaskProvenanceNote,
     readDecomposedTaskProvenance
 } from '../../../../src/gates/next-step/next-step-task-queue';
+export {
+    readReadyFinalReportSummary
+} from '../../../../src/gates/next-step/next-step-closeout-status-readers';
 export { assessProjectMemoryImpact, getProjectMemoryImpactLifecycleEvidence } from '../../../../src/gates/project-memory-impact';
 export { buildRulePackArtifact } from '../../../../src/gates/rule-pack';
 export { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';

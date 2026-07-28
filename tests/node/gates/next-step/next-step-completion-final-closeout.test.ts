@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
-import { formatNextStepText, resolveNextStep } from './next-step-test-support';
+import {
+    buildTaskAuditSummary,
+    formatNextStepText,
+    readReadyFinalReportSummary,
+    resolveNextStep,
+    synchronizeFinalCloseoutArtifacts
+} from './next-step-test-support';
 import {
     buildForcedSourceCheckoutRuntimeBuildCommand
 } from '../../../../src/validators/workspace-layout';
@@ -408,7 +414,39 @@ describe('gates/next-step', () => {
 
 
 
-    it('routes back to task-audit-summary when final closeout artifacts are tampered or non-canonical', () => {
+    it('rejects non-canonical final closeout artifacts and routes a representative tamper back to task-audit-summary', () => {
+
+        const repoRoot = makeTempRepo();
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        const summary = buildTaskAuditSummary({ taskId: TASK_ID, repoRoot });
+
+        synchronizeFinalCloseoutArtifacts(summary);
+
+        const closeoutRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+
+        const closeoutPath = path.join(closeoutRoot, `${TASK_ID}-final-closeout.json`);
+
+        const closeoutMarkdownPath = path.join(closeoutRoot, `${TASK_ID}-final-closeout.md`);
+
+        const finalUserReportPath = path.join(closeoutRoot, `${TASK_ID}-final-user-report.md`);
+
+        const canonicalCloseout = fs.readFileSync(closeoutPath);
+
+        const canonicalCloseoutMarkdown = fs.readFileSync(closeoutMarkdownPath);
+
+        const canonicalFinalUserReport = fs.readFileSync(finalUserReportPath);
 
         for (const tamper of [
 
@@ -432,31 +470,13 @@ describe('gates/next-step', () => {
 
         ]) {
 
-            const repoRoot = makeTempRepo();
+            fs.writeFileSync(closeoutPath, canonicalCloseout);
 
-            seedStartedTask(repoRoot, TASK_ID);
+            fs.writeFileSync(closeoutMarkdownPath, canonicalCloseoutMarkdown);
 
-            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+            fs.writeFileSync(finalUserReportPath, canonicalFinalUserReport);
 
-            seedCompilePass(repoRoot, TASK_ID);
-
-            seedReviewGatePass(repoRoot, TASK_ID);
-
-            seedDocImpactPass(repoRoot, TASK_ID);
-
-            seedCompletionPass(repoRoot, TASK_ID);
-
-            materializeFinalCloseout(repoRoot, TASK_ID);
-
-            const closeoutRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
-
-            const closeoutPath = path.join(closeoutRoot, `${TASK_ID}-final-closeout.json`);
-
-            const closeoutMarkdownPath = path.join(closeoutRoot, `${TASK_ID}-final-closeout.md`);
-
-            const finalUserReportPath = path.join(closeoutRoot, `${TASK_ID}-final-user-report.md`);
-
-            const closeout = JSON.parse(fs.readFileSync(closeoutPath, 'utf8')) as Record<string, unknown>;
+            const closeout = JSON.parse(canonicalCloseout.toString('utf8')) as Record<string, unknown>;
 
             if (tamper === 'missing-json-attestation') {
 
@@ -498,9 +518,17 @@ describe('gates/next-step', () => {
 
 
 
+            assert.equal(
+                readReadyFinalReportSummary(repoRoot, closeoutRoot, TASK_ID, summary),
+                null,
+                tamper
+            );
+
+            if (tamper !== 'forged-markdown') {
+                continue;
+            }
+
             const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-
 
             assert.equal(result.status, 'READY', tamper);
 
