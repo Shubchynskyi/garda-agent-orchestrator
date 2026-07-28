@@ -6,6 +6,9 @@ import {
     getReportUiTabActionHook,
     type ReportUiTabActionHooks
 } from '../../../src/reports/report-data-contract';
+import * as reportDataContractBarrel from '../../../src/reports/report-data-contract';
+import * as dashboardBarrel from '../../../src/reports/ui/dashboard';
+import * as directReportUiTabContract from '../../../src/reports/ui/dashboard/report-ui-tab-contract';
 
 interface BackupsTabFixture {
     workflow_config_path: string;
@@ -117,6 +120,23 @@ test('report UI tab contract keeps optional action hooks explicit', async () => 
     assert.equal(getReportUiTabActionHook(broadContract, 'toString'), null);
 });
 
+test('report UI tab contract preserves action identifiers for compatible lookup', () => {
+    const actions = {
+        refresh: () => 'plain',
+        ' refresh ': () => 'spaced'
+    };
+    const contract = defineReportUiTabContract({
+        id: 'backups',
+        label: { key: 'backupsTab', fallback: 'Backups' },
+        status: () => 'present',
+        actions
+    });
+
+    assert.equal(getReportUiTabActionHook(contract, 'refresh'), actions.refresh);
+    assert.equal(getReportUiTabActionHook(contract, ' refresh '), actions[' refresh ']);
+    assert.deepEqual(Object.keys(contract.actions || {}), ['refresh', ' refresh ']);
+});
+
 test('report UI tab contract works without paths or action hooks', () => {
     const contract = defineReportUiTabContract({
         id: 'instructions',
@@ -226,4 +246,64 @@ test('report UI tab contract rejects ambiguous empty and duplicate metadata', ()
         }),
         /unsupported kind 'unsupported'/u
     );
+});
+
+test('report UI tab contract rejects non-function callbacks and actions at runtime', () => {
+    assert.throws(
+        () => defineReportUiTabContract({
+            id: 'backups',
+            label: { key: 'backupsTab', fallback: 'Backups' },
+            status: 'present'
+        } as never),
+        /'backups' status must be a function/u
+    );
+    assert.throws(
+        () => defineReportUiTabContract({
+            id: 'backups',
+            label: { key: 'backupsTab', fallback: 'Backups' },
+            status: () => 'present',
+            paths: [{
+                id: 'config',
+                label: 'Config',
+                kind: 'config',
+                path: 'workflow-config.json'
+            }]
+        } as never),
+        /path 'config' path must be a function/u
+    );
+    assert.throws(
+        () => defineReportUiTabContract({
+            id: 'backups',
+            label: { key: 'backupsTab', fallback: 'Backups' },
+            status: () => 'present',
+            paths: [{
+                id: 'config',
+                label: 'Config',
+                kind: 'config',
+                path: () => 'workflow-config.json',
+                status: 'present'
+            }]
+        } as never),
+        /path 'config' status must be a function/u
+    );
+    assert.throws(
+        () => defineReportUiTabContract({
+            id: 'backups',
+            label: { key: 'backupsTab', fallback: 'Backups' },
+            status: () => 'present',
+            actions: { refresh: 'not-a-function' }
+        } as never),
+        /action 'refresh' must be a function/u
+    );
+});
+
+test('report UI tab helpers remain available through both public barrels', () => {
+    for (const exportName of [
+        'buildReportUiTabMetadata',
+        'defineReportUiTabContract',
+        'getReportUiTabActionHook'
+    ] as const) {
+        assert.equal(reportDataContractBarrel[exportName], directReportUiTabContract[exportName]);
+        assert.equal(dashboardBarrel[exportName], directReportUiTabContract[exportName]);
+    }
 });

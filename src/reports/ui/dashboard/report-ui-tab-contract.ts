@@ -78,6 +78,16 @@ function requirePathKind(value: ReportUiTabPathKind, pathId: string): ReportUiTa
     return value;
 }
 
+function requireFunction<TFunction>(
+    value: TFunction,
+    field: string
+): TFunction {
+    if (typeof value !== 'function') {
+        throw new Error(`Report UI tab ${field} must be a function.`);
+    }
+    return value;
+}
+
 /**
  * Defines and validates a reusable reports UI tab contract without coupling it
  * to either the live dashboard or the static HTML renderer.
@@ -94,6 +104,7 @@ export function defineReportUiTabContract<
         key: requireNonEmpty(contract.label.key, 'label key'),
         fallback: requireNonEmpty(contract.label.fallback, 'label fallback')
     });
+    const status = requireFunction(contract.status, `'${id}' status`);
     const seenPathIds = new Set<string>();
     const paths = Object.freeze((contract.paths || []).map((pathContract) => {
         const pathId = requireNonEmpty(pathContract.id, 'path id');
@@ -101,19 +112,32 @@ export function defineReportUiTabContract<
             throw new Error(`Report UI tab '${id}' contains duplicate path id '${pathId}'.`);
         }
         seenPathIds.add(pathId);
+        const pathResolver = requireFunction(pathContract.path, `path '${pathId}' path`);
+        const statusResolver = pathContract.status === undefined
+            ? undefined
+            : requireFunction(pathContract.status, `path '${pathId}' status`);
         return Object.freeze({
             ...pathContract,
             id: pathId,
             label: requireNonEmpty(pathContract.label, `path '${pathId}' label`),
-            kind: requirePathKind(pathContract.kind, pathId)
+            kind: requirePathKind(pathContract.kind, pathId),
+            path: pathResolver,
+            ...(statusResolver ? { status: statusResolver } : {})
         });
     }));
-    const actions = contract.actions ? Object.freeze({ ...contract.actions }) : undefined;
+    const actionEntries: Array<[string, unknown]> = [];
+    for (const [actionId, action] of Object.entries(contract.actions || {})) {
+        actionEntries.push([actionId, requireFunction(action, `action '${actionId}'`)]);
+    }
+    const actions = contract.actions
+        ? Object.freeze(Object.fromEntries(actionEntries)) as TActions
+        : undefined;
 
     return Object.freeze({
         ...contract,
         id,
         label,
+        status,
         paths,
         ...(actions ? { actions } : {})
     });
