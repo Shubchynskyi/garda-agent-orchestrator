@@ -72,7 +72,7 @@ describe('gate build-review-context CLI flow binding', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('fails closed for unsupported review type while preserving path resolution', async () => {
+    it('accepts an extensible review type while preserving canonical path resolution', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-review-context-cli-binding-invalid-review';
         seedTaskQueue(repoRoot, taskId);
@@ -82,15 +82,18 @@ describe('gate build-review-context CLI flow binding', () => {
         const preflightPath = writePreflight(repoRoot, taskId);
         prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
 
-        await assert.rejects(
-            () => runBuildReviewContextCommand({
-                repoRoot,
-                reviewType: 'unknown-review-type',
-                depth: '2',
-                preflightPath
-            }),
-            /review type|Review type|unknown-review-type/i
+        const result = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'unknown-review-type',
+            depth: '2',
+            preflightPath
+        });
+        const expectedPath = normalizePath(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-unknown-review-type-review-context.json`)
         );
+        assert.equal(result.outputPath, expectedPath);
+        assert.equal(fs.existsSync(result.outputPath), true);
+        assert.ok(result.outputLines.includes(`ReviewContextPath: ${expectedPath}`));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
