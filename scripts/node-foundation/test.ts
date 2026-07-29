@@ -58,6 +58,12 @@ const NODE_TEST_OPTIONS_WITH_VALUE = new Set<string>([
     '--test-shard',
     '--watch-path'
 ]);
+const NODE_TEST_PARTIAL_SELECTION_OPTIONS = [
+    '--test-name-pattern',
+    '--test-skip-pattern',
+    '--test-only',
+    '--test-shard'
+] as const;
 
 function normalizeCliPath(value: string): string {
     return value.replace(/\\/g, '/');
@@ -197,6 +203,18 @@ function splitForwardedTestArgs(forwardedArgs: string[]): {
         requestedShardLogDir,
         requestedDurationFile
     };
+}
+
+function findPartialTestSelectionOption(optionArgs: readonly string[]): string | null {
+    for (const arg of optionArgs) {
+        const matchedOption = NODE_TEST_PARTIAL_SELECTION_OPTIONS.find(
+            (option) => arg === option || arg.startsWith(`${option}=`)
+        );
+        if (matchedOption) {
+            return matchedOption;
+        }
+    }
+    return null;
 }
 
 function buildCompiledTestLookup(buildResult: BuildResult, compiledTestFiles: string[]): Map<string, string> {
@@ -1032,7 +1050,8 @@ async function runSingleNodeTestProcess(
     selectedTestFiles: string[],
     requestedShardConcurrency: number | null,
     requestedShardLogDir: string | null,
-    telemetryPath: string
+    telemetryPath: string,
+    updateDurationTelemetry: boolean
 ): Promise<number> {
     const shardLogDir = resolveShardLogDir(repoRoot, buildRoot, requestedShardLogDir);
     const runtimeConfig = resolveNodeTestShardRuntimeConfig(requestedShardConcurrency);
@@ -1053,7 +1072,9 @@ async function runSingleNodeTestProcess(
     );
     diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
     diagnoseFailedShardSummary(result);
-    await recordTestDurationTelemetry(telemetryPath, buildResult, [result]);
+    if (updateDurationTelemetry) {
+        await recordTestDurationTelemetry(telemetryPath, buildResult, [result]);
+    }
     return result.exitCode;
 }
 
@@ -1421,7 +1442,8 @@ async function runShardedNodeTestProcesses(
     requestedShardConcurrency: number | null,
     requestedShardLogDir: string | null,
     telemetryPath: string,
-    telemetry: TestDurationTelemetry
+    telemetry: TestDurationTelemetry,
+    updateDurationTelemetry: boolean
 ): Promise<number> {
     const executionPlan = splitNodeFoundationTestExecutionPlan(buildResult, selectedTestFiles, shardCount, telemetry);
     const parallelShards = executionPlan.parallelFiles.length === 0
@@ -1515,7 +1537,9 @@ async function runShardedNodeTestProcesses(
         diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
         diagnoseFailedShardSummary(result);
     }
-    const updatedTelemetry = await recordTestDurationTelemetry(telemetryPath, buildResult, results);
+    const updatedTelemetry = updateDurationTelemetry
+        ? await recordTestDurationTelemetry(telemetryPath, buildResult, results)
+        : null;
     if (updatedTelemetry) {
         printShardScheduleComparison(
             summarizeNodeFoundationShardSchedule(
@@ -1559,6 +1583,14 @@ export async function runNodeFoundationTests(): Promise<number> {
     const selectedTestFiles = resolveSelectedTestFiles(buildResult, compiledTestFiles, fileTargets);
     const telemetryPath = resolveDurationTelemetryPath(buildResult.repoRoot, requestedDurationFile);
     const telemetry = readTestDurationTelemetry(telemetryPath);
+    const partialTestSelectionOption = findPartialTestSelectionOption(optionArgs);
+    const updateDurationTelemetry = partialTestSelectionOption == null;
+    if (partialTestSelectionOption) {
+        console.log(formatNodeFoundationTestMarker(
+            NODE_FOUNDATION_TEST_MARKERS.DURATION_TELEMETRY_UPDATE_SKIPPED,
+            `reason=partial_test_selection option=${partialTestSelectionOption}`
+        ));
+    }
 
     if (compiledTestFiles.length === 0) {
         throw new Error('No Node foundation tests were found under .node-build/tests/node.');
@@ -1574,7 +1606,8 @@ export async function runNodeFoundationTests(): Promise<number> {
             selectedTestFiles,
             requestedShardConcurrency,
             requestedShardLogDir,
-            telemetryPath
+            telemetryPath,
+            updateDurationTelemetry
         )
         : await runShardedNodeTestProcesses(
             repoRoot,
@@ -1586,7 +1619,8 @@ export async function runNodeFoundationTests(): Promise<number> {
             requestedShardConcurrency,
             requestedShardLogDir,
             telemetryPath,
-            telemetry
+            telemetry,
+            updateDurationTelemetry
         );
 
     if (exitCode !== 0) {

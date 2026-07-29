@@ -1423,6 +1423,129 @@ test('runNodeFoundationTests refreshes compact duration telemetry from successfu
     }
 });
 
+test('runNodeFoundationTests preserves full-file duration telemetry during partial pattern runs', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalShardEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const originalConsoleLog = console.log;
+    const durationFile = path.join(buildResult.repoRoot, 'duration-telemetry.json');
+    const initialTelemetry = {
+        schema_version: 1,
+        updated_at_utc: new Date(0).toISOString(),
+        entries: {
+            'tests/node/cli/commands/gates.test.ts': {
+                file: 'tests/node/cli/commands/gates.test.ts',
+                duration_ms: 5000,
+                samples: 4,
+                updated_at_utc: new Date(0).toISOString()
+            }
+        }
+    };
+    const observedLogs: string[] = [];
+    let spawnCount = 0;
+
+    try {
+        delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+        fs.writeFileSync(durationFile, `${JSON.stringify(initialTelemetry, null, 2)}\n`, 'utf8');
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, _args: readonly string[] = []) => {
+            spawnCount += 1;
+            return createCompletingNodeTestChild();
+        }) as typeof childProcess.spawn;
+        console.log = (...args: unknown[]) => {
+            observedLogs.push(args.map(String).join(' '));
+        };
+
+        const partialRuns = [
+            {
+                args: ['--test-name-pattern', 'status sync', '--garda-shards', '2'],
+                option: '--test-name-pattern',
+                expectedSpawnCount: 2
+            },
+            {
+                args: ['--test-name-pattern=status sync'],
+                option: '--test-name-pattern',
+                expectedSpawnCount: 1
+            },
+            {
+                args: ['--test-skip-pattern', 'status sync', '--garda-shards', '2'],
+                option: '--test-skip-pattern',
+                expectedSpawnCount: 2
+            },
+            {
+                args: ['--test-skip-pattern=status sync'],
+                option: '--test-skip-pattern',
+                expectedSpawnCount: 1
+            },
+            {
+                args: ['--test-only'],
+                option: '--test-only',
+                expectedSpawnCount: 1
+            },
+            {
+                args: ['--test-shard', '1/2', 'tests/node/cli/commands/gates.test.ts'],
+                option: '--test-shard',
+                expectedSpawnCount: 1
+            },
+            {
+                args: ['--test-shard=1/2', 'tests/node/cli/commands/gates.test.ts'],
+                option: '--test-shard',
+                expectedSpawnCount: 1
+            }
+        ];
+        for (const partialRun of partialRuns) {
+            const spawnCountBeforeRun = spawnCount;
+            process.argv = [
+                'node',
+                'scripts/node-foundation/test.js',
+                ...partialRun.args,
+                '--garda-duration-file',
+                durationFile
+            ];
+            assert.equal(await testModule.runNodeFoundationTests(), 0);
+            assert.equal(spawnCount - spawnCountBeforeRun, partialRun.expectedSpawnCount);
+            assert.deepEqual(JSON.parse(fs.readFileSync(durationFile, 'utf8')), initialTelemetry);
+            assert.ok(observedLogs.some((line) => (
+                line.includes(
+                    'NODE_FOUNDATION_TEST_DURATION_TELEMETRY_UPDATE_SKIPPED '
+                    + `reason=partial_test_selection option=${partialRun.option}`
+                )
+            )));
+        }
+
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            'tests/node/cli/commands/gates.test.ts',
+            '--garda-duration-file',
+            durationFile
+        ];
+        const spawnCountBeforeFullFileRun = spawnCount;
+        assert.equal(await testModule.runNodeFoundationTests(), 0);
+        assert.equal(spawnCount - spawnCountBeforeFullFileRun, 1);
+        const updatedTelemetry = JSON.parse(fs.readFileSync(durationFile, 'utf8')) as {
+            entries: Record<string, { samples: number; }>;
+        };
+        assert.equal(updatedTelemetry.entries['tests/node/cli/commands/gates.test.ts'].samples, 5);
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = originalShardEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        console.log = originalConsoleLog;
+        cleanup();
+    }
+});
+
 test('duration telemetry writer preserves concurrent single-file updates', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const durationFile = path.join(buildResult.repoRoot, 'duration-telemetry.json');
