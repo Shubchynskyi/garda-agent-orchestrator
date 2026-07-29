@@ -51,6 +51,7 @@ import {
     buildCompletionReviewOrderBlocker,
     buildLifecycleGateOutcomes,
     getLifecycleGates,
+    hasCurrentCycleReviewProgress,
     hasCurrentCycleProjectMemoryImpactEvent,
     readOrderedTaskEvents,
     resolveFullSuiteValidationRequirementForCurrentCycle
@@ -474,7 +475,10 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     if (!hasCompletionPass) {
         blockers.push(...reviewSnapshot.requiredReviewBlockers);
     }
-    if (reviewSnapshot.reviewCoverageSummary.status === 'INCOMPLETE') {
+    if (
+        reviewSnapshot.reviewCoverageSummary.status === 'INCOMPLETE'
+        && hasCurrentCycleReviewProgress(events)
+    ) {
         blockers.push({
             gate: 'review-coverage',
             reason: reviewSnapshot.reviewCoverageSummary.visible_summary_line

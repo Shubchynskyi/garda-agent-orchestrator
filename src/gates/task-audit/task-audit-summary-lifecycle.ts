@@ -183,6 +183,50 @@ function readTaskEventSequence(event: TaskAuditEvent): number | null {
     return Number.isInteger(sequence) ? sequence : null;
 }
 
+export function hasCurrentCycleReviewProgress(events: ReadonlyArray<TaskAuditEvent>): boolean {
+    let latestCompileIndex = -1;
+    let latestCompileSequence: number | null = null;
+    for (let index = 0; index < events.length; index += 1) {
+        const eventType = String(events[index].event_type || '').trim().toUpperCase();
+        if (eventType !== 'COMPILE_GATE_PASSED' && eventType !== 'COMPILE_GATE_FAILED') {
+            continue;
+        }
+        const eventSequence = readTaskEventSequence(events[index]);
+        if (
+            latestCompileIndex === -1
+            || (
+                eventSequence != null
+                && latestCompileSequence != null
+                && eventSequence > latestCompileSequence
+            )
+            || (
+                (eventSequence == null || latestCompileSequence == null)
+                && index > latestCompileIndex
+            )
+        ) {
+            latestCompileIndex = index;
+            latestCompileSequence = eventSequence;
+        }
+    }
+    if (latestCompileIndex === -1) {
+        return true;
+    }
+    return events.some((event, index) => {
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        const isReviewOrCompletionEvent = eventType.startsWith('REVIEW_')
+            || eventType.startsWith('REVIEWER_')
+            || eventType === 'COMPLETION_GATE_PASSED'
+            || eventType === 'COMPLETION_GATE_FAILED';
+        if (!isReviewOrCompletionEvent) {
+            return false;
+        }
+        const eventSequence = readTaskEventSequence(event);
+        return latestCompileSequence != null && eventSequence != null
+            ? eventSequence > latestCompileSequence
+            : index > latestCompileIndex;
+    });
+}
+
 function taskEventOccursAfter(candidate: TaskAuditEvent, anchor: TaskAuditEvent, currentCycle: TaskCycleBindingSnapshot | null): boolean {
     const candidateSequence = readTaskEventSequence(candidate);
     const anchorSequence = readTaskEventSequence(anchor);
@@ -420,5 +464,3 @@ export function buildLifecycleGateOutcomes(
 
     return { gates, blockers };
 }
-
-

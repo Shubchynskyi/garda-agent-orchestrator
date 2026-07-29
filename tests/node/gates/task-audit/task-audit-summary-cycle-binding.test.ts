@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getUnexpectedPostDoneWorkspaceFiles } from '../../../../src/gates/task-audit/task-audit-summary-drift';
+import { hasCurrentCycleReviewProgress } from '../../../../src/gates/task-audit/task-audit-summary-lifecycle';
 
 import {
     fs,
@@ -77,8 +78,104 @@ function seedProtectedDirtyBaselineCloseout(
     return baselinePath;
 }
 
+function lifecycleEvent(eventType: string, taskSequence?: number): Record<string, unknown> {
+    return {
+        event_type: eventType,
+        ...(taskSequence == null
+            ? {}
+            : {
+                integrity: {
+                    task_sequence: taskSequence
+                }
+            })
+    };
+}
+
 
 describe('gates/task-audit-summary', () => {
+    describe('hasCurrentCycleReviewProgress', () => {
+        it('prefers task sequence over array or timestamp order', () => {
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('REVIEW_PHASE_STARTED', 11),
+                lifecycleEvent('COMPILE_GATE_PASSED', 10)
+            ]), true);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('COMPILE_GATE_PASSED', 10),
+                lifecycleEvent('REVIEW_PHASE_STARTED', 9)
+            ]), false);
+        });
+
+        it('falls back to event order when sequence evidence is absent', () => {
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('REVIEW_PHASE_STARTED'),
+                lifecycleEvent('COMPILE_GATE_PASSED')
+            ]), false);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('COMPILE_GATE_PASSED'),
+                lifecycleEvent('REVIEW_PHASE_STARTED')
+            ]), true);
+        });
+
+        it('falls back deterministically for mixed sequence evidence and recognizes reviewer activity', () => {
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('REVIEW_PHASE_STARTED'),
+                lifecycleEvent('COMPILE_GATE_PASSED', 10)
+            ]), false);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('COMPILE_GATE_PASSED', 10),
+                lifecycleEvent('REVIEW_PHASE_STARTED')
+            ]), true);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('REVIEW_PHASE_STARTED', 11),
+                lifecycleEvent('COMPILE_GATE_PASSED')
+            ]), false);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('COMPILE_GATE_PASSED'),
+                lifecycleEvent('REVIEW_PHASE_STARTED', 11)
+            ]), true);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('COMPILE_GATE_PASSED', 20),
+                lifecycleEvent('REVIEWER_DELEGATION_STARTED', 21)
+            ]), true);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('COMPILE_GATE_PASSED', 20),
+                lifecycleEvent('REVIEWER_INVOCATION_ATTESTED', 21)
+            ]), true);
+        });
+
+        it('uses the latest compile boundary after failed and successful attempts', () => {
+            const recompiled = [
+                lifecycleEvent('COMPILE_GATE_FAILED', 4),
+                lifecycleEvent('REVIEW_PHASE_STARTED', 5),
+                lifecycleEvent('COMPILE_GATE_PASSED', 6)
+            ];
+            assert.equal(hasCurrentCycleReviewProgress(recompiled), false);
+            assert.equal(hasCurrentCycleReviewProgress([
+                ...recompiled,
+                lifecycleEvent('REVIEW_PHASE_STARTED', 7)
+            ]), true);
+        });
+
+        it('recognizes review restarts and completion attempts only after the current compile', () => {
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('REVIEW_CYCLE_RESTARTED', 3),
+                lifecycleEvent('COMPILE_GATE_PASSED', 4)
+            ]), false);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('COMPILE_GATE_PASSED', 4),
+                lifecycleEvent('REVIEW_CYCLE_RESTARTED', 5)
+            ]), true);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('COMPILE_GATE_PASSED', 4),
+                lifecycleEvent('COMPLETION_GATE_FAILED', 5)
+            ]), true);
+            assert.equal(hasCurrentCycleReviewProgress([
+                lifecycleEvent('COMPILE_GATE_PASSED', 4),
+                lifecycleEvent('COMPLETION_GATE_PASSED', 5)
+            ]), true);
+        });
+    });
+
     let tmpDir: string;
     let eventsDir: string;
     let reviewsDir: string;
@@ -1075,6 +1172,24 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.status, 'INCOMPLETE');
             assert.equal(result.gates.find((gate) => gate.gate === 'required-reviews-check')?.status, 'MISSING');
             assert.equal(result.blockers.find((blocker) => blocker.gate === 'code-review'), undefined);
+            assert.equal(result.blockers.find((blocker) => blocker.gate === 'review-coverage'), undefined);
+
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:07.000Z',
+                task_id: TASK_ID,
+                event_type: 'REVIEW_PHASE_STARTED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'The current review phase started.'
+            });
+            const reviewStartedResult = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            assert.equal(reviewStartedResult.status, 'BLOCKED');
+            assert.ok(reviewStartedResult.blockers.some((blocker) => blocker.gate === 'review-coverage'));
         });
 
         it('keeps skipped full-suite evidence non-blocking when the task-bound cycle disabled the mode', () => {
