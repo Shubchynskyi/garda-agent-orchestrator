@@ -10,7 +10,7 @@ import {
     buildNodeFoundationShardFailureDiagnostics,
     hasGreenNodeTestSummaryContent
 } from '../../src/core/node-foundation-test-shard-log-analysis';
-import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } from './build';
+import { buildNodeFoundation, buildPublishRuntime, BuildResult } from './build';
 
 const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
 const NODE_FOUNDATION_TEST_SHARD_LOG_DIR_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_LOG_DIR';
@@ -403,16 +403,45 @@ function estimateWindowsCommandLineArgChars(arg: string): number {
     return serializedChars + (pendingBackslashes * 2);
 }
 
-function estimateNodeTestArgChars(optionArgs: string[], selectedTestFiles: string[]): number {
-    const args = [process.execPath, '--test', ...optionArgs, ...selectedTestFiles];
+function buildNodeTestFileArgs(repoRoot: string, selectedTestFiles: readonly string[]): string[] {
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    return selectedTestFiles.map((file) => {
+        const absoluteFile = path.isAbsolute(file)
+            ? path.resolve(file)
+            : path.resolve(resolvedRepoRoot, file);
+        const relativeFile = path.relative(resolvedRepoRoot, absoluteFile);
+        const isOutsideRepo = (
+            relativeFile === '..'
+            || relativeFile.startsWith(`..${path.sep}`)
+            || path.isAbsolute(relativeFile)
+        );
+        return relativeFile && !isOutsideRepo ? relativeFile : absoluteFile;
+    });
+}
+
+function estimateNodeTestArgChars(
+    repoRoot: string,
+    optionArgs: string[],
+    selectedTestFiles: string[]
+): number {
+    const args = [
+        process.execPath,
+        '--test',
+        ...optionArgs,
+        ...buildNodeTestFileArgs(repoRoot, selectedTestFiles)
+    ];
     return args.reduce(
         (total, arg, index) => total + estimateWindowsCommandLineArgChars(arg) + (index === 0 ? 0 : 1),
         0
     );
 }
 
-function assertNodeTestArgCharsWithinLimit(optionArgs: string[], selectedTestFiles: string[]): void {
-    const estimatedArgChars = estimateNodeTestArgChars(optionArgs, selectedTestFiles);
+function assertNodeTestArgCharsWithinLimit(
+    repoRoot: string,
+    optionArgs: string[],
+    selectedTestFiles: string[]
+): void {
+    const estimatedArgChars = estimateNodeTestArgChars(repoRoot, optionArgs, selectedTestFiles);
     if (estimatedArgChars <= NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT) {
         return;
     }
@@ -422,11 +451,11 @@ function assertNodeTestArgCharsWithinLimit(optionArgs: string[], selectedTestFil
     );
 }
 
-function resolveAutoShardCount(selectedTestFiles: string[], optionArgs: string[]): number {
+function resolveAutoShardCount(repoRoot: string, selectedTestFiles: string[], optionArgs: string[]): number {
     if (selectedTestFiles.length <= 1) {
         return 1;
     }
-    const estimatedArgChars = estimateNodeTestArgChars(optionArgs, selectedTestFiles);
+    const estimatedArgChars = estimateNodeTestArgChars(repoRoot, optionArgs, selectedTestFiles);
     if (estimatedArgChars <= NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT) {
         return 1;
     }
@@ -437,6 +466,7 @@ function resolveAutoShardCount(selectedTestFiles: string[], optionArgs: string[]
 }
 
 function resolveNodeFoundationShardCount(
+    repoRoot: string,
     selectedTestFiles: string[],
     optionArgs: string[],
     _fileTargets: string[],
@@ -455,7 +485,7 @@ function resolveNodeFoundationShardCount(
 
     const rawValue = String(process.env[NODE_FOUNDATION_TEST_SHARDS_ENV] || '').trim();
     if (!rawValue) {
-        return resolveAutoShardCount(selectedTestFiles, optionArgs);
+        return resolveAutoShardCount(repoRoot, selectedTestFiles, optionArgs);
     }
 
     const parsed = parsePositiveInteger(rawValue, NODE_FOUNDATION_TEST_SHARDS_ENV);
@@ -772,14 +802,17 @@ function assignCommandLineSafeNodeFoundationTestShards(
     const fileWeights = buildTestFileWeights(buildResult, selectedTestFiles, telemetry);
     let shardCount = Math.min(
         selectedTestFiles.length,
-        Math.max(requestedShardCount, resolveAutoShardCount(selectedTestFiles, optionArgs))
+        Math.max(
+            requestedShardCount,
+            resolveAutoShardCount(buildResult.repoRoot, selectedTestFiles, optionArgs)
+        )
     );
     while (true) {
         const shards = assignNodeFoundationTestShardWeights(fileWeights, shardCount);
         if (
             shardCount >= selectedTestFiles.length
             || shards.every((shard) => (
-                estimateNodeTestArgChars(optionArgs, shard.files)
+                estimateNodeTestArgChars(buildResult.repoRoot, optionArgs, shard.files)
                 <= NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT
             ))
         ) {
@@ -789,9 +822,13 @@ function assignCommandLineSafeNodeFoundationTestShards(
     }
 }
 
-function assertNodeFoundationShardCommandsWithinLimit(optionArgs: string[], shards: string[][]): void {
+function assertNodeFoundationShardCommandsWithinLimit(
+    repoRoot: string,
+    optionArgs: string[],
+    shards: string[][]
+): void {
     for (const shardFiles of shards) {
-        assertNodeTestArgCharsWithinLimit(optionArgs, shardFiles);
+        assertNodeTestArgCharsWithinLimit(repoRoot, optionArgs, shardFiles);
     }
 }
 
@@ -826,15 +863,56 @@ function buildTestFileWeights(
     selectedTestFiles: string[],
     telemetry: TestDurationTelemetry
 ): TestFileWeight[] {
-    return selectedTestFiles.map((file) => {
+    const fallbackDescriptors = selectedTestFiles.map((file) => {
+        let fileSize = 1;
+        let partitionSuitePath: string | null = null;
+        let partitionSuiteSize = 0;
+        try {
+            fileSize = Math.max(1, fs.statSync(file).size);
+            if (fileSize <= 1_024) {
+                const source = fs.readFileSync(file, 'utf8');
+                const match = source.match(/\brequire\(\s*['"](\.[^'"]+-suite)['"]\s*\)/u);
+                if (match) {
+                    const unresolvedSuitePath = path.resolve(path.dirname(file), match[1]);
+                    const candidateSuitePath = path.extname(unresolvedSuitePath)
+                        ? unresolvedSuitePath
+                        : `${unresolvedSuitePath}.js`;
+                    const relativeSuitePath = path.relative(buildResult.buildRoot, candidateSuitePath);
+                    if (
+                        relativeSuitePath
+                        && relativeSuitePath !== '..'
+                        && !relativeSuitePath.startsWith(`..${path.sep}`)
+                        && !path.isAbsolute(relativeSuitePath)
+                    ) {
+                        partitionSuitePath = candidateSuitePath;
+                        partitionSuiteSize = Math.max(1, fs.statSync(candidateSuitePath).size);
+                    }
+                }
+            }
+        } catch {
+            fileSize = 1;
+            partitionSuitePath = null;
+            partitionSuiteSize = 0;
+        }
+        return { file, fileSize, partitionSuitePath, partitionSuiteSize };
+    });
+    const partitionCounts = new Map<string, number>();
+    for (const descriptor of fallbackDescriptors) {
+        if (descriptor.partitionSuitePath) {
+            partitionCounts.set(
+                descriptor.partitionSuitePath,
+                (partitionCounts.get(descriptor.partitionSuitePath) ?? 0) + 1
+            );
+        }
+    }
+    return fallbackDescriptors.map((descriptor) => {
+        const { file } = descriptor;
         const key = compiledTestFileToTelemetryKey(buildResult, file);
         const entry = telemetry.entries[key];
-        let fallbackSize: number;
-        try {
-            fallbackSize = Math.max(1, fs.statSync(file).size);
-        } catch {
-            fallbackSize = 1;
-        }
+        const partitionCount = descriptor.partitionSuitePath
+            ? partitionCounts.get(descriptor.partitionSuitePath) ?? 1
+            : 1;
+        const fallbackSize = descriptor.fileSize + Math.ceil(descriptor.partitionSuiteSize / partitionCount);
         const durationMs = entry && Number.isFinite(entry.duration_ms) && entry.duration_ms > 0
             ? entry.duration_ms
             : null;
@@ -1243,7 +1321,7 @@ function runNodeTestShard(
     runtimeConfig: NodeTestShardRuntimeConfig
 ): Promise<NodeTestShardResult> {
     const shardOptionArgs = buildNodeTestShardOptionArgs(optionArgs, runtimeConfig);
-    assertNodeTestArgCharsWithinLimit(shardOptionArgs, shardFiles);
+    assertNodeTestArgCharsWithinLimit(repoRoot, shardOptionArgs, shardFiles);
     return new Promise((resolve, reject) => {
         fs.mkdirSync(shardLogDir, { recursive: true });
         const logPath = path.join(shardLogDir, `shard-${String(shardIndex + 1).padStart(2, '0')}-of-${String(shardCount).padStart(2, '0')}.log`);
@@ -1264,7 +1342,11 @@ function runNodeTestShard(
             `${shardIndex + 1}/${shardCount} ${logPath}`
         ));
         const childCommand = process.execPath;
-        const childArgs = ['--test', ...shardOptionArgs, ...shardFiles];
+        const childArgs = [
+            '--test',
+            ...shardOptionArgs,
+            ...buildNodeTestFileArgs(repoRoot, shardFiles)
+        ];
         const child = childProcess.spawn(childCommand, childArgs, {
             cwd: repoRoot,
             detached: process.platform !== 'win32',
@@ -1538,7 +1620,7 @@ async function runShardedNodeTestProcesses(
         [...parallelShards, ...isolatedShards],
         telemetry
     );
-    assertNodeFoundationShardCommandsWithinLimit(shardOptionArgs, [
+    assertNodeFoundationShardCommandsWithinLimit(buildResult.repoRoot, shardOptionArgs, [
         ...scheduledShards,
         ...executionPlan.serialFiles.map((file) => [file])
     ]);
@@ -1646,11 +1728,11 @@ async function runShardedNodeTestProcesses(
 }
 
 export async function runNodeFoundationTests(): Promise<number> {
-    const repoRoot: string = getRepoRoot();
     // Some lifecycle/update tests seed sync-surface fixtures from the current
     // publish-runtime bundle, so refresh dist before compiling .node-build.
     buildPublishRuntime();
     const buildResult: BuildResult = buildNodeFoundation();
+    const repoRoot = buildResult.repoRoot;
     const compiledTestFiles: string[] = collectCompiledNodeFoundationTestFiles(buildResult);
     const forwardedArgs = process.argv.slice(2);
     const {
@@ -1677,7 +1759,13 @@ export async function runNodeFoundationTests(): Promise<number> {
         throw new Error('No Node foundation tests were found under .node-build/tests/node.');
     }
 
-    const shardCount = resolveNodeFoundationShardCount(selectedTestFiles, optionArgs, fileTargets, requestedShardCount);
+    const shardCount = resolveNodeFoundationShardCount(
+        repoRoot,
+        selectedTestFiles,
+        optionArgs,
+        fileTargets,
+        requestedShardCount
+    );
     const exitCode = shardCount === 1
         ? await runSingleNodeTestProcess(
             repoRoot,
