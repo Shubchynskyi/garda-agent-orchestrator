@@ -6,7 +6,7 @@ import {
     describe,
     fileSha256ForTest,
     fs,
-    it,
+    it as nodeIt,
     launchArtifactInputArgsForTest,
     path,
     prepareReviewerLaunchForTest,
@@ -19,6 +19,7 @@ import {
     seedPromptBoundReviewFixture,
     seedRoutedReviewerLaunchFixture
 } from './gates-command-review-launch-fixtures';
+import { createPartitionedTestRegistrar } from '../../gate-test-partition';
 import {
     buildCompleteReviewerLaunchCommand,
     buildRecordReviewResultCommand
@@ -43,6 +44,12 @@ import { GARDA_NO_DELEGATE_ENV } from '../../../../../../src/core/review-delegat
 import {
     withFilesystemLockAsync
 } from '../../../../../../src/gate-runtime/timeline/task-events-locking';
+
+const it = createPartitionedTestRegistrar(
+    nodeIt,
+    'GARDA_REVIEW_LAUNCH_COMPLETION_PART',
+    6
+);
 
 interface ReviewerLaunchChildResult {
     exitCode: number | null;
