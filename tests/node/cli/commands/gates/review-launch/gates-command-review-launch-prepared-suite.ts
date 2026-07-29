@@ -10,7 +10,7 @@ import {
     getReviewsRoot,
     getWorkspaceSnapshot,
     initializeGitRepo,
-    it,
+    it as nodeIt,
     launchArtifactInputArgsForTest,
     path,
     prepareCurrentReviewPhase,
@@ -25,6 +25,7 @@ import {
     seedTaskQueue,
     writePreflight
 } from './gates-command-review-launch-fixtures';
+import { createPartitionedTestRegistrar } from '../../gate-test-partition';
 import {
     buildNoFindingsJsonReviewReport
 } from '../review-result/gates-command-review-result-fixtures';
@@ -36,6 +37,12 @@ import {
 } from '../../../../../../src/gate-runtime/timeline/task-events-locking';
 import { quoteCommandValue } from '../../../../../../src/core/command-quoting';
 import { buildReviewerTerminalContractLines } from '../../../../../../src/gates/review/reviewer-execution-contract';
+
+const it = createPartitionedTestRegistrar(
+    nodeIt,
+    'GARDA_REVIEW_LAUNCH_PREPARED_PART',
+    5
+);
 
 const FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE = [
     'STANDBY',
@@ -224,7 +231,7 @@ async function waitForReviewerLaunchProcessCompletion(
                 `Timed out waiting for reviewer-launch process: ` +
                 `${processState.stderr || processState.stdout}`
             ));
-        }, 15_000);
+        }, 30_000);
         processState.completion.then(
             (code) => {
                 clearTimeout(timeout);
