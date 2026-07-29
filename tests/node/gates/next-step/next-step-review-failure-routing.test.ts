@@ -13,6 +13,9 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
+import {
+    seedAuthenticatedReviewerLaunchFixture
+} from './next-step-reviewer-launch-fixtures';
 import { runIntermediateCommandCommand } from '../../../../src/cli/commands/gates';
 import {
     buildReviewCoverageContract,
@@ -521,7 +524,20 @@ function writeReviewEvidence(
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
     const artifactText = `# ${reviewType} review\n\n${options.body || ''}## Verdict\n${verdictToken}\n`;
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
-    const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+    const authenticatedLaunch = options.includeLaunchArtifact !== false
+        ? seedAuthenticatedReviewerLaunchFixture({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewerIdentity: `agent:${reviewType}-reviewer`,
+            reviewContextPath,
+            reviewTreeStateSha256,
+            appendEvent,
+            includeInvocation: false
+        })
+        : null;
+    const routeIntegrity = authenticatedLaunch?.routeIntegrity
+        ?? appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
         review_type: reviewType,
         reviewer_execution_mode: 'delegated_subagent',
         reviewer_session_id: `agent:${reviewType}-reviewer`
@@ -532,8 +548,8 @@ function writeReviewEvidence(
     const launchCompletedAtUtc = '2026-04-28T00:00:12.000Z';
     const invocationAttestedAtUtc = '2026-04-28T00:00:13.000Z';
     const reviewResultRecordedAtUtc = '2026-04-28T00:00:30.000Z';
-    let reviewerLaunchArtifactSha256 = '';
-    if (options.includeLaunchArtifact !== false) {
+    let reviewerLaunchArtifactSha256 = authenticatedLaunch?.launchArtifactSha256 || '';
+    if (options.includeLaunchArtifact !== false && !authenticatedLaunch) {
         const launchBindingSha256 = 'c'.repeat(64);
         const reviewerLaunchArtifactPath = path.join(
             repoRoot,
@@ -1331,6 +1347,7 @@ describe('gates/next-step', () => {
             reviewer_identity: 'agent:code-reviewer',
             review_context_sha256: String(launchArtifact.review_context_sha256 || ''),
             routing_event_sha256: String(launchArtifact.routing_event_sha256 || ''),
+            reviewer_launch_attempt_id: String(launchArtifact.reviewer_launch_attempt_id || ''),
             reviewer_launch_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
             reviewer_launch_artifact_sha256: failedLaunchArtifactSha256,
             rejected_reviewer_launch_artifact_sha256: rejectedLaunchArtifactSha256,
@@ -1433,14 +1450,12 @@ describe('gates/next-step', () => {
             launchArtifact.launch_failure_stage = 'provider_invocation';
             launchArtifact.launch_failure_reason = 'Provider rejected delegated reviewer invocation.';
             if (launchInputMode === 'launch_artifact_path') {
-                const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
-                writeJson(launchInputArtifactPath, {
-                    schema_version: 1,
-                    task_id: TASK_ID,
-                    review_type: 'code',
-                    handoff: 'authenticated provider launch input'
-                });
-                const launchInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+                const launchInputArtifactPath = String(
+                    launchArtifact.reviewer_launch_input_artifact_path || ''
+                );
+                const launchInputArtifactSha256 = String(
+                    launchArtifact.reviewer_launch_input_artifact_sha256 || ''
+                );
                 launchArtifact.launch_input_mode = launchInputMode;
                 launchArtifact.launch_input_sha256 = launchInputArtifactSha256;
                 launchArtifact.launch_input_artifact_path = normalizeForTimeline(launchInputArtifactPath);
@@ -1458,6 +1473,7 @@ describe('gates/next-step', () => {
                 reviewer_identity: 'agent:code-reviewer',
                 review_context_sha256: String(launchArtifact.review_context_sha256 || ''),
                 routing_event_sha256: String(launchArtifact.routing_event_sha256 || ''),
+                reviewer_launch_attempt_id: String(launchArtifact.reviewer_launch_attempt_id || ''),
                 provider_invocation_id: String(launchArtifact.provider_invocation_id || ''),
                 delegation_started_at_utc: String(launchArtifact.delegation_started_at_utc || ''),
                 launch_failure_stage: 'provider_invocation',
