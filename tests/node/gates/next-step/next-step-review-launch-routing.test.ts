@@ -513,7 +513,17 @@ function writeReviewEvidence(
             review_context_sha256: sha256Text(reviewContextText),
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
-            reviewer_launch_artifact_path: reviewerLaunchArtifactPath
+            ...preparedReviewerLaunchPathFields(repoRoot, taskId, reviewType)
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewerIdentity: `agent:${reviewType}-reviewer`,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
         });
         appendDelegationStartedEventForTest({
             repoRoot,
@@ -539,6 +549,7 @@ function writeReviewEvidence(
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields,
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: `test-${reviewType}-invocation`,
             launch_prepared_at_utc: launchPreparedAtUtc,
@@ -696,6 +707,132 @@ function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<
     };
 }
 
+function reviewerLaunchFixturePaths(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    explicitLaunchArtifactPath?: string
+): {
+    launchArtifactPath: string;
+    launchInputArtifactPath: string;
+} {
+    const launchArtifactPath = explicitLaunchArtifactPath || path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            reviewType,
+            'reviewer-launch.json'
+        );
+    return {
+        launchArtifactPath,
+        launchInputArtifactPath: path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json')
+    };
+}
+
+function reviewerLaunchAttemptIdForTest(taskId: string, reviewType: string): string {
+    return `test-${taskId}-${reviewType}-launch-attempt`;
+}
+
+function preparedReviewerLaunchPathFields(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    explicitLaunchArtifactPath?: string
+): Record<string, unknown> {
+    const fixturePaths = reviewerLaunchFixturePaths(
+        repoRoot,
+        taskId,
+        reviewType,
+        explicitLaunchArtifactPath
+    );
+    return {
+        reviewer_launch_attempt_id: reviewerLaunchAttemptIdForTest(taskId, reviewType),
+        reviewer_launch_artifact_path: fixturePaths.launchArtifactPath.replace(/\\/g, '/'),
+        reviewer_launch_input_artifact_path: fixturePaths.launchInputArtifactPath.replace(/\\/g, '/')
+    };
+}
+
+function pinPreparedReviewerLaunchInputForTest(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    reviewContextPath: string;
+    routingEventSha256: string;
+    launchBindingSha256: string;
+    preparedLaunchEventSha256: string;
+    launchArtifactPath?: string;
+}): {
+    launchArtifactPath: string;
+    launchInputArtifactPath: string;
+    launchInputArtifactSha256: string;
+    controlArtifactFields: Record<string, unknown>;
+} {
+    const fixturePaths = reviewerLaunchFixturePaths(
+        options.repoRoot,
+        options.taskId,
+        options.reviewType,
+        options.launchArtifactPath
+    );
+    const reviewerLaunchAttemptId = reviewerLaunchAttemptIdForTest(options.taskId, options.reviewType);
+    const launchInputEvidence = launchInputEvidenceFixture(options.taskId, options.reviewType);
+    writeJson(fixturePaths.launchInputArtifactPath, {
+        schema_version: 1,
+        evidence_type: 'delegated_reviewer_launch_input',
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: options.reviewerIdentity,
+        review_context_sha256: fileSha256(options.reviewContextPath),
+        routing_event_sha256: options.routingEventSha256,
+        launch_binding_sha256: options.launchBindingSha256,
+        reviewer_launch_attempt_id: reviewerLaunchAttemptId,
+        prepared_launch_event_sha256: options.preparedLaunchEventSha256,
+        copy_paste_reviewer_launch_prompt: launchInputEvidence.copy_paste_reviewer_launch_prompt,
+        copy_paste_reviewer_launch_prompt_sha256:
+            launchInputEvidence.copy_paste_reviewer_launch_prompt_sha256
+    });
+    const launchInputArtifactSha256 = fileSha256(fixturePaths.launchInputArtifactPath);
+    const pinnedIntegrity = appendEvent(
+        options.repoRoot,
+        options.taskId,
+        'REVIEWER_LAUNCH_INPUT_PINNED',
+        'INFO',
+        {
+            task_id: options.taskId,
+            review_type: options.reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: options.reviewerIdentity,
+            reviewer_identity: options.reviewerIdentity,
+            review_context_sha256: fileSha256(options.reviewContextPath),
+            routing_event_sha256: options.routingEventSha256,
+            launch_binding_sha256: options.launchBindingSha256,
+            reviewer_launch_attempt_id: reviewerLaunchAttemptId,
+            prepared_launch_event_sha256: options.preparedLaunchEventSha256,
+            reviewer_launch_artifact_path: fixturePaths.launchArtifactPath.replace(/\\/g, '/'),
+            reviewer_launch_input_artifact_path: fixturePaths.launchInputArtifactPath.replace(/\\/g, '/'),
+            reviewer_launch_input_artifact_sha256: launchInputArtifactSha256
+        }
+    );
+    return {
+        ...fixturePaths,
+        launchInputArtifactSha256,
+        controlArtifactFields: {
+            reviewer_launch_attempt_id: reviewerLaunchAttemptId,
+            reviewer_launch_input_artifact_path: fixturePaths.launchInputArtifactPath.replace(/\\/g, '/'),
+            reviewer_launch_input_artifact_sha256: launchInputArtifactSha256,
+            reviewer_launch_input_pinned_event_sha256: pinnedIntegrity.event_sha256,
+            reviewer_launch_input_pinned_event_task_sequence: pinnedIntegrity.task_sequence,
+            copy_paste_reviewer_launch_prompt: launchInputEvidence.copy_paste_reviewer_launch_prompt,
+            copy_paste_reviewer_launch_prompt_sha256:
+                launchInputEvidence.copy_paste_reviewer_launch_prompt_sha256
+        }
+    };
+}
+
 function appendDelegationStartedEventForTest(options: {
     repoRoot: string;
     taskId: string;
@@ -719,6 +856,7 @@ function appendDelegationStartedEventForTest(options: {
         routing_event_sha256: options.routingEventSha256,
         launch_binding_sha256: options.launchBindingSha256,
         prepared_launch_event_sha256: options.preparedLaunchEventSha256,
+        reviewer_launch_attempt_id: reviewerLaunchAttemptIdForTest(options.taskId, options.reviewType),
         provider_invocation_id: options.providerInvocationId,
         delegation_started_at_utc: delegationStartedAtUtc,
         launched_at_utc: delegationStartedAtUtc
@@ -744,6 +882,7 @@ function appendProviderFailureEventForTest(options: {
         reviewer_identity: options.reviewerIdentity,
         review_context_sha256: fileSha256(options.reviewContextPath),
         routing_event_sha256: options.routingEventSha256,
+        reviewer_launch_attempt_id: reviewerLaunchAttemptIdForTest(options.taskId, options.reviewType),
         provider_invocation_id: options.providerInvocationId,
         delegation_started_at_utc: delegationStartedAtUtc,
         provider_failure_reason: 'provider returned launch failure before review output'
@@ -774,6 +913,7 @@ function appendLaunchCompletedEventForTest(options: {
         routing_event_sha256: options.routingEventSha256,
         reviewer_launch_artifact_path: options.launchArtifactPath,
         reviewer_launch_artifact_sha256: fileSha256(options.launchArtifactPath),
+        reviewer_launch_attempt_id: reviewerLaunchAttemptIdForTest(options.taskId, options.reviewType),
         provider_invocation_id: options.providerInvocationId,
         delegation_started_at_utc: delegationStartedAtUtc,
         launched_at_utc: delegationStartedAtUtc,
@@ -808,7 +948,18 @@ function seedCompletedReviewerLaunchAndInvocation(
         reviewer_identity: reviewerIdentity,
         review_context_sha256: fileSha256(reviewContextPath),
         routing_event_sha256: routeIntegrity.event_sha256,
-        launch_binding_sha256: launchBindingSha256
+        launch_binding_sha256: launchBindingSha256,
+        ...preparedReviewerLaunchPathFields(repoRoot, taskId, reviewType)
+    });
+    const inputPin = pinPreparedReviewerLaunchInputForTest({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewerIdentity,
+        reviewContextPath,
+        routingEventSha256: routeIntegrity.event_sha256,
+        launchBindingSha256,
+        preparedLaunchEventSha256: preparedIntegrity.event_sha256
     });
     appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_STARTED', 'INFO', {
         task_id: taskId,
@@ -820,11 +971,12 @@ function seedCompletedReviewerLaunchAndInvocation(
         routing_event_sha256: routeIntegrity.event_sha256,
         launch_binding_sha256: launchBindingSha256,
         prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+        reviewer_launch_attempt_id: reviewerLaunchAttemptIdForTest(taskId, reviewType),
         provider_invocation_id: `test-${reviewType}-invocation`,
         delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
         launched_at_utc: '2026-04-28T00:00:00.000Z'
     });
-    const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, reviewType, 'reviewer-launch.json');
+    const launchArtifactPath = inputPin.launchArtifactPath;
     writeJson(launchArtifactPath, {
         schema_version: 1,
         evidence_type: attestationState === 'launched'
@@ -839,6 +991,7 @@ function seedCompletedReviewerLaunchAndInvocation(
         routing_event_sha256: routeIntegrity.event_sha256,
         launch_binding_sha256: launchBindingSha256,
         prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+        ...inputPin.controlArtifactFields,
         launch_tool: 'test-subagent-spawn',
         provider_invocation_id: `test-${reviewType}-invocation`,
         delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
@@ -1133,6 +1286,16 @@ describe('gates/next-step', () => {
         seedCompilePass(repoRoot, TASK_ID);
         writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
         const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const alternateLaunchArtifactPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            TASK_ID,
+            'code',
+            'alternate-reviewer-launch.json'
+        );
         const routeIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
             review_type: 'code',
             reviewer_execution_mode: 'delegated_subagent',
@@ -1147,7 +1310,24 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(
+                repoRoot,
+                TASK_ID,
+                'code',
+                alternateLaunchArtifactPath
+            )
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256,
+            launchArtifactPath: alternateLaunchArtifactPath
         });
         appendDelegationStartedEventForTest({
             repoRoot,
@@ -1160,8 +1340,8 @@ describe('gates/next-step', () => {
             preparedLaunchEventSha256: preparedIntegrity.event_sha256,
             providerInvocationId: 'test-invocation-123'
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
-        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const launchArtifactPath = inputPin.launchArtifactPath;
+        const launchInputArtifactPath = inputPin.launchInputArtifactPath;
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch_preparation',
@@ -1174,21 +1354,16 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
             launch_input_mode: 'launch_artifact_path',
-            reviewer_launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
-            prepared_launch_event_sha256: preparedIntegrity.event_sha256
-        });
-        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
-        const pinnedInputArtifactSha256 = fileSha256(launchInputArtifactPath);
-        writeJson(launchArtifactPath, {
-            ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
-            reviewer_launch_input_artifact_sha256: pinnedInputArtifactSha256
+            prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'record-reviewer-delegation-started');
         assert.ok(result.reason.includes('launch metadata'));
-        assert.ok(result.reason.includes('Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or reviewer-facing ReviewerLaunchInputArtifactPath as an opaque handoff'));
+        assert.ok(result.reason.includes('Launch the delegated reviewer with exactly one opaque handoff mode'));
+        assert.ok(result.reason.includes('Do not mix the two launch-input modes'));
         assert.ok(result.reason.includes('pass the ReviewerLaunchInputArtifactSha256 value to the CLI flag --launch-input-sha256'));
         assert.ok(result.reason.includes('do not invent a --launch-input-artifact-sha256 flag'));
         assert.ok(result.reason.includes('Do not reconstruct reviewer prompts from memory'));
@@ -1197,7 +1372,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Launch-input artifact path, launch-input hash, review type, and fork-context are already gate-owned command fragments when printed'));
         assert.ok(result.reason.includes('ReviewerOneShotLaunchHint: launch a fresh delegated reviewer once with the exact opaque handoff'));
         assert.ok(result.reason.includes(`ReviewerLaunchInputArtifactPath: ${launchInputArtifactPath.replace(/\\/g, '/')}`));
-        assert.ok(result.reason.includes(`launch_input_sha256=${fileSha256(launchInputArtifactPath)}`));
+        assert.ok(result.reason.includes(`launch_input_sha256=${inputPin.launchInputArtifactSha256}`));
         assert.ok(result.reason.includes('ReviewerLaunchArtifactPath is main-agent control metadata'));
         assert.equal(result.reason.includes('this handshake is not review evidence'), false);
         assert.ok(result.reason.includes('Do not open or summarize'));
@@ -1210,12 +1385,35 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('launch artifact=prepared'));
         assert.ok(result.reason.includes('invocation=blocked until launch completion'));
         assertNoDefaultReviewerReservationGuidance(`${result.reason}\n${result.commands.map((entry) => entry.command).join('\n')}`);
-        assert.equal(result.commands[0].label, 'Record delegated reviewer start');
+        assert.equal(result.commands.length, 2);
+        assert.equal(result.commands[0].label, 'Record delegated reviewer start from reviewer-facing launch artifact');
         assert.ok(result.commands[0].command.includes('gate record-reviewer-delegation-started'));
         assert.ok(result.commands[0].command.includes('--reviewer-identity "<agent:resolved-provider-reviewer-id-from-delegated-agent>"'));
         assert.ok(result.commands[0].command.includes('--provider-invocation-id "<provider-owned invocation id from delegated reviewer launch result>"'));
         assert.ok(result.commands[0].command.includes('--attestation-source "<provider-owned attestation source from delegated reviewer launch result>"'));
         assert.ok(result.commands[0].command.includes('--launch-input-mode "launch_artifact_path"'));
+        assert.equal(result.commands[1].label, 'Record delegated reviewer start from exact copy-paste prompt');
+        assert.ok(result.commands[1].command.includes('gate record-reviewer-delegation-started'));
+        assert.ok(result.commands[1].command.includes('--launch-input-mode "copy_paste_prompt"'));
+        assert.equal(result.commands[1].command.includes('--launch-input-artifact-path'), false);
+        const normalizedAlternateLaunchArtifactPath = alternateLaunchArtifactPath
+            .replace(`${repoRoot}${path.sep}`, '')
+            .replace(/\\/g, '/');
+        assert.ok(result.commands[0].command.replace(/\\/g, '/').includes(
+            `--reviewer-launch-artifact-path "${normalizedAlternateLaunchArtifactPath}"`
+        ));
+        assert.ok(result.commands[1].command.replace(/\\/g, '/').includes(
+            `--reviewer-launch-artifact-path "${normalizedAlternateLaunchArtifactPath}"`
+        ));
+        assert.equal(
+            result.commands.some((entry) => entry.command.replace(/\\/g, '/').includes(
+                `runtime/tmp/reviews/${TASK_ID}/code/reviewer-launch.json`
+            )),
+            false
+        );
+        assert.ok(result.commands[1].command.includes(
+            `--launch-input-sha256 "${String(inputPin.controlArtifactFields.copy_paste_reviewer_launch_prompt_sha256)}"`
+        ));
         assert.ok(result.known_non_blocking_signals.some((signal) => (
             signal.id === 'reviewer_provider_owned_placeholder_values'
             && signal.action_required === false
@@ -1224,7 +1422,7 @@ describe('gates/next-step', () => {
         assert.equal(formatNextStepText(result).includes('KnownNonBlockingSignals:'), false);
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
         assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
-        assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${fileSha256(launchInputArtifactPath)}"`));
+        assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${inputPin.launchInputArtifactSha256}"`));
         assert.ok(!result.commands[0].command.includes('--launch-input-artifact-sha256'));
         assert.ok(!result.commands[0].command.includes('--launched-at-utc'));
     });
@@ -1251,10 +1449,20 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
-        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
+        });
+        const launchArtifactPath = inputPin.launchArtifactPath;
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch_preparation',
@@ -1266,15 +1474,9 @@ describe('gates/next-step', () => {
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
-            reviewer_launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields,
             ...launchInputEvidenceFixture(TASK_ID, 'code')
-        });
-        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
-        const pinnedInputArtifactSha256 = fileSha256(launchInputArtifactPath);
-        writeJson(launchArtifactPath, {
-            ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
-            reviewer_launch_input_artifact_sha256: pinnedInputArtifactSha256
         });
         const prematureReviewOutputPath = path.join(
             repoRoot,
@@ -1311,7 +1513,7 @@ describe('gates/next-step', () => {
         assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-completion-gate.json`)), false);
     });
 
-    it('routes to complete-reviewer-launch with immutable launch input artifact evidence after delegation starts', () => {
+    it('routes copy-paste delegation start to an exact copy-paste completion command', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
         seedStartedTask(repoRoot, TASK_ID);
@@ -1333,10 +1535,32 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
-        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
+        });
+        appendDelegationStartedEventForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256,
+            providerInvocationId: 'test-invocation-123'
+        });
+        const launchArtifactPath = inputPin.launchArtifactPath;
+        const launchInputArtifactPath = inputPin.launchInputArtifactPath;
         const copyPastePrompt = 'Delegated code reviewer launch prompt.';
         const copyPastePromptSha256 = sha256Text(copyPastePrompt);
         writeJson(launchArtifactPath, {
@@ -1355,20 +1579,20 @@ describe('gates/next-step', () => {
             copy_paste_reviewer_launch_prompt: copyPastePrompt,
             copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256
         });
-        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
-        const pinnedInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+        const pinnedInputArtifactSha256 = inputPin.launchInputArtifactSha256;
+        const pinnedCopyPastePromptSha256 = String(
+            inputPin.controlArtifactFields.copy_paste_reviewer_launch_prompt_sha256
+        );
         writeJson(launchArtifactPath, {
             ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
+            ...inputPin.controlArtifactFields,
             attestation_state: 'delegation_started',
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
             launched_at_utc: '2026-04-28T00:00:00.000Z',
-            launch_input_mode: 'launch_artifact_path',
-            launch_input_sha256: pinnedInputArtifactSha256,
-            launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
-            launch_input_artifact_sha256: pinnedInputArtifactSha256,
-            prepared_reviewer_launch_artifact_sha256: pinnedInputArtifactSha256,
+            launch_input_mode: 'copy_paste_prompt',
+            launch_input_sha256: pinnedCopyPastePromptSha256,
             reviewer_launch_input_artifact_sha256: pinnedInputArtifactSha256,
             fork_context: false
         });
@@ -1391,8 +1615,9 @@ describe('gates/next-step', () => {
         )));
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
         assert.ok(normalizedCommand.includes(`--reviewer-launch-artifact-path "garda-agent-orchestrator/runtime/tmp/reviews/${TASK_ID}/code/reviewer-launch.json"`));
-        assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
-        assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${pinnedInputArtifactSha256}"`));
+        assert.ok(result.commands[0].command.includes('--launch-input-mode "copy_paste_prompt"'));
+        assert.equal(normalizedCommand.includes('--launch-input-artifact-path'), false);
+        assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${pinnedCopyPastePromptSha256}"`));
         assert.ok(!result.commands[0].command.includes('--launch-input-artifact-sha256'));
     });
 
@@ -1418,7 +1643,18 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
         });
         appendDelegationStartedEventForTest({
             repoRoot,
@@ -1440,8 +1676,8 @@ describe('gates/next-step', () => {
             routingEventSha256: routeIntegrity.event_sha256,
             providerInvocationId: 'test-invocation-123'
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
-        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const launchArtifactPath = inputPin.launchArtifactPath;
+        const launchInputArtifactPath = inputPin.launchInputArtifactPath;
         const copyPastePrompt = 'Delegated code reviewer launch prompt.';
         const copyPastePromptSha256 = sha256Text(copyPastePrompt);
         writeJson(launchArtifactPath, {
@@ -1460,10 +1696,10 @@ describe('gates/next-step', () => {
             copy_paste_reviewer_launch_prompt: copyPastePrompt,
             copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256
         });
-        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
-        const pinnedInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+        const pinnedInputArtifactSha256 = inputPin.launchInputArtifactSha256;
         writeJson(launchArtifactPath, {
             ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
+            ...inputPin.controlArtifactFields,
             attestation_state: 'delegation_started',
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
@@ -1515,7 +1751,18 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
         });
         appendDelegationStartedEventForTest({
             repoRoot,
@@ -1528,8 +1775,8 @@ describe('gates/next-step', () => {
             preparedLaunchEventSha256: preparedIntegrity.event_sha256,
             providerInvocationId: 'test-invocation-123'
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
-        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const launchArtifactPath = inputPin.launchArtifactPath;
+        const launchInputArtifactPath = inputPin.launchInputArtifactPath;
         const reviewOutputPath = path.join(path.dirname(launchArtifactPath), 'review-output-from-orphaned-launch.md');
         appendEvent(repoRoot, TASK_ID, 'CONTROLLER_SESSION_RESUMED', 'INFO', {
             task_id: TASK_ID,
@@ -1554,10 +1801,10 @@ describe('gates/next-step', () => {
             copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
             review_output_path: reviewOutputPath.replace(/\\/g, '/')
         });
-        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
-        const pinnedInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+        const pinnedInputArtifactSha256 = inputPin.launchInputArtifactSha256;
         writeJson(launchArtifactPath, {
             ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
+            ...inputPin.controlArtifactFields,
             attestation_state: 'delegation_started',
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
@@ -2051,10 +2298,32 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, reviewType)
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, reviewType, 'reviewer-launch.json');
-        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType,
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
+        });
+        appendDelegationStartedEventForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType,
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256,
+            providerInvocationId: 'test-refactor-invocation'
+        });
+        const launchArtifactPath = inputPin.launchArtifactPath;
+        const launchInputArtifactPath = inputPin.launchInputArtifactPath;
         const copyPastePrompt = 'Delegated refactor reviewer launch prompt.';
         const copyPastePromptSha256 = sha256Text(copyPastePrompt);
         writeJson(launchArtifactPath, {
@@ -2073,10 +2342,10 @@ describe('gates/next-step', () => {
             copy_paste_reviewer_launch_prompt: copyPastePrompt,
             copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256
         });
-        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
-        const launchInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+        const launchInputArtifactSha256 = inputPin.launchInputArtifactSha256;
         writeJson(launchArtifactPath, {
             ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
+            ...inputPin.controlArtifactFields,
             attestation_state: 'delegation_started',
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-refactor-invocation',
@@ -2122,23 +2391,31 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
-        });
-        appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_STARTED', 'INFO', {
-            task_id: TASK_ID,
-            review_type: 'code',
-            reviewer_execution_mode: 'delegated_subagent',
-            reviewer_session_id: reviewerIdentity,
-            reviewer_identity: reviewerIdentity,
-            review_context_sha256: fileSha256(reviewContextPath),
-            routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
-            prepared_launch_event_sha256: preparedIntegrity.event_sha256,
-            provider_invocation_id: 'test-invocation-123',
-            delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
-            launched_at_utc: '2026-04-28T00:00:00.000Z'
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
+        });
+        appendDelegationStartedEventForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256,
+            providerInvocationId: 'test-invocation-123'
+        });
+        const launchArtifactPath = inputPin.launchArtifactPath;
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -2151,6 +2428,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields,
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
@@ -2186,7 +2464,7 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('gate record-review-invocation'));
     });
 
-    it('does not accept completed launch artifacts without parent completion telemetry', () => {
+    it('routes completed launch artifacts without parent completion telemetry to exact completion recovery', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
         seedStartedTask(repoRoot, TASK_ID);
@@ -2209,7 +2487,18 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
         });
         appendDelegationStartedEventForTest({
             repoRoot,
@@ -2222,7 +2511,7 @@ describe('gates/next-step', () => {
             preparedLaunchEventSha256: preparedIntegrity.event_sha256,
             providerInvocationId: 'test-invocation-123'
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = inputPin.launchArtifactPath;
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -2235,6 +2524,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields,
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
@@ -2246,8 +2536,16 @@ describe('gates/next-step', () => {
         });
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'prepare-reviewer-launch', result.reason);
-        assert.ok(result.reason.includes('launch artifact=missing or stale'));
+        assert.equal(result.next_gate, 'complete-reviewer-launch', result.reason);
+        assert.ok(result.reason.includes('durable launched control artifact'));
+        assert.ok(result.reason.includes('matching REVIEWER_LAUNCH_COMPLETED lifecycle event is absent'));
+        assert.ok(result.commands[0].command.includes('--provider-invocation-id "test-invocation-123"'));
+        assert.ok(result.commands[0].command.includes('--launch-input-mode "copy_paste_prompt"'));
+        assert.ok(result.commands[0].command.includes(
+            `--launch-input-sha256 "${String(launchInputEvidenceFixture(TASK_ID, 'code').launch_input_sha256)}"`
+        ));
+        assert.equal(result.commands[0].command.includes('--launch-input-artifact-path'), false);
+        assert.ok(!result.commands[0].command.includes('prepare-reviewer-launch'));
         assert.ok(!result.commands.some((entry) => /record-review-result|required-reviews-check|completion-gate|task-audit-summary/u.test(entry.command)));
     });
 
@@ -2273,7 +2571,18 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
         });
         appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_STARTED', 'INFO', {
             task_id: TASK_ID,
@@ -2289,7 +2598,7 @@ describe('gates/next-step', () => {
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
             launched_at_utc: '2026-04-28T00:00:00.000Z'
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = inputPin.launchArtifactPath;
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -2302,6 +2611,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields,
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             launched_at_utc: '2026-04-28T00:00:00.000Z',
@@ -2368,7 +2678,18 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
         });
         appendDelegationStartedEventForTest({
             repoRoot,
@@ -2381,7 +2702,7 @@ describe('gates/next-step', () => {
             preparedLaunchEventSha256: preparedIntegrity.event_sha256,
             providerInvocationId: 'test-invocation-123'
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = inputPin.launchArtifactPath;
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -2394,6 +2715,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields,
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             launched_at_utc: '2026-04-28T00:00:00.000Z',
@@ -2430,7 +2752,18 @@ describe('gates/next-step', () => {
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
         });
         appendDelegationStartedEventForTest({
             repoRoot,
@@ -2443,7 +2776,7 @@ describe('gates/next-step', () => {
             preparedLaunchEventSha256: preparedIntegrity.event_sha256,
             providerInvocationId: 'test-invocation-123'
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = inputPin.launchArtifactPath;
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -2456,6 +2789,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields,
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
@@ -2582,7 +2916,18 @@ describe('gates/next-step', () => {
             reviewer_identity: plannedReviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity: plannedReviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
         });
         appendDelegationStartedEventForTest({
             repoRoot,
@@ -2595,7 +2940,7 @@ describe('gates/next-step', () => {
             preparedLaunchEventSha256: preparedIntegrity.event_sha256,
             providerInvocationId: 'test-planned-rebind-invocation'
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = inputPin.launchArtifactPath;
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -2610,6 +2955,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields,
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-planned-rebind-invocation',
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
@@ -2686,7 +3032,18 @@ describe('gates/next-step', () => {
             reviewer_identity: plannedReviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            ...preparedReviewerLaunchPathFields(repoRoot, TASK_ID, 'code')
+        });
+        const inputPin = pinPreparedReviewerLaunchInputForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity: plannedReviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256
         });
         appendDelegationStartedEventForTest({
             repoRoot,
@@ -2699,7 +3056,7 @@ describe('gates/next-step', () => {
             preparedLaunchEventSha256: preparedIntegrity.event_sha256,
             providerInvocationId: 'test-mismatched-rebind-invocation'
         });
-        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = inputPin.launchArtifactPath;
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -2714,6 +3071,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            ...inputPin.controlArtifactFields,
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-mismatched-rebind-invocation',
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',

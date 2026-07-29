@@ -3811,12 +3811,15 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         const delegatedReviewerIdentity = reviewerIdentityBinding.delegatedReviewerIdentity;
         const reviewerIdentity = reviewerIdentityBinding.reviewerIdentity;
         const routingReviewerIdentity = null;
-        const launchArtifactPath = buildDefaultReviewScratchCommandPath(
+        const defaultLaunchArtifactPath = buildDefaultReviewScratchCommandPath(
             repoRoot,
             taskId,
             reviewType,
             'reviewer-launch.json'
         );
+        const currentLaunchArtifactPath = launchArtifactEvidence.path
+            ? toRepoDisplayPath(repoRoot, launchArtifactEvidence.path)
+            : defaultLaunchArtifactPath;
         const reviewRoutingChain = buildReviewGateChainStatusSummary({
             repoRoot,
             eventsRoot,
@@ -3923,32 +3926,86 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 ),
                 prepareLaunch: buildCommand(
                     'Prepare delegated reviewer launch metadata',
-                    buildPrepareReviewerLaunchCommand(repoRoot, cliPrefix, taskId, reviewType, routingReviewerIdentity, launchArtifactPath, taskModePath)
-                ),
-                recordDelegationStarted: buildCommand(
-                    'Record delegated reviewer start',
-                    buildRecordReviewerDelegationStartedCommand({
+                    buildPrepareReviewerLaunchCommand(
+                        repoRoot,
                         cliPrefix,
                         taskId,
                         reviewType,
-                        reviewerIdentity: delegatedReviewerIdentity,
-                        launchArtifactPath,
-                        launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
-                        launchInputArtifactSha256: launchArtifactEvidence.launchInputArtifactSha256 || launchArtifactEvidence.sha256
-                    })
+                        routingReviewerIdentity,
+                        defaultLaunchArtifactPath,
+                        taskModePath
+                    )
+                ),
+                recordDelegationStartedChoices: [
+                    buildCommand(
+                        'Record delegated reviewer start from reviewer-facing launch artifact',
+                        buildRecordReviewerDelegationStartedCommand({
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewerIdentity: delegatedReviewerIdentity,
+                            launchArtifactPath: currentLaunchArtifactPath,
+                            launchInputMode: 'launch_artifact_path',
+                            launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
+                            launchInputSha256: launchArtifactEvidence.launchInputArtifactSha256,
+                            providerInvocationId: launchArtifactEvidence.providerInvocationId,
+                            controllerInvocationId: launchArtifactEvidence.controllerInvocationId,
+                            attestationSource: launchArtifactEvidence.attestationSource
+                        })
+                    ),
+                    buildCommand(
+                        'Record delegated reviewer start from exact copy-paste prompt',
+                        buildRecordReviewerDelegationStartedCommand({
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewerIdentity: delegatedReviewerIdentity,
+                            launchArtifactPath: currentLaunchArtifactPath,
+                            launchInputMode: 'copy_paste_prompt',
+                            launchInputSha256:
+                                launchArtifactEvidence.copyPasteReviewerLaunchPromptSha256,
+                            providerInvocationId: launchArtifactEvidence.providerInvocationId,
+                            controllerInvocationId: launchArtifactEvidence.controllerInvocationId,
+                            attestationSource: launchArtifactEvidence.attestationSource
+                        })
+                    )
+                ],
+                recordDelegationStarted: buildCommand(
+                    'Record delegated reviewer start',
+                    launchArtifactEvidence.launchInputMode
+                        ? buildRecordReviewerDelegationStartedCommand({
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewerIdentity: delegatedReviewerIdentity,
+                            launchArtifactPath: currentLaunchArtifactPath,
+                            launchInputMode: launchArtifactEvidence.launchInputMode,
+                            launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
+                            launchInputSha256: launchArtifactEvidence.launchInputSha256,
+                            providerInvocationId: launchArtifactEvidence.providerInvocationId,
+                            controllerInvocationId: launchArtifactEvidence.controllerInvocationId,
+                            attestationSource: launchArtifactEvidence.attestationSource
+                        })
+                        : navigatorCommand
                 ),
                 completeLaunch: buildCommand(
                     'Complete delegated reviewer launch metadata',
-                    buildCompleteReviewerLaunchCommand({
-                        cliPrefix,
-                        taskId,
-                        reviewType,
-                        reviewerIdentity: delegatedReviewerIdentity,
-                        launchArtifactPath,
-                        launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
-                        launchInputArtifactSha256: launchArtifactEvidence.launchInputArtifactSha256 || launchArtifactEvidence.sha256,
-                        recordInvocation: true
-                    })
+                    launchArtifactEvidence.launchInputMode
+                        ? buildCompleteReviewerLaunchCommand({
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewerIdentity: delegatedReviewerIdentity,
+                            launchArtifactPath: currentLaunchArtifactPath,
+                            launchInputMode: launchArtifactEvidence.launchInputMode,
+                            launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
+                            launchInputSha256: launchArtifactEvidence.launchInputSha256,
+                            providerInvocationId: launchArtifactEvidence.providerInvocationId,
+                            controllerInvocationId: launchArtifactEvidence.controllerInvocationId,
+                            attestationSource: launchArtifactEvidence.attestationSource,
+                            recordInvocation: true
+                        })
+                        : navigatorCommand
                 ),
                 recoverOrphanedLaunch: buildCommand(
                     'Restart/supersede orphaned delegated reviewer launch',
@@ -3986,7 +4043,15 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 ),
                 recordInvocation: buildCommand(
                     'Record delegated reviewer launch attestation',
-                    buildRecordReviewerInvocationCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, launchArtifactPath, taskModePath)
+                    buildRecordReviewerInvocationCommand(
+                        repoRoot,
+                        cliPrefix,
+                        taskId,
+                        reviewType,
+                        reviewerIdentity,
+                        currentLaunchArtifactPath,
+                        taskModePath
+                    )
                 ),
                 recordResult: buildCommand(
                     launchArtifactEvidence.reviewOutputPath

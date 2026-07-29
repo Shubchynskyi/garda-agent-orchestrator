@@ -9,7 +9,9 @@ import {
 export type DelegatedReviewLaunchArtifactState =
     'missing_or_invalid'
     | 'prepared'
+    | 'delegation_start_recovery'
     | 'delegation_started'
+    | 'completion_recovery'
     | 'provider_failed'
     | 'orphaned'
     | 'launched';
@@ -64,6 +66,7 @@ export interface DelegatedReviewReadinessRouteOptions {
     commands: {
         recordRouting: DelegatedReviewReadinessCommand;
         prepareLaunch: DelegatedReviewReadinessCommand;
+        recordDelegationStartedChoices: DelegatedReviewReadinessCommand[];
         recordDelegationStarted: DelegatedReviewReadinessCommand;
         completeLaunch: DelegatedReviewReadinessCommand;
         recoverOrphanedLaunch: DelegatedReviewReadinessCommand;
@@ -104,7 +107,9 @@ export function resolveDelegatedReviewReadinessRoute(
         && (
             options.launchArtifactState === 'launched'
             || options.launchArtifactState === 'prepared'
+            || options.launchArtifactState === 'delegation_start_recovery'
             || options.launchArtifactState === 'delegation_started'
+            || options.launchArtifactState === 'completion_recovery'
             || options.launchArtifactState === 'provider_failed'
             || options.launchArtifactState === 'orphaned'
             || (
@@ -148,12 +153,25 @@ export function resolveDelegatedReviewReadinessRoute(
                 title: `Record '${options.reviewType}' delegated reviewer start.`,
                 reason:
                     `Required review '${options.reviewType}' has prepared launch metadata for the current routing event and review context. ` +
-                    `Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or reviewer-facing ReviewerLaunchInputArtifactPath as an opaque handoff; treat ReviewerLaunchArtifactPath as main-agent control metadata only. Then immediately run record-reviewer-delegation-started with the provider/controller invocation id so the gate records the real delegation start timestamp before the reviewer returns. For launch_artifact_path mode, pass the ReviewerLaunchInputArtifactSha256 value to the CLI flag --launch-input-sha256; do not invent a --launch-input-artifact-sha256 flag. Do not reconstruct reviewer prompts from memory. ` +
+                    `Launch the delegated reviewer with exactly one opaque handoff mode: either the exact generated CopyPasteReviewerLaunchPrompt or the reviewer-facing ReviewerLaunchInputArtifactPath; treat ReviewerLaunchArtifactPath as main-agent control metadata only. Then run the matching mutually-exclusive record-reviewer-delegation-started command with the provider/controller invocation id so the gate records the real delegation start timestamp before the reviewer returns. Do not mix the two launch-input modes. For launch_artifact_path mode, pass the ReviewerLaunchInputArtifactSha256 value to the CLI flag --launch-input-sha256; do not invent a --launch-input-artifact-sha256 flag. Do not reconstruct reviewer prompts from memory. ` +
                     `Provider-owned placeholders in the command are --reviewer-identity, --provider-invocation-id, and --attestation-source; replace them with the delegated reviewer launch result after provider launch. If the provider exposes one subagent id, use that resolved id for both --reviewer-identity and --provider-invocation-id. Launch-input artifact path, launch-input hash, review type, and fork-context are already gate-owned command fragments when printed. ` +
                     `${options.oneShotLaunchHint ? `${options.oneShotLaunchHint} ` : ''}` +
                     `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
                     `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +
                     `${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
+                commands: options.commands.recordDelegationStartedChoices
+            };
+        }
+
+        if (options.launchArtifactState === 'delegation_start_recovery') {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'record-reviewer-delegation-started',
+                title: `Recover '${options.reviewType}' delegated reviewer start telemetry.`,
+                reason:
+                    `Required review '${options.reviewType}' has a durable delegation-started control artifact, but its matching REVIEWER_DELEGATION_STARTED lifecycle event is absent. ` +
+                    `Retry record-reviewer-delegation-started with the provider/controller identity already preserved in the command; the gate will retain the original start timestamp and append only the missing event. ` +
+                    `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
                 commands: [options.commands.recordDelegationStarted]
             };
         }
@@ -167,6 +185,19 @@ export function resolveDelegatedReviewReadinessRoute(
                     `Required review '${options.reviewType}' has recorded reviewer delegation start evidence for the current routing event and review context. ` +
                     `After the delegated reviewer returns, run complete-reviewer-launch so the gate records completion attestation without redefining the reviewer start time. ` +
                     `Provider-owned placeholders in the command are only --attestation-source; replace it with the delegated reviewer launch result after provider completion. Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed. ` +
+                    `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
+                commands: [options.commands.completeLaunch]
+            };
+        }
+
+        if (options.launchArtifactState === 'completion_recovery') {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'complete-reviewer-launch',
+                title: `Recover '${options.reviewType}' delegated reviewer completion telemetry.`,
+                reason:
+                    `Required review '${options.reviewType}' has a durable launched control artifact, but its matching REVIEWER_LAUNCH_COMPLETED lifecycle event is absent. ` +
+                    `Retry complete-reviewer-launch with the provider/controller identity already preserved in the command; the gate will retain the original completion timestamp and append only the missing event. ` +
                     `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
                 commands: [options.commands.completeLaunch]
             };

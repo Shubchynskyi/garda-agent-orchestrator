@@ -276,6 +276,16 @@ test('prepared delegated lifecycle wrapper binds identity and one-shot provider 
             commands: {
                 recordRouting: command,
                 prepareLaunch: command,
+                recordDelegationStartedChoices: [
+                    {
+                        label: 'Record delegated reviewer start from launch artifact',
+                        command: 'record-reviewer-delegation-started'
+                    },
+                    {
+                        label: 'Record delegated reviewer start from copy-paste prompt',
+                        command: 'record-reviewer-delegation-started-copy-paste'
+                    }
+                ],
                 recordDelegationStarted: {
                     label: 'Record delegated reviewer start',
                     command: 'record-reviewer-delegation-started'

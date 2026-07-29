@@ -127,28 +127,52 @@ export function buildRecordReviewerDelegationStartedCommand(params: {
     reviewType: string;
     reviewerIdentity: string;
     launchArtifactPath: string;
+    launchInputMode: 'copy_paste_prompt' | 'launch_artifact_path';
     launchInputArtifactPath?: string | null;
-    launchInputArtifactSha256?: string | null;
+    launchInputSha256?: string | null;
+    providerInvocationId?: string | null;
+    controllerInvocationId?: string | null;
+    attestationSource?: string | null;
 }): string {
-    const launchInputArtifactSha256 = String(params.launchInputArtifactSha256 || '').trim()
-        || '<ReviewerLaunchInputArtifactSha256>';
-    const launchInputArtifactPath = String(params.launchInputArtifactPath || '').trim()
-        || params.launchArtifactPath;
-    return [
+    const launchInputSha256 = String(params.launchInputSha256 || '').trim()
+        || (
+            params.launchInputMode === 'launch_artifact_path'
+                ? '<ReviewerLaunchInputArtifactSha256>'
+                : '<CopyPasteReviewerLaunchPromptSha256>'
+        );
+    const providerInvocationId = String(params.providerInvocationId || '').trim();
+    const controllerInvocationId = String(params.controllerInvocationId || '').trim();
+    const invocationArgument = controllerInvocationId
+        ? `--controller-invocation-id ${quoteCommandValue(controllerInvocationId)}`
+        : `--provider-invocation-id ${quoteCommandValue(
+            providerInvocationId || PROVIDER_INVOCATION_ID_PLACEHOLDER
+        )}`;
+    const attestationSource = String(params.attestationSource || '').trim()
+        || PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER;
+    const commandParts = [
         `${params.cliPrefix} gate record-reviewer-delegation-started`,
-        `--task-id "${params.taskId}"`,
-        `--review-type "${params.reviewType}"`,
+        `--task-id ${quoteCommandValue(params.taskId)}`,
+        `--review-type ${quoteCommandValue(params.reviewType)}`,
         '--reviewer-execution-mode "delegated_subagent"',
-        `--reviewer-identity "${params.reviewerIdentity}"`,
-        `--reviewer-launch-artifact-path "${params.launchArtifactPath}"`,
-        `--provider-invocation-id "${PROVIDER_INVOCATION_ID_PLACEHOLDER}"`,
-        `--attestation-source "${PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER}"`,
-        '--launch-input-mode "launch_artifact_path"',
-        `--launch-input-artifact-path "${launchInputArtifactPath}"`,
-        `--launch-input-sha256 "${launchInputArtifactSha256}"`,
+        `--reviewer-identity ${quoteCommandValue(params.reviewerIdentity)}`,
+        `--reviewer-launch-artifact-path ${quoteCommandValue(normalizePath(params.launchArtifactPath))}`,
+        invocationArgument,
+        `--attestation-source ${quoteCommandValue(attestationSource)}`,
+        `--launch-input-mode ${quoteCommandValue(params.launchInputMode)}`
+    ];
+    if (params.launchInputMode === 'launch_artifact_path') {
+        const launchInputArtifactPath = String(params.launchInputArtifactPath || '').trim()
+            || '<ReviewerLaunchInputArtifactPath>';
+        commandParts.push(
+            `--launch-input-artifact-path ${quoteCommandValue(normalizePath(launchInputArtifactPath))}`
+        );
+    }
+    commandParts.push(
+        `--launch-input-sha256 ${quoteCommandValue(launchInputSha256)}`,
         '--fork-context false',
         '--repo-root "."'
-    ].join(' ');
+    );
+    return commandParts.join(' ');
 }
 
 export function buildCompleteReviewerLaunchCommand(params: {
@@ -157,29 +181,54 @@ export function buildCompleteReviewerLaunchCommand(params: {
     reviewType: string;
     reviewerIdentity: string;
     launchArtifactPath: string;
+    launchInputMode: 'copy_paste_prompt' | 'launch_artifact_path';
     launchInputArtifactPath?: string | null;
-    launchInputArtifactSha256?: string | null;
+    launchInputSha256?: string | null;
+    providerInvocationId?: string | null;
+    controllerInvocationId?: string | null;
+    attestationSource?: string | null;
     recordInvocation?: boolean;
 }): string {
-    const launchInputArtifactSha256 = String(params.launchInputArtifactSha256 || '').trim()
-        || '<ReviewerLaunchInputArtifactSha256>';
-    const launchInputArtifactPath = String(params.launchInputArtifactPath || '').trim()
-        || params.launchArtifactPath;
-    return [
+    const launchInputSha256 = String(params.launchInputSha256 || '').trim()
+        || (
+            params.launchInputMode === 'launch_artifact_path'
+                ? '<ReviewerLaunchInputArtifactSha256>'
+                : '<CopyPasteReviewerLaunchPromptSha256>'
+        );
+    const providerInvocationId = String(params.providerInvocationId || '').trim();
+    const controllerInvocationId = String(params.controllerInvocationId || '').trim();
+    const invocationArguments = controllerInvocationId
+        ? [`--controller-invocation-id ${quoteCommandValue(controllerInvocationId)}`]
+        : providerInvocationId
+            ? [`--provider-invocation-id ${quoteCommandValue(providerInvocationId)}`]
+            : [];
+    const attestationSource = String(params.attestationSource || '').trim()
+        || PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER;
+    const commandParts = [
         `${params.cliPrefix} gate complete-reviewer-launch`,
-        `--task-id "${params.taskId}"`,
-        `--review-type "${params.reviewType}"`,
+        `--task-id ${quoteCommandValue(params.taskId)}`,
+        `--review-type ${quoteCommandValue(params.reviewType)}`,
         '--reviewer-execution-mode "delegated_subagent"',
-        `--reviewer-identity "${params.reviewerIdentity}"`,
-        `--reviewer-launch-artifact-path "${params.launchArtifactPath}"`,
-        `--attestation-source "${PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER}"`,
-        '--launch-input-mode "launch_artifact_path"',
-        `--launch-input-artifact-path "${launchInputArtifactPath}"`,
-        `--launch-input-sha256 "${launchInputArtifactSha256}"`,
+        `--reviewer-identity ${quoteCommandValue(params.reviewerIdentity)}`,
+        `--reviewer-launch-artifact-path ${quoteCommandValue(normalizePath(params.launchArtifactPath))}`,
+        ...invocationArguments,
+        `--attestation-source ${quoteCommandValue(attestationSource)}`,
+        `--launch-input-mode ${quoteCommandValue(params.launchInputMode)}`
+    ];
+    if (params.launchInputMode === 'launch_artifact_path') {
+        const launchInputArtifactPath = String(params.launchInputArtifactPath || '').trim()
+            || '<ReviewerLaunchInputArtifactPath>';
+        commandParts.push(
+            `--launch-input-artifact-path ${quoteCommandValue(normalizePath(launchInputArtifactPath))}`
+        );
+    }
+    commandParts.push(
+        `--launch-input-sha256 ${quoteCommandValue(launchInputSha256)}`,
         '--fork-context false',
         ...(params.recordInvocation ? ['--record-invocation'] : []),
         '--repo-root "."'
-    ].join(' ');
+    );
+    return commandParts.join(' ');
 }
 
 export function buildRecordReviewerInvocationCommand(
@@ -192,10 +241,10 @@ export function buildRecordReviewerInvocationCommand(
     taskModePath: string | null
 ): string {
     return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-invocation', [
-        `--review-type "${reviewType}"`,
+        `--review-type ${quoteCommandValue(reviewType)}`,
         '--reviewer-execution-mode "delegated_subagent"',
-        `--reviewer-identity "${reviewerIdentity}"`,
-        `--reviewer-launch-artifact-path "${launchArtifactPath}"`
+        `--reviewer-identity ${quoteCommandValue(reviewerIdentity)}`,
+        `--reviewer-launch-artifact-path ${quoteCommandValue(normalizePath(launchArtifactPath))}`
     ], taskModePath);
 }
 

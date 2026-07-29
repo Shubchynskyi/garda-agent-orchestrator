@@ -895,6 +895,16 @@ test('resolveDelegatedReviewDecisionRoute preserves missing routing recovery bef
                 label: 'Prepare delegated reviewer launch metadata',
                 command: 'node bin/garda.js gate prepare-reviewer-launch --task-id "T-1"'
             },
+            recordDelegationStartedChoices: [
+                {
+                    label: 'Record delegated reviewer start from launch artifact',
+                    command: 'node bin/garda.js gate record-reviewer-delegation-started --task-id "T-1"'
+                },
+                {
+                    label: 'Record delegated reviewer start from copy-paste prompt',
+                    command: 'node bin/garda.js gate record-reviewer-delegation-started --task-id "T-1"'
+                }
+            ],
             recordDelegationStarted: {
                 label: 'Record delegated reviewer start',
                 command: 'node bin/garda.js gate record-reviewer-delegation-started --task-id "T-1"'

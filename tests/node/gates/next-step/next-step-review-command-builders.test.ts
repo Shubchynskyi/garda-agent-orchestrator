@@ -5,8 +5,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
+    buildCompleteReviewerLaunchCommand,
+    buildRecordReviewerDelegationStartedCommand,
+    buildRecordReviewerInvocationCommand,
     buildRestartReviewCycleCommand
 } from '../../../../src/gates/next-step/next-step-review-command-builders';
+import { quoteCommandValue } from '../../../../src/core/command-quoting';
 
 function writeTaskMode(repoRoot: string, taskId: string, payload: Record<string, unknown> = {}): string {
     const taskModePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-task-mode.json`);
@@ -224,6 +228,76 @@ describe('gates/next-step review command builders', () => {
             assert.ok(command.includes('--changed-file "dist/publish-runtime-manifest.json"'), command);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('shell-quotes every persisted reviewer launch value in recovery commands', () => {
+        const dangerousProviderInvocationId = 'provider-$(whoami)`x`"q";echo pwn;\'tail';
+        const dangerousControllerInvocationId = 'controller-$(whoami)`x`"q";echo pwn;\'tail';
+        const dangerousAttestationSource = 'source-$(whoami)`x`"q";echo pwn;\'tail';
+        const dangerousReviewerIdentity = 'agent:reviewer-$(whoami)`x`"q";echo pwn;\'tail';
+        const dangerousLaunchArtifactPath = 'runtime/reviews/$(whoami)`x`"q";touch pwn;\'tail.json';
+        const dangerousLaunchInputArtifactPath = 'runtime/reviews/input-$(whoami)`x`"q";touch pwn;\'tail.json';
+        const dangerousLaunchInputSha256 = 'sha-$(whoami)`x`"q";echo pwn;\'tail';
+
+        const delegationStartCommand = buildRecordReviewerDelegationStartedCommand({
+            cliPrefix: 'node bin/garda.js',
+            taskId: 'T-SAFE-RECOVERY',
+            reviewType: 'code',
+            reviewerIdentity: dangerousReviewerIdentity,
+            launchArtifactPath: dangerousLaunchArtifactPath,
+            launchInputMode: 'launch_artifact_path',
+            launchInputArtifactPath: dangerousLaunchInputArtifactPath,
+            launchInputSha256: dangerousLaunchInputSha256,
+            providerInvocationId: dangerousProviderInvocationId,
+            attestationSource: dangerousAttestationSource
+        });
+        const completionCommand = buildCompleteReviewerLaunchCommand({
+            cliPrefix: 'node bin/garda.js',
+            taskId: 'T-SAFE-RECOVERY',
+            reviewType: 'code',
+            reviewerIdentity: dangerousReviewerIdentity,
+            launchArtifactPath: dangerousLaunchArtifactPath,
+            launchInputMode: 'copy_paste_prompt',
+            launchInputSha256: dangerousLaunchInputSha256,
+            controllerInvocationId: dangerousControllerInvocationId,
+            attestationSource: dangerousAttestationSource,
+            recordInvocation: true
+        });
+        const invocationCommand = buildRecordReviewerInvocationCommand(
+            '.',
+            'node bin/garda.js',
+            'T-SAFE-RECOVERY',
+            'code',
+            dangerousReviewerIdentity,
+            dangerousLaunchArtifactPath,
+            null
+        );
+
+        for (const [command, flag, value] of [
+            [delegationStartCommand, '--provider-invocation-id', dangerousProviderInvocationId],
+            [completionCommand, '--controller-invocation-id', dangerousControllerInvocationId],
+            [delegationStartCommand, '--attestation-source', dangerousAttestationSource],
+            [completionCommand, '--attestation-source', dangerousAttestationSource],
+            [delegationStartCommand, '--reviewer-identity', dangerousReviewerIdentity],
+            [completionCommand, '--reviewer-identity', dangerousReviewerIdentity],
+            [invocationCommand, '--reviewer-identity', dangerousReviewerIdentity],
+            [delegationStartCommand, '--reviewer-launch-artifact-path', dangerousLaunchArtifactPath],
+            [completionCommand, '--reviewer-launch-artifact-path', dangerousLaunchArtifactPath],
+            [invocationCommand, '--reviewer-launch-artifact-path', dangerousLaunchArtifactPath],
+            [delegationStartCommand, '--launch-input-artifact-path', dangerousLaunchInputArtifactPath],
+            [delegationStartCommand, '--launch-input-sha256', dangerousLaunchInputSha256],
+            [completionCommand, '--launch-input-sha256', dangerousLaunchInputSha256]
+        ] as const) {
+            assert.ok(
+                command.includes(`${flag} ${quoteCommandValue(value)}`),
+                `${flag} must use shell-safe quoting: ${command}`
+            );
+            assert.equal(
+                command.includes(`${flag} "${value}"`),
+                false,
+                `${flag} must not interpolate persisted values into raw double quotes`
+            );
         }
     });
 });
