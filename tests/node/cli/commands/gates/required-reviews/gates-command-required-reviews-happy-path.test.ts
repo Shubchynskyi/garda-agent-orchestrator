@@ -39,6 +39,7 @@ import {
     loadPostPreflightRulePack,
     runHandshakeForTask,
     runShellSmokeForTask,
+    prepareCurrentReviewPhase,
     readTaskTimelineEvents,
     readTaskQueueStatusFromTaskFile} from '../../gate-test-helpers';
 import {
@@ -494,33 +495,8 @@ describe('gates command required reviews', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
-        const commandsPath = path.join(repoRoot, 'commands-no-delegate-required-reviews.md');
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
-
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Block required reviews when no-delegate active'
-        });
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
-        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        await runCompileGateCommand({
-            repoRoot,
-            taskId,
-            preflightPath,
-            commandsPath,
-            outputFiltersPath,
-            emitMetrics: false
-        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
         writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
         const previousNoDelegate = process.env[GARDA_NO_DELEGATE_ENV];
@@ -577,33 +553,8 @@ describe('gates command required reviews', () => {
                 dependency: false
             }
         });
-        const commandsPath = path.join(repoRoot, 'commands-defaulted-verdicts.md');
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
-
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Default required review verdicts from preflight'
-        });
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
-        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        await runCompileGateCommand({
-            repoRoot,
-            taskId,
-            preflightPath,
-            commandsPath,
-            outputFiltersPath,
-            emitMetrics: false
-        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
 
         writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
         writeCleanReviewArtifact(repoRoot, taskId, 'test', 'TEST REVIEW PASSED');

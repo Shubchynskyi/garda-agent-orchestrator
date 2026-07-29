@@ -9,7 +9,6 @@ import { createHash } from 'node:crypto';
 import {
     EXIT_GATE_FAILURE} from '../../../../../../src/cli/exit-codes';
 import {
-    runCompileGateCommand,
     runRequiredReviewsCheckCommand} from '../../../../../../src/cli/commands/gates';
 import { runBuildReviewContextCommand } from '../../../../../../src/cli/commands/gate-build-handlers';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
@@ -54,6 +53,19 @@ const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
 const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
 const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:12.000Z';
 const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:13.000Z';
+const REQUIRED_REVIEWS_SAFETY_PART_ENV = 'GARDA_REQUIRED_REVIEWS_SAFETY_PART';
+
+type RequiredReviewsSafetyPart = 'findings' | 'artifact-policy' | 'lifecycle';
+
+function describeRequiredReviewsSafetyPart(
+    part: RequiredReviewsSafetyPart,
+    name: string,
+    suite: () => void
+): void {
+    if (process.env[REQUIRED_REVIEWS_SAFETY_PART_ENV] === part) {
+        describe(name, suite);
+    }
+}
 
 function buildTestProviderInvocationId(taskId: string, reviewType: string, reviewerIdentity: string): string {
     const normalizedIdentity = reviewerIdentity.replace(/^agent:/, '').replace(/[^a-zA-Z0-9._-]+/g, '-');
@@ -473,31 +485,8 @@ async function seedFindingsDispositionConsumerFixture(options: {
     seedTaskQueue(options.repoRoot, options.taskId);
     seedInitAnswers(options.repoRoot);
     const preflightPath = writePreflight(options.repoRoot, options.taskId, options.preflightOverrides);
-    const commandsPath = path.join(options.repoRoot, 'commands-findings-disposition-consumer.md');
     const outputFiltersPath = writeBudgetOutputFilters(options.repoRoot);
-    fs.writeFileSync(commandsPath, [
-        '### Compile Gate (Mandatory)',
-        '```bash',
-        'node -e "console.log(\'build ok\')"',
-        '```'
-    ].join('\n'), 'utf8');
-    runEnterTaskMode({
-        repoRoot: options.repoRoot,
-        taskId: options.taskId,
-        taskSummary: 'Consume hash-bound findings dispositions in required reviews'
-    });
-    loadTaskEntryRulePack(options.repoRoot, options.taskId);
-    runHandshakeForTask(options.repoRoot, options.taskId);
-    runShellSmokeForTask(options.repoRoot, options.taskId);
-    loadPostPreflightRulePack(options.repoRoot, options.taskId, preflightPath);
-    await runCompileGateCommand({
-        repoRoot: options.repoRoot,
-        taskId: options.taskId,
-        preflightPath,
-        commandsPath,
-        outputFiltersPath,
-        emitMetrics: false
-    });
+    prepareCurrentReviewPhase(options.repoRoot, options.taskId, preflightPath);
     writeReceiptBackedReviewArtifact(
         options.repoRoot,
         options.taskId,
@@ -565,7 +554,7 @@ async function seedReusedFindingsDispositionConsumerFixture(options: {
 
 
 
-describe('gates command required reviews', () => {
+describeRequiredReviewsSafetyPart('findings', 'gates command required reviews – findings', () => {
     it('rejects missing or tampered current findings disposition evidence', async () => {
         const scenarios = [
             {
@@ -843,39 +832,17 @@ describe('gates command required reviews', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+});
+
+describeRequiredReviewsSafetyPart('artifact-policy', 'gates command required reviews – artifact policy', () => {
     it('fails required reviews gate when authorship attestation is false for a mandatory review', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-false-authorship-attestation';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
-        const commandsPath = path.join(repoRoot, 'commands-false-authorship-attestation.md');
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
-
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Reject false delegated review authorship attestation'
-        });
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
-        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        await runCompileGateCommand({
-            repoRoot,
-            taskId,
-            preflightPath,
-            commandsPath,
-            outputFiltersPath,
-            emitMetrics: false
-        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
 
         writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
@@ -906,33 +873,8 @@ describe('gates command required reviews', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
-        const commandsPath = path.join(repoRoot, 'commands-missing-authorship-attestation.md');
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
-
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Reject missing delegated review authorship attestation'
-        });
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
-        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        await runCompileGateCommand({
-            repoRoot,
-            taskId,
-            preflightPath,
-            commandsPath,
-            outputFiltersPath,
-            emitMetrics: false
-        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
 
         writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
@@ -962,33 +904,8 @@ describe('gates command required reviews', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
-        const commandsPath = path.join(repoRoot, 'commands-skip-authorship-attestation.md');
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
-
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Reject skipped delegated review authorship attestation'
-        });
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
-        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        await runCompileGateCommand({
-            repoRoot,
-            taskId,
-            preflightPath,
-            commandsPath,
-            outputFiltersPath,
-            emitMetrics: false
-        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
 
         writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
@@ -1034,33 +951,8 @@ describe('gates command required reviews', () => {
                 dependency: false
             }
         });
-        const commandsPath = path.join(repoRoot, 'commands-defaulted-verdicts-missing-artifact.md');
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
-
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Keep defaulted required reviews strict when artifacts are missing'
-        });
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
-        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        await runCompileGateCommand({
-            repoRoot,
-            taskId,
-            preflightPath,
-            commandsPath,
-            outputFiltersPath,
-            emitMetrics: false
-        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
 
         writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
@@ -1088,33 +980,8 @@ describe('gates command required reviews', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
-        const commandsPath = path.join(repoRoot, 'commands-invalid-sections.md');
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
-
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Reject schema-invalid review artifacts earlier'
-        });
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
-        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        await runCompileGateCommand({
-            repoRoot,
-            taskId,
-            preflightPath,
-            commandsPath,
-            outputFiltersPath,
-            emitMetrics: false
-        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
 
         writeReceiptBackedReviewArtifact(
             repoRoot,
@@ -1164,33 +1031,8 @@ describe('gates command required reviews', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
-        const commandsPath = path.join(repoRoot, 'commands-trivial-review.md');
         const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
-
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Reject trivial synthetic review artifacts earlier'
-        });
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
-        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        await runCompileGateCommand({
-            repoRoot,
-            taskId,
-            preflightPath,
-            commandsPath,
-            outputFiltersPath,
-            emitMetrics: false
-        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
 
         writeReceiptBackedReviewArtifact(
             repoRoot,
@@ -1265,33 +1107,8 @@ describe('gates command required reviews', () => {
                         dependency: false
                     }
                 });
-                const commandsPath = path.join(repoRoot, 'commands-tree-state-receipt.md');
                 const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
-                fs.writeFileSync(commandsPath, [
-                    '### Compile Gate (Mandatory)',
-                    '```bash',
-                    'node -e "console.log(\'build ok\')"',
-                    '```'
-                ].join('\n'), 'utf8');
-
-                runEnterTaskMode({
-                    repoRoot,
-                    taskId: scenario.taskId,
-                    taskSummary: 'Reject review receipt tree-state binding drift'
-                });
-                loadTaskEntryRulePack(repoRoot, scenario.taskId);
-                runHandshakeForTask(repoRoot, scenario.taskId);
-                runShellSmokeForTask(repoRoot, scenario.taskId);
-                loadPostPreflightRulePack(repoRoot, scenario.taskId, preflightPath);
-
-                await runCompileGateCommand({
-                    repoRoot,
-                    taskId: scenario.taskId,
-                    preflightPath,
-                    commandsPath,
-                    outputFiltersPath,
-                    emitMetrics: false
-                });
+                prepareCurrentReviewPhase(repoRoot, scenario.taskId, preflightPath);
 
                 writeReceiptBackedReviewArtifact(
                     repoRoot,
@@ -1341,6 +1158,9 @@ describe('gates command required reviews', () => {
         }
     });
 
+});
+
+describeRequiredReviewsSafetyPart('lifecycle', 'gates command required reviews – lifecycle', () => {
     it('required-reviews-check rejects preflight paths that escape through symlinked directories', (t) => {
         const repoRoot = createTempRepo();
         const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-review-preflight-outside-'));
