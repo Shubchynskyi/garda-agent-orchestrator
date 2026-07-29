@@ -9,7 +9,7 @@ import {
     fs,
     getOrchestratorRoot,
     getReviewsRoot,
-    it,
+    it as nodeIt,
     launchArtifactInputArgsForTest,
     manualReviewContextBindingFixture,
     manualReviewContextTaskScopeFixture,
@@ -29,8 +29,14 @@ import {
     writeManualReviewerHandoffFixture,
     writePreflight
 } from './gates-command-review-launch-fixtures';
+import { createPartitionedTestRegistrar } from '../../gate-test-partition';
 
 const TEST_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:12.000Z';
+const it = createPartitionedTestRegistrar(
+    nodeIt,
+    'GARDA_REVIEW_LAUNCH_INVOCATION_PART',
+    3
+);
 
 function appendReviewerLaunchCompletedForTest(options: {
     repoRoot: string;
