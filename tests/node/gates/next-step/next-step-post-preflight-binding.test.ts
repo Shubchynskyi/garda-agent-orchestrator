@@ -13,6 +13,9 @@ import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
+import {
+    seedAuthenticatedReviewerLaunchFixture
+} from './next-step-reviewer-launch-fixtures';
 
 const TASK_ID = 'T-NEXT-1';
 
@@ -430,18 +433,6 @@ function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: st
     });
 }
 
-function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<string, unknown> {
-    const copyPastePrompt = `Delegated ${reviewType} reviewer launch prompt for ${taskId}.`;
-    const copyPastePromptSha256 = sha256Text(copyPastePrompt);
-    return {
-        copy_paste_reviewer_launch_prompt: copyPastePrompt,
-        copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
-        launch_input_mode: 'copy_paste_prompt',
-        launch_input_sha256: copyPastePromptSha256,
-        launch_input_copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256
-    };
-}
-
 function seedCompletedReviewerLaunchAndInvocation(
     repoRoot: string,
     taskId: string,
@@ -450,95 +441,15 @@ function seedCompletedReviewerLaunchAndInvocation(
     options: { includeInvocation?: boolean } = {}
 ): void {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
-    const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: reviewerIdentity
-    });
-    const launchBindingSha256 = 'c'.repeat(64);
-    const preparedIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_PREPARED', 'INFO', {
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: reviewerIdentity,
-        reviewer_identity: reviewerIdentity,
-        review_context_sha256: fileSha256(reviewContextPath),
-        routing_event_sha256: routeIntegrity.event_sha256,
-        launch_binding_sha256: launchBindingSha256
-    });
-    const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, reviewType, 'reviewer-launch.json');
-    const delegationStartedAtUtc = '2026-04-28T00:00:00.000Z';
-    const launchCompletedAtUtc = '2026-04-28T00:00:12.000Z';
-    writeJson(launchArtifactPath, {
-        schema_version: 1,
-        evidence_type: 'delegated_reviewer_launch',
-        attestation_state: 'launched',
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_identity: reviewerIdentity,
-        review_context_sha256: fileSha256(reviewContextPath),
-        routing_event_sha256: routeIntegrity.event_sha256,
-        launch_binding_sha256: launchBindingSha256,
-        prepared_launch_event_sha256: preparedIntegrity.event_sha256,
-        launch_tool: 'test-subagent-spawn',
-        provider_invocation_id: `test-${reviewType}-invocation`,
-        delegation_started_at_utc: delegationStartedAtUtc,
-        launched_at_utc: delegationStartedAtUtc,
-        launch_completed_at_utc: launchCompletedAtUtc,
-        ...launchInputEvidenceFixture(taskId, reviewType),
-        fork_context: false
-    });
-    appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_STARTED', 'INFO', {
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: reviewerIdentity,
-        reviewer_identity: reviewerIdentity,
-        review_context_sha256: fileSha256(reviewContextPath),
-        routing_event_sha256: routeIntegrity.event_sha256,
-        provider_invocation_id: `test-${reviewType}-invocation`,
-        delegation_started_at_utc: delegationStartedAtUtc
-    });
-    appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_COMPLETED', 'INFO', {
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: reviewerIdentity,
-        reviewer_identity: reviewerIdentity,
-        review_context_sha256: fileSha256(reviewContextPath),
-        routing_event_sha256: routeIntegrity.event_sha256,
-        reviewer_launch_artifact_path: launchArtifactPath,
-        reviewer_launch_artifact_sha256: fileSha256(launchArtifactPath),
-        provider_invocation_id: `test-${reviewType}-invocation`,
-        delegation_started_at_utc: delegationStartedAtUtc,
-        launched_at_utc: delegationStartedAtUtc,
-        launch_completed_at_utc: launchCompletedAtUtc
-    });
-    if (options.includeInvocation === false) {
-        return;
-    }
-    const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
-    appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: reviewerIdentity,
-        reviewer_identity: reviewerIdentity,
-        review_context_sha256: fileSha256(reviewContextPath),
-        review_tree_state_sha256: readReviewContextTreeStateSha256(repoRoot, taskId, reviewType),
-        routing_event_sha256: routeIntegrity.event_sha256,
-        reviewer_launch_artifact_path: launchArtifactPath,
-        reviewer_launch_artifact_sha256: fileSha256(launchArtifactPath),
-        reviewer_launch_attestation_source: 'test-subagent-spawn',
-        reviewer_launch_tool: 'test-subagent-spawn',
-        provider_invocation_id: `test-${reviewType}-invocation`,
-        delegation_started_at_utc: delegationStartedAtUtc,
-        launched_at_utc: delegationStartedAtUtc,
-        launch_completed_at_utc: launchCompletedAtUtc,
-        launch_input_mode: launchArtifact.launch_input_mode,
-        launch_input_sha256: launchArtifact.launch_input_sha256,
-        copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256
+    seedAuthenticatedReviewerLaunchFixture({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewerIdentity,
+        reviewContextPath,
+        reviewTreeStateSha256: readReviewContextTreeStateSha256(repoRoot, taskId, reviewType),
+        appendEvent,
+        includeInvocation: options.includeInvocation
     });
 }
 
