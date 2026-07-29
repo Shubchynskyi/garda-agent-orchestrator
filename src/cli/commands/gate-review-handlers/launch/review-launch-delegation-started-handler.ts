@@ -17,6 +17,7 @@ import {
 import {
     isPlannedReviewerIdentity
 } from '../../../../gate-runtime/review/reviewer-identity-contract';
+import { writeFileAtomically } from '../../../../core/filesystem';
 import {
     resolveRuntimeReviewerIdentity
 } from '../../../../gates/review/reviewer-routing';
@@ -30,6 +31,90 @@ import {
     buildCompleteReviewerLaunchCommand,
     buildRecordReviewerLaunchFailedCommand
 } from './reviewer-handoff-support';
+import {
+    withReviewerLaunchLaneTransaction
+} from './reviewer-launch-lane-transaction';
+import {
+    findMatchingReviewerDelegationStartedEvent,
+    isValidUtcIso8601Timestamp,
+    PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+} from './review-launch-artifact-fields';
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+export async function persistReviewerDelegationStartedTransition(options: {
+    artifactPath: string;
+    originalArtifactText: string;
+    startedArtifact: Record<string, unknown>;
+    recoveringPersistedDelegationStart: boolean;
+    reviewType: string;
+    emitStartedEvent: (startedArtifactSha256: string) => Promise<boolean>;
+    hasMatchingStartedEvent: (startedArtifactSha256: string) => boolean;
+}): Promise<{
+    startedArtifactSha256: string;
+    reusedExistingEvent: boolean;
+}> {
+    if (!options.recoveringPersistedDelegationStart) {
+        writeReviewArtifactJson(options.artifactPath, options.startedArtifact);
+    }
+    const startedArtifactSha256 = fileSha256(options.artifactPath) || '';
+    if (!startedArtifactSha256) {
+        if (!options.recoveringPersistedDelegationStart) {
+            writeFileAtomically(options.artifactPath, options.originalArtifactText, { encoding: 'utf8' });
+        }
+        throw new Error(
+            `Reviewer delegation start requires a hashable launch artifact for '${options.reviewType}'.`
+        );
+    }
+    if (options.hasMatchingStartedEvent(startedArtifactSha256)) {
+        return {
+            startedArtifactSha256,
+            reusedExistingEvent: true
+        };
+    }
+
+    let appendFailure: unknown = null;
+    let appendCommitted = false;
+    try {
+        appendCommitted = await options.emitStartedEvent(startedArtifactSha256);
+    } catch (error) {
+        appendFailure = error;
+    }
+    if (appendCommitted || options.hasMatchingStartedEvent(startedArtifactSha256)) {
+        return {
+            startedArtifactSha256,
+            reusedExistingEvent: false
+        };
+    }
+
+    const appendFailureSuffix = appendFailure
+        ? ` Cause: ${getErrorMessage(appendFailure)}`
+        : '';
+    if (options.recoveringPersistedDelegationStart) {
+        throw new Error(
+            `Reviewer delegation start requires REVIEWER_DELEGATION_STARTED telemetry for '${options.reviewType}'. ` +
+            'The recoverable delegation-started artifact was retained so the same start attempt can be retried.' +
+            appendFailureSuffix
+        );
+    }
+    try {
+        writeFileAtomically(options.artifactPath, options.originalArtifactText, { encoding: 'utf8' });
+    } catch (rollbackError) {
+        throw new Error(
+            `Reviewer delegation start requires REVIEWER_DELEGATION_STARTED telemetry for '${options.reviewType}'. ` +
+            `Telemetry persistence failed and the prepared artifact rollback also failed: ` +
+            `${getErrorMessage(rollbackError)}.` +
+            appendFailureSuffix
+        );
+    }
+    throw new Error(
+        `Reviewer delegation start requires REVIEWER_DELEGATION_STARTED telemetry for '${options.reviewType}'. ` +
+        'The original prepared artifact was restored because telemetry could not be persisted.' +
+        appendFailureSuffix
+    );
+}
 
 export interface ReviewerDelegationStartedHandlerDependencies {
     assertPreparedReviewerLaunchArtifact: typeof import('../index').assertPreparedReviewerLaunchArtifact;
@@ -96,6 +181,13 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'record-reviewer-delegation-started', 'review_phase');
+    const canonicalLaunchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+        repoRoot,
+        taskId,
+        reviewType,
+        artifactPathValue: undefined
+    });
+    return await withReviewerLaunchLaneTransaction(canonicalLaunchArtifactPath, async () => {
     const preflightPath = resolveCanonicalPreflightArtifactPath(repoRoot, taskId);
     const reviewsRoot = path.dirname(preflightPath);
     const contextPath = resolveCanonicalReviewContextPath({
@@ -208,7 +300,13 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         gateName: 'record-reviewer-delegation-started'
     });
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
+    const originalArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const recoveringPersistedDelegationStart =
+        getStringField(preparedArtifact, 'evidence_type', 'evidenceType', 'artifact_type', 'artifactType')
+            === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+        && getStringField(preparedArtifact, 'attestation_state', 'attestationState')
+            === 'delegation_started';
     const reviewerLaunchAttemptId = getStringField(
         preparedArtifact,
         'reviewer_launch_attempt_id',
@@ -282,70 +380,129 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewerLaunchInputArtifactPath: launchInputArtifactPath,
         reviewTreeStateSha256,
-        allowedAttestationStates: ['prepared']
+        allowedAttestationStates: recoveringPersistedDelegationStart
+            ? ['delegation_started']
+            : ['prepared'],
+        timelineEvents
     });
     const preparedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
+    const artifactProviderInvocationId = getStringField(
+        preparedArtifact,
+        'provider_invocation_id',
+        'providerInvocationId'
+    );
+    const artifactControllerInvocationId = getStringField(
+        preparedArtifact,
+        'controller_invocation_id',
+        'controllerInvocationId'
+    );
+    if (
+        recoveringPersistedDelegationStart
+        && (
+            providerInvocationId !== artifactProviderInvocationId
+            || controllerInvocationId !== artifactControllerInvocationId
+        )
+    ) {
+        throw new Error(
+            'Delegation start recovery invocation identity must exactly match the persisted attempt.'
+        );
+    }
+    if (
+        recoveringPersistedDelegationStart
+        && getStringField(preparedArtifact, 'attestation_source', 'attestationSource') !== attestationSource
+    ) {
+        throw new Error(
+            'Delegation start recovery attestation source must match the persisted attempt.'
+        );
+    }
+    const persistedFreshContext = preparedArtifact.fresh_context === true
+        || preparedArtifact.freshContext === true
+        || preparedArtifact.isolated_context === true
+        || preparedArtifact.isolatedContext === true
+        || preparedArtifact.fork_context === false
+        || preparedArtifact.forkContext === false;
+    if (recoveringPersistedDelegationStart && !persistedFreshContext) {
+        throw new Error(
+            'Delegation start recovery requires persisted clean-context attestation.'
+        );
+    }
     const launchInputAttestation = resolveReviewerLaunchInputAttestation({
         repoRoot,
         launchArtifactPath,
         preparedArtifact,
         preparedLaunchArtifactSha256,
-        rawMode: options.launchInputMode,
-        rawSha256: options.launchInputSha256,
-        rawArtifactPath: options.launchInputArtifactPath
+        rawMode: options.launchInputMode || preparedArtifact.launch_input_mode,
+        rawSha256: options.launchInputSha256 || preparedArtifact.launch_input_sha256,
+        rawArtifactPath: options.launchInputArtifactPath || preparedArtifact.launch_input_artifact_path
     });
-    const delegationStartedAtUtc = new Date().toISOString();
+    const delegationStartedAtUtc = recoveringPersistedDelegationStart
+        ? getStringField(
+            preparedArtifact,
+            'delegation_started_at_utc',
+            'delegationStartedAtUtc'
+        )
+        : new Date().toISOString();
+    if (
+        !delegationStartedAtUtc
+        || !isValidUtcIso8601Timestamp(delegationStartedAtUtc)
+    ) {
+        throw new Error(
+            'Delegation start recovery requires a valid persisted delegation_started_at_utc timestamp.'
+        );
+    }
     const isPlannedIdentityRebind = isPlannedReviewerIdentity(plannedReviewerIdentity)
         && reviewerIdentity !== plannedReviewerIdentity;
-    const startedArtifact: Record<string, unknown> = {
-        ...preparedArtifact,
-        reviewer_identity: reviewerIdentity,
-        attestation_state: 'delegation_started',
-        attestation_source: attestationSource,
-        launch_input_mode: launchInputAttestation.mode,
-        launch_input_sha256: launchInputAttestation.sha256,
-        launch_input_attestation_source: 'record-reviewer-delegation-started',
-        launch_input_verified_at_utc: delegationStartedAtUtc,
-        launch_input_copy_paste_reviewer_launch_prompt_sha256: launchInputAttestation.copyPasteReviewerLaunchPromptSha256,
-        delegation_started_at_utc: delegationStartedAtUtc,
-        launched_at_utc: delegationStartedAtUtc
-    };
-    if (isPlannedIdentityRebind) {
-        startedArtifact.planned_reviewer_identity = plannedReviewerIdentity;
-        startedArtifact.reviewer_identity_resolved_at_utc = delegationStartedAtUtc;
+    const startedArtifact: Record<string, unknown> = recoveringPersistedDelegationStart
+        ? preparedArtifact
+        : {
+            ...preparedArtifact,
+            reviewer_identity: reviewerIdentity,
+            attestation_state: 'delegation_started',
+            attestation_source: attestationSource,
+            launch_input_mode: launchInputAttestation.mode,
+            launch_input_sha256: launchInputAttestation.sha256,
+            launch_input_attestation_source: 'record-reviewer-delegation-started',
+            launch_input_verified_at_utc: delegationStartedAtUtc,
+            launch_input_copy_paste_reviewer_launch_prompt_sha256: launchInputAttestation.copyPasteReviewerLaunchPromptSha256,
+            delegation_started_at_utc: delegationStartedAtUtc,
+            launched_at_utc: delegationStartedAtUtc
+        };
+    if (!recoveringPersistedDelegationStart) {
+        if (isPlannedIdentityRebind) {
+            startedArtifact.planned_reviewer_identity = plannedReviewerIdentity;
+            startedArtifact.reviewer_identity_resolved_at_utc = delegationStartedAtUtc;
+        }
+        if (launchInputAttestation.artifactPath) {
+            startedArtifact.launch_input_artifact_path = normalizePath(launchInputAttestation.artifactPath);
+        }
+        if (launchInputAttestation.artifactSha256) {
+            startedArtifact.launch_input_artifact_sha256 = launchInputAttestation.artifactSha256;
+            startedArtifact.prepared_reviewer_launch_artifact_sha256 = launchInputAttestation.artifactSha256;
+        }
+        if (providerInvocationId) {
+            startedArtifact.provider_invocation_id = providerInvocationId;
+        } else {
+            startedArtifact.controller_invocation_id = controllerInvocationId;
+        }
+        if (options.freshContext === true) {
+            startedArtifact.fresh_context = true;
+        }
+        if (options.isolatedContext === true) {
+            startedArtifact.isolated_context = true;
+        }
+        if (options.forkContext !== undefined) {
+            startedArtifact.fork_context = options.forkContext;
+        }
+        startedArtifact.record_invocation_command = buildRecordReviewInvocationCommand({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewerExecutionMode: 'delegated_subagent',
+            reviewerIdentity,
+            reviewContextPath: contextPath,
+            reviewerLaunchArtifactPath: launchArtifactPath
+        });
     }
-    if (launchInputAttestation.artifactPath) {
-        startedArtifact.launch_input_artifact_path = normalizePath(launchInputAttestation.artifactPath);
-    }
-    if (launchInputAttestation.artifactSha256) {
-        startedArtifact.launch_input_artifact_sha256 = launchInputAttestation.artifactSha256;
-        startedArtifact.prepared_reviewer_launch_artifact_sha256 = launchInputAttestation.artifactSha256;
-    }
-    if (providerInvocationId) {
-        startedArtifact.provider_invocation_id = providerInvocationId;
-    } else {
-        startedArtifact.controller_invocation_id = controllerInvocationId;
-    }
-    if (options.freshContext === true) {
-        startedArtifact.fresh_context = true;
-    }
-    if (options.isolatedContext === true) {
-        startedArtifact.isolated_context = true;
-    }
-    if (options.forkContext !== undefined) {
-        startedArtifact.fork_context = options.forkContext;
-    }
-    startedArtifact.record_invocation_command = buildRecordReviewInvocationCommand({
-        repoRoot,
-        taskId,
-        reviewType,
-        reviewerExecutionMode: 'delegated_subagent',
-        reviewerIdentity,
-        reviewContextPath: contextPath,
-        reviewerLaunchArtifactPath: launchArtifactPath
-    });
-    writeReviewArtifactJson(launchArtifactPath, startedArtifact);
-    const startedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
     const invocationId = providerInvocationId || controllerInvocationId;
     const invocationIdLabel = providerInvocationId ? 'ProviderInvocationId' : 'ControllerInvocationId';
     const completeReviewerLaunchCommand = buildCompleteReviewerLaunchCommand({
@@ -377,44 +534,99 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         controllerInvocationId: controllerInvocationId || null,
         failureReason: '<replace with provider/controller failure reason>'
     });
-    const startedEvent = await emitReviewerDelegationStartedEventAsync(
-        gateHelpers.joinOrchestratorPath(repoRoot, ''),
-        taskId,
-        reviewType,
-        reviewerExecutionMode,
-        reviewerIdentity,
-        contextSha256,
-        routingEventProvenance.event_sha256,
+    startedArtifact.complete_reviewer_launch_command = completeReviewerLaunchCommand;
+    const effectiveInvocationId = providerInvocationId || controllerInvocationId;
+    const findPersistedStartedEvent = (startedArtifactSha256?: string) => findMatchingReviewerDelegationStartedEvent(
+        readDependencyTimelineEvents(timelinePath),
         {
-            launchDetails: {
-                reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
-                reviewer_launch_attempt_id: reviewerLaunchAttemptId,
-                reviewer_launch_artifact_sha256: startedLaunchArtifactSha256,
-                reviewer_launch_input_artifact_path: normalizePath(launchInputArtifactPath),
-                reviewer_launch_attestation_source: attestationSource,
-                launch_tool: getStringField(startedArtifact, 'launch_tool', 'launchTool'),
-                provider_invocation_id: providerInvocationId || null,
-                controller_invocation_id: controllerInvocationId || null,
-                launch_input_mode: launchInputAttestation.mode,
-                launch_input_sha256: launchInputAttestation.sha256,
-                launch_input_artifact_path: launchInputAttestation.artifactPath
-                    ? normalizePath(launchInputAttestation.artifactPath)
-                    : null,
-                launch_input_artifact_sha256: launchInputAttestation.artifactSha256,
-                copy_paste_reviewer_launch_prompt_sha256: launchInputAttestation.copyPasteReviewerLaunchPromptSha256,
-                launch_prepared_at_utc: getStringField(startedArtifact, 'launch_prepared_at_utc', 'launchPreparedAtUtc'),
-                delegation_started_at_utc: delegationStartedAtUtc,
-                launched_at_utc: delegationStartedAtUtc,
-                review_tree_state_sha256: reviewTreeStateSha256 || null
-            }
+            taskId,
+            reviewType,
+            reviewerExecutionMode,
+            reviewerIdentity: routingReviewerIdentity,
+            reviewContextSha256: contextSha256,
+            routingEventSha256: routingEventProvenance.event_sha256,
+            reviewerLaunchAttemptId,
+            launchBindingSha256: getStringField(
+                startedArtifact,
+                'launch_binding_sha256',
+                'launchBindingSha256'
+            ),
+            preparedLaunchEventSha256: getStringField(
+                startedArtifact,
+                'prepared_launch_event_sha256',
+                'preparedLaunchEventSha256'
+            ),
+            reviewerLaunchArtifactSha256: startedArtifactSha256 || null,
+            providerInvocationId: effectiveInvocationId,
+            delegationStartedAtUtc,
+            minSequenceExclusive: routingEvent.sequence
         }
     );
-    if (!startedEvent || taskEventAppendHasBlockingFailure(startedEvent, false)) {
+    const existingStartedEventForAttempt = timelineEvents.find((event) => (
+        event.event_type === 'REVIEWER_DELEGATION_STARTED'
+        && event.sequence > routingEvent.sequence
+        && getStringField(
+            event.details || {},
+            'reviewer_launch_attempt_id',
+            'reviewerLaunchAttemptId'
+        ).toLowerCase() === reviewerLaunchAttemptId.toLowerCase()
+    ));
+    if (
+        existingStartedEventForAttempt
+        && !findPersistedStartedEvent(preparedLaunchArtifactSha256)
+    ) {
         throw new Error(
-            `Reviewer delegation start requires REVIEWER_DELEGATION_STARTED telemetry for '${reviewType}'. ` +
-            'The lifecycle event could not be persisted.'
+            'Delegation start recovery found conflicting REVIEWER_DELEGATION_STARTED telemetry for the same immutable launch attempt.'
         );
     }
+    const { startedArtifactSha256: startedLaunchArtifactSha256 } =
+        await persistReviewerDelegationStartedTransition({
+            artifactPath: launchArtifactPath,
+            originalArtifactText,
+            startedArtifact,
+            recoveringPersistedDelegationStart,
+            reviewType,
+            hasMatchingStartedEvent: (startedArtifactSha256) =>
+                Boolean(findPersistedStartedEvent(startedArtifactSha256)),
+            emitStartedEvent: async (startedArtifactSha256) => {
+                const startedEvent = await emitReviewerDelegationStartedEventAsync(
+                    gateHelpers.joinOrchestratorPath(repoRoot, ''),
+                    taskId,
+                    reviewType,
+                    reviewerExecutionMode,
+                    reviewerIdentity,
+                    contextSha256,
+                    routingEventProvenance.event_sha256,
+                    {
+                        launchDetails: {
+                            reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
+                            reviewer_launch_attempt_id: reviewerLaunchAttemptId,
+                            reviewer_launch_artifact_sha256: startedArtifactSha256,
+                            reviewer_launch_input_artifact_path: normalizePath(launchInputArtifactPath),
+                            reviewer_launch_attestation_source: attestationSource,
+                            launch_tool: getStringField(startedArtifact, 'launch_tool', 'launchTool'),
+                            provider_invocation_id: providerInvocationId || null,
+                            controller_invocation_id: controllerInvocationId || null,
+                            launch_input_mode: launchInputAttestation.mode,
+                            launch_input_sha256: launchInputAttestation.sha256,
+                            launch_input_artifact_path: launchInputAttestation.artifactPath
+                                ? normalizePath(launchInputAttestation.artifactPath)
+                                : null,
+                            launch_input_artifact_sha256: launchInputAttestation.artifactSha256,
+                            copy_paste_reviewer_launch_prompt_sha256: launchInputAttestation.copyPasteReviewerLaunchPromptSha256,
+                            launch_prepared_at_utc: getStringField(startedArtifact, 'launch_prepared_at_utc', 'launchPreparedAtUtc'),
+                            delegation_started_at_utc: delegationStartedAtUtc,
+                            launched_at_utc: delegationStartedAtUtc,
+                            review_tree_state_sha256: reviewTreeStateSha256 || null
+                        }
+                    }
+                );
+                return Boolean(
+                    startedEvent
+                    && !taskEventAppendHasBlockingFailure(startedEvent, false)
+                );
+            }
+        });
     console.log(buildOperatorNextActionBlock({
         status: 'PASSED',
         gate: 'record-reviewer-delegation-started',
@@ -440,5 +652,6 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     console.log(`CompleteReviewerLaunchCommand: ${completeReviewerLaunchCommand}`);
     console.log(`RecordReviewerLaunchFailedCommand: ${recordReviewerLaunchFailedCommand}`);
     console.log('NextStep: if the reviewer returns valid review output, ensure it is available at ReviewOutputPath and run complete-reviewer-launch. If the reviewer returns a transport or runtime error without valid review output, run record-reviewer-launch-failed and do not run complete-reviewer-launch.');
+    });
 };
 }

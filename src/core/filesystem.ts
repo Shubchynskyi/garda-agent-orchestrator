@@ -13,6 +13,9 @@ export interface AtomicWriteFileOptions {
     fsync?: boolean;
 }
 
+const TRANSIENT_ATOMIC_RENAME_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+const ATOMIC_RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100] as const;
+
 interface ExistingFileMetadata {
     mode?: number;
     uid?: number;
@@ -90,6 +93,31 @@ function isUnsupportedMetadataPreservationError(error: unknown): boolean {
     return ['EACCES', 'EINVAL', 'ENOSYS', 'ENOTSUP', 'EPERM'].includes(code);
 }
 
+function sleepSync(milliseconds: number): void {
+    if (milliseconds <= 0) {
+        return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function replaceFileWithTransientContentionRetry(tempPath: string, filePath: string): void {
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            fs.renameSync(tempPath, filePath);
+            return;
+        } catch (error: unknown) {
+            const code = String((error as NodeJS.ErrnoException | undefined)?.code || '').toUpperCase();
+            if (
+                !TRANSIENT_ATOMIC_RENAME_ERROR_CODES.has(code)
+                || attempt >= ATOMIC_RENAME_RETRY_DELAYS_MS.length
+            ) {
+                throw error;
+            }
+            sleepSync(ATOMIC_RENAME_RETRY_DELAYS_MS[attempt]);
+        }
+    }
+}
+
 function fsyncDirectoryBestEffort(directoryPath: string): void {
     if (process.platform === 'win32') {
         return;
@@ -132,7 +160,7 @@ export function writeFileAtomically(
         }
         closeFileDescriptor(fileDescriptor);
         fileDescriptor = undefined;
-        fs.renameSync(tempPath, filePath);
+        replaceFileWithTransientContentionRetry(tempPath, filePath);
         if (options.fsync !== false) {
             fsyncDirectoryBestEffort(directoryPath);
         }

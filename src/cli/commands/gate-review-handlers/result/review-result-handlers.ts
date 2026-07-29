@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeFileAtomically } from '../../../../core/filesystem';
 import { sha256RedactedJsonPayload } from '../../../../core/redaction';
 import {
     buildReviewReceipt,
@@ -144,6 +145,13 @@ import {
 import {
     buildReviewRemediationDeltaBase
 } from '../../../../gates/review-remediation/review-remediation-delta-contract';
+
+export function restoreReviewerLaunchArtifactTextForResultRollback(
+    artifactPath: string,
+    artifactText: string
+): void {
+    writeFileAtomically(artifactPath, artifactText, { encoding: 'utf8' });
+}
 
 function summarizeReviewFindingsReport(report: ReviewFindingsReport): Record<string, unknown> {
     const findingIdsBySeverity = {
@@ -508,6 +516,47 @@ interface ReviewArtifactFileSnapshot {
     content: Buffer | null;
 }
 
+interface ReviewArtifactFamilyRollbackJournal {
+    schema_version: 1;
+    artifact_path: string;
+    snapshots: Array<{
+        path: string;
+        existed: boolean;
+        content_base64: string | null;
+    }>;
+}
+
+function normalizeReviewArtifactPathForComparison(pathValue: string): string {
+    const normalizedPath = path.resolve(pathValue);
+    return process.platform === 'win32'
+        ? normalizedPath.toLowerCase()
+        : normalizedPath;
+}
+
+function getReviewArtifactFamilyRollbackJournalPath(artifactPath: string): string {
+    return path.join(
+        path.dirname(artifactPath),
+        `.${path.basename(artifactPath)}.rollback.json`
+    );
+}
+
+function isReviewArtifactFamilyMemberPath(artifactPath: string, candidatePath: string): boolean {
+    if (
+        normalizeReviewArtifactPathForComparison(path.dirname(artifactPath))
+        !== normalizeReviewArtifactPathForComparison(path.dirname(candidatePath))
+    ) {
+        return false;
+    }
+    const artifactExtension = path.extname(artifactPath);
+    const artifactStem = path.basename(artifactPath, artifactExtension);
+    const candidateName = path.basename(candidatePath);
+    return candidateName === path.basename(artifactPath)
+        || (
+            candidateName.startsWith(`${artifactStem}-`)
+            && candidateName.endsWith(artifactExtension)
+        );
+}
+
 function assertReviewArtifactRollbackPathSafe(repoRoot: string, pathValue: string): void {
     const resolvedRepoRoot = path.resolve(repoRoot);
     const resolvedPath = path.resolve(pathValue);
@@ -545,16 +594,157 @@ function captureReviewArtifactFile(repoRoot: string, pathValue: string): ReviewA
     };
 }
 
-function restoreReviewArtifactFile(repoRoot: string, snapshot: ReviewArtifactFileSnapshot): void {
+export function restoreReviewArtifactFile(repoRoot: string, snapshot: ReviewArtifactFileSnapshot): void {
     assertReviewArtifactRollbackPathSafe(repoRoot, snapshot.path);
-    if (snapshot.existed && snapshot.content) {
-        fs.writeFileSync(snapshot.path, snapshot.content);
+    if (snapshot.existed) {
+        if (snapshot.content === null) {
+            throw new Error(
+                `Review findings validation rollback snapshot is missing content for ${normalizePath(snapshot.path)}.`
+            );
+        }
+        writeFileAtomically(snapshot.path, snapshot.content);
         return;
     }
     fs.rmSync(snapshot.path, { force: true });
 }
 
+function readReviewArtifactFamilyRollbackJournal(
+    repoRoot: string,
+    artifactPath: string,
+    journalPath: string
+): ReviewArtifactFileSnapshot[] {
+    assertReviewArtifactRollbackPathSafe(repoRoot, journalPath);
+    if (!fs.existsSync(journalPath) || !fs.lstatSync(journalPath).isFile()) {
+        throw new Error(
+            `Review findings validation rollback journal is missing or not a regular file: ` +
+            `${normalizePath(journalPath)}.`
+        );
+    }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+    } catch (error: unknown) {
+        throw new Error(
+            `Review findings validation rollback journal is invalid JSON: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Review findings validation rollback journal must be a JSON object.');
+    }
+    const journal = parsed as Partial<ReviewArtifactFamilyRollbackJournal>;
+    if (
+        journal.schema_version !== 1
+        || normalizeReviewArtifactPathForComparison(String(journal.artifact_path || ''))
+            !== normalizeReviewArtifactPathForComparison(artifactPath)
+        || !Array.isArray(journal.snapshots)
+    ) {
+        throw new Error('Review findings validation rollback journal binding is invalid.');
+    }
+    const seenPaths = new Set<string>();
+    return journal.snapshots.map((entry, index) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            throw new Error(
+                `Review findings validation rollback journal snapshot ${index + 1} is invalid.`
+            );
+        }
+        const snapshotPath = path.resolve(String(entry.path || ''));
+        const normalizedSnapshotPath = normalizeReviewArtifactPathForComparison(snapshotPath);
+        if (
+            seenPaths.has(normalizedSnapshotPath)
+            || !isReviewArtifactFamilyMemberPath(artifactPath, snapshotPath)
+        ) {
+            throw new Error(
+                `Review findings validation rollback journal snapshot path is invalid: ` +
+                `${normalizePath(snapshotPath)}.`
+            );
+        }
+        seenPaths.add(normalizedSnapshotPath);
+        assertReviewArtifactRollbackPathSafe(repoRoot, snapshotPath);
+        if (typeof entry.existed !== 'boolean') {
+            throw new Error(
+                `Review findings validation rollback journal snapshot ${index + 1} is missing existed state.`
+            );
+        }
+        if (!entry.existed) {
+            if (entry.content_base64 !== null) {
+                throw new Error(
+                    `Review findings validation rollback journal snapshot ${index + 1} ` +
+                    'must not contain bytes for an originally absent file.'
+                );
+            }
+            return {
+                path: snapshotPath,
+                existed: false,
+                content: null
+            };
+        }
+        if (typeof entry.content_base64 !== 'string') {
+            throw new Error(
+                `Review findings validation rollback journal snapshot ${index + 1} is missing file bytes.`
+            );
+        }
+        const content = Buffer.from(entry.content_base64, 'base64');
+        if (content.toString('base64') !== entry.content_base64) {
+            throw new Error(
+                `Review findings validation rollback journal snapshot ${index + 1} has invalid base64 bytes.`
+            );
+        }
+        return {
+            path: snapshotPath,
+            existed: true,
+            content
+        };
+    });
+}
+
+export function recoverReviewArtifactFamilyRollbackIfPresent(
+    repoRoot: string,
+    artifactPath: string
+): boolean {
+    const journalPath = getReviewArtifactFamilyRollbackJournalPath(artifactPath);
+    assertReviewArtifactRollbackPathSafe(repoRoot, journalPath);
+    if (!fs.existsSync(journalPath)) {
+        return false;
+    }
+    const snapshots = readReviewArtifactFamilyRollbackJournal(
+        repoRoot,
+        artifactPath,
+        journalPath
+    );
+    snapshots
+        .filter((snapshot) => snapshot.existed)
+        .forEach((snapshot) => restoreReviewArtifactFile(repoRoot, snapshot));
+    const originalExistingPaths = new Set(
+        snapshots
+            .filter((snapshot) => snapshot.existed)
+            .map((snapshot) => normalizeReviewArtifactPathForComparison(snapshot.path))
+    );
+    const artifactDirectory = path.dirname(artifactPath);
+    if (fs.existsSync(artifactDirectory) && fs.lstatSync(artifactDirectory).isDirectory()) {
+        fs.readdirSync(artifactDirectory)
+            .map((name) => path.join(artifactDirectory, name))
+            .filter((candidatePath) => isReviewArtifactFamilyMemberPath(artifactPath, candidatePath))
+            .filter((candidatePath) => !originalExistingPaths.has(
+                normalizeReviewArtifactPathForComparison(candidatePath)
+            ))
+            .forEach((candidatePath) => {
+                assertReviewArtifactRollbackPathSafe(repoRoot, candidatePath);
+                if (!fs.lstatSync(candidatePath).isFile()) {
+                    throw new Error(
+                        `Review findings validation rollback family member must be a regular file: ` +
+                        `${normalizePath(candidatePath)}.`
+                    );
+                }
+                fs.rmSync(candidatePath, { force: true });
+            });
+    }
+    fs.rmSync(journalPath, { force: true });
+    return true;
+}
+
 function captureReviewArtifactFamily(repoRoot: string, artifactPath: string): ReviewArtifactFileSnapshot[] {
+    recoverReviewArtifactFamilyRollbackIfPresent(repoRoot, artifactPath);
     const artifactDirectory = path.dirname(artifactPath);
     assertReviewArtifactRollbackPathSafe(repoRoot, artifactDirectory);
     const artifactExtension = path.extname(artifactPath);
@@ -572,29 +762,41 @@ function captureReviewArtifactFamily(repoRoot: string, artifactPath: string): Re
     return familyPaths.map((familyPath) => captureReviewArtifactFile(repoRoot, familyPath));
 }
 
-function restoreReviewArtifactFamily(
+export function restoreReviewArtifactFamily(
     repoRoot: string,
     artifactPath: string,
     snapshots: ReviewArtifactFileSnapshot[]
 ): void {
-    const artifactDirectory = path.dirname(artifactPath);
-    assertReviewArtifactRollbackPathSafe(repoRoot, artifactDirectory);
-    const artifactExtension = path.extname(artifactPath);
-    const artifactStem = path.basename(artifactPath, artifactExtension);
-    if (fs.existsSync(artifactDirectory) && fs.lstatSync(artifactDirectory).isDirectory()) {
-        fs.readdirSync(artifactDirectory)
-            .filter((name) => name === path.basename(artifactPath)
-                || (name.startsWith(`${artifactStem}-`) && name.endsWith(artifactExtension)))
-            .forEach((name) => {
-                const familyPath = path.join(artifactDirectory, name);
-                assertReviewArtifactRollbackPathSafe(repoRoot, familyPath);
-                if (!fs.lstatSync(familyPath).isFile()) {
-                    return;
-                }
-                fs.rmSync(familyPath, { force: true });
-            });
+    if (recoverReviewArtifactFamilyRollbackIfPresent(repoRoot, artifactPath)) {
+        return;
     }
-    snapshots.forEach((snapshot) => restoreReviewArtifactFile(repoRoot, snapshot));
+    const journalPath = getReviewArtifactFamilyRollbackJournalPath(artifactPath);
+    assertReviewArtifactRollbackPathSafe(repoRoot, journalPath);
+    const journal: ReviewArtifactFamilyRollbackJournal = {
+        schema_version: 1,
+        artifact_path: normalizePath(path.resolve(artifactPath)),
+        snapshots: snapshots.map((snapshot) => {
+            if (snapshot.existed && snapshot.content === null) {
+                throw new Error(
+                    `Review findings validation rollback snapshot is missing content for ` +
+                    `${normalizePath(snapshot.path)}.`
+                );
+            }
+            return {
+                path: normalizePath(path.resolve(snapshot.path)),
+                existed: snapshot.existed,
+                content_base64: snapshot.existed
+                    ? snapshot.content!.toString('base64')
+                    : null
+            };
+        })
+    };
+    writeFileAtomically(journalPath, `${JSON.stringify(journal, null, 2)}\n`, {
+        encoding: 'utf8'
+    });
+    if (!recoverReviewArtifactFamilyRollbackIfPresent(repoRoot, artifactPath)) {
+        throw new Error('Review findings validation rollback journal was not consumed.');
+    }
 }
 
 async function emitFindingsValidationLaunchFailure(options: {
@@ -962,13 +1164,37 @@ async function terminalizeCompletedLaunchAfterFindingsRejection(options: {
             validationArtifactSha256: options.validationEvidence.artifactSha256
         });
     } catch (error: unknown) {
-        fs.writeFileSync(launchArtifactPath, originalArtifactText, 'utf8');
+        let rollbackError: unknown = null;
+        try {
+            restoreReviewerLaunchArtifactTextForResultRollback(launchArtifactPath, originalArtifactText);
+        } catch (caughtRollbackError) {
+            rollbackError = caughtRollbackError;
+        }
         restoreReviewArtifactFamily(options.repoRoot, options.validationEvidence.artifactPath, validationArtifactSnapshots);
+        if (rollbackError) {
+            throw new Error(
+                `Rejected findings recovery failed and the completed launch artifact rollback also failed: ` +
+                `${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}. ` +
+                `Original failure: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
         throw error;
     }
     if (!failedEvent || taskEventAppendHasBlockingFailure(failedEvent, false)) {
-        fs.writeFileSync(launchArtifactPath, originalArtifactText, 'utf8');
+        let rollbackError: unknown = null;
+        try {
+            restoreReviewerLaunchArtifactTextForResultRollback(launchArtifactPath, originalArtifactText);
+        } catch (caughtRollbackError) {
+            rollbackError = caughtRollbackError;
+        }
         restoreReviewArtifactFamily(options.repoRoot, options.validationEvidence.artifactPath, validationArtifactSnapshots);
+        if (rollbackError) {
+            throw new Error(
+                `Rejected findings recovery requires REVIEWER_LAUNCH_FAILED telemetry for '${options.reviewType}'. ` +
+                `Telemetry persistence failed and the completed launch artifact rollback also failed: ` +
+                `${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}.`
+            );
+        }
         throw new Error(
             `Rejected findings recovery requires REVIEWER_LAUNCH_FAILED telemetry for '${options.reviewType}'. ` +
             'The immutable launch artifact was restored because telemetry could not be persisted.'
@@ -1067,7 +1293,16 @@ function restoreCompletedLaunchAfterAcceptedFindingsCorrection(options: {
             throw new Error('restored launch artifact hash does not match the completed launch');
         }
     } catch (error: unknown) {
-        fs.writeFileSync(launchArtifactPath, failedArtifactText, 'utf8');
+        try {
+            restoreReviewerLaunchArtifactTextForResultRollback(launchArtifactPath, failedArtifactText);
+        } catch (rollbackError) {
+            throw new Error(
+                `Accepted findings correction could not restore the completed launch for '${options.reviewType}', ` +
+                `and the failed launch artifact rollback also failed: ` +
+                `${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}. ` +
+                `Original failure: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
         throw new Error(
             `Accepted findings correction could not restore the completed launch for '${options.reviewType}': ` +
             `${error instanceof Error ? error.message : String(error)}`
@@ -1075,7 +1310,7 @@ function restoreCompletedLaunchAfterAcceptedFindingsCorrection(options: {
     }
     return {
         rollback: () => {
-            fs.writeFileSync(launchArtifactPath, failedArtifactText, 'utf8');
+            restoreReviewerLaunchArtifactTextForResultRollback(launchArtifactPath, failedArtifactText);
             if (fileSha256(launchArtifactPath)?.toLowerCase() !== failedArtifactSha256.toLowerCase()) {
                 throw new Error('failed launch artifact hash was not restored');
             }

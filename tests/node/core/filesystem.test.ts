@@ -73,6 +73,43 @@ test('writeFileAtomically preserves existing file content when file fsync fails'
     }
 });
 
+test('writeFileAtomically retries transient rename contention before replacing the target', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-node-foundation-'));
+
+    try {
+        const targetPath = path.join(tempRoot, 'state.json');
+        fs.writeFileSync(targetPath, '{"old":true}\n', 'utf8');
+
+        const realFs = require('node:fs');
+        const originalRenameSync = realFs.renameSync;
+        let interceptedAttempts = 0;
+        try {
+            realFs.renameSync = function (...args: any[]) {
+                interceptedAttempts += 1;
+                if (interceptedAttempts <= 2) {
+                    const error = new Error('EPERM: simulated transient rename contention') as NodeJS.ErrnoException;
+                    error.code = 'EPERM';
+                    throw error;
+                }
+                return originalRenameSync.apply(realFs, args);
+            };
+
+            writeFileAtomically(targetPath, '{"new":true}\n', { encoding: 'utf8' });
+        } finally {
+            realFs.renameSync = originalRenameSync;
+        }
+
+        assert.equal(interceptedAttempts, 3);
+        assert.equal(fs.readFileSync(targetPath, 'utf8'), '{"new":true}\n');
+        assert.deepStrictEqual(
+            fs.readdirSync(tempRoot).filter((entry) => entry.includes('.tmp-')),
+            []
+        );
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('writeFileAtomically preserves existing file mode where POSIX mode bits are supported', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-node-foundation-'));
 
