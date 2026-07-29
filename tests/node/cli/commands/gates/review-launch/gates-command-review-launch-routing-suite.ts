@@ -9,7 +9,7 @@ import {
     fs,
     getOrchestratorRoot,
     getReviewsRoot,
-    it,
+    it as nodeIt,
     launchArtifactInputArgsForTest,
     manualReviewContextBindingFixture,
     manualReviewContextTaskScopeFixture,
@@ -28,6 +28,13 @@ import {
     seedTaskQueue,
     writePreflight
 } from './gates-command-review-launch-fixtures';
+import { createPartitionedTestRegistrar } from '../../gate-test-partition';
+
+const it = createPartitionedTestRegistrar(
+    nodeIt,
+    'GARDA_REVIEW_LAUNCH_ROUTING_PART',
+    3
+);
 
 function appendRestartBoundary(
     repoRoot: string,
