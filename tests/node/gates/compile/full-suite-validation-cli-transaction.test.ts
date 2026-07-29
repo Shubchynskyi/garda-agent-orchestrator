@@ -1011,12 +1011,23 @@ describe('gates/full-suite-validation', () => {
                 changed_files: ['src/changed.ts']
             });
 
-            const result = await runCliWithCapturedOutput([
-                'gate', 'full-suite-validation',
-                '--task-id', 'T-FORECAST-TIMEOUT',
-                '--preflight-path', preflightPath,
-                '--repo-root', tempDir
-            ], { cwd: repoRoot });
+            const originalShardTimeout = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+            let result: Awaited<ReturnType<typeof runCliWithCapturedOutput>>;
+            try {
+                result = await runCliWithCapturedOutput([
+                    'gate', 'full-suite-validation',
+                    '--task-id', 'T-FORECAST-TIMEOUT',
+                    '--preflight-path', preflightPath,
+                    '--repo-root', tempDir
+                ], { cwd: repoRoot });
+            } finally {
+                if (originalShardTimeout === undefined) {
+                    delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+                } else {
+                    process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = originalShardTimeout;
+                }
+            }
 
             assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
             const artifactPath = path.join(reviewsDir, 'T-FORECAST-TIMEOUT-full-suite-validation.json');

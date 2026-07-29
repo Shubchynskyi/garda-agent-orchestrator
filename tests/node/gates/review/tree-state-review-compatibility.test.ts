@@ -72,19 +72,19 @@ test('tree-state review compatibility suite keeps the focused regression shards 
             "does not fingerprint review reuse scope from files reached through symlinked directories outside repo"
         ],
         [
-            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews-safety.test.ts',
+            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews-safety-suite.ts',
             "fails required reviews gate when receipt tree-state binding is missing or tampered"
         ],
         [
-            'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-routing.test.ts',
+            'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-routing-suite.ts',
             "record-review-routing rejects schema-less review contexts without tree_state binding"
         ],
         [
-            'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-prepared.test.ts',
+            'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-prepared-suite.ts',
             "prepare-reviewer-launch rejects stale staged review contexts after MM drift"
         ],
         [
-            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews-safety.test.ts',
+            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews-safety-suite.ts',
             "required-reviews-check rejects passed staged receipts after same-path MM drift"
         ],
         [
