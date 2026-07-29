@@ -18,7 +18,7 @@ const mutableChildProcess = require('node:child_process') as typeof childProcess
     spawnSync: typeof childProcess.spawnSync;
 };
 const DEFAULT_SHARDED_NODE_TEST_ARGS = ['--test', '--test-concurrency=2'];
-const EXPECTED_MAX_GROUPED_SHARD_FILES = 32;
+const EXPECTED_MAX_SHARD_ARG_CHARS = 24_000;
 
 function createBuildResultFixture(extraTestCount = 0): { buildResult: BuildResult; cleanup: () => void; } {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-node-foundation-tests-'));
@@ -441,7 +441,7 @@ test('runNodeFoundationTests isolates completion rollback suite from grouped sha
     }
 });
 
-test('runNodeFoundationTests schedules known 60s slow tests as isolated shards with default shard concurrency', async () => {
+test('runNodeFoundationTests keeps known 60s tests inside balanced grouped shards', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
@@ -512,17 +512,21 @@ test('runNodeFoundationTests schedules known 60s slow tests as isolated shards w
         const exitCode = await testModule.runNodeFoundationTests();
 
         assert.equal(exitCode, 0);
-        assert.equal(observedShardArgs.length, 3);
+        assert.equal(observedShardArgs.length, 2);
         assert.equal(maxActiveShards, 2);
-        assert.ok(observedShardArgs[0].includes(isolatedTestPath), 'known slow isolated test should start first');
-        const isolatedShardArgs = observedShardArgs.filter((args) => args.includes(isolatedTestPath));
-        assert.equal(isolatedShardArgs.length, 1);
-        assert.deepEqual(isolatedShardArgs[0], [...DEFAULT_SHARDED_NODE_TEST_ARGS, isolatedTestPath]);
+        const groupedShardArgs = observedShardArgs.filter((args) => args.includes(isolatedTestPath));
+        assert.equal(groupedShardArgs.length, 1);
+        assert.ok(
+            groupedShardArgs[0].length > DEFAULT_SHARDED_NODE_TEST_ARGS.length + 1,
+            'known 60s test should retain a grouped shard peer'
+        );
         const comparisonLine = observedLogs.find((line) => line.startsWith('NODE_FOUNDATION_TEST_SHARD_COMPARISON '));
-        assert.match(comparisonLine || '', /current_threshold_ms=60000/);
+        assert.match(comparisonLine || '', /current_threshold_ms=300000/);
         assert.match(comparisonLine || '', /baseline_threshold_ms=60000/);
-        assert.match(comparisonLine || '', /current_isolated_files=1/);
+        assert.match(comparisonLine || '', /current_isolated_files=0/);
         assert.match(comparisonLine || '', /baseline_isolated_files=1/);
+        assert.match(comparisonLine || '', /current_scheduled_shards=2/);
+        assert.match(comparisonLine || '', /baseline_scheduled_shards=3/);
         assert.match(comparisonLine || '', /max_worker_processes=2/);
     } finally {
         process.argv = originalArgv;
@@ -703,9 +707,9 @@ test('runNodeFoundationTests does not diagnose nonzero shard exits when the fina
     }
 });
 
-test('runNodeFoundationTests accepts cross-platform shard options and writes shard logs', async () => {
+test('runNodeFoundationTests preserves a safe requested shard count and writes shard logs', async () => {
     const { PassThrough } = require('node:stream') as typeof import('node:stream');
-    const { buildResult, cleanup } = createBuildResultFixture();
+    const { buildResult, cleanup } = createBuildResultFixture(70);
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
     const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
@@ -745,6 +749,10 @@ test('runNodeFoundationTests accepts cross-platform shard options and writes sha
         assert.equal(observedShardArgs.length, 2);
         assert.ok(observedShardArgs.every((args) => !args.includes('--garda-shards')));
         assert.ok(observedShardArgs.every((args) => !args.includes('--garda-shard-log-dir')));
+        assert.ok(
+            observedShardArgs.every((args) => args.filter((arg) => !arg.startsWith('--')).length > 32),
+            'safe explicit shards should not be re-split by a fixed file-count cap'
+        );
         const logDir = path.join(buildResult.repoRoot, 'custom-shard-logs');
         const logFiles = fs.readdirSync(logDir).sort();
         assert.deepEqual(logFiles, ['shard-01-of-02.log', 'shard-02-of-02.log']);
@@ -1586,6 +1594,11 @@ test('runNodeFoundationTests auto-shards when the compiled test command would be
     const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
     const originalSpawn = mutableChildProcess.spawn;
     const observedShardArgs: string[][] = [];
+    fs.writeFileSync(
+        path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js'),
+        `${'void 0;\n'.repeat(20_000)}\n`,
+        'utf8'
+    );
 
     try {
         process.argv = ['node', 'scripts/node-foundation/test.js'];
@@ -1605,13 +1618,17 @@ test('runNodeFoundationTests auto-shards when the compiled test command would be
         const exitCode = await testModule.runNodeFoundationTests();
 
         assert.equal(exitCode, 0);
-        assert.ok(observedShardArgs.length > 1, `Expected auto-sharding, got ${observedShardArgs.length} shard(s).`);
+        assert.ok(
+            observedShardArgs.length > 2,
+            `Expected skewed shard argv to require additional splitting, got ${observedShardArgs.length} shard(s).`
+        );
         assert.ok(observedShardArgs.every((args) => args[0] === '--test'));
         assert.ok(
-            observedShardArgs.every(
-                (args) => args.length <= EXPECTED_MAX_GROUPED_SHARD_FILES + DEFAULT_SHARDED_NODE_TEST_ARGS.length
-            ),
-            `Expected grouped shards to contain at most ${EXPECTED_MAX_GROUPED_SHARD_FILES} files.`
+            observedShardArgs.every((args) => (
+                [process.execPath, ...args].reduce((total, arg) => total + arg.length + 3, 0)
+                <= EXPECTED_MAX_SHARD_ARG_CHARS
+            )),
+            `Expected grouped shard commands to stay within ${EXPECTED_MAX_SHARD_ARG_CHARS} characters.`
         );
     } finally {
         process.argv = originalArgv;
@@ -1620,6 +1637,52 @@ test('runNodeFoundationTests auto-shards when the compiled test command would be
         } else {
             process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = originalShardEnv;
         }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests rejects an oversized shard plan before starting any process', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    addCompiledTestFile(buildResult, 'tests/node/bin/garda-delegation.test.js');
+    const oversizedPatterns = [
+        `${'\\'.repeat(10)}"`.repeat(1_800),
+        ` ${'😀'.repeat(11_999)}`
+    ];
+    let spawnCount = 0;
+    assert.ok(oversizedPatterns.every((pattern) => pattern.length < EXPECTED_MAX_SHARD_ARG_CHARS));
+
+    try {
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, __: readonly string[] = []) => {
+            spawnCount += 1;
+            return createCompletingNodeTestChild();
+        }) as typeof childProcess.spawn;
+
+        for (const oversizedPattern of oversizedPatterns) {
+            process.argv = [
+                'node',
+                'scripts/node-foundation/test.js',
+                '--garda-shards',
+                '2',
+                '--test-name-pattern',
+                oversizedPattern
+            ];
+            await assert.rejects(
+                () => testModule.runNodeFoundationTests(),
+                /Node test shard command line exceeds 24000 characters/
+            );
+        }
+        assert.equal(spawnCount, 0);
+    } finally {
+        process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
         mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
         mutableChildProcess.spawn = originalSpawn;

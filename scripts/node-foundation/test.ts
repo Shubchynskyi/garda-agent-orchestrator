@@ -29,13 +29,12 @@ const NODE_FOUNDATION_TEST_SHARD_CLEANUP_GRACE_MS = 1_000;
 const NODE_FOUNDATION_TEST_GREEN_EXIT_ISOLATION_MAX_FILES = 12;
 const NODE_FOUNDATION_TEST_GREEN_EXIT_ISOLATION_TIMEOUT_MS = 30_000;
 const DEFAULT_SHARDED_NODE_TEST_CONCURRENCY = 2;
-const NODE_FOUNDATION_MAX_GROUPED_SHARD_FILES = 32;
 const GARDA_SHARDS_OPTION = '--garda-shards';
 const GARDA_SHARD_CONCURRENCY_OPTION = '--garda-shard-concurrency';
 const GARDA_SHARD_LOG_DIR_OPTION = '--garda-shard-log-dir';
 const GARDA_DURATION_FILE_OPTION = '--garda-duration-file';
 const NODE_FOUNDATION_BASELINE_SINGLE_FILE_SHARD_MIN_DURATION_MS = 60_000;
-const NODE_FOUNDATION_SINGLE_FILE_SHARD_MIN_DURATION_MS = 60_000;
+const NODE_FOUNDATION_SINGLE_FILE_SHARD_MIN_DURATION_MS = 5 * 60_000;
 const NODE_FOUNDATION_ISOLATED_TEST_PATHS = new Set<string>([
     'tests/node/cli/commands/gates/completion/gates-completion-rollback.test.ts'
 ]);
@@ -384,9 +383,43 @@ function hasExplicitTestShardOption(optionArgs: string[]): boolean {
     return optionArgs.some((arg) => arg === '--test-shard' || arg.startsWith('--test-shard='));
 }
 
+function estimateWindowsCommandLineArgChars(arg: string): number {
+    if (arg.length > 0 && !/[ \t"]/u.test(arg)) {
+        return arg.length;
+    }
+    let serializedChars = 2;
+    let pendingBackslashes = 0;
+    for (const char of arg) {
+        if (char === '\\') {
+            pendingBackslashes += 1;
+        } else if (char === '"') {
+            serializedChars += (pendingBackslashes * 2) + 2;
+            pendingBackslashes = 0;
+        } else {
+            serializedChars += pendingBackslashes + char.length;
+            pendingBackslashes = 0;
+        }
+    }
+    return serializedChars + (pendingBackslashes * 2);
+}
+
 function estimateNodeTestArgChars(optionArgs: string[], selectedTestFiles: string[]): number {
     const args = [process.execPath, '--test', ...optionArgs, ...selectedTestFiles];
-    return args.reduce((total, arg) => total + arg.length + 3, 0);
+    return args.reduce(
+        (total, arg, index) => total + estimateWindowsCommandLineArgChars(arg) + (index === 0 ? 0 : 1),
+        0
+    );
+}
+
+function assertNodeTestArgCharsWithinLimit(optionArgs: string[], selectedTestFiles: string[]): void {
+    const estimatedArgChars = estimateNodeTestArgChars(optionArgs, selectedTestFiles);
+    if (estimatedArgChars <= NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT) {
+        return;
+    }
+    throw new Error(
+        `Node test shard command line exceeds ${NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT} characters `
+        + `(estimated ${estimatedArgChars}, files ${selectedTestFiles.length}).`
+    );
 }
 
 function resolveAutoShardCount(selectedTestFiles: string[], optionArgs: string[]): number {
@@ -729,9 +762,37 @@ function sortFilesByKnownDuration(
         .map((item) => item.file);
 }
 
-function resolveGroupedNodeFoundationShardCount(parallelFileCount: number, requestedShardCount: number): number {
-    const boundedShardCount = Math.ceil(parallelFileCount / NODE_FOUNDATION_MAX_GROUPED_SHARD_FILES);
-    return Math.min(parallelFileCount, Math.max(requestedShardCount, boundedShardCount));
+function assignCommandLineSafeNodeFoundationTestShards(
+    buildResult: BuildResult,
+    selectedTestFiles: string[],
+    optionArgs: string[],
+    requestedShardCount: number,
+    telemetry: TestDurationTelemetry
+): Array<{ files: string[]; totalWeight: number; }> {
+    const fileWeights = buildTestFileWeights(buildResult, selectedTestFiles, telemetry);
+    let shardCount = Math.min(
+        selectedTestFiles.length,
+        Math.max(requestedShardCount, resolveAutoShardCount(selectedTestFiles, optionArgs))
+    );
+    while (true) {
+        const shards = assignNodeFoundationTestShardWeights(fileWeights, shardCount);
+        if (
+            shardCount >= selectedTestFiles.length
+            || shards.every((shard) => (
+                estimateNodeTestArgChars(optionArgs, shard.files)
+                <= NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT
+            ))
+        ) {
+            return shards;
+        }
+        shardCount += 1;
+    }
+}
+
+function assertNodeFoundationShardCommandsWithinLimit(optionArgs: string[], shards: string[][]): void {
+    for (const shardFiles of shards) {
+        assertNodeTestArgCharsWithinLimit(optionArgs, shardFiles);
+    }
 }
 
 function assignNodeFoundationTestShardWeights(fileWeights: TestFileWeight[], shardCount: number): Array<{
@@ -808,11 +869,18 @@ function buildNodeFoundationTestShards(
     buildResult: BuildResult,
     selectedTestFiles: string[],
     shardCount: number,
-    telemetry: TestDurationTelemetry
+    telemetry: TestDurationTelemetry,
+    optionArgs: string[]
 ): string[][] {
     const fileWeights = buildTestFileWeights(buildResult, selectedTestFiles, telemetry);
     const knownDurationCount = fileWeights.filter((item) => item.durationMs !== null).length;
-    const shards = assignNodeFoundationTestShardWeights(fileWeights, shardCount);
+    const shards = assignCommandLineSafeNodeFoundationTestShards(
+        buildResult,
+        selectedTestFiles,
+        optionArgs,
+        shardCount,
+        telemetry
+    );
 
     const source = knownDurationCount === 0
         ? 'size_fallback'
@@ -902,6 +970,7 @@ function estimateKnownDurationWallMs(
 function summarizeNodeFoundationShardSchedule(
     buildResult: BuildResult,
     selectedTestFiles: string[],
+    shardOptionArgs: string[],
     shardCount: number,
     requestedConcurrency: number,
     telemetry: TestDurationTelemetry,
@@ -914,14 +983,14 @@ function summarizeNodeFoundationShardSchedule(
         telemetry,
         thresholdMs
     );
-    const groupedShardCount = executionPlan.parallelFiles.length === 0
-        ? 0
-        : resolveGroupedNodeFoundationShardCount(executionPlan.parallelFiles.length, shardCount);
     const parallelShards = executionPlan.parallelFiles.length === 0
         ? []
-        : assignNodeFoundationTestShardWeights(
-            buildTestFileWeights(buildResult, executionPlan.parallelFiles, telemetry),
-            groupedShardCount
+        : assignCommandLineSafeNodeFoundationTestShards(
+            buildResult,
+            executionPlan.parallelFiles,
+            shardOptionArgs,
+            shardCount,
+            telemetry
         ).map((shard) => shard.files);
     const isolatedShards = sortFilesByKnownDuration(buildResult, executionPlan.isolatedFiles, telemetry)
         .map((file) => [file]);
@@ -939,7 +1008,7 @@ function summarizeNodeFoundationShardSchedule(
 
     return {
         thresholdMs,
-        groupedShardCount,
+        groupedShardCount: parallelShards.length,
         isolatedFileCount: executionPlan.isolatedFiles.length,
         serialFileCount: executionPlan.serialFiles.length,
         scheduledShardCount: scheduledShards.length,
@@ -1173,6 +1242,8 @@ function runNodeTestShard(
     shardLogDir: string,
     runtimeConfig: NodeTestShardRuntimeConfig
 ): Promise<NodeTestShardResult> {
+    const shardOptionArgs = buildNodeTestShardOptionArgs(optionArgs, runtimeConfig);
+    assertNodeTestArgCharsWithinLimit(shardOptionArgs, shardFiles);
     return new Promise((resolve, reject) => {
         fs.mkdirSync(shardLogDir, { recursive: true });
         const logPath = path.join(shardLogDir, `shard-${String(shardIndex + 1).padStart(2, '0')}-of-${String(shardCount).padStart(2, '0')}.log`);
@@ -1193,7 +1264,7 @@ function runNodeTestShard(
             `${shardIndex + 1}/${shardCount} ${logPath}`
         ));
         const childCommand = process.execPath;
-        const childArgs = ['--test', ...buildNodeTestShardOptionArgs(optionArgs, runtimeConfig), ...shardFiles];
+        const childArgs = ['--test', ...shardOptionArgs, ...shardFiles];
         const child = childProcess.spawn(childCommand, childArgs, {
             cwd: repoRoot,
             detached: process.platform !== 'win32',
@@ -1445,14 +1516,20 @@ async function runShardedNodeTestProcesses(
     telemetry: TestDurationTelemetry,
     updateDurationTelemetry: boolean
 ): Promise<number> {
+    const runtimeConfig = resolveNodeTestShardRuntimeConfig(
+        requestedShardConcurrency,
+        DEFAULT_SHARDED_NODE_TEST_CONCURRENCY
+    );
+    const shardOptionArgs = buildNodeTestShardOptionArgs(optionArgs, runtimeConfig);
     const executionPlan = splitNodeFoundationTestExecutionPlan(buildResult, selectedTestFiles, shardCount, telemetry);
     const parallelShards = executionPlan.parallelFiles.length === 0
         ? []
         : buildNodeFoundationTestShards(
             buildResult,
             executionPlan.parallelFiles,
-            resolveGroupedNodeFoundationShardCount(executionPlan.parallelFiles.length, shardCount),
-            telemetry
+            shardCount,
+            telemetry,
+            shardOptionArgs
         );
     const isolatedShards = sortFilesByKnownDuration(buildResult, executionPlan.isolatedFiles, telemetry)
         .map((file) => [file]);
@@ -1461,11 +1538,11 @@ async function runShardedNodeTestProcesses(
         [...parallelShards, ...isolatedShards],
         telemetry
     );
+    assertNodeFoundationShardCommandsWithinLimit(shardOptionArgs, [
+        ...scheduledShards,
+        ...executionPlan.serialFiles.map((file) => [file])
+    ]);
     const shardLogDir = resolveShardLogDir(repoRoot, buildRoot, requestedShardLogDir);
-    const runtimeConfig = resolveNodeTestShardRuntimeConfig(
-        requestedShardConcurrency,
-        DEFAULT_SHARDED_NODE_TEST_CONCURRENCY
-    );
     console.log(formatNodeFoundationTestMarker(NODE_FOUNDATION_TEST_MARKERS.SHARD_LOG_DIR, shardLogDir));
     console.log(formatNodeFoundationTestMarker(NODE_FOUNDATION_TEST_MARKERS.DURATION_TELEMETRY, telemetryPath));
     const requestedConcurrency = runtimeConfig.concurrencyConfigured
@@ -1478,13 +1555,14 @@ async function runShardedNodeTestProcesses(
         `timeout_ms=${runtimeConfig.timeoutMs} heartbeat_ms=${runtimeConfig.heartbeatMs} `
         + `concurrency=${scheduledShards.length === 0 ? 1 : shardConcurrency} `
         + `node_test_concurrency=${describeNodeTestConcurrency(optionArgs, runtimeConfig)} `
-        + `grouped_shards=${parallelShards.length} max_grouped_files=${NODE_FOUNDATION_MAX_GROUPED_SHARD_FILES} `
+        + `grouped_shards=${parallelShards.length} max_shard_arg_chars=${NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT} `
         + `isolated_files=${executionPlan.isolatedFiles.length} serial_files=${executionPlan.serialFiles.length}`
     ));
     printShardScheduleComparison(
         summarizeNodeFoundationShardSchedule(
             buildResult,
             selectedTestFiles,
+            shardOptionArgs,
             shardCount,
             requestedConcurrency,
             telemetry,
@@ -1493,6 +1571,7 @@ async function runShardedNodeTestProcesses(
         summarizeNodeFoundationShardSchedule(
             buildResult,
             selectedTestFiles,
+            shardOptionArgs,
             shardCount,
             requestedConcurrency,
             telemetry,
@@ -1545,6 +1624,7 @@ async function runShardedNodeTestProcesses(
             summarizeNodeFoundationShardSchedule(
                 buildResult,
                 selectedTestFiles,
+                shardOptionArgs,
                 shardCount,
                 requestedConcurrency,
                 updatedTelemetry,
@@ -1553,6 +1633,7 @@ async function runShardedNodeTestProcesses(
             summarizeNodeFoundationShardSchedule(
                 buildResult,
                 selectedTestFiles,
+                shardOptionArgs,
                 shardCount,
                 requestedConcurrency,
                 updatedTelemetry,
