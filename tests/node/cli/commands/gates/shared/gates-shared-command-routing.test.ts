@@ -679,7 +679,15 @@ describe('cli/commands/gates', () => {
             'REVIEWER_INVOCATION_ATTESTED',
             'reviewer_invocation_attested',
             'REVIEWER_DELEGATION_ROUTED',
-            'reviewer_delegation_routed'
+            'reviewer_delegation_routed',
+            'REVIEWER_LAUNCH_INPUT_PINNED',
+            'reviewer_launch_input_pinned',
+            'REVIEWER_DELEGATION_STARTED',
+            'reviewer_delegation_started',
+            'REVIEWER_LAUNCH_COMPLETED',
+            'reviewer_launch_completed',
+            'REVIEWER_LAUNCH_FAILED',
+            'reviewer_launch_failed'
         ]) {
             assert.throws(
                 () => runLogTaskEventCommand({

@@ -211,7 +211,7 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
         'REVIEWER_LAUNCH_PREPARED',
         'REVIEWER_INVOCATION_ATTESTED'
     ]);
-    const reservedEventPattern = /^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_|COMPLETION_GATE_|FULL_SUITE_VALIDATION_|DOC_IMPACT_)/;
+    const reservedEventPattern = /^(COMPILE_GATE_|REVIEW_GATE_|REVIEWER_|PREFLIGHT_|COMPLETION_GATE_|FULL_SUITE_VALIDATION_|DOC_IMPACT_)/;
     const normalizedEventType = eventType.toUpperCase();
     if (reservedEventTypes.has(normalizedEventType) || reservedEventPattern.test(normalizedEventType)) {
         throw new Error(`EventType '${eventType}' is reserved and cannot be emitted via log-task-event.`);
