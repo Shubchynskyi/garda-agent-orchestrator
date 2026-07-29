@@ -1,6 +1,6 @@
 import {
     describe,
-    it,
+    it as nodeIt,
     assert,
     fs,
     path,
@@ -23,6 +23,7 @@ import {
     attestReviewerInvocationForTest,
     seedPromptBoundReviewFixture
 } from './gates-command-review-result-fixtures';
+import { createPartitionedTestRegistrar } from '../../gate-test-partition';
 import { createHash } from 'node:crypto';
 import * as os from 'node:os';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
@@ -30,6 +31,12 @@ import { readReviewArtifactState } from '../../../../../../src/gates/next-step/n
 import {
     getCurrentReviewerLaunchArtifactEvidenceForInvocation
 } from '../../../../../../src/gates/next-step/next-step-reviewer-launch-evidence';
+
+const it = createPartitionedTestRegistrar(
+    nodeIt,
+    'GARDA_REVIEW_RESULT_NORMALIZATION_PART',
+    6
+);
 
 function buildNoFindingCoverageLedger(reviewContextPath: string): string[] {
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as {
@@ -236,7 +243,124 @@ function rebindCompletedLaunchAttemptForTest(options: {
         .find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
     assert.ok(invocationEvent?.details);
     const launchArtifact = JSON.parse(fs.readFileSync(options.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+    const invocationDetails = invocationEvent.details as Record<string, unknown>;
+    const reviewContextSha256 = createHash('sha256')
+        .update(fs.readFileSync(options.reviewContextPath))
+        .digest('hex');
+    const normalizedLaunchArtifactPath = options.launchArtifactPath.replace(/\\/g, '/');
+    const launchInputArtifactPath = path.join(path.dirname(options.launchArtifactPath), 'reviewer-launch-input.json');
+    const normalizedLaunchInputArtifactPath = launchInputArtifactPath.replace(/\\/g, '/');
+    const launchBindingSha256 = String(
+        launchArtifact.launch_binding_sha256
+        || invocationDetails.launch_binding_sha256
+        || ''
+    ).trim();
+    const routingEventSha256 = String(
+        launchArtifact.routing_event_sha256
+        || invocationDetails.routing_event_sha256
+        || ''
+    ).trim();
+    const copyPasteReviewerLaunchPrompt = String(
+        launchArtifact.copy_paste_reviewer_launch_prompt
+        || `Delegated ${options.reviewType} reviewer launch prompt for ${options.taskId}.`
+    );
+    const copyPasteReviewerLaunchPromptSha256 = createHash('sha256')
+        .update(copyPasteReviewerLaunchPrompt, 'utf8')
+        .digest('hex');
+    const launchPreparedAtUtc = new Date().toISOString();
+    const preparedEvent = appendTaskEvent(
+        getOrchestratorRoot(options.repoRoot),
+        options.taskId,
+        'REVIEWER_LAUNCH_PREPARED',
+        'INFO',
+        'Reviewer launch attempt rebound by lifecycle regression fixture.',
+        {
+            task_id: options.taskId,
+            review_type: options.reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: options.reviewerIdentity,
+            reviewer_identity: options.reviewerIdentity,
+            review_context_sha256: reviewContextSha256,
+            routing_event_sha256: routingEventSha256,
+            launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_attempt_id: options.reviewerLaunchAttemptId,
+            reviewer_launch_artifact_path: normalizedLaunchArtifactPath,
+            reviewer_launch_input_artifact_path: normalizedLaunchInputArtifactPath,
+            reviewer_prompt_sha256: launchArtifact.reviewer_prompt_sha256,
+            role_prompt_sha256: launchArtifact.role_prompt_sha256,
+            prompt_template_sha256: launchArtifact.prompt_template_sha256,
+            output_template_sha256: launchArtifact.output_template_sha256,
+            evidence_manifest_sha256: launchArtifact.evidence_manifest_sha256,
+            copy_paste_reviewer_launch_prompt_sha256: copyPasteReviewerLaunchPromptSha256,
+            launch_prepared_at_utc: launchPreparedAtUtc
+        },
+        { passThru: true }
+    );
+    const preparedLaunchEventSha256 = String(preparedEvent?.integrity?.event_sha256 || '').trim();
+    const preparedLaunchEventTaskSequence = Number(preparedEvent?.integrity?.task_sequence);
+    assert.match(preparedLaunchEventSha256, /^[0-9a-f]{64}$/);
+    assert.ok(Number.isInteger(preparedLaunchEventTaskSequence) && preparedLaunchEventTaskSequence > 0);
+    fs.writeFileSync(launchInputArtifactPath, `${JSON.stringify({
+        schema_version: 1,
+        artifact_type: 'delegated_reviewer_handoff',
+        handoff_role: 'delegated_reviewer',
+        task_id: options.taskId,
+        reviewer_launch_attempt_id: options.reviewerLaunchAttemptId,
+        review_type: options.reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: options.reviewerIdentity,
+        review_context_path: options.reviewContextPath.replace(/\\/g, '/'),
+        review_context_sha256: reviewContextSha256,
+        routing_event_sha256: routingEventSha256,
+        launch_binding_sha256: launchBindingSha256,
+        prepared_launch_event_sha256: preparedLaunchEventSha256,
+        prepared_launch_event_task_sequence: preparedLaunchEventTaskSequence,
+        copy_paste_reviewer_launch_prompt: copyPasteReviewerLaunchPrompt,
+        copy_paste_reviewer_launch_prompt_sha256: copyPasteReviewerLaunchPromptSha256
+    }, null, 2)}\n`, 'utf8');
+    const launchInputArtifactSha256 = createHash('sha256')
+        .update(fs.readFileSync(launchInputArtifactPath))
+        .digest('hex');
+    const pinnedInputEvent = appendTaskEvent(
+        getOrchestratorRoot(options.repoRoot),
+        options.taskId,
+        'REVIEWER_LAUNCH_INPUT_PINNED',
+        'INFO',
+        'Reviewer launch input pinned by lifecycle regression fixture.',
+        {
+            task_id: options.taskId,
+            review_type: options.reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: options.reviewerIdentity,
+            reviewer_identity: options.reviewerIdentity,
+            review_context_sha256: reviewContextSha256,
+            routing_event_sha256: routingEventSha256,
+            launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_attempt_id: options.reviewerLaunchAttemptId,
+            prepared_launch_event_sha256: preparedLaunchEventSha256,
+            reviewer_launch_artifact_path: normalizedLaunchArtifactPath,
+            reviewer_launch_input_artifact_path: normalizedLaunchInputArtifactPath,
+            reviewer_launch_input_artifact_sha256: launchInputArtifactSha256
+        },
+        { passThru: true }
+    );
+    const pinnedInputEventSha256 = String(pinnedInputEvent?.integrity?.event_sha256 || '').trim();
+    const pinnedInputEventTaskSequence = Number(pinnedInputEvent?.integrity?.task_sequence);
+    assert.match(pinnedInputEventSha256, /^[0-9a-f]{64}$/);
+    assert.ok(Number.isInteger(pinnedInputEventTaskSequence) && pinnedInputEventTaskSequence > 0);
     launchArtifact.reviewer_launch_attempt_id = options.reviewerLaunchAttemptId;
+    launchArtifact.reviewer_launch_artifact_path = normalizedLaunchArtifactPath;
+    launchArtifact.reviewer_launch_input_artifact_path = normalizedLaunchInputArtifactPath;
+    launchArtifact.reviewer_launch_input_artifact_sha256 = launchInputArtifactSha256;
+    launchArtifact.reviewer_launch_input_pinned_event_sha256 = pinnedInputEventSha256;
+    launchArtifact.reviewer_launch_input_pinned_event_task_sequence = pinnedInputEventTaskSequence;
+    launchArtifact.prepared_launch_event_sha256 = preparedLaunchEventSha256;
+    launchArtifact.prepared_launch_event_task_sequence = preparedLaunchEventTaskSequence;
+    launchArtifact.copy_paste_reviewer_launch_prompt = copyPasteReviewerLaunchPrompt;
+    launchArtifact.copy_paste_reviewer_launch_prompt_sha256 = copyPasteReviewerLaunchPromptSha256;
+    launchArtifact.launch_input_mode = 'copy_paste_prompt';
+    launchArtifact.launch_input_sha256 = copyPasteReviewerLaunchPromptSha256;
+    launchArtifact.launch_input_copy_paste_reviewer_launch_prompt_sha256 = copyPasteReviewerLaunchPromptSha256;
     launchArtifact.review_output_path = (
         options.reviewOutputPath || path.join(path.dirname(options.launchArtifactPath), 'review-output.md')
     ).replace(/\\/g, '/');
@@ -245,17 +369,21 @@ function rebindCompletedLaunchAttemptForTest(options: {
         launchArtifact.launch_completed_at_utc = reboundLaunchCompletedAtUtc;
     }
     fs.writeFileSync(options.launchArtifactPath, `${JSON.stringify(launchArtifact, null, 2)}\n`, 'utf8');
-    const reviewContextSha256 = createHash('sha256')
-        .update(fs.readFileSync(options.reviewContextPath))
-        .digest('hex');
     const launchArtifactSha256 = createHash('sha256')
         .update(fs.readFileSync(options.launchArtifactPath))
         .digest('hex');
     const reboundDetails = {
-        ...(invocationEvent.details as Record<string, unknown>),
+        ...invocationDetails,
         reviewer_launch_attempt_id: options.reviewerLaunchAttemptId,
-        reviewer_launch_artifact_path: options.launchArtifactPath.replace(/\\/g, '/'),
+        reviewer_launch_artifact_path: normalizedLaunchArtifactPath,
         reviewer_launch_artifact_sha256: launchArtifactSha256,
+        reviewer_launch_input_artifact_path: normalizedLaunchInputArtifactPath,
+        reviewer_launch_input_artifact_sha256: launchInputArtifactSha256,
+        reviewer_launch_input_pinned_event_sha256: pinnedInputEventSha256,
+        reviewer_launch_input_pinned_event_task_sequence: pinnedInputEventTaskSequence,
+        prepared_launch_event_sha256: preparedLaunchEventSha256,
+        prepared_launch_event_task_sequence: preparedLaunchEventTaskSequence,
+        launch_binding_sha256: launchBindingSha256,
         review_context_sha256: reviewContextSha256,
         ...(reboundLaunchCompletedAtUtc ? { launch_completed_at_utc: reboundLaunchCompletedAtUtc } : {})
     };
