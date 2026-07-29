@@ -19,6 +19,9 @@ import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import { buildStrictDecompositionDecisionArtifact } from './next-step-test-support';
+import {
+    seedAuthenticatedReviewerLaunchFixture
+} from './next-step-reviewer-launch-fixtures';
 
 export const TASK_ID = 'T-NEXT-1';
 export const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -762,127 +765,55 @@ export function writeReviewEvidence(
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
     const artifactText = `# ${reviewType} review\n\n${options.body || ''}## Verdict\n${verdictToken}\n`;
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
-    const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: `agent:${reviewType}-reviewer`
-    });
+    const reviewerIdentity = `agent:${reviewType}-reviewer`;
     const launchPreparedAtUtc = '2026-04-28T00:00:00.000Z';
-    const delegationStartedAtUtc = '2026-04-28T00:00:01.000Z';
-    const launchedAtUtc = delegationStartedAtUtc;
+    const launchedAtUtc = '2026-04-28T00:00:01.000Z';
     const launchCompletedAtUtc = '2026-04-28T00:00:12.000Z';
     const invocationAttestedAtUtc = '2026-04-28T00:00:13.000Z';
     const reviewResultRecordedAtUtc = '2026-04-28T00:00:30.000Z';
-    let reviewerLaunchArtifactSha256 = '';
-    if (options.includeLaunchArtifact !== false) {
-        const launchBindingSha256 = 'c'.repeat(64);
-        const reviewerLaunchArtifactPath = path.join(
+    let routeIntegrity: {
+        task_sequence: number;
+        prev_event_sha256: string | null;
+        event_sha256: string;
+    };
+    let invocationIntegrity: {
+        task_sequence: number;
+        prev_event_sha256: string | null;
+        event_sha256: string;
+    };
+    if (options.includeLaunchArtifact === false) {
+        routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        });
+        invocationIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: sha256Text(reviewContextText),
+            review_tree_state_sha256: reviewTreeStateSha256,
+            routing_event_sha256: routeIntegrity.event_sha256,
+            invocation_attested_at_utc: invocationAttestedAtUtc
+        });
+    } else {
+        const launchFixture = seedAuthenticatedReviewerLaunchFixture({
             repoRoot,
-            'garda-agent-orchestrator',
-            'runtime',
-            'tmp',
-            'reviews',
             taskId,
             reviewType,
-            'reviewer-launch.json'
-        );
-        const preparedIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_PREPARED', 'INFO', {
-            task_id: taskId,
-            review_type: reviewType,
-            reviewer_execution_mode: 'delegated_subagent',
-            reviewer_session_id: `agent:${reviewType}-reviewer`,
-            reviewer_identity: `agent:${reviewType}-reviewer`,
-            review_context_sha256: sha256Text(reviewContextText),
-            routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256,
-            reviewer_launch_artifact_path: reviewerLaunchArtifactPath
+            reviewerIdentity,
+            reviewContextPath,
+            reviewTreeStateSha256,
+            appendEvent
         });
-        writeJson(reviewerLaunchArtifactPath, {
-            schema_version: 1,
-            evidence_type: 'delegated_reviewer_launch',
-            attestation_state: 'launched',
-            task_id: taskId,
-            review_type: reviewType,
-            reviewer_execution_mode: 'delegated_subagent',
-            reviewer_identity: `agent:${reviewType}-reviewer`,
-            review_context_sha256: sha256Text(reviewContextText),
-            routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256,
-            prepared_launch_event_sha256: preparedIntegrity.event_sha256,
-            launch_tool: 'test-subagent-spawn',
-            provider_invocation_id: `test-${reviewType}-invocation`,
-            launch_prepared_at_utc: launchPreparedAtUtc,
-            delegation_started_at_utc: launchedAtUtc,
-            launched_at_utc: launchedAtUtc,
-            launch_completed_at_utc: launchCompletedAtUtc,
-            ...launchInputEvidenceFixture(taskId, reviewType),
-            fork_context: false
-        });
-        appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_STARTED', 'INFO', {
-            task_id: taskId,
-            review_type: reviewType,
-            reviewer_execution_mode: 'delegated_subagent',
-            reviewer_session_id: `agent:${reviewType}-reviewer`,
-            reviewer_identity: `agent:${reviewType}-reviewer`,
-            review_context_sha256: sha256Text(reviewContextText),
-            routing_event_sha256: routeIntegrity.event_sha256,
-            provider_invocation_id: `test-${reviewType}-invocation`,
-            delegation_started_at_utc: launchedAtUtc
-        });
-        reviewerLaunchArtifactSha256 = fileSha256(reviewerLaunchArtifactPath);
-        appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_COMPLETED', 'INFO', {
-            task_id: taskId,
-            review_type: reviewType,
-            reviewer_execution_mode: 'delegated_subagent',
-            reviewer_session_id: `agent:${reviewType}-reviewer`,
-            reviewer_identity: `agent:${reviewType}-reviewer`,
-            review_context_sha256: sha256Text(reviewContextText),
-            routing_event_sha256: routeIntegrity.event_sha256,
-            reviewer_launch_artifact_path: reviewerLaunchArtifactPath,
-            reviewer_launch_artifact_sha256: reviewerLaunchArtifactSha256,
-            provider_invocation_id: `test-${reviewType}-invocation`,
-            launch_prepared_at_utc: launchPreparedAtUtc,
-            delegation_started_at_utc: launchedAtUtc,
-            launched_at_utc: launchedAtUtc,
-            launch_completed_at_utc: launchCompletedAtUtc
-        });
+        if (!launchFixture.invocationIntegrity) {
+            throw new Error('Authenticated reviewer launch fixture did not record invocation telemetry.');
+        }
+        routeIntegrity = launchFixture.routeIntegrity;
+        invocationIntegrity = launchFixture.invocationIntegrity;
     }
-    const invocationIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: `agent:${reviewType}-reviewer`,
-        reviewer_identity: `agent:${reviewType}-reviewer`,
-        review_context_sha256: sha256Text(reviewContextText),
-        review_tree_state_sha256: reviewTreeStateSha256,
-        routing_event_sha256: routeIntegrity.event_sha256,
-        ...(reviewerLaunchArtifactSha256
-            ? {
-                reviewer_launch_artifact_path: path.join(
-                    repoRoot,
-                    'garda-agent-orchestrator',
-                    'runtime',
-                    'tmp',
-                    'reviews',
-                    taskId,
-                    reviewType,
-                    'reviewer-launch.json'
-                ),
-                reviewer_launch_artifact_sha256: reviewerLaunchArtifactSha256,
-                reviewer_launch_attestation_source: 'test-subagent-spawn',
-                reviewer_launch_tool: 'test-subagent-spawn',
-                provider_invocation_id: `test-${reviewType}-invocation`,
-                launch_prepared_at_utc: launchPreparedAtUtc,
-                delegation_started_at_utc: launchedAtUtc,
-                launched_at_utc: launchedAtUtc,
-                launch_completed_at_utc: launchCompletedAtUtc,
-                launch_input_mode: launchInputEvidenceFixture(taskId, reviewType).launch_input_mode,
-                launch_input_sha256: launchInputEvidenceFixture(taskId, reviewType).launch_input_sha256,
-                copy_paste_reviewer_launch_prompt_sha256: launchInputEvidenceFixture(taskId, reviewType).copy_paste_reviewer_launch_prompt_sha256,
-                invocation_attested_at_utc: invocationAttestedAtUtc
-            }
-            : {})
-    });
     writeJson(receiptPath, {
         task_id: taskId,
         review_type: reviewType,
@@ -1181,82 +1112,15 @@ export function seedCompletedReviewerLaunchAndInvocation(
     options: { includeInvocation?: boolean } = {}
 ): void {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
-    const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: reviewerIdentity
-    });
-    const launchBindingSha256 = 'c'.repeat(64);
-    const preparedIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_PREPARED', 'INFO', {
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: reviewerIdentity,
-        reviewer_identity: reviewerIdentity,
-        review_context_sha256: fileSha256(reviewContextPath),
-        routing_event_sha256: routeIntegrity.event_sha256,
-        launch_binding_sha256: launchBindingSha256
-    });
-    const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, reviewType, 'reviewer-launch.json');
-    writeJson(launchArtifactPath, {
-        schema_version: 1,
-        evidence_type: 'delegated_reviewer_launch',
-        attestation_state: 'launched',
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_identity: reviewerIdentity,
-        review_context_sha256: fileSha256(reviewContextPath),
-        routing_event_sha256: routeIntegrity.event_sha256,
-        launch_binding_sha256: launchBindingSha256,
-        prepared_launch_event_sha256: preparedIntegrity.event_sha256,
-        launch_tool: 'test-subagent-spawn',
-        provider_invocation_id: `test-${reviewType}-invocation`,
-        delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
-        launched_at_utc: '2026-04-28T00:00:00.000Z',
-        launch_completed_at_utc: '2026-04-28T00:00:12.000Z',
-        ...launchInputEvidenceFixture(taskId, reviewType),
-        fork_context: false
-    });
-    appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_COMPLETED', 'INFO', {
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: reviewerIdentity,
-        reviewer_identity: reviewerIdentity,
-        review_context_sha256: fileSha256(reviewContextPath),
-        routing_event_sha256: routeIntegrity.event_sha256,
-        reviewer_launch_artifact_path: launchArtifactPath,
-        reviewer_launch_artifact_sha256: fileSha256(launchArtifactPath),
-        provider_invocation_id: `test-${reviewType}-invocation`,
-        delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
-        launched_at_utc: '2026-04-28T00:00:00.000Z',
-        launch_completed_at_utc: '2026-04-28T00:00:12.000Z'
-    });
-    if (options.includeInvocation === false) {
-        return;
-    }
-    const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
-    appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_session_id: reviewerIdentity,
-        reviewer_identity: reviewerIdentity,
-        review_context_sha256: fileSha256(reviewContextPath),
-        review_tree_state_sha256: readReviewContextTreeStateSha256(repoRoot, taskId, reviewType),
-        routing_event_sha256: routeIntegrity.event_sha256,
-        reviewer_launch_artifact_path: launchArtifactPath,
-        reviewer_launch_artifact_sha256: fileSha256(launchArtifactPath),
-        reviewer_launch_attestation_source: 'test-subagent-spawn',
-        reviewer_launch_tool: 'test-subagent-spawn',
-        provider_invocation_id: `test-${reviewType}-invocation`,
-        delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
-        launched_at_utc: '2026-04-28T00:00:00.000Z',
-        launch_completed_at_utc: '2026-04-28T00:00:12.000Z',
-        launch_input_mode: launchArtifact.launch_input_mode,
-        launch_input_sha256: launchArtifact.launch_input_sha256,
-        copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256
+    seedAuthenticatedReviewerLaunchFixture({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewerIdentity,
+        reviewContextPath,
+        reviewTreeStateSha256: readReviewContextTreeStateSha256(repoRoot, taskId, reviewType),
+        appendEvent,
+        includeInvocation: options.includeInvocation
     });
 }
 
