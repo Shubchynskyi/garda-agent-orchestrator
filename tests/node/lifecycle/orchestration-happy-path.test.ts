@@ -39,6 +39,9 @@ import {
     readTaskTimelineEvents
 } from '../cli/commands/gate-test-helpers';
 import { runCliWithCapturedOutput } from '../cli/commands/gate-test-helpers';
+import {
+    buildNoFindingsJsonReviewReport
+} from '../cli/commands/gates/review-result/gates-command-review-result-fixtures';
 
 const TASK_ID = 'T-215-smoke';
 const TASK_SUMMARY = 'Exercise the canonical happy path from onboarding through task completion';
@@ -338,7 +341,7 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
     const bundleRoot = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME);
     const preflightPath = path.join(bundleRoot, 'runtime', 'reviews', `${TASK_ID}-preflight.json`);
     const reviewContextPath = path.join(bundleRoot, 'runtime', 'reviews', `${TASK_ID}-test-review-context.json`);
-    const reviewOutputPath = path.join(bundleRoot, 'runtime', 'tmp', 'reviews', TASK_ID, 'test', 'review-output.md');
+    let reviewOutputPath = '';
     const materializedReviewOutputPath = path.join(bundleRoot, 'runtime', 'reviews', `${TASK_ID}-test-review-output.md`);
     const reviewerLaunchArtifactPath = path.join(bundleRoot, 'runtime', 'tmp', 'reviews', TASK_ID, 'test', 'reviewer-launch.json');
     const reviewerLaunchInputArtifactPath = path.join(bundleRoot, 'runtime', 'tmp', 'reviews', TASK_ID, 'test', 'reviewer-launch-input.json');
@@ -550,6 +553,8 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
         assert.equal(preparedLaunchArtifact.reviewer_identity, plannedReviewerIdentity);
         assert.equal(preparedLaunchArtifact.planned_reviewer_identity, plannedReviewerIdentity);
         assert.equal(String(preparedLaunchArtifact.record_invocation_command || '').includes(plannedReviewerIdentity), true);
+        reviewOutputPath = String(preparedLaunchArtifact.review_output_path || '').trim();
+        assert.notEqual(reviewOutputPath, '', 'Expected the prepared launch to pin an attempt-specific review output path.');
 
         assertNextGate(workspaceRoot, 'record-reviewer-delegation-started');
         const preparedReviewerLaunchInputArtifactSha256 = createHash('sha256')
@@ -579,6 +584,10 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
         await new Promise((resolve) => setTimeout(resolve, 10_100));
 
         assertNextGate(workspaceRoot, 'complete-reviewer-launch');
+        writeTextFile(
+            reviewOutputPath,
+            `${JSON.stringify(buildNoFindingsJsonReviewReport(reviewContextPath, TASK_ID, 'test'), null, 2)}\n`
+        );
         await runReviewGateCommand(workspaceRoot, [
             'complete-reviewer-launch',
             '--task-id', TASK_ID,
@@ -611,26 +620,6 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
         }), 'Expected complete-reviewer-launch --record-invocation to record resolved reviewer invocation telemetry.');
 
         assertNextGate(workspaceRoot, 'record-review-result');
-
-        writeTextFile(reviewOutputPath, [
-            '# Test Review',
-            '',
-            '## Validation Notes',
-            'Validated `tests/app.test.ts`, `scripts/full-suite-check.cjs`, the generated test review context, and the current full-suite validation artifact for this task. The changed test file adds the completed-path assertion that the full-suite script explicitly checks, so the test-only scope is represented in both the diff and the repository-wide validation evidence. The review context, launch metadata, invocation telemetry, and preflight binding all match the same task cycle.',
-            '',
-            '## Findings by Severity',
-            'none',
-            '',
-            '## Deferred Findings',
-            'none',
-            '',
-            '## Residual Risks',
-            'none',
-            '',
-            '## Verdict',
-            'TEST REVIEW PASSED',
-            ''
-        ].join('\n'));
         assertNextGate(workspaceRoot, 'record-review-result');
         await runReviewGateCommand(workspaceRoot, [
             'record-review-result',
