@@ -17,7 +17,6 @@ import {
     prepareScopedDiffFixture,
     readTaskTimelineEvents,
     runBuildReviewContextCommand,
-    runCompileGateCommand,
     runEnterTaskMode,
     runExplicitPreflight,
     runGit,
@@ -31,6 +30,7 @@ import {
     seedReusableReviewEvidence,
     seedTaskQueue,
     writeProtectedControlPlaneManifest,
+    writeCompilePassEvidence,
     writeProfilesConfig,
     writeReviewCapabilitiesConfig,
     writeReceiptBackedReviewArtifact,
@@ -41,6 +41,39 @@ import { classifyReviewRemediationFix } from '../../../../../../src/cli/commands
 
 const IGNORED_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
 const ROOT_IGNORED_CHANGELOG_PATH = 'CHANGELOG.md';
+const REMEDIATION_PART_ENV = 'GARDA_REVIEW_CYCLE_REMEDIATION_PART';
+
+type RemediationPart =
+    | 'reuse-basic'
+    | 'reuse-policy'
+    | 'scope-expansion'
+    | 'ignored-changelog-binding'
+    | 'ignored-changelog-guards';
+
+function describeRemediationPart(
+    part: RemediationPart,
+    name: string,
+    suite: () => void
+): void {
+    if (process.env[REMEDIATION_PART_ENV] === part) {
+        describe(name, suite);
+    }
+}
+
+function seedBaselineCompileGatePass(options: {
+    repoRoot: string;
+    taskId: string;
+    preflightPath: string;
+    commandsPath?: string;
+    outputFiltersPath?: string;
+    emitMetrics?: boolean;
+}): { exitCode: number; outputLines: string[] } {
+    writeCompilePassEvidence(options.repoRoot, options.taskId, options.preflightPath);
+    return {
+        exitCode: 0,
+        outputLines: ['COMPILE_GATE_PASSED']
+    };
+}
 
 function writeRepoFile(repoRoot: string, relativePath: string, content: string): void {
     const filePath = path.join(repoRoot, ...relativePath.split('/'));
@@ -108,7 +141,7 @@ async function prepareIgnoredChangelogFixture(
         ['src/app.ts']
     );
     loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-    const compileResult = await runCompileGateCommand({
+    const compileResult = await seedBaselineCompileGatePass({
         repoRoot,
         taskId,
         preflightPath,
@@ -265,7 +298,7 @@ async function resumeReviewReuseAfterChecklist(
     return { reusedReviewTypes, launchRequiredReviewTypes };
 }
 
-describe('cli/commands/gates – review-cycle remediation suite', () => {
+describeRemediationPart('reuse-basic', 'cli/commands/gates – review-cycle remediation reuse basics', () => {
     it('restart-review-cycle reuses unaffected security and refactor evidence after test hook remediation invalidates code', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-reuse';
@@ -302,7 +335,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -515,7 +548,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -632,7 +665,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -728,7 +761,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -821,7 +854,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -903,7 +936,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts', 'tests/app.test.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -995,7 +1028,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts', 'tests/app.test.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -1092,6 +1125,9 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+});
+
+describeRemediationPart('reuse-policy', 'cli/commands/gates – review-cycle remediation reuse policy', () => {
     it('restart-review-cycle preserves upstream lanes when failed test remediation edits an existing test file', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-902-existing-test-remediation-reuse';
@@ -1130,7 +1166,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             changedFiles
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -1253,7 +1289,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             changedFiles
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -1384,7 +1420,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             changedFiles
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -1506,7 +1542,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             changedFiles
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -1688,7 +1724,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             true
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -1812,7 +1848,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             changedFiles
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -2076,6 +2112,9 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         }
     });
 
+});
+
+describeRemediationPart('scope-expansion', 'cli/commands/gates – review-cycle remediation scope expansion', () => {
     it('restart-review-cycle preserves previous source scope when explicit refresh lists only test remediation', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-explicit-subset';
@@ -2104,7 +2143,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -2165,7 +2204,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -2229,7 +2268,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -2296,7 +2335,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -2365,7 +2404,7 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             ['src/app.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        const compileResult = await runCompileGateCommand({
+        const compileResult = await seedBaselineCompileGatePass({
             repoRoot,
             taskId,
             preflightPath,
@@ -2405,6 +2444,9 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+});
+
+describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ignored changelog remediation binding', () => {
     it('restart-review-cycle accepts an explicit ignored changelog remediation target named by the blocker', { concurrency: false }, async () => {
         const taskId = 'T-940-ignored-changelog-accepted';
         const {
@@ -2781,6 +2823,9 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+});
+
+describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – ignored changelog remediation guards', () => {
     it('restart-review-cycle rejects ignored paths mentioned only as failed-review diagnostics', { concurrency: false }, async () => {
         const taskId = 'T-940-ignored-changelog-diagnostic-only';
         const {
