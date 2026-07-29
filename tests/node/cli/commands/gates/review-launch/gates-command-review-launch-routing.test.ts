@@ -584,6 +584,50 @@ describe('cli/commands/gates review launch routing', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    for (const controlArtifactState of ['missing', 'malformed'] as const) {
+        it(`record-review-routing fails closed when current prepared telemetry has a ${controlArtifactState} control artifact`, async () => {
+            const repoRoot = createTempRepo();
+            const taskId = `T-979-routing-${controlArtifactState}-prepared-control`;
+            const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+            await prepareReviewerLaunchForTest({
+                repoRoot,
+                taskId,
+                reviewerIdentity: fixture.reviewerIdentity,
+                launchArtifactPath: fixture.launchArtifactPath
+            });
+            if (controlArtifactState === 'missing') {
+                fs.rmSync(fixture.launchArtifactPath, { force: true });
+            } else {
+                fs.writeFileSync(fixture.launchArtifactPath, '{ malformed\n', 'utf8');
+            }
+            const routingEventCountBefore = readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length;
+
+            const reroute = await runCliWithCapturedOutput([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:replacement-code-reviewer'
+            ], { cwd: repoRoot });
+
+            assert.notEqual(reroute.exitCode, 0);
+            assert.ok(
+                reroute.errors.join('\n').includes(`control artifact is ${controlArtifactState}`),
+                reroute.errors.join('\n') || reroute.logs.join('\n')
+            );
+            assert.equal(
+                readTaskTimelineEvents(repoRoot, taskId)
+                    .filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length,
+                routingEventCountBefore
+            );
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+    }
+
     it('record-review-routing and prepare-reviewer-launch replace a launched attempt invalidated by an authenticated review restart', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-979-57-invalidated';

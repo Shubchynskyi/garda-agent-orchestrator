@@ -98,6 +98,9 @@ import {
     isCompletedReviewerLaunchAttemptConsumed
 } from '../launch/reviewer-handoff-support';
 import {
+    withReviewerLaunchLaneTransaction
+} from '../launch/reviewer-launch-lane-transaction';
+import {
     assertReviewReceiptRoutingMatchesContext
 } from './review-receipt-validation';
 import { assertReviewLifecycleGuard } from '../../../../gates/review/review-lifecycle-guard';
@@ -2122,18 +2125,26 @@ async function handleRecordReviewReceiptWithDependencies(
         throw new Error(`Unsupported review type '${reviewType || 'missing'}' for record-review-receipt.`);
     }
     const repoRoot = normalizePathValue(options.repoRoot || '.');
+    const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+        repoRoot,
+        taskId,
+        reviewType,
+        artifactPathValue: undefined
+    });
     const resultLockPath = gateHelpers.joinOrchestratorPath(
         repoRoot,
         path.join('runtime', 'tmp', 'reviews', taskId, reviewType, '.record-review-result.lock')
     );
-    const { handle } = await acquireFilesystemLockAsync(resultLockPath, {
-        ownerLabel: `record-review-result:${taskId}:${reviewType}`
+    await withReviewerLaunchLaneTransaction(launchArtifactPath, async () => {
+        const { handle } = await acquireFilesystemLockAsync(resultLockPath, {
+            ownerLabel: `record-review-result:${taskId}:${reviewType}`
+        });
+        try {
+            await handleRecordReviewReceiptUnlocked(gateArgv, dependencies);
+        } finally {
+            releaseFilesystemLock(handle);
+        }
     });
-    try {
-        await handleRecordReviewReceiptUnlocked(gateArgv, dependencies);
-    } finally {
-        releaseFilesystemLock(handle);
-    }
 }
 
 async function handleRecordReviewResultWithDependencies(
@@ -2150,18 +2161,26 @@ async function handleRecordReviewResultWithDependencies(
         throw new Error(`Unsupported review type '${reviewType || 'missing'}' for record-review-result.`);
     }
     const repoRoot = normalizePathValue(options.repoRoot || '.');
+    const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+        repoRoot,
+        taskId,
+        reviewType,
+        artifactPathValue: undefined
+    });
     const resultLockPath = gateHelpers.joinOrchestratorPath(
         repoRoot,
         path.join('runtime', 'tmp', 'reviews', taskId, reviewType, '.record-review-result.lock')
     );
-    const { handle } = await acquireFilesystemLockAsync(resultLockPath, {
-        ownerLabel: `record-review-result:${taskId}:${reviewType}`
+    await withReviewerLaunchLaneTransaction(launchArtifactPath, async () => {
+        const { handle } = await acquireFilesystemLockAsync(resultLockPath, {
+            ownerLabel: `record-review-result:${taskId}:${reviewType}`
+        });
+        try {
+            await handleRecordReviewResultUnlocked(gateArgv, dependencies);
+        } finally {
+            releaseFilesystemLock(handle);
+        }
     });
-    try {
-        await handleRecordReviewResultUnlocked(gateArgv, dependencies);
-    } finally {
-        releaseFilesystemLock(handle);
-    }
 }
 
 export function createReviewResultHandlers(dependencies: ReviewResultHandlersDependencies): ReviewResultHandlers {

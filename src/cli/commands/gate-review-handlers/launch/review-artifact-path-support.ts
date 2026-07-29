@@ -131,11 +131,14 @@ export function resolveReviewerLaunchArtifactPathForWrite(options: {
     if (!artifactPath) {
         throw new Error('ReviewerLaunchArtifactPath could not be resolved.');
     }
-    if (!isTaskOwnedReviewTempPath(options.repoRoot, options.taskId, artifactPath)) {
+    const canonicalArtifactPath = fs.existsSync(artifactPath)
+        ? fs.realpathSync.native(artifactPath)
+        : artifactPath;
+    if (!isTaskOwnedReviewTempPath(options.repoRoot, options.taskId, canonicalArtifactPath)) {
         throw new Error(
             `ReviewerLaunchArtifactPath must be task-owned under reviewer scratch storage for '${options.taskId}'. ` +
-            `Got ${normalizePath(artifactPath)}.`
+            `Got ${normalizePath(canonicalArtifactPath)}.`
         );
     }
-    return artifactPath;
+    return canonicalArtifactPath;
 }

@@ -333,6 +333,47 @@ export async function emitReviewerLaunchPreparedEventAsync(
     );
 }
 
+export async function emitReviewerLaunchInputPinnedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    executionMode: 'delegated_subagent',
+    reviewerSessionId: string,
+    reviewContextSha256: string,
+    routingEventSha256: string,
+    launchBindingSha256: string,
+    reviewerLaunchAttemptId: string,
+    preparedLaunchEventSha256: string,
+    reviewerLaunchArtifactPath: string,
+    reviewerLaunchInputArtifactPath: string,
+    reviewerLaunchInputArtifactSha256: string,
+    options: AutoEmitOptions = {}
+) {
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEWER_LAUNCH_INPUT_PINNED,
+        'INFO',
+        `Reviewer launch input pinned: ${reviewType} → ${reviewerSessionId}.`,
+        {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: executionMode,
+            reviewer_session_id: reviewerSessionId,
+            reviewer_identity: reviewerSessionId,
+            review_context_sha256: reviewContextSha256,
+            routing_event_sha256: routingEventSha256,
+            launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_attempt_id: reviewerLaunchAttemptId,
+            prepared_launch_event_sha256: preparedLaunchEventSha256,
+            reviewer_launch_artifact_path: reviewerLaunchArtifactPath,
+            reviewer_launch_input_artifact_path: reviewerLaunchInputArtifactPath,
+            reviewer_launch_input_artifact_sha256: reviewerLaunchInputArtifactSha256
+        },
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
 export async function emitReviewerDelegationStartedEventAsync(
     repoRoot: string,
     taskId: string,

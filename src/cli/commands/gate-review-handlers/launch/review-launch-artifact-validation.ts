@@ -12,6 +12,8 @@ export {
 } from './review-launch-artifact-fields';
 export {
     assertPreparedReviewerLaunchArtifact,
+    findMatchingReviewerLaunchInputPinnedEvent,
+    findRecoverableReviewerLaunchPreparedEvent,
     getCurrentPreparedReviewerLaunchMismatches
 } from './review-launch-prepared-artifact';
 export {

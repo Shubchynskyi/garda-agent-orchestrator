@@ -632,6 +632,58 @@ describe('cli/commands/gates review launch invocation', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-invocation rejects completed launch evidence whose immutable input pin event is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-invocation-missing-input-pin';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+        completeReviewerLaunchArtifactForTest(fixture.launchArtifactPath);
+        const timelinePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `${taskId}.jsonl`
+        );
+        const retainedTimelineLines = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim().length > 0)
+            .filter((line) => (
+                (JSON.parse(line) as Record<string, unknown>).event_type
+                !== 'REVIEWER_LAUNCH_INPUT_PINNED'
+            ));
+        fs.writeFileSync(timelinePath, `${retainedTimelineLines.join('\n')}\n`, 'utf8');
+
+        const invocation = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(invocation.exitCode, 0);
+        assert.ok(
+            invocation.errors.join('\n').includes('must reference current REVIEWER_LAUNCH_INPUT_PINNED telemetry'),
+            invocation.errors.join('\n') || invocation.logs.join('\n')
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .some((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED'),
+            false
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-invocation rejects completed launch artifacts without parent completion telemetry', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-794-invocation-no-launch-completed-event';

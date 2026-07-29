@@ -32,7 +32,10 @@ import {
     buildReviewerLaunchBindingSha256,
     buildReviewerLaunchInputHandoffArtifact,
     COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
+    findMatchingReviewerLaunchInputPinnedEvent,
+    findMatchingReviewerLaunchPreparedEvent,
     findMatchingReviewerInvocationAttestationEvent,
+    findRecoverableReviewerLaunchPreparedEvent,
     findMatchingRoutingEvent,
     getCurrentPreparedReviewerLaunchMismatches,
     getReviewerScopedDiffHandoffPaths,
@@ -78,7 +81,9 @@ export {
     buildReviewerLaunchBindingSha256,
     buildReviewerLaunchInputHandoffArtifact,
     COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
+    findMatchingReviewerLaunchInputPinnedEvent,
     findMatchingReviewerLaunchPreparedEvent,
+    findRecoverableReviewerLaunchPreparedEvent,
     findMatchingRoutingEvent,
     getCurrentPreparedReviewerLaunchMismatches,
     getReviewerScopedDiffHandoffPaths,
@@ -136,6 +141,9 @@ export const {
     handleRecordReviewInvocation,
     validateReviewerLaunchArtifact
 } = reviewInvocationHandlers;
+const {
+    handleRecordReviewInvocationWithLaneHeld
+} = reviewInvocationHandlers;
 
 const reviewRoutingLaunchHandlers = createReviewRoutingLaunchHandlers({
     assertExplicitReviewContextRuntimeIdentity,
@@ -148,6 +156,9 @@ const reviewRoutingLaunchHandlers = createReviewRoutingLaunchHandlers({
     buildReviewerLaunchBindingSha256,
     buildReviewerLaunchInputHandoffArtifact,
     COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
+    findMatchingReviewerLaunchInputPinnedEvent,
+    findMatchingReviewerLaunchPreparedEvent,
+    findRecoverableReviewerLaunchPreparedEvent,
     findMatchingRoutingEvent,
     getCurrentPreparedReviewerLaunchMismatches,
     getReviewTreeStateLaunchSummary,
@@ -155,6 +166,7 @@ const reviewRoutingLaunchHandlers = createReviewRoutingLaunchHandlers({
     getReviewerScopedDiffHandoffPaths,
     getStringField,
     handleRecordReviewInvocation,
+    handleRecordReviewInvocationWithLaneHeld,
     isCurrentCompletedReviewerLaunchArtifact,
     isForbiddenReviewerLaunchAttestationSource,
     LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY,

@@ -5,6 +5,7 @@ import {
     getSourceCliCommand,
     resolveBundleNameForTarget
 } from '../../../../core/constants';
+import { quoteCommandValue } from '../../../../core/command-quoting';
 import {
     REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION,
     REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION
@@ -19,6 +20,11 @@ export interface ReviewerLaunchCommandTemplateOptions {
     launchArtifactPath: string;
     launchInputArtifactPath: string;
     launchInputArtifactSha256: string;
+    copyPasteReviewerLaunchPromptSha256: string;
+}
+
+interface ReviewerLaunchInputCommandTemplateOptions extends ReviewerLaunchCommandTemplateOptions {
+    launchInputMode: 'copy_paste_prompt' | 'launch_artifact_path';
 }
 
 const RESOLVED_REVIEWER_IDENTITY_PLACEHOLDER = '<agent:resolved-provider-reviewer-id-from-delegated-agent>';
@@ -29,7 +35,7 @@ const PROVIDER_FAILURE_REASON_PLACEHOLDER = '<replace with provider/controller f
 function quoteLaunchCommandValue(value: string): string {
     const normalizedValue = value.replace(/\\/g, '/');
     if (normalizedValue.includes("'")) {
-        throw new Error(`Cannot emit a shell-agnostic copy-paste reviewer launch command for values containing apostrophes: ${normalizedValue}`);
+        return quoteCommandValue(normalizedValue);
     }
     return `'${normalizedValue}'`;
 }
@@ -83,7 +89,30 @@ export function buildPreparedReviewerLaunchNextAction(handoffArtifactNames: stri
     );
 }
 
-export function buildRecordReviewerDelegationStartedCommandTemplate(options: ReviewerLaunchCommandTemplateOptions): string {
+function buildLaunchInputCommandArguments(options: ReviewerLaunchInputCommandTemplateOptions): string[] {
+    const argumentsForMode = [
+        '--launch-input-mode', quoteLaunchCommandValue(options.launchInputMode)
+    ];
+    if (options.launchInputMode === 'launch_artifact_path') {
+        argumentsForMode.push(
+            '--launch-input-artifact-path',
+            quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchInputArtifactPath))
+        );
+    }
+    argumentsForMode.push(
+        '--launch-input-sha256',
+        quoteLaunchCommandValue(
+            options.launchInputMode === 'launch_artifact_path'
+                ? options.launchInputArtifactSha256
+                : options.copyPasteReviewerLaunchPromptSha256
+        )
+    );
+    return argumentsForMode;
+}
+
+export function buildRecordReviewerDelegationStartedCommandTemplate(
+    options: ReviewerLaunchInputCommandTemplateOptions
+): string {
     const cliPrefix = buildLaunchCommandCliPrefix(options.repoRoot);
     return [
         `${cliPrefix} gate record-reviewer-delegation-started`,
@@ -95,15 +124,15 @@ export function buildRecordReviewerDelegationStartedCommandTemplate(options: Rev
         '--reviewer-launch-artifact-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchArtifactPath)),
         '--provider-invocation-id', quoteLaunchCommandValue(PROVIDER_INVOCATION_ID_PLACEHOLDER),
         '--attestation-source', quoteLaunchCommandValue(PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER),
-        '--launch-input-mode', quoteLaunchCommandValue('launch_artifact_path'),
-        '--launch-input-artifact-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchInputArtifactPath)),
-        '--launch-input-sha256', quoteLaunchCommandValue(options.launchInputArtifactSha256),
+        ...buildLaunchInputCommandArguments(options),
         '--fork-context', 'false',
         '--repo-root', quoteLaunchCommandValue('.')
     ].join(' ');
 }
 
-export function buildCompleteReviewerLaunchCommandTemplate(options: ReviewerLaunchCommandTemplateOptions): string {
+export function buildCompleteReviewerLaunchCommandTemplate(
+    options: ReviewerLaunchInputCommandTemplateOptions
+): string {
     const cliPrefix = buildLaunchCommandCliPrefix(options.repoRoot);
     return [
         `${cliPrefix} gate complete-reviewer-launch`,
@@ -115,9 +144,7 @@ export function buildCompleteReviewerLaunchCommandTemplate(options: ReviewerLaun
         '--reviewer-launch-artifact-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchArtifactPath)),
         '--provider-invocation-id', quoteLaunchCommandValue(PROVIDER_INVOCATION_ID_PLACEHOLDER),
         '--attestation-source', quoteLaunchCommandValue(PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER),
-        '--launch-input-mode', quoteLaunchCommandValue('launch_artifact_path'),
-        '--launch-input-artifact-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchInputArtifactPath)),
-        '--launch-input-sha256', quoteLaunchCommandValue(options.launchInputArtifactSha256),
+        ...buildLaunchInputCommandArguments(options),
         '--fork-context', 'false',
         '--record-invocation',
         '--repo-root', quoteLaunchCommandValue('.')

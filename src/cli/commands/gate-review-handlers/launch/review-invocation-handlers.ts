@@ -36,6 +36,21 @@ import {
     readJsonFile
 } from './review-launch-artifact-fields';
 import { resolveReviewerLaunchArtifactPathForWrite } from './review-artifact-path-support';
+import {
+    withReviewerLaunchLaneTransaction
+} from './reviewer-launch-lane-transaction';
+
+const RECORD_REVIEW_INVOCATION_OPTION_DEFINITIONS = {
+    '--task-id': { key: 'taskId', type: 'string' },
+    '--review-type': { key: 'reviewType', type: 'string' },
+    '--review-context-path': { key: 'reviewContextPath', type: 'string' },
+    '--task-mode-path': { key: 'taskModePath', type: 'string' },
+    '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
+    '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
+    '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
+    '--reviewer-launch-artifact-path': { key: 'reviewerLaunchArtifactPath', type: 'string' },
+    '--repo-root': { key: 'repoRoot', type: 'string' }
+} as const;
 
 export interface ReviewInvocationHandlerDependencies {
     assertExplicitReviewContextRuntimeIdentity: typeof import('../index').assertExplicitReviewContextRuntimeIdentity;
@@ -60,19 +75,12 @@ export function createReviewInvocationHandlers(deps: ReviewInvocationHandlerDepe
         resolveReviewerHandoffBindings
     } = deps;
 
-    async function handleRecordReviewInvocation(gateArgv: string[]): Promise<void> {
-        const defs = {
-            '--task-id': { key: 'taskId', type: 'string' },
-            '--review-type': { key: 'reviewType', type: 'string' },
-            '--review-context-path': { key: 'reviewContextPath', type: 'string' },
-            '--task-mode-path': { key: 'taskModePath', type: 'string' },
-            '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
-            '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
-            '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
-            '--reviewer-launch-artifact-path': { key: 'reviewerLaunchArtifactPath', type: 'string' },
-            '--repo-root': { key: 'repoRoot', type: 'string' }
-        };
-        const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
+    async function handleRecordReviewInvocationUnlocked(gateArgv: string[]): Promise<void> {
+        const { options: rawOptions } = parseOptions(
+            gateArgv,
+            RECORD_REVIEW_INVOCATION_OPTION_DEFINITIONS,
+            { allowPositionals: false }
+        );
         const options = rawOptions as ParsedOptionsRecord;
         const taskId = assertValidTaskId(options.taskId);
         const reviewType = String(options.reviewType || '').trim().toLowerCase();
@@ -276,8 +284,32 @@ export function createReviewInvocationHandlers(deps: ReviewInvocationHandlerDepe
         console.log(`LaunchArtifactSha256: ${launchArtifact.artifactSha256}`);
     }
 
+    async function handleRecordReviewInvocation(gateArgv: string[]): Promise<void> {
+        const { options: rawOptions } = parseOptions(
+            gateArgv,
+            RECORD_REVIEW_INVOCATION_OPTION_DEFINITIONS,
+            { allowPositionals: false }
+        );
+        const options = rawOptions as ParsedOptionsRecord;
+        const taskId = assertValidTaskId(options.taskId);
+        const reviewType = String(options.reviewType || '').trim().toLowerCase();
+        if (!reviewType) throw new Error('ReviewType is required.');
+        const repoRoot = normalizePathValue(options.repoRoot || '.');
+        const canonicalLaunchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+            repoRoot,
+            taskId,
+            reviewType,
+            artifactPathValue: undefined
+        });
+        await withReviewerLaunchLaneTransaction(
+            canonicalLaunchArtifactPath,
+            () => handleRecordReviewInvocationUnlocked(gateArgv)
+        );
+    }
+
     return {
         handleRecordReviewInvocation,
+        handleRecordReviewInvocationWithLaneHeld: handleRecordReviewInvocationUnlocked,
         validateReviewerLaunchArtifact
     };
 }

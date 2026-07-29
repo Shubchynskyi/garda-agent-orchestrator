@@ -27,6 +27,9 @@ import {
     type ReviewerLaunchArtifactValidationResult
 } from './review-launch-artifact-fields';
 import {
+    findMatchingReviewerLaunchInputPinnedEvent
+} from './review-launch-prepared-artifact';
+import {
     findMatchingReviewerDelegationStartedEvent,
     findMatchingReviewerLaunchCompletedEvent,
     findMatchingReviewerLaunchPreparedEvent
@@ -93,6 +96,7 @@ export function validateReviewerLaunchArtifact(options: {
     routingEventSequence: number;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
     artifactPathValue: unknown;
+    allowMissingCompletedEventForRecovery?: boolean;
 }): ReviewerLaunchArtifactValidationResult {
     const rawArtifactPath = String(options.artifactPathValue || '').trim();
     if (!rawArtifactPath) {
@@ -181,6 +185,20 @@ export function validateReviewerLaunchArtifact(options: {
         artifact,
         'reviewer_launch_input_artifact_path',
         'reviewerLaunchInputArtifactPath'
+    );
+    const reviewerLaunchInputArtifactSha256 = getStringField(
+        artifact,
+        'reviewer_launch_input_artifact_sha256',
+        'reviewerLaunchInputArtifactSha256'
+    ).toLowerCase();
+    const reviewerLaunchInputPinnedEventSha256 = getStringField(
+        artifact,
+        'reviewer_launch_input_pinned_event_sha256',
+        'reviewerLaunchInputPinnedEventSha256'
+    ).toLowerCase();
+    const reviewerLaunchInputPinnedEventTaskSequence = Number(
+        artifact.reviewer_launch_input_pinned_event_task_sequence
+        ?? artifact.reviewerLaunchInputPinnedEventTaskSequence
     );
     const launchInputArtifactSha256 = getStringField(artifact, 'launch_input_artifact_sha256', 'launchInputArtifactSha256').toLowerCase();
     const preparedReviewerLaunchArtifactSha256 = getStringField(
@@ -343,17 +361,15 @@ export function validateReviewerLaunchArtifact(options: {
                         'ReviewerLaunchArtifactPath control metadata is not valid reviewer launch input'
                     );
                 } else {
-                    const pinnedInputArtifactSha256 = getStringField(
-                        artifact,
-                        'reviewer_launch_input_artifact_sha256',
-                        'reviewerLaunchInputArtifactSha256'
-                    ).toLowerCase();
                     const actualLaunchInputArtifactSha256 = fileSha256(resolvedLaunchInputArtifactPath) || '';
                     if (!actualLaunchInputArtifactSha256) {
                         violations.push('ReviewerLaunchInputArtifactPath must be hashable');
-                    } else if (!pinnedInputArtifactSha256 || !/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)) {
+                    } else if (
+                        !reviewerLaunchInputArtifactSha256
+                        || !/^[0-9a-f]{64}$/.test(reviewerLaunchInputArtifactSha256)
+                    ) {
                         violations.push('reviewer_launch_input_artifact_sha256 is required for ReviewerLaunchInputArtifactPath attestation');
-                    } else if (actualLaunchInputArtifactSha256 !== pinnedInputArtifactSha256) {
+                    } else if (actualLaunchInputArtifactSha256 !== reviewerLaunchInputArtifactSha256) {
                         violations.push('ReviewerLaunchInputArtifactPath contents must match the immutable prepare-time handoff hash');
                     } else if (launchInputArtifactSha256 && actualLaunchInputArtifactSha256 !== launchInputArtifactSha256) {
                         violations.push('launch_input_artifact_sha256 must match ReviewerLaunchInputArtifactPath contents');
@@ -411,6 +427,42 @@ export function validateReviewerLaunchArtifact(options: {
         })
     ) {
         violations.push('prepared_launch_event_sha256 must reference current REVIEWER_LAUNCH_PREPARED telemetry');
+    }
+    const resolvedPinnedReviewerLaunchInputArtifactPath = reviewerLaunchInputArtifactPath
+        ? gateHelpers.resolvePathInsideRepo(
+            reviewerLaunchInputArtifactPath,
+            options.repoRoot,
+            { allowMissing: true }
+        )
+        : null;
+    if (!resolvedPinnedReviewerLaunchInputArtifactPath) {
+        violations.push('reviewer_launch_input_artifact_path is required for immutable input pin validation');
+    } else if (!/^[0-9a-f]{64}$/.test(reviewerLaunchInputArtifactSha256)) {
+        violations.push('reviewer_launch_input_artifact_sha256 must be a lowercase sha256 hex digest');
+    } else if (
+        !/^[0-9a-f]{64}$/.test(reviewerLaunchInputPinnedEventSha256)
+        || !Number.isInteger(reviewerLaunchInputPinnedEventTaskSequence)
+        || reviewerLaunchInputPinnedEventTaskSequence < 1
+    ) {
+        violations.push('reviewer launch input pin event binding is required');
+    } else if (!findMatchingReviewerLaunchInputPinnedEvent({
+        artifactPath,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewerExecutionMode: options.reviewerExecutionMode,
+        reviewerIdentity: launchBindingReviewerIdentity,
+        reviewContextSha256: options.reviewContextSha256,
+        routingEventSha256: options.routingEventSha256,
+        launchBindingSha256: expectedLaunchBindingSha256,
+        reviewerLaunchAttemptId,
+        preparedLaunchEventSha256,
+        reviewerLaunchInputArtifactPath: resolvedPinnedReviewerLaunchInputArtifactPath,
+        reviewerLaunchInputArtifactSha256,
+        timelineEvents: options.timelineEvents,
+        pinnedEventSha256: reviewerLaunchInputPinnedEventSha256,
+        pinnedEventTaskSequence: reviewerLaunchInputPinnedEventTaskSequence
+    })) {
+        violations.push('reviewer launch input pin must reference current REVIEWER_LAUNCH_INPUT_PINNED telemetry');
     }
     if (!freshContext) {
         violations.push('fresh_context, isolated_context, or fork_context=false must attest clean reviewer context');
@@ -475,6 +527,7 @@ export function validateReviewerLaunchArtifact(options: {
         && isValidUtcIso8601Timestamp(delegationStartedAtUtc)
         && providerInvocationId
         && reviewerLaunchArtifactSha256
+        && options.allowMissingCompletedEventForRecovery !== true
         && !findMatchingReviewerLaunchCompletedEvent(options.timelineEvents, {
             taskId: options.taskId,
             reviewType: options.reviewType,

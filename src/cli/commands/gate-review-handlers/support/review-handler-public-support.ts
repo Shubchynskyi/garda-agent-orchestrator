@@ -42,7 +42,9 @@ export {
 export {
     assertPreparedReviewerLaunchArtifact,
     COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
+    findMatchingReviewerLaunchInputPinnedEvent,
     findMatchingReviewerLaunchPreparedEvent,
+    findRecoverableReviewerLaunchPreparedEvent,
     getCurrentPreparedReviewerLaunchMismatches,
     isCurrentCompletedReviewerLaunchArtifact,
     isForbiddenReviewerLaunchAttestationSource,

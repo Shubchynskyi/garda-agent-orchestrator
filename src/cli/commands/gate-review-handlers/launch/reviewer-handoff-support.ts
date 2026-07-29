@@ -11,6 +11,7 @@ import {
     getSourceCliCommand,
     resolveBundleNameForTarget
 } from '../../../../core/constants';
+import { quoteCommandValue } from '../../../../core/command-quoting';
 import {
     getProviderEntryById,
     normalizeProviderId
@@ -311,11 +312,17 @@ export interface ReviewerLaunchInputHandoffArtifactOptions extends ReviewerLaunc
 }
 
 function quoteReviewerLaunchCommandValue(value: string): string {
-    return `'${value.replace(/\\/g, '/').replace(/'/g, `''`)}'`;
+    const normalizedValue = value.replace(/\\/g, '/');
+    return normalizedValue.includes("'")
+        ? quoteCommandValue(normalizedValue)
+        : `'${normalizedValue}'`;
 }
 
 function quoteRecordReviewResultCommandValue(value: string): string {
-    return `'${value.replace(/\\/g, '/').replace(/'/g, `''`)}'`;
+    const normalizedValue = value.replace(/\\/g, '/');
+    return normalizedValue.includes("'")
+        ? quoteCommandValue(normalizedValue)
+        : `'${normalizedValue}'`;
 }
 
 function toRepoRelativeCommandPath(repoRoot: string, artifactPath: string): string {

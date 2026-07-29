@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import {
     assert,
     buildReviewContext,
@@ -10,6 +11,7 @@ import {
     getWorkspaceSnapshot,
     initializeGitRepo,
     it,
+    launchArtifactInputArgsForTest,
     path,
     prepareCurrentReviewPhase,
     recordReviewerDelegationStartedForTest,
@@ -18,11 +20,21 @@ import {
     runCliWithCapturedOutput,
     runGit,
     seedInitAnswers,
+    seedPromptBoundReviewFixture,
     seedRoutedReviewerLaunchFixture,
     seedTaskQueue,
     writePreflight
 } from './gates-command-review-launch-fixtures';
+import {
+    buildNoFindingsJsonReviewReport
+} from '../review-result/gates-command-review-result-fixtures';
 import { isCompletedReviewerLaunchAttemptConsumed } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
+import { getReviewArtifactTransactionLockPath } from '../../../../../../src/gate-runtime/review/review-artifacts';
+import {
+    acquireFilesystemLock,
+    releaseFilesystemLock
+} from '../../../../../../src/gate-runtime/timeline/task-events-locking';
+import { quoteCommandValue } from '../../../../../../src/core/command-quoting';
 import { buildReviewerTerminalContractLines } from '../../../../../../src/gates/review/reviewer-execution-contract';
 
 const FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE = [
@@ -47,6 +59,183 @@ function assertNoDefaultReviewerReservationGuidance(text: string): void {
             `default reviewer launch guidance must not include ${forbiddenText}`
         );
     }
+}
+
+interface SpawnedReviewerLaunchProcess {
+    child: ReturnType<typeof spawn>;
+    stdout: string;
+    stderr: string;
+    completion: Promise<number | null>;
+}
+
+function spawnReviewerLaunchCliProcess(
+    repoRoot: string,
+    argv: string[]
+): SpawnedReviewerLaunchProcess {
+    const cliMainModulePath = path.resolve(__dirname, '../../../../../../src/cli/main.js');
+    const packageRoot = path.resolve(__dirname, '../../../../../../..');
+    const workerScript = [
+        "const { runCliMainWithHandling } = require(process.argv[1]);",
+        "const argv = JSON.parse(Buffer.from(process.argv[2], 'base64').toString('utf8'));",
+        "process.stdout.write('STARTED\\n');",
+        'runCliMainWithHandling(argv, process.argv[3]).then(',
+        '  () => process.exit(Number(process.exitCode || 0)),',
+        '  (error) => { console.error(error && error.stack ? error.stack : String(error)); process.exit(1); }',
+        ');'
+    ].join('\n');
+    const child = spawn(process.execPath, [
+        '--input-type=commonjs',
+        '--eval',
+        workerScript,
+        cliMainModulePath,
+        Buffer.from(JSON.stringify(argv), 'utf8').toString('base64'),
+        packageRoot
+    ], {
+        cwd: repoRoot,
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const state: SpawnedReviewerLaunchProcess = {
+        child,
+        stdout: '',
+        stderr: '',
+        completion: Promise.resolve(null)
+    };
+    child.stdout?.on('data', (chunk) => {
+        state.stdout += String(chunk);
+    });
+    child.stderr?.on('data', (chunk) => {
+        state.stderr += String(chunk);
+    });
+    state.completion = new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code) => resolve(code));
+    });
+    return state;
+}
+
+function spawnPrepareReviewerLaunchProcess(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewerIdentity: string;
+    launchArtifactPath?: string;
+}): SpawnedReviewerLaunchProcess {
+    return spawnReviewerLaunchCliProcess(options.repoRoot, [
+        'gate',
+        'prepare-reviewer-launch',
+        '--task-id', options.taskId,
+        '--review-type', 'code',
+        '--repo-root', options.repoRoot,
+        '--reviewer-execution-mode', 'delegated_subagent',
+        '--reviewer-identity', options.reviewerIdentity,
+        ...(options.launchArtifactPath
+            ? ['--reviewer-launch-artifact-path', options.launchArtifactPath]
+            : [])
+    ]);
+}
+
+function spawnRecordReviewRoutingProcess(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewerIdentity: string;
+}): SpawnedReviewerLaunchProcess {
+    return spawnReviewerLaunchCliProcess(options.repoRoot, [
+        'gate',
+        'record-review-routing',
+        '--task-id', options.taskId,
+        '--review-type', 'code',
+        '--repo-root', options.repoRoot,
+        '--reviewer-execution-mode', 'delegated_subagent',
+        '--reviewer-identity', options.reviewerIdentity
+    ]);
+}
+
+async function waitForReviewerLaunchLaneTransactionLock(
+    processState: SpawnedReviewerLaunchProcess,
+    laneTransactionLockPath: string
+): Promise<void> {
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+        if (fs.existsSync(path.join(laneTransactionLockPath, 'owner.json'))) {
+            return;
+        }
+        if (processState.child.exitCode !== null) {
+            throw new Error(
+                `reviewer-launch process exited before acquiring its lane transaction lock: ` +
+                `${processState.stderr || processState.stdout}`
+            );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(
+        `Timed out waiting for reviewer-launch lane transaction lock: ` +
+        `${processState.stderr || processState.stdout}`
+    );
+}
+
+async function waitForReviewerLaunchProcessStart(processState: SpawnedReviewerLaunchProcess): Promise<void> {
+    const deadline = Date.now() + 4_000;
+    while (Date.now() < deadline) {
+        if (processState.stdout.includes('STARTED')) {
+            return;
+        }
+        if (processState.child.exitCode !== null) {
+            throw new Error(
+                `reviewer-launch process exited before start: ` +
+                `${processState.stderr || processState.stdout}`
+            );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(
+        `Timed out waiting for reviewer-launch process start: ` +
+        `${processState.stderr || processState.stdout}`
+    );
+}
+
+async function waitForReviewerLaunchLockContention(processState: SpawnedReviewerLaunchProcess): Promise<void> {
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+        if (processState.stderr.includes('WARNING: lock contention')) {
+            return;
+        }
+        if (processState.child.exitCode !== null) {
+            throw new Error(
+                `reviewer-launch process exited before lock contention: ` +
+                `${processState.stderr || processState.stdout}`
+            );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(
+        `Timed out waiting for reviewer-launch lock contention: ` +
+        `${processState.stderr || processState.stdout}`
+    );
+}
+
+async function waitForReviewerLaunchProcessCompletion(
+    processState: SpawnedReviewerLaunchProcess
+): Promise<number | null> {
+    return await new Promise<number | null>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            if (processState.child.exitCode === null) {
+                processState.child.kill();
+            }
+            reject(new Error(
+                `Timed out waiting for reviewer-launch process: ` +
+                `${processState.stderr || processState.stdout}`
+            ));
+        }, 15_000);
+        processState.completion.then(
+            (code) => {
+                clearTimeout(timeout);
+                resolve(code);
+            },
+            (error: unknown) => {
+                clearTimeout(timeout);
+                reject(error);
+            }
+        );
+    });
 }
 
 describe('completed reviewer launch attempt lifecycle', () => {
@@ -276,8 +465,10 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(launchInputArtifact.review_output_path, reviewOutputPath.replace(/\\/g, '/'));
         assert.equal(launchInputArtifact.next_action, undefined);
         assert.equal(launchInputArtifact.after_launch_required_updates, undefined);
-        assert.equal(launchInputArtifact.record_reviewer_delegation_started_command, undefined);
-        assert.equal(launchInputArtifact.complete_reviewer_launch_command, undefined);
+        assert.equal(launchInputArtifact.record_reviewer_delegation_started_launch_artifact_path_command, undefined);
+        assert.equal(launchInputArtifact.record_reviewer_delegation_started_copy_paste_prompt_command, undefined);
+        assert.equal(launchInputArtifact.complete_reviewer_launch_launch_artifact_path_command, undefined);
+        assert.equal(launchInputArtifact.complete_reviewer_launch_copy_paste_prompt_command, undefined);
         assert.equal(
             launchInputArtifactText.includes('Launch a fresh delegated reviewer'),
             false,
@@ -321,38 +512,66 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             'launch_binding_sha256',
             'prepared_launch_event_sha256',
             'prepared_launch_event_task_sequence',
-            'reviewer_launch_input_artifact_sha256'
+            'reviewer_launch_input_artifact_sha256',
+            'reviewer_launch_input_pinned_event_sha256',
+            'reviewer_launch_input_pinned_event_task_sequence'
         ]);
         assert.ok(String(launchArtifact.record_invocation_command).includes('gate record-review-invocation'));
         assert.ok(String(launchArtifact.record_invocation_command).includes(`--reviewer-identity '${fixture.reviewerIdentity}'`));
         const commandReviewContextPath = path.relative(repoRoot, fixture.reviewContextPath).replace(/\\/g, '/');
         const commandLaunchArtifactPath = path.relative(repoRoot, launchArtifactPath).replace(/\\/g, '/');
         const commandLaunchInputArtifactPath = path.relative(repoRoot, launchInputArtifactPath).replace(/\\/g, '/');
-        const recordDelegationCommand = String(launchArtifact.record_reviewer_delegation_started_command);
-        assert.ok(recordDelegationCommand.includes('gate record-reviewer-delegation-started'));
-        assert.ok(recordDelegationCommand.includes(`--review-context-path '${commandReviewContextPath}'`));
-        assert.ok(recordDelegationCommand.includes("--reviewer-execution-mode 'delegated_subagent'"));
-        assert.ok(recordDelegationCommand.includes("--reviewer-identity '<agent:resolved-provider-reviewer-id-from-delegated-agent>'"));
-        assert.ok(recordDelegationCommand.includes(`--reviewer-launch-artifact-path '${commandLaunchArtifactPath}'`));
-        assert.ok(recordDelegationCommand.includes("--provider-invocation-id '<provider-owned invocation id from delegated reviewer launch result>'"));
-        assert.ok(recordDelegationCommand.includes("--attestation-source '<provider-owned attestation source from delegated reviewer launch result>'"));
-        assert.ok(recordDelegationCommand.includes("--launch-input-mode 'launch_artifact_path'"));
-        assert.ok(recordDelegationCommand.includes(`--launch-input-artifact-path '${commandLaunchInputArtifactPath}'`));
-        assert.ok(recordDelegationCommand.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`));
-        assert.ok(recordDelegationCommand.includes('--fork-context false'));
-        const completeLaunchCommand = String(launchArtifact.complete_reviewer_launch_command);
-        assert.ok(completeLaunchCommand.includes('gate complete-reviewer-launch'));
-        assert.ok(completeLaunchCommand.includes(`--review-context-path '${commandReviewContextPath}'`));
-        assert.ok(completeLaunchCommand.includes("--reviewer-execution-mode 'delegated_subagent'"));
-        assert.ok(completeLaunchCommand.includes("--reviewer-identity '<agent:resolved-provider-reviewer-id-from-delegated-agent>'"));
-        assert.ok(completeLaunchCommand.includes(`--reviewer-launch-artifact-path '${commandLaunchArtifactPath}'`));
-        assert.ok(completeLaunchCommand.includes("--provider-invocation-id '<provider-owned invocation id from delegated reviewer launch result>'"));
-        assert.ok(completeLaunchCommand.includes("--attestation-source '<provider-owned attestation source from delegated reviewer launch result>'"));
-        assert.ok(completeLaunchCommand.includes("--launch-input-mode 'launch_artifact_path'"));
-        assert.ok(completeLaunchCommand.includes(`--launch-input-artifact-path '${commandLaunchInputArtifactPath}'`));
-        assert.ok(completeLaunchCommand.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`));
-        assert.ok(completeLaunchCommand.includes('--fork-context false'));
-        assert.ok(completeLaunchCommand.includes('--record-invocation'));
+        const recordDelegationLaunchArtifactCommand = String(
+            launchArtifact.record_reviewer_delegation_started_launch_artifact_path_command
+        );
+        const recordDelegationCopyPasteCommand = String(
+            launchArtifact.record_reviewer_delegation_started_copy_paste_prompt_command
+        );
+        for (const recordDelegationCommand of [
+            recordDelegationLaunchArtifactCommand,
+            recordDelegationCopyPasteCommand
+        ]) {
+            assert.ok(recordDelegationCommand.includes('gate record-reviewer-delegation-started'));
+            assert.ok(recordDelegationCommand.includes(`--review-context-path '${commandReviewContextPath}'`));
+            assert.ok(recordDelegationCommand.includes("--reviewer-execution-mode 'delegated_subagent'"));
+            assert.ok(recordDelegationCommand.includes("--reviewer-identity '<agent:resolved-provider-reviewer-id-from-delegated-agent>'"));
+            assert.ok(recordDelegationCommand.includes(`--reviewer-launch-artifact-path '${commandLaunchArtifactPath}'`));
+            assert.ok(recordDelegationCommand.includes("--provider-invocation-id '<provider-owned invocation id from delegated reviewer launch result>'"));
+            assert.ok(recordDelegationCommand.includes("--attestation-source '<provider-owned attestation source from delegated reviewer launch result>'"));
+            assert.ok(recordDelegationCommand.includes('--fork-context false'));
+        }
+        assert.ok(recordDelegationLaunchArtifactCommand.includes("--launch-input-mode 'launch_artifact_path'"));
+        assert.ok(recordDelegationLaunchArtifactCommand.includes(`--launch-input-artifact-path '${commandLaunchInputArtifactPath}'`));
+        assert.ok(recordDelegationLaunchArtifactCommand.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`));
+        assert.ok(recordDelegationCopyPasteCommand.includes("--launch-input-mode 'copy_paste_prompt'"));
+        assert.ok(!recordDelegationCopyPasteCommand.includes('--launch-input-artifact-path'));
+        assert.ok(recordDelegationCopyPasteCommand.includes(`--launch-input-sha256 '${copyPastePromptSha256}'`));
+        const completeLaunchArtifactCommand = String(
+            launchArtifact.complete_reviewer_launch_launch_artifact_path_command
+        );
+        const completeCopyPasteCommand = String(
+            launchArtifact.complete_reviewer_launch_copy_paste_prompt_command
+        );
+        for (const completeLaunchCommand of [
+            completeLaunchArtifactCommand,
+            completeCopyPasteCommand
+        ]) {
+            assert.ok(completeLaunchCommand.includes('gate complete-reviewer-launch'));
+            assert.ok(completeLaunchCommand.includes(`--review-context-path '${commandReviewContextPath}'`));
+            assert.ok(completeLaunchCommand.includes("--reviewer-execution-mode 'delegated_subagent'"));
+            assert.ok(completeLaunchCommand.includes("--reviewer-identity '<agent:resolved-provider-reviewer-id-from-delegated-agent>'"));
+            assert.ok(completeLaunchCommand.includes(`--reviewer-launch-artifact-path '${commandLaunchArtifactPath}'`));
+            assert.ok(completeLaunchCommand.includes("--provider-invocation-id '<provider-owned invocation id from delegated reviewer launch result>'"));
+            assert.ok(completeLaunchCommand.includes("--attestation-source '<provider-owned attestation source from delegated reviewer launch result>'"));
+            assert.ok(completeLaunchCommand.includes('--fork-context false'));
+            assert.ok(completeLaunchCommand.includes('--record-invocation'));
+        }
+        assert.ok(completeLaunchArtifactCommand.includes("--launch-input-mode 'launch_artifact_path'"));
+        assert.ok(completeLaunchArtifactCommand.includes(`--launch-input-artifact-path '${commandLaunchInputArtifactPath}'`));
+        assert.ok(completeLaunchArtifactCommand.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`));
+        assert.ok(completeCopyPasteCommand.includes("--launch-input-mode 'copy_paste_prompt'"));
+        assert.ok(!completeCopyPasteCommand.includes('--launch-input-artifact-path'));
+        assert.ok(completeCopyPasteCommand.includes(`--launch-input-sha256 '${copyPastePromptSha256}'`));
         const failedLaunchCommand = String(launchArtifact.record_reviewer_launch_failed_command);
         assert.ok(failedLaunchCommand.includes('gate record-reviewer-launch-failed'));
         assert.ok(failedLaunchCommand.includes(`--review-context-path '${commandReviewContextPath}'`));
@@ -376,13 +595,39 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(launchPreparedIntegrity?.event_sha256, launchArtifact.prepared_launch_event_sha256);
         assert.equal(launchPreparedDetails?.launch_prepared_at_utc, launchArtifact.launch_prepared_at_utc);
         assert.equal(launchPreparedDetails?.reviewer_launch_input_artifact_path, launchInputArtifactPath.replace(/\\/g, '/'));
+        const launchInputPinnedEvent = events.find((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED');
+        const launchInputPinnedIntegrity = launchInputPinnedEvent?.integrity as {
+            event_sha256?: string;
+            task_sequence?: number;
+        } | undefined;
+        const launchInputPinnedDetails = launchInputPinnedEvent?.details as Record<string, unknown> | undefined;
+        assert.equal(
+            launchInputPinnedIntegrity?.event_sha256,
+            launchArtifact.reviewer_launch_input_pinned_event_sha256
+        );
+        assert.equal(
+            launchInputPinnedIntegrity?.task_sequence,
+            launchArtifact.reviewer_launch_input_pinned_event_task_sequence
+        );
+        assert.equal(
+            launchInputPinnedDetails?.prepared_launch_event_sha256,
+            launchArtifact.prepared_launch_event_sha256
+        );
+        assert.equal(
+            launchInputPinnedDetails?.reviewer_launch_input_artifact_path,
+            launchInputArtifactPath.replace(/\\/g, '/')
+        );
+        assert.equal(
+            launchInputPinnedDetails?.reviewer_launch_input_artifact_sha256,
+            pinnedInputArtifactSha256
+        );
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
         const capturedOutput = capturedLogs.join('\n');
         assert.ok(capturedLogs[0]?.startsWith('Next action:\n'));
         assert.ok(capturedOutput.includes('  Gate: prepare-reviewer-launch'));
         assert.ok(capturedOutput.includes('  Do: Launch one clean-context delegated reviewer'));
         assert.ok(capturedOutput.includes('  Command: none'));
-        assert.ok(capturedOutput.includes('  CommandReference: launch the reviewer with reviewer-facing ReviewerLaunchInputArtifactPath'));
+        assert.ok(capturedOutput.includes('  CommandReference: launch the reviewer with exactly one handoff mode'));
         assert.equal(capturedLogs.some((line) => line.startsWith('NextAction:')), false);
         assert.ok(capturedLogs.some((line) => line.includes('REVIEWER_LAUNCH_PREPARED: code')));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextSha256: ${fixture.reviewContextSha256}`)));
@@ -416,11 +661,13 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('RequiredCompletedFields:')));
         assert.ok(capturedLogs.some((line) => line.includes('launch_input_sha256=<ReviewerLaunchInputArtifactSha256 for launch_artifact_path, or CopyPasteReviewerLaunchPromptSha256>')));
         assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: reviewer_launch_attempt_id, review_context_sha256')));
-        assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));
+        assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedLaunchArtifactPathCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));
+        assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedCopyPastePromptCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));
         assert.ok(capturedLogs.some((line) => line.includes(`--launch-input-artifact-path '${commandLaunchInputArtifactPath}'`)));
         assert.ok(capturedLogs.some((line) => line.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`)));
         assert.ok(capturedLogs.some((line) => line.includes('--fork-context false')));
-        assert.ok(capturedLogs.some((line) => line.includes('CompleteReviewerLaunchCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
+        assert.ok(capturedLogs.some((line) => line.includes('CompleteReviewerLaunchLaunchArtifactPathCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
+        assert.ok(capturedLogs.some((line) => line.includes('CompleteReviewerLaunchCopyPastePromptCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
         assert.ok(capturedLogs.some((line) => line.includes('--record-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node garda-agent-orchestrator/bin/garda.js gate record-review-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('CopyPasteReviewerLaunchPrompt:')));
@@ -480,8 +727,12 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         const quoteLaunchCommandValueForTest = (value: string): string => `'${value.replace(/\\/g, '/')}'`;
         const commandLaunchArtifactPath = quoteLaunchCommandValueForTest(path.relative(repoRoot, launchArtifactPath));
         const commandLaunchInputArtifactPath = quoteLaunchCommandValueForTest(path.relative(repoRoot, launchInputArtifactPath));
-        const recordDelegationCommand = String(launchArtifact.record_reviewer_delegation_started_command);
-        const completeLaunchCommand = String(launchArtifact.complete_reviewer_launch_command);
+        const recordDelegationCommand = String(
+            launchArtifact.record_reviewer_delegation_started_launch_artifact_path_command
+        );
+        const completeLaunchCommand = String(
+            launchArtifact.complete_reviewer_launch_launch_artifact_path_command
+        );
         const failedLaunchCommand = String(launchArtifact.record_reviewer_launch_failed_command);
 
         assert.ok(recordDelegationCommand.includes(`--reviewer-launch-artifact-path ${commandLaunchArtifactPath}`));
@@ -519,17 +770,20 @@ describe('cli/commands/gates review launch prepared metadata', () => {
 
         assert.equal(result.exitCode, 0, result.errors.join('\n') || result.logs.join('\n'));
         const launchArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8'));
-        assert.match(String(launchArtifact.record_reviewer_delegation_started_command), /^node bin\/garda\.js gate record-reviewer-delegation-started /);
-        assert.match(String(launchArtifact.complete_reviewer_launch_command), /^node bin\/garda\.js gate complete-reviewer-launch /);
+        assert.match(String(launchArtifact.record_reviewer_delegation_started_launch_artifact_path_command), /^node bin\/garda\.js gate record-reviewer-delegation-started /);
+        assert.match(String(launchArtifact.record_reviewer_delegation_started_copy_paste_prompt_command), /^node bin\/garda\.js gate record-reviewer-delegation-started /);
+        assert.match(String(launchArtifact.complete_reviewer_launch_launch_artifact_path_command), /^node bin\/garda\.js gate complete-reviewer-launch /);
+        assert.match(String(launchArtifact.complete_reviewer_launch_copy_paste_prompt_command), /^node bin\/garda\.js gate complete-reviewer-launch /);
         assert.match(String(launchArtifact.record_reviewer_launch_failed_command), /^node bin\/garda\.js gate record-reviewer-launch-failed /);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('prepare-reviewer-launch rejects apostrophes instead of emitting shell-specific copy-paste commands', async () => {
+    it('prepare-reviewer-launch emits shell-safe mode-specific commands for an apostrophe path', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-prepare-launch-apostrophe-path';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const dangerousSegment = "reviewer'quote-$(whoami)`x`;touch-pwn";
         const launchArtifactPath = path.join(
             repoRoot,
             'garda-agent-orchestrator',
@@ -538,9 +792,10 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             'reviews',
             taskId,
             'code',
-            "reviewer'quote",
+            dangerousSegment,
             'reviewer-launch.json'
         );
+        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
 
         const result = await runCliWithCapturedOutput([
             'gate',
@@ -553,13 +808,68 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             '--reviewer-launch-artifact-path', launchArtifactPath
         ], { cwd: repoRoot });
 
-        assert.notEqual(result.exitCode, 0);
-        assert.match(result.errors.join('\n') || result.logs.join('\n'), /Cannot emit a shell-agnostic copy-paste reviewer launch command/);
-        if (fs.existsSync(launchArtifactPath)) {
-            const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
-            assert.equal(launchArtifact.record_reviewer_delegation_started_command, undefined);
-            assert.equal(launchArtifact.complete_reviewer_launch_command, undefined);
+        assert.equal(result.exitCode, 0, result.errors.join('\n') || result.logs.join('\n'));
+        const launchArtifact = JSON.parse(
+            fs.readFileSync(launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        const commandLaunchArtifactPath = quoteCommandValue(
+            path.relative(repoRoot, launchArtifactPath).replace(/\\/g, '/')
+        );
+        const commandLaunchInputArtifactPath = quoteCommandValue(
+            path.relative(repoRoot, launchInputArtifactPath).replace(/\\/g, '/')
+        );
+        const recordArtifactCommand = String(
+            launchArtifact.record_reviewer_delegation_started_launch_artifact_path_command
+        );
+        const recordCopyPasteCommand = String(
+            launchArtifact.record_reviewer_delegation_started_copy_paste_prompt_command
+        );
+        const completeArtifactCommand = String(
+            launchArtifact.complete_reviewer_launch_launch_artifact_path_command
+        );
+        const completeCopyPasteCommand = String(
+            launchArtifact.complete_reviewer_launch_copy_paste_prompt_command
+        );
+        const failedLaunchCommand = String(launchArtifact.record_reviewer_launch_failed_command);
+
+        for (const command of [
+            recordArtifactCommand,
+            recordCopyPasteCommand,
+            completeArtifactCommand,
+            completeCopyPasteCommand,
+            failedLaunchCommand
+        ]) {
+            assert.ok(
+                command.includes(`--reviewer-launch-artifact-path ${commandLaunchArtifactPath}`),
+                command
+            );
         }
+        assert.ok(
+            recordArtifactCommand.includes(
+                `--launch-input-artifact-path ${commandLaunchInputArtifactPath}`
+            ),
+            recordArtifactCommand
+        );
+        assert.ok(
+            completeArtifactCommand.includes(
+                `--launch-input-artifact-path ${commandLaunchInputArtifactPath}`
+            ),
+            completeArtifactCommand
+        );
+        assert.equal(recordCopyPasteCommand.includes('--launch-input-artifact-path'), false);
+        assert.equal(completeCopyPasteCommand.includes('--launch-input-artifact-path'), false);
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED')
+                .length,
+            1
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED')
+                .length,
+            1
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1017,8 +1327,10 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('NextStep: existing reviewer launch metadata is current')));
         assert.ok(capturedLogs.some((line) => line.includes('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('OneShotLaunchState: default_handoff_ready_not_review_evidence')));
-        assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));
-        assert.ok(capturedLogs.some((line) => line.includes('CompleteReviewerLaunchCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
+        assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedLaunchArtifactPathCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));
+        assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedCopyPastePromptCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));
+        assert.ok(capturedLogs.some((line) => line.includes('CompleteReviewerLaunchLaunchArtifactPathCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
+        assert.ok(capturedLogs.some((line) => line.includes('CompleteReviewerLaunchCopyPastePromptCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
         assert.ok(capturedLogs.some((line) => line.includes('--record-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
@@ -1026,6 +1338,976 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assertNoDefaultReviewerReservationGuidance(capturedLogs.join('\n'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('serializes concurrent prepare-reviewer-launch processes into one immutable attempt', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-concurrent';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'reviewer-launch.json'
+        );
+        const innerTransactionLockPath = getReviewArtifactTransactionLockPath(path.dirname(launchArtifactPath));
+        const { handle: innerTransactionLock } = acquireFilesystemLock(innerTransactionLockPath, {
+            timeoutMs: 2_000,
+            retryMs: 25,
+            staleMs: 30_000,
+            ownerLabel: 'test-concurrent-prepare-barrier'
+        });
+        const laneTransactionLockPath = `${launchArtifactPath}.lane-transaction.lock`;
+        const firstProcess = spawnPrepareReviewerLaunchProcess({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        let secondProcess: SpawnedReviewerLaunchProcess | null = null;
+        let innerTransactionLockReleased = false;
+
+        try {
+            await waitForReviewerLaunchLaneTransactionLock(firstProcess, laneTransactionLockPath);
+            secondProcess = spawnPrepareReviewerLaunchProcess({
+                repoRoot,
+                taskId,
+                reviewerIdentity: fixture.reviewerIdentity
+            });
+            await waitForReviewerLaunchProcessStart(secondProcess);
+            await waitForReviewerLaunchLockContention(secondProcess);
+            assert.equal(
+                secondProcess.child.exitCode,
+                null,
+                'the second prepare process must remain serialized behind the first prepare transaction'
+            );
+            releaseFilesystemLock(innerTransactionLock);
+            innerTransactionLockReleased = true;
+
+            const [firstExitCode, secondExitCode] = await Promise.all([
+                waitForReviewerLaunchProcessCompletion(firstProcess),
+                waitForReviewerLaunchProcessCompletion(secondProcess)
+            ]);
+            assert.equal(firstExitCode, 0, firstProcess.stderr || firstProcess.stdout);
+            assert.equal(secondExitCode, 0, secondProcess.stderr || secondProcess.stdout);
+
+            const launchArtifact = JSON.parse(
+                fs.readFileSync(launchArtifactPath, 'utf8')
+            ) as Record<string, unknown>;
+            const launchAttemptId = String(launchArtifact.reviewer_launch_attempt_id || '');
+            assert.match(
+                launchAttemptId,
+                /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+            );
+            const events = readTaskTimelineEvents(repoRoot, taskId);
+            const preparedEvents = events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED');
+            const pinnedEvents = events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED');
+            assert.equal(preparedEvents.length, 1);
+            assert.equal(pinnedEvents.length, 1);
+            assert.equal(
+                String((preparedEvents[0].details as Record<string, unknown>).reviewer_launch_attempt_id || ''),
+                launchAttemptId
+            );
+            assert.equal(
+                String((pinnedEvents[0].details as Record<string, unknown>).reviewer_launch_attempt_id || ''),
+                launchAttemptId
+            );
+            assert.equal(
+                fs.readdirSync(path.dirname(launchArtifactPath)).some((entry) => entry.includes('-superseded-')),
+                false
+            );
+            assert.equal(fs.existsSync(laneTransactionLockPath), false);
+        } finally {
+            if (!innerTransactionLockReleased) {
+                releaseFilesystemLock(innerTransactionLock);
+            }
+            if (firstProcess.child.exitCode === null) {
+                firstProcess.child.kill();
+            }
+            if (secondProcess?.child.exitCode === null) {
+                secondProcess.child.kill();
+            }
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('serializes concurrent prepare-reviewer-launch processes that request different explicit paths', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-concurrent-explicit-paths';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const firstLaunchArtifactPath = path.join(
+            path.dirname(fixture.launchArtifactPath),
+            'first-explicit',
+            'reviewer-launch.json'
+        );
+        const secondLaunchArtifactPath = path.join(
+            path.dirname(fixture.launchArtifactPath),
+            'second-explicit',
+            'reviewer-launch.json'
+        );
+        const firstArtifactTransactionLockPath = getReviewArtifactTransactionLockPath(
+            path.dirname(firstLaunchArtifactPath)
+        );
+        const { handle: firstArtifactTransactionLock } = acquireFilesystemLock(
+            firstArtifactTransactionLockPath,
+            {
+                timeoutMs: 2_000,
+                retryMs: 25,
+                staleMs: 30_000,
+                ownerLabel: 'test-concurrent-explicit-path-barrier'
+            }
+        );
+        const laneTransactionLockPath = `${fixture.launchArtifactPath}.lane-transaction.lock`;
+        const firstProcess = spawnPrepareReviewerLaunchProcess({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: firstLaunchArtifactPath
+        });
+        let secondProcess: SpawnedReviewerLaunchProcess | null = null;
+        let firstArtifactTransactionLockReleased = false;
+
+        try {
+            await waitForReviewerLaunchLaneTransactionLock(firstProcess, laneTransactionLockPath);
+            secondProcess = spawnPrepareReviewerLaunchProcess({
+                repoRoot,
+                taskId,
+                reviewerIdentity: fixture.reviewerIdentity,
+                launchArtifactPath: secondLaunchArtifactPath
+            });
+            await waitForReviewerLaunchProcessStart(secondProcess);
+            await waitForReviewerLaunchLockContention(secondProcess);
+            assert.equal(
+                secondProcess.child.exitCode,
+                null,
+                'the second explicit-path prepare must remain serialized behind the first lane transaction'
+            );
+            releaseFilesystemLock(firstArtifactTransactionLock);
+            firstArtifactTransactionLockReleased = true;
+
+            const [firstExitCode, secondExitCode] = await Promise.all([
+                waitForReviewerLaunchProcessCompletion(firstProcess),
+                waitForReviewerLaunchProcessCompletion(secondProcess)
+            ]);
+            assert.equal(firstExitCode, 0, firstProcess.stderr || firstProcess.stdout);
+            assert.notEqual(secondExitCode, 0, secondProcess.stderr || secondProcess.stdout);
+            assert.ok(
+                secondProcess.stderr.includes('already reserved')
+                || secondProcess.stderr.includes('already has an active'),
+                secondProcess.stderr || secondProcess.stdout
+            );
+            assert.equal(fs.existsSync(firstLaunchArtifactPath), true);
+            assert.equal(fs.existsSync(secondLaunchArtifactPath), false);
+            const events = readTaskTimelineEvents(repoRoot, taskId);
+            assert.equal(events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length, 1);
+            assert.equal(events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED').length, 1);
+            assert.equal(fs.existsSync(laneTransactionLockPath), false);
+        } finally {
+            if (!firstArtifactTransactionLockReleased) {
+                releaseFilesystemLock(firstArtifactTransactionLock);
+            }
+            if (firstProcess.child.exitCode === null) {
+                firstProcess.child.kill();
+            }
+            if (secondProcess?.child.exitCode === null) {
+                secondProcess.child.kill();
+            }
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('serializes prepare-reviewer-launch against a concurrent reviewer reroute', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-concurrent-reroute';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const replacementReviewerIdentity = 'agent:replacement-code-reviewer';
+        const launchArtifactPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            'reviewer-launch.json'
+        );
+        const innerTransactionLockPath = getReviewArtifactTransactionLockPath(path.dirname(launchArtifactPath));
+        const { handle: innerTransactionLock } = acquireFilesystemLock(innerTransactionLockPath, {
+            timeoutMs: 2_000,
+            retryMs: 25,
+            staleMs: 30_000,
+            ownerLabel: 'test-prepare-reroute-barrier'
+        });
+        const laneTransactionLockPath = `${launchArtifactPath}.lane-transaction.lock`;
+        const prepareProcess = spawnPrepareReviewerLaunchProcess({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        let rerouteProcess: SpawnedReviewerLaunchProcess | null = null;
+        let innerTransactionLockReleased = false;
+
+        try {
+            await waitForReviewerLaunchLaneTransactionLock(prepareProcess, laneTransactionLockPath);
+            rerouteProcess = spawnRecordReviewRoutingProcess({
+                repoRoot,
+                taskId,
+                reviewerIdentity: replacementReviewerIdentity
+            });
+            await waitForReviewerLaunchProcessStart(rerouteProcess);
+            await waitForReviewerLaunchLockContention(rerouteProcess);
+            releaseFilesystemLock(innerTransactionLock);
+            innerTransactionLockReleased = true;
+
+            const [prepareExitCode, rerouteExitCode] = await Promise.all([
+                waitForReviewerLaunchProcessCompletion(prepareProcess),
+                waitForReviewerLaunchProcessCompletion(rerouteProcess)
+            ]);
+            assert.equal(prepareExitCode, 0, prepareProcess.stderr || prepareProcess.stdout);
+            assert.notEqual(rerouteExitCode, 0, rerouteProcess.stderr || rerouteProcess.stdout);
+            assert.ok(
+                rerouteProcess.stderr.includes('immutable reviewer launch attempt is already prepared'),
+                rerouteProcess.stderr || rerouteProcess.stdout
+            );
+
+            const reviewContext = JSON.parse(
+                fs.readFileSync(fixture.reviewContextPath, 'utf8')
+            ) as Record<string, unknown>;
+            const reviewerRouting = reviewContext.reviewer_routing as Record<string, unknown>;
+            assert.equal(reviewerRouting.reviewer_session_id, fixture.reviewerIdentity);
+            const launchArtifact = JSON.parse(
+                fs.readFileSync(launchArtifactPath, 'utf8')
+            ) as Record<string, unknown>;
+            assert.equal(launchArtifact.reviewer_identity, fixture.reviewerIdentity);
+
+            const events = readTaskTimelineEvents(repoRoot, taskId);
+            const routingEvents = events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED');
+            assert.equal(routingEvents.length, 1);
+            assert.equal(
+                routingEvents.some((event) => (
+                    (event.details as Record<string, unknown>).reviewer_session_id
+                    === replacementReviewerIdentity
+                )),
+                false
+            );
+            assert.equal(events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length, 1);
+            assert.equal(events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED').length, 1);
+            assert.equal(fs.existsSync(laneTransactionLockPath), false);
+        } finally {
+            if (!innerTransactionLockReleased) {
+                releaseFilesystemLock(innerTransactionLock);
+            }
+            if (prepareProcess.child.exitCode === null) {
+                prepareProcess.child.kill();
+            }
+            if (rerouteProcess?.child.exitCode === null) {
+                rerouteProcess.child.kill();
+            }
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('serializes reviewer invocation and result consumption against concurrent reroutes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-987-review-consumption-reroute-transaction';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        const providerInvocationId = 'test-review-consumption-reroute';
+        const replacementReviewerIdentity = 'agent:replacement-after-review-consumption';
+        const alternateLaunchArtifactPath = path.join(
+            path.dirname(fixture.launchArtifactPath),
+            'alternate-invocation-artifact',
+            'reviewer-launch.json'
+        );
+        await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', alternateLaunchArtifactPath
+        ], { cwd: repoRoot }).then((result) => {
+            assert.equal(result.exitCode, 0, result.errors.join('\n'));
+        });
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: alternateLaunchArtifactPath,
+            providerInvocationId,
+            attestationSource: 'test_provider_controller'
+        });
+        const completed = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', alternateLaunchArtifactPath,
+            '--provider-invocation-id', providerInvocationId,
+            '--attestation-source', 'test_provider_controller',
+            ...launchArtifactInputArgsForTest(alternateLaunchArtifactPath),
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+        assert.equal(completed.exitCode, 0, completed.errors.join('\n'));
+
+        const laneTransactionLockPath = `${fixture.launchArtifactPath}.lane-transaction.lock`;
+        const taskEventLockPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `.${taskId}.lock`
+        );
+        const { handle: taskEventLock } = acquireFilesystemLock(taskEventLockPath, {
+            timeoutMs: 2_000,
+            retryMs: 25,
+            staleMs: 30_000,
+            ownerLabel: 'test-invocation-reroute-barrier'
+        });
+        const invocationProcess = spawnReviewerLaunchCliProcess(repoRoot, [
+            'gate',
+            'record-review-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--review-context-path', fixture.reviewContextPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', alternateLaunchArtifactPath
+        ]);
+        let invocationRerouteProcess: SpawnedReviewerLaunchProcess | null = null;
+        let taskEventLockReleased = false;
+        try {
+            await waitForReviewerLaunchLaneTransactionLock(
+                invocationProcess,
+                laneTransactionLockPath
+            );
+            invocationRerouteProcess = spawnRecordReviewRoutingProcess({
+                repoRoot,
+                taskId,
+                reviewerIdentity: replacementReviewerIdentity
+            });
+            await waitForReviewerLaunchProcessStart(invocationRerouteProcess);
+            await waitForReviewerLaunchLockContention(invocationRerouteProcess);
+            releaseFilesystemLock(taskEventLock);
+            taskEventLockReleased = true;
+            const [invocationExitCode, rerouteExitCode] = await Promise.all([
+                waitForReviewerLaunchProcessCompletion(invocationProcess),
+                waitForReviewerLaunchProcessCompletion(invocationRerouteProcess)
+            ]);
+            assert.equal(invocationExitCode, 0, invocationProcess.stderr || invocationProcess.stdout);
+            assert.notEqual(rerouteExitCode, 0, invocationRerouteProcess.stderr || invocationRerouteProcess.stdout);
+            assert.ok(
+                invocationRerouteProcess.stderr.includes('immutable reviewer launch attempt is already launched'),
+                invocationRerouteProcess.stderr || invocationRerouteProcess.stdout
+            );
+        } finally {
+            if (!taskEventLockReleased) {
+                releaseFilesystemLock(taskEventLock);
+            }
+            if (invocationProcess.child.exitCode === null) {
+                invocationProcess.child.kill();
+            }
+            if (invocationRerouteProcess?.child.exitCode === null) {
+                invocationRerouteProcess.child.kill();
+            }
+        }
+
+        const reviewOutputPath = path.join(
+            path.dirname(alternateLaunchArtifactPath),
+            'review-output-for-reroute-race.json'
+        );
+        fs.writeFileSync(
+            reviewOutputPath,
+            `${JSON.stringify(
+                buildNoFindingsJsonReviewReport(fixture.reviewContextPath, taskId),
+                null,
+                2
+            )}\n`,
+            'utf8'
+        );
+        const resultLockPath = path.join(
+            path.dirname(fixture.launchArtifactPath),
+            '.record-review-result.lock'
+        );
+        const { handle: resultLock } = acquireFilesystemLock(resultLockPath, {
+            timeoutMs: 2_000,
+            retryMs: 25,
+            staleMs: 30_000,
+            ownerLabel: 'test-result-reroute-barrier'
+        });
+        const resultProcess = spawnReviewerLaunchCliProcess(repoRoot, [
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-context-path', fixture.reviewContextPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ]);
+        let resultRerouteProcess: SpawnedReviewerLaunchProcess | null = null;
+        let resultLockReleased = false;
+        try {
+            await waitForReviewerLaunchLaneTransactionLock(
+                resultProcess,
+                laneTransactionLockPath
+            );
+            resultRerouteProcess = spawnRecordReviewRoutingProcess({
+                repoRoot,
+                taskId,
+                reviewerIdentity: replacementReviewerIdentity
+            });
+            await waitForReviewerLaunchProcessStart(resultRerouteProcess);
+            await waitForReviewerLaunchLockContention(resultRerouteProcess);
+            releaseFilesystemLock(resultLock);
+            resultLockReleased = true;
+            const [resultExitCode, rerouteExitCode] = await Promise.all([
+                waitForReviewerLaunchProcessCompletion(resultProcess),
+                waitForReviewerLaunchProcessCompletion(resultRerouteProcess)
+            ]);
+            assert.equal(resultExitCode, 0, resultProcess.stderr || resultProcess.stdout);
+            assert.notEqual(rerouteExitCode, 0, resultRerouteProcess.stderr || resultRerouteProcess.stdout);
+        } finally {
+            if (!resultLockReleased) {
+                releaseFilesystemLock(resultLock);
+            }
+            if (resultProcess.child.exitCode === null) {
+                resultProcess.child.kill();
+            }
+            if (resultRerouteProcess?.child.exitCode === null) {
+                resultRerouteProcess.child.kill();
+            }
+        }
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEW_RECORDED').length, 1);
+        assert.equal(
+            events.filter((event) => (
+                event.event_type === 'REVIEWER_DELEGATION_ROUTED'
+                && (event.details as Record<string, unknown>).reviewer_session_id
+                    === replacementReviewerIdentity
+            )).length,
+            0
+        );
+        assert.equal(fs.existsSync(laneTransactionLockPath), false);
+        assert.equal(fs.existsSync(`${alternateLaunchArtifactPath}.lane-transaction.lock`), false);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects a second active reviewer launch attempt through another explicit artifact path', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-alternate-path';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const firstLaunchArtifactPath = path.join(
+            path.dirname(fixture.launchArtifactPath),
+            'first-explicit',
+            'reviewer-launch.json'
+        );
+        const firstPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', firstLaunchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(firstPrepare.exitCode, 0, firstPrepare.errors.join('\n'));
+        const firstArtifactText = fs.readFileSync(firstLaunchArtifactPath, 'utf8');
+        const alternateLaunchArtifactPath = path.join(
+            path.dirname(fixture.launchArtifactPath),
+            'second-explicit',
+            'reviewer-launch.json'
+        );
+
+        const secondPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', alternateLaunchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(secondPrepare.exitCode, 0);
+        assert.ok(
+            secondPrepare.errors.join('\n').includes('already reserved')
+            || secondPrepare.errors.join('\n').includes('already has an active'),
+            secondPrepare.errors.join('\n') || secondPrepare.logs.join('\n')
+        );
+        assert.equal(fs.existsSync(alternateLaunchArtifactPath), false);
+        assert.equal(fs.readFileSync(firstLaunchArtifactPath, 'utf8'), firstArtifactText);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length, 1);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED').length, 1);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('recovers the same reviewer launch attempt after a reservation-only crash window', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-reservation-only-recovery';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const firstPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(firstPrepare.exitCode, 0, firstPrepare.errors.join('\n'));
+
+        const laneReservationPath = `${fixture.launchArtifactPath}.lane-reservation.json`;
+        const laneReservation = JSON.parse(
+            fs.readFileSync(laneReservationPath, 'utf8')
+        ) as Record<string, unknown>;
+        const originalAttemptId = laneReservation.reviewer_launch_attempt_id;
+        const launchArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        const launchInputArtifactPath = String(launchArtifact.reviewer_launch_input_artifact_path)
+            .replace(/\//g, path.sep);
+        fs.rmSync(fixture.launchArtifactPath, { force: true });
+        fs.rmSync(launchInputArtifactPath, { force: true });
+        const timelinePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `${taskId}.jsonl`
+        );
+        const retainedTimelineLines = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim().length > 0)
+            .filter((line) => {
+                const event = JSON.parse(line) as Record<string, unknown>;
+                return event.event_type !== 'REVIEWER_LAUNCH_PREPARED'
+                    && event.event_type !== 'REVIEWER_LAUNCH_INPUT_PINNED';
+            });
+        fs.writeFileSync(timelinePath, `${retainedTimelineLines.join('\n')}\n`, 'utf8');
+
+        const retry = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.equal(retry.exitCode, 0, retry.errors.join('\n') || retry.logs.join('\n'));
+        const recoveredArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(recoveredArtifact.reviewer_launch_attempt_id, originalAttemptId);
+        assert.equal(fs.existsSync(launchInputArtifactPath), true);
+        assert.equal(
+            fileSha256ForTest(launchInputArtifactPath),
+            recoveredArtifact.reviewer_launch_input_artifact_sha256
+        );
+        const recoveredEvents = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(
+            recoveredEvents.filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length,
+            1
+        );
+        assert.equal(
+            recoveredEvents.filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED').length,
+            1
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('treats a Windows case-variant launch path as the same reserved lane path', async () => {
+        if (process.platform !== 'win32') {
+            return;
+        }
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-windows-case-path';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const firstPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(firstPrepare.exitCode, 0, firstPrepare.errors.join('\n'));
+        const originalArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        const originalAttemptId = originalArtifact.reviewer_launch_attempt_id;
+        const caseVariantLaunchArtifactPath = fixture.launchArtifactPath.replace(
+            /[A-Za-z]/,
+            (character) => (
+                character === character.toLowerCase()
+                    ? character.toUpperCase()
+                    : character.toLowerCase()
+            )
+        );
+        assert.notEqual(caseVariantLaunchArtifactPath, fixture.launchArtifactPath);
+
+        const retry = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', caseVariantLaunchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.equal(retry.exitCode, 0, retry.errors.join('\n') || retry.logs.join('\n'));
+        const retriedArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(retriedArtifact.reviewer_launch_attempt_id, originalAttemptId);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length, 1);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED').length, 1);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('recovers a reserved prepared control artifact from the pre-event crash window', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-pre-event-recovery';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const firstPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(firstPrepare.exitCode, 0, firstPrepare.errors.join('\n'));
+
+        const completeArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        const originalAttemptId = completeArtifact.reviewer_launch_attempt_id;
+        const launchInputArtifactPath = String(completeArtifact.reviewer_launch_input_artifact_path)
+            .replace(/\//g, path.sep);
+        const preEventControlArtifact = { ...completeArtifact };
+        for (const field of [
+            'reviewer_launch_prepared_event_recorded_at_utc',
+            'prepared_launch_event_sha256',
+            'prepared_launch_event_task_sequence',
+            'reviewer_launch_input_artifact_sha256',
+            'reviewer_launch_input_pinned_event_sha256',
+            'reviewer_launch_input_pinned_event_task_sequence',
+            'record_reviewer_delegation_started_launch_artifact_path_command',
+            'record_reviewer_delegation_started_copy_paste_prompt_command',
+            'complete_reviewer_launch_launch_artifact_path_command',
+            'complete_reviewer_launch_copy_paste_prompt_command',
+            'record_reviewer_launch_failed_command'
+        ]) {
+            delete preEventControlArtifact[field];
+        }
+        fs.writeFileSync(
+            fixture.launchArtifactPath,
+            `${JSON.stringify(preEventControlArtifact, null, 2)}\n`,
+            'utf8'
+        );
+        fs.rmSync(launchInputArtifactPath, { force: true });
+        const timelinePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            `${taskId}.jsonl`
+        );
+        const retainedTimelineLines = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim().length > 0)
+            .filter((line) => {
+                const event = JSON.parse(line) as Record<string, unknown>;
+                return event.event_type !== 'REVIEWER_LAUNCH_PREPARED'
+                    && event.event_type !== 'REVIEWER_LAUNCH_INPUT_PINNED';
+            });
+        fs.writeFileSync(timelinePath, `${retainedTimelineLines.join('\n')}\n`, 'utf8');
+
+        const retry = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.equal(retry.exitCode, 0, retry.errors.join('\n') || retry.logs.join('\n'));
+        assert.ok(retry.logs.join('\n').includes('Current reviewer launch metadata is already prepared'));
+        const recoveredArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(recoveredArtifact.reviewer_launch_attempt_id, originalAttemptId);
+        assert.equal(fs.existsSync(launchInputArtifactPath), true);
+        assert.equal(
+            fileSha256ForTest(launchInputArtifactPath),
+            recoveredArtifact.reviewer_launch_input_artifact_sha256
+        );
+        const recoveredEvents = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(
+            recoveredEvents.filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length,
+            1
+        );
+        assert.equal(
+            recoveredEvents.filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED').length,
+            1
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch reconciles a durable input pin after a simulated control-artifact write failure', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-pin-write-recovery';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const firstPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(firstPrepare.exitCode, 0, firstPrepare.errors.join('\n'));
+        const completeArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        const originalAttemptId = completeArtifact.reviewer_launch_attempt_id;
+        const originalPinEventSha256 = completeArtifact.reviewer_launch_input_pinned_event_sha256;
+        const originalPinEventTaskSequence = completeArtifact.reviewer_launch_input_pinned_event_task_sequence;
+        const originalInputSha256 = completeArtifact.reviewer_launch_input_artifact_sha256;
+        const originalPreparedEventCount = readTaskTimelineEvents(repoRoot, taskId)
+            .filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length;
+        const originalPinEventCount = readTaskTimelineEvents(repoRoot, taskId)
+            .filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED').length;
+        const interruptedControlArtifact = { ...completeArtifact };
+        for (const field of [
+            'reviewer_launch_input_artifact_sha256',
+            'reviewer_launch_input_pinned_event_sha256',
+            'reviewer_launch_input_pinned_event_task_sequence',
+            'record_reviewer_delegation_started_launch_artifact_path_command',
+            'record_reviewer_delegation_started_copy_paste_prompt_command',
+            'complete_reviewer_launch_launch_artifact_path_command',
+            'complete_reviewer_launch_copy_paste_prompt_command',
+            'record_reviewer_launch_failed_command'
+        ]) {
+            delete interruptedControlArtifact[field];
+        }
+        fs.writeFileSync(
+            fixture.launchArtifactPath,
+            `${JSON.stringify(interruptedControlArtifact, null, 2)}\n`,
+            'utf8'
+        );
+
+        const retry = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.equal(retry.exitCode, 0, retry.errors.join('\n'));
+        assert.ok(retry.logs.join('\n').includes('Current reviewer launch metadata is already prepared'));
+        const reconciledArtifact = JSON.parse(
+            fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(reconciledArtifact.reviewer_launch_attempt_id, originalAttemptId);
+        assert.equal(reconciledArtifact.reviewer_launch_input_artifact_sha256, originalInputSha256);
+        assert.equal(reconciledArtifact.reviewer_launch_input_pinned_event_sha256, originalPinEventSha256);
+        assert.equal(
+            reconciledArtifact.reviewer_launch_input_pinned_event_task_sequence,
+            originalPinEventTaskSequence
+        );
+        assert.equal(typeof reconciledArtifact.record_reviewer_delegation_started_launch_artifact_path_command, 'string');
+        assert.equal(typeof reconciledArtifact.record_reviewer_delegation_started_copy_paste_prompt_command, 'string');
+        assert.equal(typeof reconciledArtifact.complete_reviewer_launch_launch_artifact_path_command, 'string');
+        assert.equal(typeof reconciledArtifact.complete_reviewer_launch_copy_paste_prompt_command, 'string');
+        assert.equal(typeof reconciledArtifact.record_reviewer_launch_failed_command, 'string');
+        const eventsAfterRetry = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(
+            eventsAfterRetry.filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length,
+            originalPreparedEventCount
+        );
+        assert.equal(
+            eventsAfterRetry.filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED').length,
+            originalPinEventCount
+        );
+        assert.equal(
+            fs.readdirSync(path.dirname(fixture.launchArtifactPath))
+                .some((entry) => entry.includes('-superseded-')),
+            false
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch recovers the pre-input and pre-pin crash windows without duplicating preparation', async () => {
+        for (const scenario of [
+            {
+                suffix: 'before-input',
+                removePreparedControlBinding: false,
+                removeInputArtifact: true
+            },
+            {
+                suffix: 'before-prepared-control-write',
+                removePreparedControlBinding: true,
+                removeInputArtifact: true
+            },
+            {
+                suffix: 'before-pin',
+                removePreparedControlBinding: false,
+                removeInputArtifact: false
+            }
+        ]) {
+            const repoRoot = createTempRepo();
+            const taskId = `T-266-prepare-launch-${scenario.suffix}-recovery`;
+            const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+            const firstPrepare = await runCliWithCapturedOutput([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+            ], { cwd: repoRoot });
+            assert.equal(firstPrepare.exitCode, 0, firstPrepare.errors.join('\n'));
+            const completeArtifact = JSON.parse(
+                fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+            ) as Record<string, unknown>;
+            const originalAttemptId = completeArtifact.reviewer_launch_attempt_id;
+            const launchInputArtifactPath = String(completeArtifact.reviewer_launch_input_artifact_path)
+                .replace(/\//g, path.sep);
+            const timelinePath = path.join(
+                repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'task-events',
+                `${taskId}.jsonl`
+            );
+            const timelineLines = fs.readFileSync(timelinePath, 'utf8')
+                .split('\n')
+                .filter((line) => line.trim().length > 0);
+            const pinEventIndex = timelineLines.findIndex((line) => (
+                (JSON.parse(line) as Record<string, unknown>).event_type === 'REVIEWER_LAUNCH_INPUT_PINNED'
+            ));
+            assert.equal(pinEventIndex, timelineLines.length - 1);
+            fs.writeFileSync(
+                timelinePath,
+                `${timelineLines.slice(0, pinEventIndex).join('\n')}\n`,
+                'utf8'
+            );
+            const interruptedControlArtifact = { ...completeArtifact };
+            for (const field of [
+                'reviewer_launch_input_artifact_sha256',
+                'reviewer_launch_input_pinned_event_sha256',
+                'reviewer_launch_input_pinned_event_task_sequence',
+                'record_reviewer_delegation_started_launch_artifact_path_command',
+                'record_reviewer_delegation_started_copy_paste_prompt_command',
+                'complete_reviewer_launch_launch_artifact_path_command',
+                'complete_reviewer_launch_copy_paste_prompt_command',
+                'record_reviewer_launch_failed_command'
+            ]) {
+                delete interruptedControlArtifact[field];
+            }
+            if (scenario.removePreparedControlBinding) {
+                delete interruptedControlArtifact.reviewer_launch_prepared_event_recorded_at_utc;
+                delete interruptedControlArtifact.prepared_launch_event_sha256;
+                delete interruptedControlArtifact.prepared_launch_event_task_sequence;
+            }
+            fs.writeFileSync(
+                fixture.launchArtifactPath,
+                `${JSON.stringify(interruptedControlArtifact, null, 2)}\n`,
+                'utf8'
+            );
+            if (scenario.removeInputArtifact) {
+                fs.rmSync(launchInputArtifactPath, { force: true });
+            }
+
+            const retry = await runCliWithCapturedOutput([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+            ], { cwd: repoRoot });
+
+            assert.equal(retry.exitCode, 0, `${scenario.suffix}: ${retry.errors.join('\n')}`);
+            assert.ok(
+                retry.logs.join('\n').includes('Current reviewer launch metadata is already prepared'),
+                scenario.suffix
+            );
+            const recoveredArtifact = JSON.parse(
+                fs.readFileSync(fixture.launchArtifactPath, 'utf8')
+            ) as Record<string, unknown>;
+            assert.equal(recoveredArtifact.reviewer_launch_attempt_id, originalAttemptId);
+            assert.equal(fs.existsSync(launchInputArtifactPath), true);
+            assert.equal(
+                fileSha256ForTest(launchInputArtifactPath),
+                recoveredArtifact.reviewer_launch_input_artifact_sha256
+            );
+            const recoveredEvents = readTaskTimelineEvents(repoRoot, taskId);
+            assert.equal(
+                recoveredEvents.filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length,
+                1,
+                scenario.suffix
+            );
+            assert.equal(
+                recoveredEvents.filter((event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED').length,
+                1,
+                scenario.suffix
+            );
+            const recoveredPinEvent = recoveredEvents.find(
+                (event) => event.event_type === 'REVIEWER_LAUNCH_INPUT_PINNED'
+            );
+            assert.equal(
+                recoveredArtifact.reviewer_launch_input_pinned_event_sha256,
+                (recoveredPinEvent?.integrity as { event_sha256?: string } | undefined)?.event_sha256
+            );
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('prepare-reviewer-launch cannot replace an immutable delegation-started attempt', async () => {

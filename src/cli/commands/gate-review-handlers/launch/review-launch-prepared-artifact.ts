@@ -17,10 +17,252 @@ import {
 import {
     PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE,
     PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
+    findMatchingReviewerLaunchPreparedEvent,
     getReviewerLaunchArtifactMismatchReasons,
     getStringField,
     readJsonFile
 } from './review-launch-artifact-fields';
+
+export interface ReviewerLaunchInputPinnedEventEvidence {
+    eventSha256: string;
+    eventTaskSequence: number;
+    inputArtifactSha256: string;
+}
+
+export function findRecoverableReviewerLaunchPreparedEvent(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    options: {
+        artifactPath: string;
+        reviewerLaunchInputArtifactPath: string;
+        taskId: string;
+        reviewType: string;
+        reviewerExecutionMode: 'delegated_subagent';
+        reviewerIdentity: string;
+        reviewContextSha256: string;
+        routingEventSha256: string;
+        reviewerLaunchAttemptId: string;
+        launchBindingSha256: string;
+        reviewerPromptSha256: string;
+        launchPreparedAtUtc: string;
+        minSequenceExclusive: number;
+    }
+): ReviewDependencyTimelineEvent | null {
+    for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+        const event = timelineEvents[index];
+        const eventSha256 = String(event.integrity?.event_sha256 || '').trim().toLowerCase();
+        const details = event.details || {};
+        if (
+            event.event_type !== 'REVIEWER_LAUNCH_PREPARED'
+            || !/^[0-9a-f]{64}$/.test(eventSha256)
+            || getStringField(details, 'task_id', 'taskId') !== options.taskId
+            || getStringField(details, 'reviewer_launch_artifact_path', 'reviewerLaunchArtifactPath')
+                !== normalizePath(options.artifactPath)
+            || getStringField(
+                details,
+                'reviewer_launch_input_artifact_path',
+                'reviewerLaunchInputArtifactPath'
+            ) !== normalizePath(options.reviewerLaunchInputArtifactPath)
+            || getStringField(details, 'reviewer_prompt_sha256', 'reviewerPromptSha256').toLowerCase()
+                !== options.reviewerPromptSha256
+            || getStringField(details, 'launch_prepared_at_utc', 'launchPreparedAtUtc')
+                !== options.launchPreparedAtUtc
+            || getStringField(details, 'attestation_source', 'attestationSource')
+                !== PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE
+        ) {
+            continue;
+        }
+        const matchingEvent = findMatchingReviewerLaunchPreparedEvent(timelineEvents, {
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerExecutionMode: options.reviewerExecutionMode,
+            reviewerIdentity: options.reviewerIdentity,
+            reviewContextSha256: options.reviewContextSha256,
+            routingEventSha256: options.routingEventSha256,
+            reviewerLaunchAttemptId: options.reviewerLaunchAttemptId,
+            launchBindingSha256: options.launchBindingSha256,
+            preparedLaunchEventSha256: eventSha256,
+            minSequenceExclusive: options.minSequenceExclusive
+        });
+        if (matchingEvent === event) {
+            return event;
+        }
+    }
+    return null;
+}
+
+export function findMatchingReviewerLaunchInputPinnedEvent(options: {
+    artifactPath: string;
+    taskId: string;
+    reviewType: string;
+    reviewerExecutionMode: 'delegated_subagent';
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+    launchBindingSha256: string;
+    reviewerLaunchAttemptId: string;
+    preparedLaunchEventSha256: string;
+    reviewerLaunchInputArtifactPath: string;
+    reviewerLaunchInputArtifactSha256: string;
+    timelineEvents: readonly ReviewDependencyTimelineEvent[];
+    pinnedEventSha256?: string | null;
+    pinnedEventTaskSequence?: number | null;
+}): ReviewerLaunchInputPinnedEventEvidence | null {
+    const expectedInputArtifactPath = normalizePath(options.reviewerLaunchInputArtifactPath);
+    const expectedInputArtifactSha256 = options.reviewerLaunchInputArtifactSha256.trim().toLowerCase();
+    const expectedPinnedEventSha256 = String(options.pinnedEventSha256 || '').trim().toLowerCase();
+    const expectedPinnedEventTaskSequence = Number(options.pinnedEventTaskSequence);
+    if (
+        !/^[0-9a-f]{64}$/.test(expectedInputArtifactSha256)
+        || (expectedPinnedEventSha256 && !/^[0-9a-f]{64}$/.test(expectedPinnedEventSha256))
+        || (
+            options.pinnedEventTaskSequence != null
+            && (!Number.isInteger(expectedPinnedEventTaskSequence) || expectedPinnedEventTaskSequence < 1)
+        )
+    ) {
+        return null;
+    }
+    for (const event of options.timelineEvents) {
+        if (event.event_type !== 'REVIEWER_LAUNCH_INPUT_PINNED' || !event.integrity) {
+            continue;
+        }
+        const eventSha256 = String(event.integrity.event_sha256 || '').trim().toLowerCase();
+        const eventTaskSequence = Number(event.integrity.task_sequence);
+        if (
+            (expectedPinnedEventSha256 && eventSha256 !== expectedPinnedEventSha256)
+            || (
+                options.pinnedEventTaskSequence != null
+                && eventTaskSequence !== expectedPinnedEventTaskSequence
+            )
+        ) {
+            continue;
+        }
+        const details = event.details || {};
+        if (
+            getStringField(details, 'task_id', 'taskId') !== options.taskId
+            || getStringField(details, 'review_type', 'reviewType').toLowerCase() !== options.reviewType
+            || getStringField(details, 'reviewer_execution_mode', 'reviewerExecutionMode')
+                !== options.reviewerExecutionMode
+            || getStringField(
+                details,
+                'reviewer_identity',
+                'reviewerIdentity',
+                'reviewer_session_id',
+                'reviewerSessionId'
+            ) !== options.reviewerIdentity
+            || getStringField(details, 'review_context_sha256', 'reviewContextSha256').toLowerCase()
+                !== options.reviewContextSha256
+            || getStringField(details, 'routing_event_sha256', 'routingEventSha256').toLowerCase()
+                !== options.routingEventSha256
+            || getStringField(details, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase()
+                !== options.launchBindingSha256
+            || getStringField(details, 'reviewer_launch_attempt_id', 'reviewerLaunchAttemptId')
+                !== options.reviewerLaunchAttemptId
+            || getStringField(details, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256').toLowerCase()
+                !== options.preparedLaunchEventSha256
+            || getStringField(details, 'reviewer_launch_artifact_path', 'reviewerLaunchArtifactPath')
+                !== normalizePath(options.artifactPath)
+            || getStringField(details, 'reviewer_launch_input_artifact_path', 'reviewerLaunchInputArtifactPath')
+                !== expectedInputArtifactPath
+            || getStringField(
+                details,
+                'reviewer_launch_input_artifact_sha256',
+                'reviewerLaunchInputArtifactSha256'
+            ).toLowerCase() !== expectedInputArtifactSha256
+        ) {
+            continue;
+        }
+        return {
+            eventSha256,
+            eventTaskSequence,
+            inputArtifactSha256: expectedInputArtifactSha256
+        };
+    }
+    return null;
+}
+
+function getReviewerLaunchInputPinMismatches(options: {
+    artifactPath: string;
+    artifact: Record<string, unknown>;
+    taskId: string;
+    reviewType: string;
+    reviewerExecutionMode: 'delegated_subagent';
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+    launchBindingSha256: string;
+    reviewerLaunchAttemptId: string;
+    preparedLaunchEventSha256: string;
+    reviewerLaunchInputArtifactSha256?: string | null;
+    timelineEvents: readonly ReviewDependencyTimelineEvent[];
+}): string[] {
+    const mismatches: string[] = [];
+    const expectedLaunchInputArtifactPath = resolveReviewerLaunchInputArtifactPath(options.artifactPath);
+    const actualLaunchInputArtifactPath = getStringField(
+        options.artifact,
+        'reviewer_launch_input_artifact_path',
+        'reviewerLaunchInputArtifactPath'
+    );
+    const pinnedInputArtifactSha256 = getStringField(
+        options.artifact,
+        'reviewer_launch_input_artifact_sha256',
+        'reviewerLaunchInputArtifactSha256'
+    ).toLowerCase();
+    const expectedReviewerLaunchInputArtifactSha256 = String(options.reviewerLaunchInputArtifactSha256 || '')
+        .trim()
+        .toLowerCase();
+    if (actualLaunchInputArtifactPath !== normalizePath(expectedLaunchInputArtifactPath)) {
+        mismatches.push('reviewer_launch_input_artifact_path mismatch');
+    } else if (!fs.existsSync(expectedLaunchInputArtifactPath) || !fs.statSync(expectedLaunchInputArtifactPath).isFile()) {
+        mismatches.push('reviewer launch input artifact missing');
+    } else {
+        const launchInputArtifactSha256 = fileSha256(expectedLaunchInputArtifactPath) || '';
+        if (!launchInputArtifactSha256) {
+            mismatches.push('reviewer launch input artifact could not be hashed');
+        } else if (!/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)) {
+            mismatches.push('reviewer_launch_input_artifact_sha256 missing');
+        } else if (launchInputArtifactSha256 !== pinnedInputArtifactSha256) {
+            mismatches.push('reviewer launch input artifact sha256 mismatch');
+        } else if (
+            expectedReviewerLaunchInputArtifactSha256
+            && pinnedInputArtifactSha256 !== expectedReviewerLaunchInputArtifactSha256
+        ) {
+            mismatches.push('reviewer_launch_input_artifact_sha256 does not match current reviewer-facing handoff content');
+        }
+    }
+    const pinnedInputEventSha256 = getStringField(
+        options.artifact,
+        'reviewer_launch_input_pinned_event_sha256',
+        'reviewerLaunchInputPinnedEventSha256'
+    ).toLowerCase();
+    const pinnedInputEventTaskSequence = Number(
+        options.artifact.reviewer_launch_input_pinned_event_task_sequence
+        ?? options.artifact.reviewerLaunchInputPinnedEventTaskSequence
+    );
+    if (!/^[0-9a-f]{64}$/.test(pinnedInputEventSha256)) {
+        mismatches.push('reviewer_launch_input_pinned_event_sha256 missing');
+    } else if (!Number.isInteger(pinnedInputEventTaskSequence) || pinnedInputEventTaskSequence < 1) {
+        mismatches.push('reviewer_launch_input_pinned_event_task_sequence missing');
+    } else if (!findMatchingReviewerLaunchInputPinnedEvent({
+        artifactPath: options.artifactPath,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewerExecutionMode: options.reviewerExecutionMode,
+        reviewerIdentity: options.reviewerIdentity,
+        reviewContextSha256: options.reviewContextSha256,
+        routingEventSha256: options.routingEventSha256,
+        launchBindingSha256: options.launchBindingSha256,
+        reviewerLaunchAttemptId: options.reviewerLaunchAttemptId,
+        preparedLaunchEventSha256: options.preparedLaunchEventSha256,
+        reviewerLaunchInputArtifactPath: expectedLaunchInputArtifactPath,
+        reviewerLaunchInputArtifactSha256: pinnedInputArtifactSha256,
+        timelineEvents: options.timelineEvents,
+        pinnedEventSha256: pinnedInputEventSha256,
+        pinnedEventTaskSequence: pinnedInputEventTaskSequence
+    })) {
+        mismatches.push('reviewer launch input pin telemetry mismatch');
+    }
+    return mismatches;
+}
 
 export function getCurrentPreparedReviewerLaunchMismatches(options: {
     artifactPath: string;
@@ -43,11 +285,15 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
     launchBindingSha256: string;
     reviewerLaunchInputArtifactSha256?: string | null;
     reviewerLaunchAttemptId: string;
-    recordReviewerDelegationStartedCommand?: string | null;
-    completeReviewerLaunchCommand?: string | null;
+    recordReviewerDelegationStartedLaunchArtifactPathCommand?: string | null;
+    recordReviewerDelegationStartedCopyPastePromptCommand?: string | null;
+    completeReviewerLaunchLaunchArtifactPathCommand?: string | null;
+    completeReviewerLaunchCopyPastePromptCommand?: string | null;
     recordReviewerLaunchFailedCommand?: string | null;
     routingEventSequence: number;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
+    deferPreparedLaunchEventValidationForRecovery?: boolean;
+    deferReviewerLaunchInputPinValidationForRecovery?: boolean;
 }): string[] {
     const evidenceType = getStringField(options.artifact, 'evidence_type', 'artifact_type');
     const attestationState = getStringField(options.artifact, 'attestation_state', 'attestationState');
@@ -76,7 +322,9 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
         launchBindingSha256: options.launchBindingSha256,
         preparedLaunchEventSha256,
         routingEventSequence: options.routingEventSequence,
-        timelineEvents: options.timelineEvents
+        timelineEvents: options.timelineEvents,
+        deferPreparedLaunchEventValidationForRecovery:
+            options.deferPreparedLaunchEventValidationForRecovery
     });
     if (Number(options.artifact.schema_version) !== 1) {
         mismatches.push('schema_version mismatch');
@@ -99,18 +347,44 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
         mismatches.push('attestation_source mismatch');
     }
     if (
-        options.recordReviewerDelegationStartedCommand
-        && getStringField(options.artifact, 'record_reviewer_delegation_started_command', 'recordReviewerDelegationStartedCommand')
-            !== options.recordReviewerDelegationStartedCommand
+        options.recordReviewerDelegationStartedLaunchArtifactPathCommand
+        && getStringField(
+            options.artifact,
+            'record_reviewer_delegation_started_launch_artifact_path_command',
+            'recordReviewerDelegationStartedLaunchArtifactPathCommand'
+        ) !== options.recordReviewerDelegationStartedLaunchArtifactPathCommand
     ) {
-        mismatches.push('record_reviewer_delegation_started_command mismatch');
+        mismatches.push('record_reviewer_delegation_started_launch_artifact_path_command mismatch');
     }
     if (
-        options.completeReviewerLaunchCommand
-        && getStringField(options.artifact, 'complete_reviewer_launch_command', 'completeReviewerLaunchCommand')
-            !== options.completeReviewerLaunchCommand
+        options.recordReviewerDelegationStartedCopyPastePromptCommand
+        && getStringField(
+            options.artifact,
+            'record_reviewer_delegation_started_copy_paste_prompt_command',
+            'recordReviewerDelegationStartedCopyPastePromptCommand'
+        ) !== options.recordReviewerDelegationStartedCopyPastePromptCommand
     ) {
-        mismatches.push('complete_reviewer_launch_command mismatch');
+        mismatches.push('record_reviewer_delegation_started_copy_paste_prompt_command mismatch');
+    }
+    if (
+        options.completeReviewerLaunchLaunchArtifactPathCommand
+        && getStringField(
+            options.artifact,
+            'complete_reviewer_launch_launch_artifact_path_command',
+            'completeReviewerLaunchLaunchArtifactPathCommand'
+        ) !== options.completeReviewerLaunchLaunchArtifactPathCommand
+    ) {
+        mismatches.push('complete_reviewer_launch_launch_artifact_path_command mismatch');
+    }
+    if (
+        options.completeReviewerLaunchCopyPastePromptCommand
+        && getStringField(
+            options.artifact,
+            'complete_reviewer_launch_copy_paste_prompt_command',
+            'completeReviewerLaunchCopyPastePromptCommand'
+        ) !== options.completeReviewerLaunchCopyPastePromptCommand
+    ) {
+        mismatches.push('complete_reviewer_launch_copy_paste_prompt_command mismatch');
     }
     if (
         options.recordReviewerLaunchFailedCommand
@@ -119,41 +393,25 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
     ) {
         mismatches.push('record_reviewer_launch_failed_command mismatch');
     }
-    if (!preparedLaunchEventSha256) {
+    if (!preparedLaunchEventSha256 && !options.deferPreparedLaunchEventValidationForRecovery) {
         mismatches.push('prepared_launch_event_sha256 missing');
     }
-    const expectedLaunchInputArtifactPath = resolveReviewerLaunchInputArtifactPath(options.artifactPath);
-    const actualLaunchInputArtifactPath = getStringField(
-        options.artifact,
-        'reviewer_launch_input_artifact_path',
-        'reviewerLaunchInputArtifactPath'
-    );
-    if (actualLaunchInputArtifactPath !== normalizePath(expectedLaunchInputArtifactPath)) {
-        mismatches.push('reviewer_launch_input_artifact_path mismatch');
-    } else if (!fs.existsSync(expectedLaunchInputArtifactPath) || !fs.statSync(expectedLaunchInputArtifactPath).isFile()) {
-        mismatches.push('reviewer launch input artifact missing');
-    } else {
-        const pinnedInputArtifactSha256 = getStringField(
-            options.artifact,
-            'reviewer_launch_input_artifact_sha256',
-            'reviewerLaunchInputArtifactSha256'
-        ).toLowerCase();
-        const launchInputArtifactSha256 = fileSha256(expectedLaunchInputArtifactPath) || '';
-        const expectedReviewerLaunchInputArtifactSha256 = String(options.reviewerLaunchInputArtifactSha256 || '')
-            .trim()
-            .toLowerCase();
-        if (!launchInputArtifactSha256) {
-            mismatches.push('reviewer launch input artifact could not be hashed');
-        } else if (!/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)) {
-            mismatches.push('reviewer_launch_input_artifact_sha256 missing');
-        } else if (launchInputArtifactSha256 !== pinnedInputArtifactSha256) {
-            mismatches.push('reviewer launch input artifact sha256 mismatch');
-        } else if (
-            expectedReviewerLaunchInputArtifactSha256
-            && pinnedInputArtifactSha256 !== expectedReviewerLaunchInputArtifactSha256
-        ) {
-            mismatches.push('reviewer_launch_input_artifact_sha256 does not match current reviewer-facing handoff content');
-        }
+    if (!options.deferReviewerLaunchInputPinValidationForRecovery) {
+        mismatches.push(...getReviewerLaunchInputPinMismatches({
+            artifactPath: options.artifactPath,
+            artifact: options.artifact,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerExecutionMode: options.reviewerExecutionMode,
+            reviewerIdentity: options.reviewerIdentity,
+            reviewContextSha256: options.reviewContextSha256,
+            routingEventSha256: options.routingEventSha256,
+            launchBindingSha256: options.launchBindingSha256,
+            reviewerLaunchAttemptId: options.reviewerLaunchAttemptId,
+            preparedLaunchEventSha256,
+            reviewerLaunchInputArtifactSha256: options.reviewerLaunchInputArtifactSha256,
+            timelineEvents: options.timelineEvents
+        }));
     }
     return mismatches;
 }
@@ -180,6 +438,7 @@ export function assertPreparedReviewerLaunchArtifact(options: {
     reviewTreeStateSha256?: string | null;
     allowedAttestationStates?: readonly string[];
     resolvedReviewerIdentity?: string | null;
+    timelineEvents: readonly ReviewDependencyTimelineEvent[];
 }): void {
     const artifact = readJsonFile(options.artifactPath, 'Prepared reviewer launch artifact');
     const artifactReviewerIdentity = getStringField(
@@ -399,6 +658,25 @@ export function assertPreparedReviewerLaunchArtifact(options: {
     if (!getStringField(artifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256')) {
         violations.push('prepared_launch_event_sha256 is required');
     }
+    violations.push(...getReviewerLaunchInputPinMismatches({
+        artifactPath: options.artifactPath,
+        artifact,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewerExecutionMode: options.reviewerExecutionMode,
+        reviewerIdentity: options.reviewerIdentity,
+        reviewContextSha256: options.reviewContextSha256,
+        routingEventSha256: options.routingEventSha256,
+        launchBindingSha256,
+        reviewerLaunchAttemptId,
+        preparedLaunchEventSha256: getStringField(
+            artifact,
+            'prepared_launch_event_sha256',
+            'preparedLaunchEventSha256'
+        ).toLowerCase(),
+        reviewerLaunchInputArtifactSha256: options.reviewerLaunchInputArtifactSha256,
+        timelineEvents: options.timelineEvents
+    }));
     if (violations.length > 0) {
         throw new Error(
             'Prepared reviewer launch artifact failed validation:\n' +

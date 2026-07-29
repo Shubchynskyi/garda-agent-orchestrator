@@ -166,6 +166,7 @@ export function getReviewerLaunchArtifactMismatchReasons(
         preparedLaunchEventSha256: string;
         routingEventSequence: number;
         timelineEvents: readonly ReviewDependencyTimelineEvent[];
+        deferPreparedLaunchEventValidationForRecovery?: boolean;
     }
 ): string[] {
     const mismatches: string[] = [];
@@ -250,26 +251,28 @@ export function getReviewerLaunchArtifactMismatchReasons(
     if (getStringField(artifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase() !== options.launchBindingSha256) {
         mismatches.push('launch_binding_sha256 mismatch');
     }
-    if (
-        getStringField(artifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256').toLowerCase()
-            !== options.preparedLaunchEventSha256
-    ) {
-        mismatches.push('prepared_launch_event_sha256 mismatch');
-    } else if (
-        !findMatchingReviewerLaunchPreparedEvent(options.timelineEvents, {
-            taskId: options.taskId,
-            reviewType: options.reviewType,
-            reviewerExecutionMode: options.reviewerExecutionMode,
-            reviewerIdentity: options.reviewerIdentity,
-            reviewContextSha256: options.reviewContextSha256,
-            routingEventSha256: options.routingEventSha256,
-            reviewerLaunchAttemptId: options.reviewerLaunchAttemptId,
-            launchBindingSha256: options.launchBindingSha256,
-            preparedLaunchEventSha256: options.preparedLaunchEventSha256,
-            minSequenceExclusive: options.routingEventSequence
-        })
-    ) {
-        mismatches.push('prepared_launch_event_sha256 is not current telemetry');
+    if (!options.deferPreparedLaunchEventValidationForRecovery) {
+        if (
+            getStringField(artifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256').toLowerCase()
+                !== options.preparedLaunchEventSha256
+        ) {
+            mismatches.push('prepared_launch_event_sha256 mismatch');
+        } else if (
+            !findMatchingReviewerLaunchPreparedEvent(options.timelineEvents, {
+                taskId: options.taskId,
+                reviewType: options.reviewType,
+                reviewerExecutionMode: options.reviewerExecutionMode,
+                reviewerIdentity: options.reviewerIdentity,
+                reviewContextSha256: options.reviewContextSha256,
+                routingEventSha256: options.routingEventSha256,
+                reviewerLaunchAttemptId: options.reviewerLaunchAttemptId,
+                launchBindingSha256: options.launchBindingSha256,
+                preparedLaunchEventSha256: options.preparedLaunchEventSha256,
+                minSequenceExclusive: options.routingEventSequence
+            })
+        ) {
+            mismatches.push('prepared_launch_event_sha256 is not current telemetry');
+        }
     }
     return mismatches;
 }
@@ -351,6 +354,7 @@ export function findMatchingReviewerDelegationStartedEvent(
         reviewerLaunchAttemptId?: string | null;
         launchBindingSha256: string;
         preparedLaunchEventSha256: string;
+        reviewerLaunchArtifactSha256?: string | null;
         providerInvocationId: string;
         delegationStartedAtUtc: string;
         minSequenceExclusive: number;
@@ -361,6 +365,9 @@ export function findMatchingReviewerDelegationStartedEvent(
     const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
     const normalizedReviewerLaunchAttemptId = String(options.reviewerLaunchAttemptId || '').trim().toLowerCase();
+    const normalizedReviewerLaunchArtifactSha256 = String(
+        options.reviewerLaunchArtifactSha256 || ''
+    ).trim().toLowerCase();
     const normalizedProviderInvocationId = String(options.providerInvocationId || '').trim();
     const normalizedDelegationStartedAtUtc = String(options.delegationStartedAtUtc || '').trim();
     for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
@@ -383,6 +390,11 @@ export function findMatchingReviewerDelegationStartedEvent(
         const detailsReviewerLaunchAttemptId = String(
             details?.reviewer_launch_attempt_id || details?.reviewerLaunchAttemptId || ''
         ).trim().toLowerCase();
+        const detailsReviewerLaunchArtifactSha256 = String(
+            details?.reviewer_launch_artifact_sha256
+                || details?.reviewerLaunchArtifactSha256
+                || ''
+        ).trim().toLowerCase();
         const detailsDelegationStartedAtUtc = String(
             details?.delegation_started_at_utc || details?.delegationStartedAtUtc || ''
         ).trim();
@@ -404,6 +416,10 @@ export function findMatchingReviewerDelegationStartedEvent(
             && detailsReviewContextSha256 === normalizedReviewContextSha256
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
             && (!normalizedReviewerLaunchAttemptId || detailsReviewerLaunchAttemptId === normalizedReviewerLaunchAttemptId)
+            && (
+                !normalizedReviewerLaunchArtifactSha256
+                || detailsReviewerLaunchArtifactSha256 === normalizedReviewerLaunchArtifactSha256
+            )
             && detailsProviderInvocationId === normalizedProviderInvocationId
             && detailsDelegationStartedAtUtc === normalizedDelegationStartedAtUtc
         ) {

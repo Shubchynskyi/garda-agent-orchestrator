@@ -28,6 +28,12 @@ import {
     isReviewerLaunchAttemptSupersededByAuthenticatedRestart
 } from './reviewer-handoff-support';
 import {
+    getReviewerLaunchLaneReservationPath,
+    getReviewerLaunchSemanticPathKey,
+    REVIEWER_LAUNCH_LANE_RESERVATION_EVIDENCE_TYPE,
+    withReviewerLaunchLaneTransaction
+} from './reviewer-launch-lane-transaction';
+import {
     parseReviewerIdentity,
     resolveReviewerIdentityOption
 } from './reviewer-identity-options';
@@ -49,6 +55,9 @@ export interface ReviewRoutingLaunchHandlerDependencies {
     buildReviewerLaunchBindingSha256: typeof import('../index').buildReviewerLaunchBindingSha256;
     buildReviewerLaunchInputHandoffArtifact: typeof import('../index').buildReviewerLaunchInputHandoffArtifact;
     COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE: typeof import('../index').COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE;
+    findMatchingReviewerLaunchInputPinnedEvent: typeof import('../index').findMatchingReviewerLaunchInputPinnedEvent;
+    findMatchingReviewerLaunchPreparedEvent: typeof import('../index').findMatchingReviewerLaunchPreparedEvent;
+    findRecoverableReviewerLaunchPreparedEvent: typeof import('../index').findRecoverableReviewerLaunchPreparedEvent;
     findMatchingRoutingEvent: typeof import('../index').findMatchingRoutingEvent;
     getCurrentPreparedReviewerLaunchMismatches: typeof import('../index').getCurrentPreparedReviewerLaunchMismatches;
     getReviewTreeStateLaunchSummary: typeof import('../index').getReviewTreeStateLaunchSummary;
@@ -56,6 +65,7 @@ export interface ReviewRoutingLaunchHandlerDependencies {
     getReviewerScopedDiffHandoffPaths: typeof import('../index').getReviewerScopedDiffHandoffPaths;
     getStringField: typeof import('../index').getStringField;
     handleRecordReviewInvocation: typeof import('../index').handleRecordReviewInvocation;
+    handleRecordReviewInvocationWithLaneHeld: (gateArgv: string[]) => Promise<void>;
     isCurrentCompletedReviewerLaunchArtifact: typeof import('../index').isCurrentCompletedReviewerLaunchArtifact;
     isForbiddenReviewerLaunchAttestationSource: typeof import('../index').isForbiddenReviewerLaunchAttestationSource;
     LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY: typeof import('../index').LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY;
@@ -122,6 +132,13 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-routing', 'review_phase');
+    const canonicalLaunchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+        repoRoot,
+        taskId,
+        reviewType,
+        artifactPathValue: undefined
+    });
+    return await withReviewerLaunchLaneTransaction(canonicalLaunchArtifactPath, async () => {
     const reviewsRoot = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
     const contextPath = resolveCanonicalReviewContextPath({
         reviewsRoot,
@@ -149,13 +166,49 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const timelineEvents = readDependencyTimelineEvents(timelinePath);
     const launchArtifactPaths = new Set<string>([
-        resolveReviewerLaunchArtifactPathForWrite({
+        canonicalLaunchArtifactPath
+    ]);
+    const latestLaunchEventByArtifactPath = new Map<string, {
+        eventType: string;
+        attemptId: string;
+    }>();
+    const laneReservationPath = getReviewerLaunchLaneReservationPath(canonicalLaunchArtifactPath);
+    const laneReservationExists = fs.existsSync(laneReservationPath);
+    const laneReservation = readJsonObjectIfPresent(laneReservationPath);
+    if (laneReservationExists && !laneReservation) {
+        throw new Error(
+            `Reviewer launch lane reservation must contain valid JSON object metadata: ` +
+            `${normalizePath(laneReservationPath)}.`
+        );
+    }
+    if (laneReservation) {
+        const reservedTaskId = getStringField(laneReservation, 'task_id', 'taskId');
+        const reservedReviewType = getStringField(laneReservation, 'review_type', 'reviewType').toLowerCase();
+        const reservedEvidenceType = getStringField(laneReservation, 'evidence_type', 'evidenceType');
+        const reservedArtifactPathValue = getStringField(
+            laneReservation,
+            'reviewer_launch_artifact_path',
+            'reviewerLaunchArtifactPath'
+        );
+        if (
+            Number(laneReservation.schema_version) !== 1
+            || reservedEvidenceType !== REVIEWER_LAUNCH_LANE_RESERVATION_EVIDENCE_TYPE
+            || reservedTaskId !== taskId
+            || reservedReviewType !== reviewType
+            || !reservedArtifactPathValue
+        ) {
+            throw new Error(
+                `Reviewer launch lane reservation is malformed or belongs to another lane: ` +
+                `${normalizePath(laneReservationPath)}.`
+            );
+        }
+        launchArtifactPaths.add(resolveReviewerLaunchArtifactPathForWrite({
             repoRoot,
             taskId,
             reviewType,
-            artifactPathValue: undefined
-        })
-    ]);
+            artifactPathValue: reservedArtifactPathValue
+        }));
+    }
     for (const timelineEvent of timelineEvents) {
         if (
             timelineEvent.event_type !== 'REVIEWER_LAUNCH_PREPARED'
@@ -175,17 +228,41 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
             'reviewerLaunchArtifactPath'
         );
         if (artifactPathValue) {
-            launchArtifactPaths.add(resolveReviewerLaunchArtifactPathForWrite({
+            const resolvedArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
                 repoRoot,
                 taskId,
                 reviewType,
                 artifactPathValue
-            }));
+            });
+            launchArtifactPaths.add(resolvedArtifactPath);
+            latestLaunchEventByArtifactPath.set(getReviewerLaunchSemanticPathKey(resolvedArtifactPath), {
+                eventType: timelineEvent.event_type,
+                attemptId: getStringField(
+                    details || {},
+                    'reviewer_launch_attempt_id',
+                    'reviewerLaunchAttemptId'
+                ) || 'legacy-unidentified'
+            });
         }
     }
     for (const launchArtifactPath of launchArtifactPaths) {
+        const launchArtifactExists = fs.existsSync(launchArtifactPath);
         const currentLaunchArtifact = readJsonObjectIfPresent(launchArtifactPath);
         if (!currentLaunchArtifact) {
+            const latestLaunchEvent = latestLaunchEventByArtifactPath.get(
+                getReviewerLaunchSemanticPathKey(launchArtifactPath)
+            );
+            if (launchArtifactExists || (
+                latestLaunchEvent
+                && latestLaunchEvent.eventType !== 'REVIEWER_LAUNCH_FAILED'
+            )) {
+                throw new Error(
+                    `Reviewer launch control artifact is ${launchArtifactExists ? 'malformed' : 'missing'} for ` +
+                    `recorded ${latestLaunchEvent?.eventType || 'lane reservation'} attempt ` +
+                    `'${latestLaunchEvent?.attemptId || 'unknown'}': ${normalizePath(launchArtifactPath)}. ` +
+                    'Restore or fail the recorded attempt before rerouting.'
+                );
+            }
             continue;
         }
         if (isReviewerLaunchAttemptSupersededByAuthenticatedRestart(
@@ -329,6 +406,7 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
         `Sha256: ${routingUpdate.contextSha256 || 'n/a'}, ` +
         `RoutedReviewContextSha256: ${routingUpdate.contextSha256 || 'n/a'})`
     );
+    });
 }
 
 
