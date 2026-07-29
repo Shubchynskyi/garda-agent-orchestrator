@@ -4131,11 +4131,12 @@ export function resolveNextStepFromCliOptions(options: {
     const preflightPathText = String(options.preflightPath || '').trim();
     let resolvedPreflightPath: string | null = null;
     if (preflightPathText) {
+        const rejectedPreflightPath = normalizePath(path.resolve(repoRoot, preflightPathText));
         try {
             resolvedPreflightPath = resolvePathInsideRepo(preflightPathText, repoRoot, { allowMissing: true });
         } catch {
             throw new Error(
-                `PreflightPath must resolve inside repo root without symlink or junction escape: ${normalizePath(preflightPathText)}. ` +
+                `PreflightPath must resolve inside repo root without symlink or junction escape: ${rejectedPreflightPath}. ` +
                 'The derived ReviewsRoot must resolve inside repo root without symlink or junction escape.'
             );
         }
@@ -4147,11 +4148,13 @@ export function resolveNextStepFromCliOptions(options: {
     ]);
     let reviewsRoot: string | null = resolvedPreflightPath ? path.dirname(resolvedPreflightPath) : null;
     if (options.reviewsRoot) {
+        const requestedReviewsRoot = String(options.reviewsRoot).trim();
+        const rejectedReviewsRoot = normalizePath(path.resolve(repoRoot, requestedReviewsRoot));
         try {
-            reviewsRoot = resolvePathInsideRepo(String(options.reviewsRoot), repoRoot, { allowMissing: true });
+            reviewsRoot = resolvePathInsideRepo(requestedReviewsRoot, repoRoot, { allowMissing: true });
         } catch {
             throw new Error(
-                `ReviewsRoot must resolve inside repo root without symlink or junction escape: ${normalizePath(options.reviewsRoot)}`
+                `ReviewsRoot must resolve inside repo root without symlink or junction escape: ${rejectedReviewsRoot}`
             );
         }
     }

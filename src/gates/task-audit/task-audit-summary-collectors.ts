@@ -180,12 +180,13 @@ export interface ProfileReviewDecisionSummary {
 
 export function resolveReviewsRoot(repoRoot: string, explicit?: string | null): string {
     if (explicit) {
+        const rejectedReviewsRoot = toPosix(path.resolve(repoRoot, explicit.trim()));
         let resolved: string | null;
         try {
             resolved = resolvePathInsideRepo(explicit, repoRoot, { allowMissing: true });
         } catch {
             throw new Error(
-                `ReviewsRoot must resolve inside repo root without symlink or junction escape: ${toPosix(explicit)}`
+                `ReviewsRoot must resolve inside repo root without symlink or junction escape: ${rejectedReviewsRoot}`
             );
         }
         if (resolved) return resolved;
