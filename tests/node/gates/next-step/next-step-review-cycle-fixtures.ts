@@ -22,6 +22,9 @@ import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import { buildStrictDecompositionDecisionArtifact } from './next-step-test-support';
 import {
+    seedAuthenticatedReviewerLaunchFixture
+} from './next-step-reviewer-launch-fixtures';
+import {
     REVIEW_CYCLE_CONTINUATION_EVENT,
     buildReviewCycleContinuationArtifact,
     resolveReviewCycleContinuationArtifactPath
@@ -767,7 +770,20 @@ export function writeReviewEvidence(
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
     const artifactText = `# ${reviewType} review\n\n${options.body || ''}## Verdict\n${verdictToken}\n`;
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
-    const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+    const authenticatedLaunch = options.includeLaunchArtifact !== false
+        ? seedAuthenticatedReviewerLaunchFixture({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewerIdentity: `agent:${reviewType}-reviewer`,
+            reviewContextPath,
+            reviewTreeStateSha256,
+            appendEvent,
+            includeInvocation: false
+        })
+        : null;
+    const routeIntegrity = authenticatedLaunch?.routeIntegrity
+        ?? appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
         review_type: reviewType,
         reviewer_execution_mode: 'delegated_subagent',
         reviewer_session_id: `agent:${reviewType}-reviewer`
@@ -778,8 +794,8 @@ export function writeReviewEvidence(
     const launchCompletedAtUtc = '2026-04-28T00:00:12.000Z';
     const invocationAttestedAtUtc = '2026-04-28T00:00:13.000Z';
     const reviewResultRecordedAtUtc = '2026-04-28T00:00:30.000Z';
-    let reviewerLaunchArtifactSha256 = '';
-    if (options.includeLaunchArtifact !== false) {
+    let reviewerLaunchArtifactSha256 = authenticatedLaunch?.launchArtifactSha256 || '';
+    if (options.includeLaunchArtifact !== false && !authenticatedLaunch) {
         const launchBindingSha256 = 'c'.repeat(64);
         const reviewerLaunchArtifactPath = path.join(
             repoRoot,
