@@ -11,8 +11,41 @@ import {
     resolveRepoPath,
     validateRepairChildTaskId
 } from '../../../../src/gates/full-suite/full-suite-repair-contracts';
+import type {
+    FullSuiteRepairTaskMaterializationResult,
+    FullSuiteRepairTaskProposal,
+    FullSuiteRepairWipRestoreResult
+} from '../../../../src/gates/full-suite';
 
 describe('full-suite repair contracts', () => {
+    it('preserves the public facade type exports', () => {
+        const proposal: FullSuiteRepairTaskProposal = {
+            suggested_task_id: 'T-930-1-1-F1',
+            title: 'Cover facade exports',
+            area: 'tests/full-suite-repair',
+            rationale: 'Keep the original import path source-compatible.'
+        };
+        const materialization: FullSuiteRepairTaskMaterializationResult = {
+            status: 'MATERIALIZED',
+            task_id: 'T-930-1-1',
+            child_task_id: proposal.suggested_task_id,
+            artifact_path: 'runtime/reviews/repair.json',
+            wip_manifest_path: 'runtime/wip/manifest.json',
+            split_required_artifact_path: null,
+            violations: [],
+            output_lines: []
+        };
+        const restore: FullSuiteRepairWipRestoreResult = {
+            status: 'RESTORED',
+            manifest_path: materialization.wip_manifest_path ?? '',
+            restored_files: [],
+            violations: [],
+            output_lines: []
+        };
+
+        assert.equal(restore.manifest_path, 'runtime/wip/manifest.json');
+    });
+
     it('quotes normalized command values without changing PowerShell single-quote semantics', () => {
         assert.equal(
             quoteCommandValue(`runtime\\reviews\\O'Reilly.json`),
