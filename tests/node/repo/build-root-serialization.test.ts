@@ -46,6 +46,7 @@ const buildScriptsWrapper = require('../../../scripts/node-foundation/build-scri
         compiledEntryPath: string,
         fingerprint: { sha256: string }
     ) => { accepted: boolean; reason: string };
+    resolveEntryProcessTimeoutMs: (entryScript: string) => number | undefined;
     runProcess: (command: string, args: string[], cwd: string, options?: { timeoutMs?: number }) => void;
 };
 
@@ -907,6 +908,31 @@ test('build-scripts wrapper fails hung child processes with timeout diagnostics'
         ),
         /node(?:\.exe)? timed out after 100 ms: .* -e /u
     );
+});
+
+test('build-scripts wrapper leaves test entrypoints unlimited without changing other entrypoints', () => {
+    assert.equal(buildScriptsWrapper.resolveEntryProcessTimeoutMs('test.js'), 0);
+    assert.equal(buildScriptsWrapper.resolveEntryProcessTimeoutMs('build.js'), undefined);
+    assert.equal(buildScriptsWrapper.resolveEntryProcessTimeoutMs('release-validation.js'), undefined);
+});
+
+test('build-scripts wrapper honors an explicit unlimited process timeout', () => {
+    const previousTimeout = process.env.GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS;
+    process.env.GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS = '50';
+    try {
+        buildScriptsWrapper.runProcess(
+            process.execPath,
+            ['-e', 'setTimeout(() => {}, 150)'],
+            getRepoRoot(),
+            { timeoutMs: 0 }
+        );
+    } finally {
+        if (previousTimeout === undefined) {
+            delete process.env.GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS;
+        } else {
+            process.env.GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS = previousTimeout;
+        }
+    }
 });
 
 test('node-foundation build wrapper fails timed-out tsc with high-signal diagnostics', () => {

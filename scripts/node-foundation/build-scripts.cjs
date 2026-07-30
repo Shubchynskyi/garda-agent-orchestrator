@@ -16,6 +16,7 @@ const SCRIPTS_BUILD_FINGERPRINT_PATH = 'scripts-build-fingerprint.json';
 const SCRIPTS_BUILD_FORCE_REBUILD_ENV = 'GARDA_BUILD_SCRIPTS_FORCE_REBUILD';
 const SCRIPTS_BUILD_PROCESS_TIMEOUT_MS_ENV = 'GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS';
 const DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS = 15 * 60 * 1000;
+const UNLIMITED_PROCESS_TIMEOUT_MS = 0;
 const INPUT_FILE_EXTENSIONS = new Set(['.cjs', '.js', '.json', '.ts']);
 
 function appendTraceLine(tracePath, message) {
@@ -43,17 +44,26 @@ function formatCommand(command, args) {
     return [command, ...args].join(' ');
 }
 
+function resolveEntryProcessTimeoutMs(entryScript) {
+    return entryScript === 'test.js'
+        ? UNLIMITED_PROCESS_TIMEOUT_MS
+        : undefined;
+}
+
 function runProcess(command, args, cwd, options = {}) {
-    const timeoutMs = options.timeoutMs || readPositiveIntegerEnv(
+    const timeoutMs = options.timeoutMs ?? readPositiveIntegerEnv(
         SCRIPTS_BUILD_PROCESS_TIMEOUT_MS_ENV,
         DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS
     );
-    const result = childProcess.spawnSync(command, args, {
+    const spawnOptions = {
         cwd,
         stdio: 'inherit',
-        timeout: timeoutMs,
         windowsHide: true
-    });
+    };
+    if (timeoutMs > UNLIMITED_PROCESS_TIMEOUT_MS) {
+        spawnOptions.timeout = timeoutMs;
+    }
+    const result = childProcess.spawnSync(command, args, spawnOptions);
     if (result.error && result.error.code === 'ETIMEDOUT') {
         throw new Error(`${path.basename(command)} timed out after ${timeoutMs} ms: ${formatCommand(command, args)}`);
     }
@@ -61,7 +71,10 @@ function runProcess(command, args, cwd, options = {}) {
         throw new Error(`${path.basename(command)} failed to start: ${result.error.message}`);
     }
     if (result.signal === 'SIGTERM') {
-        throw new Error(`${path.basename(command)} timed out or terminated after ${timeoutMs} ms: ${formatCommand(command, args)}`);
+        const timeoutDiagnostic = timeoutMs > UNLIMITED_PROCESS_TIMEOUT_MS
+            ? ` after ${timeoutMs} ms`
+            : '';
+        throw new Error(`${path.basename(command)} timed out or terminated${timeoutDiagnostic}: ${formatCommand(command, args)}`);
     }
     if (result.status !== 0) {
         throw new Error(`${path.basename(command)} failed (exit ${result.status})`);
@@ -223,6 +236,7 @@ function main() {
     const entryScript = entryArguments[0] || 'build.js';
     const entryArgs = entryArguments.length > 0 ? entryArguments.slice(1) : ['sync-repo-cli'];
     const compiledEntryPath = path.join(repoRoot, '.scripts-build', 'scripts', 'node-foundation', entryScript);
+    const entryProcessOptions = { timeoutMs: resolveEntryProcessTimeoutMs(entryScript) };
 
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     acquireBuildRootLock(lockPath);
@@ -235,14 +249,14 @@ function main() {
         const reuseStatus = getScriptsBuildReuseStatus(repoRoot, buildRoot, compiledEntryPath, fingerprint);
         printScriptsBuildReuseDiagnostic(reuseStatus, fingerprint);
         if (reuseStatus.accepted) {
-            runProcess(process.execPath, [compiledEntryPath, ...entryArgs], repoRoot);
+            runProcess(process.execPath, [compiledEntryPath, ...entryArgs], repoRoot, entryProcessOptions);
             return;
         }
         resetBuildRoot(buildRoot);
         runProcess(process.execPath, [tscCliPath, '-p', 'tsconfig.scripts.json', '--outDir', '.scripts-build'], repoRoot);
         copyScriptRuntimeSupportFiles(repoRoot, buildRoot);
         writeScriptsBuildFingerprint(buildRoot, fingerprint);
-        runProcess(process.execPath, [compiledEntryPath, ...entryArgs], repoRoot);
+        runProcess(process.execPath, [compiledEntryPath, ...entryArgs], repoRoot, entryProcessOptions);
     } finally {
         appendTraceLine(tracePath, `released ${process.pid} ${Date.now()}`);
         releaseBuildRootLock(lockPath);
@@ -258,5 +272,6 @@ module.exports = {
     DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS,
     getScriptsBuildReuseStatus,
     main,
+    resolveEntryProcessTimeoutMs,
     runProcess
 };
