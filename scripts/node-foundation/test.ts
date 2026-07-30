@@ -36,7 +36,11 @@ const GARDA_DURATION_FILE_OPTION = '--garda-duration-file';
 const NODE_FOUNDATION_BASELINE_SINGLE_FILE_SHARD_MIN_DURATION_MS = 60_000;
 const NODE_FOUNDATION_SINGLE_FILE_SHARD_MIN_DURATION_MS = 5 * 60_000;
 const NODE_FOUNDATION_ISOLATED_TEST_PATHS = new Set<string>([
-    'tests/node/cli/commands/gates/completion/gates-completion-rollback.test.ts'
+    'tests/node/cli/commands/gates/completion/gates-completion-rollback.test.ts',
+    'tests/node/cli/commands/gates/review-cycle/gates-review-cycle-remediation-ignored-changelog-guards.test.ts',
+    'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-prepared-3.test.ts',
+    'tests/node/gates/diagnostics/shell-smoke-preflight.test.ts',
+    'tests/node/gates/compile/full-suite-validation-cli-transaction.test.ts'
 ]);
 const NODE_FOUNDATION_SERIAL_TEST_PATHS = new Set<string>([
     'tests/node/bin/garda-delegation.test.ts',

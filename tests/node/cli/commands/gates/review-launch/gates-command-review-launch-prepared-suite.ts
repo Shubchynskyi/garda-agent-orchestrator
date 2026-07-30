@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import {
     assert,
     buildReviewContext,
@@ -26,6 +26,7 @@ import {
     writePreflight
 } from './gates-command-review-launch-fixtures';
 import { createPartitionedTestRegistrar } from '../../gate-test-partition';
+import { removeTempRepoWithRetry } from '../../gate-test-helpers';
 import {
     buildNoFindingsJsonReviewReport
 } from '../review-result/gates-command-review-result-fixtures';
@@ -115,9 +116,95 @@ function spawnReviewerLaunchCliProcess(
     });
     state.completion = new Promise<number | null>((resolve, reject) => {
         child.once('error', reject);
-        child.once('exit', (code) => resolve(code));
+        child.once('close', (code) => resolve(code));
     });
     return state;
+}
+
+async function waitForReviewerLaunchProcessClose(
+    processState: SpawnedReviewerLaunchProcess,
+    timeoutMs: number
+): Promise<boolean> {
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+        return await Promise.race([
+            processState.completion.then(
+                () => true,
+                () => true
+            ),
+            new Promise<boolean>((resolve) => {
+                timeout = setTimeout(() => resolve(false), timeoutMs);
+            })
+        ]);
+    } finally {
+        if (timeout) {
+            clearTimeout(timeout);
+        }
+    }
+}
+
+async function stopReviewerLaunchProcess(
+    processState: SpawnedReviewerLaunchProcess | undefined
+): Promise<void> {
+    if (!processState || await waitForReviewerLaunchProcessClose(processState, 0)) {
+        return;
+    }
+
+    const child = processState.child;
+    if (process.platform === 'win32' && child.pid) {
+        try {
+            execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+                stdio: 'ignore',
+                windowsHide: true,
+                timeout: 5_000
+            });
+        } catch (_error) {
+            child.kill('SIGKILL');
+        }
+    } else {
+        child.kill('SIGTERM');
+        if (!await waitForReviewerLaunchProcessClose(processState, 1_000)) {
+            child.kill('SIGKILL');
+        }
+    }
+
+    if (!await waitForReviewerLaunchProcessClose(processState, 2_000)) {
+        throw new Error(`Reviewer-launch process ${child.pid ?? 'unknown'} did not close after termination`);
+    }
+}
+
+async function stopReviewerLaunchProcesses(
+    processStates: Array<SpawnedReviewerLaunchProcess | null | undefined>
+): Promise<void> {
+    const results = await Promise.allSettled(
+        processStates.map(async (processState) => await stopReviewerLaunchProcess(processState ?? undefined))
+    );
+    const errors = results
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => result.reason);
+    if (errors.length > 0) {
+        throw new AggregateError(errors, 'Failed to stop reviewer-launch test processes');
+    }
+}
+
+async function cleanupReviewerLaunchRepo(
+    repoRoot: string,
+    processStates: Array<SpawnedReviewerLaunchProcess | null | undefined>
+): Promise<void> {
+    const errors: unknown[] = [];
+    try {
+        await stopReviewerLaunchProcesses(processStates);
+    } catch (error: unknown) {
+        errors.push(error);
+    }
+    try {
+        removeTempRepoWithRetry(repoRoot);
+    } catch (error: unknown) {
+        errors.push(error);
+    }
+    if (errors.length > 0) {
+        throw new AggregateError(errors, `Failed to clean reviewer-launch test repository: ${repoRoot}`);
+    }
 }
 
 function spawnPrepareReviewerLaunchProcess(options: {
@@ -223,21 +310,33 @@ async function waitForReviewerLaunchProcessCompletion(
     processState: SpawnedReviewerLaunchProcess
 ): Promise<number | null> {
     return await new Promise<number | null>((resolve, reject) => {
+        let timedOut = false;
         const timeout = setTimeout(() => {
-            if (processState.child.exitCode === null) {
-                processState.child.kill();
-            }
-            reject(new Error(
+            timedOut = true;
+            const timeoutError = new Error(
                 `Timed out waiting for reviewer-launch process: ` +
                 `${processState.stderr || processState.stdout}`
-            ));
+            );
+            void stopReviewerLaunchProcess(processState).then(
+                () => reject(timeoutError),
+                (cleanupError: unknown) => reject(new AggregateError(
+                    [timeoutError, cleanupError],
+                    'Reviewer-launch process timed out and could not be terminated cleanly'
+                ))
+            );
         }, 30_000);
         processState.completion.then(
             (code) => {
+                if (timedOut) {
+                    return;
+                }
                 clearTimeout(timeout);
                 resolve(code);
             },
             (error: unknown) => {
+                if (timedOut) {
+                    return;
+                }
                 clearTimeout(timeout);
                 reject(error);
             }
@@ -1431,13 +1530,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             if (!innerTransactionLockReleased) {
                 releaseFilesystemLock(innerTransactionLock);
             }
-            if (firstProcess.child.exitCode === null) {
-                firstProcess.child.kill();
-            }
-            if (secondProcess?.child.exitCode === null) {
-                secondProcess.child.kill();
-            }
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            await cleanupReviewerLaunchRepo(repoRoot, [firstProcess, secondProcess]);
         }
     });
 
@@ -1516,13 +1609,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             if (!firstArtifactTransactionLockReleased) {
                 releaseFilesystemLock(firstArtifactTransactionLock);
             }
-            if (firstProcess.child.exitCode === null) {
-                firstProcess.child.kill();
-            }
-            if (secondProcess?.child.exitCode === null) {
-                secondProcess.child.kill();
-            }
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            await cleanupReviewerLaunchRepo(repoRoot, [firstProcess, secondProcess]);
         }
     });
 
@@ -1607,13 +1694,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             if (!innerTransactionLockReleased) {
                 releaseFilesystemLock(innerTransactionLock);
             }
-            if (prepareProcess.child.exitCode === null) {
-                prepareProcess.child.kill();
-            }
-            if (rerouteProcess?.child.exitCode === null) {
-                rerouteProcess.child.kill();
-            }
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            await cleanupReviewerLaunchRepo(repoRoot, [prepareProcess, rerouteProcess]);
         }
     });
 
@@ -1719,12 +1800,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             if (!taskEventLockReleased) {
                 releaseFilesystemLock(taskEventLock);
             }
-            if (invocationProcess.child.exitCode === null) {
-                invocationProcess.child.kill();
-            }
-            if (invocationRerouteProcess?.child.exitCode === null) {
-                invocationRerouteProcess.child.kill();
-            }
+            await stopReviewerLaunchProcesses([invocationProcess, invocationRerouteProcess]);
         }
 
         const reviewOutputPath = path.join(
@@ -1788,12 +1864,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             if (!resultLockReleased) {
                 releaseFilesystemLock(resultLock);
             }
-            if (resultProcess.child.exitCode === null) {
-                resultProcess.child.kill();
-            }
-            if (resultRerouteProcess?.child.exitCode === null) {
-                resultRerouteProcess.child.kill();
-            }
+            await stopReviewerLaunchProcesses([resultProcess, resultRerouteProcess]);
         }
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
@@ -1808,7 +1879,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         );
         assert.equal(fs.existsSync(laneTransactionLockPath), false);
         assert.equal(fs.existsSync(`${alternateLaunchArtifactPath}.lane-transaction.lock`), false);
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        removeTempRepoWithRetry(repoRoot);
     });
 
     it('rejects a second active reviewer launch attempt through another explicit artifact path', async () => {

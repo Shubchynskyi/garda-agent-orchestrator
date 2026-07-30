@@ -64,7 +64,7 @@ function writeFullSuiteTaskModeBaseline(repoRoot: string, taskId: string): void 
 }
 
 describe('gates/full-suite-validation', () => {
-    describe('CLI integration', { concurrency: false, timeout: 120_000 }, () => {
+    describe('CLI integration', { concurrency: false, timeout: 15 * 60_000 }, () => {
         afterEach(() => {
             process.exitCode = undefined;
         });

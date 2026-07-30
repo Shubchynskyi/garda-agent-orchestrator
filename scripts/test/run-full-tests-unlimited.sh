@@ -6,6 +6,9 @@ set -uo pipefail
 SHARD_COUNT=2
 # Maximum number of shard processes running at the same time.
 SHARD_CONCURRENCY=2
+# Maximum node:test file workers inside each shard process.
+# Two shards therefore use at most 16 file workers instead of 48 on this host.
+NODE_TEST_CONCURRENCY=8
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if ! REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"; then
@@ -40,6 +43,7 @@ node "$COMPILED_RUNNER" \
     --garda-shards "$SHARD_COUNT" \
     --garda-shard-concurrency "$SHARD_CONCURRENCY" \
     --garda-shard-log-dir "$SHARD_LOG_DIR" \
+    --test-concurrency "$NODE_TEST_CONCURRENCY" \
     tests/node/core \
     tests/node/gate-runtime \
     tests/node/schemas \
@@ -130,6 +134,7 @@ done < "$FAILED_SHARDS_FILE" | sort -u > "$FAILED_TESTS_FILE"
     echo "ExitCode: $TEST_EXIT_CODE"
     echo "ConfiguredShardCount: $SHARD_COUNT"
     echo "ShardConcurrency: $SHARD_CONCURRENCY"
+    echo "NodeTestConcurrencyPerShard: $NODE_TEST_CONCURRENCY"
     echo "ExecutedShards: $EXECUTED_SHARD_COUNT"
     echo "DurationSeconds: $TOTAL_DURATION_SECONDS"
     echo "Duration: $TOTAL_DURATION_HMS"
@@ -161,6 +166,7 @@ echo "Full log: $MAIN_LOG"
 echo "Shard logs: $SHARD_LOG_DIR"
 echo "Failed tests: $FAILED_TESTS_FILE"
 echo "Executed shards: $EXECUTED_SHARD_COUNT"
+echo "Node test concurrency per shard: $NODE_TEST_CONCURRENCY"
 echo "Duration: $TOTAL_DURATION_HMS ($TOTAL_DURATION_SECONDS seconds)"
 echo "Exit code: $TEST_EXIT_CODE"
 
