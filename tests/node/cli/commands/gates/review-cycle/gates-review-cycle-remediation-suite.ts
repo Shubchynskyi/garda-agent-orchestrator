@@ -2,6 +2,7 @@ import {
     EXIT_GATE_FAILURE,
     appendTaskEvent,
     assert,
+    cloneRunScopedTempRepo,
     createTempRepo,
     describe,
     fileSha256,
@@ -42,6 +43,7 @@ import { classifyReviewRemediationFix } from '../../../../../../src/cli/commands
 const IGNORED_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
 const ROOT_IGNORED_CHANGELOG_PATH = 'CHANGELOG.md';
 const REMEDIATION_PART_ENV = 'GARDA_REVIEW_CYCLE_REMEDIATION_PART';
+const SHARED_IGNORED_CHANGELOG_TASK_ID = 'T-940-ignored-changelog-shared';
 
 type RemediationPart =
     | 'reuse-basic'
@@ -102,9 +104,127 @@ function buildIgnoredChangelogImpactAnalysis(changelogPath = IGNORED_CHANGELOG_P
     ].join(' ');
 }
 
+interface IgnoredChangelogTemplate {
+    readonly repoRoot: string;
+    readonly commandsRelativePath: string;
+    readonly outputFiltersRelativePath: string;
+}
+
+const ignoredChangelogTemplates = new Map<string, IgnoredChangelogTemplate>();
+
+function getIgnoredChangelogTemplate(changelogPath: string): IgnoredChangelogTemplate {
+    const cached = ignoredChangelogTemplates.get(changelogPath);
+    if (cached) {
+        return cached;
+    }
+    const repoRoot = createTempRepo();
+    seedRemediationRepoBase(repoRoot);
+    appendIgnoredChangelogRule(repoRoot, changelogPath);
+    writeReviewCapabilitiesConfig(repoRoot);
+    writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 0;\n');
+    writeRepoFile(repoRoot, changelogPath, '# Changelog\n\n- Initial ignored release note.\n');
+    const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+        repoRoot,
+        'ignored-changelog-template'
+    );
+    initializeGitRepo(repoRoot);
+    writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+    const snapshotRoot = cloneRunScopedTempRepo(repoRoot);
+    const template = {
+        repoRoot: snapshotRoot,
+        commandsRelativePath: path.relative(repoRoot, commandsPath),
+        outputFiltersRelativePath: path.relative(repoRoot, outputFiltersPath)
+    };
+    ignoredChangelogTemplates.set(changelogPath, template);
+    return template;
+}
+
+interface PreparedIgnoredChangelogFixture {
+    readonly repoRoot: string;
+    readonly resetSnapshotRoot: string;
+    readonly preflightRelativePath: string;
+    readonly commandsRelativePath: string;
+    readonly outputFiltersRelativePath: string;
+    useCount: number;
+}
+
+const preparedIgnoredChangelogFixtures =
+    new Map<string, Promise<PreparedIgnoredChangelogFixture>>();
+
+function restorePreparedRepo(sourceRoot: string, targetRoot: string): void {
+    assert.notEqual(path.resolve(sourceRoot), path.resolve(targetRoot));
+    fs.mkdirSync(targetRoot, { recursive: true });
+    for (const entry of fs.readdirSync(targetRoot)) {
+        fs.rmSync(path.join(targetRoot, entry), {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 50
+        });
+    }
+    for (const entry of fs.readdirSync(sourceRoot)) {
+        fs.cpSync(path.join(sourceRoot, entry), path.join(targetRoot, entry), { recursive: true });
+    }
+}
+
+async function getPreparedIgnoredChangelogFixture(
+    taskId: string,
+    changelogPath: string,
+    plannedChangedFiles: readonly string[]
+): Promise<PreparedIgnoredChangelogFixture> {
+    const fixtureKey = JSON.stringify({ taskId, changelogPath, plannedChangedFiles });
+    let fixturePromise = preparedIgnoredChangelogFixtures.get(fixtureKey);
+    if (!fixturePromise) {
+        fixturePromise = (async () => {
+            const template = getIgnoredChangelogTemplate(changelogPath);
+            const repoRoot = cloneRunScopedTempRepo(template.repoRoot);
+            const commandsPath = path.join(repoRoot, template.commandsRelativePath);
+            const outputFiltersPath = path.join(repoRoot, template.outputFiltersRelativePath);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot, 'Codex');
+
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Restart review cycle with explicit ignored changelog remediation',
+                plannedChangedFiles
+            });
+            loadTaskEntryRulePack(repoRoot, taskId);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+            const preflightPath = runExplicitPreflight(
+                repoRoot,
+                taskId,
+                'Restart review cycle with explicit ignored changelog remediation',
+                ['src/app.ts']
+            );
+            loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+            const compileResult = await seedBaselineCompileGatePass({
+                repoRoot,
+                taskId,
+                preflightPath,
+                commandsPath,
+                outputFiltersPath,
+                emitMetrics: false
+            });
+            assert.equal(compileResult.exitCode, 0);
+            return {
+                repoRoot,
+                resetSnapshotRoot: cloneRunScopedTempRepo(repoRoot),
+                preflightRelativePath: path.relative(repoRoot, preflightPath),
+                commandsRelativePath: template.commandsRelativePath,
+                outputFiltersRelativePath: template.outputFiltersRelativePath,
+                useCount: 0
+            };
+        })();
+        preparedIgnoredChangelogFixtures.set(fixtureKey, fixturePromise);
+    }
+    return fixturePromise;
+}
+
 async function prepareIgnoredChangelogFixture(
     taskId: string,
-    suffix: string,
+    _suffix: string,
     changelogPath = IGNORED_CHANGELOG_PATH,
     plannedChangedFiles = ['src/app.ts']
 ): Promise<{
@@ -113,48 +233,20 @@ async function prepareIgnoredChangelogFixture(
     commandsPath: string;
     outputFiltersPath: string;
 }> {
-    const repoRoot = createTempRepo();
-    seedRemediationRepoBase(repoRoot);
-    appendIgnoredChangelogRule(repoRoot, changelogPath);
-    writeReviewCapabilitiesConfig(repoRoot);
-    writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 0;\n');
-    writeRepoFile(repoRoot, changelogPath, '# Changelog\n\n- Initial ignored release note.\n');
-    const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, suffix);
-    initializeGitRepo(repoRoot);
-    writeRepoFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
-    seedTaskQueue(repoRoot, taskId);
-    seedInitAnswers(repoRoot, 'Codex');
-
-    runEnterTaskMode({
-        repoRoot,
+    const fixture = await getPreparedIgnoredChangelogFixture(
         taskId,
-        taskSummary: 'Restart review cycle with explicit ignored changelog remediation',
+        changelogPath,
         plannedChangedFiles
-    });
-    loadTaskEntryRulePack(repoRoot, taskId);
-    runHandshakeForTask(repoRoot, taskId);
-    runShellSmokeForTask(repoRoot, taskId);
-    const preflightPath = runExplicitPreflight(
-        repoRoot,
-        taskId,
-        'Restart review cycle with explicit ignored changelog remediation',
-        ['src/app.ts']
     );
-    loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-    const compileResult = await seedBaselineCompileGatePass({
-        repoRoot,
-        taskId,
-        preflightPath,
-        commandsPath,
-        outputFiltersPath,
-        emitMetrics: false
-    });
-    assert.equal(compileResult.exitCode, 0);
+    if (fixture.useCount > 0) {
+        restorePreparedRepo(fixture.resetSnapshotRoot, fixture.repoRoot);
+    }
+    fixture.useCount += 1;
     return {
-        repoRoot,
-        preflightPath,
-        commandsPath,
-        outputFiltersPath
+        repoRoot: fixture.repoRoot,
+        preflightPath: path.join(fixture.repoRoot, fixture.preflightRelativePath),
+        commandsPath: path.join(fixture.repoRoot, fixture.commandsRelativePath),
+        outputFiltersPath: path.join(fixture.repoRoot, fixture.outputFiltersRelativePath)
     };
 }
 
@@ -2448,7 +2540,7 @@ describeRemediationPart('scope-expansion', 'cli/commands/gates – review-cycle 
 
 describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ignored changelog remediation binding', () => {
     it('restart-review-cycle accepts an explicit ignored changelog remediation target named by the blocker', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-accepted';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2506,7 +2598,7 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
         }
     ]) {
         it(`restart-review-cycle rejects ignored remediation approval from a foreign structured review ${foreignIdentity.label}`, { concurrency: false }, async () => {
-            const taskId = `T-940-ignored-changelog-foreign-${foreignIdentity.label.replace(/\s+/gu, '-')}`;
+            const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
             const {
                 repoRoot,
                 preflightPath,
@@ -2542,7 +2634,7 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
     }
 
     it('restart-review-cycle accepts a path-first ignored changelog blocker finding', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-path-first';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2579,7 +2671,7 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
     });
 
     it('restart-review-cycle accepts a root ignored changelog target named by a path-first blocker', { concurrency: false }, async () => {
-        const taskId = 'T-940-root-ignored-changelog-path-first';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2624,7 +2716,7 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
     });
 
     it('restart-review-cycle accepts an ignored changelog remediation target approved by task plan', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-task-plan';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2669,7 +2761,7 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
     });
 
     it('restart-review-cycle rejects an explicit ignored file that is not approved by blocker evidence', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-unapproved';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2713,7 +2805,7 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
     });
 
     it('restart-review-cycle rejects ignored-only changed-file self-approval through impact analysis', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-impact-only';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2740,7 +2832,7 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
     });
 
     it('restart-review-cycle ignores impact-analysis-only ignored path mentions outside changed scope', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-impact-mention-unchanged';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2777,7 +2869,7 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
     });
 
     it('restart-review-cycle ignores generated review markdown when approving ignored remediation targets', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-generated-context-only';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2827,7 +2919,7 @@ describeRemediationPart('ignored-changelog-binding', 'cli/commands/gates – ign
 
 describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – ignored changelog remediation guards', () => {
     it('restart-review-cycle rejects ignored paths mentioned only as failed-review diagnostics', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-diagnostic-only';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2879,7 +2971,7 @@ describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – igno
     });
 
     it('restart-review-cycle rejects ignored paths mentioned only in failed-review examples', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-example-only';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2918,7 +3010,7 @@ describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – igno
     });
 
     it('restart-review-cycle rejects negated failed-review ignored path mentions', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-negated-review';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -2970,7 +3062,7 @@ describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – igno
     });
 
     it('restart-review-cycle accepts current guarded hash evidence for an ignored remediation target', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-current-guard';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -3031,7 +3123,7 @@ describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – igno
     });
 
     it('restart-review-cycle rejects stale guarded hash evidence for an ignored remediation target', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-stale-hash';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -3078,7 +3170,7 @@ describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – igno
     });
 
     it('restart-review-cycle rejects hashless guarded evidence for an ignored remediation target', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-hashless-guard';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -3123,7 +3215,7 @@ describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – igno
     });
 
     it('restart-review-cycle refreshes mixed tracked and explicit ignored remediation scope', { concurrency: false }, async () => {
-        const taskId = 'T-940-ignored-changelog-mixed';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -3173,7 +3265,7 @@ describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – igno
     });
 
     it('next-step includes explicit ignored changelog remediation in failed-review restart command', { concurrency: false }, async () => {
-        const taskId = 'T-940-next-step-ignored-changelog';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,
@@ -3196,7 +3288,7 @@ describeRemediationPart('ignored-changelog-guards', 'cli/commands/gates – igno
     });
 
     it('next-step does not include example-only ignored changelog mentions in failed-review restart command', { concurrency: false }, async () => {
-        const taskId = 'T-940-next-step-example-only-ignored-changelog';
+        const taskId = SHARED_IGNORED_CHANGELOG_TASK_ID;
         const {
             repoRoot,
             preflightPath,

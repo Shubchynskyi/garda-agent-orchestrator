@@ -151,6 +151,11 @@ export class CliTestTempManager {
         return directory;
     }
 
+    createRunScopedDirectory(prefix = 'shared-'): string {
+        const runRoot = this.ensureRunRoot();
+        return fs.mkdtempSync(path.join(runRoot, normalizeDirectoryPrefix(prefix)));
+    }
+
     cleanupDirectory(directory: string): void {
         this.removeDirectory(directory);
         this.trackedDirectories.delete(directory);
@@ -299,6 +304,10 @@ export function createManagedTestTempDirectory(
     testContext?: Pick<TestContext, 'after'>
 ): string {
     return sharedCliTestTempManager.createDirectory(prefix, testContext);
+}
+
+export function createRunScopedTestTempDirectory(prefix = 'shared-'): string {
+    return sharedCliTestTempManager.createRunScopedDirectory(prefix);
 }
 
 export function removeManagedTestTempDirectory(directory: string): void {

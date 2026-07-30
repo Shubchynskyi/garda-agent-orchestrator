@@ -49,6 +49,9 @@ import {
     isOptionalQualityCheckRuleActiveForScope
 } from '../../../../../../src/core/workflow-config';
 import {
+    cloneRunScopedTempRepo,
+    cloneTempRepo,
+    createRunScopedTempRepo,
     createTempRepo as createBaseTempRepo,
     getOrchestratorRoot,
     getReviewsRoot,
@@ -148,12 +151,20 @@ function runExplicitPreflight(
     return preflightPath;
 }
 
+let initializedTempRepoTemplate: string | null = null;
+
+function getInitializedTempRepoTemplate(): string {
+    if (initializedTempRepoTemplate === null) {
+        initializedTempRepoTemplate = createRunScopedTempRepo();
+        ensureSkillsHeadlinesCurrent(path.join(initializedTempRepoTemplate, 'garda-agent-orchestrator'));
+        writeProfilesConfig(initializedTempRepoTemplate);
+        initializeGitRepo(initializedTempRepoTemplate);
+    }
+    return initializedTempRepoTemplate;
+}
+
 function createTempRepo(testContext?: Pick<TestContext, 'after'>): string {
-    const root = createBaseTempRepo(testContext);
-    ensureSkillsHeadlinesCurrent(path.join(root, 'garda-agent-orchestrator'));
-    writeProfilesConfig(root);
-    initializeGitRepo(root);
-    return root;
+    return cloneTempRepo(getInitializedTempRepoTemplate(), testContext);
 }
 
 function writeProfilesConfig(repoRoot: string): string {
@@ -555,6 +566,8 @@ export {
     withFilesystemLockAsync,
     ensureSkillsHeadlinesCurrent,
     writeOptionalSkillSelectionArtifact,
+    cloneRunScopedTempRepo,
+    cloneTempRepo,
     createBaseTempRepo,
     getOrchestratorRoot,
     getReviewsRoot,

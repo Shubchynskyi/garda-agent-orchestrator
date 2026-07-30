@@ -14,6 +14,7 @@ import type { TestContext } from 'node:test';
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
 import {
     createManagedTestTempDirectory,
+    createRunScopedTestTempDirectory,
     removeManagedTestTempDirectory,
     removeTempRepoWithRetry
 } from './gate-test-temp-manager';
@@ -83,8 +84,7 @@ export function seedRuleFiles(repoRoot: string): void {
 }
 
 
-export function createTempRepo(testContext?: Pick<TestContext, 'after'>): string {
-    const root = createManagedTestTempDirectory('repo-', testContext);
+function seedTempRepoScaffold(root: string): void {
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
@@ -104,6 +104,38 @@ export function createTempRepo(testContext?: Pick<TestContext, 'after'>): string
         JSON.stringify(workflowConfig, null, 2) + '\n',
         'utf8'
     );
+}
+
+export function createTempRepo(testContext?: Pick<TestContext, 'after'>): string {
+    const root = createManagedTestTempDirectory('repo-', testContext);
+    seedTempRepoScaffold(root);
+    return root;
+}
+
+export function createRunScopedTempRepo(): string {
+    const root = createRunScopedTestTempDirectory('repo-template-');
+    seedTempRepoScaffold(root);
+    return root;
+}
+
+function copyTempRepo(sourceRoot: string, root: string): void {
+    for (const entry of fs.readdirSync(sourceRoot)) {
+        fs.cpSync(path.join(sourceRoot, entry), path.join(root, entry), { recursive: true });
+    }
+}
+
+export function cloneTempRepo(
+    sourceRoot: string,
+    testContext?: Pick<TestContext, 'after'>
+): string {
+    const root = createManagedTestTempDirectory('repo-', testContext);
+    copyTempRepo(sourceRoot, root);
+    return root;
+}
+
+export function cloneRunScopedTempRepo(sourceRoot: string): string {
+    const root = createRunScopedTestTempDirectory('repo-snapshot-');
+    copyTempRepo(sourceRoot, root);
     return root;
 }
 
@@ -245,6 +277,7 @@ export function backdateFileMtime(filePath: string, secondsAgo = 5): void {
 
 export {
     createManagedTestTempDirectory,
+    createRunScopedTestTempDirectory,
     removeManagedTestTempDirectory,
     removeTempRepoWithRetry
 };

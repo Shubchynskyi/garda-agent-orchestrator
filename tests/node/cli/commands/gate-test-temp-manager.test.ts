@@ -84,6 +84,26 @@ describe('CLI test temp manager', { concurrency: false }, () => {
         manager.cleanupRunRoot();
     });
 
+    it('keeps run-scoped shared fixtures until final run-root cleanup', (t) => {
+        const baseRoot = createSandbox(t);
+        const manager = new CliTestTempManager({
+            baseRoot,
+            processId: 41007,
+            hostname: 'test-host',
+            isProcessAlive: () => true
+        });
+        const sharedDirectory = manager.createRunScopedDirectory('fixture-');
+        const caseDirectory = manager.createDirectory('repo-');
+        const runRoot = path.dirname(sharedDirectory);
+
+        manager.cleanupTrackedDirectories();
+
+        assert.equal(fs.existsSync(caseDirectory), false);
+        assert.equal(fs.existsSync(sharedDirectory), true);
+        manager.cleanupRunRoot();
+        assert.equal(fs.existsSync(runRoot), false);
+    });
+
     it('does not reclaim a run root whose local owner process is alive', (t) => {
         const baseRoot = createSandbox(t);
         const activeRoot = path.join(baseRoot, 'run-active');
