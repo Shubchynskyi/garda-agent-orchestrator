@@ -113,6 +113,7 @@ function buildPackageJson(): string {
             'docs/compatibility-matrix.md',
             'docs/configuration.md',
             'docs/control-plane-isolation.md',
+            'docs/findings-contracts.md',
             'docs/node-runtime-contract.md',
             'docs/node-platform-foundation.md',
             'docs/operator-consistency-runbook.md',
@@ -401,6 +402,7 @@ function createReadinessFixture(openChecklistItem?: string): string {
             '- docs/compatibility-matrix.md',
             '- docs/configuration.md',
             '- docs/control-plane-isolation.md',
+            '- docs/findings-contracts.md',
             '- docs/node-platform-foundation.md',
             '- docs/node-runtime-contract.md',
             '- docs/operator-consistency-runbook.md',
@@ -423,6 +425,7 @@ function createReadinessFixture(openChecklistItem?: string): string {
     writeFile(path.join(repoRoot, 'docs', 'compatibility-matrix.md'), '# Compatibility Matrix\n');
     writeFile(path.join(repoRoot, 'docs', 'configuration.md'), '# Configuration\n');
     writeFile(path.join(repoRoot, 'docs', 'control-plane-isolation.md'), '# Control Plane Isolation\n');
+    writeFile(path.join(repoRoot, 'docs', 'findings-contracts.md'), '# Findings Contracts\n');
     writeFile(path.join(repoRoot, 'docs', 'node-runtime-contract.md'), '# Node Runtime Contract\n');
     writeFile(path.join(repoRoot, 'docs', 'orchestrator-work-and-isolation.md'), '# Orchestrator Work And Isolation\n');
     writeFile(path.join(repoRoot, 'docs', 'providers.md'), '# Providers\n');

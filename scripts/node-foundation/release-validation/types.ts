@@ -17,6 +17,7 @@ export const PUBLIC_PACKAGE_DOC_ITEMS = Object.freeze([
     'docs/compatibility-matrix.md',
     'docs/configuration.md',
     'docs/control-plane-isolation.md',
+    'docs/findings-contracts.md',
     'docs/node-platform-foundation.md',
     'docs/node-runtime-contract.md',
     'docs/operator-consistency-runbook.md',
