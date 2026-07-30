@@ -111,6 +111,35 @@ test('scheduled smoke workflow covers supported Node runtime lines', () => {
     assertSupportedNodeMatrix(raw, 'smoke', 'Scheduled smoke job');
 });
 
+test('lifecycle smoke updates from the exact checked-out commit in detached checkouts', () => {
+    const workflows = [
+        ['CI', getWorkflowJobBlock(getRawContent(loadCiWorkflow()), 'smoke')],
+        ['Scheduled smoke', getWorkflowJobBlock(getRawContent(loadScheduledSmokeWorkflow()), 'smoke')]
+    ] as const;
+
+    for (const [label, smokeJob] of workflows) {
+        assert.ok(
+            smokeJob.includes('SMOKE_BRANCH="garda-ci-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"'),
+            `${label} must use a run-scoped local smoke branch`
+        );
+        assert.match(
+            smokeJob,
+            /git -C "\$GITHUB_WORKSPACE" branch --force "\$SMOKE_BRANCH" "\$GITHUB_SHA"/u,
+            `${label} must anchor the smoke branch to the exact checked-out commit`
+        );
+        assert.match(
+            smokeJob,
+            /update git .* --branch "\$SMOKE_BRANCH"/u,
+            `${label} must update from the run-scoped smoke branch`
+        );
+        assert.doesNotMatch(
+            smokeJob,
+            /GITHUB_HEAD_REF|GITHUB_REF_NAME/u,
+            `${label} must not assume the event branch exists in a shallow checkout`
+        );
+    }
+});
+
 test('smoke job lifecycle step has an id for output forwarding', () => {
     const raw = getRawContent(loadCiWorkflow());
     // The lifecycle step must have `id: lifecycle-smoke` so the forensics

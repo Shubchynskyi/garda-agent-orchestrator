@@ -328,7 +328,8 @@ jobs:
 
           SMOKE_DIR="$(mktemp -d)"
           echo "smoke_dir=$SMOKE_DIR" >> "$GITHUB_OUTPUT"
-          BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          SMOKE_BRANCH="garda-ci-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git -C "$GITHUB_WORKSPACE" branch --force "$SMOKE_BRANCH" "$GITHUB_SHA"
           # Always use absolute paths in cross-platform test to avoid pathing drift
           CLI="node ${GITHUB_WORKSPACE}/bin/garda.js"
 
@@ -351,8 +352,9 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::2. Update (git clone flow)"
-          # Exercise git-based update explicitly against the current workflow branch.
-          $CLI update git --target-root "$SMOKE_DIR" --repo-url "$GIT_URL" --branch "$BRANCH_NAME" --no-prompt --trust-override
+          # Exercise git-based update against a local branch anchored to the exact
+          # checked-out commit, including detached and shallow pull-request checkouts.
+          $CLI update git --target-root "$SMOKE_DIR" --repo-url "$GIT_URL" --branch "$SMOKE_BRANCH" --no-prompt --trust-override
           echo "::endgroup::"
 
           echo "::group::3. Doctor"
