@@ -117,7 +117,7 @@ test('tree-state review compatibility suite keeps the focused regression shards 
         ],
         [
             'tests/node/cli/commands/gates/completion/gates-completion-fixtures.ts',
-            'reviewScopeSha256: computeReviewRelevantScopeFingerprint'
+            'const reviewScopeSha256 = computeReviewRelevantScopeFingerprint'
         ],
         [
             'tests/node/cli/commands/gate-test-seed-helpers.ts',
