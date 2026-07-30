@@ -194,14 +194,7 @@ function createCandidateTarball(repoRoot: string) {
     const fixtureRoot = path.join(tempRoot, 'pack-repo');
     copyPackFixture(repoRoot, fixtureRoot);
     rewriteFixtureReleaseVersion(fixtureRoot, NEXT_RELEASE_TEST_VERSION);
-    const builtDistRoot = path.join(repoRoot, 'dist');
-    const builtBinRoot = path.join(repoRoot, 'bin');
-    if (fs.existsSync(builtDistRoot) && fs.existsSync(builtBinRoot)) {
-        fs.cpSync(builtDistRoot, path.join(fixtureRoot, 'dist'), { recursive: true });
-        fs.cpSync(builtBinRoot, path.join(fixtureRoot, 'bin'), { recursive: true });
-    } else {
-        buildPublishRuntimeInRepo(fixtureRoot);
-    }
+    buildPublishRuntimeInRepo(fixtureRoot);
     const legacyCompatResult = spawnSync(process.execPath, [
         'scripts/package-legacy-entrypoint-compat.cjs',
         'create'
@@ -646,6 +639,16 @@ describe('runCheckUpdate', () => {
 
                 const updatedSource = fs.readFileSync(path.join(bundleRoot, 'src', 'lifecycle', 'update.ts'), 'utf8');
                 assert.match(updatedSource, /hasLegacyOuterUpdateLock/);
+                assert.equal(
+                    fs.readFileSync(
+                        path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-command-reference.md'),
+                        'utf8'
+                    ),
+                    fs.readFileSync(
+                        path.join(bundleRoot, 'template', 'docs', 'agent-rules', '40-command-reference.md'),
+                        'utf8'
+                    )
+                );
             } finally {
                 removePathRecursive(projectRoot);
             }

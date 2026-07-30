@@ -4,6 +4,7 @@ import { pathExists } from '../../core/filesystem';
 import { readJsonFile } from '../../core/json';
 import { runInstall } from '../../materialization/install';
 import { runInit } from '../../materialization/init';
+import { syncOptionalRuleSupportFiles } from '../../materialization/rule-support-files';
 import { writeProtectedControlPlaneManifest } from '../../gates/shared/helpers';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../../validators/workspace-layout';
 import {
@@ -346,6 +347,7 @@ export function executeUpdatePipelineStages(options: {
                     ? initResult.projectMemoryRefreshHandoffPrompt
                     : null;
             }
+            syncOptionalRuleSupportFiles({ bundleRoot });
             if (!projectMemoryMaintenanceSummaryLine) {
                 projectMemoryMaintenanceSummaryLine = readProjectMemoryMaintenanceRolloutSummaryFromBundle(bundleRoot).summary_line;
             }

@@ -8,10 +8,10 @@ import {
     GENERATED_RULE_FILES,
     generateProjectMemorySummary,
     isBootstrapOnlyLegacyCodeStyleRule,
-    OPTIONAL_RULE_SUPPORT_FILES,
     RULE_FILES,
     selectRuleSource
 } from '../rule-materialization';
+import { syncOptionalRuleSupportFiles } from '../rule-support-files';
 import {
     buildDiscoveryOverlaySection
 } from '../project-discovery';
@@ -136,24 +136,6 @@ function materializeRuleFiles(
     return { ruleSourceMap, legacyStyleGuidanceActive };
 }
 
-function copyOptionalRuleSupportFiles(options: RunInitRuleStageOptions): void {
-    const { templateRuleRoot, liveRuleRoot, dryRun } = options;
-    for (const supportFile of OPTIONAL_RULE_SUPPORT_FILES) {
-        const templatePath = path.join(templateRuleRoot, supportFile);
-        if (!pathExists(templatePath)) {
-            throw new Error(`No source found for optional rule support file: ${supportFile}`);
-        }
-        const content = readTextFile(templatePath);
-        if (!content || !content.trim()) {
-            throw new Error(`Optional rule support source is empty: ${templatePath}`);
-        }
-        const destPath = path.join(liveRuleRoot, supportFile);
-        if (!dryRun) {
-            fs.writeFileSync(destPath, content, 'utf8');
-        }
-    }
-}
-
 function scaffoldLegacyStyleGuidance(
     options: RunInitRuleStageOptions,
     legacyStyleGuidanceActive: boolean
@@ -263,7 +245,10 @@ export function runInitRuleStage(
         migrationResult,
         compileGateCommandForGuidance
     );
-    copyOptionalRuleSupportFiles(options);
+    syncOptionalRuleSupportFiles({
+        bundleRoot: options.bundleRoot,
+        dryRun: options.dryRun
+    });
     scaffoldLegacyStyleGuidance(options, materializedRules.legacyStyleGuidanceActive);
     const copiedSupportDirs = copySupportDirectories(options);
 

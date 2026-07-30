@@ -14,6 +14,8 @@ import {
     sha256Hex
 } from '../core/project-memory';
 
+export { OPTIONAL_RULE_SUPPORT_FILES } from './rule-support-files';
+
 interface SelectRuleSourceOptions {
     targetRoot: string;
     liveRuleRoot: string;
@@ -51,10 +53,6 @@ export const RULE_FILES = Object.freeze([
     '20-architecture.md', '30-code-style.md', '35-strict-coding-rules.md',
     '40-commands.md', '50-structure-and-docs.md', '60-operating-rules.md',
     '70-security.md', '80-task-workflow.md', '90-skill-catalog.md'
-]);
-
-export const OPTIONAL_RULE_SUPPORT_FILES = Object.freeze([
-    '40-command-reference.md'
 ]);
 
 export const GENERATED_RULE_FILES = Object.freeze(['15-project-memory.md']);
