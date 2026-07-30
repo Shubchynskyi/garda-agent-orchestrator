@@ -1,87 +1,47 @@
-import { TASK_QUEUE_FILENAME } from '../core/orchestration-constants';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
-import { getRequiredReviewSkillBridgeHostEntry } from '../core/provider-registry';
 import { ensureDirectory, pathExists, readTextFile } from '../core/filesystem';
-import { readJsonFile, writeJsonFile } from '../core/json';
+import { readJsonFile } from '../core/json';
 import { normalizeLineEndings } from '../core/line-endings';
 import { resolvePathInsideRoot } from '../core/paths';
-import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
+import { getRequiredReviewSkillBridgeHostEntry } from '../core/provider-registry';
+import { withLifecycleOperationLock } from '../lifecycle/common';
 import { validateInitAnswers } from '../schemas/init-answers';
 import {
-    getCanonicalEntrypointFile,
-    getActiveAgentEntrypointFiles,
     convertActiveAgentEntrypointFilesToString,
-    getProviderOrchestratorProfileDefinitions,
+    getActiveAgentEntrypointFiles,
+    getCanonicalEntrypointFile,
     getGitHubSkillBridgeProfileDefinitions,
-    SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
+    getProviderOrchestratorProfileDefinitions
 } from './common';
 import {
-    MANAGED_START,
-    MANAGED_END,
-    COMMIT_GUARD_START,
     COMMIT_GUARD_END,
-    INSTALL_BACKUP_CANDIDATE_PATHS,
-    buildTaskContentWithExistingQueue,
-    buildCanonicalManagedBlock,
-      buildRedirectManagedBlock,
-      buildCommitGuardManagedBlock,
-      buildProviderOrchestratorAgentContent,
-      buildSharedStartTaskWorkflowContent,
-      buildGitHubSkillBridgeAgentContent,
-    buildQwenSettingsContent,
-    buildClaudeLocalSettingsContent,
-    buildVscodeSettingsContent,
-    buildGitignoreEntries,
-    syncManagedGitignoreBlockInContent,
-    syncManagedAgentignoreActiveBlockInContent,
-    syncManagedBlockInContent
+    COMMIT_GUARD_START,
+    buildCommitGuardManagedBlock
 } from './content-builders';
-import { withLifecycleOperationLock } from '../lifecycle/common';
-import { readSwitchModeState, runSwitchMode } from './switch-mode';
+import { createUniqueInstallBackupRoot } from './install/install-backups';
+import type {
+    BackupFileCallback,
+    RunInstallOptions
+} from './install/install-contracts';
+import {
+    runInstallPrimaryEntrypointStage,
+    runInstallProviderEntrypointStage
+} from './install/install-entrypoint-stage';
+import { runInstallFinalizationStage } from './install/install-finalization-stage';
+import {
+    createInstallFilesystemStage,
+    escapeInstallRegex
+} from './install/install-filesystem-stage';
+import {
+    runInstallEditorSettingsStage,
+    runInstallIgnoreStage
+} from './install/install-settings-stage';
+import { runInstallTaskStage } from './install/install-task-stage';
+import { readSwitchModeState } from './switch-mode';
 import {
     applyMaterializationStage,
-    createCopyFileStage,
-    createRemoveFileStage,
     createWriteTextFileStage
 } from './staged-side-effects';
-import { createUniqueInstallBackupRoot } from './install/install-backups';
-
-interface RunInstallOptions {
-    targetRoot: string;
-    bundleRoot: string;
-    dryRun?: boolean;
-    preserveExisting?: boolean;
-    alignExisting?: boolean;
-    runInit?: boolean;
-    answerDependentOnly?: boolean;
-    skipBackups?: boolean;
-    assistantLanguage: string;
-    assistantBrevity: string;
-    sourceOfTruth: string;
-    initAnswersPath: string;
-    preserveLegacyReviewExecutionPolicyOmission?: boolean;
-    lifecycleLockAlreadyHeld?: boolean;
-    initRunner?: (options: {
-        targetRoot: string;
-        assistantLanguage: string;
-        assistantBrevity: string;
-        sourceOfTruth: string;
-        enforceNoAutoCommit: boolean;
-        claudeOrchestratorFullAccess: boolean;
-        tokenEconomyEnabled: boolean;
-        providerMinimalism: boolean;
-        activeAgentFilesSeed: string | null;
-        preserveLegacyReviewExecutionPolicyOmission: boolean;
-    }) => Record<string, unknown> | void;
-}
-
-type BackupFileCallback = (destPath: string, relativePath: string) => void;
-
-function escapeRegex(text: string): string {
-    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 const LEGACY_COMMIT_GUARD_BUNDLE_NAMES = Object.freeze([
     ['ai', 'agent', 'orchestrator'].join('-'),
@@ -99,19 +59,25 @@ function getCommitGuardManagedBlockPattern(global = false): RegExp {
     return new RegExp(
         markerPairs
             .map(([startMarker, endMarker]) => (
-                `${escapeRegex(startMarker)}[\\s\\S]*?${escapeRegex(endMarker)}`
+                `${escapeInstallRegex(startMarker)}[\\s\\S]*?${escapeInstallRegex(endMarker)}`
             ))
             .join('|'),
         global ? 'gm' : 'm'
     );
 }
 
-function getOptionalStringField(record: Record<string, unknown> | null, field: string): string | null {
+function getOptionalStringField(
+    record: Record<string, unknown> | null,
+    field: string
+): string | null {
     const value = record?.[field];
     return typeof value === 'string' ? value : null;
 }
 
-function replaceCommitGuardManagedBlocks(content: string, managedBlock: string): string {
+function replaceCommitGuardManagedBlocks(
+    content: string,
+    managedBlock: string
+): string {
     let inserted = false;
     return content.replace(getCommitGuardManagedBlockPattern(true), function () {
         if (inserted) {
@@ -140,15 +106,12 @@ export function runInstall(options: RunInstallOptions) {
         lifecycleLockAlreadyHeld = false,
         initRunner
     } = options;
-
     const sourceRoot = path.join(bundleRoot, 'template');
 
-    // Validate template directory
     if (!pathExists(sourceRoot)) {
         throw new Error(`Template directory not found: ${sourceRoot}`);
     }
 
-    // Validate target root doesn't point to bundle
     const normalizedTarget = path.resolve(targetRoot);
     const normalizedBundle = path.resolve(bundleRoot);
     if (normalizedTarget.toLowerCase() === normalizedBundle.toLowerCase()) {
@@ -157,7 +120,6 @@ export function runInstall(options: RunInstallOptions) {
         );
     }
 
-    // Validate and normalize parameters
     const trimmedLanguage = (assistantLanguage || '').trim();
     if (!trimmedLanguage) {
         throw new Error('AssistantLanguage must not be empty.');
@@ -169,585 +131,180 @@ export function runInstall(options: RunInstallOptions) {
         : withLifecycleOperationLock(normalizedTarget, 'install', callback);
 
     return runWithLock(() => {
-    // Read and validate init answers
-    const resolvedInitPath = resolvePathInsideRoot(targetRoot, initAnswersPath);
-    if (!pathExists(resolvedInitPath)) {
-        throw new Error(`Init answers file not found: ${resolvedInitPath}`);
-    }
-
-    const initAnswersRaw = readJsonFile(resolvedInitPath);
-    const initAnswers = validateInitAnswers(initAnswersRaw);
-
-    // Cross-validate parameters vs init answers
-    if (initAnswers.AssistantLanguage.toLowerCase() !== trimmedLanguage.toLowerCase()) {
-        throw new Error(
-            `AssistantLanguage parameter '${trimmedLanguage}' does not match init answers artifact value '${initAnswers.AssistantLanguage}'.`
-        );
-    }
-    if (initAnswers.AssistantBrevity !== trimmedBrevity) {
-        throw new Error(
-            `AssistantBrevity parameter '${trimmedBrevity}' does not match init answers artifact value '${initAnswers.AssistantBrevity}'.`
-        );
-    }
-    if (initAnswers.SourceOfTruth.toUpperCase().replace(/\s+/g, '') !== trimmedSourceOfTruth.toUpperCase().replace(/\s+/g, '')) {
-        throw new Error(
-            `SourceOfTruth parameter '${trimmedSourceOfTruth}' does not match init answers artifact value '${initAnswers.SourceOfTruth}'.`
-        );
-    }
-
-    const enforceNoAutoCommit = initAnswers.EnforceNoAutoCommit;
-    const enableClaudeOrchestratorFullAccess = initAnswers.ClaudeOrchestratorFullAccess;
-    const tokenEconomyEnabled = initAnswers.TokenEconomyEnabled;
-    const providerMinimalism = initAnswers.ProviderMinimalism;
-    const switchModeBeforeInstall = readSwitchModeState(targetRoot, bundleRoot);
-
-    const canonicalEntryFile = getCanonicalEntrypointFile(initAnswers.SourceOfTruth);
-    const activeEntryFilesSeed = initAnswers.ActiveAgentFiles
-        ? initAnswers.ActiveAgentFiles.join(', ')
-        : null;
-    let activeEntryFiles = getActiveAgentEntrypointFiles(activeEntryFilesSeed, initAnswers.SourceOfTruth);
-    if (activeEntryFiles.length === 0) {
-        activeEntryFiles = [canonicalEntryFile];
-    }
-    const redirectEntryFiles = activeEntryFiles.filter((f) => f !== canonicalEntryFile);
-
-    const providerOrchestratorProfiles = getProviderOrchestratorProfileDefinitions().filter(
-        (p) => activeEntryFiles.includes(p.entrypointFile)
-    );
-    const reviewSkillBridgeHostEntrypoint = getRequiredReviewSkillBridgeHostEntry().entrypointFile;
-    const githubSkillBridgeProfiles = activeEntryFiles.includes(reviewSkillBridgeHostEntrypoint)
-        ? getGitHubSkillBridgeProfileDefinitions()
-        : [];
-    const providerBridgePaths = providerOrchestratorProfiles.map((p) => p.orchestratorRelativePath);
-
-    // Setup
-    const backupLocation = createUniqueInstallBackupRoot(bundleRoot);
-    const timestamp = backupLocation.timestamp;
-    const backupRoot = backupLocation.backupRoot;
-    const deploymentDate = new Date().toISOString().slice(0, 10);
-    const bundleVersionPath = path.join(bundleRoot, 'VERSION');
-    const liveVersionPath = path.join(bundleRoot, 'live', 'version.json');
-
-    if (!pathExists(bundleVersionPath)) {
-        throw new Error(`Bundle version file not found: ${bundleVersionPath}`);
-    }
-    const bundleVersion = readTextFile(bundleVersionPath).trim();
-    if (!bundleVersion) {
-        throw new Error(`Bundle version file is empty: ${bundleVersionPath}`);
-    }
-
-    // Counters
-    let deployed = 0;
-    let backedUp = 0;
-    let skippedExisting = 0;
-    let aligned = 0;
-    let forcedOverwrites = 0;
-    let initInvoked = false;
-    let initResult: Record<string, unknown> | null = null;
-    const backedUpSet = new Set<string>();
-
-    function applyStage(stage: ReturnType<typeof createWriteTextFileStage>): void {
-        applyMaterializationStage(stage, { dryRun });
-    }
-
-    function writeTextFileStage(filePath: string, content: string): void {
-        applyStage(createWriteTextFileStage(filePath, content));
-    }
-
-    function copyFileStage(sourcePath: string, destinationPath: string): void {
-        applyStage(createCopyFileStage(sourcePath, destinationPath));
-    }
-
-    function removeFileStage(filePath: string): void {
-        applyStage(createRemoveFileStage(filePath));
-    }
-
-    // Pre-existing file tracking
-    const preExistingPaths = INSTALL_BACKUP_CANDIDATE_PATHS
-        .filter((p) => pathExists(path.join(targetRoot, p)))
-        .sort();
-
-    // Backup manifest
-    if (!skipBackups && !dryRun && preExistingPaths.length > 0) {
-        const manifestDir = path.dirname(path.join(backupRoot, '_install-backup.manifest.json'));
-        ensureDirectory(manifestDir);
-        writeJsonFile(path.join(backupRoot, '_install-backup.manifest.json'), {
-            Version: 1,
-            CreatedAt: timestamp,
-            PreExistingFiles: preExistingPaths
-        });
-    }
-
-    // Backup helper
-    function backupFile(destPath: string, relativePath: string): void {
-        if (skipBackups || !pathExists(destPath)) return;
-        const key = relativePath.toLowerCase().replace(/\\/g, '/');
-        if (backedUpSet.has(key)) return;
-        const backupPath = path.join(backupRoot, relativePath);
-        copyFileStage(destPath, backupPath);
-        backedUp++;
-        backedUpSet.add(key);
-    }
-
-    // Sync managed block into a file on disk
-    function syncManagedBlockOnDisk(destPath: string, relativePath: string, managedBlock: string): boolean {
-        if (!pathExists(destPath)) return false;
-        const content = readTextFile(destPath);
-        const result = syncManagedBlockInContent(content, managedBlock);
-        if (!result.changed) return false;
-        backupFile(destPath, relativePath);
-        writeTextFileStage(destPath, result.content);
-        return true;
-    }
-
-    function syncTaskFileOnDisk(destPath: string, relativePath: string, templateContent: string): boolean {
-        if (!pathExists(destPath)) return false;
-        const content = readTextFile(destPath);
-        const nextContent = buildTaskContentWithExistingQueue(templateContent, content);
-        if (!nextContent || nextContent === content) return false;
-        backupFile(destPath, relativePath);
-        writeTextFileStage(destPath, nextContent);
-        return true;
-    }
-
-    function removeEmptyParentDirectories(startDir: string): void {
-        let current = path.resolve(startDir);
-        const root = path.resolve(targetRoot);
-        while (current !== root) {
-            const relative = path.relative(root, current);
-            if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-                return;
-            }
-            if (!pathExists(current) || !fs.statSync(current).isDirectory() || fs.readdirSync(current).length > 0) {
-                return;
-            }
-            fs.rmdirSync(current);
-            current = path.dirname(current);
+        const resolvedInitPath = resolvePathInsideRoot(targetRoot, initAnswersPath);
+        if (!pathExists(resolvedInitPath)) {
+            throw new Error(`Init answers file not found: ${resolvedInitPath}`);
         }
-    }
+        const initAnswers = validateInitAnswers(readJsonFile(resolvedInitPath));
 
-    function removeManagedBlockOrFileOnDisk(destPath: string, relativePath: string): boolean {
-        if (!pathExists(destPath) || !fs.statSync(destPath).isFile()) return false;
-        const content = readTextFile(destPath);
-        const pattern = new RegExp(
-            `${escapeRegex(MANAGED_START)}[\\s\\S]*?${escapeRegex(MANAGED_END)}`, 'm'
-        );
-        if (!pattern.test(content)) return false;
-        const nextContent = content.replace(pattern, '').trim();
-        backupFile(destPath, relativePath);
-        if (!dryRun) {
-            if (nextContent) {
-                writeTextFileStage(destPath, `${nextContent}${content.includes('\r\n') ? '\r\n' : '\n'}`);
-            } else {
-                removeFileStage(destPath);
-                removeEmptyParentDirectories(path.dirname(destPath));
-            }
-        }
-        return true;
-    }
-
-    // Apply entrypoint managed block
-    function applyEntrypointManagedBlock(relativePath: string, managedBlock: string): void {
-        const destPath = path.join(targetRoot, relativePath);
-        const destDir = path.dirname(destPath);
-        if (!pathExists(destPath)) {
-            if (!dryRun) {
-                ensureDirectory(destDir);
-                writeTextFileStage(destPath, managedBlock + '\r\n');
-            }
-            deployed++;
-            return;
-        }
-        if (syncManagedBlockOnDisk(destPath, relativePath, managedBlock)) {
-            aligned++;
-        }
-    }
-
-    // Template content with placeholder replacements
-    function getTemplateContent(sourcePath: string, relativePath: string): string | null {
-        if (!pathExists(sourcePath)) return null;
-        let content = readTextFile(sourcePath);
-        if (!content || !content.trim()) return null;
-        const norm = relativePath.replace(/\\/g, '/');
-        if (norm === TASK_QUEUE_FILENAME) {
-            content = content.replaceAll('{{DEPLOYMENT_DATE}}', deploymentDate);
-            content = content.replaceAll('{{CANONICAL_ENTRYPOINT}}', canonicalEntryFile);
-        }
-        return content;
-    }
-
-    // Deploy exact files
-    const exactFiles = [TASK_QUEUE_FILENAME];
-    if (!answerDependentOnly) {
-        for (const relPath of exactFiles) {
-            const sourcePath = path.join(sourceRoot, relPath);
-            if (!pathExists(sourcePath)) continue;
-            const destPath = path.join(targetRoot, relPath);
-            const destDir = path.dirname(destPath);
-            if (!pathExists(destDir) && !dryRun) {
-                ensureDirectory(destDir);
-            }
-
-            if (pathExists(destPath)) {
-                if (relPath === TASK_QUEUE_FILENAME) {
-                    const templateContent = getTemplateContent(sourcePath, relPath);
-                    if (templateContent !== null) {
-                        const existingContent = readTextFile(destPath);
-                        const nextContent = buildTaskContentWithExistingQueue(templateContent, existingContent);
-                        if (preserveExisting) skippedExisting++;
-                        if (nextContent && nextContent !== existingContent) {
-                            backupFile(destPath, relPath);
-                            if (!dryRun) {
-                                writeTextFileStage(destPath, nextContent);
-                            }
-                            aligned++;
-                        }
-                        if (!preserveExisting) deployed++;
-                    }
-                    continue;
-                }
-                if (preserveExisting) {
-                    skippedExisting++;
-                    continue;
-                }
-                backupFile(destPath, relPath);
-            }
-
-            const content = getTemplateContent(sourcePath, relPath);
-            if (content && !dryRun) {
-                writeTextFileStage(destPath, content);
-            }
-            deployed++;
-        }
-    } else {
-        // Answer-dependent only: just sync TASK.md managed block
-        const taskSourcePath = path.join(sourceRoot, TASK_QUEUE_FILENAME);
-        const taskDestPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
-
-        if (pathExists(taskSourcePath)) {
-            if (pathExists(taskDestPath)) {
-                const templateContent = getTemplateContent(taskSourcePath, TASK_QUEUE_FILENAME);
-                if (templateContent !== null) {
-                    if (syncTaskFileOnDisk(taskDestPath, TASK_QUEUE_FILENAME, templateContent)) {
-                        aligned++;
-                    }
-                }
-            } else {
-                if (!dryRun) {
-                    ensureDirectory(path.dirname(taskDestPath));
-                    const content = getTemplateContent(taskSourcePath, TASK_QUEUE_FILENAME);
-                    if (content) {
-                        writeTextFileStage(taskDestPath, content);
-                    }
-                }
-                deployed++;
-            }
-        }
-    }
-
-    // Provider-neutral managed-block template; buildCanonicalManagedBlock rewrites it to the selected entrypoint.
-    const managedEntrypointTemplateContent = readTextFile(path.join(sourceRoot, 'entrypoints', 'canonical-rule-index.md'));
-    const canonicalBlock = buildCanonicalManagedBlock(canonicalEntryFile, managedEntrypointTemplateContent);
-    applyEntrypointManagedBlock(canonicalEntryFile, canonicalBlock);
-
-    // Apply redirect entrypoint managed blocks
-    for (const redirectFile of redirectEntryFiles) {
-        const redirectBlock = buildRedirectManagedBlock(redirectFile, canonicalEntryFile, providerBridgePaths);
-        applyEntrypointManagedBlock(redirectFile, redirectBlock);
-    }
-
-    // Qwen settings
-    const qwenRelPath = '.qwen/settings.json';
-    const qwenPath = path.join(targetRoot, qwenRelPath);
-    const qwenExists = pathExists(qwenPath);
-    let qwenExisting = null;
-    if (qwenExists) {
-        qwenExisting = readTextFile(qwenPath);
-    }
-    const qwenPlan = qwenExists
-        ? buildQwenSettingsContent(qwenExisting, [TASK_QUEUE_FILENAME, canonicalEntryFile])
-        : { content: null, needsUpdate: false, parseMode: 'not-present' };
-    let qwenUpdated = false;
-
-    if (qwenExists) {
-        if (!preserveExisting || qwenPlan.needsUpdate) {
-            backupFile(qwenPath, qwenRelPath);
-            if (!dryRun) {
-                ensureDirectory(path.dirname(qwenPath));
-                if (qwenPlan.content !== null) {
-                    writeTextFileStage(qwenPath, qwenPlan.content);
-                }
-            }
-            qwenUpdated = true;
-            if (preserveExisting) aligned++;
-            else deployed++;
-        }
-    }
-
-    // Claude local settings
-    const claudeRelPath = '.claude/settings.local.json';
-    const claudePath = path.join(targetRoot, claudeRelPath);
-    let claudeExisting = null;
-    if (pathExists(claudePath)) {
-        claudeExisting = readTextFile(claudePath);
-    }
-    const claudePlan = buildClaudeLocalSettingsContent(claudeExisting, enableClaudeOrchestratorFullAccess);
-    let claudeUpdated = false;
-    let claudeParseMode: string = claudePlan.parseMode;
-    let claudeNeedsUpdate = claudePlan.needsUpdate;
-
-    if (enableClaudeOrchestratorFullAccess) {
-        if (pathExists(claudePath)) {
-            if (!preserveExisting || claudePlan.needsUpdate) {
-                backupFile(claudePath, claudeRelPath);
-                if (!dryRun) {
-                    ensureDirectory(path.dirname(claudePath));
-                    writeTextFileStage(claudePath, claudePlan.content);
-                }
-                claudeUpdated = true;
-                if (preserveExisting) aligned++;
-                else deployed++;
-            }
-        } else {
-            if (!dryRun) {
-                ensureDirectory(path.dirname(claudePath));
-                writeTextFileStage(claudePath, claudePlan.content);
-            }
-            claudeUpdated = true;
-            deployed++;
-        }
-    } else {
-        claudeParseMode = 'disabled_by_init_answer';
-        claudeNeedsUpdate = false;
-    }
-
-    // VS Code settings — IDE exclude patterns for generated directories
-    const vscodeRelPath = '.vscode/settings.json';
-    const vscodePath = path.join(targetRoot, vscodeRelPath);
-    const vscodeExisting = pathExists(vscodePath) ? readTextFile(vscodePath) : null;
-    const vscodePlan = buildVscodeSettingsContent(vscodeExisting);
-    let vscodeSettingsUpdated = false;
-
-    if (vscodePlan.needsUpdate) {
-        if (pathExists(vscodePath)) {
-            backupFile(vscodePath, vscodeRelPath);
-        }
-        if (!dryRun) {
-            ensureDirectory(path.dirname(vscodePath));
-            writeTextFileStage(vscodePath, vscodePlan.content);
-        }
-        vscodeSettingsUpdated = true;
-        if (pathExists(vscodePath) && preserveExisting) aligned++;
-        else deployed++;
-    }
-
-    // Provider orchestrator profiles
-    for (const profile of providerOrchestratorProfiles) {
-        const block = buildProviderOrchestratorAgentContent(
-            profile.providerLabel, canonicalEntryFile, profile.orchestratorRelativePath
-        );
-        applyEntrypointManagedBlock(profile.orchestratorRelativePath, block);
-    }
-    applyEntrypointManagedBlock(
-        SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
-        buildSharedStartTaskWorkflowContent(canonicalEntryFile)
-    );
-
-    // GitHub skill bridge profiles
-    for (const profile of githubSkillBridgeProfiles) {
-        const block = buildGitHubSkillBridgeAgentContent(
-            profile.profileTitle, canonicalEntryFile,
-            profile.skillPath, profile.reviewRequirement, profile.capabilityFlag
-        );
-        applyEntrypointManagedBlock(profile.relativePath, block);
-    }
-
-    // Preserve user-retained entrypoints on update.
-    // Previously, any managed file not in ActiveAgentFiles was removed.
-    // Now we detect pre-existing managed files on disk and preserve them
-    // as redirect entrypoints / provider bridges instead of deleting them.
-    // Two-pass approach: discover all preserved files first, then sync content.
-    //
-    // When ProviderMinimalism=true, remove stale managed provider files instead
-    // of preserving them as redirects / bridges.
-    const desiredManagedFileSet = new Set([
-        canonicalEntryFile,
-        ...redirectEntryFiles,
-        SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
-        ...providerOrchestratorProfiles.map((profile) => profile.orchestratorRelativePath),
-        ...githubSkillBridgeProfiles.map((profile) => profile.relativePath)
-    ]);
-
-    const allProviderProfiles = getProviderOrchestratorProfileDefinitions();
-    const allSkillBridgeProfiles = getGitHubSkillBridgeProfileDefinitions();
-    const allManagedFileCandidates = [
-        ...ALL_AGENT_ENTRYPOINT_FILES,
-        SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
-        ...allProviderProfiles.map((profile) => profile.orchestratorRelativePath),
-        ...allSkillBridgeProfiles.map((profile) => profile.relativePath)
-    ];
-
-    const allEntrypointFileSet = new Set(ALL_AGENT_ENTRYPOINT_FILES as readonly string[]);
-    const allProviderBridgeMap = new Map(allProviderProfiles.map((p) => [p.orchestratorRelativePath, p]));
-    const allSkillBridgeSet = new Set(allSkillBridgeProfiles.map((p) => p.relativePath));
-
-    function fileHasManagedMarkers(filePath: string): boolean {
-        if (!pathExists(filePath)) return false;
-        const content = readTextFile(filePath);
-        return content.includes(MANAGED_START) && content.includes(MANAGED_END);
-    }
-
-    // Pass 1: discover all preserved files and collect bridge paths
-    const preservedSet = new Set<string>();
-    const preservedBridgePaths: string[] = [];
-    let preserved = 0;
-
-    if (!providerMinimalism) {
-        for (const relativePath of allManagedFileCandidates) {
-            if (desiredManagedFileSet.has(relativePath)) {
-                continue;
-            }
-            const destPath = path.join(targetRoot, relativePath);
-            if (!pathExists(destPath) || !fileHasManagedMarkers(destPath)) {
-                continue;
-            }
-
-            preservedSet.add(relativePath);
-            desiredManagedFileSet.add(relativePath);
-
-            if (allEntrypointFileSet.has(relativePath) && relativePath !== canonicalEntryFile) {
-                // Cascade: discover associated provider bridge
-                const providerProfile = allProviderProfiles.find((p) => p.entrypointFile === relativePath);
-                if (providerProfile && !desiredManagedFileSet.has(providerProfile.orchestratorRelativePath)) {
-                    const bridgePath = path.join(targetRoot, providerProfile.orchestratorRelativePath);
-                    if (fileHasManagedMarkers(bridgePath)) {
-                        preservedSet.add(providerProfile.orchestratorRelativePath);
-                        desiredManagedFileSet.add(providerProfile.orchestratorRelativePath);
-                        preservedBridgePaths.push(providerProfile.orchestratorRelativePath);
-                    }
-                    // Cascade: discover associated skill bridges for the review-bridge host provider.
-                    if (reviewSkillBridgeHostEntrypoint && relativePath === reviewSkillBridgeHostEntrypoint) {
-                        for (const skillProfile of allSkillBridgeProfiles) {
-                            if (!desiredManagedFileSet.has(skillProfile.relativePath)) {
-                                const skillBridgePath = path.join(targetRoot, skillProfile.relativePath);
-                                if (fileHasManagedMarkers(skillBridgePath)) {
-                                    preservedSet.add(skillProfile.relativePath);
-                                    desiredManagedFileSet.add(skillProfile.relativePath);
-                                }
-                            }
-                        }
-                    }
-                }
-            } else if (allProviderBridgeMap.has(relativePath)) {
-                preservedBridgePaths.push(relativePath);
-            }
-        }
-    } else {
-        for (const relativePath of allManagedFileCandidates) {
-            if (desiredManagedFileSet.has(relativePath)) {
-                continue;
-            }
-            const destPath = path.join(targetRoot, relativePath);
-            if (removeManagedBlockOrFileOnDisk(destPath, relativePath)) {
-                aligned++;
-            }
-        }
-    }
-
-    // Pass 2: sync content for all preserved files with complete bridge knowledge
-    const allBridgePaths = [...providerBridgePaths, ...preservedBridgePaths];
-
-    for (const relativePath of preservedSet) {
-        const destPath = path.join(targetRoot, relativePath);
-
-        if (allEntrypointFileSet.has(relativePath) && relativePath !== canonicalEntryFile) {
-            const redirectBlock = buildRedirectManagedBlock(relativePath, canonicalEntryFile, allBridgePaths);
-            if (syncManagedBlockOnDisk(destPath, relativePath, redirectBlock)) {
-                aligned++;
-            }
-            preserved++;
-        } else if (allProviderBridgeMap.has(relativePath)) {
-            const profile = allProviderBridgeMap.get(relativePath)!;
-            const bridgeBlock = buildProviderOrchestratorAgentContent(
-                profile.providerLabel, canonicalEntryFile, profile.orchestratorRelativePath
+        if (
+            initAnswers.AssistantLanguage.toLowerCase()
+            !== trimmedLanguage.toLowerCase()
+        ) {
+            throw new Error(
+                `AssistantLanguage parameter '${trimmedLanguage}' does not match init answers artifact value '${initAnswers.AssistantLanguage}'.`
             );
-            if (syncManagedBlockOnDisk(destPath, relativePath, bridgeBlock)) {
-                aligned++;
-            }
-            preserved++;
-        } else if (allSkillBridgeSet.has(relativePath)) {
-            const skillProfile = allSkillBridgeProfiles.find((p) => p.relativePath === relativePath)!;
-            const block = buildGitHubSkillBridgeAgentContent(
-                skillProfile.profileTitle, canonicalEntryFile,
-                skillProfile.skillPath, skillProfile.reviewRequirement, skillProfile.capabilityFlag
+        }
+        if (initAnswers.AssistantBrevity !== trimmedBrevity) {
+            throw new Error(
+                `AssistantBrevity parameter '${trimmedBrevity}' does not match init answers artifact value '${initAnswers.AssistantBrevity}'.`
             );
-            if (syncManagedBlockOnDisk(destPath, relativePath, block)) {
-                aligned++;
-            }
-            preserved++;
-        } else {
-            preserved++;
         }
-    }
+        if (
+            initAnswers.SourceOfTruth.toUpperCase().replace(/\s+/g, '')
+            !== trimmedSourceOfTruth.toUpperCase().replace(/\s+/g, '')
+        ) {
+            throw new Error(
+                `SourceOfTruth parameter '${trimmedSourceOfTruth}' does not match init answers artifact value '${initAnswers.SourceOfTruth}'.`
+            );
+        }
 
-    // Gitignore
-    const gitignoreEntryList = buildGitignoreEntries(
-        activeEntryFiles, providerOrchestratorProfiles, enableClaudeOrchestratorFullAccess, qwenExists,
-        providerMinimalism
-    );
-    let gitignoreAdded: number;
-    const gitignorePath = path.join(targetRoot, '.gitignore');
-    const agentignorePath = path.join(targetRoot, '.agentignore');
-    let agentignoreUpdated = false;
-    if (!dryRun) {
-        const gitignoreExisted = pathExists(gitignorePath);
-        const existingContent = gitignoreExisted ? readTextFile(gitignorePath) : '';
-        const syncResult = syncManagedGitignoreBlockInContent(
-            existingContent,
-            gitignoreEntryList,
-            enableClaudeOrchestratorFullAccess
+        const enforceNoAutoCommit = initAnswers.EnforceNoAutoCommit;
+        const enableClaudeOrchestratorFullAccess =
+            initAnswers.ClaudeOrchestratorFullAccess;
+        const tokenEconomyEnabled = initAnswers.TokenEconomyEnabled;
+        const providerMinimalism = initAnswers.ProviderMinimalism;
+        const switchModeBeforeInstall = readSwitchModeState(targetRoot, bundleRoot);
+        const canonicalEntryFile = getCanonicalEntrypointFile(
+            initAnswers.SourceOfTruth
         );
-        gitignoreAdded = syncResult.addedEntries;
-        if (syncResult.changed) {
-            if (gitignoreExisted) {
-                backupFile(gitignorePath, '.gitignore');
-            }
-            writeTextFileStage(gitignorePath, syncResult.content);
-        }
-        const agentignoreExisted = pathExists(agentignorePath);
-        const existingAgentignoreContent = agentignoreExisted ? readTextFile(agentignorePath) : '';
-        const agentignoreSync = syncManagedAgentignoreActiveBlockInContent(
-            existingAgentignoreContent,
-            path.basename(bundleRoot)
+        const activeEntryFilesSeed = initAnswers.ActiveAgentFiles
+            ? initAnswers.ActiveAgentFiles.join(', ')
+            : null;
+        let activeEntryFiles = getActiveAgentEntrypointFiles(
+            activeEntryFilesSeed,
+            initAnswers.SourceOfTruth
         );
-        if (agentignoreSync.changed) {
-            if (agentignoreExisted) {
-                backupFile(agentignorePath, '.agentignore');
-            }
-            writeTextFileStage(agentignorePath, agentignoreSync.content);
-            agentignoreUpdated = true;
+        if (activeEntryFiles.length === 0) {
+            activeEntryFiles = [canonicalEntryFile];
         }
-    } else {
-        const existingContent = pathExists(gitignorePath) ? readTextFile(gitignorePath) : '';
-        gitignoreAdded = syncManagedGitignoreBlockInContent(
-            existingContent,
-            gitignoreEntryList,
-            enableClaudeOrchestratorFullAccess
-        ).addedEntries;
-        const existingAgentignoreContent = pathExists(agentignorePath) ? readTextFile(agentignorePath) : '';
-        agentignoreUpdated = syncManagedAgentignoreActiveBlockInContent(
-            existingAgentignoreContent,
-            path.basename(bundleRoot)
-        ).changed;
-    }
+        const redirectEntryFiles = activeEntryFiles.filter(
+            (entrypointFile) => entrypointFile !== canonicalEntryFile
+        );
+        const providerOrchestratorProfiles =
+            getProviderOrchestratorProfileDefinitions().filter(
+                (profile) => activeEntryFiles.includes(profile.entrypointFile)
+            );
+        const reviewSkillBridgeHostEntrypoint =
+            getRequiredReviewSkillBridgeHostEntry().entrypointFile;
+        const githubSkillBridgeProfiles = activeEntryFiles.includes(
+            reviewSkillBridgeHostEntrypoint
+        )
+            ? getGitHubSkillBridgeProfileDefinitions()
+            : [];
+        const providerBridgePaths = providerOrchestratorProfiles.map(
+            (profile) => profile.orchestratorRelativePath
+        );
 
-    // Commit guard hook
-    const commitGuardHookUpdated = applyCommitGuardHook(targetRoot, enforceNoAutoCommit, dryRun, backupFile);
+        const backupLocation = createUniqueInstallBackupRoot(bundleRoot);
+        const { timestamp, backupRoot } = backupLocation;
+        const deploymentDate = new Date().toISOString().slice(0, 10);
+        const bundleVersionPath = path.join(bundleRoot, 'VERSION');
+        const liveVersionPath = path.join(bundleRoot, 'live', 'version.json');
+        if (!pathExists(bundleVersionPath)) {
+            throw new Error(`Bundle version file not found: ${bundleVersionPath}`);
+        }
+        const bundleVersion = readTextFile(bundleVersionPath).trim();
+        if (!bundleVersion) {
+            throw new Error(`Bundle version file is empty: ${bundleVersionPath}`);
+        }
 
-    // Run init if requested
-    if (runInit && !dryRun && initRunner) {
-        const maybeInitResult = initRunner({
+        const filesystem = createInstallFilesystemStage({
             targetRoot,
+            backupRoot,
+            dryRun,
+            skipBackups,
+            deploymentDate,
+            canonicalEntryFile
+        });
+        filesystem.writeBackupManifest(timestamp);
+
+        runInstallTaskStage({
+            sourceRoot,
+            targetRoot,
+            dryRun,
+            preserveExisting,
+            answerDependentOnly,
+            filesystem
+        });
+        runInstallPrimaryEntrypointStage({
+            sourceRoot,
+            canonicalEntryFile,
+            redirectEntryFiles,
+            providerBridgePaths,
+            filesystem
+        });
+        const editorSettings = runInstallEditorSettingsStage({
+            targetRoot,
+            dryRun,
+            preserveExisting,
+            canonicalEntryFile,
+            enableClaudeOrchestratorFullAccess,
+            filesystem
+        });
+        const providerEntrypoints = runInstallProviderEntrypointStage({
+            targetRoot,
+            canonicalEntryFile,
+            redirectEntryFiles,
+            providerOrchestratorProfiles,
+            githubSkillBridgeProfiles,
+            providerMinimalism,
+            reviewSkillBridgeHostEntrypoint,
+            providerBridgePaths,
+            filesystem
+        });
+        const ignoreSettings = runInstallIgnoreStage({
+            targetRoot,
+            bundleRoot,
+            dryRun,
+            activeEntryFiles,
+            providerOrchestratorProfiles,
+            enableClaudeOrchestratorFullAccess,
+            providerMinimalism,
+            qwenExists: editorSettings.qwenExists,
+            filesystem
+        });
+        const commitGuardHookUpdated = applyCommitGuardHook(
+            targetRoot,
+            enforceNoAutoCommit,
+            dryRun,
+            filesystem.backupFile
+        );
+        const finalization = runInstallFinalizationStage({
+            targetRoot,
+            normalizedTarget,
+            liveVersionPath,
+            dryRun,
+            switchModeBeforeInstall,
+            bundleVersion,
+            resolvedInitPath,
+            sourceOfTruth: initAnswers.SourceOfTruth,
+            canonicalEntryFile,
+            activeEntryFiles,
+            assistantLanguage: trimmedLanguage,
+            assistantBrevity: trimmedBrevity,
+            enforceNoAutoCommit,
+            enableClaudeOrchestratorFullAccess,
+            tokenEconomyEnabled,
+            providerMinimalism,
+            runInit,
+            initRunner,
+            activeEntryFilesSeed,
+            preserveLegacyReviewExecutionPolicyOmission
+        });
+        const { metrics } = filesystem;
+
+        return {
+            targetRoot: normalizedTarget,
+            templateRoot: sourceRoot,
+            preserveExisting,
+            alignExisting,
+            runInit,
+            answerDependentOnly,
+            skipBackups,
+            initAnswersPath: resolvedInitPath,
+            deploymentDate,
+            bundleVersion,
             assistantLanguage: trimmedLanguage,
             assistantBrevity: trimmedBrevity,
             sourceOfTruth: initAnswers.SourceOfTruth,
@@ -755,91 +312,50 @@ export function runInstall(options: RunInstallOptions) {
             claudeOrchestratorFullAccess: enableClaudeOrchestratorFullAccess,
             tokenEconomyEnabled,
             providerMinimalism,
-            activeAgentFilesSeed: activeEntryFilesSeed,
-            preserveLegacyReviewExecutionPolicyOmission
-        });
-        initResult = maybeInitResult && typeof maybeInitResult === 'object' && !Array.isArray(maybeInitResult)
-            ? maybeInitResult
-            : null;
-        initInvoked = true;
-    }
-
-    // Write live/version.json
-    let liveVersionWritten = false;
-    let protectedControlPlaneManifestWritten = false;
-    if (!dryRun) {
-        if (switchModeBeforeInstall === 'off') {
-            runSwitchMode({
-                targetRoot,
-                mode: 'off',
-                dryRun: false
-            });
-        }
-        ensureDirectory(path.dirname(liveVersionPath));
-        writeJsonFile(liveVersionPath, {
-            Version: bundleVersion,
-            UpdatedAt: new Date().toISOString(),
-            SourceOfTruth: initAnswers.SourceOfTruth,
-            CanonicalEntrypoint: canonicalEntryFile,
-            ActiveAgentFiles: convertActiveAgentEntrypointFilesToString(activeEntryFiles),
-            AssistantLanguage: trimmedLanguage,
-            AssistantBrevity: trimmedBrevity,
-            EnforceNoAutoCommit: enforceNoAutoCommit,
-            ClaudeOrchestratorFullAccess: enableClaudeOrchestratorFullAccess,
-            TokenEconomyEnabled: tokenEconomyEnabled,
-            ProviderMinimalism: providerMinimalism,
-            InitAnswersPath: resolvedInitPath
-        });
-        liveVersionWritten = true;
-        writeProtectedControlPlaneManifest(normalizedTarget);
-        protectedControlPlaneManifestWritten = true;
-    }
-
-    return {
-        targetRoot: normalizedTarget,
-        templateRoot: sourceRoot,
-        preserveExisting,
-        alignExisting,
-        runInit,
-        answerDependentOnly,
-        skipBackups,
-        initAnswersPath: resolvedInitPath,
-        deploymentDate,
-        bundleVersion,
-        assistantLanguage: trimmedLanguage,
-        assistantBrevity: trimmedBrevity,
-        sourceOfTruth: initAnswers.SourceOfTruth,
-        enforceNoAutoCommit,
-        claudeOrchestratorFullAccess: enableClaudeOrchestratorFullAccess,
-        tokenEconomyEnabled,
-        providerMinimalism,
-        canonicalEntrypoint: canonicalEntryFile,
-        activeAgentFiles: convertActiveAgentEntrypointFilesToString(activeEntryFiles),
-        filesDeployed: deployed,
-        filesForcedOverwrite: forcedOverwrites,
-        filesSkippedExisting: skippedExisting,
-        filesAligned: aligned,
-        filesPreserved: preserved,
-        filesBackedUp: backedUp,
-        gitignoreEntriesAdded: gitignoreAdded,
-        agentignoreUpdated,
-        qwenSettingsParseMode: qwenPlan.parseMode,
-        qwenSettingsNeedsUpdate: qwenPlan.needsUpdate,
-        qwenSettingsUpdated: qwenUpdated,
-        claudeLocalSettingsParseMode: claudeParseMode,
-        claudeLocalSettingsNeedsUpdate: claudeNeedsUpdate,
-        claudeLocalSettingsUpdated: claudeUpdated,
-        vscodeSettingsUpdated,
-        initInvoked,
-        preCommitHookUpdated: commitGuardHookUpdated,
-        liveVersionWritten,
-        protectedControlPlaneManifestWritten,
-        workflowConfigMergeStatus: getOptionalStringField(initResult, 'workflowConfigMergeStatus'),
-        optionalQualityChecksNotice: getOptionalStringField(initResult, 'optionalQualityChecksNotice'),
-        projectMemoryMaintenanceSummaryLine: getOptionalStringField(initResult, 'projectMemoryMaintenanceSummaryLine'),
-        projectMemoryRefreshHandoffPrompt: getOptionalStringField(initResult, 'projectMemoryRefreshHandoffPrompt'),
-        backupRoot: dryRun ? null : backupRoot
-    };
+            canonicalEntrypoint: canonicalEntryFile,
+            activeAgentFiles:
+                convertActiveAgentEntrypointFilesToString(activeEntryFiles),
+            filesDeployed: metrics.deployed,
+            filesForcedOverwrite: metrics.forcedOverwrites,
+            filesSkippedExisting: metrics.skippedExisting,
+            filesAligned: metrics.aligned,
+            filesPreserved: providerEntrypoints.preserved,
+            filesBackedUp: metrics.backedUp,
+            gitignoreEntriesAdded: ignoreSettings.gitignoreEntriesAdded,
+            agentignoreUpdated: ignoreSettings.agentignoreUpdated,
+            qwenSettingsParseMode: editorSettings.qwenSettingsParseMode,
+            qwenSettingsNeedsUpdate: editorSettings.qwenSettingsNeedsUpdate,
+            qwenSettingsUpdated: editorSettings.qwenSettingsUpdated,
+            claudeLocalSettingsParseMode:
+                editorSettings.claudeLocalSettingsParseMode,
+            claudeLocalSettingsNeedsUpdate:
+                editorSettings.claudeLocalSettingsNeedsUpdate,
+            claudeLocalSettingsUpdated:
+                editorSettings.claudeLocalSettingsUpdated,
+            vscodeSettingsUpdated: editorSettings.vscodeSettingsUpdated,
+            initInvoked: finalization.initInvoked,
+            preCommitHookUpdated: commitGuardHookUpdated,
+            liveVersionWritten: finalization.liveVersionWritten,
+            protectedControlPlaneManifestWritten:
+                finalization.protectedControlPlaneManifestWritten,
+            workflowConfigMergeStatus: getOptionalStringField(
+                finalization.initResult,
+                'workflowConfigMergeStatus'
+            ),
+            optionalQualityChecksNotice: getOptionalStringField(
+                finalization.initResult,
+                'optionalQualityChecksNotice'
+            ),
+            projectMemoryMaintenanceSummaryLine: getOptionalStringField(
+                finalization.initResult,
+                'projectMemoryMaintenanceSummaryLine'
+            ),
+            projectMemoryRefreshHandoffPrompt: getOptionalStringField(
+                finalization.initResult,
+                'projectMemoryRefreshHandoffPrompt'
+            ),
+            backupRoot: dryRun ? null : backupRoot
+        };
     });
 }
 
@@ -867,39 +383,44 @@ export function applyCommitGuardHook(
         if (!enabled) return false;
         if (!dryRun) {
             ensureDirectory(path.dirname(hookPath));
-            const hookContent = '#!/usr/bin/env bash\n\n' + managedBlock + '\n';
-            applyMaterializationStage(createWriteTextFileStage(hookPath, hookContent), { dryRun });
+            const hookContent = `#!/usr/bin/env bash\n\n${managedBlock}\n`;
+            applyMaterializationStage(
+                createWriteTextFileStage(hookPath, hookContent),
+                { dryRun }
+            );
         }
         return true;
     }
 
-    let content = readTextFile(hookPath);
-    content = normalizeLineEndings(content, '\n');
-    let updatedContent;
+    let content = normalizeLineEndings(readTextFile(hookPath), '\n');
+    let updatedContent: string;
 
     if (enabled) {
         if (pattern.test(content)) {
-            updatedContent = replaceCommitGuardManagedBlocks(content, managedBlock);
+            updatedContent = replaceCommitGuardManagedBlocks(
+                content,
+                managedBlock
+            );
         } else if (!content.trim()) {
-            updatedContent = '#!/usr/bin/env bash\n\n' + managedBlock + '\n';
+            updatedContent = `#!/usr/bin/env bash\n\n${managedBlock}\n`;
         } else {
-            updatedContent = content.trimEnd() + '\n\n' + managedBlock + '\n';
+            updatedContent = `${content.trimEnd()}\n\n${managedBlock}\n`;
         }
+    } else if (pattern.test(content)) {
+        updatedContent = `${content.replace(pattern, '').trimEnd()}\n`;
     } else {
-        if (pattern.test(content)) {
-            updatedContent = content.replace(pattern, '').trimEnd() + '\n';
-        } else {
-            return false;
-        }
+        return false;
     }
 
     if (updatedContent === content) return false;
-
     if (backupFile) {
         backupFile(hookPath, '.git/hooks/pre-commit');
     }
     if (!dryRun) {
-        applyMaterializationStage(createWriteTextFileStage(hookPath, updatedContent), { dryRun });
+        applyMaterializationStage(
+            createWriteTextFileStage(hookPath, updatedContent),
+            { dryRun }
+        );
     }
     return true;
 }
