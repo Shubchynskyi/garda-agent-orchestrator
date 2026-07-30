@@ -51,13 +51,14 @@ test('runUiActionCommand reports timeout and kills the subprocess tree', async (
         const markerPath = path.join(repoRoot, 'child-survived.txt');
         const childPidPath = path.join(repoRoot, 'child.pid');
         const childScript = [
-            `require('node:fs').writeFileSync(${JSON.stringify(childPidPath)}, String(process.pid));`,
-            `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(markerPath)}, 'alive'), 4000);`,
+            `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(markerPath)}, 'alive'), 6000);`,
             'setTimeout(() => {}, 10000);'
         ].join('');
         const parentScript = [
             'const childProcess = require("node:child_process");',
-            `childProcess.spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], { stdio: 'ignore' });`,
+            'const fs = require("node:fs");',
+            `const child = childProcess.spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], { stdio: 'ignore' });`,
+            `fs.writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));`,
             'setTimeout(() => {}, 10000);'
         ].join('');
         const action: UiActionDefinition = {
@@ -70,7 +71,7 @@ test('runUiActionCommand reports timeout and kills the subprocess tree', async (
             unavailable_reason: null,
             requires_confirmation: false,
             confirmation_phrase: null,
-            timeout_ms: 1000,
+            timeout_ms: 3000,
             command: {
                 executable: process.execPath,
                 args: ['-e', parentScript],
@@ -81,10 +82,10 @@ test('runUiActionCommand reports timeout and kills the subprocess tree', async (
         const result = await runUiActionCommand(action, repoRoot);
 
         assert.equal(result.timed_out, true);
-        assert.equal(result.timeout_ms, 1000);
+        assert.equal(result.timeout_ms, 3000);
         assert.notEqual(result.exit_code, 0);
-        assert.match(result.stderr, /Process timed out after 1000 ms/u);
-        assert.match(result.stderr, new RegExp(formatUiActionTimeoutMessage(1000).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
+        assert.match(result.stderr, /Process timed out after 3000 ms/u);
+        assert.match(result.stderr, new RegExp(formatUiActionTimeoutMessage(3000).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
         assert.equal(fs.existsSync(childPidPath), true, 'child process pid should be captured before timeout cleanup');
         const childPid = Number(fs.readFileSync(childPidPath, 'utf8'));
         assert.ok(Number.isInteger(childPid) && childPid > 0);
