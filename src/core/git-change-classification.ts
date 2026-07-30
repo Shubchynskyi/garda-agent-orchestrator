@@ -434,8 +434,7 @@ function decodeText(content: Buffer): string | null {
 
 function classifySnapshots(
     before: ContentSnapshot,
-    after: ContentSnapshot,
-    changeKind: Exclude<GitChangeKind, 'type_changed' | 'unmerged'>
+    after: ContentSnapshot
 ): Pick<GitLayerChangeClassification, 'contentClassification' | 'reason'> {
     if (before.kind === 'unavailable' || after.kind === 'unavailable') {
         return {
@@ -524,7 +523,7 @@ function classifyLayerChange(
         : readWorktreeSnapshot(repoRoot, change.path);
     return {
         ...classificationBase,
-        ...classifySnapshots(before, after, changeKind)
+        ...classifySnapshots(before, after)
     };
 }
 
@@ -560,8 +559,7 @@ function classifyUntrackedPath(repoRoot: string, filePath: string): GitLayerChan
         includedInEffectiveScope: true,
         ...classifySnapshots(
             { kind: 'missing', content: null },
-            readWorktreeSnapshot(repoRoot, filePath),
-            'untracked'
+            readWorktreeSnapshot(repoRoot, filePath)
         )
     };
 }
@@ -620,8 +618,7 @@ export function classifyGitChanges(
             includedInEffectiveScope: true,
             ...classifySnapshots(
                 { kind: 'missing', content: null },
-                worktree,
-                'untracked'
+                worktree
             )
         });
     }

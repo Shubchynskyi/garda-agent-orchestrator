@@ -962,7 +962,7 @@ export function assessQualityChecklistAnswersTemplate(options: {
         || actualRuleIds.some((ruleId, index) => ruleId !== expectedRuleIds[index])) {
         return invalidAnswersTemplate('Quality checklist answers template rule ids do not match the active rules.');
     }
-    const scaffoldIsValid = template.answers.every((answer, index) => {
+    const scaffoldIsValid = template.answers.every((answer) => {
         return isRecord(answer)
             && !Object.hasOwn(answer, 'title')
             && !Object.hasOwn(answer, 'prompt')
