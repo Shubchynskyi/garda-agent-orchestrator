@@ -17,7 +17,7 @@ const mutableChildProcess = require('node:child_process') as typeof childProcess
     spawn: typeof childProcess.spawn;
     spawnSync: typeof childProcess.spawnSync;
 };
-const DEFAULT_SHARDED_NODE_TEST_ARGS = ['--test', '--test-concurrency=2'];
+const DEFAULT_SHARDED_NODE_TEST_ARGS = ['--test'];
 const EXPECTED_MAX_SHARD_ARG_CHARS = 24_000;
 
 function createBuildResultFixture(extraTestCount = 0): { buildResult: BuildResult; cleanup: () => void; } {
@@ -196,7 +196,7 @@ test('runNodeFoundationTests fails fast when an explicit test target cannot be r
     }
 });
 
-test('runNodeFoundationTests bounds inner concurrency while running deterministic shards and aggregating failures', async () => {
+test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shards and aggregates failures', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalShardEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
