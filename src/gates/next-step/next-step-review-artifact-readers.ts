@@ -795,10 +795,6 @@ export function readReviewArtifactState(
             }
         } else if (passToken && parsedVerdictToken === passToken) {
             verdictToken = passToken;
-        } else if (requiresFindingsOnlyArtifact && contentLooksLikeJson) {
-            // Current findings-only reviews are verdict-free JSON. Their pass/fail state is
-            // derived below from the persisted system-owned validation artifact referenced by
-            // the receipt, not from legacy PASS/FAIL tokens in reviewer prose.
         } else {
             violations.push(
                 `review artifact does not contain an accepted pass token ` +
