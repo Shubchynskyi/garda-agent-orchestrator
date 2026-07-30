@@ -5,6 +5,10 @@ import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { getRequiredReviewSkillBridgeHostEntry } from '../../../src/core/provider-registry';
 import {
+    MANAGED_END,
+    MANAGED_START
+} from '../../../src/materialization/content-builders';
+import {
     runInstallPrimaryEntrypointStage,
     runInstallProviderEntrypointStage
 } from '../../../src/materialization/install/install-entrypoint-stage';
@@ -39,6 +43,16 @@ function createFilesystemStage(targetRoot: string) {
         deploymentDate: '2026-07-30',
         canonicalEntryFile: 'AGENTS.md'
     });
+}
+
+function writeLegacyManagedEntrypoint(targetRoot: string, relativePath: string): void {
+    const entrypointPath = path.join(targetRoot, relativePath);
+    fs.mkdirSync(path.dirname(entrypointPath), { recursive: true });
+    fs.writeFileSync(
+        entrypointPath,
+        `${MANAGED_START}\nlegacy managed content\n${MANAGED_END}\n`,
+        'utf8'
+    );
 }
 
 describe('install materialization stages', () => {
@@ -117,6 +131,70 @@ describe('install materialization stages', () => {
                 'start-task.md'
             )));
             assert.equal(providerResult.preserved, 0);
+        } finally {
+            fs.rmSync(targetRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves an existing managed provider entrypoint when minimalism is disabled', () => {
+        const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-install-preserve-stage-'));
+        const legacyEntrypoint = 'GEMINI.md';
+        try {
+            writeLegacyManagedEntrypoint(targetRoot, legacyEntrypoint);
+            const filesystem = createFilesystemStage(targetRoot);
+
+            const result = runInstallProviderEntrypointStage({
+                targetRoot,
+                canonicalEntryFile: 'AGENTS.md',
+                redirectEntryFiles: [],
+                providerOrchestratorProfiles: [],
+                githubSkillBridgeProfiles: [],
+                providerMinimalism: false,
+                reviewSkillBridgeHostEntrypoint:
+                    getRequiredReviewSkillBridgeHostEntry().entrypointFile,
+                providerBridgePaths: [],
+                filesystem
+            });
+
+            const content = fs.readFileSync(
+                path.join(targetRoot, legacyEntrypoint),
+                'utf8'
+            );
+            assert.equal(result.preserved, 1);
+            assert.match(content, /This file is a redirect\./);
+            assert.match(content, /AGENTS\.md/);
+            assert.equal(content.includes('legacy managed content'), false);
+        } finally {
+            fs.rmSync(targetRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('removes a stale managed provider entrypoint when minimalism is enabled', () => {
+        const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-install-minimal-stage-'));
+        const staleEntrypoint = 'GEMINI.md';
+        try {
+            writeLegacyManagedEntrypoint(targetRoot, staleEntrypoint);
+            const filesystem = createFilesystemStage(targetRoot);
+
+            const result = runInstallProviderEntrypointStage({
+                targetRoot,
+                canonicalEntryFile: 'AGENTS.md',
+                redirectEntryFiles: [],
+                providerOrchestratorProfiles: [],
+                githubSkillBridgeProfiles: [],
+                providerMinimalism: true,
+                reviewSkillBridgeHostEntrypoint:
+                    getRequiredReviewSkillBridgeHostEntry().entrypointFile,
+                providerBridgePaths: [],
+                filesystem
+            });
+
+            assert.equal(result.preserved, 0);
+            assert.equal(
+                fs.existsSync(path.join(targetRoot, staleEntrypoint)),
+                false
+            );
+            assert.equal(filesystem.metrics.aligned, 1);
         } finally {
             fs.rmSync(targetRoot, { recursive: true, force: true });
         }
