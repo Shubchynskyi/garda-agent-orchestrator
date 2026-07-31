@@ -18,6 +18,7 @@ import {
     TASK_ID,
     appendEvent,
     eventsRoot,
+    fileSha256,
     makeTempRepo,
     reviewsRoot,
     seedCompilePass,
@@ -85,7 +86,8 @@ function writeRepairDecomposition(repoRoot: string, childTaskIds: string[]): voi
         .join('\n');
     const childRows = childTaskIds.map((childTaskId, index) => (
         `| ${childTaskId} | TODO | P1 | workflow/full-suite-timeout-${index === 0 ? 'diagnostics' : 'repair'} | ` +
-        `${index === 0 ? 'Diagnose' : 'Repair'} timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. |`
+        `${index === 0 ? 'Diagnose' : 'Repair'} timeout blocker | gpt-5.5 | 2026-06-30 | strict | ` +
+        `Child of \`${TASK_ID}\`. Repair scope paths: \`src/repair-child-${index + 1}.ts\`; |`
     ));
     fs.writeFileSync(taskPath, `${parentLinked}${childRows.join('\n')}\n`, 'utf8');
 }
@@ -264,5 +266,89 @@ describe('next-step full-suite repair child handoff', () => {
         const remainingChild = resolveNextStep({ taskId: childTaskIds[1], repoRoot });
         assert.notEqual(remainingChild.next_gate, 'full-suite-repair-child-handoff');
         assert.equal(remainingChild.next_gate, 'enter-task-mode');
+    });
+
+    it('blocks a classified repair child that escapes its immutable materialized scope', () => {
+        const repoRoot = makeTempRepo();
+        const { preflightPath, fullSuitePath } = seedExhaustedTimeout(repoRoot);
+        const childTaskIds = [`${TASK_ID}-F1`, `${TASK_ID}-F2`];
+        writeRepairDecomposition(repoRoot, childTaskIds);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        writePreflight(
+            repoRoot,
+            childTaskIds[0],
+            { ...ALL_REVIEW_FLAGS, code: true },
+            { changedFiles: ['src/outside-repair-child.ts'] }
+        );
+
+        const result = resolveNextStep({ taskId: childTaskIds[0], repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-repair-child-scope');
+        assert.match(result.reason, /outside its immutable scoped handoff: src\/outside-repair-child\.ts/);
+        assert.match(result.reason, /allowed: src\/repair-child-1\.ts/);
+    });
+
+    it('blocks a repair child when its scope declaration changes after materialization', () => {
+        const repoRoot = makeTempRepo();
+        const { preflightPath, fullSuitePath } = seedExhaustedTimeout(repoRoot);
+        const childTaskIds = [`${TASK_ID}-F1`, `${TASK_ID}-F2`];
+        writeRepairDecomposition(repoRoot, childTaskIds);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const changedScopeDeclaration = fs.readFileSync(taskPath, 'utf8').replace(
+            'Repair scope paths: `src/repair-child-1.ts`;',
+            'Repair scope paths: `src/repair-child-1-changed.ts`;'
+        );
+        fs.writeFileSync(taskPath, changedScopeDeclaration, 'utf8');
+
+        const result = resolveNextStep({ taskId: childTaskIds[0], repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-repair-child-scope');
+        assert.match(result.reason, /scope declarations changed after parent/);
+        assert.match(result.reason, /materialized scope binding is immutable/);
+        assert.deepEqual(result.commands, []);
+    });
+
+    it('routes a legacy materialized handoff to recovery instead of rematerializing over suspended WIP', () => {
+        const repoRoot = makeTempRepo();
+        const { preflightPath, fullSuitePath } = seedExhaustedTimeout(repoRoot);
+        const childTaskIds = [`${TASK_ID}-F1`, `${TASK_ID}-F2`];
+        writeRepairDecomposition(repoRoot, childTaskIds);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        const manifestPath = materialized.wip_manifest_path || '';
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+        manifest.schema_version = 3;
+        delete manifest.child_scopes;
+        writeJson(manifestPath, manifest);
+        const artifact = JSON.parse(fs.readFileSync(materialized.artifact_path, 'utf8')) as Record<string, unknown>;
+        artifact.schema_version = 2;
+        delete artifact.child_scopes;
+        artifact.wip_manifest_sha256 = fileSha256(manifestPath);
+        writeJson(materialized.artifact_path, artifact);
+
+        const result = resolveNextStep({ taskId: childTaskIds[0], repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-repair-child-scope');
+        assert.match(result.reason, /materialized handoff predates scoped child isolation/);
+        assert.match(result.reason, /do not rematerialize over a legacy suspended capture/i);
     });
 });

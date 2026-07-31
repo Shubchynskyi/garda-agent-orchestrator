@@ -54,6 +54,10 @@ import {
     findFullSuiteRepairChildHandoffState,
     resolveFullSuiteRepairDecompositionState
 } from '../full-suite/full-suite-repair-decomposition';
+import {
+    sameRepairChildScopes,
+    validateRepairChildChangedFiles
+} from '../full-suite/full-suite-repair-child-scope';
 import { buildReviewCoverageContract } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
 import {
@@ -2673,6 +2677,53 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         `${cliPrefix} next-step "${repairChildHandoff.parent_task_id}" --repo-root "."`
                     )
                 ]
+            });
+        }
+        if (!repairEvidence.scoped_handoff || !repairEvidence.child_scopes) {
+            return buildDecisionRouteResult({
+                status: 'BLOCKED',
+                nextGate: 'full-suite-repair-child-scope',
+                title: 'Migrate the repair handoff to immutable child scopes before executing this child.',
+                reason:
+                    `Repair child ${taskId} is linked from parent ${repairChildHandoff.parent_task_id}, but the `
+                    + 'materialized handoff predates scoped child isolation. Restore or migrate the suspended parent WIP; '
+                    + 'do not rematerialize over a legacy suspended capture.',
+                commands: [
+                    buildCommand(
+                        'Continue repair parent recovery',
+                        `${cliPrefix} next-step "${repairChildHandoff.parent_task_id}" --repo-root "."`
+                    )
+                ]
+            });
+        }
+        if (!sameRepairChildScopes(
+            repairEvidence.child_scopes,
+            repairChildHandoff.decomposition.child_scopes
+        )) {
+            return buildDecisionRouteResult({
+                status: 'BLOCKED',
+                nextGate: 'full-suite-repair-child-scope',
+                title: 'Restore the immutable child scope declarations used by the materialized handoff.',
+                reason:
+                    `Repair child ${taskId} scope declarations changed after parent `
+                    + `${repairChildHandoff.parent_task_id} suspended WIP. The materialized scope binding is immutable.`,
+                commands: []
+            });
+        }
+        const repairScopeViolations = validateRepairChildChangedFiles(
+            repairEvidence.child_scopes,
+            taskId,
+            getPreflightChangedFilesForReviewRemediation(preflight)
+        );
+        if (repairScopeViolations.length > 0) {
+            return buildDecisionRouteResult({
+                status: 'BLOCKED',
+                nextGate: 'full-suite-repair-child-scope',
+                title: 'Return the repair child to its immutable isolated file scope.',
+                reason:
+                    `${repairScopeViolations.join(' ')} The suspended parent WIP remains isolated and must not be `
+                    + 'absorbed into this repair child.',
+                commands: []
             });
         }
     }

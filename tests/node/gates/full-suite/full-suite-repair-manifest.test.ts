@@ -71,7 +71,7 @@ describe('full-suite repair manifest boundary', () => {
         );
 
         assert.equal(result.manifest, null);
-        assert.ok(result.violations.includes('WIP manifest schema_version must be 3.'));
+        assert.ok(result.violations.includes('WIP manifest schema_version must be 4 or legacy 3.'));
         assert.ok(result.violations.includes('WIP manifest status must be suspended.'));
         assert.ok(result.violations.includes('WIP manifest task_id must be a non-empty string.'));
         assert.ok(result.violations.includes('WIP manifest child_task_ids entries must be unique.'));

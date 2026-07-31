@@ -11,11 +11,20 @@ import {
 import { joinOrchestratorPath } from '../shared/helpers';
 import { readOrderedTaskEvents } from '../task-audit/task-audit-summary-lifecycle';
 import { readImmutableRegularFileSnapshot } from './full-suite-repair-capture';
+import {
+    hasRepairChildScopeDeclaration,
+    readRepairChildScopeFromNotes,
+    validateIndependentRepairChildScopes
+} from './full-suite-repair-child-scope';
+import type {
+    RepairChildScopeEvidence
+} from './full-suite-repair-contracts';
 import { resolveInputPathInsideRepo } from './full-suite-repair-manifest';
 
 export interface FullSuiteRepairDecompositionState {
     ready: boolean;
     child_task_ids: string[];
+    child_scopes: RepairChildScopeEvidence[];
     violations: string[];
 }
 
@@ -28,7 +37,7 @@ export interface FullSuiteRepairChildHandoffState {
 export function resolveFullSuiteRepairDecompositionState(
     repoRoot: string,
     parentTaskId: string,
-    options: { allowCompletedChildren?: boolean } = {}
+    options: { allowCompletedChildren?: boolean; requireChildScopes?: boolean } = {}
 ): FullSuiteRepairDecompositionState {
     const taskEntries = readTaskQueueEntries(repoRoot);
     const parentEntry = taskEntries.get(parentTaskId);
@@ -36,6 +45,7 @@ export function resolveFullSuiteRepairDecompositionState(
         return {
             ready: false,
             child_task_ids: [],
+            child_scopes: [],
             violations: [`repair parent ${parentTaskId} is missing from TASK.md.`]
         };
     }
@@ -68,10 +78,38 @@ export function resolveFullSuiteRepairDecompositionState(
     if (disallowedNonExecutableChildTaskIds.length > 0) {
         violations.push(`repair child tasks are not executable: ${disallowedNonExecutableChildTaskIds.join(', ')}.`);
     }
+    const childScopes: RepairChildScopeEvidence[] = [];
+    for (const childTaskId of state.linkedChildTaskIds) {
+        const childEntry = taskEntries.get(childTaskId);
+        if (!childEntry) {
+            continue;
+        }
+        if (
+            !options.requireChildScopes
+            && !hasRepairChildScopeDeclaration(childEntry.notes || null)
+        ) {
+            continue;
+        }
+        const parsedScope = readRepairChildScopeFromNotes(
+            repoRoot,
+            childTaskId,
+            childEntry.notes || null
+        );
+        violations.push(...parsedScope.violations);
+        if (parsedScope.scope) {
+            childScopes.push(parsedScope.scope);
+        }
+    }
+    if (childScopes.length === state.linkedChildTaskIds.length) {
+        violations.push(...validateIndependentRepairChildScopes(childScopes));
+    } else if (options.requireChildScopes) {
+        violations.push('every repair child must declare an independently bounded Repair scope paths list.');
+    }
 
     return {
         ready: violations.length === 0,
         child_task_ids: state.linkedChildTaskIds,
+        child_scopes: childScopes,
         violations
     };
 }
@@ -162,6 +200,7 @@ export function findFullSuiteRepairChildHandoffState(
                         decomposition: {
                             ready: false,
                             child_task_ids: linkedChildTaskIds,
+                            child_scopes: [],
                             violations: [
                                 `full-suite artifact for repair parent ${parentTaskId} is missing despite `
                                 + 'durable timeout repair lifecycle evidence.'
@@ -178,6 +217,7 @@ export function findFullSuiteRepairChildHandoffState(
                 decomposition: {
                     ready: false,
                     child_task_ids: linkedChildTaskIds,
+                    child_scopes: [],
                     violations: [
                         `full-suite artifact for repair parent ${parentTaskId} cannot be inspected: ${message}`
                     ]
@@ -200,6 +240,7 @@ export function findFullSuiteRepairChildHandoffState(
                 decomposition: {
                     ready: false,
                     child_task_ids: linkedChildTaskIds,
+                    child_scopes: [],
                     violations: [
                         `full-suite artifact for repair parent ${parentTaskId} is not trusted: ${message}`
                     ]
@@ -217,6 +258,7 @@ export function findFullSuiteRepairChildHandoffState(
                 decomposition: {
                     ready: false,
                     child_task_ids: linkedChildTaskIds,
+                    child_scopes: [],
                     violations: [
                         `full-suite artifact for repair parent ${parentTaskId} no longer matches `
                         + 'durable timeout repair lifecycle evidence.'

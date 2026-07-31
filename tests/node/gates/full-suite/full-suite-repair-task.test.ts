@@ -56,8 +56,8 @@ function seedTaskQueue(repoRoot: string): void {
         '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
         '|---|---|---|---|---|---|---|---|---|',
         `| ${TASK_ID} | IN_PROGRESS | P1 | workflow/full-suite | Parent repair task | gpt-5.5 | 2026-06-30 | strict | Decomposition source: orchestrator (2026-06-30); child tasks: \`${CHILD_TASK_ID}\`, \`${SECOND_CHILD_TASK_ID}\`. |`,
-        `| ${CHILD_TASK_ID} | TODO | P1 | workflow/full-suite-timeout-diagnostics | Diagnose timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Identify the bounded timeout cause. |`,
-        `| ${SECOND_CHILD_TASK_ID} | TODO | P1 | workflow/full-suite-timeout-repair | Repair timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Apply the independently scoped repair. |`,
+        `| ${CHILD_TASK_ID} | TODO | P1 | workflow/full-suite-timeout-diagnostics | Diagnose timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Repair scope paths: \`README.md\`; Identify the bounded timeout cause. |`,
+        `| ${SECOND_CHILD_TASK_ID} | TODO | P1 | workflow/full-suite-timeout-repair | Repair timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Repair scope paths: \`src/repair-child-two.ts\`; Apply the independently scoped repair. |`,
         ''
     ].join('\n'), 'utf8');
 }
@@ -235,7 +235,7 @@ describe('full-suite repair task materialization', () => {
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
             `| ${TASK_ID} | IN_PROGRESS | P1 | workflow/full-suite | Parent repair task | gpt-5.5 | 2026-06-30 | strict | Decomposition source: orchestrator (2026-06-30); child tasks: \`${CHILD_TASK_ID}\`. |`,
-            `| ${CHILD_TASK_ID} | TODO | P1 | workflow/full-suite-timeout | Fix timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. |`,
+            `| ${CHILD_TASK_ID} | TODO | P1 | workflow/full-suite-timeout | Fix timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Repair scope paths: \`README.md\`; |`,
             ''
         ].join('\n'), 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
@@ -279,6 +279,33 @@ describe('full-suite repair task materialization', () => {
         assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/);
     });
 
+    it('rejects repair child scopes that overlap suspended parent WIP before mutation', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Repair scope paths: `README.md`;',
+                'Repair scope paths: `src/app.ts`;'
+            ),
+            'utf8'
+        );
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+
+        assert.equal(materialized.status, 'BLOCKED');
+        assert.match(materialized.violations.join('\n'), /scope overlaps suspended parent WIP: src\/app\.ts/);
+        assert.equal(materialized.wip_manifest_path, null);
+        assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/);
+    });
+
     it('suspends staged, unstaged, and task-owned ignored scratch, then restores them', () => {
         const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
         const appPath = path.join(repoRoot, 'src', 'app.ts');
@@ -310,6 +337,10 @@ describe('full-suite repair task materialization', () => {
         assert.equal(fs.existsSync(reviewEvidencePath), true, 'review evidence must not be captured as WIP');
 
         const manifest = readJson(materialized.wip_manifest_path || '');
+        assert.deepEqual(manifest.child_scopes, [
+            { task_id: CHILD_TASK_ID, paths: ['README.md'] },
+            { task_id: SECOND_CHILD_TASK_ID, paths: ['src/repair-child-two.ts'] }
+        ]);
         const untrackedPaths = (manifest.untracked_files as Array<Record<string, unknown>>).map((entry) => entry.path);
         assert.deepEqual(untrackedPaths, ['garda-agent-orchestrator/runtime/tmp/T-FULL-SUITE-REPAIR-scratch.log']);
         assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${CHILD_TASK_ID} | TODO |`));
@@ -940,6 +971,42 @@ describe('full-suite repair task materialization', () => {
         assert.ok(dryRun.output_lines.every((line) => !line.includes('--child-task-id')));
         const restoreCommandLine = dryRun.output_lines.find((line) => line.includes('Command: node garda-agent-orchestrator/bin/garda.js gate restore-full-suite-repair-wip'));
         assert.equal(restoreCommandLine?.includes('--dry-run'), false);
+    });
+
+    it('blocks legacy materialized handoff reuse so suspended parent recovery remains reachable', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        const manifestPath = materialized.wip_manifest_path || '';
+        const manifest = readJson(manifestPath);
+        manifest.schema_version = 3;
+        delete manifest.child_scopes;
+        writeJson(manifestPath, manifest);
+        const artifact = readJson(materialized.artifact_path);
+        artifact.schema_version = 2;
+        delete artifact.child_scopes;
+        artifact.wip_manifest_sha256 = fileSha256(manifestPath);
+        writeJson(materialized.artifact_path, artifact);
+
+        const retried = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+
+        assert.equal(retried.status, 'BLOCKED', retried.output_lines.join('\n'));
+        assert.equal(retried.wip_manifest_path, normalizeForArtifact(manifestPath));
+        assert.match(retried.violations.join('\n'), /predates scoped child isolation/);
+        assert.match(retried.violations.join('\n'), /do not rematerialize over its capture/);
+        assertOperatorNextActionOutput(retried.output_lines, 'FULL_SUITE_REPAIR_TASK_BLOCKED');
     });
 
     it('single-quotes restore command paths with PowerShell metacharacters', () => {
@@ -2046,6 +2113,37 @@ describe('full-suite repair task materialization', () => {
         assert.equal(restored.status, 'RESTORED', restored.output_lines.join('\n'));
         assert.equal(fs.readFileSync(path.join(repoRoot, 'src', 'app.ts'), 'utf8'), 'export const value = 2;\n');
         assert.equal(fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8'), '# Fixture\n\nadvanced\n');
+    });
+
+    it('blocks restore when descendant repair history escapes immutable child scopes', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        fs.writeFileSync(appPath, 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        fs.writeFileSync(path.join(repoRoot, 'outside-repair-scope.ts'), 'export const outside = true;\n', 'utf8');
+        runGit(repoRoot, ['add', 'outside-repair-scope.ts']);
+        runGit(repoRoot, ['commit', '-m', 'escape repair scope']);
+        markRepairChildDone(repoRoot);
+
+        const restored = restoreMaterializedWip({
+            repoRoot,
+            fullSuitePath,
+            manifestPath: materialized.wip_manifest_path || ''
+        });
+
+        assert.equal(restored.status, 'BLOCKED');
+        assert.match(
+            restored.violations.join('\n'),
+            /history escaped immutable scoped handoff: outside-repair-scope\.ts/
+        );
+        assert.equal(normalizeNewlines(fs.readFileSync(appPath, 'utf8')), 'export const value = 1;\n');
     });
 
     it('blocks restore when the repair child commit overlaps a suspended WIP path', () => {

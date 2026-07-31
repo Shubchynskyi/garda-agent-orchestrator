@@ -30,6 +30,7 @@ import type {
     CapturedPatchEvidence,
     CapturedUntrackedFileEvidence,
     PreflightChangedFileScope,
+    RepairChildScopeEvidence,
     RepairWipManifest,
     TrackedChangeFiles
 } from './full-suite-repair-contracts';
@@ -541,6 +542,7 @@ export function prepareWipCapture(params: {
     repoRoot: string;
     taskId: string;
     childTaskIds: string[];
+    childScopes: RepairChildScopeEvidence[];
     captureRoot: string;
     timestampUtc: string;
     preflightPath: string;
@@ -596,6 +598,10 @@ export function prepareWipCapture(params: {
             status: 'suspended',
             task_id: params.taskId,
             child_task_ids: [...params.childTaskIds],
+            child_scopes: params.childScopes.map((scope) => ({
+                task_id: scope.task_id,
+                paths: [...scope.paths]
+            })),
             created_at_utc: timestampUtc,
             base_commit: getHeadCommit(params.repoRoot),
             preflight_path: normalizePath(params.preflightPath),

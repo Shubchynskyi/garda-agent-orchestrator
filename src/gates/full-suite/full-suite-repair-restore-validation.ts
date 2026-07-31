@@ -302,6 +302,32 @@ export function validateDescendantRestoreHead(repoRoot: string, manifest: Repair
     if (ancestry.status !== 0) {
         return [gitFailureMessage(ancestryArgs, ancestry)];
     }
+    if (manifest.child_scopes) {
+        const allowedRepairPaths = new Set(
+            manifest.child_scopes.flatMap((scope) => scope.paths.map((entry) => normalizeGitPath(entry)))
+        );
+        const descendantPathsArgs = [
+            '--literal-pathspecs',
+            'diff',
+            '--name-only',
+            '--no-renames',
+            '-z',
+            `${manifest.base_commit}..${currentHead}`
+        ];
+        const descendantPaths = runGitStatus(repoRoot, descendantPathsArgs);
+        if (descendantPaths.status !== 0) {
+            violations.push(gitFailureMessage(descendantPathsArgs, descendantPaths));
+        } else {
+            const outOfScopePaths = splitNulList(descendantPaths.stdout)
+                .map((entry) => normalizeGitPath(entry))
+                .filter((entry) => !allowedRepairPaths.has(entry));
+            if (outOfScopePaths.length > 0) {
+                violations.push(
+                    `repair child history escaped immutable scoped handoff: ${outOfScopePaths.join(', ')}`
+                );
+            }
+        }
+    }
     for (const trackedPath of trackedHistoryPaths) {
         const historyArgs = [
             '--literal-pathspecs',

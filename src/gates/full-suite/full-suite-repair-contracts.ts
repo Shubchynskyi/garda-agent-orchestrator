@@ -10,8 +10,10 @@ import {
 import { normalizePath } from '../shared/helpers';
 import { buildOperatorNextActionBlock } from '../shared/operator-action-output';
 
-export const REPAIR_ARTIFACT_SCHEMA_VERSION = 2;
-export const WIP_MANIFEST_SCHEMA_VERSION = 3;
+export const REPAIR_ARTIFACT_SCHEMA_VERSION = 3;
+export const LEGACY_REPAIR_ARTIFACT_SCHEMA_VERSION = 2;
+export const WIP_MANIFEST_SCHEMA_VERSION = 4;
+export const LEGACY_WIP_MANIFEST_SCHEMA_VERSION = 3;
 
 export interface FullSuiteRepairTaskProposal {
     suggested_task_id: string;
@@ -100,12 +102,18 @@ export interface CapturedUntrackedFileEvidence {
     mode: number;
 }
 
+export interface RepairChildScopeEvidence {
+    task_id: string;
+    paths: string[];
+}
+
 export interface RepairWipManifest {
     schema_version: number;
     kind: 'full_suite_repair_wip';
     status: 'suspended';
     task_id: string;
     child_task_ids: string[];
+    child_scopes?: RepairChildScopeEvidence[];
     created_at_utc: string;
     base_commit: string;
     preflight_path: string;

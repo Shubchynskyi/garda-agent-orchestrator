@@ -10,11 +10,15 @@ import {
     normalizePath
 } from '../shared/helpers';
 import {
+    LEGACY_WIP_MANIFEST_SCHEMA_VERSION,
     WIP_MANIFEST_SCHEMA_VERSION,
     normalizeGitPath,
     resolveRepoPath,
     stableTimestampSlug
 } from './full-suite-repair-contracts';
+import {
+    parseRepairChildScopeEvidence
+} from './full-suite-repair-child-scope';
 import type {
     CapturedUntrackedFileEvidence,
     RepairWipManifest
@@ -471,8 +475,15 @@ export function parseRepairWipManifest(repoRoot: string, manifestPath: string, v
         return { manifest: null, violations: ['WIP manifest is missing or invalid.'] };
     }
     const violations: string[] = [];
-    if (value.schema_version !== WIP_MANIFEST_SCHEMA_VERSION) {
-        violations.push(`WIP manifest schema_version must be ${WIP_MANIFEST_SCHEMA_VERSION}.`);
+    const schemaVersion = value.schema_version;
+    if (
+        schemaVersion !== WIP_MANIFEST_SCHEMA_VERSION
+        && schemaVersion !== LEGACY_WIP_MANIFEST_SCHEMA_VERSION
+    ) {
+        violations.push(
+            `WIP manifest schema_version must be ${WIP_MANIFEST_SCHEMA_VERSION} `
+            + `or legacy ${LEGACY_WIP_MANIFEST_SCHEMA_VERSION}.`
+        );
     }
     if (value.status !== 'suspended') {
         violations.push('WIP manifest status must be suspended.');
@@ -507,6 +518,19 @@ export function parseRepairWipManifest(repoRoot: string, manifestPath: string, v
     }
     if (Object.prototype.hasOwnProperty.call(value, 'child_task_id')) {
         violations.push('WIP manifest child_task_id is not allowed; a repair split requires child_task_ids.');
+    }
+    if (schemaVersion === WIP_MANIFEST_SCHEMA_VERSION) {
+        const childScopes = parseRepairChildScopeEvidence(
+            repoRoot,
+            value.child_scopes,
+            normalizedChildTaskIds,
+            'WIP manifest child_scopes'
+        );
+        violations.push(...childScopes.violations);
+    } else if (Object.prototype.hasOwnProperty.call(value, 'child_scopes')) {
+        violations.push(
+            `legacy WIP manifest schema_version ${LEGACY_WIP_MANIFEST_SCHEMA_VERSION} must not claim child_scopes.`
+        );
     }
     if (!isCanonicalIsoUtcTimestamp(value.created_at_utc)) {
         violations.push('WIP manifest created_at_utc must be a canonical ISO-8601 UTC timestamp.');
