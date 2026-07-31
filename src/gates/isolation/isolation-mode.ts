@@ -174,7 +174,8 @@ function validateManifestStatus(
  */
 export function evaluateIsolationModePostTask(
     repoRoot: string,
-    preflightSnapshot: Record<string, string>
+    preflightSnapshot: Record<string, string>,
+    lifecycleOwnedChangedFiles: string[] = []
 ): IsolationModeEvidence {
     const config = loadIsolationModeConfig(repoRoot);
     const protectedRoots = getProtectedControlPlaneRoots(repoRoot);
@@ -200,9 +201,13 @@ export function evaluateIsolationModePostTask(
 
     // Detect files that changed between preflight and completion snapshots
     const driftFiles: string[] = [];
+    const lifecycleOwnedFiles = new Set(lifecycleOwnedChangedFiles.map((entry) => normalizePath(entry)));
     const allPaths = new Set([...Object.keys(preflightSnapshot), ...Object.keys(currentSnapshot)]);
     for (const p of allPaths) {
-        if (preflightSnapshot[p] !== currentSnapshot[p]) {
+        if (
+            preflightSnapshot[p] !== currentSnapshot[p]
+            && !lifecycleOwnedFiles.has(normalizePath(p))
+        ) {
             driftFiles.push(p);
         }
     }

@@ -148,6 +148,26 @@ describe('gates/isolation-mode', () => {
             assert.ok(evidence.violations.length > 0, 'Expected at least one violation in STRICT mode');
         });
 
+        it('excludes validated lifecycle-owned drift without hiding another strict isolation violation', () => {
+            writeIsolationConfig(tempDir, { enabled: true, enforcement: 'STRICT' });
+            const generatedManifestPath = 'dist/publish-runtime-manifest.json';
+            const externalProtectedPath = 'src/gates/external-change.ts';
+            const evidence = evaluateIsolationModePostTask(
+                tempDir,
+                {
+                    [generatedManifestPath]: 'pre-compile-hash',
+                    [externalProtectedPath]: 'external-preflight-hash'
+                },
+                [generatedManifestPath]
+            );
+
+            assert.equal(evidence.isolation_enabled, true);
+            assert.deepEqual(evidence.drift_files, [externalProtectedPath]);
+            assert.equal(evidence.violations.length, 1);
+            assert.match(evidence.violations[0] || '', /src\/gates\/external-change\.ts/u);
+            assert.doesNotMatch(evidence.violations[0] || '', /publish-runtime-manifest/u);
+        });
+
         it('detects drift in LOG_ONLY mode as warning', () => {
             writeIsolationConfig(tempDir, { enabled: true, enforcement: 'LOG_ONLY' });
             const preflight = { 'some/file.ts': 'abc123' };

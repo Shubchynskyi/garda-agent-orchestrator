@@ -5,6 +5,7 @@ import {
     toPlainRecord,
     type ProtectedControlPlaneManifestEvidence
 } from '../shared/helpers';
+import { COMPILE_GENERATED_PROTECTED_ARTIFACT_PATHS } from './compile-generated-protected-artifacts';
 
 export interface ProtectedManifestLifecycleGuardResult {
     status: 'ALLOW' | 'BLOCK';
@@ -26,6 +27,7 @@ interface ProtectedManifestLifecycleGuardOptions {
     manifestEvidence?: ProtectedControlPlaneManifestEvidence | null;
     dirtyWorkspaceProtectionStatus?: string | null;
     dirtyWorkspaceProtectedFiles?: string[] | null;
+    lifecycleOwnedManifestChangedFiles?: string[] | null;
     restartCommandHint?: string;
 }
 
@@ -139,6 +141,15 @@ export function getProtectedManifestLifecycleGuard(
     const dirtyWorkspaceProtectedFiles = normalizePathList(
         options.dirtyWorkspaceProtectedFiles || getPreflightDirtyWorkspaceProtectedFiles(options.preflight)
     );
+    const lifecycleOwnedManifestChangedFiles = new Set(
+        normalizePathList(options.lifecycleOwnedManifestChangedFiles).filter((entry) => (
+            isOrchestratorSourceCheckout(options.repoRoot)
+            && COMPILE_GENERATED_PROTECTED_ARTIFACT_PATHS.includes(entry)
+        ))
+    );
+    const currentManifestChangedFiles = manifestEvidence.changed_files.filter(
+        (entry) => !lifecycleOwnedManifestChangedFiles.has(normalizePath(entry))
+    );
     const preflightManifestAllowance = evaluateProtectedManifestBaselineAllowance({
         orchestratorWork: options.orchestratorWork,
         manifestStatus: preflightManifestStatus,
@@ -152,18 +163,27 @@ export function getProtectedManifestLifecycleGuard(
     const currentManifestAllowance = evaluateProtectedManifestBaselineAllowance({
         orchestratorWork: options.orchestratorWork,
         manifestStatus: manifestEvidence.status,
-        manifestChangedFiles: manifestEvidence.changed_files,
+        manifestChangedFiles: currentManifestChangedFiles,
         dirtyWorkspaceProtectionStatus,
         dirtyWorkspaceProtectedFiles,
         sourceCheckoutInheritedDrift: sourceCheckoutInheritedDrift && (
-            preflightManifestStatus !== 'DRIFT'
-            || manifestEvidence.changed_files.every((entry) => preflightManifestChangedFiles.includes(entry))
+            lifecycleOwnedManifestChangedFiles.size === 0
+                ? (
+                    preflightManifestStatus !== 'DRIFT'
+                    || currentManifestChangedFiles.every((entry) => preflightManifestChangedFiles.includes(entry))
+                )
+                : currentManifestChangedFiles.every((entry) => preflightManifestChangedFiles.includes(entry))
         )
     });
     const preflightManifestAllowed = preflightManifestAllowance.status === 'INHERITED_BASELINE_ONLY'
         || preflightManifestAllowance.status === 'SOURCE_CHECKOUT_INHERITED_DRIFT';
     const currentManifestAllowed = currentManifestAllowance.status === 'INHERITED_BASELINE_ONLY'
-        || currentManifestAllowance.status === 'SOURCE_CHECKOUT_INHERITED_DRIFT';
+        || currentManifestAllowance.status === 'SOURCE_CHECKOUT_INHERITED_DRIFT'
+        || (
+            lifecycleOwnedManifestChangedFiles.size > 0
+            && manifestEvidence.changed_files.length > 0
+            && currentManifestChangedFiles.length === 0
+        );
     if (preflightManifestStatus === 'INVALID') {
         return {
             status: 'BLOCK',
@@ -199,7 +219,7 @@ export function getProtectedManifestLifecycleGuard(
         };
     }
     if (manifestEvidence.status === 'DRIFT' && !currentManifestAllowed) {
-        const driftFiles = manifestEvidence.changed_files.join(', ') || 'unknown protected files';
+        const driftFiles = currentManifestChangedFiles.join(', ') || 'unknown protected files';
         const remediation = options.restartCommandHint
             ? `Restart task mode with: ${options.restartCommandHint}`
             : buildRemediationSuffix();

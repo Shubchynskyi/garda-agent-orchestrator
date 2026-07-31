@@ -1,4 +1,9 @@
 import {
+    buildCompileGeneratedProtectedArtifactEvidence,
+    captureCompileGeneratedProtectedArtifactHashes,
+    type CompileGeneratedProtectedArtifactEvidence
+} from '../../../../gates/protected-control-plane/compile-generated-protected-artifacts';
+import {
     getProtectedManifestLifecycleGuard
 } from '../../../../gates/protected-control-plane/protected-manifest-guard';
 import {
@@ -195,18 +200,30 @@ export function evaluatePostCompileProtectedManifestGuard(params: {
     preflightChangedFiles: string[];
     preCompileManifestEvidence: ProtectedManifestEvidence;
     preCompileTaskOwnedManifestFiles: string[];
+    preCompileGeneratedArtifactHashes: Record<string, string | null>;
     buildRestartCommand: BuildCompileRestartCommand;
 }): {
+    compileGeneratedProtectedArtifacts: CompileGeneratedProtectedArtifactEvidence | null;
     generatedManifestFiles: string[];
     guard: ProtectedManifestGuard | null;
     manifestEvidence: ProtectedManifestEvidence;
-} | null {
+} {
+    const compileGeneratedProtectedArtifacts = buildCompileGeneratedProtectedArtifactEvidence(
+        params.preCompileGeneratedArtifactHashes,
+        captureCompileGeneratedProtectedArtifactHashes(params.repoRoot)
+    );
     if (params.taskModeEvidence.orchestrator_work === true) {
-        return null;
+        return {
+            compileGeneratedProtectedArtifacts,
+            generatedManifestFiles: [],
+            guard: null,
+            manifestEvidence: params.preCompileManifestEvidence
+        };
     }
     const manifestEvidence = gateHelpers.evaluateProtectedControlPlaneManifest(params.repoRoot, null, true);
     if (manifestEvidence.status !== 'DRIFT') {
         return {
+            compileGeneratedProtectedArtifacts,
             generatedManifestFiles: [],
             guard: null,
             manifestEvidence
@@ -216,19 +233,24 @@ export function evaluatePostCompileProtectedManifestGuard(params: {
         params.preCompileManifestEvidence.changed_files,
         manifestEvidence.changed_files
     );
+    const compileGeneratedManifestFiles = compileGeneratedProtectedArtifacts?.changed_files || [];
+    const restartManifestFiles = generatedManifestFiles.filter(
+        (entry) => !compileGeneratedManifestFiles.includes(gateHelpers.normalizePath(entry))
+    );
     const guard = getProtectedManifestLifecycleGuard({
         repoRoot: params.repoRoot,
         orchestratorWork: false,
         phaseLabel: params.phaseLabel,
         preflight: params.preflight,
         manifestEvidence,
+        lifecycleOwnedManifestChangedFiles: compileGeneratedManifestFiles,
         restartCommandHint: params.buildRestartCommand([
             ...params.preflightChangedFiles,
             ...params.preCompileTaskOwnedManifestFiles,
-            ...generatedManifestFiles
+            ...restartManifestFiles
         ])
     });
-    return { generatedManifestFiles, guard, manifestEvidence };
+    return { compileGeneratedProtectedArtifacts, generatedManifestFiles, guard, manifestEvidence };
 }
 
 export function getCompileScopeDriftViolations(params: {

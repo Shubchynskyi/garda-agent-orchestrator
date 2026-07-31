@@ -1087,6 +1087,84 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('restarts an ordinary cycle when compile regenerates only the source-checkout publish manifest', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-restart-compile-publish-manifest';
+        const taskFile = 'scripts/task-input.ts';
+        const manifestFile = 'dist/publish-runtime-manifest.json';
+        const manifestPath = path.join(repoRoot, ...manifestFile.split('/'));
+        const compileScript =
+            "require('node:fs').writeFileSync('dist/publish-runtime-manifest.json', JSON.stringify({version:2})+'\\n')";
+
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        const workflowConfigPath = writeWorkflowConfig(repoRoot);
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as {
+            compile_gate: { command: string };
+        };
+        workflowConfig.compile_gate.command = `node -e "${compileScript}"`;
+        fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'scripts'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, ...taskFile.split('/')), 'export const value = 1;\n', 'utf8');
+        fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+        fs.writeFileSync(manifestPath, '{"version":1}\n', 'utf8');
+        writeProtectedControlPlaneManifest(repoRoot);
+        fs.writeFileSync(
+            path.join(repoRoot, '.gitignore'),
+            'TASK.md\ngarda-agent-orchestrator/runtime/\n',
+            'utf8'
+        );
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            `${taskId}-ordinary`
+        );
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart ordinary compile-generated manifest cycle'
+        });
+        assert.equal(taskModeResult.exitCode, 0, taskModeResult.outputLines.join('\n'));
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        fs.writeFileSync(path.join(repoRoot, ...taskFile.split('/')), 'export const value = 2;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart ordinary compile-generated manifest cycle',
+            [taskFile]
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/u);
+        const compileEvidence = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`), 'utf8')
+        ) as Record<string, any>;
+        assert.deepEqual(
+            compileEvidence.compile_generated_protected_artifacts?.changed_files,
+            [manifestFile]
+        );
+        assert.equal(
+            compileEvidence.compile_generated_protected_artifacts?.entries?.[0]?.after_sha256,
+            fileSha256(manifestPath)
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('rejects protected coherent-cycle restart without operator confirmation', async () => {
         const fixture = prepareProtectedCoherentRestartFixture('T-903a-restart-coherent-cycle-missing-approval');
 

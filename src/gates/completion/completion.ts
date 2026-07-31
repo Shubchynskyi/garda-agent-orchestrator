@@ -15,7 +15,11 @@ import {
     detectProtectedDirtyWorkspaceDrift,
     getProtectedDirtyWorkspaceScopeFromPreflight
 } from '../workspace';
-import { getProtectedManifestLifecycleGuard } from '../protected-control-plane';
+import {
+    getProtectedManifestLifecycleGuard,
+    reconstructProtectedSnapshotBeforeCompileGeneratedArtifacts,
+    validateCompileGeneratedProtectedArtifactEvidence
+} from '../protected-control-plane';
 import { getNoOpEvidence, getTaskModeEvidence, getTaskModeEvidenceViolations } from '../task-mode';
 import {
     getHandshakeEvidence,
@@ -195,6 +199,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const preflightProtectedSnapshotDigest = String(preflightTriggers.protected_control_plane_snapshot_sha256 || '').trim().toLowerCase();
     const hasProtectedSnapshotDigest = /^[a-f0-9]{64}$/.test(preflightProtectedSnapshotDigest);
     const orchestratorWork = !!taskModeEvidence.orchestrator_work;
+    const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);
+    const hasCompileGeneratedProtectedArtifactEvidence = !!toPlainRecord(
+        compileEvidence?.compile_generated_protected_artifacts
+    );
 
     // Re-scan protected paths at completion to detect tampering.
     // When isolation mode is enabled, enforcement level governs whether drift is
@@ -203,11 +211,31 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const isolationWarnings: string[] = [];
     let currentProtectedSnapshot: Record<string, string> | null = null;
     let protectedControlPlaneWorkflowConfigChangedFilesAtCompletion: string[] = [];
-    if (hasProtectedSnapshot || hasProtectedSnapshotDigest) {
+    if (hasProtectedSnapshot || hasProtectedSnapshotDigest || hasCompileGeneratedProtectedArtifactEvidence) {
         currentProtectedSnapshot = scanProtectedPathHashes(
             repoRoot,
             getProtectedControlPlaneRoots(repoRoot)
         );
+    }
+    const compileGeneratedProtectedArtifactValidation = !orchestratorWork && currentProtectedSnapshot
+        ? validateCompileGeneratedProtectedArtifactEvidence({
+            repoRoot,
+            compileEvidence,
+            taskId: resolvedTaskId || '',
+            preflightPath,
+            preflightSha256: validatedPreflight.preflight_hash || '',
+            currentProtectedSnapshot
+        })
+        : {
+            allowed_changed_files: [],
+            entries: [],
+            violations: []
+        };
+    errors.push(...compileGeneratedProtectedArtifactValidation.violations);
+    const compileGeneratedProtectedArtifactEntriesByPath = new Map(
+        compileGeneratedProtectedArtifactValidation.entries.map((entry) => [entry.path, entry])
+    );
+    if ((hasProtectedSnapshot || hasProtectedSnapshotDigest) && currentProtectedSnapshot) {
         const currentProtectedSnapshotDigest = computeProtectedSnapshotDigest(currentProtectedSnapshot);
         let changedFiles: string[] = [];
         let taskMutatedProtectedControlPlane = false;
@@ -216,6 +244,17 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
             const allProtectedPaths = new Set([...Object.keys(preflightProtectedSnapshot), ...Object.keys(currentProtectedSnapshot)]);
             for (const p of allProtectedPaths) {
                 if (preflightProtectedSnapshot[p] !== currentProtectedSnapshot[p]) {
+                    const compileGeneratedEntry = compileGeneratedProtectedArtifactEntriesByPath.get(p);
+                    const preflightHash = Object.prototype.hasOwnProperty.call(preflightProtectedSnapshot, p)
+                        ? String(preflightProtectedSnapshot[p] || '').trim().toLowerCase()
+                        : null;
+                    if (
+                        compileGeneratedEntry
+                        && preflightHash === compileGeneratedEntry.before_sha256
+                        && currentProtectedSnapshot[p] === compileGeneratedEntry.after_sha256
+                    ) {
+                        continue;
+                    }
                     changedFiles.push(p);
                 }
             }
@@ -223,8 +262,16 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
             protectedControlPlaneWorkflowConfigChangedFilesAtCompletion = changedFiles.filter((changedFile) => (
                 Object.prototype.hasOwnProperty.call(preflightProtectedSnapshot, changedFile)
             ));
-        } else if (hasProtectedSnapshotDigest) {
-            taskMutatedProtectedControlPlane = currentProtectedSnapshotDigest !== preflightProtectedSnapshotDigest;
+        } else if (
+            hasProtectedSnapshotDigest
+            && currentProtectedSnapshotDigest !== preflightProtectedSnapshotDigest
+        ) {
+            const reconstructedPreCompileSnapshot = reconstructProtectedSnapshotBeforeCompileGeneratedArtifacts(
+                currentProtectedSnapshot,
+                compileGeneratedProtectedArtifactValidation.entries
+            );
+            taskMutatedProtectedControlPlane =
+                computeProtectedSnapshotDigest(reconstructedPreCompileSnapshot) !== preflightProtectedSnapshotDigest;
         }
 
         if (taskMutatedProtectedControlPlane && !orchestratorWork) {
@@ -247,7 +294,9 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         orchestratorWork,
         phaseLabel: 'completion gate',
         preflight,
-        manifestEvidence: protectedManifestEvidence
+        manifestEvidence: protectedManifestEvidence,
+        lifecycleOwnedManifestChangedFiles:
+            compileGeneratedProtectedArtifactValidation.allowed_changed_files
     });
     if (!orchestratorWork && protectedManifestGuard.status === 'BLOCK') {
         if (isolationConfig.enabled && isolationConfig.enforcement === 'LOG_ONLY') {
@@ -277,7 +326,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         isolationWarnings.push(`Workflow config workspace scan warning: ${workflowConfigChanges.scan_error}`);
     }
 
-    const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);
     const docImpactEvidence = readJsonArtifact(docImpactPath, 'Doc impact gate', errors);
     const compileCommandsPath = readOptionalArtifactStringField(compileEvidence, 'commands_path');
     const compileOutputFiltersPath = readOptionalArtifactStringField(compileEvidence, 'output_filters_path');
@@ -296,7 +344,11 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         for (const [k, v] of Object.entries(preflightProtectedSnapshot)) {
             typedSnapshot[k] = String(v);
         }
-        const isolationEvidence = evaluateIsolationModePostTask(repoRoot, typedSnapshot);
+        const isolationEvidence = evaluateIsolationModePostTask(
+            repoRoot,
+            typedSnapshot,
+            compileGeneratedProtectedArtifactValidation.allowed_changed_files
+        );
         errors.push(...isolationEvidence.violations);
         isolationWarnings.push(...isolationEvidence.warnings);
     }
@@ -599,6 +651,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         project_memory_impact_evidence: projectMemoryImpactEvidence,
         zero_diff_evidence: zeroDiffEvidence,
         dirty_workspace_protection_evidence: dirtyWorkspaceProtectionEvidence,
+        compile_generated_protected_artifact_evidence: compileGeneratedProtectedArtifactValidation,
         plan: planEvidence,
         isolation_mode_warnings: isolationWarnings,
         coherent_cycle_restart_command: coherentCycleRestartCommand,

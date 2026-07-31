@@ -6,7 +6,13 @@ import * as path from 'node:path';
 import {
     runCompletionGate
 } from '../../../../src/gates/completion';
-import { computeProtectedSnapshotDigest, fileSha256, normalizePath } from '../../../../src/gates/shared/helpers';
+import {
+    computeProtectedSnapshotDigest,
+    fileSha256,
+    getProtectedControlPlaneRoots,
+    normalizePath,
+    scanProtectedPathHashes
+} from '../../../../src/gates/shared/helpers';
 import { getCurrentWorkflowConfigFileHashes } from '../../../../src/gates/workflow-config/workflow-config-work';
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
 import { GARDA_NO_DELEGATE_ENV } from '../../../../src/core/review-delegation-policy';
@@ -263,6 +269,96 @@ describe('gates/completion — protected control-plane', () => {
                 assert.equal(result.status, 'FAILED');
                 assert.ok(
                     result.violations.some((entry) => String(entry).includes('Control-plane files were modified in a non-orchestrator task'))
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('accepts compile-owned publish manifest output and rejects later tampering', () => {
+            const workspace = createCompletionWorkspace(false, 'digest');
+            const manifestRelativePath = 'dist/publish-runtime-manifest.json';
+            const manifestPath = path.join(workspace.repoRoot, ...manifestRelativePath.split('/'));
+
+            try {
+                writeJson(path.join(workspace.repoRoot, 'package.json'), {
+                    name: 'garda-agent-orchestrator',
+                    version: '0.0.0-test'
+                });
+                writeJson(manifestPath, { version: 1 });
+                const beforeSha256 = fileSha256(manifestPath);
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, any>;
+                const preCompileSnapshot = scanProtectedPathHashes(
+                    workspace.repoRoot,
+                    getProtectedControlPlaneRoots(workspace.repoRoot)
+                );
+                preflight.triggers = {
+                    protected_control_plane_snapshot_sha256:
+                        computeProtectedSnapshotDigest(preCompileSnapshot)
+                };
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, any>;
+                rulePack.stages.post_preflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                writeJson(workspace.rulePackPath, rulePack);
+
+                writeJson(manifestPath, { version: 2 });
+                const afterSha256 = fileSha256(manifestPath);
+                writeJson(workspace.compilePath, {
+                    task_id: 'T-1010',
+                    status: 'PASSED',
+                    outcome: 'PASS',
+                    preflight_path: normalizePath(workspace.preflightPath),
+                    preflight_hash_sha256: fileSha256(workspace.preflightPath),
+                    compile_generated_protected_artifacts: {
+                        schema_version: 1,
+                        producer: 'compile-gate',
+                        source_checkout: true,
+                        changed_files: [manifestRelativePath],
+                        entries: [{
+                            path: manifestRelativePath,
+                            before_sha256: beforeSha256,
+                            after_sha256: afterSha256
+                        }]
+                    }
+                });
+
+                const accepted = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+                assert.equal(accepted.status, 'PASSED', accepted.violations.join('\n'));
+                assert.deepEqual(
+                    accepted.compile_generated_protected_artifact_evidence.allowed_changed_files,
+                    [manifestRelativePath]
+                );
+
+                writeJson(manifestPath, { version: 3 });
+                const rejected = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+                assert.equal(rejected.status, 'FAILED');
+                assert.match(
+                    rejected.violations.join('\n'),
+                    /changed after compile-gate evidence was recorded/u
                 );
             } finally {
                 fs.rmSync(workspace.repoRoot, { recursive: true, force: true });

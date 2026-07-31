@@ -31,7 +31,13 @@ import {
     detectProtectedDirtyWorkspaceDrift,
     getProtectedDirtyWorkspaceScopeFromPreflight
 } from '../../../../gates/workspace/dirty-worktree-protection';
-import { getProtectedManifestLifecycleGuard } from '../../../../gates/protected-control-plane/protected-manifest-guard';
+import {
+    captureCompileGeneratedProtectedArtifactHashes,
+    type CompileGeneratedProtectedArtifactEvidence
+} from '../../../../gates/protected-control-plane/compile-generated-protected-artifacts';
+import {
+    getProtectedManifestLifecycleGuard
+} from '../../../../gates/protected-control-plane/protected-manifest-guard';
 import {
     getTaskModeEvidence,
     getTaskModeEvidenceViolations
@@ -174,6 +180,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let planDriftResult: PlanDriftResult | null = null;
     let dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(repoRoot, null);
     let protectedManifestGuard: ReturnType<typeof getProtectedManifestLifecycleGuard> | null = null;
+    let compileGeneratedProtectedArtifacts: CompileGeneratedProtectedArtifactEvidence | null = null;
     let postPreflightSequenceEvidence: ReturnType<typeof getPostPreflightSequenceEvidence> | null = null;
     let workflowConfigBaselineForCompile: Record<string, string | null> | null = null;
 
@@ -240,6 +247,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         });
         const preCompileManifestEvidence = preCompileManifestGuard.manifestEvidence;
         const preCompileTaskOwnedManifestFiles = preCompileManifestGuard.taskOwnedManifestFiles;
+        const preCompileGeneratedArtifactHashes = captureCompileGeneratedProtectedArtifactHashes(repoRoot);
         protectedManifestGuard = preCompileManifestGuard.guard;
         if (!exceptionMessage && protectedManifestGuard.status === 'BLOCK') {
             exitCode = EXIT_GATE_FAILURE;
@@ -436,6 +444,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 preflightChangedFiles,
                 preCompileManifestEvidence,
                 preCompileTaskOwnedManifestFiles,
+                preCompileGeneratedArtifactHashes,
                 buildRestartCommand: (changedFiles) => buildClassifyChangeOrchestratorWorkRestartCommand({
                     repoRoot,
                     taskId: resolvedTaskId,
@@ -444,6 +453,8 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                     changedFiles
                 })
             });
+            compileGeneratedProtectedArtifacts =
+                postCompileManifestGuard.compileGeneratedProtectedArtifacts;
             if (postCompileManifestGuard?.guard?.status === 'BLOCK') {
                 exitCode = EXIT_GATE_FAILURE;
                 exceptionMessage = postCompileManifestGuard.guard.violations.join(' ');
@@ -535,6 +546,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             manifest_path: protectedManifestGuard.manifest_evidence.manifest_path,
             changed_files: protectedManifestGuard.manifest_evidence.changed_files
         } : null,
+        compile_generated_protected_artifacts: compileGeneratedProtectedArtifacts,
         evidence_path: normalizeOptionalPath(compileEvidencePath),
         compile_output_path: retainCompileOutput ? normalizeOptionalPath(compileOutputPath) : null,
         compile_output_retention: compileOutputRetention,
