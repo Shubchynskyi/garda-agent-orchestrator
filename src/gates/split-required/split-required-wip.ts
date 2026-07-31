@@ -1,6 +1,4 @@
-import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
@@ -9,7 +7,6 @@ import {
 import {
     runGit
 } from '../../core/git-helpers';
-import { isPlainRecord } from '../../core/records';
 import {
     joinOrchestratorPath,
     normalizePath
@@ -28,12 +25,28 @@ import {
 import type {
     SplitRequiredWipListResult,
     SplitRequiredWipManifest,
-    SplitRequiredWipPatchEvidence,
     SplitRequiredWipRestoreResult,
     SplitRequiredWipRetireResult,
     SplitRequiredWipTrackedFileEvidence,
     SplitRequiredWipUntrackedFileEvidence
 } from './split-required-wip-contracts';
+import {
+    applyAdvancedRestorePlan,
+    buildGitApplyIncludeArgs,
+    ensureCleanTrackedWorkspace,
+    gitFailureMessage,
+    hasPatchContent,
+    normalizeSelectedPaths,
+    planAdvancedRestore,
+    runGitStatus,
+    selectedFiles,
+    validateAdvancedManifestBlobs,
+    validateManifestFileReferences,
+    validateNoSymlinkPath,
+    validateSelectedTargetsClean,
+    validateTrackedTargetObstructions
+} from './split-required-wip-restore-plan';
+import type { AdvancedRestorePlan } from './split-required-wip-restore-plan';
 
 export { canCaptureSplitRequiredWip } from './split-required-wip-contracts';
 export { captureAndSuspendSplitRequiredWip } from './split-required-wip-capture';
@@ -49,475 +62,6 @@ export type {
     SplitRequiredWipTrackedFileEvidence,
     SplitRequiredWipUntrackedFileEvidence
 } from './split-required-wip-contracts';
-
-interface AdvancedRestorePlan {
-    temp_root: string;
-    candidate_index_path: string;
-    candidate_worktree_root: string;
-    current_head: string;
-    current_index_sha256: string;
-    target_sha256: Map<string, string | null>;
-}
-
-function removeFileIfExists(filePath: string): void {
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        fs.unlinkSync(filePath);
-    }
-}
-
-function hasPatchContent(patch: SplitRequiredWipPatchEvidence): boolean {
-    return patch.bytes > 0 && !patch.empty;
-}
-
-function normalizeSelectedPaths(paths: readonly string[]): Set<string> {
-    return new Set(paths.map((entry) => normalizeGitPath(entry)).filter(Boolean));
-}
-
-function selectedFiles<T extends { path: string }>(entries: readonly T[], selectedPaths: Set<string>): T[] {
-    if (selectedPaths.size === 0) {
-        return [...entries];
-    }
-    return entries.filter((entry) => selectedPaths.has(normalizeGitPath(entry.path)));
-}
-
-function buildGitApplyIncludeArgs(selectedPaths: Set<string>): string[] {
-    if (selectedPaths.size === 0) {
-        return [];
-    }
-    return [...selectedPaths]
-        .sort()
-        .map((entry) => `--include=${entry.replace(/([\\*?\[\]])/gu, '\\$1')}`);
-}
-
-function indexEntriesByPath(repoRoot: string, indexPath: string): Map<string, string[]> {
-    const args = ['ls-files', '--stage', '-z'];
-    const result = runGitStatus(repoRoot, args, gitEnvironment(indexPath));
-    if (result.status !== 0) {
-        throw new Error(gitFailureMessage(args, result));
-    }
-    const entries = new Map<string, string[]>();
-    for (const record of result.stdout.split('\0')) {
-        if (!record) {
-            continue;
-        }
-        const separator = record.indexOf('\t');
-        if (separator < 0) {
-            throw new Error('git ls-files returned malformed index evidence.');
-        }
-        const filePath = normalizeGitPath(record.slice(separator + 1));
-        const pathEntries = entries.get(filePath) || [];
-        pathEntries.push(record.slice(0, separator));
-        entries.set(filePath, pathEntries);
-    }
-    return entries;
-}
-
-function validateTrackedTargetObstructions(
-    repoRoot: string,
-    selectedTrackedFiles: SplitRequiredWipTrackedFileEvidence[]
-): string[] {
-    try {
-        const currentIndexEntries = indexEntriesByPath(repoRoot, currentIndexPath(repoRoot));
-        return selectedTrackedFiles
-            .map((entry) => normalizeGitPath(entry.path))
-            .filter((relativePath) => fileStateSha256(resolveRepoPath(repoRoot, relativePath)) !== null)
-            .filter((relativePath) => !currentIndexEntries.has(relativePath))
-            .sort()
-            .map((relativePath) => `selected tracked restore target has an untracked obstruction: ${relativePath}`);
-    } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return [`failed to inspect selected restore targets in the current index: ${message}`];
-    }
-}
-
-function unauthorizedIndexChanges(
-    repoRoot: string,
-    beforeIndexPath: string,
-    afterIndexPath: string,
-    selectedPaths: Set<string>
-): string[] {
-    const before = indexEntriesByPath(repoRoot, beforeIndexPath);
-    const after = indexEntriesByPath(repoRoot, afterIndexPath);
-    const allPaths = new Set([...before.keys(), ...after.keys()]);
-    return [...allPaths]
-        .filter((entry) => JSON.stringify(before.get(entry) || []) !== JSON.stringify(after.get(entry) || []))
-        .filter((entry) => !selectedPaths.has(entry))
-        .sort();
-}
-
-function ensureCleanTrackedWorkspace(repoRoot: string): string[] {
-    const violations: string[] = [];
-    const unstaged = runGit(repoRoot, ['diff', '--name-only']).trim();
-    const staged = runGit(repoRoot, ['diff', '--name-only', '--cached']).trim();
-    if (unstaged) {
-        violations.push(`unstaged tracked changes exist: ${unstaged.replace(/\r?\n/gu, ', ')}`);
-    }
-    if (staged) {
-        violations.push(`staged changes exist: ${staged.replace(/\r?\n/gu, ', ')}`);
-    }
-    return violations;
-}
-
-function runGitStatus(repoRoot: string, args: string[], environment: NodeJS.ProcessEnv = process.env): {
-    status: number;
-    stdout: string;
-    stderr: string;
-} {
-    const result = childProcess.spawnSync('git', ['-C', repoRoot, ...args], {
-        encoding: 'utf8',
-        env: environment,
-        stdio: ['ignore', 'pipe', 'pipe']
-    });
-    return {
-        status: result.status ?? -1,
-        stdout: String(result.stdout || ''),
-        stderr: String(result.stderr || '')
-    };
-}
-
-function gitEnvironment(indexPath: string, worktreePath?: string): NodeJS.ProcessEnv {
-    return {
-        ...process.env,
-        GIT_INDEX_FILE: indexPath,
-        ...(worktreePath ? { GIT_WORK_TREE: worktreePath } : {})
-    };
-}
-
-function gitFailureMessage(args: string[], result: { stdout: string; stderr: string }): string {
-    return `git ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim() || 'unknown git error'}`;
-}
-
-function currentIndexPath(repoRoot: string): string {
-    const gitPath = runGit(repoRoot, ['rev-parse', '--git-path', 'index']).trim();
-    return path.isAbsolute(gitPath) ? path.resolve(gitPath) : path.resolve(repoRoot, gitPath);
-}
-
-function fileStateSha256(filePath: string): string | null {
-    let stat: fs.Stats;
-    try {
-        stat = fs.lstatSync(filePath);
-    } catch (error: unknown) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT' || code === 'ENOTDIR') {
-            return null;
-        }
-        throw error;
-    }
-    if (!stat.isFile()) {
-        return `non-file:${stat.mode}`;
-    }
-    return sha256FileRequired(filePath);
-}
-
-function selectedTargetState(repoRoot: string, selectedPaths: Set<string>): Map<string, string | null> {
-    return new Map([...selectedPaths].map((relativePath) => [
-        relativePath,
-        fileStateSha256(resolveRepoPath(repoRoot, relativePath))
-    ]));
-}
-
-function validateSelectedTargetsClean(repoRoot: string, selectedPaths: Set<string>): string[] {
-    const violations: string[] = [];
-    for (const relativePath of [...selectedPaths].sort()) {
-        for (const args of [
-            ['diff', '--quiet', '--', relativePath],
-            ['diff', '--cached', '--quiet', '--', relativePath]
-        ]) {
-            const result = runGitStatus(repoRoot, args);
-            if (result.status === 1) {
-                violations.push(`selected restore target is dirty: ${relativePath}`);
-                break;
-            }
-            if (result.status !== 0) {
-                violations.push(gitFailureMessage(args, result));
-                break;
-            }
-        }
-    }
-    return violations;
-}
-
-function validateNoSymlinkPath(repoRoot: string, relativePath: string): string[] {
-    const violations: string[] = [];
-    const root = path.resolve(repoRoot);
-    const target = resolveRepoPath(root, relativePath);
-    let cursor = target;
-    while (cursor !== root) {
-        if (fs.existsSync(cursor) && fs.lstatSync(cursor).isSymbolicLink()) {
-            violations.push(`selected restore path contains a symbolic link: ${relativePath}`);
-            break;
-        }
-        cursor = path.dirname(cursor);
-    }
-    const tree = runGitStatus(repoRoot, ['ls-tree', '-z', 'HEAD', '--', normalizeGitPath(relativePath)]);
-    if (tree.status !== 0) {
-        violations.push(gitFailureMessage(['ls-tree', 'HEAD', '--', relativePath], tree));
-    } else if (tree.stdout.startsWith('120000 ')) {
-        violations.push(`selected restore target is a symbolic link in HEAD: ${relativePath}`);
-    }
-    return violations;
-}
-
-function validateAdvancedManifestBlobs(
-    repoRoot: string,
-    manifest: SplitRequiredWipManifest,
-    selectedTrackedFiles: SplitRequiredWipTrackedFileEvidence[]
-): string[] {
-    const violations: string[] = [];
-    const commitCheck = runGitStatus(repoRoot, ['cat-file', '-e', `${manifest.base_commit}^{commit}`]);
-    if (commitCheck.status !== 0) {
-        return [`manifest base commit is missing or invalid: ${manifest.base_commit}`];
-    }
-    for (const entry of selectedTrackedFiles) {
-        if (!entry.head_sha256) {
-            const absent = runGitStatus(repoRoot, ['cat-file', '-e', `${manifest.base_commit}:${entry.path}`]);
-            if (absent.status === 0) {
-                violations.push(`manifest base blob evidence is missing for tracked path: ${entry.path}`);
-            }
-            continue;
-        }
-        const blobCheck = runGitStatus(repoRoot, ['cat-file', '-e', `${entry.head_sha256}^{blob}`]);
-        if (blobCheck.status !== 0) {
-            violations.push(`manifest base blob is missing: path=${entry.path}; blob=${entry.head_sha256}`);
-            continue;
-        }
-        const baseBlob = runGitStatus(repoRoot, ['rev-parse', `${manifest.base_commit}:${entry.path}`]);
-        if (baseBlob.status !== 0 || baseBlob.stdout.trim() !== entry.head_sha256) {
-            violations.push(`manifest base blob does not match base commit: path=${entry.path}; blob=${entry.head_sha256}`);
-        }
-    }
-    return violations;
-}
-
-function planAdvancedRestore(
-    repoRoot: string,
-    manifest: SplitRequiredWipManifest,
-    selectedPaths: Set<string>,
-    selectedTrackedFiles: SplitRequiredWipTrackedFileEvidence[]
-): { plan: AdvancedRestorePlan | null; violations: string[] } {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-wip-restore-'));
-    const candidateIndexPath = path.join(tempRoot, 'candidate.index');
-    const unstagedIndexPath = path.join(tempRoot, 'unstaged.index');
-    const candidateWorktreeRoot = path.join(tempRoot, 'worktree');
-    const indexPath = currentIndexPath(repoRoot);
-    const includeArgs = buildGitApplyIncludeArgs(selectedPaths);
-    const fail = (message: string): { plan: null; violations: string[] } => {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
-        return { plan: null, violations: [`three-way restore failed: ${message}`] };
-    };
-    try {
-        fs.mkdirSync(candidateWorktreeRoot, { recursive: true });
-        fs.copyFileSync(indexPath, candidateIndexPath);
-        const candidateEnvironment = gitEnvironment(candidateIndexPath);
-        if (hasPatchContent(manifest.patches.staged)) {
-            const args = ['apply', '--3way', '--cached', ...includeArgs, manifest.patches.staged.path];
-            const applied = runGitStatus(repoRoot, args, candidateEnvironment);
-            if (applied.status !== 0) {
-                return fail(gitFailureMessage(args, applied));
-            }
-            const unauthorized = unauthorizedIndexChanges(repoRoot, indexPath, candidateIndexPath, selectedPaths);
-            if (unauthorized.length > 0) {
-                return fail(`staged patch changed unauthorized paths: ${unauthorized.join(', ')}`);
-            }
-        }
-        fs.copyFileSync(candidateIndexPath, unstagedIndexPath);
-        if (hasPatchContent(manifest.patches.unstaged)) {
-            const args = ['apply', '--3way', '--cached', ...includeArgs, manifest.patches.unstaged.path];
-            const applied = runGitStatus(repoRoot, args, gitEnvironment(unstagedIndexPath));
-            if (applied.status !== 0) {
-                return fail(gitFailureMessage(args, applied));
-            }
-            const unauthorized = unauthorizedIndexChanges(repoRoot, candidateIndexPath, unstagedIndexPath, selectedPaths);
-            if (unauthorized.length > 0) {
-                return fail(`unstaged patch changed unauthorized paths: ${unauthorized.join(', ')}`);
-            }
-        }
-        const unstagedEnvironment = gitEnvironment(unstagedIndexPath);
-        for (const entry of selectedTrackedFiles) {
-            const args = ['checkout-index', '--force', `--prefix=${normalizePath(candidateWorktreeRoot)}/`, '--', entry.path];
-            const checkedOut = runGitStatus(repoRoot, args, unstagedEnvironment);
-            if (checkedOut.status !== 0 && !checkedOut.stderr.includes('is not in the cache')) {
-                return fail(gitFailureMessage(args, checkedOut));
-            }
-        }
-        for (const entry of selectedTrackedFiles) {
-            const candidatePath = resolveRepoPath(candidateWorktreeRoot, entry.path);
-            if (fs.existsSync(candidatePath) && fs.lstatSync(candidatePath).isSymbolicLink()) {
-                return fail(`candidate restore target is a symbolic link: ${entry.path}`);
-            }
-            const stage = runGitStatus(repoRoot, ['ls-files', '--stage', '--', entry.path], gitEnvironment(candidateIndexPath));
-            if (stage.status !== 0) {
-                return fail(gitFailureMessage(['ls-files', '--stage', '--', entry.path], stage));
-            }
-            if (stage.stdout.startsWith('120000 ')) {
-                return fail(`candidate index target is a symbolic link: ${entry.path}`);
-            }
-        }
-        return {
-            plan: {
-                temp_root: tempRoot,
-                candidate_index_path: candidateIndexPath,
-                candidate_worktree_root: candidateWorktreeRoot,
-                current_head: getHeadCommit(repoRoot),
-                current_index_sha256: sha256FileRequired(indexPath),
-                target_sha256: selectedTargetState(repoRoot, selectedPaths)
-            },
-            violations: []
-        };
-    } catch (error: unknown) {
-        return fail(error instanceof Error ? error.message : String(error));
-    }
-}
-
-function replaceFileFromCandidate(candidatePath: string, targetPath: string, token: string): void {
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    const stagedPath = `${targetPath}.garda-${token}.tmp`;
-    fs.copyFileSync(candidatePath, stagedPath, fs.constants.COPYFILE_EXCL);
-    fs.chmodSync(stagedPath, fs.statSync(candidatePath).mode);
-    fs.renameSync(stagedPath, targetPath);
-}
-
-function applyAdvancedRestorePlan(
-    repoRoot: string,
-    plan: AdvancedRestorePlan,
-    selectedTrackedFiles: SplitRequiredWipTrackedFileEvidence[],
-    selectedUntrackedFiles: SplitRequiredWipUntrackedFileEvidence[]
-): string[] {
-    const indexPath = currentIndexPath(repoRoot);
-    const selectedPaths = new Set([
-        ...selectedTrackedFiles.map((entry) => normalizeGitPath(entry.path)),
-        ...selectedUntrackedFiles.map((entry) => normalizeGitPath(entry.path))
-    ]);
-    if (getHeadCommit(repoRoot) !== plan.current_head
-        || sha256FileRequired(indexPath) !== plan.current_index_sha256) {
-        return ['three-way restore failed: repository HEAD or index changed after validation.'];
-    }
-    const currentTargets = selectedTargetState(repoRoot, selectedPaths);
-    for (const [relativePath, expected] of plan.target_sha256) {
-        if (currentTargets.get(relativePath) !== expected) {
-            return [`three-way restore failed: selected target changed after validation: ${relativePath}`];
-        }
-    }
-    const backupRoot = path.join(plan.temp_root, 'backup');
-    const backupIndexPath = path.join(backupRoot, 'index');
-    const token = path.basename(plan.temp_root);
-    fs.mkdirSync(backupRoot, { recursive: true });
-    fs.copyFileSync(indexPath, backupIndexPath);
-    const originalFiles = new Map<string, { exists: boolean; backup_path: string; mode: number | null }>();
-    for (const relativePath of selectedPaths) {
-        const targetPath = resolveRepoPath(repoRoot, relativePath);
-        const backupPath = resolveRepoPath(backupRoot, relativePath);
-        const exists = fs.existsSync(targetPath);
-        if (exists) {
-            fs.mkdirSync(path.dirname(backupPath), { recursive: true });
-            fs.copyFileSync(targetPath, backupPath);
-        }
-        originalFiles.set(relativePath, {
-            exists,
-            backup_path: backupPath,
-            mode: exists ? fs.statSync(targetPath).mode : null
-        });
-    }
-    const restoreOriginalState = (): void => {
-        fs.copyFileSync(backupIndexPath, indexPath);
-        for (const [relativePath, original] of originalFiles) {
-            const targetPath = resolveRepoPath(repoRoot, relativePath);
-            if (!original.exists) {
-                removeFileIfExists(targetPath);
-                continue;
-            }
-            fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-            fs.copyFileSync(original.backup_path, targetPath);
-            if (original.mode !== null) {
-                fs.chmodSync(targetPath, original.mode);
-            }
-        }
-    };
-    try {
-        for (const entry of selectedTrackedFiles) {
-            const candidatePath = resolveRepoPath(plan.candidate_worktree_root, entry.path);
-            const targetPath = resolveRepoPath(repoRoot, entry.path);
-            if (fs.existsSync(candidatePath)) {
-                replaceFileFromCandidate(candidatePath, targetPath, token);
-            } else {
-                removeFileIfExists(targetPath);
-            }
-        }
-        for (const entry of selectedUntrackedFiles) {
-            replaceFileFromCandidate(
-                resolveInputPathInsideRepo(repoRoot, entry.artifact_path, `untracked artifact ${entry.path}`),
-                resolveRepoPath(repoRoot, entry.path),
-                token
-            );
-        }
-        const indexLockPath = `${indexPath}.lock`;
-        fs.copyFileSync(plan.candidate_index_path, indexLockPath, fs.constants.COPYFILE_EXCL);
-        fs.renameSync(indexLockPath, indexPath);
-        return [];
-    } catch (error: unknown) {
-        try {
-            restoreOriginalState();
-        } catch (rollbackError: unknown) {
-            const message = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-            return [`three-way restore failed and rollback failed: ${message}`];
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        return [`three-way restore failed without retained mutations: ${message}`];
-    }
-}
-
-function validateManifestFileReferences(repoRoot: string, manifest: SplitRequiredWipManifest): string[] {
-    const violations: string[] = [];
-    if (!isPlainRecord(manifest.patches)
-        || !isPlainRecord(manifest.patches.staged)
-        || !isPlainRecord(manifest.patches.unstaged)) {
-        return ['WIP manifest patch references are missing or invalid.'];
-    }
-    const validateArtifactHash = (label: string, artifactPath: string, expectedSha256: string): void => {
-        if (!expectedSha256) {
-            violations.push(`${label} sha256 is missing.`);
-            return;
-        }
-        if (!fs.existsSync(artifactPath)) {
-            violations.push(`${label} artifact is missing: ${normalizePath(artifactPath)}`);
-            return;
-        }
-        if (fs.lstatSync(artifactPath).isSymbolicLink()) {
-            violations.push(`${label} artifact must not be a symbolic link: ${normalizePath(artifactPath)}`);
-            return;
-        }
-        if (!fs.statSync(artifactPath).isFile()) {
-            violations.push(`${label} artifact is not a file: ${normalizePath(artifactPath)}`);
-            return;
-        }
-        const actualSha256 = sha256FileRequired(artifactPath);
-        if (actualSha256 !== expectedSha256) {
-            violations.push(`${label} sha256 mismatch: expected=${expectedSha256}; actual=${actualSha256}`);
-        }
-    };
-    for (const [label, patch] of [
-        ['staged patch', manifest.patches.staged],
-        ['unstaged patch', manifest.patches.unstaged]
-    ] as const) {
-        try {
-            const patchPath = resolveInputPathInsideRepo(repoRoot, patch.path, label);
-            validateArtifactHash(label, patchPath, patch.sha256);
-        } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : String(error);
-            violations.push(message);
-        }
-    }
-    for (const entry of manifest.untracked_files || []) {
-        try {
-            const artifactPath = resolveInputPathInsideRepo(repoRoot, entry.artifact_path, `untracked artifact ${entry.path}`);
-            validateArtifactHash(`untracked artifact ${entry.path}`, artifactPath, entry.sha256);
-        } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : String(error);
-            violations.push(message);
-        }
-    }
-    return violations;
-}
 
 export function listSplitRequiredWip(params: {
     repoRoot: string;
@@ -609,6 +153,13 @@ export function restoreSplitRequiredWip(params: {
         }
         selectedTrackedFiles = selectedFiles(manifest.tracked_files, selectedPaths);
         selectedUntrackedFiles = selectedFiles(manifest.untracked_files, selectedPaths);
+        const effectiveSelectedPaths = new Set(
+            [...selectedTrackedFiles, ...selectedUntrackedFiles]
+                .map((entry) => normalizeGitPath(entry.path))
+        );
+        for (const selectedPath of effectiveSelectedPaths) {
+            violations.push(...validateNoSymlinkPath(repoRoot, selectedPath));
+        }
         if (advancedHead) {
             if (selectedPaths.size === 0) {
                 violations.push('advanced restore requires at least one explicit include-path authorization.');
@@ -621,9 +172,6 @@ export function restoreSplitRequiredWip(params: {
             }
             violations.push(...validateSelectedTargetsClean(repoRoot, selectedPaths));
             violations.push(...validateTrackedTargetObstructions(repoRoot, selectedTrackedFiles));
-            for (const selectedPath of selectedPaths) {
-                violations.push(...validateNoSymlinkPath(repoRoot, selectedPath));
-            }
             violations.push(...validateAdvancedManifestBlobs(repoRoot, manifest, selectedTrackedFiles));
         } else {
             violations.push(...ensureCleanTrackedWorkspace(repoRoot));
@@ -652,7 +200,7 @@ export function restoreSplitRequiredWip(params: {
     }
     if (params.dryRun) {
         if (advancedPlan) {
-            fs.rmSync(advancedPlan.temp_root, { recursive: true, force: true });
+            fs.rmSync(advancedPlan.tempRoot, { recursive: true, force: true });
         }
         return {
             status: 'DRY_RUN_OK',
@@ -678,7 +226,7 @@ export function restoreSplitRequiredWip(params: {
             selectedTrackedFiles,
             selectedUntrackedFiles
         );
-        fs.rmSync(advancedPlan.temp_root, { recursive: true, force: true });
+        fs.rmSync(advancedPlan.tempRoot, { recursive: true, force: true });
         if (advancedViolations.length > 0) {
             return {
                 status: 'BLOCKED',
