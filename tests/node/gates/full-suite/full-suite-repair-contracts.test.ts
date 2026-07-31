@@ -11,6 +11,9 @@ import {
     resolveRepoPath,
     validateRepairChildTaskId
 } from '../../../../src/gates/full-suite/full-suite-repair-contracts';
+import {
+    sameRepairChildTaskIds
+} from '../../../../src/gates/full-suite/full-suite-repair-decomposition';
 import type {
     FullSuiteRepairTaskMaterializationResult,
     FullSuiteRepairTaskProposal,
@@ -18,6 +21,13 @@ import type {
 } from '../../../../src/gates/full-suite';
 
 describe('full-suite repair contracts', () => {
+    it('requires the persisted repair child handoff to preserve exact array order', () => {
+        const childTaskIds = ['T-930-1-1-F1', 'T-930-1-1-F2'];
+
+        assert.equal(sameRepairChildTaskIds(childTaskIds, [...childTaskIds]), true);
+        assert.equal(sameRepairChildTaskIds(childTaskIds, [...childTaskIds].reverse()), false);
+    });
+
     it('preserves the public facade type exports', () => {
         const proposal: FullSuiteRepairTaskProposal = {
             suggested_task_id: 'T-930-1-1-F1',
@@ -28,7 +38,8 @@ describe('full-suite repair contracts', () => {
         const materialization: FullSuiteRepairTaskMaterializationResult = {
             status: 'MATERIALIZED',
             task_id: 'T-930-1-1',
-            child_task_id: proposal.suggested_task_id,
+            child_task_id: null,
+            child_task_ids: [proposal.suggested_task_id, 'T-930-1-1-F2'],
             artifact_path: 'runtime/reviews/repair.json',
             wip_manifest_path: 'runtime/wip/manifest.json',
             split_required_artifact_path: null,

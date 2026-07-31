@@ -464,17 +464,17 @@ function buildLifecycleGateHelpEntries(
         },
         'materialize-full-suite-repair-task': {
             ...createSingleUsageEntry(
-                'Materialize the audited repair child task for an exhausted full-suite timeout blocker, suspend task-owned parent WIP, and latch the parent as split-required.',
+                'Validate an audited two-or-more-child repair handoff for an exhausted full-suite timeout blocker, suspend task-owned parent WIP, and latch the parent as split-required.',
                 `${cliPrefix} gate materialize-full-suite-repair-task --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --full-suite-artifact-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-full-suite-validation.json`)}" --repo-root "."`,
                 true
             )
         },
         'restore-full-suite-repair-wip': {
             ...createGateHelpEntry(
-                'Restore a previously suspended parent WIP manifest after the repair child completes, refusing stale-base or dirty-workspace conflicts.',
+                'Restore a previously suspended parent WIP manifest after every linked repair child completes, refusing stale-base or dirty-workspace conflicts.',
                 [
-                    `${cliPrefix} gate restore-full-suite-repair-wip --task-id "${TASK_ID_PLACEHOLDER}" --full-suite-artifact-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-full-suite-validation.json`)}" --manifest-path "${buildBundleRelativePath(bundleName, `runtime/wip/${TASK_ID_PLACEHOLDER}/full-suite-repair/<timestamp>/manifest.json`)}" --child-task-id "${TASK_ID_PLACEHOLDER}-F1" --dry-run --repo-root "."`,
-                    `${cliPrefix} gate restore-full-suite-repair-wip --task-id "${TASK_ID_PLACEHOLDER}" --full-suite-artifact-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-full-suite-validation.json`)}" --manifest-path "${buildBundleRelativePath(bundleName, `runtime/wip/${TASK_ID_PLACEHOLDER}/full-suite-repair/<timestamp>/manifest.json`)}" --child-task-id "${TASK_ID_PLACEHOLDER}-F1" --repo-root "."`
+                    `${cliPrefix} gate restore-full-suite-repair-wip --task-id "${TASK_ID_PLACEHOLDER}" --full-suite-artifact-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-full-suite-validation.json`)}" --manifest-path "${buildBundleRelativePath(bundleName, `runtime/wip/${TASK_ID_PLACEHOLDER}/full-suite-repair/<timestamp>/manifest.json`)}" --dry-run --repo-root "."`,
+                    `${cliPrefix} gate restore-full-suite-repair-wip --task-id "${TASK_ID_PLACEHOLDER}" --full-suite-artifact-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-full-suite-validation.json`)}" --manifest-path "${buildBundleRelativePath(bundleName, `runtime/wip/${TASK_ID_PLACEHOLDER}/full-suite-repair/<timestamp>/manifest.json`)}" --repo-root "."`
                 ],
                 false
             )

@@ -42,19 +42,36 @@ import {
 
 function appendRepairTaskRow(repoRoot: string, taskId = `${TASK_ID}-F1`): void {
     const taskPath = path.join(repoRoot, 'TASK.md');
-    const row =
-        `| ${taskId} | TODO | P1 | workflow/full-suite-timeout | Fix full-suite timeout blocker | gpt-5.5 | 2026-06-30 | strict | Materialized timeout repair follow-up. |`;
-    fs.writeFileSync(taskPath, `${fs.readFileSync(taskPath, 'utf8')}${row}\n`, 'utf8');
+    const secondTaskId = `${TASK_ID}-F2`;
+    const linkedParent = fs.readFileSync(taskPath, 'utf8')
+        .split('\n')
+        .map((line) => {
+            if (!line.startsWith(`| ${TASK_ID} |`)) {
+                return line;
+            }
+            const cells = line.split('|');
+            cells[9] =
+                ` Decomposition source: orchestrator (2026-06-30); child tasks: \`${taskId}\`, \`${secondTaskId}\`. `;
+            return cells.join('|');
+        })
+        .join('\n');
+    const rows = [
+        `| ${taskId} | TODO | P1 | workflow/full-suite-timeout-diagnostics | Diagnose full-suite timeout | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. |`,
+        `| ${secondTaskId} | TODO | P1 | workflow/full-suite-timeout-repair | Repair full-suite timeout | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. |`
+    ];
+    fs.writeFileSync(taskPath, `${linkedParent}${rows.join('\n')}\n`, 'utf8');
 }
 
 function writeCompletedRepairTaskRows(repoRoot: string, childTaskId = `${TASK_ID}-F1`): void {
+    const secondChildTaskId = `${TASK_ID}-F2`;
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '# TASK.md',
         '',
         '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
         '|---|---|---|---|---|---|---|---|---|',
-        `| ${TASK_ID} | SPLIT_REQUIRED | P1 | workflow/full-suite-repair-split-suspend | Parent repair task | gpt-5.5 | 2026-06-30 | strict | Created child tasks: \`${childTaskId}\`; parent WIP suspended for full-suite repair. |`,
-        `| ${childTaskId} | DONE | P1 | workflow/full-suite-timeout | Fix full-suite timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Repair completed. |`,
+        `| ${TASK_ID} | SPLIT_REQUIRED | P1 | workflow/full-suite-repair-split-suspend | Parent repair task | gpt-5.5 | 2026-06-30 | strict | Decomposition source: orchestrator (2026-06-30); child tasks: \`${childTaskId}\`, \`${secondChildTaskId}\`; parent WIP suspended for full-suite repair. |`,
+        `| ${childTaskId} | DONE | P1 | workflow/full-suite-timeout-diagnostics | Diagnose full-suite timeout | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Repair completed. |`,
+        `| ${secondChildTaskId} | DONE | P1 | workflow/full-suite-timeout-repair | Repair full-suite timeout | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Repair completed. |`,
         ''
     ].join('\n'), 'utf8');
 }
@@ -64,6 +81,7 @@ function writeRepairTaskMaterializationEvidence(
     childTaskId = `${TASK_ID}-F1`,
     status = 'MATERIALIZED'
 ): void {
+    const childTaskIds = [childTaskId, `${TASK_ID}-F2`];
     const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
     const fullSuitePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`);
     const createdAtUtc = '2026-06-30T00:00:00.000Z';
@@ -83,11 +101,11 @@ function writeRepairTaskMaterializationEvidence(
     fs.writeFileSync(unstagedPatchPath, '', 'utf8');
     const manifestPath = path.join(manifestRoot, 'manifest.json');
     writeJson(manifestPath, {
-        schema_version: 2,
+        schema_version: 3,
         kind: 'full_suite_repair_wip',
         status: 'suspended',
         task_id: TASK_ID,
-        child_task_id: childTaskId,
+        child_task_ids: childTaskIds,
         created_at_utc: createdAtUtc,
         base_commit: getGitFixtureHead(repoRoot),
         preflight_path: normalizeForTimeline(preflightPath),
@@ -113,10 +131,10 @@ function writeRepairTaskMaterializationEvidence(
         unrelated_untracked_files: []
     });
     writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-repair-task.json`), {
-        schema_version: 1,
+        schema_version: 2,
         status,
         task_id: TASK_ID,
-        child_task_id: childTaskId,
+        child_task_ids: childTaskIds,
         created_at_utc: '2026-06-30T00:00:01.000Z',
         preflight_path: normalizeForTimeline(preflightPath),
         preflight_sha256: fileSha256(preflightPath),
@@ -859,7 +877,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'full-suite-timeout-repair-task');
 
-        assert.match(result.title, /repair task/i);
+        assert.match(result.title, /repair handoff/i);
 
         assert.match(result.reason, new RegExp(`${TASK_ID}-F1`));
 
@@ -1019,17 +1037,34 @@ describe('gates/next-step', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'restore-full-suite-repair-wip', result.reason);
-        assert.match(result.reason, /repair child T-NEXT-1-F1 is DONE/);
+        assert.match(result.reason, /All linked full-suite repair children are DONE/);
         assert.ok(result.commands.some((command) => command.command.includes('restore-full-suite-repair-wip')));
         assert.ok(result.commands.some((command) => command.command.includes('--dry-run')));
         assert.ok(result.commands.every((command) => command.command.includes(`--task-id "${TASK_ID}"`)));
-        assert.ok(result.commands.every((command) => command.command.includes(`--child-task-id "${TASK_ID}-F1"`)));
+        assert.ok(result.commands.every((command) => !command.command.includes('--child-task-id')));
         assert.ok(result.commands.every((command) => command.command.includes(`${TASK_ID}-full-suite-validation.json`)));
         const formatted = formatNextStepText(result);
         assert.match(formatted, /Command: none/);
         assert.match(formatted, /CommandReference: choose one of the 2 Commands entries below/);
         assert.doesNotMatch(formatted, /Command: inspect diagnostics; no executable command is available/);
         assert.ok(!result.reason.includes('completed because all explicit children are DONE'));
+
+        const secondChildTaskId = `${TASK_ID}-F2`;
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const duplicateScopeTaskQueue = fs.readFileSync(taskPath, 'utf8').replace(
+            `| ${secondChildTaskId} | DONE | P1 | workflow/full-suite-timeout-repair | Repair full-suite timeout |`,
+            `| ${secondChildTaskId} | DONE | P1 | workflow/full-suite-timeout-diagnostics | Diagnose full-suite timeout |`
+        );
+        fs.writeFileSync(taskPath, duplicateScopeTaskQueue, 'utf8');
+
+        const invalidDecompositionResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(invalidDecompositionResult.next_gate, 'restore-full-suite-repair-wip');
+        assert.ok(
+            invalidDecompositionResult.commands.every(
+                (command) => !command.command.includes('restore-full-suite-repair-wip')
+            )
+        );
     });
 
     it('accepts current warning-only full-suite timeout evidence and continues to reviewer launch', () => {

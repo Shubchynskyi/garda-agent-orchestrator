@@ -45,6 +45,9 @@ import {
     readFullSuiteRepairTaskMaterializationEvidence
 } from '../full-suite/full-suite-repair-task';
 import {
+    resolveFullSuiteRepairDecompositionState
+} from '../full-suite/full-suite-repair-decomposition';
+import {
     resolveNextStepFullSuiteValidationRoute,
     type NextStepFullSuiteValidationRoutingOptions
 } from './next-step-full-suite-routing';
@@ -375,37 +378,42 @@ function resolveCompletedFullSuiteRepairWipRestoreRoute(options: {
     if (!options.fullSuiteArtifactPath) {
         return null;
     }
-    const childTaskIds = extractExplicitLinkedChildTaskIds(
-        options.taskEntry?.notes || null,
-        options.taskEntries.keys(),
-        options.taskId
-    ).filter((childTaskId) => childTaskId !== options.taskId);
-    for (const childTaskId of childTaskIds) {
-        const childEntry = options.taskEntries.get(childTaskId);
-        if (!childEntry || !isTaskQueueDoneStatus(childEntry.status)) {
-            continue;
-        }
-        const evidence = readFullSuiteRepairTaskMaterializationEvidence({
-            repoRoot: options.repoRoot,
-            reviewsRoot: options.reviewsRoot,
-            taskId: options.taskId,
-            fullSuiteArtifactPath: options.fullSuiteArtifactPath,
-            childTaskId
-        });
-        if (!evidence.materialized || !evidence.wip_manifest_path) {
-            continue;
-        }
-        const fullSuiteArtifactPath = toRepoDisplayPath(options.repoRoot, options.fullSuiteArtifactPath);
-        const restoreBindingFlags =
-            `--task-id "${options.taskId}" ` +
-            `--full-suite-artifact-path "${fullSuiteArtifactPath}" ` +
-            `--child-task-id "${childTaskId}"`;
-        return {
+    const decomposition = resolveFullSuiteRepairDecompositionState(
+        options.repoRoot,
+        options.taskId,
+        { allowCompletedChildren: true }
+    );
+    const childTaskIds = decomposition.child_task_ids;
+    if (
+        !decomposition.ready
+        || childTaskIds.some((childTaskId) => {
+            const childEntry = options.taskEntries.get(childTaskId);
+            return !childEntry || !isTaskQueueDoneStatus(childEntry.status);
+        })
+    ) {
+        return null;
+    }
+    const evidence = readFullSuiteRepairTaskMaterializationEvidence({
+        repoRoot: options.repoRoot,
+        reviewsRoot: options.reviewsRoot,
+        taskId: options.taskId,
+        fullSuiteArtifactPath: options.fullSuiteArtifactPath,
+        childTaskId: null,
+        childTaskIds
+    });
+    if (!evidence.materialized || !evidence.wip_manifest_path) {
+        return null;
+    }
+    const fullSuiteArtifactPath = toRepoDisplayPath(options.repoRoot, options.fullSuiteArtifactPath);
+    const restoreBindingFlags =
+        `--task-id "${options.taskId}" ` +
+        `--full-suite-artifact-path "${fullSuiteArtifactPath}"`;
+    return {
             status: 'BLOCKED',
             nextGate: 'restore-full-suite-repair-wip',
             title: 'Restore suspended full-suite repair WIP before resuming parent.',
             reason:
-                `Linked full-suite repair child ${childTaskId} is DONE and materialized repair evidence is current. ` +
+                `All linked full-suite repair children are DONE (${childTaskIds.join(', ')}) and materialized repair evidence is current. ` +
                 'Restore the suspended parent WIP before running parent classify, compile, review, full-suite, completion, or final closeout gates. ' +
                 'The restore gate validates manifest paths, artifact hashes, stale base, tracked workspace cleanliness, and untracked target conflicts before applying the parent WIP.',
             commands: [
@@ -421,8 +429,6 @@ function resolveCompletedFullSuiteRepairWipRestoreRoute(options: {
             missingArtifacts: [],
             finalReport: null
         };
-    }
-    return null;
 }
 
 export function resolveTaskQueueTerminalDecisionRoute(options: {

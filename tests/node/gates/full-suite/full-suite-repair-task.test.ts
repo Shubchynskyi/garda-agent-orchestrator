@@ -20,6 +20,8 @@ import {
 
 const TASK_ID = 'T-FULL-SUITE-REPAIR';
 const CHILD_TASK_ID = `${TASK_ID}-F1`;
+const SECOND_CHILD_TASK_ID = `${TASK_ID}-F2`;
+const CHILD_TASK_IDS = [CHILD_TASK_ID, SECOND_CHILD_TASK_ID];
 
 const tempRoots: string[] = [];
 
@@ -53,7 +55,9 @@ function seedTaskQueue(repoRoot: string): void {
         '',
         '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
         '|---|---|---|---|---|---|---|---|---|',
-        `| ${TASK_ID} | IN_PROGRESS | P1 | workflow/full-suite | Parent repair task | gpt-5.5 | 2026-06-30 | strict | Parent task. |`,
+        `| ${TASK_ID} | IN_PROGRESS | P1 | workflow/full-suite | Parent repair task | gpt-5.5 | 2026-06-30 | strict | Decomposition source: orchestrator (2026-06-30); child tasks: \`${CHILD_TASK_ID}\`, \`${SECOND_CHILD_TASK_ID}\`. |`,
+        `| ${CHILD_TASK_ID} | TODO | P1 | workflow/full-suite-timeout-diagnostics | Diagnose timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Identify the bounded timeout cause. |`,
+        `| ${SECOND_CHILD_TASK_ID} | TODO | P1 | workflow/full-suite-timeout-repair | Repair timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. Apply the independently scoped repair. |`,
         ''
     ].join('\n'), 'utf8');
 }
@@ -154,7 +158,9 @@ function setTaskStatus(repoRoot: string, taskId: string, nextStatus: string): vo
 }
 
 function markRepairChildDone(repoRoot: string): void {
-    setTaskStatus(repoRoot, CHILD_TASK_ID, 'DONE');
+    for (const childTaskId of CHILD_TASK_IDS) {
+        setTaskStatus(repoRoot, childTaskId, 'DONE');
+    }
 }
 
 function assertOperatorNextActionOutput(lines: string[], marker: string): void {
@@ -218,6 +224,59 @@ describe('full-suite repair task materialization', () => {
         for (const tempRoot of tempRoots.splice(0)) {
             fs.rmSync(tempRoot, { recursive: true, force: true });
         }
+    });
+
+    it('rejects a singular repair child before parent WIP is suspended', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(taskPath, [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | IN_PROGRESS | P1 | workflow/full-suite | Parent repair task | gpt-5.5 | 2026-06-30 | strict | Decomposition source: orchestrator (2026-06-30); child tasks: \`${CHILD_TASK_ID}\`. |`,
+            `| ${CHILD_TASK_ID} | TODO | P1 | workflow/full-suite-timeout | Fix timeout blocker | gpt-5.5 | 2026-06-30 | strict | Child of \`${TASK_ID}\`. |`,
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+
+        assert.equal(materialized.status, 'BLOCKED');
+        assert.equal(materialized.wip_manifest_path, null);
+        assert.deepEqual(materialized.child_task_ids, [CHILD_TASK_ID]);
+        assert.ok(materialized.violations.some((violation) => violation.includes('requires at least two meaningful linked child tasks')));
+        assert.match(fs.readFileSync(taskPath, 'utf8'), new RegExp(`\\| ${TASK_ID} \\| IN_PROGRESS \\|`));
+        assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/);
+    });
+
+    it('rejects a repair proposal from a full-suite artifact that did not time out', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const fullSuiteArtifact = readJson(fullSuitePath);
+        fullSuiteArtifact.timed_out = false;
+        writeJson(fullSuitePath, fullSuiteArtifact);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+
+        assert.equal(materialized.status, 'BLOCKED');
+        assert.equal(materialized.wip_manifest_path, null);
+        assert.match(materialized.violations.join('\n'), /timed_out=true/);
+        assert.match(fs.readFileSync(taskPath, 'utf8'), new RegExp(`\\| ${TASK_ID} \\| IN_PROGRESS \\|`));
+        assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/);
     });
 
     it('suspends staged, unstaged, and task-owned ignored scratch, then restores them', () => {
@@ -294,6 +353,139 @@ describe('full-suite repair task materialization', () => {
         assertOperatorNextActionOutput(restored.output_lines, 'FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED');
         assertBlockedOperatorOutputHasNoNavigatorCommand(restored.output_lines);
         assert.ok(restored.violations.some((violation) => violation.includes(`repair child ${CHILD_TASK_ID} must be DONE`)));
+        assert.equal(normalizeNewlines(fs.readFileSync(appPath, 'utf8')), 'export const value = 1;\n');
+        assert.equal(runGit(repoRoot, ['diff', '--name-only']).trim(), '');
+        assert.equal(runGit(repoRoot, ['diff', '--name-only', '--cached']).trim(), '');
+    });
+
+    it('blocks restore while any linked repair child remains unfinished', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        fs.writeFileSync(appPath, 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        setTaskStatus(repoRoot, CHILD_TASK_ID, 'DONE');
+
+        const restored = restoreMaterializedWip({
+            repoRoot,
+            fullSuitePath,
+            manifestPath: materialized.wip_manifest_path || ''
+        });
+
+        assert.equal(restored.status, 'BLOCKED');
+        assertOperatorNextActionOutput(restored.output_lines, 'FULL_SUITE_REPAIR_WIP_RESTORE_BLOCKED');
+        assertBlockedOperatorOutputHasNoNavigatorCommand(restored.output_lines);
+        assert.ok(restored.violations.some((violation) => violation.includes(`repair child ${SECOND_CHILD_TASK_ID} must be DONE`)));
+        assert.equal(normalizeNewlines(fs.readFileSync(appPath, 'utf8')), 'export const value = 1;\n');
+        assert.equal(runGit(repoRoot, ['diff', '--name-only']).trim(), '');
+        assert.equal(runGit(repoRoot, ['diff', '--name-only', '--cached']).trim(), '');
+    });
+
+    it('blocks restore when the repair decomposition changes before WIP mutation', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const taskPath = path.resolve(repoRoot, 'TASK.md');
+        const statusLockPath = `${taskPath}.garda-status-sync.lock`;
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        fs.writeFileSync(appPath, 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        markRepairChildDone(repoRoot);
+
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalOpenSync = fsModule.openSync;
+        let injected = false;
+        fsModule.openSync = ((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+            if (!injected
+                && path.resolve(String(filePath)) === statusLockPath
+                && flags === 'wx') {
+                injected = true;
+                const driftedTaskQueue = fs.readFileSync(taskPath, 'utf8')
+                    .replace(`, \`${SECOND_CHILD_TASK_ID}\``, '');
+                fs.writeFileSync(taskPath, driftedTaskQueue, 'utf8');
+            }
+            return originalOpenSync(filePath, flags, mode);
+        }) as typeof fsModule.openSync;
+        let restored: ReturnType<typeof restoreMaterializedWip> | null = null;
+        try {
+            restored = restoreMaterializedWip({
+                repoRoot,
+                fullSuitePath,
+                manifestPath: materialized.wip_manifest_path || ''
+            });
+        } finally {
+            fsModule.openSync = originalOpenSync;
+        }
+
+        assert.equal(injected, true);
+        assert.equal(restored?.status, 'BLOCKED');
+        assert.ok(
+            restored?.violations.some((violation) => violation.includes('repair handoff changed before WIP restore')),
+            restored?.violations.join('\n')
+        );
+        assert.equal(normalizeNewlines(fs.readFileSync(appPath, 'utf8')), 'export const value = 1;\n');
+        assert.equal(runGit(repoRoot, ['diff', '--name-only']).trim(), '');
+        assert.equal(runGit(repoRoot, ['diff', '--name-only', '--cached']).trim(), '');
+    });
+
+    it('blocks restore when materialization evidence changes before WIP mutation', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const taskPath = path.resolve(repoRoot, 'TASK.md');
+        const statusLockPath = `${taskPath}.garda-status-sync.lock`;
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        fs.writeFileSync(appPath, 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        markRepairChildDone(repoRoot);
+
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalOpenSync = fsModule.openSync;
+        let injected = false;
+        fsModule.openSync = ((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+            if (!injected
+                && path.resolve(String(filePath)) === statusLockPath
+                && flags === 'wx') {
+                injected = true;
+                const artifact = readJson(materialized.artifact_path);
+                artifact.status = 'BLOCKED';
+                fs.writeFileSync(materialized.artifact_path, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+            }
+            return originalOpenSync(filePath, flags, mode);
+        }) as typeof fsModule.openSync;
+        let restored: ReturnType<typeof restoreMaterializedWip> | null = null;
+        try {
+            restored = restoreMaterializedWip({
+                repoRoot,
+                fullSuitePath,
+                manifestPath: materialized.wip_manifest_path || ''
+            });
+        } finally {
+            fsModule.openSync = originalOpenSync;
+        }
+
+        assert.equal(injected, true);
+        assert.equal(restored?.status, 'BLOCKED');
+        assert.ok(
+            restored?.violations.some((violation) => violation.includes('repair handoff changed before WIP restore')),
+            restored?.violations.join('\n')
+        );
         assert.equal(normalizeNewlines(fs.readFileSync(appPath, 'utf8')), 'export const value = 1;\n');
         assert.equal(runGit(repoRoot, ['diff', '--name-only']).trim(), '');
         assert.equal(runGit(repoRoot, ['diff', '--name-only', '--cached']).trim(), '');
@@ -476,7 +668,7 @@ describe('full-suite repair task materialization', () => {
         assert.ok(materialized.violations.some((violation) => violation.includes('tracked changes outside current preflight scope: README.md')));
         assert.equal(runGit(repoRoot, ['diff', '--name-only']).trim(), 'README.md');
         assert.equal(runGit(repoRoot, ['diff', '--name-only', '--cached']).trim(), 'src/app.ts');
-        assert.ok(!fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${CHILD_TASK_ID} | TODO |`));
+        assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), new RegExp(`\\| ${TASK_ID} \\| IN_PROGRESS \\|`));
     });
 
     it('blocks materialization when unrelated visible untracked files would dirty the repair scope', () => {
@@ -497,7 +689,7 @@ describe('full-suite repair task materialization', () => {
         assert.ok(materialized.violations.some((violation) => violation.includes('unrelated untracked files would keep repair scope dirty: unrelated-notes.txt')));
         assert.equal(fs.readFileSync(path.join(repoRoot, 'unrelated-notes.txt'), 'utf8'), 'operator scratch\n');
         assert.equal(runGit(repoRoot, ['status', '--short', '--untracked-files=all']).includes('?? unrelated-notes.txt'), true);
-        assert.ok(!fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${CHILD_TASK_ID} | TODO |`));
+        assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), new RegExp(`\\| ${TASK_ID} \\| IN_PROGRESS \\|`));
     });
 
     it('blocks task-id untracked files outside the captured runtime tmp and preflight scopes', () => {
@@ -543,7 +735,7 @@ describe('full-suite repair task materialization', () => {
         assert.equal(materialized.wip_manifest_path, null);
         assert.ok(materialized.violations.some((violation) => violation.includes('symbolic-link or junction')));
         assert.equal(fs.readFileSync(externalPath, 'utf8'), 'external secret must not be captured\n');
-        assert.ok(!fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${CHILD_TASK_ID} | TODO |`));
+        assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), new RegExp(`\\| ${TASK_ID} \\| IN_PROGRESS \\|`));
     });
 
     it('blocks a preflight-authorized untracked hard link before capture', (t) => {
@@ -574,7 +766,7 @@ describe('full-suite repair task materialization', () => {
         assert.equal(materialized.wip_manifest_path, null);
         assert.ok(materialized.violations.some((violation) => violation.includes('additional hard links')));
         assert.equal(fs.readFileSync(externalPath, 'utf8'), 'hard-linked external content\n');
-        assert.ok(!fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${CHILD_TASK_ID} | TODO |`));
+        assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), new RegExp(`\\| ${TASK_ID} \\| IN_PROGRESS \\|`));
     });
 
     it('cleans prepared capture and leaves TASK.md unchanged on a post-copy source failure', () => {
@@ -614,7 +806,7 @@ describe('full-suite repair task materialization', () => {
         assert.ok(materialized?.violations.some((violation) => violation.includes('changed while copying')));
         const taskContent = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
         assert.match(taskContent, new RegExp(`\\| ${TASK_ID} \\| IN_PROGRESS \\|`));
-        assert.ok(!taskContent.includes(`| ${CHILD_TASK_ID} | TODO |`));
+        assert.ok(taskContent.includes(`| ${CHILD_TASK_ID} | TODO |`));
         const captureParent = path.join(
             repoRoot,
             'garda-agent-orchestrator',
@@ -745,7 +937,7 @@ describe('full-suite repair task materialization', () => {
         assertOperatorNextActionOutput(dryRun.output_lines, 'FULL_SUITE_REPAIR_WIP_RESTORE_DRY_RUN_OK');
         assert.ok(dryRun.output_lines.some((line) => line.includes('Command: node garda-agent-orchestrator/bin/garda.js gate restore-full-suite-repair-wip')));
         assert.ok(dryRun.output_lines.some((line) => line.includes("--manifest-path 'garda-agent-orchestrator/runtime/wip/")));
-        assert.ok(dryRun.output_lines.some((line) => line.includes(`--child-task-id '${CHILD_TASK_ID}'`)));
+        assert.ok(dryRun.output_lines.every((line) => !line.includes('--child-task-id')));
         const restoreCommandLine = dryRun.output_lines.find((line) => line.includes('Command: node garda-agent-orchestrator/bin/garda.js gate restore-full-suite-repair-wip'));
         assert.equal(restoreCommandLine?.includes('--dry-run'), false);
     });
@@ -784,7 +976,7 @@ describe('full-suite repair task materialization', () => {
         const restoreCommandLine = dryRun.output_lines.find((line) => line.includes('Command: node garda-agent-orchestrator/bin/garda.js gate restore-full-suite-repair-wip')) || '';
         assert.ok(restoreCommandLine.includes("--full-suite-artifact-path 'garda-agent-orchestrator/runtime/reviews/pwsh-$(whoami)`x`''tail/full-suite-validation.json'"));
         assert.ok(restoreCommandLine.includes("--manifest-path 'garda-agent-orchestrator/runtime/wip/"));
-        assert.ok(restoreCommandLine.includes(`--child-task-id '${CHILD_TASK_ID}'`));
+        assert.ok(!restoreCommandLine.includes('--child-task-id'));
         assert.equal(restoreCommandLine.includes('--full-suite-artifact-path "'), false);
         assert.equal(restoreCommandLine.includes('--manifest-path "'), false);
     });
@@ -805,7 +997,7 @@ describe('full-suite repair task materialization', () => {
 
         assert.equal(materialized.status, 'BLOCKED');
         assert.equal(materialized.wip_manifest_path, null);
-        assert.ok(materialized.violations.some((violation) => violation.includes('TASK.md repair child materialization failed: task_file_missing')));
+        assert.ok(materialized.violations.some((violation) => violation.includes(`repair parent ${TASK_ID} is missing from TASK.md`)));
         assert.equal(fs.readFileSync(appPath, 'utf8'), 'export const value = 2;\n');
         assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/);
         const repairCaptureRoot = path.join(
@@ -853,6 +1045,102 @@ describe('full-suite repair task materialization', () => {
 
         assert.equal(materialized?.status, 'BLOCKED');
         assert.ok(materialized?.violations.some((violation) => violation.includes('injected queue read failure')));
+        assert.equal(fs.readFileSync(appPath, 'utf8'), 'export const value = 2;\n');
+        assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/);
+        assertMaterializationControlPlaneRolledBack(repoRoot, originalTaskQueue);
+    });
+
+    it('aborts and rolls back when the repair decomposition changes under the task-queue lock', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const originalTaskQueue = fs.readFileSync(taskPath, 'utf8');
+        const driftedTaskQueue = originalTaskQueue.replace(`, \`${SECOND_CHILD_TASK_ID}\``, '');
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        fs.writeFileSync(appPath, 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalReadFileSync = fsModule.readFileSync;
+        let taskReadCount = 0;
+        fsModule.readFileSync = ((...args: unknown[]) => {
+            if (typeof args[0] !== 'number' && path.resolve(String(args[0])) === path.resolve(taskPath)) {
+                taskReadCount += 1;
+                if (taskReadCount === 4) {
+                    fs.writeFileSync(taskPath, driftedTaskQueue, 'utf8');
+                }
+            }
+            return Reflect.apply(originalReadFileSync, fsModule, args) as unknown;
+        }) as typeof fsModule.readFileSync;
+        let materialized: ReturnType<typeof materializeFullSuiteRepairTask> | null = null;
+        try {
+            materialized = materializeFullSuiteRepairTask({
+                repoRoot,
+                taskId: TASK_ID,
+                preflightPath,
+                fullSuiteArtifactPath: fullSuitePath
+            });
+        } finally {
+            fsModule.readFileSync = originalReadFileSync;
+        }
+
+        assert.equal(materialized?.status, 'BLOCKED');
+        assert.ok(
+            materialized?.violations.some((violation) => violation.includes('decomposition_changed')),
+            materialized?.violations.join('\n')
+        );
+        assert.equal(fs.readFileSync(appPath, 'utf8'), 'export const value = 2;\n');
+        assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/);
+        assertMaterializationControlPlaneRolledBack(repoRoot, originalTaskQueue);
+    });
+
+    it('aborts and rolls back when the repair decomposition changes before WIP suspension', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        const taskPath = path.resolve(repoRoot, 'TASK.md');
+        const originalTaskQueue = fs.readFileSync(taskPath, 'utf8');
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        fs.writeFileSync(appPath, 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalWriteFileSync = fsModule.writeFileSync;
+        let injected = false;
+        fsModule.writeFileSync = ((filePath: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, options?: fs.WriteFileOptions) => {
+            const content = typeof data === 'string'
+                ? data
+                : Buffer.isBuffer(data)
+                    ? data.toString('utf8')
+                    : '';
+            if (!injected
+                && typeof filePath !== 'number'
+                && path.resolve(String(filePath)) === taskPath
+                && content.includes(`| ${TASK_ID} | SPLIT_REQUIRED |`)) {
+                injected = true;
+                return originalWriteFileSync(
+                    filePath,
+                    content.replace(`, \`${SECOND_CHILD_TASK_ID}\``, ''),
+                    options
+                );
+            }
+            return originalWriteFileSync(filePath, data, options);
+        }) as typeof fsModule.writeFileSync;
+        let materialized: ReturnType<typeof materializeFullSuiteRepairTask> | null = null;
+        try {
+            materialized = materializeFullSuiteRepairTask({
+                repoRoot,
+                taskId: TASK_ID,
+                preflightPath,
+                fullSuiteArtifactPath: fullSuitePath
+            });
+        } finally {
+            fsModule.writeFileSync = originalWriteFileSync;
+        }
+
+        assert.equal(injected, true);
+        assert.equal(materialized?.status, 'BLOCKED');
+        assert.ok(
+            materialized?.violations.some((violation) => violation.includes('decomposition_changed')),
+            materialized?.violations.join('\n')
+        );
         assert.equal(fs.readFileSync(appPath, 'utf8'), 'export const value = 2;\n');
         assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/);
         assertMaterializationControlPlaneRolledBack(repoRoot, originalTaskQueue);
@@ -2121,7 +2409,7 @@ describe('full-suite repair task materialization', () => {
         assert.ok(unsupportedControlPath.violations.some((violation) => violation.includes('safe repository-relative path')));
     });
 
-    it('rejects malformed schema-v2 timestamps, bindings, tracked hashes, and duplicate untracked paths', () => {
+    it('rejects malformed schema-v3 timestamps, bindings, tracked hashes, and duplicate untracked paths', () => {
         const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
         const appPath = path.join(repoRoot, 'src', 'app.ts');
         const helperPath = path.join(repoRoot, 'src', 'new-helper.ts');
@@ -2601,6 +2889,41 @@ describe('full-suite repair task materialization', () => {
         assert.equal(evidence.reason, 'full-suite repair WIP manifest sha256 mismatch');
     });
 
+    it('rejects legacy singular child_task_id materialization evidence', () => {
+        const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const materialized = materializeFullSuiteRepairTask({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            fullSuiteArtifactPath: fullSuitePath
+        });
+        assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
+        const artifactPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'reviews',
+            `${TASK_ID}-full-suite-repair-task.json`
+        );
+        const artifact = readJson(artifactPath);
+        delete artifact.child_task_ids;
+        artifact.child_task_id = CHILD_TASK_ID;
+        writeJson(artifactPath, artifact);
+
+        const evidence = readFullSuiteRepairTaskMaterializationEvidence({
+            repoRoot,
+            reviewsRoot: path.dirname(artifactPath),
+            taskId: TASK_ID,
+            fullSuiteArtifactPath: fullSuitePath,
+            childTaskId: CHILD_TASK_ID
+        });
+
+        assert.equal(evidence.materialized, false);
+        assert.match(evidence.reason, /requires at least two unique child_task_ids/);
+    });
+
     it('blocks when the manifest path is replaced after materialization validation', () => {
         const { repoRoot, preflightPath, fullSuitePath } = makeRepo();
         const appPath = path.join(repoRoot, 'src', 'app.ts');
@@ -2616,7 +2939,7 @@ describe('full-suite repair task materialization', () => {
         const manifestPath = materialized.wip_manifest_path || '';
         const replacementManifest = {
             ...readJson(manifestPath),
-            child_task_id: 'T-UNAUTHORIZED-CHILD'
+            child_task_ids: ['T-UNAUTHORIZED-CHILD', SECOND_CHILD_TASK_ID]
         };
         markRepairChildDone(repoRoot);
 

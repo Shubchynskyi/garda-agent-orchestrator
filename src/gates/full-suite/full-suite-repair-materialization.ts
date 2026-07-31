@@ -43,6 +43,11 @@ import {
     validateTaskTableTextField,
     writeJson
 } from './full-suite-repair-contracts';
+import {
+    isRepairQualifiedFullSuiteArtifact,
+    resolveFullSuiteRepairDecompositionState,
+    sameRepairChildTaskIds
+} from './full-suite-repair-decomposition';
 import type {
     FullSuiteRepairTaskMaterializationResult,
     FullSuiteRepairTaskProposal,
@@ -86,6 +91,16 @@ import {
 
 function readRepairTaskProposal(fullSuiteArtifactPath: string, parentTaskId: string): RepairTaskProposalReadResult {
     const artifact = safeReadJson(fullSuiteArtifactPath);
+    if (!isRepairQualifiedFullSuiteArtifact(artifact, parentTaskId)) {
+        return {
+            proposal: null,
+            violations: [
+                `Current full-suite artifact is not a repair-qualified exhausted timeout for ${parentTaskId}; `
+                + 'expected matching task_id, timed_out=true, timeout_blocker=true, attempts_exhausted=true, '
+                + 'and a structured repair_task_proposal.'
+            ]
+        };
+    }
     const timeoutPolicy = isPlainRecord(artifact?.timeout_policy) ? artifact.timeout_policy : null;
     const proposal = isPlainRecord(timeoutPolicy?.repair_task_proposal)
         ? timeoutPolicy.repair_task_proposal
@@ -130,11 +145,13 @@ export function readFullSuiteRepairTaskMaterializationEvidence(params: {
     taskId: string;
     fullSuiteArtifactPath: string;
     childTaskId: string | null;
+    childTaskIds?: string[];
 }): {
     materialized: boolean;
     reason: string;
     artifact_path: string;
     child_task_id?: string | null;
+    child_task_ids?: string[];
     wip_manifest_path?: string | null;
     wip_manifest_sha256?: string | null;
     split_required_artifact_path?: string | null;
@@ -187,8 +204,38 @@ export function readFullSuiteRepairTaskMaterializationEvidence(params: {
     if (artifact.task_id !== params.taskId) {
         return { materialized: false, reason: 'full-suite repair artifact task_id mismatch', artifact_path: normalizePath(artifactPath) };
     }
-    if (params.childTaskId && artifact.child_task_id !== params.childTaskId) {
-        return { materialized: false, reason: 'full-suite repair artifact child_task_id mismatch', artifact_path: normalizePath(artifactPath) };
+    if (artifact.schema_version !== REPAIR_ARTIFACT_SCHEMA_VERSION) {
+        return { materialized: false, reason: `full-suite repair artifact schema_version must be ${REPAIR_ARTIFACT_SCHEMA_VERSION}`, artifact_path: normalizePath(artifactPath) };
+    }
+    const rawArtifactChildTaskIds = Array.isArray(artifact.child_task_ids)
+        ? artifact.child_task_ids
+        : [];
+    const artifactChildTaskIds = rawArtifactChildTaskIds
+        .map((entry) => typeof entry === 'string' ? entry.trim() : '')
+        .filter(Boolean);
+    const artifactChildTaskIdsWellFormed = rawArtifactChildTaskIds.every((entry) => (
+        typeof entry === 'string'
+        && entry.length > 0
+        && entry === entry.trim()
+        && !/[\u0000-\u001F\u007F]/u.test(entry)
+    ));
+    if (
+        !artifactChildTaskIdsWellFormed
+        || artifactChildTaskIds.length < 2
+        || new Set(artifactChildTaskIds).size !== artifactChildTaskIds.length
+        || Object.prototype.hasOwnProperty.call(artifact, 'child_task_id')
+    ) {
+        return {
+            materialized: false,
+            reason: 'full-suite repair artifact requires at least two unique child_task_ids and must not use child_task_id',
+            artifact_path: normalizePath(artifactPath)
+        };
+    }
+    if (params.childTaskId && !artifactChildTaskIds.includes(params.childTaskId)) {
+        return { materialized: false, reason: 'full-suite repair artifact does not include requested repair child', artifact_path: normalizePath(artifactPath) };
+    }
+    if (params.childTaskIds && !sameRepairChildTaskIds(artifactChildTaskIds, params.childTaskIds)) {
+        return { materialized: false, reason: 'full-suite repair artifact child_task_ids mismatch', artifact_path: normalizePath(artifactPath) };
     }
     if (artifact.status !== 'MATERIALIZED') {
         return { materialized: false, reason: 'full-suite repair artifact status is not MATERIALIZED', artifact_path: normalizePath(artifactPath) };
@@ -242,17 +289,18 @@ export function readFullSuiteRepairTaskMaterializationEvidence(params: {
     if (parsedValue.task_id !== params.taskId) {
         return { materialized: false, reason: 'full-suite repair WIP manifest task_id mismatch', artifact_path: normalizePath(artifactPath) };
     }
-    if (params.childTaskId && parsedValue.child_task_id !== params.childTaskId) {
-        return { materialized: false, reason: 'full-suite repair WIP manifest child_task_id mismatch', artifact_path: normalizePath(artifactPath) };
+    if (!sameRepairChildTaskIds(parsedValue.child_task_ids, artifactChildTaskIds)) {
+        return { materialized: false, reason: 'full-suite repair WIP manifest child_task_ids mismatch', artifact_path: normalizePath(artifactPath) };
     }
     if (parsedValue.full_suite_artifact_sha256 !== expectedFullSuiteSha) {
         return { materialized: false, reason: 'full-suite repair WIP manifest is not bound to the current full-suite artifact', artifact_path: normalizePath(artifactPath) };
     }
     return {
         materialized: true,
-        reason: 'full-suite repair task and WIP manifest are materialized',
+        reason: 'full-suite repair child handoff and WIP manifest are materialized',
         artifact_path: normalizePath(artifactPath),
-        child_task_id: String(artifact.child_task_id || ''),
+        child_task_id: null,
+        child_task_ids: artifactChildTaskIds,
         wip_manifest_path: normalizePath(manifestPath),
         wip_manifest_sha256: expectedManifestSha,
         split_required_artifact_path: typeof artifact.split_required_artifact_path === 'string'
@@ -261,18 +309,19 @@ export function readFullSuiteRepairTaskMaterializationEvidence(params: {
     };
 }
 
-function appendChildLinkNote(existingNotes: string, childTaskId: string, manifestPath: string): string {
-    if (existingNotes.includes(childTaskId)) {
+function appendRepairSuspensionNote(existingNotes: string, manifestPath: string): string {
+    const normalizedManifestPath = normalizePath(manifestPath);
+    if (existingNotes.includes(normalizedManifestPath)) {
         return existingNotes;
     }
-    const suffix = `Created child tasks: \`${childTaskId}\`; parent WIP suspended at \`${normalizePath(manifestPath)}\`.`;
+    const suffix = `Parent WIP suspended for the validated full-suite repair child handoff at \`${normalizedManifestPath}\`.`;
     return existingNotes.trim() ? `${existingNotes.trim()} ${suffix}` : suffix;
 }
 
 function materializeTaskQueueRows(params: {
     repoRoot: string;
     parentTaskId: string;
-    proposal: FullSuiteRepairTaskProposal;
+    childTaskIds: string[];
     manifestPath: string;
 }): TaskQueueRowsMaterializationResult {
     const taskPath = path.join(params.repoRoot, TASK_QUEUE_FILENAME);
@@ -309,8 +358,23 @@ function materializeTaskQueueRows(params: {
                     error_message: null
                 };
             }
-            const childExists = parsed.rows.some((row) => row.taskId === params.proposal.suggested_task_id);
-            const nextNotes = appendChildLinkNote(parentRow.notes, params.proposal.suggested_task_id, params.manifestPath);
+            const currentDecomposition = resolveFullSuiteRepairDecompositionState(
+                params.repoRoot,
+                params.parentTaskId
+            );
+            if (
+                !currentDecomposition.ready
+                || !sameRepairChildTaskIds(currentDecomposition.child_task_ids, params.childTaskIds)
+            ) {
+                return {
+                    outcome: 'decomposition_changed',
+                    task_path: normalizePath(taskPath),
+                    parent_linked: false,
+                    child_created: false,
+                    error_message: 'Validated repair decomposition changed before materialization.'
+                };
+            }
+            const nextNotes = appendRepairSuspensionNote(parentRow.notes, params.manifestPath);
             let parentLinked = false;
             const updatedParentLine = replaceTaskMdTableCell(parentRow.rawLine, 8, ` ${nextNotes} `);
             if (updatedParentLine && updatedParentLine !== parentRow.rawLine) {
@@ -318,35 +382,15 @@ function materializeTaskQueueRows(params: {
                 parentLinked = true;
             }
 
-            let childCreated = false;
-            if (!childExists) {
-                const today = nowIso().slice(0, 10);
-                const childNotes = `Child of \`${params.parentTaskId}\`. Repair full-suite timeout blocker. Restore parent WIP from \`${normalizePath(params.manifestPath)}\` after child completion.`;
-                const row = [
-                    params.proposal.suggested_task_id,
-                    'TODO',
-                    parentRow.priority || 'P1',
-                    params.proposal.area,
-                    params.proposal.title,
-                    parentRow.owner || 'gpt-5.5',
-                    today,
-                    'strict',
-                    childNotes
-                ];
-                const childLine = `| ${row.join(' | ')} |`;
-                lines.splice(parentRow.lineIndex + 1, 0, childLine);
-                childCreated = true;
-            }
-
             const nextContent = formatActiveTaskQueueTable(lines.join(newline));
             if (nextContent !== original) {
                 fs.writeFileSync(taskPath, nextContent, 'utf8');
             }
             return {
-                outcome: childCreated || parentLinked ? 'updated' : 'already_synced',
+                outcome: parentLinked ? 'updated' : 'already_synced',
                 task_path: normalizePath(taskPath),
                 parent_linked: parentLinked,
-                child_created: childCreated,
+                child_created: false,
                 error_message: null
             };
         }
@@ -485,6 +529,7 @@ function buildBlockedMaterializationResult(params: {
     repoRoot: string;
     taskId: string;
     proposal: FullSuiteRepairTaskProposal;
+    childTaskIds: string[];
     artifactPath: string;
     preflightPath: string;
     fullSuiteArtifactPath: string;
@@ -510,7 +555,7 @@ function buildBlockedMaterializationResult(params: {
         schema_version: REPAIR_ARTIFACT_SCHEMA_VERSION,
         status: 'BLOCKED',
         task_id: params.taskId,
-        child_task_id: params.proposal.suggested_task_id,
+        child_task_ids: params.childTaskIds,
         created_at_utc: params.timestampUtc,
         proposal: params.proposal,
         preflight_path: normalizePath(params.preflightPath),
@@ -553,7 +598,7 @@ function buildBlockedMaterializationResult(params: {
             {
                 artifact_path: normalizePath(blockedArtifactPath),
                 artifact_sha256: fs.existsSync(blockedArtifactPath) ? fileSha256(blockedArtifactPath) : null,
-                child_task_id: params.proposal.suggested_task_id,
+                child_task_ids: params.childTaskIds,
                 wip_manifest_path: params.retainedManifestPath
                     ? normalizePath(params.retainedManifestPath)
                     : null,
@@ -579,7 +624,8 @@ function buildBlockedMaterializationResult(params: {
     return {
         status: 'BLOCKED',
         task_id: params.taskId,
-        child_task_id: params.proposal.suggested_task_id,
+        child_task_id: null,
+        child_task_ids: params.childTaskIds,
         artifact_path: normalizePath(blockedArtifactPath),
         wip_manifest_path: params.retainedManifestPath
             ? normalizePath(params.retainedManifestPath)
@@ -596,7 +642,7 @@ function buildBlockedMaterializationResult(params: {
             legacyLines: [
                 'FULL_SUITE_REPAIR_TASK_BLOCKED',
                 `TaskId: ${params.taskId}`,
-                `ChildTaskId: ${params.proposal.suggested_task_id}`,
+                `ChildTaskIds: ${params.childTaskIds.join(', ')}`,
                 `ArtifactPath: ${normalizePath(blockedArtifactPath)}`,
                 ...params.violations.map((violation) => `Violation: ${violation}`)
             ]
@@ -624,6 +670,7 @@ function materializeFullSuiteRepairTaskUnlocked(
             status: 'BLOCKED',
             task_id: params.taskId,
             child_task_id: null,
+            child_task_ids: [],
             artifact_path: normalizePath(artifactPath),
             wip_manifest_path: null,
             split_required_artifact_path: null,
@@ -639,18 +686,46 @@ function materializeFullSuiteRepairTaskUnlocked(
             })
         };
     }
+    const decomposition = resolveFullSuiteRepairDecompositionState(repoRoot, params.taskId);
+    if (!decomposition.ready) {
+        return {
+            status: 'BLOCKED',
+            task_id: params.taskId,
+            child_task_id: null,
+            child_task_ids: decomposition.child_task_ids,
+            artifact_path: normalizePath(artifactPath),
+            wip_manifest_path: null,
+            split_required_artifact_path: null,
+            violations: decomposition.violations,
+            output_lines: formatFullSuiteRepairOutput({
+                repoRoot,
+                taskId: params.taskId,
+                status: 'BLOCKED',
+                action: 'Create a real multi-child repair decomposition before suspending parent WIP.',
+                reason: decomposition.violations.join(' '),
+                detailsPath: fullSuiteArtifactPath,
+                legacyLines: [
+                    'FULL_SUITE_REPAIR_TASK_BLOCKED',
+                    ...decomposition.violations.map((violation) => `Violation: ${violation}`)
+                ]
+            })
+        };
+    }
+    const repairChildTaskIds = decomposition.child_task_ids;
     const currentEvidence = readFullSuiteRepairTaskMaterializationEvidence({
         repoRoot,
         reviewsRoot,
         taskId: params.taskId,
         fullSuiteArtifactPath,
-        childTaskId: proposal.suggested_task_id
+        childTaskId: null,
+        childTaskIds: repairChildTaskIds
     });
     if (currentEvidence.materialized) {
         return {
             status: 'ALREADY_MATERIALIZED',
             task_id: params.taskId,
-            child_task_id: proposal.suggested_task_id,
+            child_task_id: null,
+            child_task_ids: repairChildTaskIds,
             artifact_path: normalizePath(artifactPath),
             wip_manifest_path: currentEvidence.wip_manifest_path || null,
             split_required_artifact_path: currentEvidence.split_required_artifact_path || null,
@@ -659,12 +734,12 @@ function materializeFullSuiteRepairTaskUnlocked(
                 repoRoot,
                 taskId: params.taskId,
                 status: 'ALREADY_MATERIALIZED',
-                action: 'Continue parent routing through the existing repair child.',
+                action: 'Continue parent routing through the existing repair children.',
                 reason: currentEvidence.reason,
                 detailsPath: artifactPath,
                 legacyLines: [
                     'FULL_SUITE_REPAIR_TASK_ALREADY_MATERIALIZED',
-                    `ChildTaskId: ${proposal.suggested_task_id}`,
+                    `ChildTaskIds: ${repairChildTaskIds.join(', ')}`,
                     `ArtifactPath: ${normalizePath(artifactPath)}`,
                     `Reason: ${currentEvidence.reason}`
                 ]
@@ -696,7 +771,7 @@ function materializeFullSuiteRepairTaskUnlocked(
             preparedCapture = prepareWipCapture({
                 repoRoot,
                 taskId: params.taskId,
-                childTaskId: proposal.suggested_task_id,
+                childTaskIds: repairChildTaskIds,
                 captureRoot: wipCapture.captureRoot,
                 timestampUtc: wipCapture.timestampUtc,
                 preflightPath,
@@ -728,7 +803,8 @@ function materializeFullSuiteRepairTaskUnlocked(
         return {
             status: 'BLOCKED',
             task_id: params.taskId,
-            child_task_id: proposal.suggested_task_id,
+            child_task_id: null,
+            child_task_ids: repairChildTaskIds,
             artifact_path: normalizePath(artifactPath),
             wip_manifest_path: null,
             split_required_artifact_path: null,
@@ -743,7 +819,7 @@ function materializeFullSuiteRepairTaskUnlocked(
                 legacyLines: [
                     'FULL_SUITE_REPAIR_TASK_BLOCKED',
                     `TaskId: ${params.taskId}`,
-                    `ChildTaskId: ${proposal.suggested_task_id}`,
+                    `ChildTaskIds: ${repairChildTaskIds.join(', ')}`,
                     `ArtifactPath: ${normalizePath(artifactPath)}`,
                     ...scopeViolations.map((violation) => `Violation: ${violation}`)
                 ]
@@ -754,6 +830,7 @@ function materializeFullSuiteRepairTaskUnlocked(
     if (!preparedCapture) {
         throw new Error('prepared WIP capture missing after successful capture preconditions');
     }
+    const preparedCaptureBeforeSuspension = preparedCapture;
     const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     const splitRequiredArtifactPath = path.join(reviewsRoot, `${params.taskId}-split-required.json`);
     let taskSnapshot: OptionalControlPlaneFileSnapshot;
@@ -780,7 +857,8 @@ function materializeFullSuiteRepairTaskUnlocked(
         return {
             status: 'BLOCKED',
             task_id: params.taskId,
-            child_task_id: proposal.suggested_task_id,
+            child_task_id: null,
+            child_task_ids: repairChildTaskIds,
             artifact_path: normalizePath(artifactPath),
             wip_manifest_path: null,
             split_required_artifact_path: null,
@@ -807,14 +885,15 @@ function materializeFullSuiteRepairTaskUnlocked(
         queueResult = materializeTaskQueueRows({
             repoRoot,
             parentTaskId: params.taskId,
-            proposal,
+            childTaskIds: repairChildTaskIds,
             manifestPath: wipCapture.manifestPath
         });
         if (queueResult.outcome === 'task_file_missing'
             || queueResult.outcome === 'task_not_found'
+            || queueResult.outcome === 'decomposition_changed'
             || queueResult.outcome === 'write_failed') {
             throw new Error(
-                `TASK.md repair child materialization failed: ${queueResult.outcome}`
+                `TASK.md repair handoff materialization failed: ${queueResult.outcome}`
                 + `${queueResult.error_message ? ` (${queueResult.error_message})` : ''}.`
             );
         }
@@ -825,11 +904,11 @@ function materializeFullSuiteRepairTaskUnlocked(
             reviewsRoot,
             taskId: params.taskId,
             guardKind: 'full_suite_repair',
-            guardReason: 'Full-suite timeout blocker exhausted retry policy and requires repair child scope.',
+            guardReason: 'Full-suite timeout blocker exhausted retry policy and requires multi-child repair scope.',
             rawGuardSummary: proposal.rationale,
             preflightPath,
             guardDetails: {
-                repair_child_task_id: proposal.suggested_task_id,
+                repair_child_task_ids: repairChildTaskIds,
                 full_suite_artifact_path: normalizePath(fullSuiteArtifactPath),
                 wip_manifest_path: normalizePath(wipCapture.manifestPath)
             }
@@ -842,28 +921,67 @@ function materializeFullSuiteRepairTaskUnlocked(
                 + `${latchResult.status_sync.error_message ? ` (${latchResult.status_sync.error_message})` : ''}.`
             );
         }
-        preparedCapture = verifyPreparedWipCapture(repoRoot, preparedCapture);
-        const finalWorkspaceViolations = validateWorkspaceMatchesPreparedCapture(
-            repoRoot,
-            trackedChanges,
-            preparedCapture
-        );
-        if (finalWorkspaceViolations.length > 0) {
-            throw new Error(`WIP changed before suspension: ${finalWorkspaceViolations.join(' ')}`);
-        }
+        const suspensionResult = withTaskQueueStatusSyncLock<{
+            outcome: 'suspended' | 'decomposition_changed' | 'lock_failed';
+            error_message: string | null;
+        }>(
+            taskPath,
+            (message) => ({
+                outcome: 'lock_failed',
+                error_message: message
+            }),
+            () => {
+                const currentDecomposition = resolveFullSuiteRepairDecompositionState(
+                    repoRoot,
+                    params.taskId
+                );
+                if (
+                    !currentDecomposition.ready
+                    || !sameRepairChildTaskIds(currentDecomposition.child_task_ids, repairChildTaskIds)
+                ) {
+                    return {
+                        outcome: 'decomposition_changed',
+                        error_message: 'Validated repair decomposition changed before WIP suspension.'
+                    };
+                }
+                const verifiedPreparedCapture = verifyPreparedWipCapture(
+                    repoRoot,
+                    preparedCaptureBeforeSuspension
+                );
+                preparedCapture = verifiedPreparedCapture;
+                const finalWorkspaceViolations = validateWorkspaceMatchesPreparedCapture(
+                    repoRoot,
+                    trackedChanges,
+                    verifiedPreparedCapture
+                );
+                if (finalWorkspaceViolations.length > 0) {
+                    throw new Error(`WIP changed before suspension: ${finalWorkspaceViolations.join(' ')}`);
+                }
 
-        suspensionStarted = true;
-        suspendPreparedWip(repoRoot, trackedChanges, preparedCapture);
-        const suspensionViolations = validatePreparedWipSuspended(repoRoot, preparedCapture);
-        if (suspensionViolations.length > 0) {
-            throw new Error(suspensionViolations.join(' '));
+                suspensionStarted = true;
+                suspendPreparedWip(repoRoot, trackedChanges, verifiedPreparedCapture);
+                const suspensionViolations = validatePreparedWipSuspended(repoRoot, verifiedPreparedCapture);
+                if (suspensionViolations.length > 0) {
+                    throw new Error(suspensionViolations.join(' '));
+                }
+                return {
+                    outcome: 'suspended',
+                    error_message: null
+                };
+            }
+        );
+        if (suspensionResult.outcome !== 'suspended') {
+            throw new Error(
+                `Atomic repair WIP suspension failed: ${suspensionResult.outcome}`
+                + `${suspensionResult.error_message ? ` (${suspensionResult.error_message})` : ''}.`
+            );
         }
         const manifestPath = wipCapture.manifestPath;
         const materializationArtifact = {
             schema_version: REPAIR_ARTIFACT_SCHEMA_VERSION,
             status: 'MATERIALIZED',
             task_id: params.taskId,
-            child_task_id: proposal.suggested_task_id,
+            child_task_ids: repairChildTaskIds,
             created_at_utc: nowIso(),
             proposal,
             preflight_path: normalizePath(preflightPath),
@@ -883,11 +1001,11 @@ function materializeFullSuiteRepairTaskUnlocked(
             params.taskId,
             'FULL_SUITE_REPAIR_TASK_MATERIALIZED',
             'BLOCKED',
-            'Full-suite timeout repair task materialized and parent WIP suspended.',
+            'Full-suite timeout repair handoff materialized and parent WIP suspended.',
             {
                 artifact_path: normalizePath(artifactPath),
                 artifact_sha256: sha256Text(`${JSON.stringify(materializationArtifact, null, 2)}\n`),
-                child_task_id: proposal.suggested_task_id,
+                child_task_ids: repairChildTaskIds,
                 wip_manifest_path: normalizePath(manifestPath),
                 split_required_artifact_path: latchResult.artifact_path,
                 violations
@@ -898,7 +1016,8 @@ function materializeFullSuiteRepairTaskUnlocked(
         return {
             status: 'MATERIALIZED',
             task_id: params.taskId,
-            child_task_id: proposal.suggested_task_id,
+            child_task_id: null,
+            child_task_ids: repairChildTaskIds,
             artifact_path: normalizePath(artifactPath),
             wip_manifest_path: normalizePath(manifestPath),
             split_required_artifact_path: latchResult.artifact_path,
@@ -907,18 +1026,18 @@ function materializeFullSuiteRepairTaskUnlocked(
                 repoRoot,
                 taskId: params.taskId,
                 status: 'MATERIALIZED',
-                action: 'Continue parent routing through the repair child.',
-                reason: 'Full-suite timeout repair task materialized and parent WIP suspended.',
+                action: 'Continue parent routing through the repair children.',
+                reason: 'Full-suite timeout repair handoff materialized and parent WIP suspended.',
                 detailsPath: artifactPath,
-                detailsHint: 'Parent routing should continue via the repair child.',
+                detailsHint: 'Parent routing should continue via the repair children.',
                 legacyLines: [
                     'FULL_SUITE_REPAIR_TASK_MATERIALIZED',
                     `TaskId: ${params.taskId}`,
-                    `ChildTaskId: ${proposal.suggested_task_id}`,
+                    `ChildTaskIds: ${repairChildTaskIds.join(', ')}`,
                     `ArtifactPath: ${normalizePath(artifactPath)}`,
                     `WipManifestPath: ${normalizePath(manifestPath)}`,
                     `SplitRequiredArtifactPath: ${latchResult.artifact_path}`,
-                    `NextStep: run ${buildNextStepCommand(repoRoot, params.taskId) || 'next-step'}; parent routing should continue via the repair child.`
+                    `NextStep: run ${buildNextStepCommand(repoRoot, params.taskId) || 'next-step'}; parent routing should continue via the repair children.`
                 ]
             })
         };
@@ -964,7 +1083,7 @@ function materializeFullSuiteRepairTaskUnlocked(
                             previous_status: 'SPLIT_REQUIRED',
                             new_status: restoredStatus,
                             reason: 'full_suite_repair_materialization_rollback',
-                            repair_child_task_id: proposal.suggested_task_id
+                            repair_child_task_ids: repairChildTaskIds
                         },
                         { actor: 'orchestrator' }
                     );
@@ -995,7 +1114,7 @@ function materializeFullSuiteRepairTaskUnlocked(
                     ? 'Full-suite repair task materialization rolled back transactionally.'
                     : 'Full-suite repair task materialization rollback is incomplete.',
                 {
-                    child_task_id: proposal.suggested_task_id,
+                    child_task_ids: repairChildTaskIds,
                     wip_manifest_path: retainedManifestPath
                         ? normalizePath(retainedManifestPath)
                         : null,
@@ -1016,6 +1135,7 @@ function materializeFullSuiteRepairTaskUnlocked(
             repoRoot,
             taskId: params.taskId,
             proposal,
+            childTaskIds: repairChildTaskIds,
             artifactPath,
             preflightPath,
             fullSuiteArtifactPath,
@@ -1045,6 +1165,7 @@ function buildMaterializationLockBlockedResult(params: {
         status: 'BLOCKED',
         task_id: params.taskId,
         child_task_id: null,
+        child_task_ids: [],
         artifact_path: normalizePath(params.artifactPath),
         wip_manifest_path: null,
         split_required_artifact_path: null,

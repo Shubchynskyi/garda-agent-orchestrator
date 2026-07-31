@@ -540,7 +540,7 @@ export interface PreparedWipCapture {
 export function prepareWipCapture(params: {
     repoRoot: string;
     taskId: string;
-    childTaskId: string;
+    childTaskIds: string[];
     captureRoot: string;
     timestampUtc: string;
     preflightPath: string;
@@ -595,7 +595,7 @@ export function prepareWipCapture(params: {
             kind: 'full_suite_repair_wip',
             status: 'suspended',
             task_id: params.taskId,
-            child_task_id: params.childTaskId,
+            child_task_ids: [...params.childTaskIds],
             created_at_utc: timestampUtc,
             base_commit: getHeadCommit(params.repoRoot),
             preflight_path: normalizePath(params.preflightPath),
@@ -920,4 +920,3 @@ export function removePreparedWipCapture(repoRoot: string, captureRoot: string):
 export function hasPatchContent(patch: CapturedPatchEvidence): boolean {
     return patch.bytes > 0 && !patch.empty;
 }
-

@@ -74,11 +74,11 @@ function buildManifest(repoRoot: string, options: {
     const staged = writeArtifact(repoRoot, 'runtime/staged.patch', options.stagedPatch || Buffer.alloc(0));
     const unstaged = writeArtifact(repoRoot, 'runtime/unstaged.patch', options.unstagedPatch || Buffer.alloc(0));
     return {
-        schema_version: 2,
+        schema_version: 3,
         kind: 'full_suite_repair_wip',
         status: 'suspended',
         task_id: 'T-TEST',
-        child_task_id: 'T-TEST-F1',
+        child_task_ids: ['T-TEST-F1', 'T-TEST-F2'],
         created_at_utc: '2026-07-31T00:00:00.000Z',
         base_commit: options.baseCommit,
         preflight_path: preflight.path,
@@ -135,11 +135,11 @@ describe('full-suite repair restore validation', () => {
         const staged = writeArtifact(repoRoot, 'runtime/staged.patch', Buffer.alloc(0));
         const unstaged = writeArtifact(repoRoot, 'runtime/unstaged.patch', Buffer.alloc(0));
         const manifest: RepairWipManifest = {
-            schema_version: 2,
+            schema_version: 3,
             kind: 'full_suite_repair_wip',
             status: 'suspended',
             task_id: 'T-TEST',
-            child_task_id: 'T-TEST-F1',
+            child_task_ids: ['T-TEST-F1', 'T-TEST-F2'],
             created_at_utc: '2026-07-31T00:00:00.000Z',
             base_commit: 'deadbeef',
             preflight_path: preflight.path,

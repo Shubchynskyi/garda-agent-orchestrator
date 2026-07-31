@@ -50,6 +50,10 @@ import {
 import {
     readFullSuiteRepairTaskMaterializationEvidence
 } from '../full-suite/full-suite-repair-task';
+import {
+    findFullSuiteRepairChildHandoffState,
+    resolveFullSuiteRepairDecompositionState
+} from '../full-suite/full-suite-repair-decomposition';
 import { buildReviewCoverageContract } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
 import {
@@ -712,7 +716,18 @@ function isFullSuiteTimeoutRepairTaskMaterialized(
     taskId: string,
     fullSuiteArtifactPath: string
 ): boolean {
-    if (!proposal.suggestedTaskId || !taskEntries.has(proposal.suggestedTaskId)) {
+    if (!proposal.suggestedTaskId) {
+        return false;
+    }
+    const decomposition = resolveFullSuiteRepairDecompositionState(
+        repoRoot,
+        taskId,
+        { allowCompletedChildren: true }
+    );
+    if (
+        !decomposition.ready
+        || decomposition.child_task_ids.some((childTaskId) => !taskEntries.has(childTaskId))
+    ) {
         return false;
     }
     return readFullSuiteRepairTaskMaterializationEvidence({
@@ -720,7 +735,8 @@ function isFullSuiteTimeoutRepairTaskMaterialized(
         reviewsRoot,
         taskId,
         fullSuiteArtifactPath,
-        childTaskId: proposal.suggestedTaskId
+        childTaskId: null,
+        childTaskIds: decomposition.child_task_ids
     }).materialized;
 }
 
@@ -2603,6 +2619,45 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     });
     if (taskIdCaseMismatchRoute) {
         return buildDecisionRouteResult(taskIdCaseMismatchRoute);
+    }
+
+    const repairChildHandoff = findFullSuiteRepairChildHandoffState(
+        repoRoot,
+        taskId,
+        reviewsRoot,
+        eventsRoot
+    );
+    if (repairChildHandoff) {
+        const repairEvidence = repairChildHandoff.decomposition.ready
+            ? readFullSuiteRepairTaskMaterializationEvidence({
+                repoRoot,
+                reviewsRoot,
+                taskId: repairChildHandoff.parent_task_id,
+                fullSuiteArtifactPath: repairChildHandoff.full_suite_artifact_path,
+                childTaskId: taskId,
+                childTaskIds: repairChildHandoff.decomposition.child_task_ids
+            })
+            : null;
+        if (!repairChildHandoff.decomposition.ready || !repairEvidence?.materialized) {
+            const reason = !repairChildHandoff.decomposition.ready
+                ? repairChildHandoff.decomposition.violations.join(' ')
+                : repairEvidence?.reason || 'full-suite repair materialization evidence is missing';
+            return buildDecisionRouteResult({
+                status: 'BLOCKED',
+                nextGate: 'full-suite-repair-child-handoff',
+                title: 'Complete the multi-child full-suite repair handoff before executing this child.',
+                reason:
+                    `Repair child ${taskId} is linked from parent ${repairChildHandoff.parent_task_id}, but its authenticated ` +
+                    `two-or-more-child decomposition handoff is not current. ${reason} ` +
+                    'Do not enter task mode, classify, compile, review, or complete the repair child until the parent materializes the validated handoff.',
+                commands: [
+                    buildCommand(
+                        'Continue repair parent handoff',
+                        `${cliPrefix} next-step "${repairChildHandoff.parent_task_id}" --repo-root "."`
+                    )
+                ]
+            });
+        }
     }
 
     let splitRequiredReviewCycleContinuationAssessment:

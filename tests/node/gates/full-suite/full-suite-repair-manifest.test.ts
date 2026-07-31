@@ -31,7 +31,7 @@ describe('full-suite repair manifest boundary', () => {
                 schema_version: -1,
                 status: 'captured',
                 task_id: ' T-930-1-2',
-                child_task_id: '',
+                child_task_ids: ['T-930-1-2-F1', 'T-930-1-2-F1'],
                 created_at_utc: 'not-a-timestamp',
                 preflight_path: '../preflight.json',
                 full_suite_artifact_path: '-full-suite.json',
@@ -71,10 +71,10 @@ describe('full-suite repair manifest boundary', () => {
         );
 
         assert.equal(result.manifest, null);
-        assert.ok(result.violations.includes('WIP manifest schema_version must be 2.'));
+        assert.ok(result.violations.includes('WIP manifest schema_version must be 3.'));
         assert.ok(result.violations.includes('WIP manifest status must be suspended.'));
         assert.ok(result.violations.includes('WIP manifest task_id must be a non-empty string.'));
-        assert.ok(result.violations.includes('WIP manifest child_task_id must be a non-empty string.'));
+        assert.ok(result.violations.includes('WIP manifest child_task_ids entries must be unique.'));
         assert.ok(result.violations.includes(
             'WIP manifest created_at_utc must be a canonical ISO-8601 UTC timestamp.'
         ));

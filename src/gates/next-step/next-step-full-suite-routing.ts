@@ -123,8 +123,8 @@ function resolveAfterCompileBeforeReviewsRoute(
     if (options.timeoutBlockerExhausted && !timeoutBlockerResolvedByRepairTask) {
         return buildTimeoutBlockerRepairRoute(
             options,
-            'Create full-suite timeout repair task before reviewer launch.',
-            'Do not launch independent reviewers until the timeout blocker is resolved or an audited repair task is materialized.'
+            'Materialize a multi-child full-suite timeout repair handoff before reviewer launch.',
+            'Do not launch independent reviewers until the timeout blocker is resolved or an audited multi-child repair handoff is materialized.'
         );
     }
 
@@ -204,8 +204,8 @@ function resolveBeforeTestReviewRoute(
     if (options.timeoutBlockerExhausted && !timeoutBlockerResolvedByRepairTask) {
         return buildTimeoutBlockerRepairRoute(
             options,
-            'Create full-suite timeout repair task before launching test review.',
-            'Do not launch the mandatory test reviewer until the timeout blocker is resolved or an audited repair task is materialized.'
+            'Materialize a multi-child full-suite timeout repair handoff before launching test review.',
+            'Do not launch the mandatory test reviewer until the timeout blocker is resolved or an audited multi-child repair handoff is materialized.'
         );
     }
 
@@ -431,7 +431,7 @@ function buildTimeoutBlockerRepairRoute(
     blockerInstruction: string
 ): NextStepFullSuiteValidationRoute {
     const proposal = options.timeoutRepairTaskProposal
-        ? ` Proposed repair task: ${options.timeoutRepairTaskProposal}.`
+        ? ` Diagnostic repair suggestion: ${options.timeoutRepairTaskProposal}.`
         : ' No structured repair-task proposal was found in the full-suite artifact; inspect the artifact before continuing.';
     const repairCommand = options.timeoutRepairTaskCommand || options.navigatorCommand;
     return {
@@ -441,13 +441,15 @@ function buildTimeoutBlockerRepairRoute(
         reason:
             `Full-suite validation timed out for the current compiled scope after exhausting the configured retry policy. ` +
             `${blockerInstruction}${proposal} ` +
-            `After the repair task is created or the timeout/runtime issue is fixed, rerun the navigator before any review launch. ` +
+            `Before materialization, record and link at least two meaningful independently scoped repair child tasks; ` +
+            `the singular suggested_task_id is not decomposition provenance. After the multi-child handoff is materialized ` +
+            `or the timeout/runtime issue is fixed, rerun the navigator before any review launch. ` +
             `Command: ${options.commandText}. ${options.timeoutForecastLine || ''}`.trim(),
         commands: [
             buildCommand(
                 options.timeoutRepairTaskCommand
-                    ? 'Materialize audited timeout repair task'
-                    : 'Rerun navigator after audited timeout repair task is materialized',
+                    ? 'Validate and materialize multi-child timeout repair handoff'
+                    : 'Rerun navigator after audited timeout repair handoff is materialized',
                 repairCommand
             )
         ]

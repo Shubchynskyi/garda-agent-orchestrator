@@ -477,7 +477,7 @@ export function parseRepairWipManifest(repoRoot: string, manifestPath: string, v
     if (value.status !== 'suspended') {
         violations.push('WIP manifest status must be suspended.');
     }
-    for (const fieldName of ['task_id', 'child_task_id'] as const) {
+    for (const fieldName of ['task_id'] as const) {
         const fieldValue = value[fieldName];
         if (typeof fieldValue !== 'string'
             || !fieldValue.trim()
@@ -485,6 +485,28 @@ export function parseRepairWipManifest(repoRoot: string, manifestPath: string, v
             || /[\u0000-\u001F\u007F]/u.test(fieldValue)) {
             violations.push(`WIP manifest ${fieldName} must be a non-empty string.`);
         }
+    }
+    const childTaskIds = Array.isArray(value.child_task_ids)
+        ? value.child_task_ids
+        : [];
+    if (childTaskIds.length < 2) {
+        violations.push('WIP manifest child_task_ids must contain at least two repair child task ids.');
+    }
+    const normalizedChildTaskIds = childTaskIds.map((entry) => (
+        typeof entry === 'string' ? entry.trim() : ''
+    ));
+    if (normalizedChildTaskIds.some((entry, index) => (
+        !entry
+        || entry !== childTaskIds[index]
+        || /[\u0000-\u001F\u007F]/u.test(entry)
+    ))) {
+        violations.push('WIP manifest child_task_ids entries must be non-empty canonical strings.');
+    }
+    if (new Set(normalizedChildTaskIds).size !== normalizedChildTaskIds.length) {
+        violations.push('WIP manifest child_task_ids entries must be unique.');
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'child_task_id')) {
+        violations.push('WIP manifest child_task_id is not allowed; a repair split requires child_task_ids.');
     }
     if (!isCanonicalIsoUtcTimestamp(value.created_at_utc)) {
         violations.push('WIP manifest created_at_utc must be a canonical ISO-8601 UTC timestamp.');

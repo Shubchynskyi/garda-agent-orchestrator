@@ -50,6 +50,10 @@ import {
     readFullSuiteRepairTaskMaterializationEvidence
 } from './full-suite-repair-materialization';
 import {
+    resolveFullSuiteRepairDecompositionState,
+    sameRepairChildTaskIds
+} from './full-suite-repair-decomposition';
+import {
     inspectRestoreMutationState,
     rollbackFullSuiteRepairRestore
 } from './full-suite-repair-restore-validation';
@@ -58,7 +62,34 @@ function isParentResumeStatus(status: string | null): boolean {
     return status === 'SPLIT_REQUIRED' || status === 'DECOMPOSED' || status === 'IN_PROGRESS';
 }
 
-function resumeParentTaskAfterWipRestore(repoRoot: string, taskId: string): ParentResumeStatusResult {
+function validateCurrentRepairHandoffForRestore(
+    repoRoot: string,
+    taskId: string,
+    expectedChildTaskIds: readonly string[]
+): string[] {
+    const decomposition = resolveFullSuiteRepairDecompositionState(
+        repoRoot,
+        taskId,
+        { allowCompletedChildren: true }
+    );
+    const violations = decomposition.ready
+        ? []
+        : [`current full-suite repair decomposition is not valid: ${decomposition.violations.join(' ')}`];
+    if (
+        decomposition.ready
+        && !sameRepairChildTaskIds(decomposition.child_task_ids, expectedChildTaskIds)
+    ) {
+        violations.push('current full-suite repair decomposition child_task_ids do not match the suspended WIP manifest.');
+    }
+    violations.push(...validateRepairChildrenDone(repoRoot, [...expectedChildTaskIds]));
+    return violations;
+}
+
+function resumeParentTaskAfterWipRestore(
+    repoRoot: string,
+    taskId: string,
+    expectedChildTaskIds: readonly string[]
+): ParentResumeStatusResult {
     const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return {
@@ -105,6 +136,21 @@ function resumeParentTaskAfterWipRestore(repoRoot: string, taskId: string): Pare
                     previous_status: previousStatus,
                     next_status: 'IN_PROGRESS',
                     error_message: `Expected parent status SPLIT_REQUIRED, DECOMPOSED, or IN_PROGRESS; found ${previousStatus || 'unknown'}.`
+                };
+            }
+            const handoffViolations = validateCurrentRepairHandoffForRestore(
+                repoRoot,
+                taskId,
+                expectedChildTaskIds
+            );
+            if (handoffViolations.length > 0) {
+                return {
+                    outcome: 'blocked_status',
+                    task_path: normalizePath(taskPath),
+                    task_id: taskId,
+                    previous_status: previousStatus,
+                    next_status: 'IN_PROGRESS',
+                    error_message: handoffViolations.join(' ')
                 };
             }
             if (previousStatus === 'IN_PROGRESS') {
@@ -209,26 +255,28 @@ function validateParentCanResumeAfterWipRestore(repoRoot: string, taskId: string
     return [];
 }
 
-function validateRepairChildDone(repoRoot: string, childTaskId: string): string[] {
+function validateRepairChildrenDone(repoRoot: string, childTaskIds: string[]): string[] {
     const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
-    const normalizedChildTaskId = childTaskId.trim();
-    if (!normalizedChildTaskId) {
-        return ['Repair child task id is missing from the WIP manifest.'];
+    if (childTaskIds.length < 2) {
+        return ['At least two repair child task ids are required in the WIP manifest.'];
     }
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
-        return [`repair child completion check failed: TASK.md missing at ${normalizePath(taskPath)}.`];
+        return [`repair children completion check failed: TASK.md missing at ${normalizePath(taskPath)}.`];
     }
-    const row = parseCanonicalActiveTaskQueue(fs.readFileSync(taskPath, 'utf8'))
-        .rows
-        .find((candidate) => candidate.taskId === normalizedChildTaskId);
-    if (!row) {
-        return [`repair child ${normalizedChildTaskId} is missing from TASK.md.`];
+    const rows = parseCanonicalActiveTaskQueue(fs.readFileSync(taskPath, 'utf8')).rows;
+    const violations: string[] = [];
+    for (const childTaskId of childTaskIds) {
+        const row = rows.find((candidate) => candidate.taskId === childTaskId);
+        if (!row) {
+            violations.push(`repair child ${childTaskId} is missing from TASK.md.`);
+            continue;
+        }
+        const status = readTaskQueueStatusToken(row.status);
+        if (status !== 'DONE') {
+            violations.push(`repair child ${childTaskId} must be DONE before restoring parent WIP; found ${status || 'unknown'}.`);
+        }
     }
-    const status = readTaskQueueStatusToken(row.status);
-    if (status !== 'DONE') {
-        return [`repair child ${normalizedChildTaskId} must be DONE before restoring parent WIP; found ${status || 'unknown'}.`];
-    }
-    return [];
+    return violations;
 }
 
 function buildRestoreTransactionBlockedResult(params: {
@@ -296,21 +344,33 @@ function restoreFullSuiteRepairWipUnlocked(params: RestoreFullSuiteRepairWipPara
     if (!taskId) {
         violations.push('TaskId must not be empty.');
     } else {
-        const materializationEvidence = readFullSuiteRepairTaskMaterializationEvidence({
+        const decomposition = resolveFullSuiteRepairDecompositionState(
             repoRoot,
-            reviewsRoot,
             taskId,
-            fullSuiteArtifactPath,
-            childTaskId: params.childTaskId || null
-        });
-        if (!materializationEvidence.materialized || !materializationEvidence.wip_manifest_path) {
-            violations.push(`current full-suite repair materialization evidence is not valid: ${materializationEvidence.reason}`);
+            { allowCompletedChildren: true }
+        );
+        if (!decomposition.ready) {
+            violations.push(
+                `current full-suite repair decomposition is not valid: ${decomposition.violations.join(' ')}`
+            );
         } else {
-            const evidenceManifestPath = resolveInputPathInsideRepo(repoRoot, materializationEvidence.wip_manifest_path, 'WipManifestPath');
-            if (normalizePath(evidenceManifestPath) !== normalizePath(manifestPath)) {
-                violations.push('ManifestPath is not the current materialized full-suite repair WIP manifest.');
+            const materializationEvidence = readFullSuiteRepairTaskMaterializationEvidence({
+                repoRoot,
+                reviewsRoot,
+                taskId,
+                fullSuiteArtifactPath,
+                childTaskId: params.childTaskId || null,
+                childTaskIds: decomposition.child_task_ids
+            });
+            if (!materializationEvidence.materialized || !materializationEvidence.wip_manifest_path) {
+                violations.push(`current full-suite repair materialization evidence is not valid: ${materializationEvidence.reason}`);
+            } else {
+                const evidenceManifestPath = resolveInputPathInsideRepo(repoRoot, materializationEvidence.wip_manifest_path, 'WipManifestPath');
+                if (normalizePath(evidenceManifestPath) !== normalizePath(manifestPath)) {
+                    violations.push('ManifestPath is not the current materialized full-suite repair WIP manifest.');
+                }
+                expectedManifestSha256 = String(materializationEvidence.wip_manifest_sha256 || '').trim();
             }
-            expectedManifestSha256 = String(materializationEvidence.wip_manifest_sha256 || '').trim();
         }
     }
     let manifestValue: unknown = null;
@@ -339,7 +399,7 @@ function restoreFullSuiteRepairWipUnlocked(params: RestoreFullSuiteRepairWipPara
         if (manifest.task_id !== taskId) {
             violations.push(`WIP manifest task_id mismatch: expected=${taskId}; actual=${manifest.task_id}.`);
         }
-        violations.push(...validateRepairChildDone(repoRoot, String(manifest.child_task_id || '')));
+        violations.push(...validateRepairChildrenDone(repoRoot, manifest.child_task_ids));
         violations.push(...validateParentCanResumeAfterWipRestore(repoRoot, String(manifest.task_id || '')));
         violations.push(...inspectRestoreMutationState(repoRoot, manifest).violations);
     }
@@ -378,8 +438,7 @@ function restoreFullSuiteRepairWipUnlocked(params: RestoreFullSuiteRepairWipPara
                     repoRoot,
                     taskId,
                     fullSuiteArtifactPath,
-                    manifestPath,
-                    childTaskId: manifest.child_task_id
+                    manifestPath
                 }),
                 detailsPath: manifestPath,
                 legacyLines: [
@@ -420,35 +479,103 @@ function restoreFullSuiteRepairWipUnlocked(params: RestoreFullSuiteRepairWipPara
     const createdUntrackedFiles: CapturedUntrackedFileEvidence[] = [];
     let stagedApplied = false;
     let unstagedApplied = false;
+    const taskPath = path.join(repoRoot, TASK_QUEUE_FILENAME);
     try {
-        if (hasPatchContent(manifest.patches.staged)) {
-            const stagedPatch = patchSnapshots.staged;
-            if (!stagedPatch) {
-                throw new Error('staged patch validated content snapshot is unavailable.');
+        const restoreGuardResult = withTaskQueueStatusSyncLock<{
+            outcome: 'restored' | 'handoff_changed' | 'lock_failed';
+            error_message: string | null;
+        }>(
+            taskPath,
+            (message) => ({
+                outcome: 'lock_failed',
+                error_message: message
+            }),
+            () => {
+                const handoffViolations = validateCurrentRepairHandoffForRestore(
+                    repoRoot,
+                    manifest.task_id,
+                    manifest.child_task_ids
+                );
+                if (handoffViolations.length > 0) {
+                    return {
+                        outcome: 'handoff_changed',
+                        error_message: handoffViolations.join(' ')
+                    };
+                }
+                const currentMaterializationEvidence = readFullSuiteRepairTaskMaterializationEvidence({
+                    repoRoot,
+                    reviewsRoot,
+                    taskId: manifest.task_id,
+                    fullSuiteArtifactPath,
+                    childTaskId: params.childTaskId || null,
+                    childTaskIds: manifest.child_task_ids
+                });
+                if (
+                    !currentMaterializationEvidence.materialized
+                    || !currentMaterializationEvidence.wip_manifest_path
+                ) {
+                    return {
+                        outcome: 'handoff_changed',
+                        error_message:
+                            `current full-suite repair materialization evidence is not valid: `
+                            + currentMaterializationEvidence.reason
+                    };
+                }
+                const currentManifestPath = resolveInputPathInsideRepo(
+                    repoRoot,
+                    currentMaterializationEvidence.wip_manifest_path,
+                    'WipManifestPath'
+                );
+                if (
+                    normalizePath(currentManifestPath) !== normalizePath(manifestPath)
+                    || String(currentMaterializationEvidence.wip_manifest_sha256 || '').trim()
+                        !== expectedManifestSha256
+                ) {
+                    return {
+                        outcome: 'handoff_changed',
+                        error_message: 'Current materialization evidence no longer matches the validated WIP manifest.'
+                    };
+                }
+                if (hasPatchContent(manifest.patches.staged)) {
+                    const stagedPatch = patchSnapshots.staged;
+                    if (!stagedPatch) {
+                        throw new Error('staged patch validated content snapshot is unavailable.');
+                    }
+                    runGitWithInput(repoRoot, ['apply', '--check', '--index', '-'], stagedPatch);
+                    runGitWithInput(repoRoot, ['apply', '--index', '-'], stagedPatch);
+                    stagedApplied = true;
+                    for (const entry of manifest.tracked_files.filter((file) => file.staged)) {
+                        restoredFiles.add(entry.path);
+                    }
+                }
+                if (hasPatchContent(manifest.patches.unstaged)) {
+                    const unstagedPatch = patchSnapshots.unstaged;
+                    if (!unstagedPatch) {
+                        throw new Error('unstaged patch validated content snapshot is unavailable.');
+                    }
+                    runGitWithInput(repoRoot, ['apply', '--check', '-'], unstagedPatch);
+                    runGitWithInput(repoRoot, ['apply', '-'], unstagedPatch);
+                    unstagedApplied = true;
+                    for (const entry of manifest.tracked_files.filter((file) => file.unstaged)) {
+                        restoredFiles.add(entry.path);
+                    }
+                }
+                for (const entry of manifest.untracked_files) {
+                    restoreContainedUntrackedFile({ repoRoot, entry });
+                    createdUntrackedFiles.push(entry);
+                    restoredFiles.add(entry.path);
+                }
+                return {
+                    outcome: 'restored',
+                    error_message: null
+                };
             }
-            runGitWithInput(repoRoot, ['apply', '--check', '--index', '-'], stagedPatch);
-            runGitWithInput(repoRoot, ['apply', '--index', '-'], stagedPatch);
-            stagedApplied = true;
-            for (const entry of manifest.tracked_files.filter((file) => file.staged)) {
-                restoredFiles.add(entry.path);
-            }
-        }
-        if (hasPatchContent(manifest.patches.unstaged)) {
-            const unstagedPatch = patchSnapshots.unstaged;
-            if (!unstagedPatch) {
-                throw new Error('unstaged patch validated content snapshot is unavailable.');
-            }
-            runGitWithInput(repoRoot, ['apply', '--check', '-'], unstagedPatch);
-            runGitWithInput(repoRoot, ['apply', '-'], unstagedPatch);
-            unstagedApplied = true;
-            for (const entry of manifest.tracked_files.filter((file) => file.unstaged)) {
-                restoredFiles.add(entry.path);
-            }
-        }
-        for (const entry of manifest.untracked_files) {
-            restoreContainedUntrackedFile({ repoRoot, entry });
-            createdUntrackedFiles.push(entry);
-            restoredFiles.add(entry.path);
+        );
+        if (restoreGuardResult.outcome !== 'restored') {
+            throw new Error(
+                `repair handoff changed before WIP restore: ${restoreGuardResult.outcome}`
+                + `${restoreGuardResult.error_message ? ` (${restoreGuardResult.error_message})` : ''}.`
+            );
         }
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -472,7 +599,11 @@ function restoreFullSuiteRepairWipUnlocked(params: RestoreFullSuiteRepairWipPara
     }
     let parentResume: ParentResumeStatusResult;
     try {
-        parentResume = resumeParentTaskAfterWipRestore(repoRoot, manifest.task_id);
+        parentResume = resumeParentTaskAfterWipRestore(
+            repoRoot,
+            manifest.task_id,
+            manifest.child_task_ids
+        );
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         const rollbackViolations = rollbackFullSuiteRepairRestore({
@@ -514,7 +645,7 @@ function restoreFullSuiteRepairWipUnlocked(params: RestoreFullSuiteRepairWipPara
                 'Full-suite repair parent WIP restore rolled back after parent status sync failure.',
                 {
                     manifest_path: normalizePath(manifestPath),
-                    child_task_id: manifest.child_task_id,
+                    child_task_ids: manifest.child_task_ids,
                     restored_files: [...restoredFiles].sort(),
                     parent_status_sync: parentResume,
                     rollback_violations: rollbackViolations
@@ -540,10 +671,10 @@ function restoreFullSuiteRepairWipUnlocked(params: RestoreFullSuiteRepairWipPara
             manifest.task_id,
             'FULL_SUITE_REPAIR_WIP_RESTORED',
             'PASS',
-            'Full-suite repair parent WIP restored after repair child completion.',
+            'Full-suite repair parent WIP restored after all repair children completed.',
             {
                 manifest_path: normalizePath(manifestPath),
-                child_task_id: manifest.child_task_id,
+                child_task_ids: manifest.child_task_ids,
                 restored_files: [...restoredFiles].sort(),
                 parent_status_sync: parentResume
             },
@@ -589,7 +720,7 @@ function restoreFullSuiteRepairWipUnlocked(params: RestoreFullSuiteRepairWipPara
             gate: 'full-suite-repair-wip-restore',
             status: 'RESTORED',
             action: 'Continue the parent task through the navigator.',
-            reason: 'Full-suite repair parent WIP restored after repair child completion.',
+            reason: 'Full-suite repair parent WIP restored after all repair children completed.',
             detailsPath: manifestPath,
             legacyLines: [
                 'FULL_SUITE_REPAIR_WIP_RESTORED',

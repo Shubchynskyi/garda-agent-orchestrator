@@ -10,8 +10,8 @@ import {
 import { normalizePath } from '../shared/helpers';
 import { buildOperatorNextActionBlock } from '../shared/operator-action-output';
 
-export const REPAIR_ARTIFACT_SCHEMA_VERSION = 1;
-export const WIP_MANIFEST_SCHEMA_VERSION = 2;
+export const REPAIR_ARTIFACT_SCHEMA_VERSION = 2;
+export const WIP_MANIFEST_SCHEMA_VERSION = 3;
 
 export interface FullSuiteRepairTaskProposal {
     suggested_task_id: string;
@@ -29,6 +29,7 @@ export interface FullSuiteRepairTaskMaterializationResult {
     status: 'MATERIALIZED' | 'ALREADY_MATERIALIZED' | 'BLOCKED';
     task_id: string;
     child_task_id: string | null;
+    child_task_ids: string[];
     artifact_path: string;
     wip_manifest_path: string | null;
     split_required_artifact_path: string | null;
@@ -104,7 +105,7 @@ export interface RepairWipManifest {
     kind: 'full_suite_repair_wip';
     status: 'suspended';
     task_id: string;
-    child_task_id: string;
+    child_task_ids: string[];
     created_at_utc: string;
     base_commit: string;
     preflight_path: string;
