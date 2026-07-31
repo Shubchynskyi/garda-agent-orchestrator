@@ -52,6 +52,7 @@ export interface NextStepFullSuiteValidationRoutingOptions {
     gatePassed: boolean;
     timeoutBlockerExhausted: boolean;
     timeoutRepairTaskProposal: string | null;
+    repeatedTimeoutBlockerAnalysis?: string | null;
     timeoutRepairTaskCommand?: string | null;
     timeoutRepairTaskMaterialized?: boolean;
     timedOutRetryAvailable: boolean;
@@ -123,7 +124,7 @@ function resolveAfterCompileBeforeReviewsRoute(
     if (options.timeoutBlockerExhausted && !timeoutBlockerResolvedByRepairTask) {
         return buildTimeoutBlockerRepairRoute(
             options,
-            'Materialize a multi-child full-suite timeout repair handoff before reviewer launch.',
+            'Materialize a multi-child full-suite timeout repair task handoff before reviewer launch.',
             'Do not launch independent reviewers until the timeout blocker is resolved or an audited multi-child repair handoff is materialized.'
         );
     }
@@ -204,7 +205,7 @@ function resolveBeforeTestReviewRoute(
     if (options.timeoutBlockerExhausted && !timeoutBlockerResolvedByRepairTask) {
         return buildTimeoutBlockerRepairRoute(
             options,
-            'Materialize a multi-child full-suite timeout repair handoff before launching test review.',
+            'Materialize a multi-child full-suite timeout repair task handoff before launching test review.',
             'Do not launch the mandatory test reviewer until the timeout blocker is resolved or an audited multi-child repair handoff is materialized.'
         );
     }
@@ -434,13 +435,20 @@ function buildTimeoutBlockerRepairRoute(
         ? ` Diagnostic repair suggestion: ${options.timeoutRepairTaskProposal}.`
         : ' No structured repair-task proposal was found in the full-suite artifact; inspect the artifact before continuing.';
     const repairCommand = options.timeoutRepairTaskCommand || options.navigatorCommand;
+    const repeatedBlocker = options.repeatedTimeoutBlockerAnalysis
+        ? ` Repeated-blocker analysis: ${options.repeatedTimeoutBlockerAnalysis}. `
+            + 'The same blocker fingerprint must not create another automatic nested repair child; '
+            + 'continue only with a true independently scoped multi-child decomposition or an explicit recovery decision.'
+        : '';
     return {
         status: 'BLOCKED',
         nextGate: 'full-suite-timeout-repair-task',
-        title,
+        title: options.repeatedTimeoutBlockerAnalysis
+            ? 'Analyze repeated full-suite blocker before any nested repair routing.'
+            : title,
         reason:
             `Full-suite validation timed out for the current compiled scope after exhausting the configured retry policy. ` +
-            `${blockerInstruction}${proposal} ` +
+            `${blockerInstruction}${proposal}${repeatedBlocker} ` +
             `Before materialization, record and link at least two meaningful independently scoped repair child tasks; ` +
             `the singular suggested_task_id is not decomposition provenance. After the multi-child handoff is materialized ` +
             `or the timeout/runtime issue is fixed, rerun the navigator before any review launch. ` +

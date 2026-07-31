@@ -94,6 +94,31 @@ export interface FullSuiteTimeoutRepairTaskProposal {
     rationale: string;
 }
 
+export interface FullSuiteTimeoutBlockerIdentity {
+    schema_version: 1;
+    source_task_id: string;
+    observed_task_id: string;
+    base_commit: string;
+    scope_sha256: string;
+    gate: 'full-suite-validation';
+    failure_class: 'timeout_retry_exhausted';
+    fingerprint_sha256: string;
+}
+
+export interface FullSuiteRepeatedBlockerAnalysis {
+    schema_version: 1;
+    status: 'REPEATED_BLOCKER';
+    source_task_id: string;
+    observed_task_id: string;
+    matched_ancestor_task_id: string;
+    blocker_fingerprint_sha256: string;
+    base_commit: string;
+    scope_sha256: string;
+    gate: 'full-suite-validation';
+    failure_class: 'timeout_retry_exhausted';
+    required_resolution: 'TRUE_DECOMPOSITION_OR_EXPLICIT_RECOVERY_DECISION';
+}
+
 export interface FullSuiteTimeoutPolicyEvidence {
     timeout_blocker: boolean;
     timeout_retry_count: number;
@@ -102,6 +127,8 @@ export interface FullSuiteTimeoutPolicyEvidence {
     attempts_exhausted: boolean;
     warning_only_continuation: boolean;
     repair_task_proposal: FullSuiteTimeoutRepairTaskProposal | null;
+    blocker_identity?: FullSuiteTimeoutBlockerIdentity | null;
+    repeated_blocker_analysis?: FullSuiteRepeatedBlockerAnalysis | null;
 }
 
 export interface FullSuiteCommandProvenance {

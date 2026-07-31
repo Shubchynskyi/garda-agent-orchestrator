@@ -18,6 +18,7 @@ import {
     loadFullSuiteValidationConfig,
     persistFullSuiteFailureEvidence,
     recordFullSuiteValidationDuration,
+    resolveFullSuiteTimeoutBlockerEvidence,
     type FullSuiteValidationResult,
     type FullSuiteTimeoutAttemptEvidence
 } from '../../../../gates/full-suite/full-suite-validation';
@@ -509,6 +510,13 @@ export async function runFullSuiteValidationCommand(
     );
     result.command_provenance = commandContract.provenance;
     const timeoutAttemptsExhausted = timedOut && timeoutAttempts.length >= maxAttempts;
+    const timeoutBlockerEvidence = timeoutAttemptsExhausted && executionConfig.timeout_blocker !== false
+        ? resolveFullSuiteTimeoutBlockerEvidence({
+            repoRoot,
+            taskId,
+            cycleBinding
+        })
+        : null;
     result.timeout_policy = {
         timeout_blocker: executionConfig.timeout_blocker !== false,
         timeout_retry_count: timeoutRetryCount,
@@ -518,11 +526,19 @@ export async function runFullSuiteValidationCommand(
         warning_only_continuation: timedOut && executionConfig.timeout_blocker === false,
         repair_task_proposal: timeoutAttemptsExhausted && executionConfig.timeout_blocker !== false
             ? buildFullSuiteTimeoutRepairTaskProposal(taskId)
-            : null
+            : null,
+        blocker_identity: timeoutBlockerEvidence?.blocker_identity || null,
+        repeated_blocker_analysis: timeoutBlockerEvidence?.repeated_blocker_analysis || null
     };
     if (result.timeout_policy.repair_task_proposal) {
         result.violations.push(
             'Full-suite timeout blocker exhausted the configured retry policy; materialize the proposed repair follow-up before reviewer launch.'
+        );
+    }
+    if (result.timeout_policy.repeated_blocker_analysis) {
+        result.violations.push(
+            'Repeated full-suite blocker fingerprint matches a repair ancestor; do not create another automatic nested repair child. '
+            + 'Record a true multi-child decomposition or an explicit recovery decision.'
         );
     }
     fs.writeFileSync(outputArtifactPath, rawOutputText, 'utf8');

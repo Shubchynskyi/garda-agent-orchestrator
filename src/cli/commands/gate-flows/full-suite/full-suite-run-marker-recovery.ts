@@ -13,6 +13,7 @@ import {
     loadFullSuiteValidationConfig,
     persistFullSuiteFailureEvidence,
     recordFullSuiteValidationDuration,
+    resolveFullSuiteTimeoutBlockerEvidence,
     resolveFullSuiteDurationHistoryPath,
     type FullSuiteTimeoutPolicyEvidence,
     type FullSuiteValidationCycleBinding,
@@ -34,6 +35,7 @@ import {
     writeArtifactThenEmitMandatoryFullSuiteEvent
 } from './full-suite-validation-lifecycle';
 import {
+    readFullSuiteScopeBinding,
     readLatestCompileGatePassedTimestamp
 } from './full-suite-validation-cycle-binding';
 import {
@@ -575,6 +577,21 @@ async function materializeInterruptedFullSuiteTimeoutEvidence(options: {
         : 1;
     const maxAttempts = Math.max(1, 1 + timeoutRetryCount);
     const attemptsExhausted = maxAttempts <= 1;
+    const preflight = JSON.parse(fs.readFileSync(options.preflightPath, 'utf8')) as Record<string, unknown>;
+    const cycleBinding: FullSuiteValidationCycleBinding = {
+        task_id: options.taskId,
+        preflight_path: gateHelpers.normalizePath(options.preflightPath),
+        preflight_sha256: options.preflightSha256,
+        compile_gate_timestamp: options.compileGateTimestamp,
+        scope_binding: readFullSuiteScopeBinding(options.repoRoot, options.taskId, preflight)
+    };
+    const timeoutBlockerEvidence = attemptsExhausted && config.timeout_blocker !== false
+        ? resolveFullSuiteTimeoutBlockerEvidence({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            cycleBinding
+        })
+        : null;
     const timeoutPolicy: FullSuiteTimeoutPolicyEvidence = {
         timeout_blocker: config.timeout_blocker !== false,
         timeout_retry_count: timeoutRetryCount,
@@ -589,7 +606,9 @@ async function materializeInterruptedFullSuiteTimeoutEvidence(options: {
         warning_only_continuation: config.timeout_blocker === false,
         repair_task_proposal: attemptsExhausted && config.timeout_blocker !== false
             ? buildFullSuiteTimeoutRepairTaskProposal(options.taskId)
-            : null
+            : null,
+        blocker_identity: timeoutBlockerEvidence?.blocker_identity || null,
+        repeated_blocker_analysis: timeoutBlockerEvidence?.repeated_blocker_analysis || null
     };
     const startedAtMs = Date.parse(options.summary?.startedAtUtc || '');
     const durationMs = Number.isFinite(startedAtMs)
@@ -647,19 +666,7 @@ async function materializeInterruptedFullSuiteTimeoutEvidence(options: {
             'Dead run marker had no live child or descendant process evidence; no generic Node process cleanup was required.'
         ],
         timeout_policy: timeoutPolicy,
-        cycle_binding: {
-            task_id: options.taskId,
-            preflight_path: gateHelpers.normalizePath(options.preflightPath),
-            preflight_sha256: options.preflightSha256,
-            compile_gate_timestamp: options.compileGateTimestamp,
-            scope_binding: options.summary?.preflightSha256
-                ? {
-                    changed_files_sha256: null,
-                    scope_sha256: null,
-                    scope_content_sha256: null
-                }
-                : null
-        },
+        cycle_binding: cycleBinding,
         duration_ms: durationMs,
         timeout_forecast: timeoutForecast
     };

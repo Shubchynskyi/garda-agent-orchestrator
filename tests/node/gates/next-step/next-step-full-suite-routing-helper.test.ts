@@ -102,6 +102,27 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.timeoutRepairTaskCommand);
     });
 
+    it('blocks stale repeated blocker routing instead of silently routing another nested repair child', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            gateStatus: 'FAIL',
+            timeoutBlockerExhausted: true,
+            timeoutRepairTaskProposal: 'id=T-123-F1-F1; title=Fix full-suite timeout blocker',
+            repeatedTimeoutBlockerAnalysis:
+                'source_task_id=T-123; observed_task_id=T-123-F1; matched_ancestor_task_id=T-123; '
+                + `fingerprint=${'a'.repeat(64)}; gate=full-suite-validation; failure_class=timeout_retry_exhausted; `
+                + 'required_resolution=TRUE_DECOMPOSITION_OR_EXPLICIT_RECOVERY_DECISION'
+        });
+
+        assert.match(route?.title || '', /Analyze repeated full-suite blocker/);
+        assert.match(route?.reason || '', /same blocker fingerprint must not create another automatic nested repair child/);
+        assert.match(route?.reason || '', /TRUE_DECOMPOSITION_OR_EXPLICIT_RECOVERY_DECISION/);
+        assert.match(route?.reason || '', /at least two meaningful independently scoped repair child tasks/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.timeoutRepairTaskCommand);
+    });
+
     it('prints a cleanup command only for dead interrupted markers without live descendants', () => {
         const route = resolveNextStepFullSuiteValidationRoute({
             ...BASE_OPTIONS,

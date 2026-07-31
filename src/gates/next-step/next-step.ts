@@ -678,6 +678,7 @@ function hasFullSuiteTimeoutWarningLifecyclePolicy(
 interface FullSuiteTimeoutRepairTaskProposal {
     suggestedTaskId: string | null;
     summary: string | null;
+    repeatedBlockerAnalysis: string | null;
 }
 
 function getFullSuiteTimeoutRepairTaskProposal(
@@ -689,7 +690,8 @@ function getFullSuiteTimeoutRepairTaskProposal(
     if (!proposal) {
         return {
             suggestedTaskId: null,
-            summary: null
+            summary: null,
+            repeatedBlockerAnalysis: null
         };
     }
     const taskId = String(proposal.suggested_task_id || '').trim();
@@ -702,9 +704,24 @@ function getFullSuiteTimeoutRepairTaskProposal(
         area ? `area=${area}` : null,
         rationale ? `rationale=${rationale}` : null
     ].filter(Boolean).join('; ') || null;
+    const repeatedBlocker = isPlainRecord(timeoutPolicy?.repeated_blocker_analysis)
+        ? timeoutPolicy.repeated_blocker_analysis
+        : null;
+    const repeatedBlockerAnalysis = repeatedBlocker?.status === 'REPEATED_BLOCKER'
+        ? [
+            `source_task_id=${String(repeatedBlocker.source_task_id || '').trim() || '<missing>'}`,
+            `observed_task_id=${String(repeatedBlocker.observed_task_id || '').trim() || '<missing>'}`,
+            `matched_ancestor_task_id=${String(repeatedBlocker.matched_ancestor_task_id || '').trim() || '<missing>'}`,
+            `fingerprint=${String(repeatedBlocker.blocker_fingerprint_sha256 || '').trim() || '<missing>'}`,
+            `gate=${String(repeatedBlocker.gate || '').trim() || '<missing>'}`,
+            `failure_class=${String(repeatedBlocker.failure_class || '').trim() || '<missing>'}`,
+            `required_resolution=${String(repeatedBlocker.required_resolution || '').trim() || '<missing>'}`
+        ].join('; ')
+        : null;
     return {
         suggestedTaskId: taskId || null,
-        summary
+        summary,
+        repeatedBlockerAnalysis
     };
 }
 
@@ -3358,6 +3375,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 gatePassed: fullSuiteGatePassed,
                 timeoutBlockerExhausted: fullSuiteTimeoutBlockerExhausted,
                 timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal.summary,
+                repeatedTimeoutBlockerAnalysis: fullSuiteTimeoutRepairTaskProposal.repeatedBlockerAnalysis,
                 timeoutRepairTaskCommand: fullSuiteTimeoutRepairTaskProposal.suggestedTaskId
                     ? fullSuiteRepairTaskCommand
                     : null,

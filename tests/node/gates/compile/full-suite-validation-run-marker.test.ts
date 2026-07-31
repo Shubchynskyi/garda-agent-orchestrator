@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -413,6 +414,73 @@ describe('full-suite validation run marker', () => {
                 forecast_sample_eligible: false,
                 forecast_exclusion_reason: 'timed_out'
             }]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('uses the preflight scope hash for interrupted timeout blocker recovery', async () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-marker-blocker-scope-'));
+        try {
+            const taskId = 'T-MARKER-BLOCKER-SCOPE';
+            const scopeSha256 = 'a'.repeat(64);
+            childProcess.execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
+            childProcess.execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'tests@example.com']);
+            childProcess.execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Tests']);
+            fs.writeFileSync(path.join(repoRoot, 'README.md'), '# Fixture\n', 'utf8');
+            childProcess.execFileSync('git', ['-C', repoRoot, 'add', 'README.md']);
+            childProcess.execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'seed'], { stdio: 'ignore' });
+
+            const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+            fs.mkdirSync(path.dirname(configPath), { recursive: true });
+            fs.writeFileSync(configPath, JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    timeout_retry_count: 0,
+                    timeout_blocker: true
+                }
+            }), 'utf8');
+            const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: taskId,
+                metrics: {
+                    changed_files_sha256: 'b'.repeat(64),
+                    scope_sha256: scopeSha256,
+                    scope_content_sha256: 'c'.repeat(64)
+                }
+            }), 'utf8');
+            const preflightSha256 = fileSha256(preflightPath) || '';
+            const markerPath = writeCurrentMarker({
+                repoRoot,
+                taskId,
+                preflightPath,
+                preflightSha256,
+                childPid: 999998
+            });
+
+            const result = await runFullSuiteRunMarkerRecoveryCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                clearDeadMarker: true,
+                operatorConfirmed: 'yes'
+            });
+
+            assert.equal(result.exitCode, 0);
+            assert.equal(fs.existsSync(markerPath), false);
+            const fullSuiteArtifact = JSON.parse(fs.readFileSync(
+                path.join(reviewsRoot, `${taskId}-full-suite-validation.json`),
+                'utf8'
+            )) as Record<string, unknown>;
+            const timeoutPolicy = fullSuiteArtifact.timeout_policy as Record<string, unknown>;
+            const blockerIdentity = timeoutPolicy.blocker_identity as Record<string, unknown>;
+            assert.equal(timeoutPolicy.attempts_exhausted, true);
+            assert.equal(blockerIdentity.scope_sha256, scopeSha256);
+            assert.notEqual(blockerIdentity.scope_sha256, preflightSha256);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
