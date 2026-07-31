@@ -8,7 +8,9 @@ import * as path from 'node:path';
 
 import {
     materializeFullSuiteRepairTask,
-    readFullSuiteRepairTaskMaterializationEvidence,
+    readFullSuiteRepairTaskMaterializationEvidence
+} from '../../../../src/gates/full-suite/full-suite-repair-materialization';
+import {
     restoreFullSuiteRepairWip
 } from '../../../../src/gates/full-suite/full-suite-repair-task';
 import {
