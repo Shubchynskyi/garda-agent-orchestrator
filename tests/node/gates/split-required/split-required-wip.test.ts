@@ -12,6 +12,11 @@ import {
     retireSplitRequiredWip
 } from '../../../../src/gates/split-required/split-required-wip';
 import {
+    listSplitRequiredWip as listSplitRequiredWipOperation,
+    restoreSplitRequiredWip as restoreSplitRequiredWipOperation,
+    retireSplitRequiredWip as retireSplitRequiredWipOperation
+} from '../../../../src/gates/split-required/split-required-wip-operations';
+import {
     materializeSplitRequiredLatch
 } from '../../../../src/gates/next-step/next-step-split-required-latch';
 import {
@@ -97,6 +102,12 @@ function capture(repoRoot: string, changedFiles: string[]) {
 }
 
 describe('split-required WIP capture and restore', () => {
+    it('keeps the compatibility facade bound to the extracted operations', () => {
+        assert.equal(listSplitRequiredWip, listSplitRequiredWipOperation);
+        assert.equal(restoreSplitRequiredWip, restoreSplitRequiredWipOperation);
+        assert.equal(retireSplitRequiredWip, retireSplitRequiredWipOperation);
+    });
+
     it('captures WIP when ordinary split-required latch materializes in a git worktree', () => {
         const repoRoot = makeRepo();
         writeFile(repoRoot, 'src/a.ts', 'export const a = 2;\n');
