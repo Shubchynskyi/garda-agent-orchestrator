@@ -1,4 +1,3 @@
-import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -8,9 +7,7 @@ import {
     appendMandatoryTaskEvent
 } from '../../gate-runtime/task-events';
 import {
-    runGit,
-    runGitBinary,
-    splitNulList
+    runGit
 } from '../../core/git-helpers';
 import { isPlainRecord } from '../../core/records';
 import {
@@ -18,20 +15,10 @@ import {
     normalizePath
 } from '../shared/helpers';
 import {
-    safeReadJson
-} from '../task-audit/task-audit-summary-collectors';
-import {
-    buildSplitRequiredWipManifest,
-    canCaptureSplitRequiredWip,
-    fileBytes,
-    findCurrentCapturedManifest,
     findManifestPaths,
     getHeadCommit,
-    headBlobSha,
     normalizeGitPath,
     nowIso,
-    pathExistsInHead,
-    planCaptureLocation,
     readManifest,
     resolveInputPathInsideRepo,
     resolveRepoPath,
@@ -39,8 +26,6 @@ import {
     writeJson
 } from './split-required-wip-contracts';
 import type {
-    SplitRequiredWipCaptureResult,
-    SplitRequiredWipGuardKind,
     SplitRequiredWipListResult,
     SplitRequiredWipManifest,
     SplitRequiredWipPatchEvidence,
@@ -51,6 +36,7 @@ import type {
 } from './split-required-wip-contracts';
 
 export { canCaptureSplitRequiredWip } from './split-required-wip-contracts';
+export { captureAndSuspendSplitRequiredWip } from './split-required-wip-capture';
 export type {
     SplitRequiredWipCaptureResult,
     SplitRequiredWipGuardKind,
@@ -64,24 +50,6 @@ export type {
     SplitRequiredWipUntrackedFileEvidence
 } from './split-required-wip-contracts';
 
-interface TrackedChangeFiles {
-    staged: Set<string>;
-    unstaged: Set<string>;
-    all: string[];
-}
-
-interface PreflightChangedFileScope {
-    allowed: Set<string>;
-    violations: string[];
-}
-
-interface CapturedManifestEvidence {
-    stagedPatch: SplitRequiredWipPatchEvidence;
-    unstagedPatch: SplitRequiredWipPatchEvidence;
-    trackedFiles: SplitRequiredWipTrackedFileEvidence[];
-    untrackedFiles: SplitRequiredWipUntrackedFileEvidence[];
-}
-
 interface AdvancedRestorePlan {
     temp_root: string;
     candidate_index_path: string;
@@ -91,241 +59,10 @@ interface AdvancedRestorePlan {
     target_sha256: Map<string, string | null>;
 }
 
-function collectTrackedChangeFiles(repoRoot: string): TrackedChangeFiles {
-    const staged = new Set(splitNulList(runGitBinary(repoRoot, ['diff', '--name-only', '--cached', '-z'])).map(normalizeGitPath));
-    const unstaged = new Set(splitNulList(runGitBinary(repoRoot, ['diff', '--name-only', '-z'])).map(normalizeGitPath));
-    return {
-        staged,
-        unstaged,
-        all: [...new Set([...staged, ...unstaged])].sort()
-    };
-}
-
-function excludeGateOwnedQueueFiles(changes: TrackedChangeFiles): TrackedChangeFiles {
-    const isImplementationWip = (relativePath: string): boolean => normalizeGitPath(relativePath) !== TASK_QUEUE_FILENAME;
-    const staged = new Set([...changes.staged].filter(isImplementationWip));
-    const unstaged = new Set([...changes.unstaged].filter(isImplementationWip));
-    return {
-        staged,
-        unstaged,
-        all: [...new Set([...staged, ...unstaged])].sort()
-    };
-}
-
-function collectVisibleUntrackedFiles(repoRoot: string): string[] {
-    return splitNulList(runGitBinary(repoRoot, ['ls-files', '--others', '--exclude-standard', '-z']))
-        .map(normalizeGitPath)
-        .sort();
-}
-
-function collectUntrackedFilesForPathspecs(repoRoot: string, pathspecs: string[], includeIgnored: boolean): string[] {
-    const normalizedPathspecs = [...new Set(pathspecs.map(normalizeGitPath).filter(Boolean))].sort();
-    if (normalizedPathspecs.length === 0) {
-        return [];
-    }
-    const visibleUntracked = splitNulList(runGitBinary(repoRoot, [
-        'ls-files',
-        '--others',
-        '--exclude-standard',
-        '-z',
-        '--',
-        ...normalizedPathspecs
-    ]));
-    const ignoredUntracked = includeIgnored
-        ? splitNulList(runGitBinary(repoRoot, [
-            'ls-files',
-            '--others',
-            '--ignored',
-            '--exclude-standard',
-            '-z',
-            '--',
-            ...normalizedPathspecs
-        ]))
-        : [];
-    return [...new Set([...visibleUntracked, ...ignoredUntracked].map(normalizeGitPath))].sort();
-}
-
-function isIgnoredRuntimeArtifactPath(relativePath: string): boolean {
-    const lower = normalizeGitPath(relativePath).toLowerCase();
-    return lower.startsWith('garda-agent-orchestrator/runtime/reviews/')
-        || lower.startsWith('garda-agent-orchestrator/runtime/task-events/')
-        || lower.startsWith('garda-agent-orchestrator/runtime/task-ledger/')
-        || lower.startsWith('garda-agent-orchestrator/runtime/project-memory/')
-        || lower.startsWith('garda-agent-orchestrator/runtime/wip/')
-        || lower.startsWith('garda-agent-orchestrator/runtime/metrics');
-}
-
-function isTaskOwnedUntrackedPath(relativePath: string, taskId: string): boolean {
-    const normalized = normalizeGitPath(relativePath);
-    if (isIgnoredRuntimeArtifactPath(normalized)) {
-        return false;
-    }
-    const taskToken = taskId.toLowerCase();
-    const lower = normalized.toLowerCase();
-    const hasTaskIdToken = lower.includes(`/${taskToken}/`)
-        || lower.includes(`/${taskToken}-`)
-        || lower.endsWith(`/${taskToken}.md`)
-        || lower.endsWith(`/${taskToken}.json`)
-        || lower.endsWith(`/${taskToken}.jsonl`);
-    return hasTaskIdToken && lower.startsWith('garda-agent-orchestrator/runtime/tmp/');
-}
-
-function collectRuntimeTmpTaskOwnedUntrackedFiles(repoRoot: string, taskId: string): string[] {
-    return collectUntrackedFilesForPathspecs(
-        repoRoot,
-        ['garda-agent-orchestrator/runtime/tmp'],
-        true
-    ).filter((relativePath) => isTaskOwnedUntrackedPath(relativePath, taskId));
-}
-
-function readPreflightChangedFileScope(repoRoot: string, preflightPath: string, expectedTaskId: string): PreflightChangedFileScope {
-    const artifact = safeReadJson(preflightPath);
-    const violations: string[] = [];
-    const allowed = new Set<string>();
-    if (!isPlainRecord(artifact)) {
-        return {
-            allowed,
-            violations: ['Preflight artifact is missing or invalid.']
-        };
-    }
-    const artifactTaskId = typeof artifact.task_id === 'string' ? artifact.task_id.trim() : '';
-    if (artifactTaskId && artifactTaskId !== expectedTaskId) {
-        violations.push(`Preflight task_id mismatch: expected ${expectedTaskId}; found ${artifactTaskId}.`);
-    }
-    if (!Array.isArray(artifact.changed_files)) {
-        violations.push('Preflight changed_files must be an array.');
-        return { allowed, violations };
-    }
-    for (const entry of artifact.changed_files) {
-        if (typeof entry !== 'string' || !entry.trim()) {
-            violations.push('Preflight changed_files contains an invalid path.');
-            continue;
-        }
-        try {
-            const resolved = resolveRepoPath(repoRoot, entry.trim());
-            const relativePath = normalizeGitPath(path.relative(path.resolve(repoRoot), resolved));
-            if (!relativePath) {
-                violations.push('Preflight changed_files contains an invalid empty path.');
-                continue;
-            }
-            allowed.add(relativePath);
-        } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : String(error);
-            violations.push(`Preflight changed_files path invalid: ${message}`);
-        }
-    }
-    return { allowed, violations };
-}
-
-function writeEmptyPatchFile(outputPath: string): SplitRequiredWipPatchEvidence {
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, '', 'utf8');
-    return buildPatchEvidence(outputPath);
-}
-
-function buildPatchEvidence(filePath: string): SplitRequiredWipPatchEvidence {
-    return {
-        path: normalizePath(filePath),
-        sha256: sha256FileRequired(filePath),
-        bytes: fileBytes(filePath),
-        empty: fileBytes(filePath) === 0
-    };
-}
-
-function writePatchFile(repoRoot: string, args: string[], outputPath: string): SplitRequiredWipPatchEvidence {
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    const output = runGit(repoRoot, args);
-    fs.writeFileSync(outputPath, output, 'utf8');
-    return buildPatchEvidence(outputPath);
-}
-
-function writeScopedPatchFile(repoRoot: string, diffArgs: string[], relativePaths: Set<string>, outputPath: string): SplitRequiredWipPatchEvidence {
-    const sortedPaths = [...relativePaths].sort();
-    if (sortedPaths.length === 0) {
-        return writeEmptyPatchFile(outputPath);
-    }
-    return writePatchFile(repoRoot, [...diffArgs, '--', ...sortedPaths], outputPath);
-}
-
-function copyUntrackedTaskFile(repoRoot: string, captureRoot: string, relativePath: string): SplitRequiredWipUntrackedFileEvidence {
-    const sourcePath = resolveRepoPath(repoRoot, relativePath);
-    const artifactPath = path.join(captureRoot, 'untracked', normalizeGitPath(relativePath));
-    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-    fs.copyFileSync(sourcePath, artifactPath);
-    return {
-        path: normalizeGitPath(relativePath),
-        artifact_path: normalizePath(artifactPath),
-        sha256: sha256FileRequired(artifactPath),
-        bytes: fileBytes(artifactPath)
-    };
-}
-
 function removeFileIfExists(filePath: string): void {
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         fs.unlinkSync(filePath);
     }
-}
-
-function suspendTrackedChanges(repoRoot: string, changedFiles: string[]): void {
-    if (changedFiles.length === 0) {
-        return;
-    }
-    const trackedAtHead = new Map(changedFiles.map((relativePath) => [
-        relativePath,
-        pathExistsInHead(repoRoot, relativePath)
-    ]));
-    runGit(repoRoot, ['reset', '--quiet', 'HEAD', '--', ...changedFiles]);
-    const headTrackedFiles = changedFiles.filter((relativePath) => trackedAtHead.get(relativePath));
-    if (headTrackedFiles.length > 0) {
-        runGit(repoRoot, ['checkout', '--quiet', '--', ...headTrackedFiles]);
-    }
-    for (const relativePath of changedFiles) {
-        if (trackedAtHead.get(relativePath)) {
-            continue;
-        }
-        removeFileIfExists(resolveRepoPath(repoRoot, relativePath));
-    }
-}
-
-function captureManifestEvidence(params: {
-    repoRoot: string;
-    manifestPath: string;
-    trackedChanges: TrackedChangeFiles;
-    capturedUntrackedFiles: string[];
-}): CapturedManifestEvidence {
-    const stagedPatch = writeScopedPatchFile(
-        params.repoRoot,
-        ['diff', '--binary', '--cached'],
-        params.trackedChanges.staged,
-        path.join(path.dirname(params.manifestPath), 'staged.patch')
-    );
-    const unstagedPatch = writeScopedPatchFile(
-        params.repoRoot,
-        ['diff', '--binary'],
-        params.trackedChanges.unstaged,
-        path.join(path.dirname(params.manifestPath), 'unstaged.patch')
-    );
-    const untracked = params.capturedUntrackedFiles.map((relativePath) => (
-        copyUntrackedTaskFile(params.repoRoot, path.dirname(params.manifestPath), relativePath)
-    ));
-    const trackedFiles = params.trackedChanges.all.map((relativePath) => {
-        const absolutePath = resolveRepoPath(params.repoRoot, relativePath);
-        return {
-            path: relativePath,
-            head_sha256: headBlobSha(params.repoRoot, relativePath),
-            worktree_sha256: fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile()
-                ? sha256FileRequired(absolutePath)
-                : null,
-            staged: params.trackedChanges.staged.has(relativePath),
-            unstaged: params.trackedChanges.unstaged.has(relativePath)
-        };
-    });
-    return {
-        stagedPatch,
-        unstagedPatch,
-        trackedFiles,
-        untrackedFiles: untracked
-    };
 }
 
 function hasPatchContent(patch: SplitRequiredWipPatchEvidence): boolean {
@@ -780,129 +517,6 @@ function validateManifestFileReferences(repoRoot: string, manifest: SplitRequire
         }
     }
     return violations;
-}
-
-export function captureAndSuspendSplitRequiredWip(params: {
-    repoRoot: string;
-    taskId: string;
-    preflightPath: string;
-    guardKind: SplitRequiredWipGuardKind;
-    guardReason: string;
-}): SplitRequiredWipCaptureResult {
-    const repoRoot = path.resolve(params.repoRoot || '.');
-    const preflightPath = resolveInputPathInsideRepo(repoRoot, params.preflightPath, 'PreflightPath');
-    const taskId = String(params.taskId || '').trim();
-    if (!canCaptureSplitRequiredWip(repoRoot)) {
-        return {
-            status: 'BLOCKED',
-            manifest_path: null,
-            manifest_sha256: null,
-            tracked_files: [],
-            untracked_files: [],
-            violations: ['split-required WIP capture requires a git worktree.']
-        };
-    }
-    const current = findCurrentCapturedManifest({
-        repoRoot,
-        taskId,
-        preflightPath,
-        guardKind: params.guardKind
-    });
-    if (current) {
-        return {
-            status: 'ALREADY_CAPTURED',
-            manifest_path: normalizePath(current.path),
-            manifest_sha256: sha256FileRequired(current.path),
-            tracked_files: current.manifest.tracked_files.map((entry) => entry.path).sort(),
-            untracked_files: current.manifest.untracked_files.map((entry) => entry.path).sort(),
-            violations: []
-        };
-    }
-
-    const preflightScope = readPreflightChangedFileScope(repoRoot, preflightPath, taskId);
-    const trackedChanges = excludeGateOwnedQueueFiles(collectTrackedChangeFiles(repoRoot));
-    const outOfScopeTrackedChanges = trackedChanges.all.filter((relativePath) => !preflightScope.allowed.has(relativePath));
-    const visibleUntracked = collectVisibleUntrackedFiles(repoRoot);
-    const unrelatedVisibleUntrackedFiles = visibleUntracked.filter((relativePath) => (
-        !isTaskOwnedUntrackedPath(relativePath, taskId)
-        && !preflightScope.allowed.has(relativePath)
-    ));
-    const scopeViolations = [...preflightScope.violations];
-    if (outOfScopeTrackedChanges.length > 0) {
-        scopeViolations.push(`tracked changes outside current preflight scope: ${outOfScopeTrackedChanges.join(', ')}`);
-    }
-    if (unrelatedVisibleUntrackedFiles.length > 0) {
-        scopeViolations.push(`unrelated untracked files would keep split child scope dirty: ${unrelatedVisibleUntrackedFiles.join(', ')}`);
-    }
-    if (scopeViolations.length > 0) {
-        return {
-            status: 'BLOCKED',
-            manifest_path: null,
-            manifest_sha256: null,
-            tracked_files: trackedChanges.all,
-            untracked_files: [],
-            violations: scopeViolations
-        };
-    }
-
-    const scopedUntrackedFiles = collectUntrackedFilesForPathspecs(repoRoot, [...preflightScope.allowed], true);
-    const ignoredRuntimeArtifacts = scopedUntrackedFiles.filter(isIgnoredRuntimeArtifactPath);
-    const capturedUntrackedFiles = [...new Set([
-        ...collectRuntimeTmpTaskOwnedUntrackedFiles(repoRoot, taskId),
-        ...scopedUntrackedFiles.filter((relativePath) => !isIgnoredRuntimeArtifactPath(relativePath))
-    ])].sort();
-    const capturePlan = planCaptureLocation(repoRoot, taskId);
-    const manifestEvidence = captureManifestEvidence({
-        repoRoot,
-        manifestPath: capturePlan.manifestPath,
-        trackedChanges,
-        capturedUntrackedFiles
-    });
-    const manifest = buildSplitRequiredWipManifest({
-        repoRoot,
-        taskId,
-        guardKind: params.guardKind,
-        guardReason: params.guardReason,
-        timestampUtc: capturePlan.timestampUtc,
-        manifestPath: capturePlan.manifestPath,
-        preflightPath,
-        ...manifestEvidence,
-        unrelatedVisibleUntrackedFiles,
-        ignoredRuntimeArtifacts
-    });
-    writeJson(capturePlan.manifestPath, manifest);
-    const manifestSha256 = sha256FileRequired(capturePlan.manifestPath);
-
-    suspendTrackedChanges(repoRoot, trackedChanges.all);
-    for (const relativePath of capturedUntrackedFiles) {
-        removeFileIfExists(resolveRepoPath(repoRoot, relativePath));
-    }
-
-    appendMandatoryTaskEvent(
-        joinOrchestratorPath(repoRoot, ''),
-        taskId,
-        'SPLIT_REQUIRED_WIP_CAPTURED',
-        'BLOCKED',
-        'Split-required parent WIP captured into task-owned artifacts and suspended.',
-        {
-            manifest_path: normalizePath(capturePlan.manifestPath),
-            manifest_sha256: manifestSha256,
-            guard_kind: params.guardKind,
-            tracked_files: manifest.tracked_files.map((entry) => entry.path).sort(),
-            untracked_files: manifest.untracked_files.map((entry) => entry.path).sort(),
-            ignored_runtime_artifacts: ignoredRuntimeArtifacts
-        },
-        { actor: 'orchestrator' }
-    );
-
-    return {
-        status: 'CAPTURED',
-        manifest_path: normalizePath(capturePlan.manifestPath),
-        manifest_sha256: manifestSha256,
-        tracked_files: manifest.tracked_files.map((entry) => entry.path).sort(),
-        untracked_files: manifest.untracked_files.map((entry) => entry.path).sort(),
-        violations: []
-    };
 }
 
 export function listSplitRequiredWip(params: {

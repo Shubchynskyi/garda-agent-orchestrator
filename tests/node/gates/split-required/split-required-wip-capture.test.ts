@@ -1,0 +1,526 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import {
+    captureAndSuspendSplitRequiredWip,
+    restoreSplitRequiredWip
+} from '../../../../src/gates/split-required/split-required-wip';
+
+const TASK_ID = 'T-CAPTURE';
+
+function runGit(repoRoot: string, args: string[]): string {
+    return childProcess.execFileSync('git', ['-C', repoRoot, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+}
+
+function writeFile(repoRoot: string, relativePath: string, content: string): void {
+    const filePath = path.join(repoRoot, relativePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function removeTempRoot(rootPath: string): void {
+    fs.rmSync(rootPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50
+    });
+}
+
+function makeRepo(): string {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-split-capture-'));
+    runGit(repoRoot, ['init']);
+    runGit(repoRoot, ['config', 'user.email', 'test@example.invalid']);
+    runGit(repoRoot, ['config', 'user.name', 'Test User']);
+    runGit(repoRoot, ['config', 'core.autocrlf', 'false']);
+    runGit(repoRoot, ['config', 'core.eol', 'lf']);
+    writeFile(repoRoot, '.gitignore', 'garda-agent-orchestrator/runtime/\n');
+    writeFile(repoRoot, 'README.md', '# Capture fixture\n');
+    writeFile(repoRoot, 'src/app.ts', 'export const value = 1;\n');
+    writeFile(repoRoot, 'TASK.md', [
+        '# TASK.md',
+        '',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        `| ${TASK_ID} | IN_PROGRESS | P1 | workflow | Capture fixture | gpt-5.6 | 2026-07-31 | balanced | Test. |`,
+        ''
+    ].join('\n'));
+    runGit(repoRoot, ['add', '.']);
+    runGit(repoRoot, ['commit', '-m', 'initial']);
+    return repoRoot;
+}
+
+function writePreflight(repoRoot: string, changedFiles: string[]): string {
+    const preflightPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'reviews',
+        `${TASK_ID}-preflight.json`
+    );
+    fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
+    fs.writeFileSync(preflightPath, `${JSON.stringify({
+        task_id: TASK_ID,
+        changed_files: changedFiles,
+        required_reviews: {},
+        metrics: {
+            changed_files_count: changedFiles.length,
+            changed_lines_total: changedFiles.length
+        }
+    }, null, 2)}\n`, 'utf8');
+    return preflightPath;
+}
+
+function capture(repoRoot: string, changedFiles: string[]) {
+    return captureAndSuspendSplitRequiredWip({
+        repoRoot,
+        taskId: TASK_ID,
+        preflightPath: writePreflight(repoRoot, changedFiles),
+        guardKind: 'scope_budget',
+        guardReason: 'capture boundary test'
+    });
+}
+
+function captureDirectories(repoRoot: string): string[] {
+    const captureRoot = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'wip',
+        TASK_ID,
+        'split-required'
+    );
+    if (!fs.existsSync(captureRoot)) {
+        return [];
+    }
+    return fs.readdirSync(captureRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort();
+}
+
+describe('split-required WIP capture boundary', () => {
+    it('captures and restores exact staged unstaged and authorized untracked WIP', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 3;\n');
+        writeFile(repoRoot, 'src/new.ts', 'export const added = true;\n');
+
+        const captured = capture(repoRoot, ['src/app.ts', 'src/new.ts']);
+
+        assert.equal(captured.status, 'CAPTURED', captured.violations.join('\n'));
+        assert.ok(captured.manifest_path);
+        assert.deepEqual(captured.tracked_files, ['src/app.ts']);
+        assert.deepEqual(captured.untracked_files, ['src/new.ts']);
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src/app.ts'), 'utf8'), 'export const value = 1;\n');
+        assert.equal(fs.existsSync(path.join(repoRoot, 'src/new.ts')), false);
+        assert.equal(runGit(repoRoot, ['diff', '--cached', '--name-only']).trim(), '');
+        assert.equal(runGit(repoRoot, ['diff', '--name-only']).trim(), '');
+
+        const manifest = JSON.parse(
+            fs.readFileSync(captured.manifest_path, 'utf8')
+        ) as {
+            kind: string;
+            patches: {
+                staged: { bytes: number; empty: boolean };
+                unstaged: { bytes: number; empty: boolean };
+            };
+            tracked_files: Array<{
+                path: string;
+                head_sha256: string | null;
+                worktree_sha256: string | null;
+                staged: boolean;
+                unstaged: boolean;
+            }>;
+            untracked_files: Array<{ path: string; artifact_path: string }>;
+        };
+        assert.equal(manifest.kind, 'split_required_wip');
+        assert.equal(manifest.patches.staged.empty, false);
+        assert.ok(manifest.patches.staged.bytes > 0);
+        assert.equal(manifest.patches.unstaged.empty, false);
+        assert.ok(manifest.patches.unstaged.bytes > 0);
+        assert.equal(manifest.tracked_files.length, 1);
+        assert.equal(manifest.tracked_files[0]?.path, 'src/app.ts');
+        assert.ok(manifest.tracked_files[0]?.head_sha256);
+        assert.ok(manifest.tracked_files[0]?.worktree_sha256);
+        assert.equal(manifest.tracked_files[0]?.staged, true);
+        assert.equal(manifest.tracked_files[0]?.unstaged, true);
+        assert.equal(manifest.untracked_files[0]?.path, 'src/new.ts');
+        assert.equal(
+            fs.readFileSync(manifest.untracked_files[0]!.artifact_path, 'utf8'),
+            'export const added = true;\n'
+        );
+
+        const restored = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path
+        });
+
+        assert.equal(restored.status, 'RESTORED', restored.violations.join('\n'));
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src/app.ts'), 'utf8'), 'export const value = 3;\n');
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src/new.ts'), 'utf8'), 'export const added = true;\n');
+        assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/u);
+        assert.match(
+            runGit(repoRoot, ['diff', '--', 'src/app.ts']),
+            /[-]export const value = 2;[\s\S]*[+]export const value = 3;/u
+        );
+    });
+
+    it('blocks a preflight without task identity before workspace mutation', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        const preflightPath = writePreflight(repoRoot, ['src/app.ts']);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        delete preflight.task_id;
+        fs.writeFileSync(preflightPath, `${JSON.stringify(preflight, null, 2)}\n`, 'utf8');
+
+        const captured = captureAndSuspendSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            guardKind: 'scope_budget',
+            guardReason: 'capture boundary test'
+        });
+
+        assert.equal(captured.status, 'BLOCKED');
+        assert.ok(captured.violations.some(
+            (violation) => violation.includes('Preflight task_id must be a non-empty string')
+        ));
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src/app.ts'), 'utf8'), 'export const value = 2;\n');
+        assert.deepEqual(captureDirectories(repoRoot), []);
+    });
+
+    it('blocks tracked changes outside the authorized preflight scope without mutation', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeFile(repoRoot, 'README.md', '# Out of scope\n');
+
+        const captured = capture(repoRoot, ['src/app.ts']);
+
+        assert.equal(captured.status, 'BLOCKED');
+        assert.ok(captured.violations.some(
+            (violation) => violation.includes('tracked changes outside current preflight scope: README.md')
+        ));
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src/app.ts'), 'utf8'), 'export const value = 2;\n');
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8'), '# Out of scope\n');
+        assert.deepEqual(captureDirectories(repoRoot), []);
+    });
+
+    it('rejects capture storage redirected through a symlink or junction', (context) => {
+        const repoRoot = makeRepo();
+        const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-split-capture-external-'));
+        context.after(() => removeTempRoot(repoRoot));
+        context.after(() => removeTempRoot(externalRoot));
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        const runtimeRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime');
+        const wipRoot = path.join(runtimeRoot, 'wip');
+        fs.mkdirSync(runtimeRoot, { recursive: true });
+        fs.symlinkSync(externalRoot, wipRoot, process.platform === 'win32' ? 'junction' : 'dir');
+
+        const captured = capture(repoRoot, ['src/app.ts']);
+
+        assert.equal(captured.status, 'BLOCKED');
+        assert.ok(captured.violations.some(
+            (violation) => violation.includes('symbolic link, junction, or non-directory')
+        ));
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src/app.ts'), 'utf8'), 'export const value = 2;\n');
+        assert.deepEqual(fs.readdirSync(externalRoot), []);
+    });
+
+    it('rejects tracked WIP reached through a linked source ancestor', (context) => {
+        const repoRoot = makeRepo();
+        const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-split-source-external-'));
+        context.after(() => removeTempRoot(repoRoot));
+        context.after(() => removeTempRoot(externalRoot));
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        writeFile(externalRoot, 'app.ts', 'export const value = 2;\n');
+
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalMkdirSync = fsModule.mkdirSync;
+        let injected = false;
+        fsModule.mkdirSync = ((directoryPath: fs.PathLike, options?: fs.MakeDirectoryOptions) => {
+            const result = Reflect.apply(originalMkdirSync, fsModule, [directoryPath, options]);
+            const normalizedPath = path.resolve(String(directoryPath));
+            if (!injected
+                && path.basename(path.dirname(normalizedPath)) === 'split-required'
+                && normalizedPath.includes(`${path.sep}runtime${path.sep}wip${path.sep}${TASK_ID}${path.sep}`)) {
+                fs.rmSync(path.join(repoRoot, 'src'), { recursive: true, force: true });
+                fs.symlinkSync(
+                    externalRoot,
+                    path.join(repoRoot, 'src'),
+                    process.platform === 'win32' ? 'junction' : 'dir'
+                );
+                injected = true;
+            }
+            return result;
+        }) as typeof fsModule.mkdirSync;
+        let captured: ReturnType<typeof capture> | null = null;
+        try {
+            captured = capture(repoRoot, ['src/app.ts']);
+        } finally {
+            fsModule.mkdirSync = originalMkdirSync;
+        }
+
+        assert.equal(injected, true);
+        assert.equal(captured?.status, 'BLOCKED');
+        assert.ok(captured?.violations.some(
+            (violation) => violation.includes('tracked capture source path ancestry contains a symbolic link')
+        ));
+        assert.equal(fs.readFileSync(path.join(externalRoot, 'app.ts'), 'utf8'), 'export const value = 2;\n');
+        assert.equal(fs.lstatSync(path.join(repoRoot, 'src')).isSymbolicLink(), true);
+    });
+
+    it('captures task-owned ignored temp WIP and excludes ignored runtime artifacts', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        const scopedPath = 'src/scoped.ts';
+        const taskOwnedPath = `garda-agent-orchestrator/runtime/tmp/${TASK_ID}/notes.json`;
+        const runtimeArtifactPath = `garda-agent-orchestrator/runtime/reviews/${TASK_ID}-review.json`;
+        writeFile(repoRoot, scopedPath, 'export const scoped = true;\n');
+        writeFile(repoRoot, taskOwnedPath, '{\"taskOwned\":true}\n');
+        writeFile(repoRoot, runtimeArtifactPath, '{\"review\":true}\n');
+
+        const captured = capture(repoRoot, [scopedPath, runtimeArtifactPath]);
+
+        assert.equal(captured.status, 'CAPTURED', captured.violations.join('\n'));
+        assert.ok(captured.manifest_path);
+        assert.deepEqual(captured.untracked_files, [taskOwnedPath, scopedPath].sort());
+        assert.equal(fs.existsSync(path.join(repoRoot, scopedPath)), false);
+        assert.equal(fs.existsSync(path.join(repoRoot, taskOwnedPath)), false);
+        assert.equal(fs.existsSync(path.join(repoRoot, runtimeArtifactPath)), true);
+        const manifest = JSON.parse(fs.readFileSync(captured.manifest_path, 'utf8')) as {
+            ignored_runtime_artifacts: string[];
+        };
+        assert.deepEqual(manifest.ignored_runtime_artifacts, [runtimeArtifactPath]);
+
+        const restored = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path
+        });
+
+        assert.equal(restored.status, 'RESTORED', restored.violations.join('\n'));
+        assert.equal(fs.readFileSync(path.join(repoRoot, scopedPath), 'utf8'), 'export const scoped = true;\n');
+        assert.equal(fs.readFileSync(path.join(repoRoot, taskOwnedPath), 'utf8'), '{\"taskOwned\":true}\n');
+        assert.equal(fs.readFileSync(path.join(repoRoot, runtimeArtifactPath), 'utf8'), '{\"review\":true}\n');
+    });
+
+    it('blocks suspension when HEAD changes after immutable capture preparation', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalReadFileSync = fsModule.readFileSync;
+        let manifestReads = 0;
+        let injected = false;
+        fsModule.readFileSync = ((...args: unknown[]) => {
+            const normalizedPath = typeof args[0] === 'number' ? '' : path.resolve(String(args[0]));
+            if (path.basename(normalizedPath) === 'manifest.json'
+                && normalizedPath.includes(`${path.sep}runtime${path.sep}wip${path.sep}${TASK_ID}${path.sep}`)) {
+                manifestReads += 1;
+                if (manifestReads === 2) {
+                    runGit(repoRoot, ['commit', '--allow-empty', '--no-verify', '-m', 'concurrent head move']);
+                    injected = true;
+                }
+            }
+            return Reflect.apply(originalReadFileSync, fsModule, args) as unknown;
+        }) as typeof fsModule.readFileSync;
+        let captured: ReturnType<typeof capture> | null = null;
+        try {
+            captured = capture(repoRoot, ['src/app.ts']);
+        } finally {
+            fsModule.readFileSync = originalReadFileSync;
+        }
+
+        assert.equal(injected, true);
+        assert.equal(captured?.status, 'BLOCKED');
+        assert.ok(captured?.violations.some(
+            (violation) => violation.includes('repository HEAD changed during split-required WIP capture')
+        ));
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src/app.ts'), 'utf8'), 'export const value = 2;\n');
+        assert.deepEqual(captureDirectories(repoRoot), []);
+    });
+
+    it('blocks suspension when an untracked source is replaced with equal content', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        const relativePath = 'src/replaced.ts';
+        const sourcePath = path.join(repoRoot, relativePath);
+        writeFile(repoRoot, relativePath, 'export const replaced = true;\n');
+
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalReadFileSync = fsModule.readFileSync;
+        const originalUnlinkSync = fsModule.unlinkSync;
+        const originalWriteFileSync = fsModule.writeFileSync;
+        let artifactReads = 0;
+        let injected = false;
+        fsModule.readFileSync = ((...args: unknown[]) => {
+            const normalizedPath = typeof args[0] === 'number' ? '' : path.resolve(String(args[0]));
+            if (normalizedPath.includes(`${path.sep}runtime${path.sep}wip${path.sep}${TASK_ID}${path.sep}`)
+                && normalizedPath.endsWith(`${path.sep}untracked${path.sep}src${path.sep}replaced.ts`)) {
+                artifactReads += 1;
+                if (artifactReads === 2) {
+                    originalUnlinkSync(sourcePath);
+                    originalWriteFileSync(sourcePath, 'export const replaced = true;\n', 'utf8');
+                    injected = true;
+                }
+            }
+            return Reflect.apply(originalReadFileSync, fsModule, args) as unknown;
+        }) as typeof fsModule.readFileSync;
+        let captured: ReturnType<typeof capture> | null = null;
+        try {
+            captured = capture(repoRoot, [relativePath]);
+        } finally {
+            fsModule.readFileSync = originalReadFileSync;
+        }
+
+        assert.equal(injected, true);
+        assert.equal(captured?.status, 'BLOCKED');
+        assert.ok(captured?.violations.some(
+            (violation) => violation.includes('source identity changed after capture')
+        ));
+        assert.equal(fs.readFileSync(sourcePath, 'utf8'), 'export const replaced = true;\n');
+        assert.deepEqual(captureDirectories(repoRoot), []);
+    });
+
+    it('removes an incomplete capture when immutable manifest creation fails', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalWriteFileSync = fsModule.writeFileSync;
+        let injected = false;
+        fsModule.writeFileSync = ((
+            filePath: fs.PathOrFileDescriptor,
+            data: string | NodeJS.ArrayBufferView,
+            options?: fs.WriteFileOptions
+        ) => {
+            const normalizedPath = typeof filePath === 'number'
+                ? ''
+                : path.resolve(String(filePath));
+            if (!injected
+                && path.basename(normalizedPath) === 'manifest.json'
+                && normalizedPath.includes(`${path.sep}runtime${path.sep}wip${path.sep}${TASK_ID}${path.sep}`)) {
+                injected = true;
+                throw new Error('injected immutable manifest write failure');
+            }
+            return Reflect.apply(originalWriteFileSync, fsModule, [filePath, data, options]);
+        }) as typeof fsModule.writeFileSync;
+        let captured: ReturnType<typeof capture> | null = null;
+        try {
+            captured = capture(repoRoot, ['src/app.ts']);
+        } finally {
+            fsModule.writeFileSync = originalWriteFileSync;
+        }
+
+        assert.equal(injected, true);
+        assert.equal(captured?.status, 'BLOCKED');
+        assert.ok(captured?.violations.some(
+            (violation) => violation.includes('injected immutable manifest write failure')
+        ));
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src/app.ts'), 'utf8'), 'export const value = 2;\n');
+        assert.deepEqual(captureDirectories(repoRoot), []);
+    });
+
+    it('restores staged and unstaged WIP when tracked suspension fails after reset', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 2;\n');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        writeFile(repoRoot, 'src/app.ts', 'export const value = 3;\n');
+
+        const childProcessModule = require('node:child_process') as typeof import('node:child_process');
+        const originalExecFileSync = childProcessModule.execFileSync;
+        let injected = false;
+        childProcessModule.execFileSync = ((
+            file: string,
+            args?: readonly string[],
+            options?: childProcess.ExecFileSyncOptions
+        ) => {
+            const commandArgs = Array.isArray(args) ? args.map(String) : [];
+            if (!injected
+                && file === 'git'
+                && commandArgs.includes('checkout')
+                && commandArgs.includes('src/app.ts')) {
+                injected = true;
+                throw new Error('injected split capture checkout failure');
+            }
+            return Reflect.apply(originalExecFileSync, childProcessModule, [file, args, options]);
+        }) as typeof childProcessModule.execFileSync;
+        let captured: ReturnType<typeof capture> | null = null;
+        try {
+            captured = capture(repoRoot, ['src/app.ts']);
+        } finally {
+            childProcessModule.execFileSync = originalExecFileSync;
+        }
+
+        assert.equal(injected, true);
+        assert.equal(captured?.status, 'BLOCKED');
+        assert.ok(captured?.violations.some(
+            (violation) => violation.includes('split capture checkout failure')
+        ));
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src/app.ts'), 'utf8'), 'export const value = 3;\n');
+        assert.match(runGit(repoRoot, ['diff', '--cached', '--', 'src/app.ts']), /\+export const value = 2;/u);
+        assert.match(
+            runGit(repoRoot, ['diff', '--', 'src/app.ts']),
+            /[-]export const value = 2;[\s\S]*[+]export const value = 3;/u
+        );
+        assert.deepEqual(captureDirectories(repoRoot), []);
+    });
+
+    it('restores already removed untracked WIP when a later removal fails', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        writeFile(repoRoot, 'src/a-helper.ts', 'export const first = true;\n');
+        writeFile(repoRoot, 'src/b-helper.ts', 'export const second = true;\n');
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalUnlinkSync = fsModule.unlinkSync;
+        let injected = false;
+        fsModule.unlinkSync = ((filePath: fs.PathLike) => {
+            const normalizedPath = path.resolve(String(filePath));
+            if (!injected
+                && normalizedPath.endsWith(
+                    `${path.sep}suspended-untracked${path.sep}src${path.sep}b-helper.ts`
+                )) {
+                injected = true;
+                throw new Error('injected second split capture removal failure');
+            }
+            return originalUnlinkSync(filePath);
+        }) as typeof fsModule.unlinkSync;
+        let captured: ReturnType<typeof capture> | null = null;
+        try {
+            captured = capture(repoRoot, ['src/a-helper.ts', 'src/b-helper.ts']);
+        } finally {
+            fsModule.unlinkSync = originalUnlinkSync;
+        }
+
+        assert.equal(injected, true);
+        assert.equal(captured?.status, 'BLOCKED');
+        assert.ok(captured?.violations.some(
+            (violation) => violation.includes('second split capture removal failure')
+        ));
+        assert.equal(
+            fs.readFileSync(path.join(repoRoot, 'src', 'a-helper.ts'), 'utf8'),
+            'export const first = true;\n'
+        );
+        assert.equal(
+            fs.readFileSync(path.join(repoRoot, 'src', 'b-helper.ts'), 'utf8'),
+            'export const second = true;\n'
+        );
+        assert.deepEqual(captureDirectories(repoRoot), []);
+    });
+});
