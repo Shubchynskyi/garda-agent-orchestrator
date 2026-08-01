@@ -677,6 +677,100 @@ describe('gates/next-step preflight compile recovery', () => {
 
         assert.equal(readiness.ready, true);
         assert.equal(readiness.reason, 'Compile gate evidence is current.');
+
+    });
+
+    it('recovers an explicit authorized-scope mismatch when an authorized file is unchanged', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'src', 'unchanged.ts'), 'export const unchanged = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        const authorizedFiles = ['src/app.ts', 'src/unchanged.ts'];
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, authorizedFiles);
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            detection_source: snapshot.detection_source,
+            mode: 'FULL_PATH',
+            scope_category: 'code',
+            metrics: {
+                authorized_files_count: snapshot.authorized_files_count,
+                authorized_files_sha256: snapshot.authorized_files_sha256,
+                changed_lines_total: snapshot.changed_lines_total,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            required_reviews: { ...ALL_REVIEW_FLAGS },
+            authorized_files: snapshot.authorized_files,
+            changed_files: snapshot.changed_files
+        });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), {
+            timestamp_utc: new Date().toISOString(),
+            task_id: TASK_ID,
+            event_source: 'compile-gate',
+            status: 'PASSED',
+            outcome: 'PASS',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_hash_sha256: fileSha256(preflightPath),
+            scope_detection_source: snapshot.detection_source,
+            scope_include_untracked: snapshot.include_untracked,
+            scope_authorized_files: snapshot.authorized_files,
+            scope_authorized_files_count: snapshot.authorized_files_count,
+            scope_authorized_files_sha256: snapshot.authorized_files_sha256,
+            scope_changed_files: snapshot.changed_files,
+            scope_changed_files_count: snapshot.changed_files_count,
+            scope_changed_lines_total: snapshot.changed_lines_total,
+            scope_changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256
+        });
+
+        const readiness = readCompileReadiness(
+            repoRoot,
+            reviewsRoot(repoRoot),
+            eventsRoot(repoRoot),
+            TASK_ID,
+            preflightPath
+        );
+
+        assert.equal(readiness.ready, true);
+        assert.equal(readiness.reason, 'Compile gate evidence is current.');
+
+        const compilePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`);
+        const malformedEvidence = JSON.parse(fs.readFileSync(compilePath, 'utf8')) as Record<string, unknown>;
+        malformedEvidence.scope_authorized_files_count = `${snapshot.authorized_files_count}corrupt`;
+        writeJson(compilePath, malformedEvidence);
+
+        const malformedReadiness = readCompileReadiness(
+            repoRoot,
+            reviewsRoot(repoRoot),
+            eventsRoot(repoRoot),
+            TASK_ID,
+            preflightPath
+        );
+        assert.equal(malformedReadiness.ready, false);
+        assert.equal(
+            malformedReadiness.reason,
+            'Compile gate authorized scope evidence is invalid; rerun compile-gate.'
+        );
+
+        malformedEvidence.scope_authorized_files_count = snapshot.authorized_files_count;
+        malformedEvidence.scope_authorized_files_sha256 = '0'.repeat(64);
+        writeJson(compilePath, malformedEvidence);
+
+        const mismatchedHashReadiness = readCompileReadiness(
+            repoRoot,
+            reviewsRoot(repoRoot),
+            eventsRoot(repoRoot),
+            TASK_ID,
+            preflightPath
+        );
+        assert.equal(mismatchedHashReadiness.ready, false);
+        assert.equal(
+            mismatchedHashReadiness.reason,
+            'Compile gate authorized scope evidence is invalid; rerun compile-gate.'
+        );
     });
 
     it('keeps preflight workspace readiness stale when the materialized diff changes', () => {

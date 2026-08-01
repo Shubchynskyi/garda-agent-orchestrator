@@ -125,7 +125,7 @@ describe('cli/commands/gates compile and post-preflight', () => {
         const taskId = 'T-901';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
-        const preflightPath = writePreflight(repoRoot, taskId);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'unchanged.ts'), 'export const unchanged = true;\n', 'utf8');
         const commandsPath = path.join(repoRoot, 'commands.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
@@ -146,6 +146,14 @@ describe('cli/commands/gates compile and post-preflight', () => {
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
+        initializeGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = true;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Compile an explicit authorized superset',
+            ['src/app.ts', 'src/unchanged.ts']
+        );
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
 
         const result = await runCompileGateCommand({
@@ -163,6 +171,10 @@ describe('cli/commands/gates compile and post-preflight', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_PASSED');
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'compile-gate');
+        assert.deepEqual(evidence.scope_authorized_files, ['src/app.ts', 'src/unchanged.ts']);
+        assert.equal(evidence.scope_authorized_files_count, 2);
+        assert.match(evidence.scope_authorized_files_sha256, /^[a-f0-9]{64}$/);
+        assert.deepEqual(evidence.scope_changed_files, ['src/app.ts']);
         const compileOutputPath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-output.log`);
         assert.equal(fs.existsSync(compileOutputPath), false);
         assert.equal(evidence.compile_output_path, null);

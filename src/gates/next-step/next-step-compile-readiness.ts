@@ -12,7 +12,8 @@ import {
 } from '../scope/domain-scope-fingerprints';
 import {
     fileSha256,
-    normalizePath
+    normalizePath,
+    stringSha256
 } from '../shared/helpers';
 import {
     safeReadJson
@@ -148,6 +149,32 @@ export function readCompileReadiness(
     const changedFiles = Array.isArray(evidence.scope_changed_files)
         ? evidence.scope_changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
+    const hasAuthorizedScopeEvidence = evidence.scope_authorized_files != null
+        || evidence.scope_authorized_files_count != null
+        || evidence.scope_authorized_files_sha256 != null;
+    const authorizedFiles = hasAuthorizedScopeEvidence && Array.isArray(evidence.scope_authorized_files)
+        ? [...new Set(evidence.scope_authorized_files
+            .map((entry) => normalizePath(String(entry || '').trim()))
+            .filter(Boolean))].sort()
+        : changedFiles;
+    if (hasAuthorizedScopeEvidence) {
+        const authorizedFilesCount = typeof evidence.scope_authorized_files_count === 'number'
+            ? evidence.scope_authorized_files_count
+            : Number.NaN;
+        const authorizedFilesSha256 = String(evidence.scope_authorized_files_sha256 || '').trim().toLowerCase();
+        if (
+            !Array.isArray(evidence.scope_authorized_files)
+            || !Number.isSafeInteger(authorizedFilesCount)
+            || authorizedFilesCount !== authorizedFiles.length
+            || !authorizedFilesSha256
+            || authorizedFilesSha256 !== stringSha256(authorizedFiles.join('\n'))
+        ) {
+            return {
+                ready: false,
+                reason: 'Compile gate authorized scope evidence is invalid; rerun compile-gate.'
+            };
+        }
+    }
     const compileGitClassification = normalizeGitChangeClassificationEvidence(
         evidence.scope_git_change_classification
     );
@@ -178,7 +205,7 @@ export function readCompileReadiness(
         repoRoot,
         detectionSource,
         evidence.scope_include_untracked == null ? true : !!evidence.scope_include_untracked,
-        changedFiles,
+        authorizedFiles,
         { noCache: true, readOnly: true }
     );
     const currentGitClassification = normalizeGitChangeClassificationEvidence(
