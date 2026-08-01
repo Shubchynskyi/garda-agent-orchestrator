@@ -630,6 +630,43 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(result.commands[0].command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
     });
 
+    it('preserves workflow-config work from a protected preflight recovery hint', () => {
+        const repoRoot = makeTempRepo();
+        markTaskAsWorkflowConfigOwner(repoRoot);
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const sourceRelativePath = 'src/gates/next-step.ts';
+        const sourcePath = path.join(repoRoot, ...sourceRelativePath.split('/'));
+        fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+        fs.writeFileSync(sourcePath, 'export const baseline = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 27
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+        fs.writeFileSync(sourcePath, 'export const changed = true;\n', 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error:
+                `Preflight scope touches protected orchestrator control-plane files without task-mode --orchestrator-work: ${sourceRelativePath}. ` +
+                'Restart task mode as orchestrator work before preflight classification. Suggested command: ' +
+                `node bin/garda.js gate enter-task-mode --task-id "${TASK_ID}" --orchestrator-work --workflow-config-work --repo-root "."`
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.title, /workflow-config work/i);
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes(`--planned-changed-file "${sourceRelativePath}"`));
+        assert.ok(command.includes(`--planned-changed-file "${workflowConfigRelativePath}"`));
+    });
+
     it('blocks app-workspace protected control-plane recovery when garda self-guard is on', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

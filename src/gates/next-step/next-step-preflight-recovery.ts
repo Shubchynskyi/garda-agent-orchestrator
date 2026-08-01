@@ -163,9 +163,16 @@ function hasProtectedOrchestratorWorkRecoverySignal(message: string): boolean {
 
 function hasWorkflowConfigWorkRecoverySignal(message: string): boolean {
     const normalized = String(message || '').toLowerCase();
-    return normalized.includes('workflow config files changed before')
+    if (!normalized.includes('--workflow-config-work')) {
+        return false;
+    }
+    return (
+        normalized.includes('workflow config files changed before')
         && normalized.includes('task-mode')
-        && normalized.includes('--workflow-config-work');
+    ) || (
+        normalized.includes('protected orchestrator control-plane files')
+        && normalized.includes('--orchestrator-work')
+    );
 }
 
 function hasDirtyBaselineRecoverySignal(
