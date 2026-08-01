@@ -116,6 +116,115 @@ describe('security review task-intent classification', () => {
         }
     });
 
+    it('recognizes realpath, symlink, and junction containment remediation without broad alias matches', () => {
+        const positiveCases = [
+            'Recognize realpath-containment remediation as mandatory security-review intent',
+            'Harden symlink boundary validation for outside-root targets',
+            'Reject junction aliases that escape the workspace root',
+            'Prevent repository root escape through directory junctions',
+            'Validate realpath containment checks',
+            'Verify symlink boundary enforcement',
+            'Repair junction root escape validation',
+            'Update realpath containment checks',
+            'Fix realpath containment validation and update docs',
+            'Update docs and fix symlink boundary validation',
+            'Update docs, then fix realpath containment validation',
+            'Update docs — repair junction boundary enforcement',
+            'Fix realpath containment validation',
+            'Fix symlink boundary validation',
+            'Fix realpath containment validation with documentation updates',
+            'Harden symlink boundary validation with docs updates',
+            'Fix path containment validation with docs updates',
+            'Update docs and harden path containment validation',
+            'Fix realpath containment',
+            'Update symlink containment',
+            'Please fix realpath containment validation',
+            'Ensure symlink boundary validation',
+            'We need to repair junction containment',
+            'Task: update realpath containment checks',
+            'Prevent junctions from leaving the workspace root',
+            'Fix symlinks that leave the project root',
+            'Block realpaths beyond the repository root',
+            'Update docs: fix path containment'
+        ];
+        const negativeCases = [
+            'Document how realpath values are displayed',
+            'Document realpath-containment terminology for operators',
+            'Fix the realpath-containment terminology in the operator guide',
+            'Fix realpath containment validation wording in the operator guide',
+            'Update realpath containment terminology in the operator guide',
+            'Update realpath containment terminology, labels, and guide examples',
+            'Harden realpath boundary documentation',
+            'Harden realpath containment validation documentation',
+            'Fix documentation for realpath containment validation',
+            'Document path containment terminology for operators',
+            'Document path containment validation for operators',
+            'Fix path containment validation wording in the operator guide',
+            'Please document how to harden realpath-containment checks',
+            'Ensure realpath containment documentation is updated',
+            'Please ensure documentation for realpath containment is updated',
+            'Document how junctions can leave the workspace root',
+            'Update the operator guide for junctions leaving the workspace root',
+            'Fix junction labels that leave the workspace root column',
+            'Fix realpath containment in the documentation',
+            'Update realpath containment within the operator guide',
+            'Fix symlink boundary validation for the developer guide',
+            'Update docs: realpath containment',
+            'Discuss path containment options',
+            'Review path containment alternatives',
+            'Document how to harden realpath-containment checks',
+            'Rename the junction boundary helper used by layout rendering',
+            'Fix the junction boundary helper used by layout rendering',
+            'Harden the symlink boundary helper',
+            'Prevent junction boundary rendering regressions',
+            'Update the operator guide to prevent junction root escapes',
+            'Add symlink examples to the documentation',
+            'Validate junction labels in the diagnostics table',
+            'Update the realpath cache benchmark'
+        ];
+
+        for (const taskIntent of positiveCases) {
+            const classification = classifySecurityReviewIntent(taskIntent);
+
+            assert.equal(classification.triggered, true, taskIntent);
+            assert.ok(
+                classification.reasons.includes('path_containment_remediation'),
+                taskIntent
+            );
+            assert.equal(classifyRuntimeIntent(taskIntent).required_reviews.security, true, taskIntent);
+        }
+
+        for (const taskIntent of negativeCases) {
+            const classification = classifySecurityReviewIntent(taskIntent);
+
+            assert.deepEqual(classification, {
+                triggered: false,
+                reasons: []
+            }, taskIntent);
+            assert.equal(classifyRuntimeIntent(taskIntent).required_reviews.security, false, taskIntent);
+        }
+    });
+
+    it('rejects the false-positive failure path for incidental junction boundary helper wording', () => {
+        const taskIntent = 'Fix the junction boundary helper used by layout rendering';
+
+        assert.deepEqual(classifySecurityReviewIntent(taskIntent), {
+            triggered: false,
+            reasons: []
+        });
+        assert.equal(classifyRuntimeIntent(taskIntent).required_reviews.security, false);
+    });
+
+    it('rejects action-qualified realpath-containment documentation wording', () => {
+        const taskIntent = 'Fix realpath containment validation wording in the operator guide';
+
+        assert.deepEqual(classifySecurityReviewIntent(taskIntent), {
+            triggered: false,
+            reasons: []
+        });
+        assert.equal(classifyRuntimeIntent(taskIntent).required_reviews.security, false);
+    });
+
     it('recognizes recovery, evidence-integrity, and artifact-trust intent on neutral runtime paths', () => {
         const cases = new Map<string, SecurityReviewIntentReason>([
             ['Fix recovery state replay in the catalog module', 'recovery_control_plane_change'],

@@ -40,6 +40,28 @@ const ADVERSARIAL_PATH_REMEDIATION_PATTERN =
     /(?:\b(?:adversarial|untrusted)\s+paths?\b|\b(?:path|directory)\s+traversal\b|\bsymlink\s+escape\b|\bpath\s+injection\b|\b(?:reject|block|prevent|guard|validate)\b.{0,80}\bpath\s+aliases?\b)/i;
 const PATH_CONTAINMENT_REMEDIATION_PATTERN =
     /(?:\boutside[-\s]?root\s+paths?\b|\bpath\s+containment\b|\bpaths?\b.{0,80}\b(?:contained|confined|bounded)\b.{0,40}\b(?:repository|workspace|project)\s+root\b|\b(?:escape|outside)\b.{0,40}\b(?:repository|workspace|project)\s+root\b|\bexternal\s+symlinks?\b)/i;
+const FILESYSTEM_ALIAS_CONTAINMENT_CONTEXT_PATTERN =
+    /(?:\b(?:realpaths?|symlinks?|junctions?)\b.{0,80}\b(?:containment|outside[-\s]?root|root\s+escape|(?:escape|leav|exit|cross|breach)\w*.{0,24}(?:repository|workspace|project)\s+root|(?:outside|beyond)\s+(?:the\s+)?(?:repository|workspace|project)\s+root)\b|\b(?:containment|outside[-\s]?root|root\s+escape|(?:escape|leav|exit|cross|breach)\w*.{0,24}(?:repository|workspace|project)\s+root|(?:outside|beyond)\s+(?:the\s+)?(?:repository|workspace|project)\s+root)\b.{0,80}\b(?:realpaths?|symlinks?|junctions?)\b)/i;
+const FILESYSTEM_ALIAS_BOUNDARY_CONTEXT_PATTERN =
+    /(?:\b(?:realpaths?|symlinks?|junctions?)\b.{0,40}\bboundar(?:y|ies)\b|\bboundar(?:y|ies)\b.{0,40}\b(?:realpaths?|symlinks?|junctions?)\b)/i;
+const FILESYSTEM_ALIAS_LEADING_DIRECTIVE_PATTERN =
+    /^\s*(?:(?:please|kindly)\s+|(?:we\s+)?(?:need|want)\s+to\s+|(?:task|goal|objective)\s*:\s*)+/i;
+const FILESYSTEM_ALIAS_SECURITY_REMEDIATION_ACTION_PATTERN =
+    /^\s*(?:ensur|recogniz|harden|enforce|reject|block|prevent|guard|confine|restrict|validat|verif|correct|repair|resolv|address|secure|remediat|keep|preserv)\w*\b/i;
+const FILESYSTEM_ALIAS_TECHNICAL_CHANGE_ACTION_PATTERN =
+    /^\s*(?:fix|update|chang|modify|implement|add)\w*\b/i;
+const FILESYSTEM_ALIAS_TECHNICAL_TARGET_PATTERN =
+    /\b(?:containment|validation|enforcement|checks?|escape|outside[-\s]?root|resolution|canonicalization|(?:escape|leav|exit|cross|breach)\w*.{0,24}(?:repository|workspace|project)\s+root|(?:outside|beyond)\s+(?:the\s+)?(?:repository|workspace|project)\s+root)\b/i;
+const FILESYSTEM_ALIAS_INCIDENTAL_SURFACE_PATTERN =
+    /\b(?:document(?:ation|ing|ed|s)?|docs?|guides?|terminology|examples?|labels?|display|layout|rendering|benchmarks?|readme)\b/i;
+const FILESYSTEM_ALIAS_INCIDENTAL_PRIMARY_TARGET_PATTERN =
+    /^\s*(?:(?:ensur|recogniz|harden|enforce|reject|block|prevent|guard|confine|restrict|validat|verif|correct|repair|resolv|address|secure|remediat|keep|preserv|fix|update|chang|modify|implement|add)\w*)\s+(?:the\s+)?(?:(?:operator|developer|user)\s+)?(?:documentation|docs?|guides?|readme)\b/i;
+const FILESYSTEM_ALIAS_TECHNICAL_TARGET_INCIDENTAL_QUALIFIER_PATTERN =
+    /\b(?:containment|validation|enforcement|checks?|resolution|canonicalization)\s+(?:wording|terminology|documentation|docs?|guides?|examples?|labels?|display|layout|rendering|benchmarks?|readme)\b/i;
+const FILESYSTEM_ALIAS_INCIDENTAL_SCOPE_PATTERN =
+    /\b(?:in|within|for|of)\s+(?:the\s+)?(?:(?:operator|developer|user)\s+)?(?:documentation|docs?|guides?|readme)\b/i;
+const FILESYSTEM_ALIAS_MIXED_INTENT_CLAUSE_SEPARATOR_PATTERN =
+    /\s+(?:and|plus|then|while|alongside)\s+|[,;:]\s*(?:then\s+)?|\s+[—–-]\s+/i;
 const LEGACY_SECURITY_RUNTIME_INTENT_PATTERN =
     /\b(webhook|oauth2?|openid|oidc|jwt|token|credential|credentials|secret|callback|callback ownership|telegram bot api|bot api|file[-\s]?download|download token|sanitize(?:d)?[-\s]?observability|secret[-\s]?safe[-\s]?observability|redact(?:ion)?|pii|auth(?:entication|orization)?)\b/i;
 
@@ -49,6 +71,99 @@ function hasRecoveryControlPlaneChangeIntent(taskIntent: string): boolean {
     }
     return RECOVERY_CONTROL_PLANE_CHANGE_PATTERN.test(taskIntent)
         && RECOVERY_CONTROL_PLANE_CHANGE_ACTION_PATTERN.test(taskIntent);
+}
+
+function normalizeFilesystemAliasIntentClause(intentClause: string): string {
+    return intentClause.replace(FILESYSTEM_ALIAS_LEADING_DIRECTIVE_PATTERN, '');
+}
+
+function hasFilesystemAliasRemediationAction(intentClause: string): boolean {
+    const normalizedClause = normalizeFilesystemAliasIntentClause(intentClause);
+    return FILESYSTEM_ALIAS_SECURITY_REMEDIATION_ACTION_PATTERN.test(normalizedClause)
+        || FILESYSTEM_ALIAS_TECHNICAL_CHANGE_ACTION_PATTERN.test(normalizedClause);
+}
+
+function hasSubstantiveFilesystemAliasTarget(intentClause: string): boolean {
+    const technicalTargetIndex = intentClause.search(FILESYSTEM_ALIAS_TECHNICAL_TARGET_PATTERN);
+    if (technicalTargetIndex < 0) {
+        return false;
+    }
+    const incidentalSurfaceIndex = intentClause.search(FILESYSTEM_ALIAS_INCIDENTAL_SURFACE_PATTERN);
+    return incidentalSurfaceIndex < 0 || technicalTargetIndex < incidentalSurfaceIndex;
+}
+
+function hasLegacyPathContainmentRemediationIntent(intentClause: string): boolean {
+    const normalizedClause = normalizeFilesystemAliasIntentClause(intentClause);
+    if (!PATH_CONTAINMENT_REMEDIATION_PATTERN.test(normalizedClause)) {
+        return false;
+    }
+    if (
+        !STRUCTURED_SECURITY_FOLLOW_UP_PATTERN.test(intentClause)
+        && !hasFilesystemAliasRemediationAction(normalizedClause)
+    ) {
+        return false;
+    }
+    if (!FILESYSTEM_ALIAS_INCIDENTAL_SURFACE_PATTERN.test(normalizedClause)) {
+        return true;
+    }
+    if (
+        FILESYSTEM_ALIAS_INCIDENTAL_PRIMARY_TARGET_PATTERN.test(normalizedClause)
+        || FILESYSTEM_ALIAS_TECHNICAL_TARGET_INCIDENTAL_QUALIFIER_PATTERN.test(normalizedClause)
+        || FILESYSTEM_ALIAS_INCIDENTAL_SCOPE_PATTERN.test(normalizedClause)
+    ) {
+        return false;
+    }
+    const hasTechnicalTarget = hasSubstantiveFilesystemAliasTarget(normalizedClause);
+    return hasTechnicalTarget && (
+        FILESYSTEM_ALIAS_SECURITY_REMEDIATION_ACTION_PATTERN.test(normalizedClause)
+        || FILESYSTEM_ALIAS_TECHNICAL_CHANGE_ACTION_PATTERN.test(normalizedClause)
+    );
+}
+
+function hasFilesystemAliasRemediationIntent(intentClause: string): boolean {
+    const normalizedClause = normalizeFilesystemAliasIntentClause(intentClause);
+    const hasIncidentalSurface = FILESYSTEM_ALIAS_INCIDENTAL_SURFACE_PATTERN.test(normalizedClause);
+    if (
+        FILESYSTEM_ALIAS_INCIDENTAL_PRIMARY_TARGET_PATTERN.test(normalizedClause)
+        || FILESYSTEM_ALIAS_TECHNICAL_TARGET_INCIDENTAL_QUALIFIER_PATTERN.test(normalizedClause)
+        || FILESYSTEM_ALIAS_INCIDENTAL_SCOPE_PATTERN.test(normalizedClause)
+    ) {
+        return false;
+    }
+    const hasTechnicalTarget = hasSubstantiveFilesystemAliasTarget(normalizedClause);
+    const hasRemediationAction = (
+        FILESYSTEM_ALIAS_SECURITY_REMEDIATION_ACTION_PATTERN.test(normalizedClause)
+        && (!hasIncidentalSurface || hasTechnicalTarget)
+    )
+        || (
+            FILESYSTEM_ALIAS_TECHNICAL_CHANGE_ACTION_PATTERN.test(normalizedClause)
+            && hasTechnicalTarget
+        );
+    const hasAliasContext = FILESYSTEM_ALIAS_CONTAINMENT_CONTEXT_PATTERN.test(normalizedClause)
+        || (
+            FILESYSTEM_ALIAS_BOUNDARY_CONTEXT_PATTERN.test(normalizedClause)
+            && hasTechnicalTarget
+        );
+    return hasRemediationAction && hasAliasContext;
+}
+
+function hasPathContainmentRemediationIntent(taskIntent: string): boolean {
+    if (
+        hasLegacyPathContainmentRemediationIntent(taskIntent)
+        || hasFilesystemAliasRemediationIntent(taskIntent)
+    ) {
+        return true;
+    }
+    return FILESYSTEM_ALIAS_INCIDENTAL_SURFACE_PATTERN.test(taskIntent)
+        && taskIntent
+            .split(FILESYSTEM_ALIAS_MIXED_INTENT_CLAUSE_SEPARATOR_PATTERN)
+            .some((intentClause) =>
+                (
+                    hasLegacyPathContainmentRemediationIntent(intentClause)
+                    && hasFilesystemAliasRemediationAction(intentClause)
+                )
+                || hasFilesystemAliasRemediationIntent(intentClause)
+            );
 }
 
 export function classifySecurityReviewIntent(taskIntent: string): SecurityReviewIntentClassification {
@@ -79,7 +194,7 @@ export function classifySecurityReviewIntent(taskIntent: string): SecurityReview
     if (ADVERSARIAL_PATH_REMEDIATION_PATTERN.test(normalizedIntent)) {
         reasons.push('adversarial_path_remediation');
     }
-    if (PATH_CONTAINMENT_REMEDIATION_PATTERN.test(normalizedIntent)) {
+    if (hasPathContainmentRemediationIntent(normalizedIntent)) {
         reasons.push('path_containment_remediation');
     }
     const substantiveReasonFound = reasons.some((reason) =>
