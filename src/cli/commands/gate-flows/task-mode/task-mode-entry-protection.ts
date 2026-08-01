@@ -16,11 +16,14 @@ import type {
     WorkflowConfigPreTaskBaselineState
 } from '../../../../gates/workflow-config/workflow-config-work';
 import {
+    taskMetadataAllowsWorkflowConfigWork,
+    WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE
+} from '../../../../gates/workflow-config/workflow-config-work-paths';
+export { WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE } from '../../../../gates/workflow-config/workflow-config-work-paths';
+import {
     quotePowerShellCliValue,
     buildGateCommandPrefix
 } from './task-mode-command-format';
-
-export const WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE = 'workflow-config policy changes';
 
 export class TaskModeProtectedManifestEntryError extends Error {
     constructor(message: string) {
@@ -144,18 +147,6 @@ export function buildOrchestratorWorkHandoffCommand(
         parts.push(`--planned-changed-file ${quotePowerShellCliValue(plannedChangedFile)}`);
     }
     return parts.join(' ');
-}
-
-export function taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata: TaskQueueMetadataForProtectedEntry | null): boolean {
-    if (!taskQueueMetadata) {
-        return false;
-    }
-    const trustedTaskText = [
-        taskQueueMetadata.area,
-        taskQueueMetadata.title,
-        taskQueueMetadata.notes
-    ].filter(Boolean).join(' ').toLowerCase();
-    return trustedTaskText.includes(WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE);
 }
 
 export function isGardaSelfGuardDenyAgentEntry(repoRoot: string, orchestratorRoot: string): boolean {

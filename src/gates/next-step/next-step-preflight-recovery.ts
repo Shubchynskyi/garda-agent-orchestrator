@@ -10,6 +10,12 @@ import {
     resolveBundleNameForTarget
 } from '../../core/constants';
 import {
+    resolveTaskResetAvailability
+} from '../../core/task-reset-availability';
+import type {
+    TaskQueueEntry
+} from '../../core/task-queue-read';
+import {
     isOrchestratorSourceCheckout
 } from '../protected-control-plane/protected-control-plane';
 import {
@@ -56,6 +62,10 @@ import {
     filterProtectedRestartScopeGeneratedRuntimeArtifacts,
     readCurrentProtectedScopeBeforePreflight
 } from './next-step-protected-scope';
+import {
+    getWorkflowConfigChangedFiles,
+    taskMetadataAllowsWorkflowConfigWork
+} from '../workflow-config/workflow-config-work-paths';
 
 export interface FailedGateRecovery {
     nextGate: string;
@@ -199,6 +209,21 @@ function parseDirtyBaselineFilesFromError(errorText: string): string[] {
         .map((entry) => normalizePath(entry))
         .filter(Boolean))]
         .sort();
+}
+
+function parseWorkflowConfigFilesFromError(errorText: string): string[] {
+    const marker = '--workflow-config-work:';
+    const start = errorText.indexOf(marker);
+    if (start < 0) {
+        return [];
+    }
+    const afterMarker = errorText.slice(start + marker.length);
+    const end = afterMarker.indexOf('. Re-enter task mode');
+    const listText = end >= 0 ? afterMarker.slice(0, end) : afterMarker;
+    return getWorkflowConfigChangedFiles(listText
+        .split(',')
+        .map((entry) => normalizePath(entry))
+        .filter(Boolean));
 }
 
 function formatPathList(paths: string[]): string {
@@ -413,7 +438,8 @@ export function readFailedGateRecovery(
     cliPrefix: string,
     taskMode: Record<string, unknown> | null,
     taskModePath: string | null,
-    preflightCommandPath: string
+    preflightCommandPath: string,
+    taskEntry: TaskQueueEntry | null = null
 ): FailedGateRecovery | null {
     if (!taskMode) {
         return null;
@@ -568,6 +594,30 @@ export function readFailedGateRecovery(
             command: buildGardaSelfGuardPolicyChangeCommand(cliPrefix)
         };
     }
+    if (hasWorkflowConfigRecoverySignal && !taskMetadataAllowsWorkflowConfigWork(taskEntry)) {
+        const taskResetAvailability = resolveTaskResetAvailability(repoRoot);
+        if (!taskResetAvailability.enabled) {
+            return {
+                nextGate: 'operator-maintenance',
+                title: 'Enable audited task reset for workflow-config baseline recovery.',
+                reason:
+                    `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) requires a fresh task-mode baseline after an operator workflow-config update, ` +
+                    'but this task does not own workflow-config policy changes and audited task reset is unavailable.',
+                label: 'Enable task reset',
+                command: taskResetAvailability.remediationCommand
+            };
+        }
+        return {
+            nextGate: 'task-reset',
+            title: 'Reset stale task mode after an operator workflow-config update.',
+            reason:
+                `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) requires a fresh task-mode baseline after an operator workflow-config update. ` +
+                'This task does not own workflow-config policy changes, so upgrading it into --workflow-config-work would violate the task ownership contract. ' +
+                'Reset the stale lifecycle evidence for rerun, then rerun next-step to enter task mode against the approved config baseline.',
+            label: 'Reset task for fresh workflow-config baseline',
+            command: `${cliPrefix} gate task-reset --task-id "${taskId}" --reopen --confirm --repo-root "."`
+        };
+    }
     const splitCheckpointScope = resolveAuthenticatedSplitCheckpointCommandScope(repoRoot, taskId);
     if (splitCheckpointScope?.violation) {
         return {
@@ -582,11 +632,15 @@ export function readFailedGateRecovery(
     const currentWorkspace = splitCheckpointScope
         ? null
         : readCurrentGitWorkspaceSnapshot(repoRoot, true);
+    const reportedWorkflowConfigFiles = hasWorkflowConfigRecoverySignal
+        ? parseWorkflowConfigFilesFromError(errorText)
+        : [];
     const currentChangedFiles = splitCheckpointScope
         ? splitCheckpointScope.changedFiles
-        : Array.isArray(currentWorkspace?.changed_files)
-            ? filterProtectedRestartScopeGeneratedRuntimeArtifacts(repoRoot, currentWorkspace.changed_files)
-            : [];
+        : filterProtectedRestartScopeGeneratedRuntimeArtifacts(repoRoot, [
+            ...(Array.isArray(currentWorkspace?.changed_files) ? currentWorkspace.changed_files : []),
+            ...reportedWorkflowConfigFiles
+        ]);
 
     return {
         nextGate: 'enter-task-mode',

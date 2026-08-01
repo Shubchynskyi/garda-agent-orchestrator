@@ -14,6 +14,9 @@ import {
     type TaskQueueEntry
 } from '../../core/task-queue-read';
 import {
+    resolveTaskResetAvailability
+} from '../../core/task-reset-availability';
+import {
     resolveReviewerResultRecoveryIdentity
 } from '../review/security/reviewer-result-recovery-identity';
 import {
@@ -77,6 +80,9 @@ import {
     normalizeWorkspaceRelativePath,
     normalizeWorkspaceRelativePaths
 } from '../workspace/dirty-worktree-protection';
+import {
+    taskMetadataAllowsWorkflowConfigWork
+} from '../workflow-config/workflow-config-work-paths';
 import {
     collectKnownNonBlockingSignals,
     type KnownNonBlockingSignal
@@ -2605,6 +2611,38 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 ]
             };
         }
+        if (
+            currentProtectedScope.workflowConfigFiles.length > 0
+            && !taskMetadataAllowsWorkflowConfigWork(taskEntry)
+        ) {
+            const taskResetAvailability = resolveTaskResetAvailability(repoRoot);
+            return taskResetAvailability.enabled
+                ? {
+                    status: 'BLOCKED',
+                    nextGate: 'task-reset',
+                    title: 'Reset stale task mode after an operator workflow-config update.',
+                    reason:
+                        `The current workspace contains operator-approved workflow-config updates outside this task's ownership: ${protectedScopeList}. ` +
+                        'Reset the stale lifecycle evidence for rerun, then rerun next-step to enter task mode against the approved config baseline.',
+                    commands: [
+                        buildCommand(
+                            'Reset task for fresh workflow-config baseline',
+                            `${cliPrefix} gate task-reset --task-id "${taskId}" --reopen --confirm --repo-root "."`
+                        )
+                    ]
+                }
+                : {
+                    status: 'BLOCKED',
+                    nextGate: 'operator-maintenance',
+                    title: 'Enable audited task reset for workflow-config baseline recovery.',
+                    reason:
+                        `The current workspace contains operator-approved workflow-config updates outside this task's ownership: ${protectedScopeList}. ` +
+                        'Audited task reset must be enabled before the stale task-mode baseline can be replaced.',
+                    commands: [
+                        buildCommand('Enable task reset', taskResetAvailability.remediationCommand)
+                    ]
+                };
+        }
         return {
             status: 'BLOCKED',
             nextGate: 'enter-task-mode',
@@ -2943,7 +2981,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             cliPrefix,
             taskMode,
             taskModePath,
-            preflightCommandPath
+            preflightCommandPath,
+            taskEntry
         ),
         resolveStrictDecompositionRoute: buildStrictDecompositionContinuationBlock,
         resolveProtectedScopeRoute: buildCurrentProtectedScopeTaskModeRestartRoute,

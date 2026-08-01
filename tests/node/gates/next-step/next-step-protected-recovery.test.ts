@@ -108,6 +108,17 @@ function makeTempRepo(): string {
     return repoRoot;
 }
 
+function markTaskAsWorkflowConfigOwner(repoRoot: string): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '# TASK.md',
+        '',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        `| ${TASK_ID} | TODO | P1 | workflow | Update workflow-config policy changes | gpt-5.4 | 2026-04-25 | balanced | Explicitly owns workflow-config policy changes. |`,
+        ''
+    ].join('\n'), 'utf8');
+}
+
 function reviewsRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
 }
@@ -699,6 +710,7 @@ describe('gates/next-step protected recovery', () => {
 
     it('routes workflow-config preflight failures to workflow-config protected task-mode recovery', () => {
         const repoRoot = makeTempRepo();
+        markTaskAsWorkflowConfigOwner(repoRoot);
         writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
         initGitRepo(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
@@ -728,8 +740,58 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(!command.includes('gate classify-change'));
     });
 
+    it('preserves ignored workflow-config paths reported by a failed preflight recovery', () => {
+        const repoRoot = makeTempRepo();
+        markTaskAsWorkflowConfigOwner(repoRoot);
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        initGitRepo(repoRoot, { gitignoreContent: `${workflowConfigRelativePath}\n` });
+        seedStartedTask(repoRoot, TASK_ID);
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 7
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+        writeProtectedManifestSnapshot(repoRoot, {
+            [workflowConfigRelativePath]: fileSha256(workflowConfigPath)
+        });
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error: WORKFLOW_CONFIG_PREFLIGHT_ERROR
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes(`--planned-changed-file "${workflowConfigRelativePath}"`));
+    });
+
+    it('routes non-owning workflow-config baseline recovery through audited task-reset enablement', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error: WORKFLOW_CONFIG_PREFLIGHT_ERROR
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'operator-maintenance');
+        assert.match(result.title, /Enable audited task reset/);
+        assert.match(result.reason, /does not own workflow-config policy changes/);
+        assert.ok(command.includes('workflow set'));
+        assert.ok(command.includes('--task-reset-enabled true'));
+        assert.ok(!command.includes('--workflow-config-work'));
+    });
+
     it('routes dirty protected workflow-config drift before printing classify-change', () => {
         const repoRoot = makeTempRepo();
+        markTaskAsWorkflowConfigOwner(repoRoot);
         writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
         initGitRepo(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
@@ -762,6 +824,7 @@ describe('gates/next-step protected recovery', () => {
 
     it('keeps ignored workflow-config drift in protected restart scope with tracked protected source changes', () => {
         const repoRoot = makeTempRepo();
+        markTaskAsWorkflowConfigOwner(repoRoot);
         writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
         const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
         const sourceRelativePath = 'src/gates/next-step/next-step.ts';
@@ -796,6 +859,7 @@ describe('gates/next-step protected recovery', () => {
 
     it('routes newly added ignored workflow-config protected root before classify', () => {
         const repoRoot = makeTempRepo();
+        markTaskAsWorkflowConfigOwner(repoRoot);
         writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
         const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), `${workflowConfigRelativePath}\n`, 'utf8');

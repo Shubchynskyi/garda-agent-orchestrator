@@ -9,6 +9,26 @@ import {
     toPlainRecord
 } from '../shared/helpers';
 
+export const WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE = 'workflow-config policy changes';
+
+export interface WorkflowConfigTaskMetadata {
+    area?: string | null;
+    title?: string | null;
+    notes?: string | null;
+}
+
+export function taskMetadataAllowsWorkflowConfigWork(taskMetadata: WorkflowConfigTaskMetadata | null): boolean {
+    if (!taskMetadata) {
+        return false;
+    }
+    const trustedTaskText = [
+        taskMetadata.area,
+        taskMetadata.title,
+        taskMetadata.notes
+    ].filter(Boolean).join(' ').toLowerCase();
+    return trustedTaskText.includes(WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE);
+}
+
 export function getWorkflowConfigControlPlanePaths(repoRoot: string): string[] {
     return getProtectedControlPlaneRoots(repoRoot)
         .map((entry) => normalizePath(entry))
