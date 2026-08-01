@@ -338,6 +338,17 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     if (closeout.project_memory?.visible_summary_line) {
         lines.push(closeout.project_memory.visible_summary_line);
     }
+    if (closeout.orchestrator_defect_capture) {
+        lines.push(closeout.orchestrator_defect_capture.visible_summary_line);
+        for (const record of closeout.orchestrator_defect_capture.records) {
+            lines.push(
+                `Orchestrator defect ${record.defect_id || 'unknown'}: status=${record.status}; `
+                + `resolution=${record.resolution || 'missing'}; `
+                + `problem_record=${record.problem_record_id || 'missing'}; `
+                + `follow_up=${record.follow_up_task_id || 'missing'}.`
+            );
+        }
+    }
     const knownNonBlockingSignalsLine = formatKnownNonBlockingSignals(closeout.known_non_blocking_signals || []);
     if (knownNonBlockingSignalsLine) {
         lines.push(knownNonBlockingSignalsLine);
@@ -611,6 +622,17 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     if (summary.final_closeout.project_memory?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.project_memory.visible_summary_line}`);
+    }
+    if (summary.final_closeout.orchestrator_defect_capture) {
+        lines.push(`  ${summary.final_closeout.orchestrator_defect_capture.visible_summary_line}`);
+        for (const record of summary.final_closeout.orchestrator_defect_capture.records) {
+            lines.push(
+                `  OrchestratorDefect: id=${record.defect_id || 'unknown'}; status=${record.status}; `
+                + `resolution=${record.resolution || 'missing'}; `
+                + `problem_record=${record.problem_record_id || 'missing'}; `
+                + `follow_up=${record.follow_up_task_id || 'missing'}`
+            );
+        }
     }
     const knownNonBlockingSignalsLine = formatKnownNonBlockingSignals(summary.final_closeout.known_non_blocking_signals || []);
     if (knownNonBlockingSignalsLine) {

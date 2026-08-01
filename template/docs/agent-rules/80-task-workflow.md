@@ -162,6 +162,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `garda-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - The runtime auto-emits task-start and stage-transition events such as `PLAN_CREATED`, `PREFLIGHT_STARTED`, `IMPLEMENTATION_STARTED`, `REVIEW_PHASE_STARTED`, `STATUS_CHANGED`, `PROVIDER_ROUTING_DECISION`, gate pass/fail markers, and terminal completion markers.
+- When an orchestrator defect is encountered or fixed during another task, immediately append `ORCHESTRATOR_DEFECT_ACKNOWLEDGED` with `details.defect_id`, `summary`, `resolution` (`fixed_in_current_task` or `deferred_to_follow_up`), `problem_record_id`, and `follow_up_task_id`. Permission to fix the defect in place does not waive durable capture.
+- The referenced follow-up must exist as a canonical `TASK.md` row, and the workspace-owned orchestrator-problems section must contain one record that links `problem_record_id` to `follow_up_task_id`. Final task audit blocks an acknowledged defect whose durable record or follow-up is missing. Timelines without an acknowledgement remain read-only compatible and report `encountered=unknown` rather than inventing a no-defect assertion.
 - Task-event writers must use best-effort append locking for both per-task log and aggregate `all-tasks.jsonl`; do not rely on unsynchronized raw append for concurrent runs.
 - Task-event integrity is procedural hardening only: local hash-chain and replay detection help detect tampering after the fact, but they are not a security-grade trust anchor.
 - Task timeline completeness is surfaced in `status` and `doctor`; incomplete timelines are a real workflow defect, not optional trace noise.

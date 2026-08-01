@@ -31,6 +31,7 @@ import { parseOptionalNumber } from './task-audit-summary-collectors';
 import { buildFinalCloseoutProjectMemorySummary } from './task-audit-summary-project-memory';
 import type { ReviewCoverageAuditSummary } from './task-audit-summary-review-coverage';
 import type { ReviewFindingsAuditSummary } from './task-audit-summary-review-findings';
+import type { FinalCloseoutOrchestratorDefectCaptureSummary } from './task-audit-summary-orchestrator-defects';
 import {
     collectKnownNonBlockingSignals
 } from '../shared/known-nonblocking-signals';
@@ -70,6 +71,7 @@ export interface BuildFinalCloseoutArtifactInput {
     fullSuiteValidationRequiredForLifecycle: boolean;
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode;
     projectMemoryImpactEvidence: ProjectMemoryImpactLifecycleEvidence;
+    orchestratorDefectCapture: FinalCloseoutOrchestratorDefectCaptureSummary;
     tokenEconomy: FinalCloseoutArtifact['token_economy'];
     taskCycleDiagnostics: FinalCloseoutTaskCycleDiagnostics;
     workspaceStatusSnapshot: StatusSnapshot;
@@ -501,6 +503,7 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
         },
         docs: input.docsSummary,
         project_memory: projectMemory,
+        orchestrator_defect_capture: input.orchestratorDefectCapture,
         known_non_blocking_signals: knownNonBlockingSignals,
         token_economy: input.tokenEconomy,
         task_cycle_diagnostics: input.taskCycleDiagnostics,

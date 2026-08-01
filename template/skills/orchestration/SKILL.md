@@ -194,6 +194,8 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 23. Update required docs and changelog when behavior changed.
    - Internal orchestration artifacts (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`) may remain gitignored in deployed workspaces; update them on disk but do not `git add -f` them unless the user explicitly asks to version orchestrator internals.
 24. Record artifacts, evidence, and any non-status task notes in `TASK.md`.
+   - If an orchestrator defect was encountered or fixed, emit `ORCHESTRATOR_DEFECT_ACKNOWLEDGED` through `gate log-task-event` with `defect_id`, `summary`, `resolution`, `problem_record_id`, and `follow_up_task_id` in `--details-json`.
+   - Verify that the follow-up task row exists and that the canonical `TASK.md` orchestrator-problems section links the problem record to that follow-up. An in-place fix never replaces this durable capture.
 25. After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json`; this materializes `runtime/reviews/<task-id>-final-closeout.json` and `runtime/reviews/<task-id>-final-closeout.md`. Use the canonical final-closeout artifact instead of reconstructing the report structure manually.
 26. Terminal status contract:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed; successful completion finalization reconciles `TASK.md` to `DONE`.
@@ -286,6 +288,9 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 ## Task Event Logging Commands
 - Node:
   `node garda-agent-orchestrator/bin/garda.js gate log-task-event --task-id "<task-id>" --event-type "<event-type>" --outcome "INFO|PASS|FAIL|BLOCKED" --message "<short message>" --actor "orchestrator"`
+- Orchestrator defect acknowledgement:
+  `node garda-agent-orchestrator/bin/garda.js gate log-task-event --task-id "<task-id>" --event-type "ORCHESTRATOR_DEFECT_ACKNOWLEDGED" --outcome "INFO" --message "<short summary>" --actor "orchestrator" --details-json '{"defect_id":"T-<id>","summary":"<defect>","resolution":"fixed_in_current_task|deferred_to_follow_up","problem_record_id":"T-<id>","follow_up_task_id":"T-<id>"}'`
+- Final task audit fails closed when an acknowledgement lacks a linked canonical `TASK.md` problem record or follow-up row. Timelines with no acknowledgement remain historical read-only compatible and report the encounter state as unknown.
 - Task event logs:
   - `garda-agent-orchestrator/runtime/task-events/<task-id>.jsonl`
   - `garda-agent-orchestrator/runtime/task-events/all-tasks.jsonl`

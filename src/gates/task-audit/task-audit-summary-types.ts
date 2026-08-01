@@ -23,6 +23,7 @@ import type {
 import type { ReviewCoverageAuditSummary } from './task-audit-summary-review-coverage';
 import type { ReviewFindingsAuditSummary } from './task-audit-summary-review-findings';
 import type { TaskQueueEntry } from '../../core/task-queue-read';
+import type { FinalCloseoutOrchestratorDefectCaptureSummary } from './task-audit-summary-orchestrator-defects';
 
 export interface TaskAuditSummaryOptions {
     taskId: string;
@@ -62,6 +63,7 @@ export interface FinalCloseoutArtifact {
     } | null;
     docs: FinalCloseoutDocsSummary;
     project_memory?: FinalCloseoutProjectMemorySummary | null;
+    orchestrator_defect_capture?: FinalCloseoutOrchestratorDefectCaptureSummary;
     known_non_blocking_signals?: KnownNonBlockingSignal[];
     token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
     task_cycle_diagnostics?: FinalCloseoutTaskCycleDiagnostics;

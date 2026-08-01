@@ -79,6 +79,9 @@ import {
 } from './task-audit-summary-review-timing-audit';
 import { buildReviewCoverageAuditSummary } from './task-audit-summary-review-coverage';
 import { buildReviewFindingsAuditSummary } from './task-audit-summary-review-findings';
+import {
+    buildOrchestratorDefectCaptureSummary
+} from './task-audit-summary-orchestrator-defects';
 import type {
     FinalCloseoutTaskCycleDiagnostics,
     PointInTimeSnapshot,
@@ -100,6 +103,10 @@ export type {
     TaskAuditSummaryOptions,
     TaskAuditSummaryResult
 } from './task-audit-summary-types';
+export type {
+    FinalCloseoutOrchestratorDefectCaptureSummary,
+    OrchestratorDefectCaptureRecord
+} from './task-audit-summary-orchestrator-defects';
 export type {
     ReviewFindingsAuditItem,
     ReviewFindingsAuditLane,
@@ -307,6 +314,19 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     );
     const gates = [...lifecycleStatus.gates];
     const blockers = [...lifecycleStatus.blockers];
+    const orchestratorDefectCapture = buildOrchestratorDefectCaptureSummary({
+        repoRoot,
+        taskId: safeTaskId,
+        events
+    });
+    if (orchestratorDefectCapture.status === 'INVALID') {
+        blockers.push({
+            gate: 'orchestrator-defect-capture',
+            reason:
+                'An acknowledged orchestrator defect lacks durable TASK.md capture: '
+                + orchestratorDefectCapture.violations.join(' | ')
+        });
+    }
     let pointInTimeSnapshot: PointInTimeSnapshot = {
         status: 'STABLE',
         gate: null,
@@ -732,6 +752,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         fullSuiteValidationRequiredForLifecycle,
         reviewExecutionPolicyMode,
         projectMemoryImpactEvidence,
+        orchestratorDefectCapture,
         tokenEconomy,
         taskCycleDiagnostics,
         workspaceStatusSnapshot,
