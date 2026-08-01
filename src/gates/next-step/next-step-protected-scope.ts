@@ -17,6 +17,9 @@ import {
 import {
     isOrchestratorSourceCheckout
 } from '../protected-control-plane/protected-control-plane';
+import {
+    normalizeDirtyWorkspaceBaseline
+} from '../workspace/dirty-worktree-protection';
 
 export interface CurrentGitWorkspaceSnapshotLike {
     changed_files: string[];
@@ -26,6 +29,38 @@ export interface CurrentProtectedScope {
     changedFiles: string[];
     protectedFiles: string[];
     workflowConfigFiles: string[];
+}
+
+function excludeUnchangedTaskModeBaselineFiles(
+    repoRoot: string,
+    scope: CurrentProtectedScope,
+    taskMode: Record<string, unknown> | null
+): CurrentProtectedScope | null {
+    const baseline = normalizeDirtyWorkspaceBaseline(taskMode?.dirty_workspace_baseline, repoRoot);
+    if (!baseline) {
+        return scope;
+    }
+    const unchangedBaselineFiles = new Set(
+        baseline.changed_files.filter((relativePath) => {
+            const expectedHash = baseline.file_hashes[relativePath];
+            if (!expectedHash || !/^[a-f0-9]{64}$/u.test(expectedHash)) {
+                return false;
+            }
+            return fileSha256(path.join(repoRoot, ...relativePath.split('/'))) === expectedHash;
+        })
+    );
+    if (unchangedBaselineFiles.size === 0) {
+        return scope;
+    }
+    const protectedFiles = scope.protectedFiles.filter((entry) => !unchangedBaselineFiles.has(entry));
+    if (protectedFiles.length === 0) {
+        return null;
+    }
+    return {
+        changedFiles: scope.changedFiles.filter((entry) => !unchangedBaselineFiles.has(entry)),
+        protectedFiles,
+        workflowConfigFiles: scope.workflowConfigFiles.filter((entry) => !unchangedBaselineFiles.has(entry))
+    };
 }
 
 function readWorkflowConfigProtectedManifestCandidates(repoRoot: string): string[] {
@@ -182,7 +217,8 @@ function selectCurrentScopeWorkflowConfigManifestFiles(
 export function readCurrentProtectedScopeBeforePreflight(
     repoRoot: string,
     workspaceSnapshot: CurrentGitWorkspaceSnapshotLike | null,
-    readWorkspaceSnapshot: () => CurrentGitWorkspaceSnapshotLike | null
+    readWorkspaceSnapshot: () => CurrentGitWorkspaceSnapshotLike | null,
+    taskMode: Record<string, unknown> | null = null
 ): CurrentProtectedScope | null {
     const snapshot = workspaceSnapshot ?? readWorkspaceSnapshot();
     const protectedRoots = getProtectedControlPlaneRoots(repoRoot);
@@ -231,9 +267,9 @@ export function readCurrentProtectedScopeBeforePreflight(
     if (protectedFiles.length === 0) {
         return null;
     }
-    return {
+    return excludeUnchangedTaskModeBaselineFiles(repoRoot, {
         changedFiles,
         protectedFiles,
         workflowConfigFiles: protectedFiles.filter((entry) => isWorkflowConfigControlPlanePath(entry))
-    };
+    }, taskMode);
 }

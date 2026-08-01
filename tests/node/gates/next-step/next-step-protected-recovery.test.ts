@@ -822,6 +822,109 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(!command.includes('gate classify-change'));
     });
 
+    it('does not repeat protected workflow-config recovery for a hash-identical fresh task-mode baseline', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        initGitRepo(repoRoot);
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 21
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+        const baselineHash = fileSha256(workflowConfigPath);
+        writeProtectedManifestSnapshot(repoRoot, {
+            [workflowConfigRelativePath]: baselineHash
+        });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Resume against approved workflow config baseline',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            dirtyWorkspaceBaseline: {
+                detection_source: 'git_auto',
+                include_untracked: true,
+                changed_files: [workflowConfigRelativePath],
+                changed_files_sha256: sha256Text(workflowConfigRelativePath),
+                scope_sha256: sha256Text(`scope:${workflowConfigRelativePath}`),
+                file_hashes: { [workflowConfigRelativePath]: baselineHash }
+            }
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.doesNotMatch(result.reason, /operator-approved workflow-config updates outside/i);
+    });
+
+    it('still routes post-entry workflow-config changes through protected recovery', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const workflowConfigPath = path.join(repoRoot, ...workflowConfigRelativePath.split('/'));
+        initGitRepo(repoRoot);
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.full_suite_validation = {
+            ...(workflowConfig.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 23
+        };
+        writeJson(workflowConfigPath, workflowConfig);
+        const baselineHash = fileSha256(workflowConfigPath);
+        writeProtectedManifestSnapshot(repoRoot, {
+            [workflowConfigRelativePath]: baselineHash
+        });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Detect post-entry workflow config changes',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            dirtyWorkspaceBaseline: {
+                detection_source: 'git_auto',
+                include_untracked: true,
+                changed_files: [workflowConfigRelativePath],
+                changed_files_sha256: sha256Text(workflowConfigRelativePath),
+                scope_sha256: sha256Text(`scope:${workflowConfigRelativePath}`),
+                file_hashes: { [workflowConfigRelativePath]: baselineHash }
+            }
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        const changedAgain = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        changedAgain.full_suite_validation = {
+            ...(changedAgain.full_suite_validation as Record<string, unknown>),
+            green_summary_max_lines: 25
+        };
+        writeJson(workflowConfigPath, changedAgain);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'operator-maintenance');
+        assert.match(result.title, /task reset/i);
+        assert.match(result.reason, /operator-approved workflow-config updates outside/i);
+        assert.match(result.reason, new RegExp(workflowConfigRelativePath.replace(/[./]/gu, '\\$&'), 'u'));
+    });
+
     it('keeps ignored workflow-config drift in protected restart scope with tracked protected source changes', () => {
         const repoRoot = makeTempRepo();
         markTaskAsWorkflowConfigOwner(repoRoot);

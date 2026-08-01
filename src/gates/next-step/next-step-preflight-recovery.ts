@@ -529,7 +529,8 @@ export function readFailedGateRecovery(
         const currentProtectedScope = readCurrentProtectedScopeBeforePreflight(
             repoRoot,
             null,
-            () => readCurrentGitWorkspaceSnapshot(repoRoot, true)
+            () => readCurrentGitWorkspaceSnapshot(repoRoot, true),
+            taskMode
         );
         const currentProtectedScopeNeedsTaskModeRestart = currentProtectedScope
             && (

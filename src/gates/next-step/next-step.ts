@@ -2584,7 +2584,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         const currentProtectedScope = readCurrentProtectedScopeBeforePreflight(
             repoRoot,
             readNoPreflightCurrentSnapshot(),
-            () => readCurrentGitWorkspaceSnapshot(repoRoot, true)
+            () => readCurrentGitWorkspaceSnapshot(repoRoot, true),
+            taskMode
         );
         const currentProtectedScopeNeedsTaskModeRestart = currentProtectedScope
             && (
