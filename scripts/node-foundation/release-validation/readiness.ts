@@ -22,6 +22,8 @@ import {
     readPackageJsonObject,
     readTextFileIfExists
 } from './shared';
+import { PACKAGE_SURFACE_BASELINE_PATH } from './package-surface-types';
+import { parsePackageSurfaceBaseline } from './package-surface-baseline';
 
 function extractReleaseChecklistItems(checklistMarkdown: string, version: string): {
     releaseChecklistItems: string[];
@@ -700,6 +702,7 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
 
     const validateRelease = scripts['validate:release'] || '';
     const validateReadiness = scripts['validate:release-readiness'] || '';
+    const validatePackageSurface = scripts['validate:package-surface'] || '';
     const releaseSmoke = scripts['test:release-smoke'] || '';
     const releasePreflight = scripts['release:preflight'] || '';
     const archiveSource = scripts['archive:source'] || '';
@@ -709,6 +712,20 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
     const prepack = scripts.prepack || '';
     const manifestText = readTextFileIfExists(path.join(normalizedRoot, 'MANIFEST.md')) || '';
     const validateReleaseFast = scripts['validate:release:fast'] || '';
+    const packageSurfaceTests = scripts['test:packaging'] || '';
+    const baselinePath = path.join(normalizedRoot, PACKAGE_SURFACE_BASELINE_PATH);
+    let baselineValid = false;
+    let baselineDetail = `missing ${PACKAGE_SURFACE_BASELINE_PATH}`;
+    const baselineText = readTextFileIfExists(baselinePath);
+    if (baselineText !== null) {
+        try {
+            const baseline = parsePackageSurfaceBaseline(JSON.parse(baselineText), baselinePath);
+            baselineValid = true;
+            baselineDetail = `${baseline.package.name}@${baseline.package.version}: ${baseline.rationale}`;
+        } catch (error: unknown) {
+            baselineDetail = error instanceof Error ? error.message : String(error);
+        }
+    }
 
     pushCheck(
         checks,
@@ -723,6 +740,24 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
             validateRelease.includes('npm run test:packaging') &&
             countOccurrences(validateRelease, 'npm run validate:clean-worktree') >= 2,
         [validateRelease || 'missing validate:release']
+    );
+
+    pushCheck(
+        checks,
+        violations,
+        'package-surface',
+        'release preflight scores the deterministic packed surface against a tracked explicit baseline',
+        validatePackageSurface === 'node scripts/node-foundation/build-scripts.cjs validate-release.js package-surface' &&
+            releasePreflight.endsWith('&& npm run validate:package-surface') &&
+            packageSurfaceTests.includes('tests/node/packaging/package-surface.test.ts') &&
+            baselineValid &&
+            isGitTracked(normalizedRoot, PACKAGE_SURFACE_BASELINE_PATH),
+        [
+            `validate:package-surface=${validatePackageSurface || 'missing'}`,
+            `test:packaging=${packageSurfaceTests || 'missing'}`,
+            `baseline=${baselineDetail}`,
+            `baselineTracked=${isGitTracked(normalizedRoot, PACKAGE_SURFACE_BASELINE_PATH)}`
+        ]
     );
 
     pushCheck(
@@ -744,7 +779,7 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         checks,
         violations,
         'release-gate',
-        'release:preflight runs release readiness and short release smoke before the expensive release validation path',
+        'release:preflight runs release readiness and short release smoke before release validation and package-surface scoring',
         validateReadiness === 'node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness' &&
             releaseSmoke.includes('tests/node/core/task-ids.test.ts') &&
             releaseSmoke.includes('tests/node/gate-runtime/task-events-append.test.ts') &&
@@ -754,7 +789,7 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
             releaseSmoke.includes('tests/node/validators/doctor-formatting.test.ts') &&
             !releaseSmoke.includes('tests/node/packaging/pack-smoke.test.ts') &&
             validateRelease.includes('npm run test:packaging') &&
-            releasePreflight === 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release',
+            releasePreflight === 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release && npm run validate:package-surface',
         [
             `validate:release-readiness=${validateReadiness || 'missing'}`,
             `test:release-smoke=${releaseSmoke || 'missing'}`,

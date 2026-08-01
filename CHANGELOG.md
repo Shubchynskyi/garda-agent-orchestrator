@@ -3,6 +3,7 @@
 ## 1.2.0
 
 - Reduced the published npm surface to the compiled runtime and required assets: tarballs omit `src/**`, `tests/**`, and local build trees, while package smoke proves clean install and CLI invocation without TypeScript, devDependencies, or a consumer build.
+- Added deterministic offline package-surface release scoring for file count, unpacked size, lifecycle scripts, and executable lexical risk signals, with a tracked baseline, actionable growth diagnostics, explicit rationale-bound baseline updates, and optional prior-artifact comparison without a Socket token or network dependency.
 - Added guarded `garda profile policy` preview/apply flows with normalized policy planning, stale-preview hashes, shared profile-config locking, crash-recoverable mutation audits, and future-task-only policy effects.
 - Added deterministic reviewer coverage ledgers for every changed file, behavior boundary, and applicable review category; incomplete or generic coverage and unresolved finding links now fail before receipt recording, while final audit exposes omitted obligations without imposing a finding quota.
 - Added evidence-only focused-test remediation: the canonical reviewer marker now binds the exact changed test to current task-owned command, artifact, output hash/size, chronology, scope, and in-root path evidence before restarting review without a fake source edit.

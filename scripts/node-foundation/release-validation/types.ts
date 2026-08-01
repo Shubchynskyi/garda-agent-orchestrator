@@ -51,7 +51,9 @@ export const RELEASE_VALIDATION_COMMANDS = Object.freeze([
     'version-parity',
     'clean-worktree',
     'embedded-bundle-parity',
-    'release-readiness'
+    'release-readiness',
+    'package-surface',
+    'package-surface-baseline'
 ] as const);
 
 export type ReleaseValidationCommand = typeof RELEASE_VALIDATION_COMMANDS[number];

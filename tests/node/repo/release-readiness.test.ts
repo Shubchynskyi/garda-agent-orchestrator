@@ -64,6 +64,7 @@ function buildPackageJson(): string {
             'validate:embedded-bundle-parity': 'node scripts/node-foundation/build-scripts.cjs validate-release.js embedded-bundle-parity',
             'validate:clean-worktree': 'node scripts/node-foundation/build-scripts.cjs validate-release.js clean-worktree',
             'validate:release-readiness': 'node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness',
+            'validate:package-surface': 'node scripts/node-foundation/build-scripts.cjs validate-release.js package-surface',
             'test:release-smoke': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core/task-ids.test.ts tests/node/gate-runtime/task-events-append.test.ts tests/node/gates/next-step/next-step-startup-routing.test.ts tests/node/validators/status.test.ts tests/node/validators/why-blocked.test.ts tests/node/validators/doctor-formatting.test.ts',
             lint: 'eslint "src/**/*.ts" "tests/node/**/*.ts" "scripts/node-foundation/**/*.ts"',
             coverage: 'c8 npm test',
@@ -74,7 +75,7 @@ function buildPackageJson(): string {
             'quality:fast': 'npm run typecheck && npm run typecheck:unused && npm run lint && npm run coverage:fast && npm run audit:prod',
             'validate:release': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality && npm run test:packaging && npm run validate:clean-worktree',
             'validate:release:fast': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality:fast && npm run test:packaging && npm run validate:clean-worktree',
-            'release:preflight': 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release',
+            'release:preflight': 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release && npm run validate:package-surface',
             'archive:source': 'node scripts/node-foundation/build-scripts.cjs archive-release.js source',
             'archive:evidence': 'node scripts/node-foundation/build-scripts.cjs archive-release.js evidence',
             prepack: 'npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create',
@@ -83,7 +84,7 @@ function buildPackageJson(): string {
             'test:cli': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/cli',
             'test:lifecycle': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/lifecycle',
             'test:bin': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/bin',
-            'test:packaging': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/packaging/pack-smoke.test.ts',
+            'test:packaging': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/packaging/pack-smoke.test.ts tests/node/packaging/package-surface.test.ts',
             'test:sharded': 'node scripts/node-foundation/build-scripts.cjs test.js --garda-shards 2 --garda-shard-concurrency 2 tests/node/core tests/node/gate-runtime tests/node/schemas tests/node/validators tests/node/repo tests/node/reports tests/node/compat tests/node/policy tests/node/runtime tests/node/gates tests/node/cli tests/node/lifecycle tests/node/bin tests/node/materialization',
             'test:full': 'node scripts/node-foundation/build-scripts.cjs build.js node-foundation && node scripts/node-foundation/build-scripts.cjs test.js tests/node/core tests/node/gate-runtime tests/node/schemas tests/node/validators tests/node/repo tests/node/reports tests/node/compat tests/node/policy tests/node/runtime tests/node/gates tests/node/cli tests/node/lifecycle tests/node/bin tests/node/materialization',
             'test:fast': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core'
@@ -163,6 +164,42 @@ function buildReleaseChecklist(openItem?: string): string {
         '',
         '## 1.2.0'
     ].join('\n');
+}
+
+function buildPackageSurfaceBaseline(): string {
+    return JSON.stringify({
+        schemaVersion: 1,
+        package: { name: 'garda-agent-orchestrator', version: '1.1.0' },
+        metrics: {
+            fileCount: 100,
+            unpackedSizeBytes: 100000,
+            lifecycleScripts: {
+                postpack: 'node scripts/package-legacy-entrypoint-compat.cjs remove',
+                prepack: 'npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create'
+            },
+            riskSignals: {
+                child_process: 1,
+                exec: 1,
+                fetch: 1,
+                fs: 1,
+                readFile: 1,
+                writeFile: 1
+            }
+        },
+        allowedGrowth: {
+            fileCount: 10,
+            unpackedSizeBytes: 262144,
+            riskSignals: {
+                child_process: 0,
+                exec: 0,
+                fetch: 0,
+                fs: 0,
+                readFile: 0,
+                writeFile: 0
+            }
+        },
+        rationale: 'Fixture compiled-only package baseline.'
+    }, null, 2);
 }
 
 interface BuildCiWorkflowOptions {
@@ -384,6 +421,7 @@ function createReadinessFixture(openChecklistItem?: string): string {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-release-readiness-'));
 
     writeFile(path.join(repoRoot, 'package.json'), buildPackageJson());
+    writeFile(path.join(repoRoot, 'config', 'release-package-surface-baseline.json'), buildPackageSurfaceBaseline());
     writeFile(path.join(repoRoot, 'TASK.md'), '# Local task queue is not release truth.\n');
     writeFile(path.join(repoRoot, 'SECURITY.md'), '# Security\n');
     writeFile(
@@ -510,6 +548,57 @@ test('release readiness passes when package, CI, docs, security, and checklist c
         assert.match(output, /Release-security baseline: readiness labels npm audit and gitleaks as blocking/);
         assert.match(output, /Trusted Publishing path: pushing the matching v\* tag runs/);
         assert.doesNotMatch(output, /Security\/audit proof:/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails closed when the package-surface baseline is missing', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        fs.unlinkSync(path.join(repoRoot, 'config', 'release-package-surface-baseline.json'));
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /package-surface: release preflight scores the deterministic packed surface/u);
+        assert.match(output, /missing config\/release-package-surface-baseline\.json/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails closed when the package-surface baseline is malformed', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, 'config', 'release-package-surface-baseline.json'),
+            JSON.stringify({ schemaVersion: 1, rationale: '' })
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /release-package-surface-baseline\.json\.allowedGrowth must be an object/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when package-surface scoring is removed from release preflight', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        updatePackageScripts(repoRoot, (scripts) => {
+            scripts['release:preflight'] = 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release';
+        });
+
+        const result = validateReleaseReadiness(repoRoot);
+
+        assert.equal(result.passed, false);
+        assert.ok(result.violations.some((violation) => violation.startsWith('package-surface:')));
+        assert.ok(result.violations.some((violation) => violation.startsWith('release-gate:')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -1711,7 +1800,14 @@ test('release readiness fails when package files include node test build output'
 test('release validation command dispatch accepts only the fixed command allow-list', () => {
     assert.deepEqual(
         [...RELEASE_VALIDATION_COMMANDS],
-        ['version-parity', 'clean-worktree', 'embedded-bundle-parity', 'release-readiness']
+        [
+            'version-parity',
+            'clean-worktree',
+            'embedded-bundle-parity',
+            'release-readiness',
+            'package-surface',
+            'package-surface-baseline'
+        ]
     );
     assert.equal(resolveReleaseValidationCommand(undefined), 'version-parity');
     assert.equal(resolveReleaseValidationCommand(' release-readiness '), 'release-readiness');
