@@ -1429,7 +1429,10 @@ describe('gates/full-suite-validation', () => {
             const preflightPath = path.join(reviewsDir, 'T-TIMEOUT-LOCK-preflight.json');
             writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-TIMEOUT-LOCK',
-                changed_files: ['src/changed.ts']
+                changed_files: ['src/changed.ts'],
+                metrics: {
+                    scope_sha256: 'a'.repeat(64)
+                }
             });
 
             const result = await runCliWithCapturedOutput([
@@ -1488,7 +1491,10 @@ describe('gates/full-suite-validation', () => {
             const preflightPath = path.join(reviewsDir, 'T-TIMEOUT-RETRY-EXHAUSTED-preflight.json');
             writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-TIMEOUT-RETRY-EXHAUSTED',
-                changed_files: ['src/changed.ts']
+                changed_files: ['src/changed.ts'],
+                metrics: {
+                    scope_sha256: 'b'.repeat(64)
+                }
             });
 
             const result = await runCliWithCapturedOutput([

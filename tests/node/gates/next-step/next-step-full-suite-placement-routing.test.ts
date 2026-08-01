@@ -877,7 +877,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'full-suite-timeout-repair-task');
 
-        assert.match(result.title, /repair handoff/i);
+        assert.match(result.title, /repair task handoff/i);
 
         assert.match(result.reason, new RegExp(`${TASK_ID}-F1`));
 
