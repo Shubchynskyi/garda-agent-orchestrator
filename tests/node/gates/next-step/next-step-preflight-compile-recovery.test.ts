@@ -1253,22 +1253,59 @@ describe('gates/next-step preflight compile recovery', () => {
         });
         initGitRepo(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh planned-only preflight with a cross-domain task delta',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: ['src/app.ts']
+        }));
         fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
         seedCompilePass(repoRoot, TASK_ID);
         seedReviewGatePass(repoRoot, TASK_ID);
         seedDocImpactPass(repoRoot, TASK_ID);
         getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
-        fs.writeFileSync(path.join(repoRoot, 'src', 'extra.ts'), 'export const extra = 3;\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{"private":true}\n', 'utf8');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'classify-change');
-        assert.ok(result.reason.includes('stale preflight authorized file set [src/app.ts] differs from current git snapshot [src/app.ts, src/extra.ts]'));
-        assert.ok(result.reason.includes('missing from preflight: [src/extra.ts]'));
+        assert.ok(result.reason.includes('stale preflight authorized file set [src/app.ts] differs from current git snapshot [package.json, src/app.ts]'));
+        assert.ok(result.reason.includes('missing from preflight: [package.json]'));
         assert.ok(!result.commands[0].command.includes('full-suite-validation'));
         assert.ok(result.commands[0].command.includes('--changed-file "src/app.ts"'));
-        assert.ok(result.commands[0].command.includes('--changed-file "src/extra.ts"'));
+        assert.ok(result.commands[0].command.includes('--changed-file "package.json"'));
+    });
+
+    it('rejects cross-domain task deltas hidden by a materialized planned-only preflight', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'tests', 'node'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'node', 'planned.test.ts'), 'export const planned = 1;\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'tests', 'node', 'planned.test.ts'), 'export const changed = 2;\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: ['tests/node/planned.test.ts'],
+            seedPostPreflight: false
+        });
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), '{"private":true}\n', 'utf8');
+
+        const readiness = readPreflightWorkspaceReadiness(
+            repoRoot,
+            JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+            { plannedChangedFiles: ['tests/node/planned.test.ts'] }
+        );
+
+        assert.equal(readiness.ready, false);
+        assert.match(readiness.reason, /missing from preflight: \[package\.json\]/u);
+        assert.deepEqual(readiness.currentChangedFiles, ['package.json', 'tests/node/planned.test.ts']);
     });
 
     it('does not reintroduce stale protected dirty-baseline files into stale preflight refresh commands', () => {

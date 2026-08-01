@@ -1949,11 +1949,9 @@ function getPreflightRefreshCommandChangedFiles(params: {
             ))
         );
         const currentTaskScopeChangedFiles = currentChangedFiles.filter((changedFile) => (
-            (params.includeFullFailedReviewRemediationScope === true
-                && !unchangedDirtyBaselineSet.has(changedFile))
-            || plannedSet.has(changedFile)
-                || (dirtyBaselineSet.has(changedFile) && !unchangedDirtyBaselineSet.has(changedFile))
-                || (!unchangedDirtyBaselineSet.has(changedFile) && isRelatedToPlannedScope(changedFile, plannedChangedFiles))
+            plannedSet.has(changedFile)
+                || !unchangedDirtyBaselineSet.has(changedFile)
+                || isRelatedToPlannedScope(changedFile, plannedChangedFiles)
         ));
         const currentChangedSet = new Set(currentChangedFiles);
         const taskScopedRefreshChangedFiles = taskScopedChangedFiles.filter((changedFile) => (
