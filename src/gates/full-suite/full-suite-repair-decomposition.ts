@@ -6,7 +6,8 @@ import { readTaskQueueStatusToken } from '../../core/active-task-state';
 import {
     extractExplicitLinkedChildTaskIds,
     readTaskQueueEntries,
-    resolveSplitRequiredDecompositionState
+    resolveSplitRequiredDecompositionState,
+    type TaskQueueEntry
 } from '../next-step/next-step-task-queue';
 import { joinOrchestratorPath } from '../shared/helpers';
 import { readOrderedTaskEvents } from '../task-audit/task-audit-summary-lifecycle';
@@ -165,9 +166,10 @@ export function findFullSuiteRepairChildHandoffState(
     repoRoot: string,
     childTaskId: string,
     reviewsRoot = joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews')),
-    eventsRoot = joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'))
+    eventsRoot = joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events')),
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>
 ): FullSuiteRepairChildHandoffState | null {
-    const taskEntries = readTaskQueueEntries(repoRoot);
+    const taskEntries = taskQueueEntries ?? readTaskQueueEntries(repoRoot);
     const resolvedReviewsRoot = resolveInputPathInsideRepo(repoRoot, reviewsRoot, 'ReviewsRoot');
     const resolvedEventsRoot = resolveInputPathInsideRepo(repoRoot, eventsRoot, 'EventsRoot');
     for (const [parentTaskId, parentEntry] of taskEntries) {

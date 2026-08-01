@@ -2646,7 +2646,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         repoRoot,
         taskId,
         reviewsRoot,
-        eventsRoot
+        eventsRoot,
+        taskEntries
     );
     if (repairChildHandoff) {
         const repairEvidence = repairChildHandoff.decomposition.ready
