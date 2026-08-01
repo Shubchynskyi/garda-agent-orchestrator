@@ -30,15 +30,21 @@ export const PUBLIC_PACKAGE_DOC_ITEMS = Object.freeze([
 
 export const RELEASE_READINESS_CHECKLIST_PATH = 'docs/release-readiness.md';
 
-export const SOURCEFUL_PACKAGE_SURFACE_ITEMS = Object.freeze([
+export const PUBLISHED_PACKAGE_SURFACE_ITEMS = Object.freeze([
     'bin',
     'dist',
-    'src',
     'template',
     'package.json',
     'MANIFEST.md',
     'docs/operator-consistency-runbook.md',
     'VERSION'
+]);
+
+export const FORBIDDEN_PUBLISHED_PACKAGE_SURFACE_ITEMS = Object.freeze([
+    '.node-build',
+    '.scripts-build',
+    'src',
+    'tests'
 ]);
 
 export const RELEASE_VALIDATION_COMMANDS = Object.freeze([

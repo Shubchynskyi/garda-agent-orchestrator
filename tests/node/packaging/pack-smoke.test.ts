@@ -10,6 +10,7 @@ import { getRepoRoot } from '../../../scripts/node-foundation/build';
 const RETRYABLE_WINDOWS_CLEANUP_CODES = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
 const SPAWN_OUTPUT_TAIL_LENGTH = 4000;
 const CONSUMER_INSTALL_LIFECYCLE_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'];
+const FORBIDDEN_PUBLISHED_ROOTS = ['.node-build', '.scripts-build', 'src', 'tests'];
 const NPM_PACK_TIMEOUT_MS = 120_000;
 const NPM_INSTALL_TARBALL_TIMEOUT_MS = process.platform === 'win32' ? 300_000 : 120_000;
 
@@ -42,6 +43,7 @@ function loadPackFixtureItems(repoRoot: string): string[] {
     const items = new Set<string>(pkgJson.files || []);
     items.delete('dist');
     items.delete('bin');
+    items.add('src');
     items.add('package.json');
     items.add('scripts/package-legacy-entrypoint-compat.cjs');
     items.add('scripts/node-foundation');
@@ -191,6 +193,19 @@ function assertNoConsumerInstallLifecycleScripts(packageJson: { scripts?: Record
     }
 }
 
+function assertCompiledOnlyPackageSurface(packageJson: { files?: unknown[] }, packageRoot?: string): void {
+    const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : [];
+    assert.ok(!packageFiles.includes('src'), 'package.json files must exclude the TypeScript src tree');
+
+    if (!packageRoot) return;
+    for (const forbiddenRoot of FORBIDDEN_PUBLISHED_ROOTS) {
+        assert.ok(
+            !fs.existsSync(path.join(packageRoot, forbiddenRoot)),
+            `installed package must not include ${forbiddenRoot}`
+        );
+    }
+}
+
 function packageFileIsPresent(packageRoot: string, relativePath: string): boolean {
     const normalizedPath = relativePath.replace(/\\/gu, '/');
     return fs.existsSync(path.join(packageRoot, normalizedPath));
@@ -299,6 +314,7 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
 
     try {
         assertNoConsumerInstallLifecycleScripts(packageJson);
+        assertCompiledOnlyPackageSurface(packageJson);
         copyPackFixture(repoRoot, fixtureRoot);
         initializeCleanPackFixture(fixtureRoot);
 
@@ -316,19 +332,12 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
         assert.ok(fs.existsSync(cliScript), 'bin/garda.js must be present in installed package');
         assert.ok(fs.existsSync(path.join(installedPackageRoot, 'bin', 'garda.js')), 'legacy bin/garda.js must remain present in installed package');
 
-        // 1. Compiled dist/ must be present (prepack build result)
+        // 1. Compiled dist/ must be present and development-only roots must be absent.
         assert.ok(
             fs.existsSync(path.join(installedPackageRoot, 'dist', 'src', 'index.js')),
             'dist/src/index.js must exist in the installed package'
         );
-        assert.ok(
-            fs.existsSync(path.join(installedPackageRoot, 'src', 'bin', 'garda.ts')),
-            'src/bin/garda.ts must remain present as the shipped source-of-truth package surface'
-        );
-        assert.ok(
-            !fs.existsSync(path.join(installedPackageRoot, '.node-build')),
-            'installed package must not include .node-build'
-        );
+        assertCompiledOnlyPackageSurface(packageJson, installedPackageRoot);
         assert.ok(
             fs.existsSync(path.join(installedPackageRoot, 'template', 'entrypoints', 'canonical-rule-index.md')),
             'neutral canonical rule-index template must exist in the installed package'

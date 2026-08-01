@@ -2,10 +2,11 @@ import * as path from 'node:path';
 
 import { getRepoRoot } from '../build';
 import {
+    FORBIDDEN_PUBLISHED_PACKAGE_SURFACE_ITEMS,
+    PUBLISHED_PACKAGE_SURFACE_ITEMS,
     PUBLIC_PACKAGE_DOC_ITEMS,
     RELEASE_READINESS_CHECKLIST_PATH,
     SECURITY_RELEASE_DOC_ITEMS,
-    SOURCEFUL_PACKAGE_SURFACE_ITEMS,
     type ReleaseReadinessCheck,
     type ReleaseReadinessResult
 } from './types';
@@ -668,6 +669,26 @@ function validateTrustedPublishDocsContract(repoRoot: string, version: string | 
     };
 }
 
+function canPublishForbiddenPackageRoot(entry: string): boolean {
+    const normalizedEntry = entry
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/^(?:\.\/)+/, '')
+        .replace(/^\/+/, '')
+        .replace(/\/+$/, '');
+
+    if (!normalizedEntry || normalizedEntry.startsWith('!')) {
+        return false;
+    }
+
+    return (
+        /[*?\[\]{}()]/.test(normalizedEntry) ||
+        FORBIDDEN_PUBLISHED_PACKAGE_SURFACE_ITEMS.some(
+            (forbiddenRoot) => normalizedEntry === forbiddenRoot || normalizedEntry.startsWith(`${forbiddenRoot}/`)
+        )
+    );
+}
+
 function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessResult {
     const normalizedRoot = path.resolve(repoRoot);
     const violations: string[] = [];
@@ -781,17 +802,17 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         checks,
         violations,
         'packaging',
-        'prepack and package files preserve clean-package, sourceful runtime, and linked public-doc contracts',
+        'prepack and package files preserve clean-package, compiled-only runtime, and linked public-doc contracts',
         prepack.includes('npm run validate:clean-worktree') &&
             prepack.includes('npm run build:publish-runtime') &&
             prepack.includes('node scripts/package-legacy-entrypoint-compat.cjs create') &&
-            SOURCEFUL_PACKAGE_SURFACE_ITEMS
+            PUBLISHED_PACKAGE_SURFACE_ITEMS
                 .concat(SECURITY_RELEASE_DOC_ITEMS)
                 .concat(PUBLIC_PACKAGE_DOC_ITEMS)
                 .every((entry) => packageFiles.includes(entry)) &&
+            packageFiles.every((entry) => !canPublishForbiddenPackageRoot(entry)) &&
             PUBLIC_PACKAGE_DOC_ITEMS.every((entry) => fileExists(normalizedRoot, entry)) &&
-            manifestListsEvery(manifestText, PUBLIC_PACKAGE_DOC_ITEMS) &&
-            !packageFiles.includes('.node-build'),
+            manifestListsEvery(manifestText, PUBLIC_PACKAGE_DOC_ITEMS),
         [prepack || 'missing prepack', `files=${packageFiles.join(', ') || 'missing'}`]
     );
 

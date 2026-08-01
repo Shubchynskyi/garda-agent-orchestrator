@@ -9,6 +9,7 @@ import {
     COMPILED_RUNTIME_DEPLOY_CANDIDATES,
     DEPLOY_ITEMS,
     FORBIDDEN_COMPILED_RUNTIME_DEPLOY_PATHS,
+    OPTIONAL_DEPLOY_ITEMS,
     SKIPPED_ENTRY_NAMES,
     SKIPPED_FILE_SUFFIXES
 } from './cli-constants';
@@ -179,6 +180,12 @@ export function deployFreshBundle(sourceRoot: string, destinationPath: string): 
         const sourcePath = ensureSourceItemExists(sourceRoot, relativePath);
         copyPath(sourcePath, path.join(destinationPath, relativePath), sourceRoot);
     }
+    for (const relativePath of OPTIONAL_DEPLOY_ITEMS) {
+        const sourcePath = path.join(sourceRoot, relativePath);
+        if (fs.existsSync(sourcePath)) {
+            copyPath(sourcePath, path.join(destinationPath, relativePath), sourceRoot);
+        }
+    }
     copyCompiledRuntimeArtifacts(sourceRoot, destinationPath, { replaceExisting: false });
 }
 
@@ -192,6 +199,14 @@ export function syncBundleItems(sourceRoot: string, destinationPath: string): vo
         const targetPath = path.join(destinationPath, relativePath);
         removePathIfExists(targetPath);
         copyPath(sourcePath, targetPath, sourceRoot);
+    }
+    for (const relativePath of OPTIONAL_DEPLOY_ITEMS) {
+        const sourcePath = path.join(sourceRoot, relativePath);
+        const targetPath = path.join(destinationPath, relativePath);
+        removePathIfExists(targetPath);
+        if (fs.existsSync(sourcePath)) {
+            copyPath(sourcePath, targetPath, sourceRoot);
+        }
     }
     copyCompiledRuntimeArtifacts(sourceRoot, destinationPath, { replaceExisting: true });
 }

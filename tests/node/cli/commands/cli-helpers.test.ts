@@ -570,6 +570,24 @@ test('deployFreshBundle copies DEPLOY_ITEMS to destination', () => {
         }
         assert.ok(fs.existsSync(path.join(destPath, 'dist', 'src', 'index.js')), 'Missing compiled runtime output');
         assert.ok(!fs.existsSync(path.join(destPath, '.node-build')), 'Deployed bundle must not include .node-build');
+        assert.ok(!fs.existsSync(path.join(destPath, 'src')), 'Compiled-only bundle must not synthesize a source tree');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('deployFreshBundle copies the optional source tree when present', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-test-'));
+    try {
+        const sourceRoot = path.join(tmpDir, 'source');
+        const destPath = path.join(tmpDir, 'bundle');
+        writeDeploySourceFixture(sourceRoot);
+        fs.mkdirSync(path.join(sourceRoot, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(sourceRoot, 'src', 'marker.ts'), 'export {};\n', 'utf8');
+
+        deployFreshBundle(sourceRoot, destPath);
+
+        assert.equal(fs.readFileSync(path.join(destPath, 'src', 'marker.ts'), 'utf8'), 'export {};\n');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -639,6 +657,10 @@ test('syncBundleItems replaces existing items', () => {
         fs.mkdirSync(destPath, { recursive: true });
         fs.writeFileSync(path.join(sourceRoot, 'VERSION'), 'new-VERSION', 'utf8');
         fs.writeFileSync(path.join(destPath, 'VERSION'), 'old', 'utf8');
+        fs.mkdirSync(path.join(sourceRoot, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(sourceRoot, 'src', 'marker.ts'), 'new-source\n', 'utf8');
+        fs.mkdirSync(path.join(destPath, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(destPath, 'src', 'marker.ts'), 'stale-source\n', 'utf8');
         writeDevBuildRuntimeFixture(sourceRoot);
         fs.mkdirSync(path.join(destPath, '.node-build', 'src'), { recursive: true });
         fs.writeFileSync(path.join(destPath, '.node-build', 'src', 'index.js'), 'module.exports = {};\n', 'utf8');
@@ -647,6 +669,24 @@ test('syncBundleItems replaces existing items', () => {
         assert.equal(fs.readFileSync(path.join(destPath, 'VERSION'), 'utf8'), 'new-VERSION');
         assert.ok(fs.existsSync(path.join(destPath, 'dist', 'src', 'index.js')));
         assert.ok(!fs.existsSync(path.join(destPath, '.node-build')), 'Bundle sync must remove stale deployed .node-build');
+        assert.equal(fs.readFileSync(path.join(destPath, 'src', 'marker.ts'), 'utf8'), 'new-source\n');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('syncBundleItems removes a stale source tree from a compiled-only bundle', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-test-'));
+    try {
+        const sourceRoot = path.join(tmpDir, 'source');
+        const destPath = path.join(tmpDir, 'bundle');
+        writeDeploySourceFixture(sourceRoot);
+        fs.mkdirSync(path.join(destPath, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(destPath, 'src', 'stale.ts'), 'stale\n', 'utf8');
+
+        syncBundleItems(sourceRoot, destPath);
+
+        assert.ok(!fs.existsSync(path.join(destPath, 'src')), 'Bundle sync must remove stale optional source');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

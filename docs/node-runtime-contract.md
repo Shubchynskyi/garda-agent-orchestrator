@@ -94,11 +94,13 @@ AGENT_INIT_PROMPT.md, CLI_INTERACTIVE, CLI_NONINTERACTIVE
 
 ## Deployed Bundle Surface
 
-The npm package and deployed bundle intentionally stay sourceful: both `src/`
-and `dist/` are shipped. `dist/` is the executable runtime surface; `src/` is
-the canonical TypeScript source surface used for source-checkout workflows,
-debugging, auditability, and embedded-bundle parity. `.node-build/` remains a
-local test/build staging directory and must not be shipped.
+The npm package ships the compiled runtime in `dist/` together with `bin/`,
+templates, metadata, and public documentation. It omits the repository
+`src/`, `tests/`, `.node-build/`, and `.scripts-build/` trees, so consumer
+installs do not need TypeScript, devDependencies, or a build step. Source
+checkouts and source-controlled embedded bundles may retain `src/` for
+development, auditability, and parity validation; deployed execution still
+uses `dist/` only.
 
 The deployed bundle keeps:
 
@@ -106,7 +108,6 @@ The deployed bundle keeps:
 .gitattributes
 bin/
 dist/
-src/
 template/
 AGENT_INIT_PROMPT.md
 CHANGELOG.md

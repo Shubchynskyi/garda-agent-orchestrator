@@ -3,7 +3,8 @@
 This repository uses [gitleaks](https://github.com/gitleaks/gitleaks) to
 detect accidentally committed secrets such as API keys, tokens, and private
 keys. Secret scanning is a **prevention** layer that complements the runtime
-[redaction](../src/core/redaction.ts) applied to diagnostics and artifacts.
+redaction implemented in `src/core/redaction.ts` in source checkouts and applied
+to diagnostics and artifacts.
 
 ## How It Works
 

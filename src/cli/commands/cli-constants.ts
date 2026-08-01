@@ -16,7 +16,6 @@ export const SKIPPED_FILE_SUFFIXES = Object.freeze([
 export const DEPLOY_ITEMS = Object.freeze([
     '.gitattributes',
     'bin',
-    'src',
     'template',
     'AGENT_INIT_PROMPT.md',
     'CHANGELOG.md',
@@ -26,6 +25,10 @@ export const DEPLOY_ITEMS = Object.freeze([
     'README.md',
     'VERSION',
     'package.json'
+]);
+
+export const OPTIONAL_DEPLOY_ITEMS = Object.freeze([
+    'src'
 ]);
 
 export const COMPILED_RUNTIME_DEPLOY_CANDIDATES = Object.freeze([

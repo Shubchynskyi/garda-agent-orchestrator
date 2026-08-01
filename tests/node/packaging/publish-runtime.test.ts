@@ -42,6 +42,7 @@ function loadBuildFixtureItems(repoRoot: string): readonly string[] {
     const items = new Set<string>(loadPackageSurfaceItems(repoRoot));
     items.delete('dist');
     items.delete('bin');
+    items.add('src');
     items.add('scripts/node-foundation');
     items.add('tsconfig.build.json');
     items.add('tsconfig.scripts.json');
@@ -126,6 +127,8 @@ test('published runtime works when the package is executed from node_modules', (
         assert.ok(fs.existsSync(path.join(fixtureRoot, 'dist', 'src', 'reports', 'ui', 'lang-packs', 'garda-ui-ru.json')));
 
         copyPublishedPackageSurface(fixtureRoot, packageRoot);
+        assert.ok(!fs.existsSync(path.join(packageRoot, 'src')), 'published package surface must exclude src');
+        assert.ok(!fs.existsSync(path.join(packageRoot, 'tests')), 'published package surface must exclude tests');
         fs.mkdirSync(workspaceRoot, { recursive: true });
 
         const remediationModules = [
