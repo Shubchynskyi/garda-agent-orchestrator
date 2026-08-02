@@ -41,7 +41,8 @@ export function appendTaskEventLineSync(
     taskFilePath: string,
     taskId: string,
     event: TaskEvent,
-    emitOnce: boolean
+    emitOnce: boolean,
+    onCanonicalAppend?: () => void
 ): string | null {
     const readiness = readTaskEventAppendReadiness(taskFilePath, taskId, event.event_type, emitOnce);
     if (readiness.duplicate) {
@@ -58,6 +59,7 @@ export function appendTaskEventLineSync(
 
     const serializedLine = JSON.stringify(event);
     fs.appendFileSync(taskFilePath, serializedLine + '\n', 'utf8');
+    onCanonicalAppend?.();
     refreshTaskEventAppendIndexAfterAppend(taskFilePath, taskId, event);
     return serializedLine;
 }
@@ -67,7 +69,8 @@ export async function appendTaskEventLineAsync(
     taskId: string,
     event: TaskEvent,
     preWriteDelayMs: number,
-    emitOnce: boolean
+    emitOnce: boolean,
+    onCanonicalAppend?: () => void
 ): Promise<string | null> {
     const readiness = readTaskEventAppendReadiness(taskFilePath, taskId, event.event_type, emitOnce);
     if (readiness.duplicate) {
@@ -87,6 +90,7 @@ export async function appendTaskEventLineAsync(
         await sleepMsAsync(preWriteDelayMs);
     }
     fs.appendFileSync(taskFilePath, serializedLine + '\n', 'utf8');
+    onCanonicalAppend?.();
     refreshTaskEventAppendIndexAfterAppend(taskFilePath, taskId, event);
     return serializedLine;
 }

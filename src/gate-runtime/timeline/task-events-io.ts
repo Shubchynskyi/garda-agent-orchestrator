@@ -15,6 +15,13 @@ import { createTaskEventPublicRecord } from './task-event-public-contract';
 import { redactSecretText, redactSensitiveData } from '../../core/redaction';
 import { isLowNoiseRuntimeWritesEnabled } from '../derived-runtime-writes';
 import {
+    abortRuntimeMutationGeneration,
+    beginRuntimeMutationGeneration,
+    commitRuntimeMutationGeneration,
+    resolveOrchestratorRootFromRuntimePath,
+    type RuntimeMutationGenerationTicket
+} from '../runtime-mutation-generation';
+import {
     appendTaskEventLineAsync,
     appendTaskEventLineSync,
     toPositiveInteger
@@ -113,6 +120,49 @@ function handleAppendFailure(result: AppendTaskEventResult, warning: string, pas
     return passThru ? result : null;
 }
 
+function abortUncommittedTaskEventMutation(ticket: RuntimeMutationGenerationTicket | null): void {
+    if (!ticket) {
+        return;
+    }
+    try {
+        abortRuntimeMutationGeneration(ticket);
+    } catch {
+        // Preserve the append failure and leave damaged generation evidence fail-closed.
+    }
+}
+
+function handleTaskEventWriteFailure(
+    result: AppendTaskEventResult,
+    event: TaskEvent,
+    error: unknown,
+    passThru: boolean,
+    mutationTicket: RuntimeMutationGenerationTicket | null,
+    taskEventPersisted: boolean
+): AppendTaskEventResult | null {
+    if (!taskEventPersisted) {
+        abortUncommittedTaskEventMutation(mutationTicket);
+        return handleAppendFailure(result, buildAppendWarning('task-event append failed', error), passThru);
+    }
+
+    markTaskEventCommitted(result, event);
+    const derivedWarning = buildAppendWarning('task-event post-append processing failed', error);
+    recordDerivedAppendWarning(result, derivedWarning);
+    process.stderr.write(`WARNING: ${derivedWarning}\n`);
+
+    if (mutationTicket) {
+        try {
+            commitRuntimeMutationGeneration(mutationTicket);
+        } catch (settlementError: unknown) {
+            return handleAppendFailure(
+                result,
+                buildAppendWarning('task-event generation commit failed after canonical append', settlementError),
+                passThru
+            );
+        }
+    }
+    return passThru ? result : null;
+}
+
 export function appendTaskEvent(
     repoRoot: string,
     taskId: string,
@@ -136,14 +186,26 @@ export function appendTaskEvent(
     const event = createTaskEvent(safeTaskId, eventType, outcome, actor, message, details);
     const result = createAppendResult(paths);
     const lowNoiseRuntimeWrites = isLowNoiseRuntimeWritesEnabled(options);
+    const mutationRoot = resolveOrchestratorRootFromRuntimePath(paths.taskFilePath, 'task-events');
     let line: string | null = null;
+    let mutationTicket: RuntimeMutationGenerationTicket | null = null;
+    let taskEventPersisted = false;
 
     try {
         fs.mkdirSync(paths.eventsRoot, { recursive: true });
+        mutationTicket = mutationRoot
+            ? beginRuntimeMutationGeneration(mutationRoot, 'task-event-append')
+            : null;
 
         const taskLockResult = withFilesystemLock(paths.taskLockPath, lockOptions, function (): void {
-            line = appendTaskEventLineSync(paths.taskFilePath, safeTaskId, event, emitOnce);
+            line = appendTaskEventLineSync(paths.taskFilePath, safeTaskId, event, emitOnce, () => {
+                taskEventPersisted = true;
+            });
             if (line == null) {
+                if (mutationTicket) {
+                    abortRuntimeMutationGeneration(mutationTicket);
+                }
+                mutationTicket = null;
                 markTaskEventSkippedDuplicate(result);
                 return;
             }
@@ -151,7 +213,14 @@ export function appendTaskEvent(
         });
         applyTaskLockTelemetry(result, taskLockResult.telemetry);
     } catch (error: unknown) {
-        return handleAppendFailure(result, buildAppendWarning('task-event append failed', error), passThru);
+        return handleTaskEventWriteFailure(
+            result,
+            event,
+            error,
+            passThru,
+            mutationTicket,
+            taskEventPersisted
+        );
     }
 
     if (result.skipped_reason === 'emit_once_duplicate') {
@@ -183,6 +252,9 @@ export function appendTaskEvent(
     if (!lowNoiseRuntimeWrites) {
         refreshTimelineSummaryForCommittedEvent(result, paths.eventsRoot, safeTaskId, event);
     }
+    if (mutationTicket) {
+        commitRuntimeMutationGeneration(mutationTicket);
+    }
     return passThru ? result : null;
 }
 
@@ -209,15 +281,27 @@ export async function appendTaskEventAsync(
     const event = createTaskEvent(safeTaskId, eventType, outcome, actor, message, details);
     const result = createAppendResult(paths);
     const lowNoiseRuntimeWrites = isLowNoiseRuntimeWritesEnabled(options);
+    const mutationRoot = resolveOrchestratorRootFromRuntimePath(paths.taskFilePath, 'task-events');
     let line: string | null = null;
+    let mutationTicket: RuntimeMutationGenerationTicket | null = null;
+    let taskEventPersisted = false;
 
     try {
         fs.mkdirSync(paths.eventsRoot, { recursive: true });
+        mutationTicket = mutationRoot
+            ? beginRuntimeMutationGeneration(mutationRoot, 'task-event-append')
+            : null;
 
         const taskLockResult = await withFilesystemLockAsync(paths.taskLockPath, lockOptions, async function (): Promise<void> {
             const preWriteDelayMs = toPositiveInteger(options.preWriteDelayMs, 0);
-            line = await appendTaskEventLineAsync(paths.taskFilePath, safeTaskId, event, preWriteDelayMs, emitOnce);
+            line = await appendTaskEventLineAsync(paths.taskFilePath, safeTaskId, event, preWriteDelayMs, emitOnce, () => {
+                taskEventPersisted = true;
+            });
             if (line == null) {
+                if (mutationTicket) {
+                    abortRuntimeMutationGeneration(mutationTicket);
+                }
+                mutationTicket = null;
                 markTaskEventSkippedDuplicate(result);
                 return;
             }
@@ -225,7 +309,14 @@ export async function appendTaskEventAsync(
         });
         applyTaskLockTelemetry(result, taskLockResult.telemetry);
     } catch (error: unknown) {
-        return handleAppendFailure(result, buildAppendWarning('task-event append failed', error), passThru);
+        return handleTaskEventWriteFailure(
+            result,
+            event,
+            error,
+            passThru,
+            mutationTicket,
+            taskEventPersisted
+        );
     }
 
     if (result.skipped_reason === 'emit_once_duplicate') {
@@ -256,6 +347,9 @@ export async function appendTaskEventAsync(
 
     if (!lowNoiseRuntimeWrites) {
         refreshTimelineSummaryForCommittedEvent(result, paths.eventsRoot, safeTaskId, event);
+    }
+    if (mutationTicket) {
+        commitRuntimeMutationGeneration(mutationTicket);
     }
     return passThru ? result : null;
 }

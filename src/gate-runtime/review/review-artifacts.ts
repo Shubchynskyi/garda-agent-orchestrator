@@ -25,6 +25,13 @@ import {
     upsertEntry
 } from './reviews-index';
 import { isLowNoiseRuntimeWritesEnabled } from '../derived-runtime-writes';
+import {
+    abortRuntimeMutationGeneration,
+    beginRuntimeMutationGeneration,
+    commitRuntimeMutationGeneration,
+    resolveOrchestratorRootFromRuntimePath,
+    type RuntimeMutationGenerationTicket
+} from '../runtime-mutation-generation';
 
 const DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS = 25;
@@ -555,55 +562,84 @@ function writeReviewArtifactTextUnlocked(
     artifactPath: string,
     content: string,
     options: ReviewArtifactLockOptions = {},
-    updateIndex: boolean = true
+    updateIndex: boolean = true,
+    trackRuntimeMutation: boolean = true
 ): ReviewArtifactWriteResult {
-    const rollbackState = shouldRequireIndexUpdate(options)
+    const orchestratorRoot = trackRuntimeMutation
+        ? resolveOrchestratorRootFromRuntimePath(artifactPath, 'reviews')
+        : null;
+    const rollbackState = shouldRequireIndexUpdate(options) || orchestratorRoot !== null
         ? captureReviewArtifactRollbackState(artifactPath)
         : null;
+    const mutationTicket = orchestratorRoot === null
+        ? null
+        : beginRuntimeMutationGeneration(orchestratorRoot, 'review-artifact-write');
+    let artifactPersisted = false;
+    let mutationSettled = false;
     const redactedContent = redactSecretText(content);
-    const { lock_path, telemetry } = withReviewArtifactLock(artifactPath, () => {
-        writeArtifactFileAtomically(artifactPath, redactedContent);
-    }, options);
-    const reviewsDir = path.dirname(artifactPath);
-    const skipIndexUpdate = updateIndex
-        && !shouldRequireIndexUpdate(options)
-        && isLowNoiseRuntimeWritesEnabled(options);
-    const indexUpdate = skipIndexUpdate
-        ? {
-            status: 'skipped_low_noise' as const,
-            index_path: resolveIndexPath(reviewsDir),
-            file_name: path.basename(artifactPath)
+    try {
+        const { lock_path, telemetry } = withReviewArtifactLock(artifactPath, () => {
+            writeArtifactFileAtomically(artifactPath, redactedContent);
+            artifactPersisted = true;
+        }, options);
+        const reviewsDir = path.dirname(artifactPath);
+        const skipIndexUpdate = updateIndex
+            && !shouldRequireIndexUpdate(options)
+            && isLowNoiseRuntimeWritesEnabled(options);
+        const indexUpdate = skipIndexUpdate
+            ? {
+                status: 'skipped_low_noise' as const,
+                index_path: resolveIndexPath(reviewsDir),
+                file_name: path.basename(artifactPath)
+            }
+            : updateIndex
+            ? upsertEntry(reviewsDir, path.basename(artifactPath))
+            : {
+                status: 'updated' as const,
+                index_path: resolveIndexPath(reviewsDir),
+                file_name: path.basename(artifactPath)
+            };
+        if (indexUpdate.status === 'failed' && shouldRequireIndexUpdate(options)) {
+            if (rollbackState) {
+                try {
+                    restoreReviewArtifactFromRollbackStateUnlocked(artifactPath, rollbackState, {
+                        ...options,
+                        requireIndexUpdate: false
+                    });
+                    if (mutationTicket) {
+                        abortRuntimeMutationGeneration(mutationTicket);
+                        mutationSettled = true;
+                    }
+                } catch {
+                    // Preserve the index failure and leave generation evidence fail-closed.
+                }
+            }
+            throw new Error(
+                `Review artifact index update failed for '${path.basename(artifactPath)}': ${indexUpdate.error || 'unknown error'}`
+            );
         }
-        : updateIndex
-        ? upsertEntry(reviewsDir, path.basename(artifactPath))
-        : {
-            status: 'updated' as const,
-            index_path: resolveIndexPath(reviewsDir),
-            file_name: path.basename(artifactPath)
+        if (mutationTicket) {
+            commitRuntimeMutationGeneration(mutationTicket);
+            mutationSettled = true;
+        }
+        return {
+            artifact_path: artifactPath,
+            lock_path,
+            telemetry,
+            index_update_status: indexUpdate.status,
+            index_path: indexUpdate.index_path,
+            ...(indexUpdate.error ? { index_update_error: indexUpdate.error } : {})
         };
-    if (indexUpdate.status === 'failed' && shouldRequireIndexUpdate(options)) {
-        if (rollbackState) {
+    } catch (error: unknown) {
+        if (mutationTicket && !mutationSettled && !artifactPersisted) {
             try {
-                restoreReviewArtifactFromRollbackStateUnlocked(artifactPath, rollbackState, {
-                    ...options,
-                    requireIndexUpdate: false
-                });
+                abortRuntimeMutationGeneration(mutationTicket);
             } catch {
-                // Preserve the index failure as the primary critical write error.
+                // Preserve the write failure and leave damaged generation evidence fail-closed.
             }
         }
-        throw new Error(
-            `Review artifact index update failed for '${path.basename(artifactPath)}': ${indexUpdate.error || 'unknown error'}`
-        );
+        throw error;
     }
-    return {
-        artifact_path: artifactPath,
-        lock_path,
-        telemetry,
-        index_update_status: indexUpdate.status,
-        index_path: indexUpdate.index_path,
-        ...(indexUpdate.error ? { index_update_error: indexUpdate.error } : {})
-    };
 }
 
 export function writeReviewArtifactText(
@@ -721,7 +757,7 @@ function commitStagedReviewArtifactTransactionEntry(
     writeReviewArtifactTextUnlocked(entry.artifactPath, content, {
         ...entry.options,
         requireIndexUpdate: false
-    }, false);
+    }, false, false);
 }
 
 function assertTransactionIndexPersisted(reviewsDir: string, phase: string): void {
@@ -757,19 +793,29 @@ export async function writeReviewArtifactsWithRollback<T>(
             options: entry.options
         }));
         const stagingDir = createReviewArtifactTransactionStagingDir(reviewsDir);
+        let mutationTicket: RuntimeMutationGenerationTicket | null = null;
         try {
             const stagedWrites = writes.map((entry, index) => ({
                 entry,
                 stagedPath: writeReviewArtifactTransactionEntryToStaging(entry, stagingDir, index)
             }));
+            const orchestratorRoot = resolveOrchestratorRootFromRuntimePath(writes[0].artifactPath, 'reviews');
+            if (orchestratorRoot) {
+                mutationTicket = beginRuntimeMutationGeneration(orchestratorRoot, 'review-artifact-transaction');
+            }
             for (const stagedWrite of stagedWrites) {
                 commitStagedReviewArtifactTransactionEntry(stagedWrite.entry, stagedWrite.stagedPath);
             }
             const afterWritesResult = await afterWrites();
             assertTransactionIndexPersisted(reviewsDir, 'commit');
+            if (mutationTicket) {
+                commitRuntimeMutationGeneration(mutationTicket);
+                mutationTicket = null;
+            }
             return afterWritesResult;
         } catch (error: unknown) {
             let rollbackFailed = false;
+            let rollbackIndexPersisted = false;
             try {
                 for (let index = rollbackStates.length - 1; index >= 0; index -= 1) {
                     const entry = rollbackStates[index];
@@ -781,9 +827,18 @@ export async function writeReviewArtifactsWithRollback<T>(
                 }
                 if (!rollbackFailed) {
                     assertTransactionIndexPersisted(reviewsDir, 'rollback');
+                    rollbackIndexPersisted = true;
                 }
             } catch {
                 // Preserve the original write or post-write failure.
+            }
+            if (mutationTicket && !rollbackFailed && rollbackIndexPersisted) {
+                try {
+                    abortRuntimeMutationGeneration(mutationTicket);
+                    mutationTicket = null;
+                } catch {
+                    // Preserve the original failure and leave generation evidence fail-closed.
+                }
             }
             throw error;
         } finally {
