@@ -353,6 +353,19 @@ describe('gates/workspace-snapshot-cache', () => {
             assert.equal(result.cache_hit, false);
         });
 
+        it('keeps multiple parameter variants hot within one process', () => {
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+            const firstVariant = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, []);
+            const secondVariant = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
+
+            const firstVariantAgain = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, []);
+
+            assert.equal(firstVariant.cache_hit, false);
+            assert.equal(secondVariant.cache_hit, false);
+            assert.equal(firstVariantAgain.cache_hit, true);
+            assert.deepEqual(firstVariantAgain.changed_files, firstVariant.changed_files);
+        });
+
         it('respects noCache option', () => {
             fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
             getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, []);

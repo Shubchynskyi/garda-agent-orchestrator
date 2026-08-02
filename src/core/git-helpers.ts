@@ -6,6 +6,10 @@ export interface RunGitOptions {
     timeoutMs?: number;
 }
 
+export interface RunGitBinaryOptions extends RunGitOptions {
+    input?: string | Buffer;
+}
+
 function isGitTimeoutError(error: unknown): boolean {
     const details = error as NodeJS.ErrnoException & { killed?: boolean };
     return details?.code === 'ETIMEDOUT' || details?.killed === true;
@@ -31,13 +35,14 @@ export function runGit(repoRoot: string, args: string[], options: RunGitOptions 
 export function runGitBinary(
     repoRoot: string,
     args: string[],
-    options: Pick<RunGitOptions, 'allowFailure' | 'maxBuffer' | 'timeoutMs'> = {}
+    options: Pick<RunGitBinaryOptions, 'allowFailure' | 'input' | 'maxBuffer' | 'timeoutMs'> = {}
 ): Buffer {
     try {
         return childProcess.execFileSync('git', ['-C', repoRoot, ...args], {
+            input: options.input,
             maxBuffer: options.maxBuffer,
             timeout: options.timeoutMs,
-            stdio: ['ignore', 'pipe', 'pipe']
+            stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe']
         });
     } catch (error: unknown) {
         if (options.allowFailure && !isGitTimeoutError(error)) {

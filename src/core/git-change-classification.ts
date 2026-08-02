@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { TextDecoder } from 'node:util';
 
-import { runGit, runGitBinary } from './git-helpers';
+import { runGitBinary } from './git-helpers';
 import { normalizeLineEndings } from './line-endings';
 import { isPathInsideRoot, isPathRealpathInsideRoot } from './paths';
 import { DEFAULT_GIT_TIMEOUT_MS } from './subprocess';
@@ -119,6 +119,16 @@ interface ParsedPorcelainStatus {
 interface ContentSnapshot {
     kind: 'file' | 'missing' | 'other' | 'symlink' | 'unavailable';
     content: Buffer | null;
+}
+
+interface GitBlobReference {
+    kind: Extract<ContentSnapshot['kind'], 'file' | 'other' | 'symlink'>;
+    objectId: string | null;
+}
+
+interface TrackedSnapshotLookup {
+    head: Map<string, ContentSnapshot>;
+    index: Map<string, ContentSnapshot>;
 }
 
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -313,80 +323,217 @@ function parsePorcelainStatus(output: Buffer): ParsedPorcelainStatus {
     return { staged, unstaged, untracked };
 }
 
-function readBlobSnapshot(
+function parseIndexBlobReferences(output: Buffer, wantedPaths: ReadonlySet<string>): Map<string, GitBlobReference> {
+    const references = new Map<string, GitBlobReference>();
+    for (const record of output.toString('utf8').split('\0')) {
+        if (!record) continue;
+        const tabIndex = record.indexOf('\t');
+        if (tabIndex < 0) continue;
+        const filePath = record.slice(tabIndex + 1);
+        if (!wantedPaths.has(filePath)) continue;
+        const [mode, objectId, stage] = record.slice(0, tabIndex).split(/\s+/u);
+        if (stage !== '0') continue;
+        const kind = mode === '120000' ? 'symlink' : mode.startsWith('100') ? 'file' : 'other';
+        references.set(filePath, {
+            kind,
+            objectId: kind === 'other' ? null : objectId
+        });
+    }
+    return references;
+}
+
+function parseHeadBlobReferences(output: Buffer, wantedPaths: ReadonlySet<string>): Map<string, GitBlobReference> {
+    const references = new Map<string, GitBlobReference>();
+    for (const record of output.toString('utf8').split('\0')) {
+        if (!record) continue;
+        const tabIndex = record.indexOf('\t');
+        if (tabIndex < 0) continue;
+        const filePath = record.slice(tabIndex + 1);
+        if (!wantedPaths.has(filePath)) continue;
+        const [mode, type, objectId] = record.slice(0, tabIndex).split(/\s+/u);
+        const kind = type !== 'blob'
+            ? 'other'
+            : mode === '120000'
+                ? 'symlink'
+                : 'file';
+        references.set(filePath, {
+            kind,
+            objectId: kind === 'other' ? null : objectId
+        });
+    }
+    return references;
+}
+
+function readIndexBlobReferences(
     repoRoot: string,
-    objectId: string,
-    kind: Extract<ContentSnapshot['kind'], 'file' | 'symlink'>,
+    wantedPaths: ReadonlySet<string>,
     budget: GitCommandBudget
-): ContentSnapshot {
-    if (!/^[0-9a-f]{40,64}$/iu.test(objectId)) {
-        return { kind: 'unavailable', content: null };
-    }
-    const size = Number.parseInt(runGit(repoRoot, ['cat-file', '-s', objectId], {
-        timeoutMs: remainingGitCommandTimeoutMs(budget)
-    }).trim(), 10);
-    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_CLASSIFICATION_CONTENT_BYTES) {
-        return { kind: 'unavailable', content: null };
-    }
-    const content = runGitBinary(repoRoot, ['cat-file', 'blob', objectId], {
-        maxBuffer: GIT_CONTENT_MAX_BUFFER_BYTES,
+): Map<string, GitBlobReference> {
+    if (wantedPaths.size === 0) return new Map();
+    const output = runGitBinary(repoRoot, ['ls-files', '--stage', '-z'], {
+        maxBuffer: GIT_STATUS_MAX_BUFFER_BYTES,
         timeoutMs: remainingGitCommandTimeoutMs(budget)
     });
-    return content.length <= MAX_CLASSIFICATION_CONTENT_BYTES
-        ? { kind, content }
-        : { kind: 'unavailable', content: null };
+    return parseIndexBlobReferences(output, wantedPaths);
 }
 
-function readHeadSnapshot(
+function readHeadBlobReferences(
     repoRoot: string,
-    filePath: string,
+    wantedPaths: ReadonlySet<string>,
     budget: GitCommandBudget
-): ContentSnapshot {
-    const output = runGitBinary(
-        repoRoot,
-        ['ls-tree', '-z', 'HEAD', '--', literalPathspec(filePath)],
-        {
-            allowFailure: true,
-            timeoutMs: remainingGitCommandTimeoutMs(budget)
-        }
-    );
-    const record = output.toString('utf8').split('\0').find(Boolean);
-    if (!record) {
-        return { kind: 'missing', content: null };
-    }
-    const tabIndex = record.indexOf('\t');
-    const metadata = tabIndex >= 0 ? record.slice(0, tabIndex) : record;
-    const [mode, type, objectId] = metadata.split(/\s+/u);
-    if (type !== 'blob') {
-        return { kind: 'other', content: null };
-    }
-    return readBlobSnapshot(repoRoot, objectId, mode === '120000' ? 'symlink' : 'file', budget);
+): Map<string, GitBlobReference> {
+    if (wantedPaths.size === 0) return new Map();
+    const output = runGitBinary(repoRoot, ['ls-tree', '-r', '-z', 'HEAD'], {
+        allowFailure: true,
+        maxBuffer: GIT_STATUS_MAX_BUFFER_BYTES,
+        timeoutMs: remainingGitCommandTimeoutMs(budget)
+    });
+    return parseHeadBlobReferences(output, wantedPaths);
 }
 
-function readIndexSnapshot(
-    repoRoot: string,
-    filePath: string,
-    budget: GitCommandBudget
-): ContentSnapshot {
-    const output = runGitBinary(
-        repoRoot,
-        ['ls-files', '--stage', '-z', '--', literalPathspec(filePath)],
-        {
-            allowFailure: true,
-            timeoutMs: remainingGitCommandTimeoutMs(budget)
+function parseBatchObjectSizes(output: Buffer): Map<string, number> {
+    const sizes = new Map<string, number>();
+    for (const line of output.toString('utf8').split('\n')) {
+        const [objectId, type, rawSize] = line.trim().split(/\s+/u);
+        const size = Number.parseInt(rawSize, 10);
+        if (
+            /^[0-9a-f]{40,64}$/iu.test(objectId)
+            && type === 'blob'
+            && Number.isSafeInteger(size)
+            && size >= 0
+            && size <= MAX_CLASSIFICATION_CONTENT_BYTES
+        ) {
+            sizes.set(objectId, size);
         }
-    );
-    const record = output.toString('utf8').split('\0').find((entry) => /\s0\t/u.test(entry));
-    if (!record) {
-        return { kind: 'missing', content: null };
     }
-    const tabIndex = record.indexOf('\t');
-    const metadata = tabIndex >= 0 ? record.slice(0, tabIndex) : record;
-    const [mode, objectId] = metadata.split(/\s+/u);
-    const kind = mode === '120000' ? 'symlink' : mode.startsWith('100') ? 'file' : 'other';
-    return kind === 'other'
-        ? { kind, content: null }
-        : readBlobSnapshot(repoRoot, objectId, kind, budget);
+    return sizes;
+}
+
+function splitBlobObjectBatches(objectIds: string[], sizes: ReadonlyMap<string, number>): string[][] {
+    const batches: string[][] = [];
+    let current: string[] = [];
+    let currentBytes = 0;
+    for (const objectId of objectIds) {
+        const size = sizes.get(objectId);
+        if (size === undefined) continue;
+        const responseBytes = size + objectId.length + 32;
+        if (current.length > 0 && currentBytes + responseBytes > GIT_CONTENT_MAX_BUFFER_BYTES) {
+            batches.push(current);
+            current = [];
+            currentBytes = 0;
+        }
+        current.push(objectId);
+        currentBytes += responseBytes;
+    }
+    if (current.length > 0) batches.push(current);
+    return batches;
+}
+
+function parseBatchBlobContents(output: Buffer, expectedObjectIds: readonly string[]): Map<string, Buffer> {
+    const contents = new Map<string, Buffer>();
+    let offset = 0;
+    for (const expectedObjectId of expectedObjectIds) {
+        const headerEnd = output.indexOf(0x0a, offset);
+        if (headerEnd < 0) {
+            throw new Error('git cat-file --batch returned a truncated object header.');
+        }
+        const [objectId, type, rawSize] = output.subarray(offset, headerEnd).toString('utf8').split(/\s+/u);
+        const size = Number.parseInt(rawSize, 10);
+        if (objectId !== expectedObjectId || type !== 'blob' || !Number.isSafeInteger(size) || size < 0) {
+            throw new Error('git cat-file --batch returned an unexpected object header.');
+        }
+        const contentStart = headerEnd + 1;
+        const contentEnd = contentStart + size;
+        if (contentEnd >= output.length || output[contentEnd] !== 0x0a) {
+            throw new Error('git cat-file --batch returned truncated object content.');
+        }
+        contents.set(objectId, Buffer.from(output.subarray(contentStart, contentEnd)));
+        offset = contentEnd + 1;
+    }
+    return contents;
+}
+
+function readBlobContents(
+    repoRoot: string,
+    objectIds: Iterable<string>,
+    budget: GitCommandBudget
+): Map<string, Buffer> {
+    const uniqueObjectIds = uniqueSorted(
+        [...objectIds].filter((objectId) => /^[0-9a-f]{40,64}$/iu.test(objectId))
+    );
+    if (uniqueObjectIds.length === 0) return new Map();
+
+    const batchInput = `${uniqueObjectIds.join('\n')}\n`;
+    const sizes = parseBatchObjectSizes(runGitBinary(repoRoot, ['cat-file', '--batch-check'], {
+        input: batchInput,
+        maxBuffer: GIT_STATUS_MAX_BUFFER_BYTES,
+        timeoutMs: remainingGitCommandTimeoutMs(budget)
+    }));
+    const contents = new Map<string, Buffer>();
+    for (const batch of splitBlobObjectBatches(uniqueObjectIds, sizes)) {
+        const output = runGitBinary(repoRoot, ['cat-file', '--batch'], {
+            input: `${batch.join('\n')}\n`,
+            maxBuffer: GIT_CONTENT_MAX_BUFFER_BYTES,
+            timeoutMs: remainingGitCommandTimeoutMs(budget)
+        });
+        for (const [objectId, content] of parseBatchBlobContents(output, batch)) {
+            contents.set(objectId, content);
+        }
+    }
+    return contents;
+}
+
+function materializeTrackedSnapshots(
+    wantedPaths: ReadonlySet<string>,
+    references: ReadonlyMap<string, GitBlobReference>,
+    blobContents: ReadonlyMap<string, Buffer>
+): Map<string, ContentSnapshot> {
+    const snapshots = new Map<string, ContentSnapshot>();
+    for (const filePath of wantedPaths) {
+        const reference = references.get(filePath);
+        if (!reference) {
+            snapshots.set(filePath, { kind: 'missing', content: null });
+        } else if (reference.kind === 'other') {
+            snapshots.set(filePath, { kind: 'other', content: null });
+        } else if (!reference.objectId || !blobContents.has(reference.objectId)) {
+            snapshots.set(filePath, { kind: 'unavailable', content: null });
+        } else {
+            snapshots.set(filePath, {
+                kind: reference.kind,
+                content: blobContents.get(reference.objectId) || null
+            });
+        }
+    }
+    return snapshots;
+}
+
+function buildTrackedSnapshotLookup(
+    repoRoot: string,
+    porcelain: ParsedPorcelainStatus,
+    budget: GitCommandBudget
+): TrackedSnapshotLookup {
+    const headPaths = new Set<string>();
+    const indexPaths = new Set<string>();
+    for (const change of porcelain.staged) {
+        if (change.changeKind === 'type_changed' || change.changeKind === 'unmerged') continue;
+        headPaths.add(change.previousPath || change.path);
+        indexPaths.add(change.path);
+    }
+    for (const change of porcelain.unstaged) {
+        if (change.changeKind === 'type_changed' || change.changeKind === 'unmerged') continue;
+        indexPaths.add(change.previousPath || change.path);
+    }
+
+    const headReferences = readHeadBlobReferences(repoRoot, headPaths, budget);
+    const indexReferences = readIndexBlobReferences(repoRoot, indexPaths, budget);
+    const objectIds = [...headReferences.values(), ...indexReferences.values()]
+        .map((reference) => reference.objectId)
+        .filter((objectId): objectId is string => objectId !== null);
+    const blobContents = readBlobContents(repoRoot, objectIds, budget);
+    return {
+        head: materializeTrackedSnapshots(headPaths, headReferences, blobContents),
+        index: materializeTrackedSnapshots(indexPaths, indexReferences, blobContents)
+    };
 }
 
 function readWorktreeSnapshot(repoRoot: string, filePath: string): ContentSnapshot {
@@ -495,7 +642,7 @@ function classifyLayerChange(
     repoRoot: string,
     layer: Exclude<GitChangeLayer, 'untracked'>,
     change: ParsedNameStatus,
-    budget: GitCommandBudget
+    snapshots: TrackedSnapshotLookup
 ): GitLayerChangeClassification {
     const changeKind = change.changeKind;
     const classificationBase = {
@@ -516,10 +663,10 @@ function classifyLayerChange(
 
     const beforePath = change.previousPath || change.path;
     const before = layer === 'staged'
-        ? readHeadSnapshot(repoRoot, beforePath, budget)
-        : readIndexSnapshot(repoRoot, beforePath, budget);
+        ? snapshots.head.get(beforePath) || { kind: 'missing', content: null }
+        : snapshots.index.get(beforePath) || { kind: 'missing', content: null };
     const after = layer === 'staged'
-        ? readIndexSnapshot(repoRoot, change.path, budget)
+        ? snapshots.index.get(change.path) || { kind: 'missing', content: null }
         : readWorktreeSnapshot(repoRoot, change.path);
     return {
         ...classificationBase,
@@ -542,11 +689,31 @@ function readPorcelainStatus(repoRoot: string, budget: GitCommandBudget): Parsed
     }));
 }
 
-function readConfig(repoRoot: string, key: string, budget: GitCommandBudget): string {
-    return runGit(repoRoot, ['config', '--get', key], {
+function readRelevantGitConfig(
+    repoRoot: string,
+    budget: GitCommandBudget
+): GitChangeClassificationResult['gitConfig'] {
+    const values = new Map<string, string>();
+    const output = runGitBinary(repoRoot, [
+        'config',
+        '--null',
+        '--get-regexp',
+        '^core\.(autocrlf|eol|safecrlf)$'
+    ], {
         allowFailure: true,
         timeoutMs: remainingGitCommandTimeoutMs(budget)
-    }).trim() || 'unset';
+    });
+    for (const record of output.toString('utf8').split('\0')) {
+        if (!record) continue;
+        const separatorIndex = record.indexOf('\n');
+        if (separatorIndex < 0) continue;
+        values.set(record.slice(0, separatorIndex).toLowerCase(), record.slice(separatorIndex + 1));
+    }
+    return {
+        autocrlf: values.get('core.autocrlf') || 'unset',
+        eol: values.get('core.eol') || 'unset',
+        safecrlf: values.get('core.safecrlf') || 'unset'
+    };
 }
 
 function classifyUntrackedPath(repoRoot: string, filePath: string): GitLayerChangeClassification {
@@ -589,10 +756,11 @@ export function classifyGitChanges(
 ): GitChangeClassificationResult {
     const budget = createGitCommandBudget(options);
     const porcelain = readPorcelainStatus(repoRoot, budget);
+    const snapshots = buildTrackedSnapshotLookup(repoRoot, porcelain, budget);
     const staged = porcelain.staged
-        .map((change) => classifyLayerChange(repoRoot, 'staged', change, budget));
+        .map((change) => classifyLayerChange(repoRoot, 'staged', change, snapshots));
     const unstaged = porcelain.unstaged
-        .map((change) => classifyLayerChange(repoRoot, 'unstaged', change, budget));
+        .map((change) => classifyLayerChange(repoRoot, 'unstaged', change, snapshots));
     const untracked = porcelain.untracked.map((filePath) => classifyUntrackedPath(repoRoot, filePath));
     const explicitUntrackedPaths = uniqueSorted(
         (options.explicitUntrackedPaths || [])
@@ -625,11 +793,7 @@ export function classifyGitChanges(
     const changes = [...staged, ...unstaged, ...untracked].sort((left, right) =>
         compareOrdinal(left.path, right.path) || LAYER_ORDER[left.layer] - LAYER_ORDER[right.layer]
     );
-    const gitConfig = {
-        autocrlf: readConfig(repoRoot, 'core.autocrlf', budget),
-        eol: readConfig(repoRoot, 'core.eol', budget),
-        safecrlf: readConfig(repoRoot, 'core.safecrlf', budget)
-    };
+    const gitConfig = readRelevantGitConfig(repoRoot, budget);
 
     return {
         policy: GIT_EOL_CHANGE_POLICY,

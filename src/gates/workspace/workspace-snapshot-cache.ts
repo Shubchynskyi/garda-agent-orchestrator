@@ -9,6 +9,14 @@ import { getSafeWorktreePathState } from './worktree-path-state';
 
 const CACHE_VERSION = 4;
 const CACHE_RELATIVE_PATH = path.join('runtime', 'cache', 'workspace-snapshot.json');
+const MAX_IN_PROCESS_CACHE_ENTRIES = 32;
+
+interface InProcessSnapshotCacheEntry {
+    repoKey: string;
+    snapshot: WorkspaceSnapshot;
+}
+
+const inProcessSnapshotCache = new Map<string, InProcessSnapshotCacheEntry>();
 
 export type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;
 
@@ -43,6 +51,45 @@ function normalizeExplicitChangedFiles(explicitChangedFiles: string[]): string[]
             .map((filePath) => normalizeGitRepoRelativePath(filePath))
             .filter((filePath): filePath is string => filePath !== null)
     )].sort();
+}
+
+function normalizeRepoCacheKey(repoRoot: string): string {
+    const resolved = normalizePath(path.resolve(repoRoot));
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function makeInProcessCacheKey(repoRoot: string, fingerprint: string): string {
+    return `${normalizeRepoCacheKey(repoRoot)}|${fingerprint}`;
+}
+
+function cloneWorkspaceSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
+    return JSON.parse(JSON.stringify(snapshot)) as WorkspaceSnapshot;
+}
+
+function rememberInProcessSnapshot(repoRoot: string, fingerprint: string, snapshot: WorkspaceSnapshot): void {
+    const cacheKey = makeInProcessCacheKey(repoRoot, fingerprint);
+    inProcessSnapshotCache.delete(cacheKey);
+    inProcessSnapshotCache.set(cacheKey, {
+        repoKey: normalizeRepoCacheKey(repoRoot),
+        snapshot: cloneWorkspaceSnapshot(snapshot)
+    });
+    while (inProcessSnapshotCache.size > MAX_IN_PROCESS_CACHE_ENTRIES) {
+        const oldestKey = inProcessSnapshotCache.keys().next().value as string | undefined;
+        if (!oldestKey) break;
+        inProcessSnapshotCache.delete(oldestKey);
+    }
+}
+
+function forgetInProcessSnapshots(repoRoot: string): boolean {
+    const repoKey = normalizeRepoCacheKey(repoRoot);
+    let removed = false;
+    for (const [cacheKey, entry] of inProcessSnapshotCache) {
+        if (entry.repoKey === repoKey) {
+            inProcessSnapshotCache.delete(cacheKey);
+            removed = true;
+        }
+    }
+    return removed;
 }
 
 /**
@@ -444,18 +491,19 @@ export function writeSnapshotCache(cachePath: string, entry: WorkspaceSnapshotCa
  * Remove the snapshot cache file.
  */
 export function invalidateSnapshotCache(repoRoot: string): boolean {
+    const removedFromMemory = forgetInProcessSnapshots(repoRoot);
     try {
         const cachePath = resolveSnapshotCachePath(repoRoot);
         if (!isSnapshotCachePathSafe(repoRoot, cachePath)) {
-            return false;
+            return removedFromMemory;
         }
         if (fs.existsSync(cachePath)) {
             fs.unlinkSync(cachePath);
             return true;
         }
-        return false;
+        return removedFromMemory;
     } catch {
-        return false;
+        return removedFromMemory;
     }
 }
 
@@ -489,15 +537,27 @@ export function getWorkspaceSnapshotCached(
     const cachePath = resolveSnapshotCachePath(repoRoot);
     const cachePathSafe = isSnapshotCachePathSafe(repoRoot, cachePath);
     const fp = computeSnapshotFingerprint(repoRoot, detectionSource, includeUntracked, explicitChangedFiles);
+    const inProcessCacheKey = makeInProcessCacheKey(repoRoot, fp.fingerprint);
+
+    const inProcessCached = cachePathSafe ? inProcessSnapshotCache.get(inProcessCacheKey) : null;
+    if (inProcessCached) {
+        inProcessSnapshotCache.delete(inProcessCacheKey);
+        inProcessSnapshotCache.set(inProcessCacheKey, inProcessCached);
+        return { ...cloneWorkspaceSnapshot(inProcessCached.snapshot), cache_hit: true };
+    }
 
     // Attempt cache hit
     const cached = cachePathSafe ? readSnapshotCache(cachePath) : null;
     if (cached && cached.fingerprint === fp.fingerprint) {
+        rememberInProcessSnapshot(repoRoot, fp.fingerprint, cached.snapshot);
         return { ...cached.snapshot, cache_hit: true };
     }
 
     // Cache miss — compute fresh
     const fresh = getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, explicitChangedFiles);
+    if (cachePathSafe) {
+        rememberInProcessSnapshot(repoRoot, fp.fingerprint, fresh);
+    }
 
     if (!options.readOnly && cachePathSafe) {
         const normalizedExplicit = normalizeExplicitChangedFiles(explicitChangedFiles);

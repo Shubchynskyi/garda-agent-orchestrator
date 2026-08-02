@@ -126,8 +126,6 @@ describe('Git change classification', () => {
             assert.deepEqual(result.changes, []);
             assert.deepEqual(observedTimeouts, [
                 DEFAULT_GIT_TIMEOUT_MS,
-                DEFAULT_GIT_TIMEOUT_MS,
-                DEFAULT_GIT_TIMEOUT_MS,
                 DEFAULT_GIT_TIMEOUT_MS
             ]);
         } finally {
@@ -150,6 +148,41 @@ describe('Git change classification', () => {
         assert.deepEqual(result.effectiveChangedFiles, ['tracked.txt']);
         assert.deepEqual(result.eolOnlyFiles, ['tracked.txt']);
         assert.match(change?.reason || '', /keeps the change in effective dirty scope/);
+    });
+
+    it('batches index and blob reads across many changed files', () => {
+        const repoRoot = makeRepo();
+        const fileNames = Array.from({ length: 12 }, (_, index) => `tracked-${index}.txt`);
+        for (const fileName of fileNames) {
+            fs.writeFileSync(path.join(repoRoot, fileName), `before ${fileName}\n`, 'utf8');
+        }
+        runGit(repoRoot, ['add', ...fileNames]);
+        runGit(repoRoot, ['commit', '-m', 'add batching fixtures']);
+        for (const fileName of fileNames) {
+            fs.writeFileSync(path.join(repoRoot, fileName), `after ${fileName}\n`, 'utf8');
+        }
+
+        const commands: string[][] = [];
+        const originalRunGitBinary = gitHelpers.runGitBinary;
+        const runGitBinaryMock = mock.method(
+            gitHelpers,
+            'runGitBinary',
+            ((...args: Parameters<typeof gitHelpers.runGitBinary>) => {
+                commands.push([...args[1]]);
+                return originalRunGitBinary(...args);
+            }) as typeof gitHelpers.runGitBinary
+        );
+        try {
+            const result = classifyGitChanges(repoRoot);
+            assert.equal(result.unstagedFiles.length, fileNames.length);
+        } finally {
+            runGitBinaryMock.mock.restore();
+        }
+
+        assert.equal(commands.filter((args) => args[0] === 'ls-files' && args.includes('--stage')).length, 1);
+        assert.equal(commands.filter((args) => args[0] === 'cat-file' && args[1] === '--batch-check').length, 1);
+        assert.equal(commands.filter((args) => args[0] === 'cat-file' && args[1] === '--batch').length, 1);
+        assert.equal(commands.filter((args) => args[0] === 'cat-file' && ['-s', 'blob'].includes(args[1])).length, 0);
     });
 
     it('preserves independent staged and unstaged classifications for one path', () => {
