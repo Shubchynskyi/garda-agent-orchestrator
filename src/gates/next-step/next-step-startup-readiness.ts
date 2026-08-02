@@ -24,6 +24,10 @@ export interface StartupCycleReadinessOptions {
     enforceLateRulePackAfterReviewPhase?: boolean;
 }
 
+function isPassedStartupDiagnostic(entry: TimelineEventEntry): boolean {
+    return entry.outcome === 'PASS' || entry.details?.passed === true;
+}
+
 export function readStartupCycleReadiness(
     repoRoot: string,
     eventsRoot: string,
@@ -165,6 +169,14 @@ export function readStartupCycleReadiness(
             reason: `The latest TASK_MODE_ENTERED event is seq ${latestTaskMode.sequence}, and the latest startup rule-pack event is seq ${latestRulePack.sequence}, but no HANDSHAKE_DIAGNOSTICS_RECORDED event exists after them.`
         };
     }
+    if (!isPassedStartupDiagnostic(latestHandshake)) {
+        return {
+            ready: false,
+            nextGate: 'handshake-diagnostics',
+            title: 'Retry failed handshake diagnostics for the current task-mode cycle.',
+            reason: `The latest HANDSHAKE_DIAGNOSTICS_RECORDED event after startup rules is seq ${latestHandshake.sequence}, but it did not pass. Retry handshake diagnostics before shell-smoke, preflight, compile, review, or completion.`
+        };
+    }
 
     const latestShellSmoke = findLatestTimelineEvent(
         events,
@@ -176,6 +188,14 @@ export function readStartupCycleReadiness(
             nextGate: 'shell-smoke-preflight',
             title: 'Run shell smoke preflight for the current task-mode cycle.',
             reason: `The latest HANDSHAKE_DIAGNOSTICS_RECORDED event is seq ${latestHandshake.sequence}, but no SHELL_SMOKE_PREFLIGHT_RECORDED event exists after it.`
+        };
+    }
+    if (!isPassedStartupDiagnostic(latestShellSmoke)) {
+        return {
+            ready: false,
+            nextGate: 'shell-smoke-preflight',
+            title: 'Retry failed shell smoke preflight for the current task-mode cycle.',
+            reason: `The latest SHELL_SMOKE_PREFLIGHT_RECORDED event after handshake is seq ${latestShellSmoke.sequence}, but it did not pass. Retry shell-smoke before classify-change instead of advancing a partial restart cycle.`
         };
     }
 

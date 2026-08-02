@@ -38,6 +38,7 @@ import {
     toNonNegativeRestartCount
 } from './recovery-flow-restart-evidence';
 import { runRecoveryFlowPreflightPipeline } from './recovery-flow-preflight-pipeline';
+import { readInterruptedCoherentCycleReadiness } from './recovery-flow-interrupted-coherent-cycle';
 
 export async function runRestartCoherentCycleCommand(
     options: RestartCoherentCycleCommandOptions
@@ -60,6 +61,61 @@ export async function runRestartCoherentCycleCommand(
         && previousTaskMode.workflow_config_work === true
         ? resolveRestartAllowedDirtyWorkflowConfigFiles(repoRoot, previousPreflight, replayScope.plannedChangedFiles)
         : [];
+
+    const compileEvidencePath = resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`);
+    const interruptedCycle = readInterruptedCoherentCycleReadiness({
+        repoRoot,
+        taskId: resolvedTaskId,
+        taskModePath: resolvedTaskModePath,
+        preflightPath: resolvedPreflightPath,
+        compileEvidencePath
+    });
+    if (interruptedCycle.ready) {
+        const refreshedRequiredReviews = previousPreflight.preflight.required_reviews as Record<string, boolean>;
+        const nextStepSummary = 'continue from current compile evidence after finalizing the interrupted coherent-cycle restart.';
+        const restartArtifactPath = appendRestartCompletedEvidence({
+            repoRoot,
+            taskId: resolvedTaskId,
+            eventType: 'COHERENT_CYCLE_RESTARTED',
+            artifactSuffix: '-coherent-cycle-restart.json',
+            message: 'Interrupted coherent task cycle finalized from current verified compile evidence.',
+            taskModePath: resolvedTaskModePath,
+            preflightPath: resolvedPreflightPath,
+            compileEvidencePath,
+            detectionSource: replayScope.detectionSource,
+            plannedChangedFilesCount: replayScope.plannedChangedFiles.length,
+            detectedChangedFilesCount: toNonNegativeRestartCount(
+                previousPreflight.changed_files_count,
+                previousPreflight.changed_files.length
+            ),
+            elapsedMs: Date.now() - startedAt,
+            restartReason: 'coherent_cycle_restart_resumed_after_interrupted_shell_smoke',
+            nextStepSummary,
+            extraDetails: {
+                resumed_interrupted_restart: true,
+                failed_shell_smoke_sequence: interruptedCycle.failedShellSmokeSequence,
+                passed_shell_smoke_sequence: interruptedCycle.passedShellSmokeSequence,
+                compile_sequence: interruptedCycle.compileSequence
+            }
+        });
+        return {
+            outputLines: buildCoherentCycleRestartedOutput({
+                taskId: resolvedTaskId,
+                navigatorCommand: buildNextStepRecoveryCommand(repoRoot, resolvedTaskId),
+                taskModePath: resolvedTaskModePath,
+                preflightPath: resolvedPreflightPath,
+                restartArtifactPath,
+                detectionSource: replayScope.detectionSource,
+                plannedChangedFilesCount: replayScope.plannedChangedFiles.length,
+                changedFilesCount: previousPreflight.changed_files_count,
+                preflightMode: previousPreflight.preflight.mode,
+                preflightScopeCategory: previousPreflight.preflight.scope_category,
+                preflightChangedFilesCount: previousPreflight.changed_files_count,
+                preflightRequiredReviewTypes: collectRequiredRestartReviewTypes(refreshedRequiredReviews)
+            }),
+            exitCode: 0
+        };
+    }
 
     try {
         const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
@@ -181,7 +237,7 @@ export async function runRestartCoherentCycleCommand(
             message: 'Coherent task cycle restarted after compile gate pass.',
             taskModePath: resolvedTaskModePath,
             preflightPath: refreshedPreflightPath,
-            compileEvidencePath: resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`),
+            compileEvidencePath,
             detectionSource: replayScope.detectionSource,
             plannedChangedFilesCount: replayScope.plannedChangedFiles.length,
             detectedChangedFilesCount: toNonNegativeRestartCount(

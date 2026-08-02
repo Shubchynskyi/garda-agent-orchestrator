@@ -1087,6 +1087,125 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('finalizes an interrupted shell-smoke restart without replaying task mode or compile', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-resume-interrupted-shell-smoke';
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            `${taskId}-compile`
+        );
+
+        const enterInitial = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Seed lifecycle boundary before interrupted coherent restart',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        assert.equal(enterInitial.exitCode, 0, enterInitial.outputLines.join('\n'));
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const initialPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Seed lifecycle boundary before interrupted coherent restart',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, initialPreflightPath);
+        const initialCompile = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath: initialPreflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(initialCompile.exitCode, 0, initialCompile.outputLines.join('\n'));
+
+        const enterRestart = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Resume interrupted coherent restart',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        assert.equal(enterRestart.exitCode, 0, enterRestart.outputLines.join('\n'));
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'FAIL',
+            'Shell smoke failed during coherent-cycle restart.',
+            { passed: false },
+            { actor: 'gate' }
+        );
+        runShellSmokeForTask(repoRoot, taskId);
+        const recoveredPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Resume interrupted coherent restart',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, recoveredPreflightPath);
+        const recoveredCompile = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath: recoveredPreflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(recoveredCompile.exitCode, 0, recoveredCompile.outputLines.join('\n'));
+
+        const beforeFinalize = readTaskTimelineEvents(repoRoot, taskId);
+        const taskModeCount = beforeFinalize.filter((event) => event.event_type === 'TASK_MODE_ENTERED').length;
+        const compileCount = beforeFinalize.filter((event) => event.event_type === 'COMPILE_GATE_PASSED').length;
+
+        const finalizeResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath: recoveredPreflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(finalizeResult.exitCode, 0, finalizeResult.outputLines.join('\n'));
+        assert.match(finalizeResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/u);
+        const afterFinalize = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(
+            afterFinalize.filter((event) => event.event_type === 'TASK_MODE_ENTERED').length,
+            taskModeCount,
+            'finalization must not enter task mode again'
+        );
+        assert.equal(
+            afterFinalize.filter((event) => event.event_type === 'COMPILE_GATE_PASSED').length,
+            compileCount,
+            'finalization must not compile again'
+        );
+        const restartEvent = [...afterFinalize].reverse().find(
+            (event) => event.event_type === 'COHERENT_CYCLE_RESTARTED'
+        ) as Record<string, unknown> | undefined;
+        assert.ok(restartEvent);
+        const restartDetails = restartEvent.details as Record<string, unknown>;
+        assert.equal(restartDetails.resumed_interrupted_restart, true);
+        assert.equal(
+            restartDetails.restart_reason,
+            'coherent_cycle_restart_resumed_after_interrupted_shell_smoke'
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('restarts an ordinary cycle when compile regenerates only the source-checkout publish manifest', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-restart-compile-publish-manifest';

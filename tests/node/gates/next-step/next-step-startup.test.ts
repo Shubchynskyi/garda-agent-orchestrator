@@ -759,6 +759,27 @@ describe('gates/next-step startup routing', () => {
         assert.equal(missingShellSmoke.next_gate, 'shell-smoke-preflight');
     });
 
+    it('retries failed startup diagnostics instead of advancing to classify-change', () => {
+        const repoRoot = makeTempRepo();
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        appendEvent(repoRoot, TASK_ID, 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'FAIL', { passed: false });
+
+        const failedHandshake = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(failedHandshake.next_gate, 'handshake-diagnostics');
+        assert.match(failedHandshake.reason, /did not pass/u);
+
+        appendEvent(repoRoot, TASK_ID, 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'PASS', { passed: true });
+        appendEvent(repoRoot, TASK_ID, 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'FAIL', { passed: false });
+
+        const failedShellSmoke = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(failedShellSmoke.next_gate, 'shell-smoke-preflight');
+        assert.match(failedShellSmoke.reason, /instead of advancing a partial restart cycle/u);
+        assert.equal(failedShellSmoke.commands[0].command.includes('gate classify-change'), false);
+    });
+
     it('routes stale TASK_ENTRY rule-pack evidence back to load-rule-pack before classify-change', () => {
         const repoRoot = makeTempRepo();
         seedTaskModeOnly(repoRoot, TASK_ID);
