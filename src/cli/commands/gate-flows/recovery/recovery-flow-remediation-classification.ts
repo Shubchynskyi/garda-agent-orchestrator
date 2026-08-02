@@ -185,6 +185,8 @@ export function classifyReviewRemediationFix(
         testRefactorChangedLinesThreshold?: number;
         testRefactorStructuralPathRegexes?: readonly string[];
         changedFileStats?: unknown;
+        reviewEvidenceOnly?: boolean;
+        remediationReviewType?: string;
     } = {}
 ): ReviewRemediationFixClassification {
     const normalizedRequiredReviewTypes = [...new Set(
@@ -196,7 +198,16 @@ export function classifyReviewRemediationFix(
         : scopeBoundary.allowedTestOnlyExpansionFiles.length > 0
             ? 'test_only_expansion'
             : 'previous_scope_only';
-    const semantic = getReviewRemediationSemanticSignals(scopeBoundary, impactAnalysis, testTriggerRegexes);
+    const remediationReviewType = String(options.remediationReviewType || '').trim().toLowerCase();
+    const semantic = options.reviewEvidenceOnly === true
+        ? {
+            category: 'review_evidence_only' as const,
+            matchedSignals: ['provider review evidence only'],
+            rationale: `delegated reviewer evidence failed for '${remediationReviewType || 'unknown'}' without a source remediation delta`,
+            changedFiles: [] as string[],
+            scopeSource: 'current_changed_files' as const
+        }
+        : getReviewRemediationSemanticSignals(scopeBoundary, impactAnalysis, testTriggerRegexes);
     const affectedFileGroups = groupReviewRemediationFiles(scopeBoundary.currentChangedFiles, testTriggerRegexes);
     const preflightReuseBlockReason = getPreflightReuseBlockReason(
         preflightPayload,
@@ -251,6 +262,28 @@ export function classifyReviewRemediationFix(
             blocked_before_reuse: true,
             invalidated_review_types: normalizedRequiredReviewTypes,
             preserved_review_types: []
+        };
+    }
+    if (semantic.category === 'review_evidence_only') {
+        const targetReviewType = normalizedRequiredReviewTypes.includes(remediationReviewType)
+            ? remediationReviewType
+            : '';
+        const invalidatedReviewTypes = targetReviewType ? [targetReviewType] : normalizedRequiredReviewTypes;
+        return {
+            ...base,
+            rationale: targetReviewType
+                ? semantic.rationale
+                : `${semantic.rationale}; review type is missing or not required, so fail closed`,
+            reason: targetReviewType
+                ? semantic.rationale
+                : `${semantic.rationale}; review type is missing or not required, so fail closed`,
+            non_test_review_reuse_candidate: Boolean(targetReviewType),
+            test_review_reuse_candidate: Boolean(targetReviewType),
+            blocked_before_reuse: false,
+            invalidated_review_types: invalidatedReviewTypes,
+            preserved_review_types: targetReviewType
+                ? normalizedRequiredReviewTypes.filter((entry) => entry !== targetReviewType)
+                : []
         };
     }
     if (scopeBoundary.allowedTestOnlyExpansionFiles.length > 0 || semantic.category === 'test_coverage_only') {

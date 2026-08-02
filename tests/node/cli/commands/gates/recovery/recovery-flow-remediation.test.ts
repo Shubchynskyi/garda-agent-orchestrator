@@ -152,6 +152,43 @@ describe('cli/commands/gate-flows/recovery remediation units', () => {
         assert.equal(classification.evidence.test_refactor_changed_lines_total, 21);
     });
 
+    it('invalidates only the failed lane for review-evidence-only remediation', () => {
+        const scopeBoundary: ReviewRemediationScopeBoundary = {
+            status: 'OK',
+            previousChangedFiles: ['src/app.ts', TEST_FILE],
+            currentChangedFiles: [],
+            expandedFiles: [],
+            expandedNonTestFiles: [],
+            allowedTestOnlyExpansionFiles: []
+        };
+        const classification = classifyReviewRemediationFix(
+            scopeBoundary,
+            ['api', 'code', 'performance', 'refactor', 'security', 'test'],
+            buildImpactAnalysis(
+                'Reviewer finding: delegated API review evidence cited a line outside the current file. ' +
+                'Intended fix: replace only that reviewer output; source, runtime, API, and test behavior remain unchanged.'
+            ),
+            ['(^|/)tests?/'],
+            undefined,
+            {
+                reviewEvidenceOnly: true,
+                remediationReviewType: 'api'
+            }
+        );
+
+        assert.equal(classification.category, 'review_evidence_only');
+        assert.deepEqual(classification.invalidated_review_types, ['api']);
+        assert.deepEqual(classification.preserved_review_types, [
+            'code',
+            'performance',
+            'refactor',
+            'security',
+            'test'
+        ]);
+        assert.equal(classification.non_test_review_reuse_candidate, true);
+        assert.equal(classification.test_review_reuse_candidate, true);
+    });
+
     it('builds refresh classification scope from prior, replay, expansion, and explicit files', () => {
         const changedFiles = resolveReviewRemediationClassifyChangedFiles(
             {

@@ -28,6 +28,8 @@ export interface RestartReviewCycleCommandOptions {
     taskIntent?: unknown;
     impactAnalysis?: unknown;
     impactAnalysisPath?: string;
+    reviewType?: unknown;
+    reviewEvidenceOnly?: unknown;
     commandsPath?: string;
     outputFiltersPath?: string;
     failTailLines?: unknown;
@@ -66,6 +68,7 @@ export interface ReviewRemediationImpactAnalysis {
 }
 
 export type ReviewRemediationSemanticCategory =
+    | 'review_evidence_only'
     | 'test_coverage_only'
     | 'test_hook_isolation'
     | 'api_surface'

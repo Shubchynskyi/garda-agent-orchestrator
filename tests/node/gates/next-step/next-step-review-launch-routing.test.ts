@@ -1720,6 +1720,9 @@ describe('gates/next-step', () => {
         assert.equal(result.commands[0].label, 'Restart/supersede failed delegated reviewer launch');
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
         assert.ok(result.commands[0].command.includes(`--preflight-path "garda-agent-orchestrator/runtime/reviews/${TASK_ID}-preflight.json"`));
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(result.commands[0].command.includes('--review-evidence-only'));
+        assert.ok(!result.commands[0].command.includes('--changed-file'));
         assert.ok(result.reason.includes('provider recorded a failed launch before review output was available'));
         assert.ok(result.reason.includes('do not complete the old launch'));
         assert.ok(result.reason.includes('do not reuse the failed reviewer session'));
@@ -1825,6 +1828,9 @@ describe('gates/next-step', () => {
         assert.equal(result.commands[0].label, 'Restart/supersede orphaned delegated reviewer launch');
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
         assert.ok(result.commands[0].command.includes(`--preflight-path "garda-agent-orchestrator/runtime/reviews/${TASK_ID}-preflight.json"`));
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(result.commands[0].command.includes('--review-evidence-only'));
+        assert.ok(!result.commands[0].command.includes('--changed-file'));
         assert.ok(result.reason.includes('abandoned delegated reviewer launch'));
         assert.ok(result.reason.includes('do not complete the old launch'));
         assert.ok(result.reason.includes('launch artifact=orphaned'));

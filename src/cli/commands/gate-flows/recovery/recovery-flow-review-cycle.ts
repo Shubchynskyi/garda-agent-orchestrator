@@ -98,9 +98,13 @@ export async function runRestartReviewCycleCommand(
         resolvedPreflightPath,
         previousPreflight
     } = runRecoveryFlowPreflightPipeline(options);
+    const reviewEvidenceOnly = options.reviewEvidenceOnly === true;
+    const remediationReviewType = String(options.reviewType || '').trim().toLowerCase();
     const replayScope = resolveReviewCycleReplayScope(options, previousPreflight, previousTaskMode);
     const previousChangedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
-    let currentRemediationChangedFiles = resolveCurrentRemediationChangedFiles(repoRoot, replayScope);
+    let currentRemediationChangedFiles = reviewEvidenceOnly
+        ? []
+        : resolveCurrentRemediationChangedFiles(repoRoot, replayScope);
     const taskModeArtifactRelativePath = resolvedTaskModePath
         ? gateHelpers.normalizePath(path.relative(repoRoot, path.resolve(resolvedTaskModePath)))
         : '';
@@ -334,6 +338,185 @@ export async function runRestartReviewCycleCommand(
                 `Artifact: ${gateHelpers.normalizePath(artifactPath)}. ` +
                 'Refresh the normal preflight/classification path or split the expanded work into a separate task.'
             );
+        }
+
+        if (reviewEvidenceOnly) {
+            if (!remediationReviewType) {
+                throw new Error('review-evidence-only restart requires --review-type.');
+            }
+            const requiredReviews = previousPreflight.preflight.required_reviews as Record<string, boolean>;
+            const requiredReviewTypes = collectRequiredReviewTypes(requiredReviews);
+            if (!requiredReviewTypes.includes(remediationReviewType)) {
+                throw new Error(
+                    `review-evidence-only restart review type '${remediationReviewType}' is not required by the current preflight.`
+                );
+            }
+            const compileEvidencePath = resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`);
+            if (!fs.existsSync(compileEvidencePath) || !fs.statSync(compileEvidencePath).isFile()) {
+                throw new Error('review-evidence-only restart requires current compile-gate evidence.');
+            }
+            const compileEvidence = JSON.parse(fs.readFileSync(compileEvidencePath, 'utf8')) as Record<string, unknown>;
+            const currentPreflightSha256 = gateHelpers.fileSha256(resolvedPreflightPath);
+            if (
+                String(compileEvidence.status || '').trim() !== 'PASSED'
+                || String(compileEvidence.task_id || '').trim() !== resolvedTaskId
+                || String(compileEvidence.preflight_hash_sha256 || '').trim().toLowerCase() !== currentPreflightSha256
+            ) {
+                throw new Error(
+                    'review-evidence-only restart requires PASSED compile evidence bound to the current task and preflight.'
+                );
+            }
+            const liveWorkspaceSnapshot = getWorkspaceSnapshot(
+                repoRoot,
+                'git_auto',
+                true,
+                []
+            ) as Record<string, unknown>;
+            const liveChangedFiles = normalizeChangedFiles(liveWorkspaceSnapshot.changed_files as unknown[]);
+            if (
+                liveChangedFiles.length !== previousChangedFiles.length
+                || liveChangedFiles.some((entry, index) => entry !== previousChangedFiles[index])
+            ) {
+                throw new Error(
+                    'review-evidence-only restart is blocked because the live workspace file scope changed after compile.'
+                );
+            }
+            const scopedWorkspaceSnapshot = getWorkspaceSnapshot(
+                repoRoot,
+                'explicit_changed_files',
+                previousPreflight.include_untracked,
+                previousChangedFiles
+            ) as Record<string, unknown>;
+            if (
+                String(scopedWorkspaceSnapshot.scope_content_sha256 || '').trim().toLowerCase()
+                !== String(compileEvidence.scope_content_sha256 || '').trim().toLowerCase()
+            ) {
+                throw new Error(
+                    'review-evidence-only restart is blocked because task-scoped content changed after compile.'
+                );
+            }
+
+            remediationFixClassification = classifyReviewRemediationFix(
+                scopeBoundary,
+                requiredReviewTypes,
+                remediationImpactAnalysis,
+                reviewTriggerPolicy.test_path_regexes,
+                previousPreflight.preflight,
+                {
+                    testRefactorChangedLinesThreshold: reviewTriggerPolicy.test_refactor_changed_lines_threshold,
+                    testRefactorStructuralPathRegexes: reviewTriggerPolicy.test_refactor_structural_path_regexes,
+                    reviewEvidenceOnly: true,
+                    remediationReviewType
+                }
+            );
+            const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(previousPreflight.preflight);
+            const effectiveDepth = getEffectiveDepthFromPreflight(previousTaskMode, previousPreflight);
+            const nextStep =
+                `Rerun next-step to materialize preserved review evidence and prepare one fresh '${remediationReviewType}' reviewer launch.`;
+            const remediationArtifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
+                schema_version: 1,
+                task_id: resolvedTaskId,
+                status: 'PASSED',
+                previous_preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
+                previous_preflight_sha256: currentPreflightSha256,
+                refreshed_preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
+                refreshed_preflight_sha256: currentPreflightSha256,
+                detection_source: 'review_evidence_only',
+                impact_analysis: remediationImpactAnalysis,
+                remediation_fix_classification: remediationFixClassification,
+                remediation_scope: {
+                    status: scopeBoundary.status,
+                    previous_changed_files: scopeBoundary.previousChangedFiles,
+                    current_changed_files: [],
+                    expanded_files: [],
+                    expanded_non_test_files: [],
+                    allowed_test_only_expansion_files: []
+                },
+                refresh_points: {
+                    preflight: 'reused_current',
+                    post_preflight_rule_pack: 'reused_current',
+                    compile: 'reused_current',
+                    review_contexts: 'deferred_to_navigator'
+                },
+                review_reuse: {
+                    review_execution_policy: reviewExecutionPolicyMode,
+                    prepared_review_types: [],
+                    launch_required_review_types: [remediationReviewType],
+                    reused_review_types: remediationFixClassification.preserved_review_types,
+                    pending_review_types: [remediationReviewType],
+                    pending_reason: 'failed delegated reviewer evidence must be replaced without invalidating unchanged lanes'
+                }
+            });
+            const restartArtifactPath = appendRestartCompletedEvidence({
+                repoRoot,
+                taskId: resolvedTaskId,
+                eventType: 'REVIEW_CYCLE_RESTARTED',
+                artifactSuffix: '-review-cycle-restart.json',
+                message: 'Delegated reviewer evidence-only cycle restarted without source or compile replay.',
+                taskModePath: resolvedTaskModePath,
+                preflightPath: resolvedPreflightPath,
+                compileEvidencePath,
+                detectionSource: 'review_evidence_only',
+                plannedChangedFilesCount: previousChangedFiles.length,
+                detectedChangedFilesCount: 0,
+                elapsedMs: Date.now() - startedAt,
+                restartReason: 'failed_delegated_reviewer_evidence_only',
+                nextStepSummary: nextStep,
+                extraDetails: {
+                    remediation_artifact_path: gateHelpers.normalizePath(remediationArtifactPath),
+                    remediation_artifact_sha256: requireArtifactSha256(remediationArtifactPath, 'review-remediation-cycle'),
+                    impact_analysis_source: remediationImpactAnalysis.source,
+                    affected_files_count: 0,
+                    remediation_category: remediationFixClassification.category,
+                    invalidated_review_types: remediationFixClassification.invalidated_review_types,
+                    preserved_review_types: remediationFixClassification.preserved_review_types,
+                    review_contexts_refresh_status: 'deferred_to_navigator',
+                    review_execution_policy_mode: reviewExecutionPolicyMode,
+                    prepared_review_types: [],
+                    launch_required_review_types: [remediationReviewType],
+                    reused_review_types: remediationFixClassification.preserved_review_types,
+                    pending_review_types: [remediationReviewType],
+                    pending_reason: 'failed delegated reviewer evidence must be replaced without invalidating unchanged lanes'
+                }
+            });
+            return {
+                outputLines: buildReviewCycleRestartedOutput({
+                    taskId: resolvedTaskId,
+                    navigatorCommand: buildNextStepRecoveryCommand(repoRoot, resolvedTaskId),
+                    preflightPath: resolvedPreflightPath,
+                    remediationArtifactPath,
+                    restartArtifactPath,
+                    detectionSource: 'review_evidence_only',
+                    affectedFilesCount: 0,
+                    impactAnalysisSource: remediationImpactAnalysis.source,
+                    remediationCategory: remediationFixClassification.category,
+                    invalidatedReviewTypes: remediationFixClassification.invalidated_review_types,
+                    preservedReviewTypes: remediationFixClassification.preserved_review_types,
+                    scopeBoundaryStatus: scopeBoundary.status,
+                    previousFilesCount: previousChangedFiles.length,
+                    currentFilesCount: 0,
+                    expandedNonTestFiles: [],
+                    reviewContextsRefreshStatus: 'deferred_to_navigator',
+                    effectiveDepth,
+                    reviewExecutionPolicyMode,
+                    preparedResults: [],
+                    launchRequiredReviewTypes: [remediationReviewType],
+                    reusedReviewTypes: remediationFixClassification.preserved_review_types,
+                    pendingReviewTypes: [remediationReviewType],
+                    pendingReason: 'failed delegated reviewer evidence must be replaced without invalidating unchanged lanes',
+                    nextStep,
+                    preflightMode: previousPreflight.preflight.mode,
+                    preflightScopeCategory: previousPreflight.preflight.scope_category,
+                    preflightChangedFilesCount: previousPreflight.changed_files_count,
+                    preflightRequiredReviewTypes: requiredReviewTypes,
+                    refreshPoints: {
+                        preflight: 'reused_current',
+                        postPreflightRulePack: 'reused_current',
+                        compile: 'reused_current'
+                    }
+                }),
+                exitCode: 0
+            };
         }
 
         if (prePreflightRefreshPlan.rerunHandshakeDiagnostics) {

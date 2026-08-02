@@ -101,7 +101,17 @@ export function buildReviewCycleRestartedOutput(input: {
     preflightScopeCategory: unknown;
     preflightChangedFilesCount: number;
     preflightRequiredReviewTypes: readonly string[];
+    refreshPoints?: {
+        preflight: string;
+        postPreflightRulePack: string;
+        compile: string;
+    };
 }): string[] {
+    const refreshPoints = input.refreshPoints || {
+        preflight: 'refreshed',
+        postPreflightRulePack: 'reloaded',
+        compile: 'rerun'
+    };
     return [
         ...buildOperatorNextActionBlock({
             status: 'PASSED',
@@ -120,7 +130,7 @@ export function buildReviewCycleRestartedOutput(input: {
         `ImpactAnalysis: recorded; affected_files=${input.affectedFilesCount}; source=${input.impactAnalysisSource}`,
         `RemediationFixClassification: ${input.remediationCategory}; invalidated_review_types=${formatReviewTypeList(input.invalidatedReviewTypes)}; preserved_review_types=${formatReviewTypeList(input.preservedReviewTypes)}`,
         `ScopeBoundary: ${input.scopeBoundaryStatus}; previous=${input.previousFilesCount}; current=${input.currentFilesCount}; expanded_non_test=${formatReviewTypeList(input.expandedNonTestFiles)}`,
-        `RefreshPoints: preflight=refreshed; post_preflight_rule_pack=reloaded; compile=rerun; review_contexts=${input.reviewContextsRefreshStatus}`,
+        `RefreshPoints: preflight=${refreshPoints.preflight}; post_preflight_rule_pack=${refreshPoints.postPreflightRulePack}; compile=${refreshPoints.compile}; review_contexts=${input.reviewContextsRefreshStatus}`,
         `ReuseBoundaries: non_test_changes_must_stay_within_previous_preflight_scope; test_only_expansion_allowed; expanded_non_test_files_block_reuse`,
         `EffectiveDepth: ${input.effectiveDepth}`,
         `ReviewExecutionPolicy: ${input.reviewExecutionPolicyMode}`,

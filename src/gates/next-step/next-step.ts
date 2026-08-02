@@ -4184,7 +4184,12 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             taskId,
                             reviewArtifactPaths: [state.artifactPath],
                             taskMode
-                        })
+                        }),
+                        {
+                            includeChangedFileScope: false,
+                            reviewType,
+                            reviewEvidenceOnly: true
+                        }
                     )
                 ),
                 recoverFailedLaunch: buildCommand(
@@ -4201,7 +4206,12 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                             taskId,
                             reviewArtifactPaths: [state.artifactPath],
                             taskMode
-                        })
+                        }),
+                        {
+                            includeChangedFileScope: false,
+                            reviewType,
+                            reviewEvidenceOnly: true
+                        }
                     )
                 ),
                 recordInvocation: buildCommand(

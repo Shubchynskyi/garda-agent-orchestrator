@@ -158,6 +158,8 @@ export async function handleRestartReviewCycle(gateArgv: string[]): Promise<void
         '--task-intent': { key: 'taskIntent', type: 'string' },
         '--impact-analysis': { key: 'impactAnalysis', type: 'string' },
         '--impact-analysis-path': { key: 'impactAnalysisPath', type: 'string' },
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--review-evidence-only': { key: 'reviewEvidenceOnly', type: 'boolean' },
         '--commands-path': { key: 'commandsPath', type: 'string' },
         '--output-filters-path': { key: 'outputFiltersPath', type: 'string' },
         '--fail-tail-lines': { key: 'failTailLines', type: 'string' },

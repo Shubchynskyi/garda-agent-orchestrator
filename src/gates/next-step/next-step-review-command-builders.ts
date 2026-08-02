@@ -285,6 +285,8 @@ export function buildRestartReviewCycleCommand(
     additionalChangedFiles: readonly string[] = [],
     options: {
         includeChangedFileScope?: boolean;
+        reviewType?: string;
+        reviewEvidenceOnly?: boolean;
     } = {}
 ): string {
     const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
@@ -305,6 +307,8 @@ export function buildRestartReviewCycleCommand(
         `--task-intent ${quoteCommandValue(taskIntent)}`,
         `--preflight-path ${quoteCommandValue(preflightCommandPath)}`,
         `--impact-analysis ${quoteCommandValue('<replace with main-agent remediation impact analysis>')}`,
+        ...(options.reviewType ? [`--review-type ${quoteCommandValue(options.reviewType)}`] : []),
+        ...(options.reviewEvidenceOnly ? ['--review-evidence-only'] : []),
         ...changedFiles.map((changedFile) => `--changed-file ${quoteCommandValue(changedFile)}`),
         ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
         '--repo-root "."'

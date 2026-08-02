@@ -142,10 +142,16 @@ describe('gates/next-step review command builders', () => {
                 'garda-agent-orchestrator/runtime/reviews/T-SCOPE-preflight.json',
                 null,
                 ['src/additional.ts'],
-                { includeChangedFileScope: false }
+                {
+                    includeChangedFileScope: false,
+                    reviewType: 'api',
+                    reviewEvidenceOnly: true
+                }
             );
 
             assert.ok(command.includes('gate restart-review-cycle'), command);
+            assert.ok(command.includes('--review-type "api"'), command);
+            assert.ok(command.includes('--review-evidence-only'), command);
             assert.ok(!command.includes('--changed-file'), command);
             assert.ok(!command.includes('src/app.ts'), command);
             assert.ok(!command.includes('src/additional.ts'), command);
