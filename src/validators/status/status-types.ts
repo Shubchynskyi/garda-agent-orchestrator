@@ -57,3 +57,13 @@ export interface StatusSnapshot extends CliStatusSnapshot {
     toxinMetricsSummary: ToxinStatusSummary | null;
     scopeBudgetGuardStatus: ScopeBudgetStatusSnapshot | null;
 }
+
+export interface TaskCycleStatusSnapshot {
+    enforceNoAutoCommit: StatusSnapshot['enforceNoAutoCommit'];
+    assistantLanguage: StatusSnapshot['assistantLanguage'];
+    assistantLanguageConfirmed: StatusSnapshot['assistantLanguageConfirmed'];
+    readyForTasks: StatusSnapshot['readyForTasks'];
+    recommendedNextCommand: StatusSnapshot['recommendedNextCommand'];
+    latestUpdateNotice: StatusSnapshot['latestUpdateNotice'];
+    timelineWarningDetails: TimelineSummary['warningDetails'];
+}

@@ -201,6 +201,63 @@ describe('gates/task-audit-summary', () => {
             assert.ok(finalMarkdown.includes('Task-cycle diagnostic: status=PARTIAL'));
         });
 
+        it('prevents recursive global toxin traversal on cold and warm task-audit reads', () => {
+            fs.writeFileSync(
+                path.join(tmpDir, 'TASK.md'),
+                [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    `| ${TASK_ID} | 🟨 IN_PROGRESS | P1 | runtime | Narrow audit | codex | 2026-08-02 | balanced | partial lifecycle |`,
+                    ''
+                ].join('\n'),
+                'utf8'
+            );
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' }
+            ]);
+            const toxinRoot = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'backups');
+            for (let index = 0; index < 20; index++) {
+                const artifactPath = path.join(toxinRoot, `batch-${index}`, 'artifact.json');
+                fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+                fs.writeFileSync(artifactPath, '{}\n', 'utf8');
+            }
+            const fsModule = require('node:fs') as typeof import('node:fs');
+            const originalReaddirSync = fsModule.readdirSync;
+            const traversalCounts = [0, 0];
+            let phase = 0;
+            fsModule.readdirSync = ((targetPath: fs.PathLike, options?: unknown) => {
+                const resolvedPath = path.resolve(String(targetPath));
+                if (resolvedPath === path.resolve(toxinRoot) || resolvedPath.startsWith(`${path.resolve(toxinRoot)}${path.sep}`)) {
+                    traversalCounts[phase]++;
+                }
+                return originalReaddirSync(targetPath, options as never);
+            }) as typeof fsModule.readdirSync;
+            try {
+                const cold = buildTaskAuditSummary({
+                    taskId: TASK_ID,
+                    repoRoot: tmpDir,
+                    eventsRoot: eventsDir,
+                    reviewsRoot: reviewsDir
+                });
+                phase = 1;
+                const warm = buildTaskAuditSummary({
+                    taskId: TASK_ID,
+                    repoRoot: tmpDir,
+                    eventsRoot: eventsDir,
+                    reviewsRoot: reviewsDir
+                });
+
+                assert.equal(cold.task_cycle_diagnostics?.timeline_warning_kind, 'INCOMPLETE');
+                assert.equal(warm.task_cycle_diagnostics?.timeline_warning_kind, 'INCOMPLETE');
+                assert.deepEqual(traversalCounts, [0, 0]);
+            } finally {
+                fsModule.readdirSync = originalReaddirSync;
+            }
+        });
+
         it('surfaces corrupt task-cycle diagnostics without treating them as missing lifecycle events', () => {
             fs.writeFileSync(
                 path.join(tmpDir, 'TASK.md'),

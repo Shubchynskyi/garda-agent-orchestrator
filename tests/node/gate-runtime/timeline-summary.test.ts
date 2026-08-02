@@ -650,6 +650,38 @@ describe('gate-runtime/timeline-summary', () => {
             assert.ok(result.warnings[0].includes('INCOMPLETE timeline: T-001.jsonl'));
         });
 
+        it('blocks foreign unrelated task timelines without enumerating the events root', () => {
+            const bundlePath = tempDir;
+            writeTimeline(tempDir, 'T-001', ['TASK_MODE_ENTERED']);
+            writeTimeline(tempDir, 'T-OTHER', ['TASK_MODE_ENTERED']);
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            const fsModule = require('node:fs') as typeof import('node:fs');
+            const originalReaddirSync = fsModule.readdirSync;
+            let eventsRootEnumerationCount = 0;
+            fsModule.readdirSync = ((targetPath: fs.PathLike, options?: unknown) => {
+                if (path.resolve(String(targetPath)) === path.resolve(eventsRoot)) {
+                    eventsRootEnumerationCount++;
+                }
+                return originalReaddirSync(targetPath, options as never);
+            }) as typeof fsModule.readdirSync;
+            try {
+                const result = collectTimelineSummaryForStatus(bundlePath, {
+                    taskStatuses: new Map([
+                        ['T-001', 'IN_PROGRESS'],
+                        ['T-OTHER', 'IN_PROGRESS']
+                    ]),
+                    taskIds: new Set(['T-001'])
+                });
+
+                assert.equal(eventsRootEnumerationCount, 0);
+                assert.equal(result.taskCount, 1);
+                assert.equal(result.warningDetails.length, 1);
+                assert.equal(result.warningDetails[0].task_id, 'T-001');
+            } finally {
+                fsModule.readdirSync = originalReaddirSync;
+            }
+        });
+
         it('suppresses terminal DONE incomplete history on the status surface', () => {
             const bundlePath = tempDir;
             writeTimeline(tempDir, 'T-001', ['TASK_MODE_ENTERED']);

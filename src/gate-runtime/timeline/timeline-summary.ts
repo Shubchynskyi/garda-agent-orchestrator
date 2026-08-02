@@ -67,6 +67,7 @@ export interface StatusTimelineSummary {
 
 export interface TimelineSummaryCollectionOptions {
     taskStatuses?: ReadonlyMap<string, string>;
+    taskIds?: ReadonlySet<string>;
 }
 
 export interface DoctorTimelineEvidence {
@@ -709,7 +710,16 @@ export function collectTimelineSummaryForStatus(
         return { taskCount: 0, healthy: 0, warnings: [], warningDetails: [] };
     }
 
-    const files = listTimelineJsonlFiles(eventsRoot);
+    const files = options.taskIds === undefined
+        ? listTimelineJsonlFiles(eventsRoot)
+        : [...options.taskIds]
+            .map((taskId) => ({ taskId, fileName: `${taskId}.jsonl` }))
+            .filter(({ taskId, fileName }) => (
+                parseTaskIdJsonlFileName(fileName) === taskId
+                && fs.existsSync(path.join(eventsRoot, fileName))
+            ))
+            .map(({ fileName }) => fileName)
+            .sort((left, right) => left.localeCompare(right));
     if (files.length === 0) {
         return { taskCount: 0, healthy: 0, warnings: [], warningDetails: [] };
     }

@@ -1,4 +1,4 @@
-import type { StatusSnapshot } from '../../validators/status';
+import type { TaskCycleStatusSnapshot } from '../../validators/status';
 import type { EffectiveReviewExecutionPolicyMode } from '../../core/review-execution-policy';
 import { buildReviewExecutionPolicySummaryLine } from '../../core/review-execution-policy';
 import {
@@ -74,7 +74,7 @@ export interface BuildFinalCloseoutArtifactInput {
     orchestratorDefectCapture: FinalCloseoutOrchestratorDefectCaptureSummary;
     tokenEconomy: FinalCloseoutArtifact['token_economy'];
     taskCycleDiagnostics: FinalCloseoutTaskCycleDiagnostics;
-    workspaceStatusSnapshot: StatusSnapshot;
+    workspaceStatusSnapshot: TaskCycleStatusSnapshot;
     commitCommandTemplate: string;
     commitCommandSuggestion: string;
 }

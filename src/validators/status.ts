@@ -43,10 +43,11 @@ import type {
     LiveVersionPayload,
     LiveVersionState,
     StatusSnapshot,
+    TaskCycleStatusSnapshot,
     TimelineSummary
 } from './status/status-types';
 
-export type { StatusSnapshot } from './status/status-types';
+export type { StatusSnapshot, TaskCycleStatusSnapshot } from './status/status-types';
 export {
     formatStatusSnapshot,
     formatStatusSnapshotCompact,
@@ -474,7 +475,8 @@ function readProtectedManifestEvidence(
 function readTimelineSummary(
     bundlePath: string,
     bundlePresent: boolean,
-    taskStatuses: ReadonlyMap<string, string>
+    taskStatuses: ReadonlyMap<string, string>,
+    taskId?: string
 ): TimelineSummary {
     if (!bundlePresent) {
         return {
@@ -484,7 +486,10 @@ function readTimelineSummary(
             warningDetails: []
         };
     }
-    return collectTimelineSummaryForStatus(bundlePath, { taskStatuses });
+    return collectTimelineSummaryForStatus(bundlePath, {
+        taskStatuses,
+        taskIds: taskId === undefined ? undefined : new Set([taskId])
+    });
 }
 
 function readActiveProfile(bundlePath: string, bundlePresent: boolean): string | null {
@@ -557,10 +562,14 @@ function resolveScopeBudgetPreflightPath(bundlePath: string, taskStatuses: Map<s
     return null;
 }
 
-export function getStatusSnapshot(
+function collectStatusSnapshot(
     targetRoot: string,
     initAnswersPath?: string,
-    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>,
+    options: {
+        taskId?: string;
+        includeGlobalRuntimeMetrics: boolean;
+    } = { includeGlobalRuntimeMetrics: true }
 ): StatusSnapshot {
     const resolvedTargetRoot = path.resolve(targetRoot);
     const bundlePath = getBundlePath(resolvedTargetRoot);
@@ -651,10 +660,14 @@ export function getStatusSnapshot(
     const taskStatuses = taskQueueEntries
         ? buildTaskQueueStatusMap(taskQueueEntries)
         : readTaskQueueStatusMap(taskPath, taskPresent);
-    const timelineSummary = readTimelineSummary(bundlePath, bundlePresent, taskStatuses);
+    const timelineSummary = readTimelineSummary(bundlePath, bundlePresent, taskStatuses, options.taskId);
     const activeProfile = readActiveProfile(bundlePath, bundlePresent);
-    const toxinMetricsSummary = readToxinMetricsSummary(resolvedTargetRoot, bundlePath, bundlePresent);
-    const scopeBudgetGuardStatus = readScopeBudgetGuardStatus(resolvedTargetRoot, bundlePath, bundlePresent, taskStatuses);
+    const toxinMetricsSummary = options.includeGlobalRuntimeMetrics
+        ? readToxinMetricsSummary(resolvedTargetRoot, bundlePath, bundlePresent)
+        : null;
+    const scopeBudgetGuardStatus = options.includeGlobalRuntimeMetrics
+        ? readScopeBudgetGuardStatus(resolvedTargetRoot, bundlePath, bundlePresent, taskStatuses)
+        : null;
     const mandatoryFullSuiteConfig = bundlePresent
         ? readMandatoryFullSuiteConfig(bundlePath)
         : { enabled: null, command: null, performance: null };
@@ -713,5 +726,34 @@ export function getStatusSnapshot(
         mandatoryFullSuiteCommand: mandatoryFullSuiteConfig.command,
         mandatoryFullSuitePerformance: mandatoryFullSuiteConfig.performance,
         latestUpdateNotice
+    };
+}
+
+export function getStatusSnapshot(
+    targetRoot: string,
+    initAnswersPath?: string,
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>
+): StatusSnapshot {
+    return collectStatusSnapshot(targetRoot, initAnswersPath, taskQueueEntries);
+}
+
+export function getTaskCycleStatusSnapshot(
+    targetRoot: string,
+    taskId: string,
+    initAnswersPath?: string,
+    taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>
+): TaskCycleStatusSnapshot {
+    const snapshot = collectStatusSnapshot(targetRoot, initAnswersPath, taskQueueEntries, {
+        taskId,
+        includeGlobalRuntimeMetrics: false
+    });
+    return {
+        enforceNoAutoCommit: snapshot.enforceNoAutoCommit,
+        assistantLanguage: snapshot.assistantLanguage,
+        assistantLanguageConfirmed: snapshot.assistantLanguageConfirmed,
+        readyForTasks: snapshot.readyForTasks,
+        recommendedNextCommand: snapshot.recommendedNextCommand,
+        latestUpdateNotice: snapshot.latestUpdateNotice,
+        timelineWarningDetails: snapshot.timelineWarningDetails || []
     };
 }

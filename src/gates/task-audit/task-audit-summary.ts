@@ -27,7 +27,7 @@ import {
     resolveReviewExecutionPolicyModeFromPreflight
 } from '../../core/review-execution-policy';
 import { normalizeReviewCycleGuardConfig } from '../../core/review-cycle-guard';
-import { getStatusSnapshot } from '../../validators';
+import { getTaskCycleStatusSnapshot, type TaskCycleStatusSnapshot } from '../../validators';
 import {
     buildUnavailableRequiredReviewTrustSummary,
     type EvidenceArtifact,
@@ -156,7 +156,7 @@ function readReviewCycleExcludedReviewTypes(repoRoot: string): string[] {
 
 function buildTaskCycleDiagnostics(options: {
     taskId: string;
-    workspaceStatusSnapshot: ReturnType<typeof getStatusSnapshot>;
+    workspaceStatusSnapshot: TaskCycleStatusSnapshot;
 }): FinalCloseoutTaskCycleDiagnostics {
     const warningDetails = options.workspaceStatusSnapshot.timelineWarningDetails || [];
     const matchingDetails = warningDetails.filter((detail) => detail.task_id === options.taskId);
@@ -293,7 +293,12 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const hasCompletionPassEvent = events.some((event) => String(event.event_type || '').trim().toUpperCase() === 'COMPLETION_GATE_PASSED');
     const projectMemoryImpactRequired = projectMemoryImpactEvidence.required
         && (!hasCompletionPassEvent || hasCurrentProjectMemoryImpactEvent);
-    const workspaceStatusSnapshot = getStatusSnapshot(repoRoot, undefined, options.taskQueueEntries);
+    const workspaceStatusSnapshot = getTaskCycleStatusSnapshot(
+        repoRoot,
+        safeTaskId,
+        undefined,
+        options.taskQueueEntries
+    );
     const lifecycleGates = getLifecycleGates(fullSuiteValidationRequiredForLifecycle, projectMemoryImpactRequired);
     let integrityStatus: string;
     if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {

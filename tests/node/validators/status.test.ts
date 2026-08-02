@@ -6,6 +6,7 @@ import * as os from 'node:os';
 
 import {
     getStatusSnapshot,
+    getTaskCycleStatusSnapshot,
     formatStatusSnapshot,
     formatStatusSnapshotCompact,
     resolveInitAnswersPath
@@ -1198,6 +1199,75 @@ test('getStatusSnapshot summarizes toxin metrics without creating metrics.jsonl'
         assert.ok(snapshot.toxinMetricsSummary!.runtime_total_bytes > 0);
         assert.equal(fs.existsSync(metricsPath), false);
     } finally {
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
+test('getTaskCycleStatusSnapshot preserves routing fields and skips toxin traversal on cold and warm reads', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-cycle-status-'));
+    const fsModule = require('node:fs') as typeof import('node:fs');
+    const originalReaddirSync = fsModule.readdirSync;
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-001 | 🟨 IN_PROGRESS | P1 | runtime | Current task | codex | 2026-08-02 | balanced | partial lifecycle |',
+                '| T-OTHER | 🟨 IN_PROGRESS | P2 | runtime | Other task | codex | 2026-08-02 | balanced | partial lifecycle |'
+            ]),
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
+        writeIntegrityTaskModeEvent(path.join(eventsRoot, 'T-001.jsonl'), 'T-001');
+        writeIntegrityTaskModeEvent(path.join(eventsRoot, 'T-OTHER.jsonl'), 'T-OTHER');
+        const toxinRoot = path.join(bundlePath, 'runtime', 'backups');
+        for (let index = 0; index < 20; index++) {
+            writeStatusFixtureFile(path.join(toxinRoot, `batch-${index}`, 'artifact.json'), '{}\n');
+        }
+
+        let narrowTraversalCount = 0;
+        let fullTraversalCount = 0;
+        let phase: 'narrow' | 'full' = 'narrow';
+        fsModule.readdirSync = ((targetPath: fs.PathLike, options?: unknown) => {
+            const resolvedPath = path.resolve(String(targetPath));
+            if (resolvedPath === path.resolve(toxinRoot) || resolvedPath.startsWith(`${path.resolve(toxinRoot)}${path.sep}`)) {
+                if (phase === 'narrow') narrowTraversalCount++;
+                else fullTraversalCount++;
+            }
+            return originalReaddirSync(targetPath, options as never);
+        }) as typeof fsModule.readdirSync;
+
+        const cold = getTaskCycleStatusSnapshot(tmpDir, 'T-001');
+        const warm = getTaskCycleStatusSnapshot(tmpDir, 'T-001');
+        phase = 'full';
+        const full = getStatusSnapshot(tmpDir);
+
+        assert.equal(narrowTraversalCount, 0);
+        assert.ok(fullTraversalCount > 0, 'control snapshot should traverse the seeded toxin root');
+        assert.deepEqual(warm, cold);
+        assert.equal(cold.readyForTasks, full.readyForTasks);
+        assert.equal(cold.enforceNoAutoCommit, full.enforceNoAutoCommit);
+        assert.equal(cold.assistantLanguage, full.assistantLanguage);
+        assert.equal(cold.assistantLanguageConfirmed, full.assistantLanguageConfirmed);
+        assert.equal(cold.recommendedNextCommand, full.recommendedNextCommand);
+        assert.equal(cold.latestUpdateNotice, full.latestUpdateNotice);
+        assert.deepEqual(cold.timelineWarningDetails.map((detail) => detail.task_id), ['T-001']);
+        assert.deepEqual(
+            full.timelineWarningDetails?.map((detail) => detail.task_id).sort(),
+            ['T-001', 'T-OTHER']
+        );
+    } finally {
+        fsModule.readdirSync = originalReaddirSync;
         cleanupStatusTempDir(tmpDir);
     }
 });
