@@ -1,4 +1,8 @@
 import { matchAnyRegex } from '../../gate-runtime/text-utils';
+import {
+    readStagedBlobFingerprints,
+    type StagedBlobFingerprints
+} from '../../core/staged-index-fingerprints';
 import { buildScopeContentFingerprint } from '../compile/compile-gate';
 import {
     DOMAIN_SCOPE_NAMES,
@@ -75,11 +79,17 @@ function buildScopeFingerprintEntry(
     repoRoot: string,
     detectionSource: string,
     includeUntracked: boolean,
-    domainFiles: string[]
+    domainFiles: string[],
+    stagedBlobFingerprints?: StagedBlobFingerprints
 ): DomainScopeFingerprintEntry {
     const changedFiles = [...new Set(domainFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
     const changedFilesSha256 = stringSha256(changedFiles.join('\n'));
-    const scopeContentSha256 = buildScopeContentFingerprint(repoRoot, detectionSource, changedFiles);
+    const scopeContentSha256 = buildScopeContentFingerprint(
+        repoRoot,
+        detectionSource,
+        changedFiles,
+        stagedBlobFingerprints
+    );
     const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(detectionSource);
     return {
         changed_files: changedFiles,
@@ -110,6 +120,9 @@ export function buildDomainScopeFingerprints(options: {
     const includeUntracked = options.includeUntracked === true;
     const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(detectionSource);
     const changedFiles = [...new Set(options.changedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
+    const stagedBlobFingerprints = useStaged
+        ? readStagedBlobFingerprints(options.repoRoot, changedFiles)
+        : undefined;
     const classificationConfig = options.classificationConfig || getClassificationConfig(options.repoRoot);
     const byDomain = new Map<DomainScopeName, string[]>(
         DOMAIN_SCOPE_NAMES.map((domain) => [domain, []])
@@ -120,7 +133,13 @@ export function buildDomainScopeFingerprints(options: {
     const domains = Object.fromEntries(
         DOMAIN_SCOPE_NAMES.map((domain) => [
             domain,
-            buildScopeFingerprintEntry(options.repoRoot, detectionSource, includeUntracked, byDomain.get(domain) || [])
+            buildScopeFingerprintEntry(
+                options.repoRoot,
+                detectionSource,
+                includeUntracked,
+                byDomain.get(domain) || [],
+                stagedBlobFingerprints
+            )
         ])
     ) as Record<DomainScopeName, DomainScopeFingerprintEntry>;
     const fingerprints: DomainScopeFingerprints = {
@@ -144,19 +163,22 @@ export function buildDomainScopeFingerprints(options: {
     fingerprints.legacy.review_scope_sha256 = computeReviewRelevantScopeFingerprint(
         legacyPreflight,
         options.repoRoot,
-        classificationConfig
+        classificationConfig,
+        stagedBlobFingerprints
     ).review_scope_sha256;
     fingerprints.legacy.non_test_review_scope_sha256 = computeReviewReuseCodeScopeFingerprint(
         'security',
         legacyPreflight,
         options.repoRoot,
-        classificationConfig
+        classificationConfig,
+        stagedBlobFingerprints
     ).code_scope_sha256;
     fingerprints.legacy.code_review_scope_sha256 = computeReviewReuseCodeScopeFingerprint(
         'code',
         legacyPreflight,
         options.repoRoot,
-        classificationConfig
+        classificationConfig,
+        stagedBlobFingerprints
     ).code_scope_sha256;
     fingerprints.legacy.code_scope_sha256 = fingerprints.legacy.code_review_scope_sha256;
     return fingerprints;

@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    buildScopeContentFingerprint,
     getCompileCommandProfile,
     getCompileCommands,
     getCompileCommandContractViolations,
@@ -13,7 +14,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../../src/core/constants';
-import { initGitRepo } from '../git-fixtures';
+import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
 
 describe('gates/compile-gate', () => {
     describe('getCompileCommandProfile', () => {
@@ -371,6 +372,40 @@ describe('gates/compile-gate', () => {
                 assert.equal(snapshot.changed_files_count, 1);
             } finally {
                 fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+    });
+
+    describe('buildScopeContentFingerprint', () => {
+        it('keeps staged content stable until the index changes', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-staged-fingerprint-'));
+            const trackedPath = path.join(repoRoot, 'src', 'app.ts');
+            try {
+                fs.mkdirSync(path.dirname(trackedPath), { recursive: true });
+                fs.writeFileSync(trackedPath, 'export const value = "baseline";\n', 'utf8');
+                initGitRepo(repoRoot);
+
+                fs.writeFileSync(trackedPath, 'export const value = "alpha";\n', 'utf8');
+                runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+                const stagedAlpha = buildScopeContentFingerprint(
+                    repoRoot,
+                    'git_staged_only',
+                    ['src/app.ts']
+                );
+
+                fs.writeFileSync(trackedPath, 'export const value = "bravo";\n', 'utf8');
+                assert.equal(
+                    buildScopeContentFingerprint(repoRoot, 'git_staged_only', ['src/app.ts']),
+                    stagedAlpha
+                );
+
+                runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+                assert.notEqual(
+                    buildScopeContentFingerprint(repoRoot, 'git_staged_only', ['src/app.ts']),
+                    stagedAlpha
+                );
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
             }
         });
     });

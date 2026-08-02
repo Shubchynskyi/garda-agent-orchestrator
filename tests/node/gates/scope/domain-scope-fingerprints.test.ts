@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -14,7 +16,62 @@ import {
 } from '../../../../src/gates/review-reuse';
 import { getClassificationConfig } from '../../../../src/gates/preflight/classify-change';
 
+type GitHelpersModule = typeof import('../../../../src/core/git-helpers');
+
+function runGit(repoRoot: string, args: string[]): void {
+    const result = childProcess.spawnSync('git', ['-C', repoRoot, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+    assert.equal(result.status, 0, String(result.stderr || result.error || 'git command failed'));
+}
+
 describe('gates/domain-scope-fingerprints', () => {
+    it('shares one staged-index read across domain and legacy fingerprints', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-domain-scope-staged-batch-'));
+        try {
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            const changedFiles = Array.from({ length: 20 }, (_, index) => `src/file-${index}.ts`);
+            for (const changedFile of changedFiles) {
+                fs.writeFileSync(path.join(repoRoot, changedFile), `export const source = "${changedFile}";\n`, 'utf8');
+            }
+            runGit(repoRoot, ['add', 'src']);
+
+            const requireForPatch = createRequire(__filename);
+            const gitHelpers = requireForPatch('../../../../src/core/git-helpers') as {
+                runGitBinary: GitHelpersModule['runGitBinary'];
+            };
+            const originalRunGitBinary = gitHelpers.runGitBinary;
+            let stagedIndexReadCount = 0;
+            let fingerprints: ReturnType<typeof buildDomainScopeFingerprints> | null = null;
+            try {
+                gitHelpers.runGitBinary = ((root, args, options) => {
+                    if (args[0] === 'ls-files' && args.includes('--stage') && args.includes('-z')) {
+                        stagedIndexReadCount += 1;
+                    }
+                    return originalRunGitBinary(root, args, options);
+                }) as GitHelpersModule['runGitBinary'];
+                fingerprints = buildDomainScopeFingerprints({
+                    repoRoot,
+                    detectionSource: 'git_staged_only',
+                    includeUntracked: false,
+                    changedFiles
+                });
+            } finally {
+                gitHelpers.runGitBinary = originalRunGitBinary;
+            }
+
+            assert.equal(stagedIndexReadCount, 1);
+            assert.ok(fingerprints);
+            assert.equal(fingerprints.domains.implementation.changed_files_count, changedFiles.length);
+            assert.match(fingerprints.domains.implementation.scope_content_sha256 || '', /^[0-9a-f]{64}$/u);
+            assert.match(fingerprints.legacy.review_scope_sha256 || '', /^[0-9a-f]{64}$/u);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('preserves legacy closeout-aware review scope hashes', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-domain-scope-closeout-'));
         try {

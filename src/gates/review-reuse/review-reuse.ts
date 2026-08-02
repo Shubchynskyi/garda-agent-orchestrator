@@ -4,6 +4,10 @@ import * as path from 'node:path';
 
 import { matchAnyRegex } from '../../gate-runtime/text-utils';
 import {
+    readStagedBlobFingerprints,
+    type StagedBlobFingerprints
+} from '../../core/staged-index-fingerprints';
+import {
     getClassificationConfig,
     isSafeOrdinaryDocumentationPath,
     type ResolvedClassificationConfig
@@ -475,7 +479,8 @@ function isAllowedManualValidationEvidenceTail(tail: string): boolean {
 function collectReviewReuseNeutralEvidenceFiles(
     preflight: Record<string, unknown>,
     repoRoot: string,
-    allChangedFiles: readonly string[]
+    allChangedFiles: readonly string[],
+    stagedBlobFingerprints?: StagedBlobFingerprints
 ): string[] {
     return allChangedFiles
         .filter((filePath) => {
@@ -484,7 +489,7 @@ function collectReviewReuseNeutralEvidenceFiles(
                 return false;
             }
             if (usesStagedContent(preflight)) {
-                const stagedFingerprint = getStagedBlobFingerprint(repoRoot, filePath);
+                const stagedFingerprint = stagedBlobFingerprints?.get(filePath) || null;
                 if (stagedFingerprint) {
                     const stagedMode = stagedFingerprint.split(':')[1];
                     return stagedMode === '100644' || stagedMode === '100755';
@@ -504,39 +509,14 @@ function collectReviewReuseNeutralCloseoutFiles(allChangedFiles: readonly string
         .sort();
 }
 
-function getStagedBlobFingerprint(repoRoot: string, relativePath: string): string | null {
-    try {
-        const result = childProcess.spawnSync('git', ['ls-files', '-s', '--', `:(literal)${relativePath}`], {
-            cwd: repoRoot,
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe'],
-            windowsHide: true,
-            timeout: 30_000
-        });
-        if (result.status !== 0) {
-            return null;
-        }
-        const firstLine = String(result.stdout || '').split(/\r?\n/).find((line) => line.trim());
-        if (!firstLine) {
-            return null;
-        }
-        const match = /^(\d+)\s+([0-9a-f]{40,64})\s+\d+\t/.exec(firstLine);
-        if (!match || !match[1] || !match[2]) {
-            return null;
-        }
-        return `staged:${match[1]}:${match[2].toLowerCase()}`;
-    } catch {
-        return null;
-    }
-}
-
 function getScopedContentFingerprint(
     repoRoot: string,
     preflight: Record<string, unknown>,
-    relativePath: string
+    relativePath: string,
+    stagedBlobFingerprints?: StagedBlobFingerprints
 ): { fingerprint: string | null; missing: boolean } {
     if (usesStagedContent(preflight)) {
-        const stagedFingerprint = getStagedBlobFingerprint(repoRoot, relativePath);
+        const stagedFingerprint = stagedBlobFingerprints?.get(relativePath) || null;
         if (stagedFingerprint) {
             return { fingerprint: stagedFingerprint, missing: false };
         }
@@ -596,6 +576,7 @@ function computeCodeReviewScopeFingerprintInternal(
     options: {
         excludeNonRuntimePerformanceSupportFiles?: boolean;
         classificationConfig?: ResolvedClassificationConfig;
+        stagedBlobFingerprints?: StagedBlobFingerprints;
     } = {}
 ): CodeReviewScopeFingerprint {
     const classificationConfig = resolveReviewReuseClassificationConfig(
@@ -606,6 +587,9 @@ function computeCodeReviewScopeFingerprintInternal(
     const allChangedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
+    const stagedBlobFingerprints = usesStagedContent(preflight)
+        ? options.stagedBlobFingerprints || readStagedBlobFingerprints(repoRoot, allChangedFiles)
+        : undefined;
     const testChangedFiles = allChangedFiles.filter((filePath) => matchAnyRegex(filePath, classificationConfig.test_trigger_regexes, {
         skipInvalidRegex: true,
         caseInsensitive: true
@@ -622,7 +606,12 @@ function computeCodeReviewScopeFingerprintInternal(
         options.excludeNonRuntimePerformanceSupportFiles ? performanceSupportChangedFiles : []
     );
     const reviewReuseNeutralConfigSet = new Set(reviewReuseNeutralConfigFiles);
-    const reviewReuseNeutralEvidenceFiles = collectReviewReuseNeutralEvidenceFiles(preflight, repoRoot, allChangedFiles);
+    const reviewReuseNeutralEvidenceFiles = collectReviewReuseNeutralEvidenceFiles(
+        preflight,
+        repoRoot,
+        allChangedFiles,
+        stagedBlobFingerprints
+    );
     const reviewReuseNeutralEvidenceSet = new Set(reviewReuseNeutralEvidenceFiles);
     const reviewReuseNeutralCloseoutFiles = collectReviewReuseNeutralCloseoutFiles(allChangedFiles);
     const reviewReuseNeutralCloseoutSet = new Set(reviewReuseNeutralCloseoutFiles);
@@ -637,7 +626,12 @@ function computeCodeReviewScopeFingerprintInternal(
     const sortedNonTestFiles = [...nonTestChangedFiles].sort();
     const missingNonTestFiles: string[] = [];
     const fingerprintEntries = sortedNonTestFiles.map((relativePath) => {
-        const scopedFingerprint = getScopedContentFingerprint(repoRoot, preflight, relativePath);
+        const scopedFingerprint = getScopedContentFingerprint(
+            repoRoot,
+            preflight,
+            relativePath,
+            stagedBlobFingerprints
+        );
         if (scopedFingerprint.missing) {
             missingNonTestFiles.push(relativePath);
         }
@@ -670,19 +664,22 @@ export function computeReviewReuseCodeScopeFingerprint(
     reviewType: string,
     preflight: Record<string, unknown>,
     repoRoot: string,
-    classificationConfig?: ResolvedClassificationConfig
+    classificationConfig?: ResolvedClassificationConfig,
+    stagedBlobFingerprints?: StagedBlobFingerprints
 ): CodeReviewScopeFingerprint {
     const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
     return computeCodeReviewScopeFingerprintInternal(preflight, repoRoot, {
         excludeNonRuntimePerformanceSupportFiles: normalizedReviewType === 'code',
-        classificationConfig
+        classificationConfig,
+        stagedBlobFingerprints
     });
 }
 
 export function computeReviewRelevantScopeFingerprint(
     preflight: Record<string, unknown>,
     repoRoot: string,
-    classificationConfig?: ResolvedClassificationConfig
+    classificationConfig?: ResolvedClassificationConfig,
+    stagedBlobFingerprints?: StagedBlobFingerprints
 ): ReviewRelevantScopeFingerprint {
     const resolvedClassificationConfig = resolveReviewReuseClassificationConfig(
         preflight,
@@ -692,6 +689,9 @@ export function computeReviewRelevantScopeFingerprint(
     const allChangedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
+    const resolvedStagedBlobFingerprints = usesStagedContent(preflight)
+        ? stagedBlobFingerprints || readStagedBlobFingerprints(repoRoot, allChangedFiles)
+        : undefined;
     const docsOnlyChangedFiles = allChangedFiles.filter((filePath) => (
         isSafeOrdinaryDocumentationPath(filePath, resolvedClassificationConfig)
         && !isCloseoutEvidencePath(filePath)
@@ -709,7 +709,12 @@ export function computeReviewRelevantScopeFingerprint(
     const sortedReviewRelevantFiles = [...reviewRelevantFiles].sort();
     const missingReviewRelevantFiles: string[] = [];
     const fingerprintEntries = sortedReviewRelevantFiles.map((relativePath) => {
-        const scopedFingerprint = getScopedContentFingerprint(repoRoot, preflight, relativePath);
+        const scopedFingerprint = getScopedContentFingerprint(
+            repoRoot,
+            preflight,
+            relativePath,
+            resolvedStagedBlobFingerprints
+        );
         if (scopedFingerprint.missing) {
             missingReviewRelevantFiles.push(relativePath);
         }

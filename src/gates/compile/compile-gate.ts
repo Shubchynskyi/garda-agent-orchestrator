@@ -4,6 +4,10 @@ import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../core/constants';
 import { stringSha256, normalizePath, joinOrchestratorPath } from '../shared/helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import {
+    readStagedBlobFingerprints,
+    type StagedBlobFingerprints
+} from '../../core/staged-index-fingerprints';
+import {
     buildGitChangeClassificationEvidence,
     classifyGitChanges,
     normalizeGitRepoRelativePath,
@@ -397,30 +401,6 @@ export function extractNewPathFromNumstat(pathSpec: string): string {
     return pathSpec.substring(arrowIndex + 4);
 }
 
-function getStagedBlobFingerprint(repoRoot: string, relativePath: string): string | null {
-    try {
-        const result = spawnSyncWithTimeout('git', ['-C', String(repoRoot), 'ls-files', '-s', '--', `:(literal)${relativePath}`], {
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe'],
-            timeoutMs: DEFAULT_GIT_TIMEOUT_MS
-        });
-        if (result.status !== 0 || result.timedOut || result.error) {
-            return null;
-        }
-        const firstLine = String(result.stdout || '').split(/\r?\n/).find((line) => line.trim());
-        if (!firstLine) {
-            return null;
-        }
-        const match = /^(\d+)\s+([0-9a-f]{40,64})\s+\d+\t/.exec(firstLine);
-        if (!match || !match[1] || !match[2]) {
-            return null;
-        }
-        return `staged:${match[1]}:${match[2].toLowerCase()}`;
-    } catch {
-        return null;
-    }
-}
-
 function getWorktreeContentFingerprint(repoRoot: string, relativePath: string): string {
     const normalized = normalizePath(relativePath);
     if (!normalized) {
@@ -463,7 +443,12 @@ function getWorktreeContentFingerprint(repoRoot: string, relativePath: string): 
     }
 }
 
-export function buildScopeContentFingerprint(repoRoot: string, source: string, changedFiles: string[]): string | null {
+export function buildScopeContentFingerprint(
+    repoRoot: string,
+    source: string,
+    changedFiles: string[],
+    stagedBlobFingerprints?: StagedBlobFingerprints
+): string | null {
     if (parseSplitCheckpointDetectionSource(source)) {
         if (changedFiles.length === 0) {
             return stringSha256('');
@@ -471,11 +456,15 @@ export function buildScopeContentFingerprint(repoRoot: string, source: string, c
         return getSplitCheckpointWorkspaceSnapshot(repoRoot, source, changedFiles).scope_content_sha256;
     }
     const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(source);
-    const fingerprintEntries = [...new Set(changedFiles.map((entry) => normalizePath(entry)).filter(Boolean))]
-        .sort()
+    const normalizedChangedFiles = [...new Set(changedFiles.map((entry) => normalizePath(entry)).filter(Boolean))]
+        .sort();
+    const resolvedStagedBlobFingerprints = useStaged
+        ? stagedBlobFingerprints || readStagedBlobFingerprints(repoRoot, normalizedChangedFiles)
+        : undefined;
+    const fingerprintEntries = normalizedChangedFiles
         .map((relativePath) => {
             const stagedFingerprint = useStaged
-                ? getStagedBlobFingerprint(repoRoot, relativePath)
+                ? resolvedStagedBlobFingerprints?.get(relativePath) || null
                 : null;
             return `${relativePath}:${stagedFingerprint || getWorktreeContentFingerprint(repoRoot, relativePath)}`;
         });
