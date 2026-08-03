@@ -26,7 +26,9 @@ import {
 } from './next-step-command-formatters';
 import {
     getWorkspaceSnapshotCached,
-    type WorkspaceSnapshot
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshot,
+    type WorkspaceSnapshotRequest
 } from '../workspace/workspace-snapshot-cache';
 import {
     evaluateStagedPostDoneAuditedScope,
@@ -251,18 +253,24 @@ export function readPostDoneWorkspaceDriftDecision(
     repoRoot: string,
     preflight: Record<string, unknown> | null,
     docImpactPath: string,
-    finalCloseoutJsonPath: string
+    finalCloseoutJsonPath: string,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): PostDoneWorkspaceDriftDecision {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     if (!preflight) {
         return { blocked: false, reason: 'No preflight is available for post-DONE drift comparison.' };
     }
 
     let currentSnapshot: WorkspaceSnapshot & { cache_hit: boolean };
     try {
-        currentSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], {
-            noCache: true,
-            readOnly: true
-        });
+        currentSnapshot = authenticatedWorkspaceSnapshotRequest
+            ? authenticatedWorkspaceSnapshotRequest.read('git_auto', true, [])
+            : getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], {
+                noCache: true,
+                readOnly: true
+            });
     } catch (error) {
         const gitMetadataPath = path.join(repoRoot, '.git');
         if (!fs.existsSync(gitMetadataPath)) {
@@ -304,7 +312,8 @@ export function readPostDoneWorkspaceDriftDecision(
         repoRoot,
         auditedFiles: auditedChangedFiles,
         currentChangedFiles,
-        finalCloseoutJsonPath
+        finalCloseoutJsonPath,
+        workspaceSnapshotRequest: authenticatedWorkspaceSnapshotRequest
     });
     if (stagedScopeDecision) {
         return stagedScopeDecision.blocked
@@ -329,7 +338,8 @@ export function readPostDoneWorkspaceDriftDecision(
             currentAuditedScope = readPostDoneAuditedScopeFingerprint(
                 repoRoot,
                 auditedChangedFiles,
-                implementationSummary
+                implementationSummary,
+                authenticatedWorkspaceSnapshotRequest
             );
         } catch (error) {
             return {
@@ -366,7 +376,8 @@ export function readPostDoneWorkspaceDriftDecision(
 
     const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
         docImpactPath,
-        allowDocsOnlyDelta: false
+        allowDocsOnlyDelta: false,
+        workspaceSnapshotRequest: authenticatedWorkspaceSnapshotRequest
     });
     if (readiness.ready) {
         return { blocked: false, reason: readiness.reason };

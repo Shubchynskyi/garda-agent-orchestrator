@@ -5,7 +5,11 @@ import { buildBundleRelativePath } from '../../core/constants';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from '../preflight/classify-change';
 import { buildScopeContentFingerprint } from '../compile/compile-gate';
-import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
+import {
+    getWorkspaceSnapshotCached,
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
+} from '../workspace/workspace-snapshot-cache';
 import {
     detectProtectedDirtyWorkspaceDrift,
     getProtectedDirtyWorkspaceScopeFromPreflight
@@ -160,7 +164,11 @@ function readUnstagedChangedFiles(repoRoot: string, auditedFiles: string[]): str
 function evaluateCloseoutExtraScope(options: {
     repoRoot: string;
     provenance: Record<string, unknown> | null;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }): StagedPostDoneScopeDecision | null {
+    const authenticatedWorkspaceSnapshotRequest = options.workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(options.repoRoot, options.workspaceSnapshotRequest)
+        : undefined;
     const extraScope = options.provenance?.closeout_extra_scope;
     if (!extraScope || typeof extraScope !== 'object' || Array.isArray(extraScope)) {
         return null;
@@ -178,10 +186,12 @@ function evaluateCloseoutExtraScope(options: {
 
     let currentExtraSnapshot: ReturnType<typeof getWorkspaceSnapshotCached>;
     try {
-        currentExtraSnapshot = getWorkspaceSnapshotCached(options.repoRoot, 'explicit_changed_files', true, extraFiles, {
-            noCache: true,
-            readOnly: true
-        });
+        currentExtraSnapshot = authenticatedWorkspaceSnapshotRequest
+            ? authenticatedWorkspaceSnapshotRequest.read('explicit_changed_files', true, extraFiles)
+            : getWorkspaceSnapshotCached(options.repoRoot, 'explicit_changed_files', true, extraFiles, {
+                noCache: true,
+                readOnly: true
+            });
     } catch (error) {
         return {
             blocked: true,
@@ -217,7 +227,11 @@ export function evaluateStagedPostDoneAuditedScope(options: {
     auditedFiles: string[];
     currentChangedFiles: string[];
     finalCloseoutJsonPath: string;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }): StagedPostDoneScopeDecision | null {
+    const authenticatedWorkspaceSnapshotRequest = options.workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(options.repoRoot, options.workspaceSnapshotRequest)
+        : undefined;
     const provenance = readFinalCloseoutAuditedScopeProvenance(options.finalCloseoutJsonPath);
     if (!isStagedScopeProvenance(provenance)) {
         return null;
@@ -264,7 +278,8 @@ export function evaluateStagedPostDoneAuditedScope(options: {
     }
     const extraScopeDecision = evaluateCloseoutExtraScope({
         repoRoot: options.repoRoot,
-        provenance
+        provenance,
+        workspaceSnapshotRequest: authenticatedWorkspaceSnapshotRequest
     });
     if (extraScopeDecision?.blocked) {
         return extraScopeDecision;
@@ -276,10 +291,12 @@ export function evaluateStagedPostDoneAuditedScope(options: {
         : detectionSource !== 'git_staged_only';
     let stagedSnapshot: ReturnType<typeof getWorkspaceSnapshotCached>;
     try {
-        stagedSnapshot = getWorkspaceSnapshotCached(options.repoRoot, detectionSource, includeUntracked, [], {
-            noCache: true,
-            readOnly: true
-        });
+        stagedSnapshot = authenticatedWorkspaceSnapshotRequest
+            ? authenticatedWorkspaceSnapshotRequest.read(detectionSource, includeUntracked, [])
+            : getWorkspaceSnapshotCached(options.repoRoot, detectionSource, includeUntracked, [], {
+                noCache: true,
+                readOnly: true
+            });
     } catch (error) {
         return {
             blocked: true,
@@ -338,14 +355,20 @@ export function buildPostDoneWorkspaceDriftBlocker(
     auditedChangedFiles: string[],
     preflightChangedFiles: string[],
     preflight: Record<string, unknown> | null,
-    finalCloseoutJsonPath: string
+    finalCloseoutJsonPath: string,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): BlockerEntry | null {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     let currentChangedFiles: string[];
     try {
-        currentChangedFiles = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], {
-            noCache: true,
-            readOnly: true
-        }).changed_files.map((entry) => toPosix(entry)).filter(Boolean);
+        currentChangedFiles = (authenticatedWorkspaceSnapshotRequest
+            ? authenticatedWorkspaceSnapshotRequest.read('git_auto', true, [])
+            : getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], {
+                noCache: true,
+                readOnly: true
+            })).changed_files.map((entry) => toPosix(entry)).filter(Boolean);
     } catch (error) {
         const gitMetadataPath = path.join(repoRoot, '.git');
         if (!fs.existsSync(gitMetadataPath)) {
@@ -386,7 +409,8 @@ export function buildPostDoneWorkspaceDriftBlocker(
         repoRoot,
         auditedFiles: [...auditedSet].sort(),
         currentChangedFiles,
-        finalCloseoutJsonPath
+        finalCloseoutJsonPath,
+        workspaceSnapshotRequest: authenticatedWorkspaceSnapshotRequest
     });
     if (stagedScopeDecision) {
         return stagedScopeDecision.blocked
@@ -396,7 +420,8 @@ export function buildPostDoneWorkspaceDriftBlocker(
     const auditedScopeBlocker = buildPostDoneAuditedScopeDriftBlocker(
         repoRoot,
         [...auditedSet].sort(),
-        finalCloseoutJsonPath
+        finalCloseoutJsonPath,
+        authenticatedWorkspaceSnapshotRequest
     );
     if (auditedScopeBlocker) {
         return auditedScopeBlocker;
@@ -409,7 +434,8 @@ export function buildPostDoneWorkspaceDriftBlocker(
         auditedChangedFiles,
         preflightChangedFiles,
         preflight,
-        finalCloseoutJsonPath
+        finalCloseoutJsonPath,
+        authenticatedWorkspaceSnapshotRequest
     );
 }
 
@@ -426,9 +452,21 @@ export interface PostDoneAuditedScopeFingerprint {
 
 export function buildPostDoneAuditedScopeFingerprint(
     repoRoot: string,
-    auditedFiles: string[]
+    auditedFiles: string[],
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): PostDoneAuditedScopeFingerprint {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     const changedFiles = [...new Set(auditedFiles.map((entry) => toPosix(entry)).filter(Boolean))].sort();
+    if (authenticatedWorkspaceSnapshotRequest) {
+        const snapshot = authenticatedWorkspaceSnapshotRequest.read('explicit_changed_files', true, changedFiles);
+        return {
+            changed_files: snapshot.changed_files,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256
+        };
+    }
     return {
         changed_files: changedFiles,
         changed_files_sha256: stringSha256(changedFiles.join('\n')),
@@ -439,8 +477,12 @@ export function buildPostDoneAuditedScopeFingerprint(
 export function readPostDoneAuditedScopeFingerprint(
     repoRoot: string,
     auditedFiles: string[],
-    implementationSummary: Record<string, unknown> | null
+    implementationSummary: Record<string, unknown> | null,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): PostDoneAuditedScopeFingerprint {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     const normalizedAuditedFiles = normalizeChangedFiles(auditedFiles);
     const recordedChangedFiles = normalizeChangedFiles(implementationSummary?.changed_files);
     const recordedChangedFilesSha256 = normalizeOptionalHash(implementationSummary?.changed_files_sha256);
@@ -449,15 +491,21 @@ export function readPostDoneAuditedScopeFingerprint(
         && recordedChangedFiles.length === normalizedAuditedFiles.length
         && recordedChangedFiles.every((entry, index) => entry === normalizedAuditedFiles[index]);
     if (recordedFileListIsAuthenticated) {
-        return buildPostDoneAuditedScopeFingerprint(repoRoot, normalizedAuditedFiles);
+        return buildPostDoneAuditedScopeFingerprint(
+            repoRoot,
+            normalizedAuditedFiles,
+            authenticatedWorkspaceSnapshotRequest
+        );
     }
-    const legacySnapshot = getWorkspaceSnapshotCached(
-        repoRoot,
-        'explicit_changed_files',
-        true,
-        normalizedAuditedFiles,
-        { noCache: true, readOnly: true }
-    );
+    const legacySnapshot = authenticatedWorkspaceSnapshotRequest
+        ? authenticatedWorkspaceSnapshotRequest.read('explicit_changed_files', true, normalizedAuditedFiles)
+        : getWorkspaceSnapshotCached(
+            repoRoot,
+            'explicit_changed_files',
+            true,
+            normalizedAuditedFiles,
+            { noCache: true, readOnly: true }
+        );
     return {
         changed_files: legacySnapshot.changed_files,
         changed_files_sha256: legacySnapshot.changed_files_sha256,
@@ -518,12 +566,21 @@ function buildPostDoneSameScopeDriftBlocker(
     auditedChangedFiles: string[],
     preflightChangedFiles: string[],
     preflight: Record<string, unknown> | null,
-    finalCloseoutJsonPath: string
+    finalCloseoutJsonPath: string,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): BlockerEntry | null {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     const implementationFiles = [...new Set(preflightChangedFiles.map((entry) => toPosix(entry)).filter(Boolean))].sort();
     const auditedFiles = [...new Set(auditedChangedFiles.map((entry) => toPosix(entry)).filter(Boolean))].sort();
     if (implementationFiles.length === 0) {
-        return buildPostDoneAuditedScopeDriftBlocker(repoRoot, auditedFiles, finalCloseoutJsonPath);
+        return buildPostDoneAuditedScopeDriftBlocker(
+            repoRoot,
+            auditedFiles,
+            finalCloseoutJsonPath,
+            authenticatedWorkspaceSnapshotRequest
+        );
     }
     if (!preflight || typeof preflight !== 'object') {
         return null;
@@ -543,10 +600,12 @@ function buildPostDoneSameScopeDriftBlocker(
 
     let currentImplementationSnapshot: ReturnType<typeof getWorkspaceSnapshotCached>;
     try {
-        currentImplementationSnapshot = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, implementationFiles, {
-            noCache: true,
-            readOnly: true
-        });
+        currentImplementationSnapshot = authenticatedWorkspaceSnapshotRequest
+            ? authenticatedWorkspaceSnapshotRequest.read('explicit_changed_files', true, implementationFiles)
+            : getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, implementationFiles, {
+                noCache: true,
+                readOnly: true
+            });
     } catch (error) {
         const gitMetadataPath = path.join(repoRoot, '.git');
         if (!fs.existsSync(gitMetadataPath)) {
@@ -570,7 +629,12 @@ function buildPostDoneSameScopeDriftBlocker(
     const lineCountChanged = Number.isFinite(expectedChangedLinesTotal)
         && currentImplementationSnapshot.changed_lines_total !== expectedChangedLinesTotal;
     if (!contentChanged && !lineCountChanged) {
-        return buildPostDoneAuditedScopeDriftBlocker(repoRoot, auditedFiles, finalCloseoutJsonPath);
+        return buildPostDoneAuditedScopeDriftBlocker(
+            repoRoot,
+            auditedFiles,
+            finalCloseoutJsonPath,
+            authenticatedWorkspaceSnapshotRequest
+        );
     }
 
     const details = [
@@ -589,8 +653,12 @@ function buildPostDoneSameScopeDriftBlocker(
 function buildPostDoneAuditedScopeDriftBlocker(
     repoRoot: string,
     auditedFiles: string[],
-    finalCloseoutJsonPath: string
+    finalCloseoutJsonPath: string,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): BlockerEntry | null {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     if (auditedFiles.length === 0) {
         return null;
     }
@@ -612,7 +680,8 @@ function buildPostDoneAuditedScopeDriftBlocker(
         currentAuditedSnapshot = readPostDoneAuditedScopeFingerprint(
             repoRoot,
             auditedFiles,
-            implementationSummary
+            implementationSummary,
+            authenticatedWorkspaceSnapshotRequest
         );
     } catch (error) {
         const gitMetadataPath = path.join(repoRoot, '.git');
@@ -659,12 +728,20 @@ export function isLocalControlPlaneCommitPath(filePath: string): boolean {
         || normalized === INTERNAL_CHANGELOG_PATH;
 }
 
-export function resolveCommittableChangedFiles(repoRoot: string): string[] | null {
+export function resolveCommittableChangedFiles(
+    repoRoot: string,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
+): string[] | null {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     try {
-        const currentWorkspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], {
-            noCache: true,
-            readOnly: true
-        });
+        const currentWorkspaceSnapshot = authenticatedWorkspaceSnapshotRequest
+            ? authenticatedWorkspaceSnapshotRequest.read('git_auto', true, [])
+            : getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], {
+                noCache: true,
+                readOnly: true
+            });
         const changedFiles = Array.isArray(currentWorkspaceSnapshot.changed_files)
             ? currentWorkspaceSnapshot.changed_files
             : [];

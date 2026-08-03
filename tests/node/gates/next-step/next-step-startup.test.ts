@@ -977,6 +977,14 @@ describe('gates/next-step startup routing', () => {
 
     it('routes workflow-config changes to workflow-config task-mode restart before classify-change', () => {
         const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow | Update workflow-config policy changes | gpt-5.4 | 2026-04-25 | balanced | Explicitly owns workflow-config policy changes. |`,
+            ''
+        ].join('\n'), 'utf8');
         fs.writeFileSync(
             path.join(repoRoot, 'package.json'),
             JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n',
@@ -1025,6 +1033,40 @@ describe('gates/next-step startup routing', () => {
         assert.equal(result.next_gate, 'classify-change', result.reason);
         assert.ok(result.commands[0].command.includes('gate classify-change'));
         assert.equal(result.commands[0].command.includes('--orchestrator-work'), false);
+    });
+
+    it('shares one Git snapshot across next-step audit and readiness consumers', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const sharedSnapshot = true;\n', 'utf8');
+
+        const childProcessModule = require('node:child_process') as typeof import('node:child_process');
+        const originalSpawnSync = childProcessModule.spawnSync;
+        const originalExecFileSync = childProcessModule.execFileSync;
+        const gitCommands: string[][] = [];
+        childProcessModule.spawnSync = ((command: string, args: string[], options: unknown) => {
+            if (command === 'git') gitCommands.push([...args]);
+            return originalSpawnSync(command, args, options as never);
+        }) as typeof originalSpawnSync;
+        childProcessModule.execFileSync = ((command: string, args: string[], options: unknown) => {
+            if (command === 'git') gitCommands.push([...args]);
+            return originalExecFileSync(command, args, options as never);
+        }) as typeof originalExecFileSync;
+        try {
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'classify-change', result.reason);
+            assert.equal(gitCommands.filter((args) => args.includes('status')).length, 1);
+            assert.equal(gitCommands.filter((args) => args.includes('config')).length, 1);
+            assert.equal(gitCommands.filter((args) => args.includes('--numstat')).length, 1);
+        } finally {
+            childProcessModule.spawnSync = originalSpawnSync;
+            childProcessModule.execFileSync = originalExecFileSync;
+        }
     });
 
     it('routes restarted task-mode cycles through fresh startup gates before reusing old preflight', () => {

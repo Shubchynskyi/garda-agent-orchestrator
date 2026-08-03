@@ -11,6 +11,7 @@ import {
     isOptionalQualityCheckRuleActiveForScope
 } from '../../../src/core/workflow-config';
 import { buildScopeContentFingerprint } from '../../../src/gates/compile/compile-gate';
+import { createWorkspaceSnapshotRequest } from '../../../src/gates/workspace/workspace-snapshot-cache';
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 import {
     buildBackupsTab,
@@ -280,13 +281,18 @@ function runGit(repoRoot: string, args: string[]): string {
     });
 }
 
-function patchPreflightScopeContent(preflightPath: string, repoRoot: string, changedFiles: string[]): void {
+function patchPreflightScopeContent(
+    preflightPath: string,
+    repoRoot: string,
+    changedFiles: string[],
+    detectionSource = 'git_auto'
+): void {
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as {
         metrics?: Record<string, string>;
     };
     preflight.metrics = {
         ...(preflight.metrics || {}),
-        scope_content_sha256: buildScopeContentFingerprint(repoRoot, 'git_auto', changedFiles) || ''
+        scope_content_sha256: buildScopeContentFingerprint(repoRoot, detectionSource, changedFiles) || ''
     };
     fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2));
 }
@@ -295,6 +301,7 @@ function writePreflight(repoRoot: string, taskId = 'T-100', options: {
     changedFiles?: string[];
     scopeSeed?: string;
     contentSeed?: string;
+    detectionSource?: string;
 } = {}): string {
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
     fs.mkdirSync(reviewsRoot, { recursive: true });
@@ -303,7 +310,7 @@ function writePreflight(repoRoot: string, taskId = 'T-100', options: {
     fs.writeFileSync(preflightPath, JSON.stringify({
         task_id: taskId,
         mode: 'FULL_PATH',
-        detection_source: 'explicit_changed_files',
+        detection_source: options.detectionSource || 'explicit_changed_files',
         changed_files: changedFiles,
         metrics: {
             changed_lines_total: 12,
@@ -1984,6 +1991,130 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.match(report.backups_tab.workflow_config_path, /workflow-config\.json$/u);
     assert.ok(report.tasks_tab.rows[0].detail.unavailable.some((entry) => entry.scope === 'task:T-100:detail'));
     assert.equal(report.unavailable.length, 0);
+});
+
+test('buildReportDataContract shares one Git snapshot across audit and quality consumers', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeProfilesConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    runGit(repoRoot, ['init']);
+    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.invalid']);
+    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGit(repoRoot, ['add', '.']);
+    runGit(repoRoot, ['commit', '-m', 'fixture']);
+    fs.appendFileSync(path.join(repoRoot, 'TASK.md'), '\n<!-- shared snapshot change -->\n', 'utf8');
+
+    const childProcessModule = require('node:child_process') as typeof import('node:child_process');
+    const originalSpawnSync = childProcessModule.spawnSync;
+    const originalExecFileSync = childProcessModule.execFileSync;
+    const gitCommands: string[][] = [];
+    childProcessModule.spawnSync = ((command: string, args: string[], options: unknown) => {
+        if (command === 'git') gitCommands.push([...args]);
+        return originalSpawnSync(command, args, options as never);
+    }) as typeof originalSpawnSync;
+    childProcessModule.execFileSync = ((command: string, args: string[], options: unknown) => {
+        if (command === 'git') gitCommands.push([...args]);
+        return originalExecFileSync(command, args, options as never);
+    }) as typeof originalExecFileSync;
+    try {
+        const report = buildReportDataContract({
+            repoRoot,
+            generatedAtUtc: '2026-05-16T00:00:00.000Z'
+        });
+
+        assert.equal(report.tasks_tab.rows.length, 2);
+        assert.equal(gitCommands.filter((args) => args.includes('status')).length, 1);
+        assert.equal(gitCommands.filter((args) => args.includes('config')).length, 1);
+        assert.equal(gitCommands.filter((args) => args.includes('--numstat')).length, 1);
+    } finally {
+        childProcessModule.spawnSync = originalSpawnSync;
+        childProcessModule.execFileSync = originalExecFileSync;
+    }
+});
+
+test('buildReportDataContract keeps report bindings on one frozen workspace generation', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeProfilesConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    runGit(repoRoot, ['init']);
+    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.invalid']);
+    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGit(repoRoot, ['add', '.']);
+    runGit(repoRoot, ['commit', '-m', 'fixture']);
+    fs.appendFileSync(path.join(repoRoot, 'TASK.md'), '\n<!-- generation A -->\n', 'utf8');
+    const preflightPath = writePreflight(repoRoot, 'T-100', { changedFiles: ['TASK.md'] });
+    patchPreflightScopeContent(preflightPath, repoRoot, ['TASK.md']);
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath
+    });
+
+    const workspaceSnapshotRequest = createWorkspaceSnapshotRequest(repoRoot);
+    workspaceSnapshotRequest.read('git_auto', true, []);
+    fs.appendFileSync(path.join(repoRoot, 'TASK.md'), '<!-- generation B -->\n', 'utf8');
+
+    const frozenReport = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z',
+        workspaceSnapshotRequest
+    });
+    const frozenTaskDetail = buildReportTaskDetail({
+        taskId: 'T-100',
+        repoRoot,
+        workspaceSnapshotRequest
+    });
+    assert.equal(frozenReport.quality_gate_tab.latest_check.evidence_status, 'current');
+    assert.equal(frozenTaskDetail?.quality_checklist.latest?.evidence_status, 'current');
+
+    const refreshedReport = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:04:00.000Z'
+    });
+    const refreshedTaskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+    assert.equal(refreshedReport.quality_gate_tab.latest_check.evidence_status, 'stale');
+    assert.equal(refreshedTaskDetail?.quality_checklist.latest?.evidence_status, 'stale');
+});
+
+test('buildReportDataContract preserves staged quality evidence after an unstaged edit to the same file', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeProfilesConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    runGit(repoRoot, ['init']);
+    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.invalid']);
+    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGit(repoRoot, ['add', '.']);
+    runGit(repoRoot, ['commit', '-m', 'fixture']);
+    fs.appendFileSync(path.join(repoRoot, 'TASK.md'), '\n<!-- staged generation -->\n', 'utf8');
+    runGit(repoRoot, ['add', 'TASK.md']);
+    const preflightPath = writePreflight(repoRoot, 'T-100', {
+        changedFiles: ['TASK.md'],
+        detectionSource: 'git_staged_only'
+    });
+    patchPreflightScopeContent(preflightPath, repoRoot, ['TASK.md'], 'git_staged_only');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath
+    });
+    fs.appendFileSync(path.join(repoRoot, 'TASK.md'), '<!-- later unstaged generation -->\n', 'utf8');
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:03:00.000Z'
+    });
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'current');
+    assert.equal(taskDetail?.quality_checklist.latest?.evidence_status, 'current');
 });
 
 test('buildReportDataContract uses companion effective scope budget metrics', () => {

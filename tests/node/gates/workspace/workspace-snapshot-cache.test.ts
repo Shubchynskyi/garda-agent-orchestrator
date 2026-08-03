@@ -7,14 +7,29 @@ import * as os from 'node:os';
 
 import * as gitChangeClassification from '../../../../src/core/git-change-classification';
 import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate';
+import { readCompileReadiness } from '../../../../src/gates/next-step/next-step-compile-readiness';
+import { readPreflightWorkspaceReadiness } from '../../../../src/gates/next-step/next-step-preflight-workspace-readiness';
+import {
+    buildDocsOnlyDeltaReadiness,
+    readCurrentGitWorkspaceSnapshot
+} from '../../../../src/gates/scope/docs-only-delta-readiness';
+import { buildFinalCloseoutArtifact } from '../../../../src/gates/task-audit/task-audit-summary-closeout-artifact';
+import {
+    buildPostDoneWorkspaceDriftBlocker,
+    evaluateStagedPostDoneAuditedScope,
+    resolveCommittableChangedFiles
+} from '../../../../src/gates/task-audit/task-audit-summary-drift';
+import { getCurrentWorkflowConfigChanges } from '../../../../src/gates/workflow-config/workflow-config-work-changes';
 import {
     computeSnapshotFingerprint,
+    createWorkspaceSnapshotRequest,
     getWorkspaceSnapshotCached,
     invalidateSnapshotCache,
     parseGitCachedRawDiffDeletedPaths,
     readHeadSha,
     readSnapshotCache,
     resolveSnapshotCachePath,
+    resolveWorkspaceSnapshotRequest,
     statGitIndex,
     writeSnapshotCache
 } from '../../../../src/gates/workspace/workspace-snapshot-cache';
@@ -161,6 +176,179 @@ describe('gates/workspace-snapshot-cache', () => {
     });
 
     describe('performance characterization', () => {
+        it('rejects mixed workspace generations across shared audit and report consumers', () => {
+            const childProcessModule = require('node:child_process') as typeof import('node:child_process');
+            const originalSpawnSync = childProcessModule.spawnSync;
+            const originalExecFileSync = childProcessModule.execFileSync;
+            const gitCommands: string[][] = [];
+            childProcessModule.spawnSync = ((command: string, args: string[], options: unknown) => {
+                if (command === 'git') gitCommands.push([...args]);
+                return originalSpawnSync(command, args, options as never);
+            }) as typeof originalSpawnSync;
+            childProcessModule.execFileSync = ((command: string, args: string[], options: unknown) => {
+                if (command === 'git') gitCommands.push([...args]);
+                return originalExecFileSync(command, args, options as never);
+            }) as typeof originalExecFileSync;
+            try {
+                fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+                const request = createWorkspaceSnapshotRequest(repoRoot);
+                const first = request.read('git_auto', true, []);
+                fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 3;\n', 'utf8');
+                const repeated = request.read('git_auto', true, []);
+
+                assert.strictEqual(repeated, first);
+                assert.equal(Object.isFrozen(first), true);
+                assert.equal(Object.isFrozen(first.changed_files), true);
+                assert.equal(repeated.scope_content_sha256, first.scope_content_sha256);
+                assert.equal(gitCommands.filter((args) => args.includes('status')).length, 1);
+                assert.equal(gitCommands.filter((args) => args.includes('config')).length, 1);
+                assert.equal(gitCommands.filter((args) => args.includes('--numstat')).length, 1);
+
+                const refreshed = createWorkspaceSnapshotRequest(repoRoot).read('git_auto', true, []);
+                assert.notEqual(refreshed.scope_content_sha256, first.scope_content_sha256);
+            } finally {
+                childProcessModule.spawnSync = originalSpawnSync;
+                childProcessModule.execFileSync = originalExecFileSync;
+            }
+        });
+
+        it('keys request snapshots by normalized staged and untracked parameters', () => {
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+            execFileSync('git', ['-C', repoRoot, 'add', 'file.ts'], { stdio: 'ignore' });
+            fs.writeFileSync(path.join(repoRoot, 'draft.ts'), 'export const draft = true;\n', 'utf8');
+            const request = createWorkspaceSnapshotRequest(repoRoot);
+
+            const withUntracked = request.read('git_auto', true, []);
+            const withoutUntracked = request.read('git_auto', false, []);
+            const stagedOnly = request.read('GIT_STAGED_ONLY', true, []);
+            const equivalentStagedOnly = request.read('git_staged_only', false, []);
+
+            assert.ok(withUntracked.changed_files.includes('draft.ts'));
+            assert.ok(!withoutUntracked.changed_files.includes('draft.ts'));
+            assert.notStrictEqual(withUntracked, withoutUntracked);
+            assert.strictEqual(stagedOnly, equivalentStagedOnly);
+            assert.deepEqual(stagedOnly.changed_files, ['file.ts']);
+        });
+
+        it('rejects foreign and forged workspace snapshot requests', () => {
+            const request = createWorkspaceSnapshotRequest(repoRoot);
+            assert.strictEqual(resolveWorkspaceSnapshotRequest(repoRoot, request), request);
+            const forgedRequest = {
+                repo_root: repoRoot,
+                read: request.read
+            };
+            const rejectsForgedRequest = /not factory-authenticated for the requested repository root/u;
+
+            const foreignTempDir = initTestRepo();
+            try {
+                const foreignRepoRoot = path.join(foreignTempDir, 'repo');
+                const foreignRequest = createWorkspaceSnapshotRequest(foreignRepoRoot);
+                assert.throws(
+                    () => resolveWorkspaceSnapshotRequest(repoRoot, foreignRequest),
+                    /not factory-authenticated for the requested repository root/u
+                );
+                assert.throws(
+                    () => resolveWorkspaceSnapshotRequest(repoRoot, forgedRequest),
+                    rejectsForgedRequest
+                );
+                assert.throws(
+                    () => readCompileReadiness(repoRoot, tempDir, tempDir, 'T-TEST', 'missing.json', forgedRequest),
+                    rejectsForgedRequest
+                );
+                assert.throws(
+                    () => readPreflightWorkspaceReadiness(repoRoot, {}, { workspaceSnapshotRequest: forgedRequest }),
+                    rejectsForgedRequest
+                );
+                assert.throws(
+                    () => buildDocsOnlyDeltaReadiness(
+                        repoRoot,
+                        [],
+                        [],
+                        0,
+                        true,
+                        'git_auto',
+                        '',
+                        '',
+                        [],
+                        null,
+                        forgedRequest
+                    ),
+                    rejectsForgedRequest
+                );
+                assert.throws(
+                    () => readCurrentGitWorkspaceSnapshot(repoRoot, true, forgedRequest),
+                    rejectsForgedRequest
+                );
+                assert.throws(
+                    () => buildFinalCloseoutArtifact({
+                        repoRoot,
+                        workspaceSnapshotRequest: forgedRequest
+                    } as Parameters<typeof buildFinalCloseoutArtifact>[0]),
+                    rejectsForgedRequest
+                );
+                assert.throws(
+                    () => buildPostDoneWorkspaceDriftBlocker(repoRoot, [], [], null, 'closeout.json', forgedRequest),
+                    rejectsForgedRequest
+                );
+                assert.throws(
+                    () => resolveCommittableChangedFiles(repoRoot, forgedRequest),
+                    rejectsForgedRequest
+                );
+                assert.throws(
+                    () => getCurrentWorkflowConfigChanges(repoRoot, null, { workspaceSnapshotRequest: forgedRequest }),
+                    rejectsForgedRequest
+                );
+            } finally {
+                cleanupTestRepo(foreignTempDir);
+            }
+        });
+
+        it('reuses the request snapshot in repeated staged post-DONE checks', () => {
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+            execFileSync('git', ['-C', repoRoot, 'add', 'file.ts'], { stdio: 'ignore' });
+            const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+            const closeoutPath = path.join(tempDir, 'closeout.json');
+            fs.writeFileSync(closeoutPath, JSON.stringify({
+                implementation_summary: {
+                    audited_scope_provenance: {
+                        use_staged: true,
+                        detection_source: 'git_staged_only',
+                        include_untracked: false,
+                        changed_files: stagedSnapshot.changed_files,
+                        changed_files_sha256: stagedSnapshot.changed_files_sha256,
+                        scope_content_sha256: stagedSnapshot.scope_content_sha256
+                    }
+                }
+            }), 'utf8');
+            const request = createWorkspaceSnapshotRequest(repoRoot);
+            const childProcessModule = require('node:child_process') as typeof import('node:child_process');
+            const originalSpawnSync = childProcessModule.spawnSync;
+            const gitCommands: string[][] = [];
+            childProcessModule.spawnSync = ((command: string, args: string[], options: unknown) => {
+                if (command === 'git') gitCommands.push([...args]);
+                return originalSpawnSync(command, args, options as never);
+            }) as typeof originalSpawnSync;
+            try {
+                const options = {
+                    repoRoot,
+                    auditedFiles: stagedSnapshot.changed_files,
+                    currentChangedFiles: stagedSnapshot.changed_files,
+                    finalCloseoutJsonPath: closeoutPath,
+                    workspaceSnapshotRequest: request
+                };
+                const first = evaluateStagedPostDoneAuditedScope(options);
+                const repeated = evaluateStagedPostDoneAuditedScope(options);
+
+                assert.equal(first?.blocked, false);
+                assert.deepEqual(repeated, first);
+                assert.equal(gitCommands.filter((args) => (
+                    args.includes('--numstat') && args.includes('--cached')
+                )).length, 1);
+            } finally {
+                childProcessModule.spawnSync = originalSpawnSync;
+            }
+        });
+
         it('uses the cached raw diff as the only staged-only diff subprocess', () => {
             const originalSpawnSync = (require('node:child_process') as typeof import('node:child_process')).spawnSync;
             const diffCommands: string[][] = [];

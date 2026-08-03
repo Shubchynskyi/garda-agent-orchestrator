@@ -62,7 +62,10 @@ import {
     isLocalControlPlaneCommitPath,
     resolveCommittableChangedFiles
 } from './task-audit-summary-drift';
-import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
+import {
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
+} from '../workspace/workspace-snapshot-cache';
 import { getTaskOwnedPreflightScopeFromPreflight } from '../workspace/dirty-worktree-protection';
 import {
     collectEvidenceArtifacts,
@@ -199,6 +202,7 @@ function buildFinalCloseoutChangeMetrics(options: {
     preflightChangedFiles: string[];
     preflightChangedLinesTotal: number;
     finalTrackedChangedFiles: string[];
+    workspaceSnapshotRequest: WorkspaceSnapshotRequest;
 }): FinalCloseoutChangeMetrics {
     const preflightFileSet = new Set(options.preflightChangedFiles.map((entry) => toPosix(entry)).filter(Boolean));
     const lateEvidenceFiles = [...new Set(options.finalTrackedChangedFiles
@@ -212,12 +216,10 @@ function buildFinalCloseoutChangeMetrics(options: {
         finalTrackedChangedLinesSource = 'workspace_snapshot';
     } else {
         try {
-            const finalSnapshot = getWorkspaceSnapshotCached(
-                options.repoRoot,
+            const finalSnapshot = options.workspaceSnapshotRequest.read(
                 'explicit_changed_files',
                 true,
-                options.finalTrackedChangedFiles,
-                { noCache: true, readOnly: true }
+                options.finalTrackedChangedFiles
             );
             const lineTotal = Number(finalSnapshot.changed_lines_total);
             if (Number.isFinite(lineTotal)) {
@@ -262,6 +264,10 @@ function filterNotRequiredEvidenceArtifacts(
 
 export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAuditSummaryResult {
     const repoRoot = path.resolve(options.repoRoot);
+    const workspaceSnapshotRequest = resolveWorkspaceSnapshotRequest(
+        repoRoot,
+        options.workspaceSnapshotRequest
+    );
     const safeTaskId = assertValidTaskId(options.taskId);
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
     const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
@@ -366,7 +372,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         repoRoot,
         preflightChangedFiles: preflightSummary.changedFiles,
         preflightChangedLinesTotal,
-        finalTrackedChangedFiles: changedFiles
+        finalTrackedChangedFiles: changedFiles,
+        workspaceSnapshotRequest
     });
     const changedLinesTotal = changeMetrics.final_tracked_changed_lines_total ?? preflightChangedLinesTotal;
     const finalCloseoutJsonPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.json`);
@@ -382,7 +389,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             changedFiles,
             preflightSummary.changedFiles,
             preflight,
-            finalCloseoutJsonPath
+            finalCloseoutJsonPath,
+            workspaceSnapshotRequest
         );
         if (postDoneDriftBlocker) {
             blockers.push(postDoneDriftBlocker);
@@ -637,7 +645,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     }
 
     const commitGuardEnabled = workspaceStatusSnapshot.enforceNoAutoCommit === true;
-    const committableChangedFiles = resolveCommittableChangedFiles(repoRoot);
+    const committableChangedFiles = resolveCommittableChangedFiles(repoRoot, workspaceSnapshotRequest);
     const rawCommitCandidateChangedFiles = committableChangedFiles == null
         ? changedFiles.filter((changedFile) => !isLocalControlPlaneCommitPath(changedFile))
         : committableChangedFiles;
@@ -762,7 +770,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         taskCycleDiagnostics,
         workspaceStatusSnapshot,
         commitCommandTemplate,
-        commitCommandSuggestion
+        commitCommandSuggestion,
+        workspaceSnapshotRequest
     });
 
     return {

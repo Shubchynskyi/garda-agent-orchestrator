@@ -34,6 +34,10 @@ import type {
     ReportTaskQueueRow
 } from './types';
 import { DEFAULT_REPORT_MAX_DETAILED_TASKS } from './types';
+import {
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
+} from '../../gates/workspace/workspace-snapshot-cache';
 
 const TERMINAL_TASK_STATUS_TOKENS = new Set(['DONE']);
 
@@ -66,14 +70,16 @@ function readTaskAuditSummary(
     repoRoot: string,
     eventsRoot: string,
     reviewsRoot: string,
-    unavailable: ReportDataUnavailableEntry[]
+    unavailable: ReportDataUnavailableEntry[],
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): TaskAuditSummaryResult | null {
     try {
         return buildTaskAuditSummary({
             taskId,
             repoRoot,
             eventsRoot,
-            reviewsRoot
+            reviewsRoot,
+            workspaceSnapshotRequest
         });
     } catch (error: unknown) {
         unavailable.push({
@@ -475,6 +481,10 @@ function buildTaskPlanDetail(repoRoot: string, taskId: string, taskRow: ReportTa
 
 export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): ReportTaskDetail {
     const repoRoot = path.resolve(options.repoRoot);
+    const workspaceSnapshotRequest = resolveWorkspaceSnapshotRequest(
+        repoRoot,
+        options.workspaceSnapshotRequest
+    );
     const eventsRoot = options.eventsRoot
         ? path.resolve(options.eventsRoot)
         : joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
@@ -495,8 +505,21 @@ export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): Re
             reason: error instanceof Error ? error.message : String(error)
         });
     }
-    const audit = readTaskAuditSummary(taskId, repoRoot, eventsRoot, reviewsRoot, unavailable);
-    const qualityChecklist = buildTaskQualityChecklist(taskId, repoRoot, eventsRoot, reviewsRoot);
+    const audit = readTaskAuditSummary(
+        taskId,
+        repoRoot,
+        eventsRoot,
+        reviewsRoot,
+        unavailable,
+        workspaceSnapshotRequest
+    );
+    const qualityChecklist = buildTaskQualityChecklist(
+        taskId,
+        repoRoot,
+        eventsRoot,
+        reviewsRoot,
+        workspaceSnapshotRequest
+    );
 
     return {
         task_id: taskId,

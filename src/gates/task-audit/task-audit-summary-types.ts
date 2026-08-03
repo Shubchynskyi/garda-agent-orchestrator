@@ -24,6 +24,7 @@ import type { ReviewCoverageAuditSummary } from './task-audit-summary-review-cov
 import type { ReviewFindingsAuditSummary } from './task-audit-summary-review-findings';
 import type { TaskQueueEntry } from '../../core/task-queue-read';
 import type { FinalCloseoutOrchestratorDefectCaptureSummary } from './task-audit-summary-orchestrator-defects';
+import type { WorkspaceSnapshotRequest } from '../workspace/workspace-snapshot-cache';
 
 export interface TaskAuditSummaryOptions {
     taskId: string;
@@ -32,6 +33,7 @@ export interface TaskAuditSummaryOptions {
     reviewsRoot?: string | null;
     ignoreActiveCompletionFinalizationLock?: boolean;
     taskQueueEntries?: ReadonlyMap<string, TaskQueueEntry>;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }
 
 export interface FinalCloseoutArtifact {

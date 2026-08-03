@@ -11,6 +11,8 @@ import {
 } from '../shared/helpers';
 import {
     getWorkspaceSnapshotCached,
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
 } from '../workspace/workspace-snapshot-cache';
 import {
     normalizeWorkspaceRelativePath,
@@ -65,6 +67,7 @@ export interface PreflightWorkspaceReadinessOptions {
     plannedChangedFiles?: string[];
     dirtyWorkspaceBaselineChangedFiles?: string[];
     dirtyWorkspaceBaselineFileHashes?: Record<string, string>;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }
 
 function isDistRuntimeOutputRelatedToPlannedSource(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
@@ -129,6 +132,9 @@ export function readPreflightWorkspaceReadiness(
     preflight: Record<string, unknown>,
     options: PreflightWorkspaceReadinessOptions = {}
 ): PreflightWorkspaceReadiness {
+    const authenticatedWorkspaceSnapshotRequest = options.workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, options.workspaceSnapshotRequest)
+        : undefined;
     const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
     const expectedChangedLinesTotal = typeof metrics.changed_lines_total === 'number'
         ? metrics.changed_lines_total
@@ -183,13 +189,15 @@ export function readPreflightWorkspaceReadiness(
     const expectedDomainScopeFingerprints = normalizeDomainScopeFingerprints(
         isPlainRecord(metrics.domain_scope_fingerprints) ? metrics.domain_scope_fingerprints : null
     );
-    const currentScope = getWorkspaceSnapshotCached(
-        repoRoot,
-        detectionSource,
-        includeUntracked,
-        authorizedFiles,
-        { noCache: true, readOnly: true }
-    );
+    const currentScope = authenticatedWorkspaceSnapshotRequest
+        ? authenticatedWorkspaceSnapshotRequest.read(detectionSource, includeUntracked, authorizedFiles)
+        : getWorkspaceSnapshotCached(
+            repoRoot,
+            detectionSource,
+            includeUntracked,
+            authorizedFiles,
+            { noCache: true, readOnly: true }
+        );
     const currentScopeGitClassification = normalizeGitChangeClassificationEvidence(
         currentScope.git_change_classification
     );
@@ -324,7 +332,11 @@ export function readPreflightWorkspaceReadiness(
         : undefined;
     const allowDocsOnlyDelta = options.allowDocsOnlyDelta !== false;
     if (normalizedDetectionSource === 'explicit_changed_files') {
-        const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
+        const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(
+            repoRoot,
+            includeUntracked,
+            options.workspaceSnapshotRequest
+        );
         if (currentGitSnapshot) {
             const unchangedProtectedFiles = getUnchangedProtectedDirtyWorkspaceFiles(repoRoot, preflight);
             const currentGitSnapshotFiles = currentGitSnapshot.changed_files
@@ -429,7 +441,8 @@ export function readPreflightWorkspaceReadiness(
                     expectedComparableChangedFilesSha256,
                     expectedScopeContentSha256,
                     getDocImpactDeclaredDocsUpdated(options.docImpactPath),
-                    expectedDomainScopeFingerprints
+                    expectedDomainScopeFingerprints,
+                    options.workspaceSnapshotRequest
                 );
                 if (docsOnlyDeltaReadiness) {
                     return docsOnlyDeltaReadiness;
@@ -508,7 +521,8 @@ export function readPreflightWorkspaceReadiness(
             expectedComparableChangedFilesSha256,
             expectedScopeContentSha256,
             getDocImpactDeclaredDocsUpdated(options.docImpactPath),
-            expectedDomainScopeFingerprints
+            expectedDomainScopeFingerprints,
+            options.workspaceSnapshotRequest
         );
         if (docsOnlyDeltaReadiness) {
             return docsOnlyDeltaReadiness;

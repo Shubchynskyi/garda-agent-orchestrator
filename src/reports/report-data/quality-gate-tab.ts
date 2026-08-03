@@ -14,12 +14,14 @@ import type {
 } from './types';
 import { buildQualityGateEvidence } from './quality-gate-evidence';
 import { formatQualityRulePackVersion } from './quality-baseline-labels';
+import type { WorkspaceSnapshotRequest } from '../../gates/workspace/workspace-snapshot-cache';
 
 interface BuildQualityGateTabOptions {
     repoRoot: string;
     reviewsRoot: string;
     eventsRoot: string;
     workflowConfigTab: ReportWorkflowConfigTab;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }
 
 function baselineRuleMap(): Map<string, OptionalQualityCheckRule> {
@@ -121,7 +123,8 @@ export function buildQualityGateTab(input: ReportWorkflowConfigTab | BuildQualit
         repoRoot: options.repoRoot,
         reviewsRoot: options.reviewsRoot,
         eventsRoot: options.eventsRoot,
-        workflowConfigTab
+        workflowConfigTab,
+        workspaceSnapshotRequest: options.workspaceSnapshotRequest
     });
 
     return {

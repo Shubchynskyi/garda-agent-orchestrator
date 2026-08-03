@@ -20,6 +20,8 @@ import {
 } from '../task-audit/task-audit-summary-collectors';
 import {
     getWorkspaceSnapshotCached,
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
 } from '../workspace/workspace-snapshot-cache';
 import {
     buildCompileEvidenceDocsOnlyExtensionReadiness,
@@ -59,8 +61,12 @@ export function readCompileReadiness(
     reviewsRoot: string,
     eventsRoot: string,
     taskId: string,
-    preflightPath: string
+    preflightPath: string,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): CompileReadiness {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     const compilePath = path.join(reviewsRoot, `${taskId}-compile-gate.json`);
     if (!fileExists(compilePath)) {
         return {
@@ -201,13 +207,18 @@ export function readCompileReadiness(
             reason: 'Compile gate evidence is missing scope snapshot fields; rerun compile-gate.'
         };
     }
-    const currentScope = getWorkspaceSnapshotCached(
-        repoRoot,
-        detectionSource,
-        evidence.scope_include_untracked == null ? true : !!evidence.scope_include_untracked,
-        authorizedFiles,
-        { noCache: true, readOnly: true }
-    );
+    const includeUntracked = evidence.scope_include_untracked == null
+        ? true
+        : !!evidence.scope_include_untracked;
+    const currentScope = authenticatedWorkspaceSnapshotRequest
+        ? authenticatedWorkspaceSnapshotRequest.read(detectionSource, includeUntracked, authorizedFiles)
+        : getWorkspaceSnapshotCached(
+            repoRoot,
+            detectionSource,
+            includeUntracked,
+            authorizedFiles,
+            { noCache: true, readOnly: true }
+        );
     const currentGitClassification = normalizeGitChangeClassificationEvidence(
         currentScope.git_change_classification
     );
@@ -250,8 +261,11 @@ export function readCompileReadiness(
                 reason: 'Compile gate evidence is current for implementation, test, docs, and config scope; only neutral closeout evidence changed.'
             };
         }
-        const includeUntracked = evidence.scope_include_untracked == null ? true : !!evidence.scope_include_untracked;
-        const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
+        const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(
+            repoRoot,
+            includeUntracked,
+            workspaceSnapshotRequest
+        );
         const docsOnlyDeltaReadiness = currentGitSnapshot
             ? buildDocsOnlyDeltaReadiness(
                 repoRoot,
@@ -263,7 +277,8 @@ export function readCompileReadiness(
                 changedFilesSha256,
                 scopeContentSha256,
                 getDocImpactDeclaredDocsUpdated(path.join(reviewsRoot, `${taskId}-doc-impact.json`)),
-                expectedDomainScopeFingerprints
+                expectedDomainScopeFingerprints,
+                workspaceSnapshotRequest
             )
             : null;
         if (docsOnlyDeltaReadiness) {

@@ -1,10 +1,8 @@
-import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { isPathInsideRoot } from '../../core/paths';
 import { formatOptionalQualityChecksRuleSetDiagnostics } from '../../core/workflow-config';
-import { buildScopeContentFingerprint } from '../../gates/compile/compile-gate';
 import {
     QUALITY_CHECKLIST_ID,
     QUALITY_CHECKLIST_STATUSES,
@@ -18,6 +16,10 @@ import {
     toPosix
 } from '../../gates/shared/helpers';
 import { readOrderedTaskEvents } from '../../gates/task-audit/task-audit-summary-lifecycle';
+import {
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
+} from '../../gates/workspace/workspace-snapshot-cache';
 import type {
     ReportQualityGateActionRequiredHistoryEntry,
     ReportQualityGateAnswerSummary,
@@ -522,41 +524,31 @@ function addScopeMismatchReasons(options: {
     }
 }
 
-function readGitLines(repoRoot: string, args: string[]): string[] | null {
-    try {
-        const output = execFileSync('git', ['-C', repoRoot, ...args], {
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'ignore'],
-            timeout: 10000
-        });
-        return output.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
-    } catch {
-        return null;
-    }
-}
-
-function readCurrentGitChangedFiles(repoRoot: string): string[] | null {
-    const unstaged = readGitLines(repoRoot, ['diff', '--name-only', '--no-ext-diff']);
-    const staged = readGitLines(repoRoot, ['diff', '--name-only', '--cached', '--no-ext-diff']);
-    const untracked = readGitLines(repoRoot, ['ls-files', '--others', '--exclude-standard']);
-    if (!unstaged || !staged || !untracked) {
-        return null;
-    }
-    return [...new Set([...unstaged, ...staged, ...untracked].map(normalizePath).filter(Boolean))].sort();
-}
-
-function buildCurrentEvidenceContext(repoRoot: string, reviewsRoot: string): CurrentEvidenceContext {
+function buildCurrentEvidenceContext(
+    reviewsRoot: string,
+    workspaceSnapshotRequest: WorkspaceSnapshotRequest
+): CurrentEvidenceContext {
     const latestPreflight = readLatestPreflightScopeBinding(reviewsRoot);
-    const changedFiles = readCurrentGitChangedFiles(repoRoot);
-    const currentGitScope = changedFiles && changedFiles.length > 0
+    const preflightDetectionSource = latestPreflight?.detectionSource.trim().toLowerCase() || '';
+    const currentDetectionSource = preflightDetectionSource === 'git_staged_only'
+        || preflightDetectionSource === 'git_staged_plus_untracked'
+        ? preflightDetectionSource
+        : 'git_auto';
+    let currentSnapshot: ReturnType<WorkspaceSnapshotRequest['read']> | null;
+    try {
+        currentSnapshot = workspaceSnapshotRequest.read(
+            currentDetectionSource,
+            currentDetectionSource !== 'git_staged_only',
+            []
+        );
+    } catch {
+        currentSnapshot = null;
+    }
+    const currentGitScope = currentSnapshot && currentSnapshot.changed_files.length > 0
         ? {
-            changedFilesSha256: stringSha256(changedFiles.join('\n')) || null,
+            changedFilesSha256: currentSnapshot.changed_files_sha256 || null,
             scopeSha256: null,
-            scopeContentSha256: buildScopeContentFingerprint(
-                repoRoot,
-                latestPreflight?.detectionSource || 'git_auto',
-                changedFiles
-            )
+            scopeContentSha256: currentSnapshot.scope_content_sha256 || null
         }
         : null;
     return { latestPreflight, currentGitScope };
@@ -934,16 +926,24 @@ export function buildQualityGateEvidence(options: {
     reviewsRoot: string;
     eventsRoot: string;
     workflowConfigTab: ReportWorkflowConfigTab;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }): {
     latestCheck: ReportQualityGateLatestCheck;
     actionRequiredHistory: ReportQualityGateActionRequiredHistoryEntry[];
 } {
+    const workspaceSnapshotRequest = resolveWorkspaceSnapshotRequest(
+        options.repoRoot,
+        options.workspaceSnapshotRequest
+    );
     const artifacts = readQualityChecklistArtifacts(options.reviewsRoot);
     const timelineEvidence = readQualityChecklistTimelineEvidence({
         repoRoot: options.repoRoot,
         eventsRoot: options.eventsRoot
     });
-    const currentContext = buildCurrentEvidenceContext(options.repoRoot, options.reviewsRoot);
+    const currentContext = buildCurrentEvidenceContext(
+        options.reviewsRoot,
+        workspaceSnapshotRequest
+    );
     const latestCheck = artifacts[0]
         ? buildLatestCheckFromArtifact({
             repoRoot: options.repoRoot,

@@ -54,6 +54,27 @@ function bindProtectedDirtyBaseline(
     writeJson(preflightPath, preflight);
 }
 
+function captureGitCommands<T>(callback: () => T): { result: T; gitCommands: string[][] } {
+    const childProcessModule = require('node:child_process') as typeof import('node:child_process');
+    const originalSpawnSync = childProcessModule.spawnSync;
+    const originalExecFileSync = childProcessModule.execFileSync;
+    const gitCommands: string[][] = [];
+    childProcessModule.spawnSync = ((command: string, args: string[], options: unknown) => {
+        if (command === 'git') gitCommands.push([...args]);
+        return originalSpawnSync(command, args, options as never);
+    }) as typeof originalSpawnSync;
+    childProcessModule.execFileSync = ((command: string, args: string[], options: unknown) => {
+        if (command === 'git') gitCommands.push([...args]);
+        return originalExecFileSync(command, args, options as never);
+    }) as typeof originalExecFileSync;
+    try {
+        return { result: callback(), gitCommands };
+    } finally {
+        childProcessModule.spawnSync = originalSpawnSync;
+        childProcessModule.execFileSync = originalExecFileSync;
+    }
+}
+
 function seedCompletedTaskWithProtectedDirtyBaseline(
     repoRoot: string
 ): { baselinePath: string; preflightPath: string } {
@@ -892,7 +913,9 @@ describe('gates/next-step', () => {
 
 
 
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const { result, gitCommands } = captureGitCommands(() => (
+            resolveNextStep({ taskId: TASK_ID, repoRoot })
+        ));
 
         const text = formatNextStepText(result);
 
@@ -915,6 +938,12 @@ describe('gates/next-step', () => {
         assert.equal(text.includes('gate compile-gate'), false);
 
         assert.equal(text.includes('gate full-suite-validation'), false);
+
+        const gitAutoNumstatCommands = gitCommands.filter((args) => (
+            args.includes('--numstat') && !args.includes('--')
+        ));
+
+        assert.equal(gitAutoNumstatCommands.length, 1);
 
     });
 

@@ -1,4 +1,8 @@
-import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
+import {
+    getWorkspaceSnapshotCached,
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
+} from '../workspace/workspace-snapshot-cache';
 import { isWorkflowConfigControlPlanePathShape } from '../shared/helpers';
 import { getAuditedWorkflowConfigChangeProvenance } from './workflow-config-work-audit';
 import { readProtectedManifestWorkflowConfigHashes } from './workflow-config-work-baseline';
@@ -53,8 +57,12 @@ export function getCurrentWorkflowConfigChanges(
     baselineFileHashes?: Record<string, string | null> | null,
     options: {
         allowProtectedManifestFallback?: boolean;
+        workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
     } = {}
 ): CurrentWorkflowConfigChanges {
+    const authenticatedWorkspaceSnapshotRequest = options.workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, options.workspaceSnapshotRequest)
+        : undefined;
     const currentFileHashes = getCurrentWorkflowConfigFileHashes(repoRoot);
     const workflowConfigControlPlanePaths = [
         ...new Set([
@@ -78,7 +86,9 @@ export function getCurrentWorkflowConfigChanges(
     const baselineChangedFiles = getWorkflowConfigChangedFilesFromBaseline(currentFileHashes, effectiveBaselineFileHashes);
     const hasBaselineFileHashes = !!effectiveBaselineFileHashes && Object.keys(effectiveBaselineFileHashes).length > 0;
     try {
-        const snapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], { noCache: true });
+        const snapshot = authenticatedWorkspaceSnapshotRequest
+            ? authenticatedWorkspaceSnapshotRequest.read('git_auto', true, [])
+            : getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], { noCache: true });
         return {
             changed_files: getWorkflowConfigChangedFiles([
                 ...(hasBaselineFileHashes ? [] : snapshot.changed_files),

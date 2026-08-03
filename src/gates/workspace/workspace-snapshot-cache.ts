@@ -6,6 +6,7 @@ import { getWorkspaceSnapshot } from '../compile/compile-gate';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { normalizeGitRepoRelativePath } from '../../core/git-change-classification';
 import { getSafeWorktreePathState } from './worktree-path-state';
+import { normalizeGitChangeClassificationEvidence } from '../../core/git-change-classification';
 
 const CACHE_VERSION = 4;
 const CACHE_RELATIVE_PATH = path.join('runtime', 'cache', 'workspace-snapshot.json');
@@ -17,6 +18,7 @@ interface InProcessSnapshotCacheEntry {
 }
 
 const inProcessSnapshotCache = new Map<string, InProcessSnapshotCacheEntry>();
+const workspaceSnapshotRequestRoots = new WeakMap<WorkspaceSnapshotRequest, string>();
 
 export type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;
 
@@ -45,12 +47,159 @@ export interface WorkspaceSnapshotCacheOptions {
     readOnly?: boolean;
 }
 
+export type ResolvedWorkspaceSnapshot = WorkspaceSnapshot & { cache_hit: boolean };
+
+export interface WorkspaceSnapshotRequest {
+    readonly repo_root: string;
+    read(
+        detectionSource: string,
+        includeUntracked: boolean,
+        explicitChangedFiles: string[]
+    ): ResolvedWorkspaceSnapshot;
+}
+
+interface WorkspaceSnapshotRequestEntry {
+    snapshot: ResolvedWorkspaceSnapshot | null;
+    error: unknown;
+}
+
 function normalizeExplicitChangedFiles(explicitChangedFiles: string[]): string[] {
     return [...new Set(
         (explicitChangedFiles || [])
             .map((filePath) => normalizeGitRepoRelativePath(filePath))
             .filter((filePath): filePath is string => filePath !== null)
     )].sort();
+}
+
+function normalizeSnapshotRequestKey(
+    detectionSource: string,
+    includeUntracked: boolean,
+    explicitChangedFiles: string[]
+): string {
+    const normalizedSource = String(detectionSource || 'git_auto').trim().toLowerCase() || 'git_auto';
+    const effectiveIncludeUntracked = normalizedSource === 'git_staged_only' ? false : includeUntracked;
+    return JSON.stringify([
+        normalizedSource,
+        effectiveIncludeUntracked,
+        normalizeExplicitChangedFiles(explicitChangedFiles)
+    ]);
+}
+
+function sameStringList(left: readonly string[], right: readonly string[]): boolean {
+    return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+function authenticateWorkspaceSnapshot(snapshot: ResolvedWorkspaceSnapshot): void {
+    const changedFiles = normalizeExplicitChangedFiles(snapshot.changed_files);
+    const authorizedFiles = normalizeExplicitChangedFiles(snapshot.authorized_files);
+    if (
+        !sameStringList(changedFiles, snapshot.changed_files)
+        || snapshot.changed_files_count !== changedFiles.length
+        || snapshot.changed_files_sha256 !== stringSha256(changedFiles.join('\n'))
+    ) {
+        throw new Error('Workspace snapshot authentication failed: changed-file binding is inconsistent.');
+    }
+    if (
+        !sameStringList(authorizedFiles, snapshot.authorized_files)
+        || snapshot.authorized_files_count !== authorizedFiles.length
+        || snapshot.authorized_files_sha256 !== stringSha256(authorizedFiles.join('\n'))
+    ) {
+        throw new Error('Workspace snapshot authentication failed: authorized-file binding is inconsistent.');
+    }
+    const normalizedClassification = normalizeGitChangeClassificationEvidence(snapshot.git_change_classification);
+    if (
+        snapshot.git_change_classification != null
+        && (
+            !normalizedClassification
+            || !sameStringList(normalizedClassification.effective_changed_files, changedFiles)
+        )
+    ) {
+        throw new Error('Workspace snapshot authentication failed: canonical Git classification is inconsistent.');
+    }
+    for (const hash of [snapshot.changed_files_sha256, snapshot.scope_content_sha256, snapshot.scope_sha256]) {
+        if (!/^[0-9a-f]{64}$/u.test(String(hash || '').trim().toLowerCase())) {
+            throw new Error('Workspace snapshot authentication failed: scope hash is invalid.');
+        }
+    }
+}
+
+function deepFreezeSnapshot<T>(value: T): T {
+    if (!value || typeof value !== 'object' || Object.isFrozen(value)) {
+        return value;
+    }
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+        deepFreezeSnapshot(nested);
+    }
+    return Object.freeze(value);
+}
+
+/**
+ * Build a request-local, parameter-keyed reader for fresh canonical workspace
+ * snapshots. Equivalent consumers receive the same authenticated immutable
+ * object, including the same cached failure, while a later request starts from
+ * a new workspace generation.
+ */
+export function createWorkspaceSnapshotRequest(repoRoot: string): WorkspaceSnapshotRequest {
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    const entries = new Map<string, WorkspaceSnapshotRequestEntry>();
+    const request = Object.freeze({
+        repo_root: normalizePath(resolvedRepoRoot),
+        read(
+            detectionSource: string,
+            includeUntracked: boolean,
+            explicitChangedFiles: string[]
+        ): ResolvedWorkspaceSnapshot {
+            const key = normalizeSnapshotRequestKey(detectionSource, includeUntracked, explicitChangedFiles);
+            const existing = entries.get(key);
+            if (existing) {
+                if (existing.snapshot) return existing.snapshot;
+                throw existing.error;
+            }
+            try {
+                const snapshot = getWorkspaceSnapshotCached(
+                    resolvedRepoRoot,
+                    detectionSource,
+                    includeUntracked,
+                    explicitChangedFiles,
+                    { noCache: true, readOnly: true }
+                );
+                authenticateWorkspaceSnapshot(snapshot);
+                const immutableSnapshot = deepFreezeSnapshot(snapshot);
+                entries.set(key, { snapshot: immutableSnapshot, error: null });
+                return immutableSnapshot;
+            } catch (error: unknown) {
+                entries.set(key, { snapshot: null, error });
+                throw error;
+            }
+        }
+    });
+    workspaceSnapshotRequestRoots.set(request, normalizeRepoCacheKey(resolvedRepoRoot));
+    return request;
+}
+
+/**
+ * Reuse only factory-created requests that are bound to the same repository.
+ * This prevents public audit/report injection points from accepting a foreign
+ * workspace generation or a structurally compatible forged reader.
+ */
+export function resolveWorkspaceSnapshotRequest(
+    repoRoot: string,
+    request?: WorkspaceSnapshotRequest
+): WorkspaceSnapshotRequest {
+    if (!request) {
+        return createWorkspaceSnapshotRequest(repoRoot);
+    }
+    const expectedRepoRoot = normalizeRepoCacheKey(repoRoot);
+    const registeredRepoRoot = typeof request === 'object' && request !== null
+        ? workspaceSnapshotRequestRoots.get(request)
+        : undefined;
+    const declaredRepoRoot = typeof request?.repo_root === 'string'
+        ? normalizeRepoCacheKey(request.repo_root)
+        : null;
+    if (registeredRepoRoot !== expectedRepoRoot || declaredRepoRoot !== expectedRepoRoot) {
+        throw new Error('Workspace snapshot request is not factory-authenticated for the requested repository root.');
+    }
+    return request;
 }
 
 function normalizeRepoCacheKey(repoRoot: string): string {

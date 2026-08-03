@@ -1,14 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import {
     formatOptionalQualityChecksRuleSetDiagnostics,
     normalizeOptionalQualityChecksConfig
 } from '../../core/workflow-config';
 import { resolveBundleRootForTarget } from '../../core/constants';
 import { isPathInsideRoot } from '../../core/paths';
-import { buildScopeContentFingerprint } from '../../gates/compile/compile-gate';
 import {
     assessQualityChecklistPolicyCompatibility,
     QUALITY_CHECKLIST_ID,
@@ -16,11 +14,13 @@ import {
     type QualityChecklistStatus
 } from '../../gates/quality-checklist';
 import {
-    normalizePath,
-    stringSha256,
     toPosix
 } from '../../gates/shared/helpers';
 import { readOrderedTaskEvents } from '../../gates/task-audit/task-audit-summary-lifecycle';
+import {
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
+} from '../../gates/workspace/workspace-snapshot-cache';
 import type {
     ReportArtifactLink,
     ReportQualityGateActionRequiredHistoryEntry,
@@ -275,14 +275,6 @@ function readPreflightScopeBinding(preflightPath: string | null): ScopeBinding |
     };
 }
 
-function readPreflightDetectionSource(preflightPath: string | null): string {
-    if (!preflightPath) {
-        return 'git_auto';
-    }
-    const preflight = safeReadJsonRecord(preflightPath);
-    return String(preflight?.detection_source || '').trim() || 'git_auto';
-}
-
 function addScopeMismatchReasons(
     reasons: string[],
     artifactBinding: ScopeBinding | null,
@@ -315,49 +307,46 @@ function addScopeMismatchReasons(
     }
 }
 
-function readGitLines(repoRoot: string, args: string[]): string[] | null {
+function readCurrentGitScopeBinding(
+    workspaceSnapshotRequest: WorkspaceSnapshotRequest,
+    currentPreflightPath: string
+): { binding: ScopeBinding | null; sourceLabel: string } {
+    const preflight = safeReadJsonRecord(currentPreflightPath);
+    const preflightDetectionSource = String(preflight?.detection_source || '').trim().toLowerCase();
+    const usesStagedScope = preflightDetectionSource === 'git_staged_only'
+        || preflightDetectionSource === 'git_staged_plus_untracked';
+    const currentDetectionSource = usesStagedScope
+        ? preflightDetectionSource
+        : 'git_auto';
+    const sourceLabel = usesStagedScope ? 'the current staged git scope' : 'the current git worktree';
+    let currentSnapshot: ReturnType<WorkspaceSnapshotRequest['read']>;
     try {
-        const output = execFileSync('git', ['-C', repoRoot, ...args], {
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'ignore'],
-            timeout: 10000
-        });
-        return output.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+        currentSnapshot = workspaceSnapshotRequest.read(
+            currentDetectionSource,
+            currentDetectionSource !== 'git_staged_only',
+            []
+        );
     } catch {
-        return null;
+        return { binding: null, sourceLabel };
     }
-}
-
-function readCurrentGitChangedFiles(repoRoot: string): string[] | null {
-    const unstaged = readGitLines(repoRoot, ['diff', '--name-only', '--no-ext-diff']);
-    const staged = readGitLines(repoRoot, ['diff', '--name-only', '--cached', '--no-ext-diff']);
-    const untracked = readGitLines(repoRoot, ['ls-files', '--others', '--exclude-standard']);
-    if (!unstaged || !staged || !untracked) {
-        return null;
-    }
-    return [...new Set([...unstaged, ...staged, ...untracked].map(normalizePath).filter(Boolean))].sort();
-}
-
-function readCurrentGitScopeBinding(repoRoot: string, currentPreflightPath: string): ScopeBinding | null {
-    const changedFiles = readCurrentGitChangedFiles(repoRoot);
-    if (!changedFiles || changedFiles.length === 0) {
-        return null;
+    if (currentSnapshot.changed_files.length === 0) {
+        return { binding: null, sourceLabel };
     }
     return {
-        changedFilesSha256: stringSha256(changedFiles.join('\n')) || null,
-        scopeSha256: null,
-        scopeContentSha256: buildScopeContentFingerprint(
-            repoRoot,
-            readPreflightDetectionSource(currentPreflightPath),
-            changedFiles
-        )
+        binding: {
+            changedFilesSha256: currentSnapshot.changed_files_sha256 || null,
+            scopeSha256: null,
+            scopeContentSha256: currentSnapshot.scope_content_sha256 || null
+        },
+        sourceLabel
     };
 }
 
 function taskQualityChecklistFreshnessReasons(
     payload: Record<string, unknown> | null,
     repoRoot: string,
-    currentPreflightPath: string
+    currentPreflightPath: string,
+    workspaceSnapshotRequest: WorkspaceSnapshotRequest
 ): string[] {
     if (!payload) {
         return [];
@@ -392,11 +381,12 @@ function taskQualityChecklistFreshnessReasons(
         readPreflightScopeBinding(currentPreflightPath),
         'the current task preflight scope'
     );
+    const currentGitScope = readCurrentGitScopeBinding(workspaceSnapshotRequest, currentPreflightPath);
     addScopeMismatchReasons(
         reasons,
         artifactBinding,
-        readCurrentGitScopeBinding(repoRoot, currentPreflightPath),
-        'the current git worktree'
+        currentGitScope.binding,
+        currentGitScope.sourceLabel
     );
     addWorkflowConfigFreshnessReasons(reasons, repoRoot, payload);
     return reasons;
@@ -597,7 +587,8 @@ function buildTaskQualityChecklistLatest(
     taskId: string,
     repoRoot: string,
     currentPreflightPath: string,
-    artifactPath: string
+    artifactPath: string,
+    workspaceSnapshotRequest: WorkspaceSnapshotRequest
 ): ReportTaskQualityChecklistLatest | null {
     if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
         return null;
@@ -609,7 +600,12 @@ function buildTaskQualityChecklistLatest(
     const invalidReasons = validateTaskQualityChecklistPayload(payload, taskId);
     const staleReasons = invalidReasons.length > 0
         ? invalidReasons
-        : taskQualityChecklistFreshnessReasons(payload, repoRoot, currentPreflightPath);
+        : taskQualityChecklistFreshnessReasons(
+            payload,
+            repoRoot,
+            currentPreflightPath,
+            workspaceSnapshotRequest
+        );
     const evidenceStatus = invalidReasons.length > 0
         ? 'invalid'
         : staleReasons.length > 0
@@ -699,12 +695,23 @@ export function buildTaskQualityChecklist(
     taskId: string,
     repoRoot: string,
     eventsRoot: string,
-    reviewsRoot: string
+    reviewsRoot: string,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): ReportTaskQualityChecklist {
+    const resolvedWorkspaceSnapshotRequest = resolveWorkspaceSnapshotRequest(
+        repoRoot,
+        workspaceSnapshotRequest
+    );
     const artifactPath = path.join(reviewsRoot, `${taskId}-quality-checklist.json`);
     const currentPreflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     return {
-        latest: buildTaskQualityChecklistLatest(taskId, repoRoot, currentPreflightPath, artifactPath),
+        latest: buildTaskQualityChecklistLatest(
+            taskId,
+            repoRoot,
+            currentPreflightPath,
+            artifactPath,
+            resolvedWorkspaceSnapshotRequest
+        ),
         action_required_history: readTaskQualityChecklistActionHistory(taskId, repoRoot, eventsRoot)
     };
 }

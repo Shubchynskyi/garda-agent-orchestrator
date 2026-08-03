@@ -334,6 +334,10 @@ import {
     readCurrentGitWorkspaceSnapshot
 } from '../scope/docs-only-delta-readiness';
 import {
+    createWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
+} from '../workspace/workspace-snapshot-cache';
+import {
     buildClassifyChangeCommand,
     buildCompileGateCommand,
     buildCompletionGateCommand,
@@ -1896,7 +1900,8 @@ export function buildReviewReuseCandidatesForDiagnostics(text: string, affectedR
 function getCurrentWorkspaceRefreshChangedFiles(
     repoRoot: string,
     preflight: Record<string, unknown> | null,
-    fallbackChangedFiles: string[] | undefined
+    fallbackChangedFiles: string[] | undefined,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): string[] | undefined {
     const detectionSource = String(preflight?.detection_source || '').trim().toLowerCase();
     if (detectionSource !== 'explicit_changed_files') {
@@ -1905,7 +1910,11 @@ function getCurrentWorkspaceRefreshChangedFiles(
     const includeUntracked = typeof preflight?.include_untracked === 'boolean'
         ? preflight.include_untracked
         : true;
-    const currentSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
+    const currentSnapshot = readCurrentGitWorkspaceSnapshot(
+        repoRoot,
+        includeUntracked,
+        workspaceSnapshotRequest
+    );
     if (!currentSnapshot) {
         return fallbackChangedFiles;
     }
@@ -1921,6 +1930,7 @@ function getPreflightRefreshCommandChangedFiles(params: {
     preflight: Record<string, unknown> | null;
     fallbackChangedFiles: string[] | undefined;
     includeFullFailedReviewRemediationScope?: boolean;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }): string[] | undefined {
     const plannedChangedFiles = filterSourceCheckoutGeneratedRuntimeArtifacts(
         params.repoRoot,
@@ -1933,7 +1943,8 @@ function getPreflightRefreshCommandChangedFiles(params: {
         const currentChangedFiles = filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, getCurrentWorkspaceRefreshChangedFiles(
             params.repoRoot,
             params.preflight,
-            params.fallbackChangedFiles
+            params.fallbackChangedFiles,
+            params.workspaceSnapshotRequest
         ));
         if (!currentChangedFiles) {
             return taskScopedChangedFiles;
@@ -1974,7 +1985,8 @@ function getPreflightRefreshCommandChangedFiles(params: {
     return filterOptionalSourceCheckoutGeneratedRuntimeArtifacts(params.repoRoot, getCurrentWorkspaceRefreshChangedFiles(
         params.repoRoot,
         params.preflight,
-        params.fallbackChangedFiles
+        params.fallbackChangedFiles,
+        params.workspaceSnapshotRequest
     ));
 }
 
@@ -2280,12 +2292,14 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             sourceRuntimeStaleness: detectSourceCheckoutRuntimeStaleness(repoRoot)
         });
     }
+    const workspaceSnapshotRequest = createWorkspaceSnapshotRequest(repoRoot);
     const summary = buildTaskAuditSummary({
         taskId,
         repoRoot,
         eventsRoot,
         reviewsRoot,
-        taskQueueEntries: taskEntries
+        taskQueueEntries: taskEntries,
+        workspaceSnapshotRequest
     });
     const fullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
     const fullSuiteTimeoutForecast = fullSuiteConfig.enabled
@@ -2576,7 +2590,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     let noPreflightCurrentSnapshot: CurrentGitWorkspaceSnapshot | null | undefined;
     const readNoPreflightCurrentSnapshot = (): CurrentGitWorkspaceSnapshot | null => {
         if (noPreflightCurrentSnapshot === undefined) {
-            noPreflightCurrentSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, true);
+            noPreflightCurrentSnapshot = readCurrentGitWorkspaceSnapshot(
+                repoRoot,
+                true,
+                workspaceSnapshotRequest
+            );
         }
         return noPreflightCurrentSnapshot;
     };
@@ -2584,7 +2602,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         const currentProtectedScope = readCurrentProtectedScopeBeforePreflight(
             repoRoot,
             readNoPreflightCurrentSnapshot(),
-            () => readCurrentGitWorkspaceSnapshot(repoRoot, true),
+            () => readCurrentGitWorkspaceSnapshot(repoRoot, true, workspaceSnapshotRequest),
             taskMode
         );
         const currentProtectedScopeNeedsTaskModeRestart = currentProtectedScope
@@ -2829,7 +2847,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 repoRoot,
                 preflight,
                 readinessArtifacts.paths.docImpactPath,
-                readinessArtifacts.paths.finalCloseoutJsonPath
+                readinessArtifacts.paths.finalCloseoutJsonPath,
+                workspaceSnapshotRequest
             )
             : { blocked: false, reason: 'No materialized final closeout artifact exists yet.' };
         const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
@@ -2860,7 +2879,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             docImpactPath,
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
             dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode),
-            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode)
+            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode),
+            workspaceSnapshotRequest
         })
         : { ready: false, reason: 'No current preflight exists.' };
     const strictPreGuardWorkspaceReadiness = preflight
@@ -2871,6 +2891,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
             dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode),
             dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode),
+            workspaceSnapshotRequest,
             allowDocsOnlyDelta: false
         })
         : { ready: false, reason: 'No current preflight exists.' };
@@ -2899,7 +2920,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             docImpactPath,
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
             dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode),
-            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode)
+            dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode),
+            workspaceSnapshotRequest
         })
         : preflightWorkspaceReadiness;
     const effectiveStrictPreGuardWorkspaceReadiness = preflight && failedCurrentReviewStateForPreflight
@@ -2910,6 +2932,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
             dirtyWorkspaceBaselineChangedFiles: getTaskModeDirtyWorkspaceBaselineChangedFiles(repoRoot, taskMode),
             dirtyWorkspaceBaselineFileHashes: getTaskModeDirtyWorkspaceBaselineFileHashes(repoRoot, taskMode),
+            workspaceSnapshotRequest,
             allowDocsOnlyDelta: false
         })
         : strictPreGuardWorkspaceReadiness;
@@ -3023,7 +3046,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             repoRoot,
             taskMode,
             preflight,
-            fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
+            fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight),
+            workspaceSnapshotRequest
         })
     });
     const mandatoryOptionalSkillRemediation = getMandatoryOptionalSkillRemediationCommand(
@@ -3102,7 +3126,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 repoRoot,
                 taskMode,
                 preflight,
-                fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
+                fallbackChangedFiles: getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight),
+                workspaceSnapshotRequest
             })
         }),
         protectedControlPlane: {
@@ -3130,6 +3155,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 preflight,
                 taskMode,
                 includeFullFailedReviewRemediationScope: Boolean(failedCurrentReviewStateForPreflight),
+                workspaceSnapshotRequest,
                 fallbackChangedFiles: (reviewGateAlreadyPassed
                     ? effectivePreflightWorkspaceReadiness.currentChangedFiles
                     : effectiveStrictPreGuardWorkspaceReadiness.currentChangedFiles)
@@ -3416,7 +3442,14 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         }),
         resolveCompileGateRoute: () => {
             const compileReadiness = preflight
-                ? readCompileReadiness(repoRoot, reviewsRoot, eventsRoot, taskId, preflightPath)
+                ? readCompileReadiness(
+                    repoRoot,
+                    reviewsRoot,
+                    eventsRoot,
+                    taskId,
+                    preflightPath,
+                    workspaceSnapshotRequest
+                )
                 : { ready: false, reason: 'No current preflight exists.' };
             return resolveNextStepCompileGateRoute({
                 compileGatePassed: isGatePassed(summary, 'compile-gate'),
@@ -3436,6 +3469,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         repoRoot,
                         preflight,
                         taskMode,
+                        workspaceSnapshotRequest,
                         fallbackChangedFiles: preflightWorkspaceReadiness.currentChangedFiles
                             ?? getPreflightRefreshChangedFiles(repoRoot, taskMode, preflight)
                     })

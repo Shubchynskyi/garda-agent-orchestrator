@@ -18,6 +18,7 @@ import {
 import type { BuildReportDataContractOptions, ReportDataContract } from './types';
 import { REPORT_DATA_CONTRACT_SCHEMA_VERSION } from './types';
 import { buildWorkflowConfigTab } from './workflow-config-tab';
+import { resolveWorkspaceSnapshotRequest } from '../../gates/workspace/workspace-snapshot-cache';
 
 export function buildReportDataContract(options: BuildReportDataContractOptions): ReportDataContract {
     const repoRoot = path.resolve(options.repoRoot);
@@ -28,13 +29,23 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
         ? path.resolve(options.reviewsRoot)
         : joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
     const generatedAtUtc = options.generatedAtUtc || new Date().toISOString();
+    const workspaceSnapshotRequest = resolveWorkspaceSnapshotRequest(
+        repoRoot,
+        options.workspaceSnapshotRequest
+    );
     const queue = readCanonicalActiveQueueRows(repoRoot);
     const maxDetailedTasks = normalizeMaxDetailedTasks(options.maxDetailedTasks);
     const detailedTaskIds = selectDetailedTaskIds(queue.rows, maxDetailedTasks);
     const tasks = queue.rows.map((row) => ({
         ...row,
         detail: detailedTaskIds.has(row.task_id)
-            ? buildReportTaskDetail({ taskId: row.task_id, repoRoot, eventsRoot, reviewsRoot })
+            ? buildReportTaskDetail({
+                taskId: row.task_id,
+                repoRoot,
+                eventsRoot,
+                reviewsRoot,
+                workspaceSnapshotRequest
+            })
             : buildSkippedTaskDetail(row.task_id, maxDetailedTasks)
     }));
     const workflowConfigTab = buildWorkflowConfigTab(repoRoot);
@@ -42,7 +53,8 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
         repoRoot,
         reviewsRoot,
         eventsRoot,
-        workflowConfigTab
+        workflowConfigTab,
+        workspaceSnapshotRequest
     });
     const profilesTab = buildProfilesTab(repoRoot);
     const initSettingsTab = buildInitSettingsTab(repoRoot);

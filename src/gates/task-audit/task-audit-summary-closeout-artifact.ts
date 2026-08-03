@@ -6,7 +6,11 @@ import {
 } from '../../core/task-queue-status-contract';
 import type { TaskCycleBindingSnapshot } from '../task-events-summary/task-events-summary';
 import { buildDomainScopeFingerprints } from '../scope/domain-scope-fingerprints';
-import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
+import {
+    getWorkspaceSnapshotCached,
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshotRequest
+} from '../workspace/workspace-snapshot-cache';
 import { toPosix } from '../shared/helpers';
 import type { ProjectMemoryImpactLifecycleEvidence } from '../project-memory-impact';
 import type {
@@ -77,6 +81,7 @@ export interface BuildFinalCloseoutArtifactInput {
     workspaceStatusSnapshot: TaskCycleStatusSnapshot;
     commitCommandTemplate: string;
     commitCommandSuggestion: string;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }
 
 function readTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
@@ -107,7 +112,8 @@ function readTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode: Record<string,
 function buildWorkflowConfigAuditSummary(input: BuildFinalCloseoutArtifactInput): FinalCloseoutWorkflowConfigAuditSummary {
     const workflowConfigBaseline = normalizeWorkflowConfigFileHashes(input.taskMode?.workflow_config_file_hashes);
     const changes = getCurrentWorkflowConfigChanges(input.repoRoot, workflowConfigBaseline, {
-        allowProtectedManifestFallback: false
+        allowProtectedManifestFallback: false,
+        workspaceSnapshotRequest: input.workspaceSnapshotRequest
     });
     const provenance = getAuditedWorkflowConfigChangeProvenance({
         repoRoot: input.repoRoot,
@@ -366,13 +372,18 @@ function buildFullSuiteTimeoutSummary(
 }
 
 export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInput): FinalCloseoutArtifact {
+    const authenticatedWorkspaceSnapshotRequest = input.workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(input.repoRoot, input.workspaceSnapshotRequest)
+        : undefined;
     let closeoutScopeSnapshot: ReturnType<typeof getWorkspaceSnapshotCached> | null = null;
     if (input.changedFiles.length > 0) {
         try {
-            closeoutScopeSnapshot = getWorkspaceSnapshotCached(input.repoRoot, 'explicit_changed_files', true, input.changedFiles, {
-                noCache: true,
-                readOnly: true
-            });
+            closeoutScopeSnapshot = authenticatedWorkspaceSnapshotRequest
+                ? authenticatedWorkspaceSnapshotRequest.read('explicit_changed_files', true, input.changedFiles)
+                : getWorkspaceSnapshotCached(input.repoRoot, 'explicit_changed_files', true, input.changedFiles, {
+                    noCache: true,
+                    readOnly: true
+                });
         } catch {
             closeoutScopeSnapshot = null;
         }
@@ -388,10 +399,12 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
     let closeoutExtraSnapshot: ReturnType<typeof getWorkspaceSnapshotCached> | null = null;
     if (closeoutExtraFiles.length > 0) {
         try {
-            closeoutExtraSnapshot = getWorkspaceSnapshotCached(input.repoRoot, 'explicit_changed_files', true, closeoutExtraFiles, {
-                noCache: true,
-                readOnly: true
-            });
+            closeoutExtraSnapshot = authenticatedWorkspaceSnapshotRequest
+                ? authenticatedWorkspaceSnapshotRequest.read('explicit_changed_files', true, closeoutExtraFiles)
+                : getWorkspaceSnapshotCached(input.repoRoot, 'explicit_changed_files', true, closeoutExtraFiles, {
+                    noCache: true,
+                    readOnly: true
+                });
         } catch {
             closeoutExtraSnapshot = null;
         }

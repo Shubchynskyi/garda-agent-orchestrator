@@ -21,7 +21,9 @@ import {
 } from '../task-audit/task-audit-summary-collectors';
 import {
     getWorkspaceSnapshotCached,
-    type WorkspaceSnapshot
+    resolveWorkspaceSnapshotRequest,
+    type WorkspaceSnapshot,
+    type WorkspaceSnapshotRequest
 } from '../workspace/workspace-snapshot-cache';
 import { isPlainRecord } from '../../core/records';
 
@@ -138,8 +140,12 @@ export function buildDocsOnlyDeltaReadiness(
     expectedChangedFilesSha256: string,
     expectedScopeContentSha256: string,
     declaredDocsUpdated: string[],
-    expectedDomainScopeFingerprints: ReturnType<typeof normalizeDomainScopeFingerprints>
+    expectedDomainScopeFingerprints: ReturnType<typeof normalizeDomainScopeFingerprints>,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): DocsOnlyDeltaReadiness | null {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     if (!isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSource)) {
         return null;
     }
@@ -213,13 +219,15 @@ export function buildDocsOnlyDeltaReadiness(
         return null;
     }
 
-    const currentReviewScope = getWorkspaceSnapshotCached(
-        repoRoot,
-        'explicit_changed_files',
-        includeUntracked,
-        preflightChangedFiles,
-        { noCache: true, readOnly: true }
-    );
+    const currentReviewScope = authenticatedWorkspaceSnapshotRequest
+        ? authenticatedWorkspaceSnapshotRequest.read('explicit_changed_files', includeUntracked, preflightChangedFiles)
+        : getWorkspaceSnapshotCached(
+            repoRoot,
+            'explicit_changed_files',
+            includeUntracked,
+            preflightChangedFiles,
+            { noCache: true, readOnly: true }
+        );
     const reviewScopeViolations: string[] = [];
     if (currentReviewScope.changed_files_sha256 !== expectedChangedFilesSha256) {
         reviewScopeViolations.push('preflight changed_files differ from the current non-doc workspace snapshot');
@@ -267,13 +275,19 @@ export function describePathList(paths: readonly string[], limit = 8): string {
 
 export function readCurrentGitWorkspaceSnapshot(
     repoRoot: string,
-    includeUntracked: boolean
+    includeUntracked: boolean,
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): (WorkspaceSnapshot & { cache_hit: boolean }) | null {
+    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
+        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
+        : undefined;
     try {
-        return getWorkspaceSnapshotCached(repoRoot, 'git_auto', includeUntracked, [], {
-            noCache: true,
-            readOnly: true
-        });
+        return authenticatedWorkspaceSnapshotRequest
+            ? authenticatedWorkspaceSnapshotRequest.read('git_auto', includeUntracked, [])
+            : getWorkspaceSnapshotCached(repoRoot, 'git_auto', includeUntracked, [], {
+                noCache: true,
+                readOnly: true
+            });
     } catch {
         return null;
     }
@@ -298,4 +312,3 @@ function isOrdinaryDocumentationDeltaPath(
 ): boolean {
     return isSafeOrdinaryDocumentationPath(filePath, classificationConfig);
 }
-

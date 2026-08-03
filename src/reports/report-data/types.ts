@@ -2,6 +2,7 @@ import type { WorkflowConfigData } from '../../core/workflow-config';
 import type { TaskStatsResult } from '../../cli/commands/stats';
 import type { CompactLatestCycleTaskEventsSummary } from '../../gates/task-events-summary';
 import type { TaskAuditSummaryResult } from '../../gates/task-audit/task-audit-summary';
+import type { WorkspaceSnapshotRequest } from '../../gates/workspace/workspace-snapshot-cache';
 import type {
     FullSuiteTimeoutAttemptEvidence,
     FullSuiteTimeoutForecast,
@@ -542,6 +543,7 @@ export interface BuildReportDataContractOptions {
     eventsRoot?: string | null;
     reviewsRoot?: string | null;
     maxDetailedTasks?: number | null;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }
 
 export interface BuildReportTaskDetailOptions {
@@ -549,4 +551,5 @@ export interface BuildReportTaskDetailOptions {
     repoRoot: string;
     eventsRoot?: string | null;
     reviewsRoot?: string | null;
+    workspaceSnapshotRequest?: WorkspaceSnapshotRequest;
 }
