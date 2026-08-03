@@ -2,7 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../../core/filesystem';
 import { isPathRealpathInsideRoot, stringSha256, joinOrchestratorPath, normalizePath } from '../shared/helpers';
-import { getWorkspaceSnapshot } from '../compile/compile-gate';
+import {
+    createWorkspaceSnapshotGitGeneration,
+    getWorkspaceSnapshot
+} from '../compile/compile-gate';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { normalizeGitRepoRelativePath } from '../../core/git-change-classification';
 import { getSafeWorktreePathState } from './worktree-path-state';
@@ -142,6 +145,7 @@ function deepFreezeSnapshot<T>(value: T): T {
 export function createWorkspaceSnapshotRequest(repoRoot: string): WorkspaceSnapshotRequest {
     const resolvedRepoRoot = path.resolve(repoRoot);
     const entries = new Map<string, WorkspaceSnapshotRequestEntry>();
+    const gitGeneration = createWorkspaceSnapshotGitGeneration(resolvedRepoRoot);
     const request = Object.freeze({
         repo_root: normalizePath(resolvedRepoRoot),
         read(
@@ -156,13 +160,17 @@ export function createWorkspaceSnapshotRequest(repoRoot: string): WorkspaceSnaps
                 throw existing.error;
             }
             try {
-                const snapshot = getWorkspaceSnapshotCached(
+                const freshSnapshot = getWorkspaceSnapshot(
                     resolvedRepoRoot,
                     detectionSource,
                     includeUntracked,
                     explicitChangedFiles,
-                    { noCache: true, readOnly: true }
+                    gitGeneration
                 );
+                const snapshot: ResolvedWorkspaceSnapshot = {
+                    ...freshSnapshot,
+                    cache_hit: false
+                };
                 authenticateWorkspaceSnapshot(snapshot);
                 const immutableSnapshot = deepFreezeSnapshot(snapshot);
                 entries.set(key, { snapshot: immutableSnapshot, error: null });

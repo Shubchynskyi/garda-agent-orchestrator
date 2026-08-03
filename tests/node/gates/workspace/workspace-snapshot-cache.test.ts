@@ -6,7 +6,10 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import * as gitChangeClassification from '../../../../src/core/git-change-classification';
-import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate';
+import {
+    createWorkspaceSnapshotGitGeneration,
+    getWorkspaceSnapshot
+} from '../../../../src/gates/compile/compile-gate';
 import { readCompileReadiness } from '../../../../src/gates/next-step/next-step-compile-readiness';
 import { readPreflightWorkspaceReadiness } from '../../../../src/gates/next-step/next-step-preflight-workspace-readiness';
 import {
@@ -212,22 +215,53 @@ describe('gates/workspace-snapshot-cache', () => {
             }
         });
 
-        it('keys request snapshots by normalized staged and untracked parameters', () => {
+        it('derives distinct request snapshots from at most eight Git subprocesses', () => {
+            fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'ignored.ts\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'second.ts'), 'export const second = 1;\n', 'utf8');
+            execFileSync('git', ['-C', repoRoot, 'add', '.gitignore', 'second.ts'], { stdio: 'ignore' });
+            execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'add mixed fixtures'], { stdio: 'ignore' });
             fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
             execFileSync('git', ['-C', repoRoot, 'add', 'file.ts'], { stdio: 'ignore' });
+            fs.writeFileSync(path.join(repoRoot, 'second.ts'), 'export const second = 2;\n', 'utf8');
             fs.writeFileSync(path.join(repoRoot, 'draft.ts'), 'export const draft = true;\n', 'utf8');
-            const request = createWorkspaceSnapshotRequest(repoRoot);
+            fs.writeFileSync(path.join(repoRoot, 'ignored.ts'), 'export const ignored = true;\n', 'utf8');
 
-            const withUntracked = request.read('git_auto', true, []);
-            const withoutUntracked = request.read('git_auto', false, []);
-            const stagedOnly = request.read('GIT_STAGED_ONLY', true, []);
-            const equivalentStagedOnly = request.read('git_staged_only', false, []);
+            const childProcessModule = require('node:child_process') as typeof import('node:child_process');
+            const originalSpawnSync = childProcessModule.spawnSync;
+            const originalExecFileSync = childProcessModule.execFileSync;
+            const gitCommands: string[][] = [];
+            childProcessModule.spawnSync = ((command: string, args: string[], options: unknown) => {
+                if (command === 'git') gitCommands.push([...args]);
+                return originalSpawnSync(command, args, options as never);
+            }) as typeof originalSpawnSync;
+            childProcessModule.execFileSync = ((command: string, args: string[], options: unknown) => {
+                if (command === 'git') gitCommands.push([...args]);
+                return originalExecFileSync(command, args, options as never);
+            }) as typeof originalExecFileSync;
+            try {
+                const request = createWorkspaceSnapshotRequest(repoRoot);
+                const withUntracked = request.read('git_auto', true, []);
+                const withoutUntracked = request.read('git_auto', false, []);
+                const stagedOnly = request.read('GIT_STAGED_ONLY', true, []);
+                const equivalentStagedOnly = request.read('git_staged_only', false, []);
+                const explicitIgnored = request.read('explicit_changed_files', true, ['ignored.ts']);
 
-            assert.ok(withUntracked.changed_files.includes('draft.ts'));
-            assert.ok(!withoutUntracked.changed_files.includes('draft.ts'));
-            assert.notStrictEqual(withUntracked, withoutUntracked);
-            assert.strictEqual(stagedOnly, equivalentStagedOnly);
-            assert.deepEqual(stagedOnly.changed_files, ['file.ts']);
+                assert.deepEqual(withUntracked.changed_files, ['draft.ts', 'file.ts', 'second.ts']);
+                assert.deepEqual(withoutUntracked.changed_files, ['file.ts', 'second.ts']);
+                assert.notStrictEqual(withUntracked, withoutUntracked);
+                assert.strictEqual(stagedOnly, equivalentStagedOnly);
+                assert.deepEqual(stagedOnly.changed_files, ['file.ts']);
+                assert.deepEqual(explicitIgnored.changed_files, ['ignored.ts']);
+                assert.ok(gitCommands.length <= 8, `expected at most 8 Git subprocesses, received ${gitCommands.length}`);
+                assert.equal(gitCommands.filter((args) => args.includes('status')).length, 1);
+                assert.equal(gitCommands.filter((args) => args.includes('config')).length, 1);
+                assert.equal(gitCommands.filter((args) => args.includes('ls-tree')).length, 1);
+                assert.equal(gitCommands.filter((args) => args.includes('ls-files')).length, 1);
+                assert.equal(gitCommands.filter((args) => args.includes('--numstat')).length, 2);
+            } finally {
+                childProcessModule.spawnSync = originalSpawnSync;
+                childProcessModule.execFileSync = originalExecFileSync;
+            }
         });
 
         it('rejects foreign and forged workspace snapshot requests', () => {
@@ -238,11 +272,18 @@ describe('gates/workspace-snapshot-cache', () => {
                 read: request.read
             };
             const rejectsForgedRequest = /not factory-authenticated for the requested repository root/u;
+            const genuineGitGeneration = createWorkspaceSnapshotGitGeneration(repoRoot);
+            const forgedGitGeneration = { ...genuineGitGeneration };
+            assert.throws(
+                () => getWorkspaceSnapshot(repoRoot, 'git_auto', true, [], forgedGitGeneration),
+                /Workspace Git generation is not factory-authenticated/u
+            );
 
             const foreignTempDir = initTestRepo();
             try {
                 const foreignRepoRoot = path.join(foreignTempDir, 'repo');
                 const foreignRequest = createWorkspaceSnapshotRequest(foreignRepoRoot);
+                const foreignGitGeneration = createWorkspaceSnapshotGitGeneration(foreignRepoRoot);
                 assert.throws(
                     () => resolveWorkspaceSnapshotRequest(repoRoot, foreignRequest),
                     /not factory-authenticated for the requested repository root/u
@@ -250,6 +291,10 @@ describe('gates/workspace-snapshot-cache', () => {
                 assert.throws(
                     () => resolveWorkspaceSnapshotRequest(repoRoot, forgedRequest),
                     rejectsForgedRequest
+                );
+                assert.throws(
+                    () => getWorkspaceSnapshot(repoRoot, 'git_auto', true, [], foreignGitGeneration),
+                    /Workspace Git generation is not factory-authenticated/u
                 );
                 assert.throws(
                     () => readCompileReadiness(repoRoot, tempDir, tempDir, 'T-TEST', 'missing.json', forgedRequest),

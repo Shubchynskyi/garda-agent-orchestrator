@@ -10,8 +10,12 @@ import {
 import {
     buildGitChangeClassificationEvidence,
     classifyGitChanges,
+    collectGitChangeClassificationSnapshot,
+    deriveGitChangeClassification,
     normalizeGitRepoRelativePath,
     selectGitChangeClassificationLayers,
+    type GitChangeClassificationResult,
+    type GitChangeClassificationSnapshot,
     type GitChangeLayer
 } from '../../core/git-change-classification';
 import { isGeneratedOrchestratorLockPath } from '../locks/generated-lock-paths';
@@ -471,11 +475,123 @@ export function buildScopeContentFingerprint(
     return stringSha256(fingerprintEntries.join('\n'));
 }
 
+export interface WorkspaceSnapshotGitGeneration {
+    readonly repo_root: string;
+    readClassification(explicitUntrackedPaths: readonly string[]): GitChangeClassificationResult;
+    readNumstat(useStaged: boolean): readonly string[];
+    readStagedBlobFingerprints(relativePaths: readonly string[]): StagedBlobFingerprints;
+}
+
+const workspaceSnapshotGitGenerations = new WeakSet<WorkspaceSnapshotGitGeneration>();
+
+function runWorkspaceSnapshotGitLines(repoRoot: string, args: string[], failMsg: string): string[] {
+    const result = spawnSyncWithTimeout('git', ['-C', String(repoRoot), ...args], {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+        maxBuffer: 50 * 1024 * 1024
+    });
+    if (result.timedOut) {
+        throw new Error(`${failMsg} git timed out after ${DEFAULT_GIT_TIMEOUT_MS} ms.`);
+    }
+    if (result.error) {
+        throw new Error(`${failMsg} ${result.error.message || result.error}`);
+    }
+    if (result.status !== 0) {
+        const errText = String(result.stderr || '').trim();
+        throw new Error(`${failMsg} git exited with code ${result.status}. ${errText}`);
+    }
+    return String(result.stdout || '').split(/\r?\n/).filter((line) => line.trim());
+}
+
+function normalizeGenerationPaths(relativePaths: readonly string[]): string[] {
+    return [...new Set(
+        relativePaths
+            .map((filePath) => normalizeGitRepoRelativePath(filePath))
+            .filter((filePath): filePath is string => filePath !== null)
+    )].sort();
+}
+
+export function createWorkspaceSnapshotGitGeneration(repoRoot: string): WorkspaceSnapshotGitGeneration {
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    let classificationSnapshot: GitChangeClassificationSnapshot | null = null;
+    const classifications = new Map<string, GitChangeClassificationResult>();
+    const numstatByTarget = new Map<boolean, readonly string[]>();
+
+    function readClassificationSnapshot(): GitChangeClassificationSnapshot {
+        classificationSnapshot ??= collectGitChangeClassificationSnapshot(resolvedRepoRoot, {
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS
+        });
+        return classificationSnapshot;
+    }
+
+    const generation = Object.freeze({
+        repo_root: normalizePath(resolvedRepoRoot),
+        readClassification(explicitUntrackedPaths: readonly string[]): GitChangeClassificationResult {
+            const normalizedPaths = normalizeGenerationPaths(explicitUntrackedPaths);
+            const key = normalizedPaths.join('\0');
+            const cached = classifications.get(key);
+            if (cached) return cached;
+            const classification = deriveGitChangeClassification(
+                resolvedRepoRoot,
+                readClassificationSnapshot(),
+                normalizedPaths
+            );
+            classifications.set(key, classification);
+            return classification;
+        },
+        readNumstat(useStaged: boolean): readonly string[] {
+            const cached = numstatByTarget.get(useStaged);
+            if (cached) return cached;
+            const args = ['diff', '--numstat', '--diff-filter=ACDMRTUXB', useStaged ? '--cached' : 'HEAD'];
+            const rows = Object.freeze(runWorkspaceSnapshotGitLines(
+                resolvedRepoRoot,
+                args,
+                'Failed to collect changed files snapshot.'
+            ));
+            numstatByTarget.set(useStaged, rows);
+            return rows;
+        },
+        readStagedBlobFingerprints(relativePaths: readonly string[]): StagedBlobFingerprints {
+            const snapshot = readClassificationSnapshot();
+            const fingerprints = new Map<string, string>();
+            for (const relativePath of normalizeGenerationPaths(relativePaths)) {
+                const fingerprint = snapshot.stagedBlobFingerprints.get(relativePath);
+                if (fingerprint) fingerprints.set(relativePath, fingerprint);
+            }
+            return fingerprints;
+        }
+    });
+    workspaceSnapshotGitGenerations.add(generation);
+    return generation;
+}
+
+function authenticateWorkspaceSnapshotGitGeneration(
+    repoRoot: string,
+    generation?: WorkspaceSnapshotGitGeneration
+): WorkspaceSnapshotGitGeneration | null {
+    if (!generation) return null;
+    if (
+        !workspaceSnapshotGitGenerations.has(generation)
+        || path.resolve(generation.repo_root) !== path.resolve(repoRoot)
+    ) {
+        throw new Error('Workspace Git generation is not factory-authenticated for the requested repository root.');
+    }
+    return generation;
+}
+
 /**
  * Get workspace snapshot for scope validation.
  * Matches Python get_workspace_snapshot.
  */
-export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, includeUntracked: boolean, explicitChangedFiles: string[]) {
+export function getWorkspaceSnapshot(
+    repoRoot: string,
+    detectionSource: string,
+    includeUntracked: boolean,
+    explicitChangedFiles: string[],
+    gitGeneration?: WorkspaceSnapshotGitGeneration
+) {
+    const authenticatedGitGeneration = authenticateWorkspaceSnapshotGitGeneration(repoRoot, gitGeneration);
     const source = (detectionSource || 'git_auto').trim().toLowerCase();
     if (parseSplitCheckpointDetectionSource(source)) {
         const snapshot = getSplitCheckpointWorkspaceSnapshot(repoRoot, source, explicitChangedFiles);
@@ -501,26 +617,6 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     }
     const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
     const generatedRuntimeSplitOptions = { isSourceCheckout };
-
-    function gitLines(args: string[], failMsg: string): string[] {
-        const result = spawnSyncWithTimeout('git', ['-C', String(repoRoot), ...args], {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
-            maxBuffer: 50 * 1024 * 1024
-        });
-        if (result.timedOut) {
-            throw new Error(`${failMsg} git timed out after ${DEFAULT_GIT_TIMEOUT_MS} ms.`);
-        }
-        if (result.error) {
-            throw new Error(`${failMsg} ${result.error.message || result.error}`);
-        }
-        if (result.status !== 0) {
-            const errText = String(result.stderr || '').trim();
-            throw new Error(`${failMsg} git exited with code ${result.status}. ${errText}`);
-        }
-        return (String(result.stdout || '')).split(/\r?\n/).filter(l => l.trim());
-    }
 
     const rawExplicitSplit = splitGeneratedRuntimeControlPlaneArtifacts(
         (explicitChangedFiles || []).map((filePath) => {
@@ -550,10 +646,13 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
             'unstaged',
             ...(includeUntracked ? ['untracked' as const] : [])
         ];
-        const completeGitClassification = classifyGitChanges(repoRoot, {
-            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
-            explicitUntrackedPaths: includeUntracked ? normalizedExplicit : []
-        });
+        const explicitUntrackedPaths = includeUntracked ? normalizedExplicit : [];
+        const completeGitClassification = authenticatedGitGeneration
+            ? authenticatedGitGeneration.readClassification(explicitUntrackedPaths)
+            : classifyGitChanges(repoRoot, {
+                timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+                explicitUntrackedPaths
+            });
         const explicitLayerClassification = selectGitChangeClassificationLayers(completeGitClassification, {
             layers: selectedGitLayers,
             paths: normalizedExplicit,
@@ -576,7 +675,14 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         let additionsTotal = 0, deletionsTotal = 0;
         if (normalizedExplicit.length > 0) {
             try {
-                for (const line of gitLines(['diff', '--numstat', '--diff-filter=ACDMRTUXB', 'HEAD', '--', ...normalizedExplicit], 'Failed numstat')) {
+                const numstatLines = authenticatedGitGeneration
+                    ? authenticatedGitGeneration.readNumstat(false)
+                    : runWorkspaceSnapshotGitLines(
+                        repoRoot,
+                        ['diff', '--numstat', '--diff-filter=ACDMRTUXB', 'HEAD', '--', ...normalizedExplicit],
+                        'Failed numstat'
+                    );
+                for (const line of numstatLines) {
                     const parts = line.split('\t');
                     if (parts.length >= 3) {
                         const changedPath = normalizePath(extractNewPathFromNumstat(parts.slice(2).join('\t')));
@@ -638,9 +744,11 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     const selectedGitLayers: GitChangeLayer[] = useStaged
         ? ['staged', ...(includeUntracked ? ['untracked' as const] : [])]
         : ['staged', 'unstaged', ...(includeUntracked ? ['untracked' as const] : [])];
-    const completeGitClassification = classifyGitChanges(repoRoot, {
-        timeoutMs: DEFAULT_GIT_TIMEOUT_MS
-    });
+    const completeGitClassification = authenticatedGitGeneration
+        ? authenticatedGitGeneration.readClassification([])
+        : classifyGitChanges(repoRoot, {
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS
+        });
     const layerClassification = selectGitChangeClassificationLayers(completeGitClassification, {
         layers: selectedGitLayers,
         context: `workspace snapshot detection_source=${source}`
@@ -662,7 +770,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
 
     const diffArgs = ['diff', '--numstat', '--diff-filter=ACDMRTUXB'];
     diffArgs.push(useStaged ? '--cached' : 'HEAD');
-    const numstatOutput = gitLines(diffArgs, 'Failed to collect changed files snapshot.');
+    const numstatOutput = authenticatedGitGeneration
+        ? authenticatedGitGeneration.readNumstat(useStaged)
+        : runWorkspaceSnapshotGitLines(repoRoot, diffArgs, 'Failed to collect changed files snapshot.');
 
     // Extract both file names and line counts from the single numstat call
     const diffFileStats: Record<string, { additions: number; deletions: number; changed_lines: number }> = {};
@@ -699,7 +809,14 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
 
     const changedLinesTotal = additionsTotal + deletionsTotal;
     const filesFingerprint = stringSha256(normalizedChanged.join('\n'));
-    const contentFingerprint = buildScopeContentFingerprint(repoRoot, source, normalizedChanged);
+    const contentFingerprint = buildScopeContentFingerprint(
+        repoRoot,
+        source,
+        normalizedChanged,
+        useStaged
+            ? authenticatedGitGeneration?.readStagedBlobFingerprints(normalizedChanged)
+            : undefined
+    );
     const scopeFingerprint = stringSha256(
         `${source}|${useStaged}|${includeUntracked}|${normalizedChanged.length}|${changedLinesTotal}|${filesFingerprint}|${contentFingerprint}`
     );

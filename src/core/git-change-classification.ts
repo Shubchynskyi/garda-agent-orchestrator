@@ -66,6 +66,12 @@ export interface GitChangeClassificationOptions {
     explicitUntrackedPaths?: readonly string[];
 }
 
+export interface GitChangeClassificationSnapshot {
+    classification: GitChangeClassificationResult;
+    trackedIndexPaths: ReadonlySet<string>;
+    stagedBlobFingerprints: ReadonlyMap<string, string>;
+}
+
 export interface GitChangeLayerSelectionOptions {
     layers: readonly GitChangeLayer[];
     paths?: readonly string[];
@@ -129,6 +135,14 @@ interface GitBlobReference {
 interface TrackedSnapshotLookup {
     head: Map<string, ContentSnapshot>;
     index: Map<string, ContentSnapshot>;
+    trackedIndexPaths: Set<string>;
+    stagedBlobFingerprints: Map<string, string>;
+}
+
+interface IndexBlobReferenceSnapshot {
+    references: Map<string, GitBlobReference>;
+    trackedPaths: Set<string>;
+    stagedBlobFingerprints: Map<string, string>;
 }
 
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -188,10 +202,6 @@ const EVIDENCE_CONTENT_CLASSIFICATIONS = new Set<GitContentClassification>([
     'eol_only',
     'metadata'
 ]);
-
-function literalPathspec(filePath: string): string {
-    return `:(literal)${filePath}`;
-}
 
 function compareOrdinal(left: string, right: string): number {
     return left < right ? -1 : left > right ? 1 : 0;
@@ -323,15 +333,21 @@ function parsePorcelainStatus(output: Buffer): ParsedPorcelainStatus {
     return { staged, unstaged, untracked };
 }
 
-function parseIndexBlobReferences(output: Buffer, wantedPaths: ReadonlySet<string>): Map<string, GitBlobReference> {
+function parseIndexBlobReferences(output: Buffer, wantedPaths: ReadonlySet<string>): IndexBlobReferenceSnapshot {
     const references = new Map<string, GitBlobReference>();
+    const trackedPaths = new Set<string>();
+    const stagedBlobFingerprints = new Map<string, string>();
     for (const record of output.toString('utf8').split('\0')) {
         if (!record) continue;
         const tabIndex = record.indexOf('\t');
         if (tabIndex < 0) continue;
         const filePath = record.slice(tabIndex + 1);
-        if (!wantedPaths.has(filePath)) continue;
         const [mode, objectId, stage] = record.slice(0, tabIndex).split(/\s+/u);
+        trackedPaths.add(filePath);
+        if (!stagedBlobFingerprints.has(filePath) && /^\d+$/u.test(mode) && /^[0-9a-f]{40,64}$/iu.test(objectId)) {
+            stagedBlobFingerprints.set(filePath, `staged:${mode}:${objectId.toLowerCase()}`);
+        }
+        if (!wantedPaths.has(filePath)) continue;
         if (stage !== '0') continue;
         const kind = mode === '120000' ? 'symlink' : mode.startsWith('100') ? 'file' : 'other';
         references.set(filePath, {
@@ -339,7 +355,7 @@ function parseIndexBlobReferences(output: Buffer, wantedPaths: ReadonlySet<strin
             objectId: kind === 'other' ? null : objectId
         });
     }
-    return references;
+    return { references, trackedPaths, stagedBlobFingerprints };
 }
 
 function parseHeadBlobReferences(output: Buffer, wantedPaths: ReadonlySet<string>): Map<string, GitBlobReference> {
@@ -368,8 +384,7 @@ function readIndexBlobReferences(
     repoRoot: string,
     wantedPaths: ReadonlySet<string>,
     budget: GitCommandBudget
-): Map<string, GitBlobReference> {
-    if (wantedPaths.size === 0) return new Map();
+): IndexBlobReferenceSnapshot {
     const output = runGitBinary(repoRoot, ['ls-files', '--stage', '-z'], {
         maxBuffer: GIT_STATUS_MAX_BUFFER_BYTES,
         timeoutMs: remainingGitCommandTimeoutMs(budget)
@@ -525,14 +540,16 @@ function buildTrackedSnapshotLookup(
     }
 
     const headReferences = readHeadBlobReferences(repoRoot, headPaths, budget);
-    const indexReferences = readIndexBlobReferences(repoRoot, indexPaths, budget);
-    const objectIds = [...headReferences.values(), ...indexReferences.values()]
+    const indexSnapshot = readIndexBlobReferences(repoRoot, indexPaths, budget);
+    const objectIds = [...headReferences.values(), ...indexSnapshot.references.values()]
         .map((reference) => reference.objectId)
         .filter((objectId): objectId is string => objectId !== null);
     const blobContents = readBlobContents(repoRoot, objectIds, budget);
     return {
         head: materializeTrackedSnapshots(headPaths, headReferences, blobContents),
-        index: materializeTrackedSnapshots(indexPaths, indexReferences, blobContents)
+        index: materializeTrackedSnapshots(indexPaths, indexSnapshot.references, blobContents),
+        trackedIndexPaths: indexSnapshot.trackedPaths,
+        stagedBlobFingerprints: indexSnapshot.stagedBlobFingerprints
     };
 }
 
@@ -731,70 +748,13 @@ function classifyUntrackedPath(repoRoot: string, filePath: string): GitLayerChan
     };
 }
 
-function readTrackedExplicitPaths(
-    repoRoot: string,
-    explicitPaths: readonly string[],
-    budget: GitCommandBudget
-): Set<string> {
-    if (explicitPaths.length === 0) {
-        return new Set();
-    }
-    const output = runGitBinary(
-        repoRoot,
-        ['ls-files', '--cached', '-z', '--', ...explicitPaths.map(literalPathspec)],
-        {
-            maxBuffer: GIT_STATUS_MAX_BUFFER_BYTES,
-            timeoutMs: remainingGitCommandTimeoutMs(budget)
-        }
-    );
-    return new Set(output.toString('utf8').split('\0').filter(Boolean));
-}
-
-export function classifyGitChanges(
-    repoRoot: string,
-    options: GitChangeClassificationOptions = {}
+function buildGitChangeClassificationResult(
+    gitConfig: GitChangeClassificationResult['gitConfig'],
+    changes: GitLayerChangeClassification[]
 ): GitChangeClassificationResult {
-    const budget = createGitCommandBudget(options);
-    const porcelain = readPorcelainStatus(repoRoot, budget);
-    const snapshots = buildTrackedSnapshotLookup(repoRoot, porcelain, budget);
-    const staged = porcelain.staged
-        .map((change) => classifyLayerChange(repoRoot, 'staged', change, snapshots));
-    const unstaged = porcelain.unstaged
-        .map((change) => classifyLayerChange(repoRoot, 'unstaged', change, snapshots));
-    const untracked = porcelain.untracked.map((filePath) => classifyUntrackedPath(repoRoot, filePath));
-    const explicitUntrackedPaths = uniqueSorted(
-        (options.explicitUntrackedPaths || [])
-            .map(normalizeGitRepoRelativePath)
-            .filter((filePath): filePath is string => filePath !== null)
-    );
-    const trackedExplicitPaths = readTrackedExplicitPaths(repoRoot, explicitUntrackedPaths, budget);
-    const porcelainUntrackedPaths = new Set(porcelain.untracked);
-    for (const filePath of explicitUntrackedPaths) {
-        if (trackedExplicitPaths.has(filePath) || porcelainUntrackedPaths.has(filePath)) {
-            continue;
-        }
-        const worktree = readWorktreeSnapshot(repoRoot, filePath);
-        if (worktree.kind !== 'file') {
-            continue;
-        }
-        untracked.push({
-            path: filePath,
-            previousPath: null,
-            layer: 'untracked',
-            status: '?',
-            changeKind: 'untracked',
-            includedInEffectiveScope: true,
-            ...classifySnapshots(
-                { kind: 'missing', content: null },
-                worktree
-            )
-        });
-    }
-    const changes = [...staged, ...unstaged, ...untracked].sort((left, right) =>
-        compareOrdinal(left.path, right.path) || LAYER_ORDER[left.layer] - LAYER_ORDER[right.layer]
-    );
-    const gitConfig = readRelevantGitConfig(repoRoot, budget);
-
+    const staged = changes.filter((change) => change.layer === 'staged');
+    const unstaged = changes.filter((change) => change.layer === 'unstaged');
+    const untracked = changes.filter((change) => change.layer === 'untracked');
     return {
         policy: GIT_EOL_CHANGE_POLICY,
         gitConfig,
@@ -815,6 +775,82 @@ export function classifyGitChanges(
                 .map((change) => change.path)
         )
     };
+}
+
+export function collectGitChangeClassificationSnapshot(
+    repoRoot: string,
+    options: Pick<GitChangeClassificationOptions, 'timeoutMs'> = {}
+): GitChangeClassificationSnapshot {
+    const budget = createGitCommandBudget(options);
+    const porcelain = readPorcelainStatus(repoRoot, budget);
+    const snapshots = buildTrackedSnapshotLookup(repoRoot, porcelain, budget);
+    const staged = porcelain.staged
+        .map((change) => classifyLayerChange(repoRoot, 'staged', change, snapshots));
+    const unstaged = porcelain.unstaged
+        .map((change) => classifyLayerChange(repoRoot, 'unstaged', change, snapshots));
+    const untracked = porcelain.untracked.map((filePath) => classifyUntrackedPath(repoRoot, filePath));
+    const changes = [...staged, ...unstaged, ...untracked].sort((left, right) =>
+        compareOrdinal(left.path, right.path) || LAYER_ORDER[left.layer] - LAYER_ORDER[right.layer]
+    );
+    const gitConfig = readRelevantGitConfig(repoRoot, budget);
+
+    return {
+        classification: buildGitChangeClassificationResult(gitConfig, changes),
+        trackedIndexPaths: snapshots.trackedIndexPaths,
+        stagedBlobFingerprints: snapshots.stagedBlobFingerprints
+    };
+}
+
+export function deriveGitChangeClassification(
+    repoRoot: string,
+    snapshot: GitChangeClassificationSnapshot,
+    explicitPaths: readonly string[] = []
+): GitChangeClassificationResult {
+    const explicitUntrackedPaths = uniqueSorted(
+        explicitPaths
+            .map(normalizeGitRepoRelativePath)
+            .filter((filePath): filePath is string => filePath !== null)
+    );
+    if (explicitUntrackedPaths.length === 0) {
+        return snapshot.classification;
+    }
+    const changes = [...snapshot.classification.changes];
+    const classifiedUntrackedPaths = new Set(snapshot.classification.untrackedFiles);
+    for (const filePath of explicitUntrackedPaths) {
+        if (snapshot.trackedIndexPaths.has(filePath) || classifiedUntrackedPaths.has(filePath)) {
+            continue;
+        }
+        const worktree = readWorktreeSnapshot(repoRoot, filePath);
+        if (worktree.kind !== 'file') {
+            continue;
+        }
+        changes.push({
+            path: filePath,
+            previousPath: null,
+            layer: 'untracked',
+            status: '?',
+            changeKind: 'untracked',
+            includedInEffectiveScope: true,
+            ...classifySnapshots(
+                { kind: 'missing', content: null },
+                worktree
+            )
+        });
+    }
+    changes.sort((left, right) =>
+        compareOrdinal(left.path, right.path) || LAYER_ORDER[left.layer] - LAYER_ORDER[right.layer]
+    );
+    return buildGitChangeClassificationResult(snapshot.classification.gitConfig, changes);
+}
+
+export function classifyGitChanges(
+    repoRoot: string,
+    options: GitChangeClassificationOptions = {}
+): GitChangeClassificationResult {
+    const snapshot = collectGitChangeClassificationSnapshot(repoRoot, {
+        timeoutMs: options.timeoutMs
+    });
+    return deriveGitChangeClassification(repoRoot, snapshot, options.explicitUntrackedPaths);
 }
 
 export function selectGitChangeClassificationLayers(

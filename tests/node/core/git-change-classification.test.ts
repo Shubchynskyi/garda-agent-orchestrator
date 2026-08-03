@@ -126,6 +126,7 @@ describe('Git change classification', () => {
             assert.deepEqual(result.changes, []);
             assert.deepEqual(observedTimeouts, [
                 DEFAULT_GIT_TIMEOUT_MS,
+                DEFAULT_GIT_TIMEOUT_MS,
                 DEFAULT_GIT_TIMEOUT_MS
             ]);
         } finally {
@@ -284,15 +285,33 @@ describe('Git change classification', () => {
         runGit(repoRoot, ['commit', '-m', 'ignore explicit fixture']);
         fs.writeFileSync(path.join(repoRoot, 'ignored.txt'), 'task owned\n', 'utf8');
 
-        const automatic = classifyGitChanges(repoRoot);
-        const explicit = classifyGitChanges(repoRoot, {
-            explicitUntrackedPaths: ['nested/../ignored.txt', '../outside.txt']
-        });
+        const commands: string[][] = [];
+        const originalRunGitBinary = gitHelpers.runGitBinary;
+        const runGitBinaryMock = mock.method(
+            gitHelpers,
+            'runGitBinary',
+            ((...args: Parameters<typeof gitHelpers.runGitBinary>) => {
+                commands.push([...args[1]]);
+                return originalRunGitBinary(...args);
+            }) as typeof gitHelpers.runGitBinary
+        );
+        let automatic: ReturnType<typeof classifyGitChanges>;
+        let explicit: ReturnType<typeof classifyGitChanges>;
+        try {
+            automatic = classifyGitChanges(repoRoot);
+            explicit = classifyGitChanges(repoRoot, {
+                explicitUntrackedPaths: ['nested/../ignored.txt', '../outside.txt']
+            });
+        } finally {
+            runGitBinaryMock.mock.restore();
+        }
 
         assert.deepEqual(automatic.effectiveChangedFiles, []);
         assert.deepEqual(explicit.effectiveChangedFiles, ['ignored.txt']);
         assert.deepEqual(explicit.untrackedFiles, ['ignored.txt']);
         assert.equal(explicit.changes[0]?.contentClassification, 'content');
+        assert.equal(commands.filter((args) => args[0] === 'ls-files' && args.includes('--stage')).length, 2);
+        assert.equal(commands.filter((args) => args[0] === 'ls-files' && args.includes('--cached')).length, 0);
     });
 
     it('respects core.autocrlf=true normalization that Git itself considers clean', () => {
