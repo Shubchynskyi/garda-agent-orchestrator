@@ -130,6 +130,17 @@ All generated directories are both gitignored and excluded from IDE indexing by 
 | `runtime/bundle-backups/**` | Saved bundle copies created during applied updates |
 | `runtime/update-reports/**` | Update and rollback reports |
 
+## SQLite Persistence Boundary
+
+Garda's staged SQLite catalog is workspace-local at
+`garda-agent-orchestrator/runtime/catalog/orchestration.sqlite3`. It is a
+rebuildable query projection over canonical task, event, review, ledger,
+retention, metric, and approved project-memory files. It is not shared between
+projects and is not an authority for lifecycle, review, security, or completion
+decisions. The driver, source-of-truth matrix, migration, WAL, recovery, backup,
+restore, and benchmark contracts are defined in
+[`docs/database/sqlite-persistence.md`](database/sqlite-persistence.md).
+
 ## Git And EOL Change Classification
 
 `src/core/git-change-classification.ts` is the canonical low-level primitive for

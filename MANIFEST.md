@@ -110,6 +110,7 @@ Kept inside bundle:
 - docs/compatibility-matrix.md
 - docs/configuration.md
 - docs/control-plane-isolation.md
+- docs/database/sqlite-persistence.md
 - docs/findings-contracts.md
 - docs/node-platform-foundation.md
 - docs/node-runtime-contract.md
