@@ -1,7 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../../core/filesystem';
-import { KNOWN_REVIEW_ARTIFACT_SUFFIXES } from '../../core/task-ids';
+import { REVIEW_CAPABILITY_KEYS } from '../../core/review-capabilities';
+import {
+    isCanonicalTaskId,
+    KNOWN_REVIEW_ARTIFACT_SUFFIXES
+} from '../../core/task-ids';
 import { inspectFilesystemLock, withFilesystemLock } from '../timeline/task-events-locking';
 import { isLowNoiseRuntimeWritesEnabled } from '../derived-runtime-writes';
 
@@ -11,6 +15,7 @@ import { isLowNoiseRuntimeWritesEnabled } from '../derived-runtime-writes';
 // changes or when the index is stale.
 
 const INDEX_FILE_NAME = 'reviews-index.json';
+const INDEX_VERSION = 2;
 const DEFAULT_INDEX_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_INDEX_LOCK_RETRY_MS = 25;
 const DEFAULT_INDEX_LOCK_STALE_MS = 30 * 1000;
@@ -28,10 +33,11 @@ export interface ReviewsIndexEntry {
 }
 
 export interface ReviewsIndex {
-    version: 1;
+    version: 2;
     directoryMtimeMs: number;
     directoryCtimeMs?: number;
     directoryEntryCount?: number;
+    directoryUnindexedEntryCount?: number;
     generatedAtMs: number;
     entries: ReviewsIndexEntry[];
 }
@@ -65,6 +71,9 @@ function cloneReviewsIndex(index: ReviewsIndex): ReviewsIndex {
         directoryMtimeMs: index.directoryMtimeMs,
         ...(typeof index.directoryCtimeMs === 'number' ? { directoryCtimeMs: index.directoryCtimeMs } : {}),
         ...(typeof index.directoryEntryCount === 'number' ? { directoryEntryCount: index.directoryEntryCount } : {}),
+        ...(typeof index.directoryUnindexedEntryCount === 'number'
+            ? { directoryUnindexedEntryCount: index.directoryUnindexedEntryCount }
+            : {}),
         generatedAtMs: index.generatedAtMs,
         entries: index.entries.map((entry) => ({ ...entry }))
     };
@@ -101,6 +110,7 @@ function refreshIndexDirectoryMetadata(index: ReviewsIndex, reviewsDir: string):
     index.directoryMtimeMs = dirSnapshot.mtimeMs;
     index.directoryCtimeMs = dirSnapshot.ctimeMs;
     index.directoryEntryCount = getDirectoryEntryCount(reviewsDir);
+    index.directoryUnindexedEntryCount = Math.max(0, index.directoryEntryCount - index.entries.length);
     index.generatedAtMs = Date.now();
 }
 
@@ -120,13 +130,13 @@ function markIndexFileAsDirectorySelfWrite(indexPath: string, reviewsDir: string
 
 function isDirectoryChangeFromIndexWrite(
     indexPath: string,
-    reviewsDir: string,
     cached: ReviewsIndex,
-    currentDirSnapshot: { mtimeMs: number; ctimeMs: number }
+    currentDirSnapshot: { mtimeMs: number; ctimeMs: number },
+    currentDirectoryEntryCount: number
 ): boolean {
     if (
         typeof cached.directoryEntryCount === 'number'
-        && getDirectoryEntryCount(reviewsDir) !== cached.directoryEntryCount
+        && currentDirectoryEntryCount !== cached.directoryEntryCount
     ) {
         return false;
     }
@@ -145,14 +155,62 @@ function isDirectoryChangeFromIndexWrite(
     }
 }
 
+function isReviewsIndexEntry(value: unknown): value is ReviewsIndexEntry {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+    const entry = value as Record<string, unknown>;
+    if (
+        typeof entry.fileName !== 'string'
+        || typeof entry.taskId !== 'string'
+        || typeof entry.artifactType !== 'string'
+        || typeof entry.mtimeMs !== 'number'
+        || !Number.isFinite(entry.mtimeMs)
+        || typeof entry.sizeBytes !== 'number'
+        || !Number.isSafeInteger(entry.sizeBytes)
+        || entry.sizeBytes < 0
+    ) {
+        return false;
+    }
+    const parsed = parseReviewArtifactFileName(entry.fileName);
+    return parsed?.taskId === entry.taskId && parsed.artifactType === entry.artifactType;
+}
+
 function readIndexFile(indexPath: string): ReviewsIndex | null {
     try {
         if (!fs.existsSync(indexPath)) return null;
-        const raw = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
-        if (raw && raw.version === 1 && Array.isArray(raw.entries)) {
-            return raw as ReviewsIndex;
+        const raw = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as Record<string, unknown>;
+        if (
+            raw?.version !== INDEX_VERSION
+            || typeof raw.directoryMtimeMs !== 'number'
+            || !Number.isFinite(raw.directoryMtimeMs)
+            || raw.directoryMtimeMs < 0
+            || (
+                raw.directoryCtimeMs !== undefined
+                && (
+                    typeof raw.directoryCtimeMs !== 'number'
+                    || !Number.isFinite(raw.directoryCtimeMs)
+                    || raw.directoryCtimeMs < 0
+                )
+            )
+            || typeof raw.generatedAtMs !== 'number'
+            || !Number.isSafeInteger(raw.generatedAtMs)
+            || raw.generatedAtMs < 0
+            || raw.generatedAtMs > Date.now()
+            || !Array.isArray(raw.entries)
+            || typeof raw.directoryEntryCount !== 'number'
+            || !Number.isSafeInteger(raw.directoryEntryCount)
+            || raw.directoryEntryCount < 0
+            || typeof raw.directoryUnindexedEntryCount !== 'number'
+            || !Number.isSafeInteger(raw.directoryUnindexedEntryCount)
+            || raw.directoryUnindexedEntryCount < 0
+            || raw.directoryEntryCount !== raw.entries.length + raw.directoryUnindexedEntryCount
+            || !raw.entries.every(isReviewsIndexEntry)
+        ) {
+            return null;
         }
-        return null;
+        const fileNames = new Set((raw.entries as ReviewsIndexEntry[]).map((entry) => entry.fileName));
+        return fileNames.size === raw.entries.length ? raw as unknown as ReviewsIndex : null;
     } catch {
         return null;
     }
@@ -175,25 +233,44 @@ export function isIndexStale(
     if (!cached) return true;
 
     const currentDirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
+    const currentDirectoryEntryCount = getDirectoryEntryCount(reviewsDir);
     if (currentDirSnapshot.mtimeMs !== cached.directoryMtimeMs) {
-        if (!isDirectoryChangeFromIndexWrite(indexPath, reviewsDir, cached, currentDirSnapshot)) {
+        if (!isDirectoryChangeFromIndexWrite(indexPath, cached, currentDirSnapshot, currentDirectoryEntryCount)) {
             return true;
         }
     }
     if (
         typeof cached.directoryCtimeMs === 'number'
         && currentDirSnapshot.ctimeMs !== cached.directoryCtimeMs
-        && !isDirectoryChangeFromIndexWrite(indexPath, reviewsDir, cached, currentDirSnapshot)
+        && !isDirectoryChangeFromIndexWrite(indexPath, cached, currentDirSnapshot, currentDirectoryEntryCount)
     ) {
         return true;
     }
-    if (typeof cached.directoryEntryCount === 'number' && getDirectoryEntryCount(reviewsDir) !== cached.directoryEntryCount) return true;
+    if (typeof cached.directoryEntryCount === 'number' && currentDirectoryEntryCount !== cached.directoryEntryCount) return true;
 
     return Date.now() - cached.generatedAtMs > maxStalenessMs;
 }
 
+const IMMUTABLE_REVIEW_SNAPSHOT_PATTERN = new RegExp(
+    `^(T-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)-(${REVIEW_CAPABILITY_KEYS.join('|')})-`
+    + '(artifact|receipt|findings-validation|findings-disposition|remediation-baseline)-([0-9a-f]{64})\\.(json|md)$',
+    'u'
+);
+
 export function parseReviewArtifactFileName(fileName: string): { taskId: string; artifactType: string } | null {
     if (!fileName.startsWith('T-')) return null;
+
+    const immutableSnapshotMatch = IMMUTABLE_REVIEW_SNAPSHOT_PATTERN.exec(fileName);
+    if (immutableSnapshotMatch) {
+        const [, taskId, , snapshotType, , extension] = immutableSnapshotMatch;
+        const expectedExtension = snapshotType === 'artifact' ? 'md' : 'json';
+        if (extension === expectedExtension && isCanonicalTaskId(taskId)) {
+            return {
+                taskId,
+                artifactType: fileName.slice(taskId.length + 1)
+            };
+        }
+    }
 
     // Try known suffixes first for deterministic parsing
     for (const suffix of KNOWN_SUFFIXES) {
@@ -230,23 +307,26 @@ export function parseReviewArtifactFileName(fileName: string): { taskId: string;
 export function rebuildIndex(reviewsDir: string): ReviewsIndex {
     const entries: ReviewsIndexEntry[] = [];
     const dirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
-    const dirEntryCount = getDirectoryEntryCount(reviewsDir);
 
     let fileNames: string[];
     try {
         fileNames = fs.readdirSync(reviewsDir);
     } catch {
         return {
-            version: 1,
+            version: INDEX_VERSION,
             directoryMtimeMs: dirSnapshot.mtimeMs,
             directoryCtimeMs: dirSnapshot.ctimeMs,
-            directoryEntryCount: dirEntryCount,
+            directoryEntryCount: 0,
+            directoryUnindexedEntryCount: 0,
             generatedAtMs: Date.now(),
             entries
         };
     }
 
-    for (const fileName of fileNames) {
+    const indexedCandidates = fileNames.filter((fileName) => (
+        fileName !== INDEX_FILE_NAME && !fileName.endsWith('.lock')
+    ));
+    for (const fileName of indexedCandidates) {
         const parsed = parseReviewArtifactFileName(fileName);
         if (!parsed) continue;
 
@@ -267,10 +347,11 @@ export function rebuildIndex(reviewsDir: string): ReviewsIndex {
     }
 
     return {
-        version: 1,
+        version: INDEX_VERSION,
         directoryMtimeMs: dirSnapshot.mtimeMs,
         directoryCtimeMs: dirSnapshot.ctimeMs,
-        directoryEntryCount: dirEntryCount,
+        directoryEntryCount: indexedCandidates.length,
+        directoryUnindexedEntryCount: Math.max(0, indexedCandidates.length - entries.length),
         generatedAtMs: Date.now(),
         entries
     };

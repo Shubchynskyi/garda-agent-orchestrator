@@ -26,7 +26,6 @@ import {
     type DomainScopeFingerprints
 } from '../scope/domain-scope-fingerprints';
 import {
-    fileSha256,
     joinOrchestratorPath
 } from '../shared/helpers';
 import {
@@ -37,7 +36,11 @@ import {
     type ReviewCycleArtifactVerdictResult,
     type ReviewCycleGuardReadResult
 } from './next-step-review-cycle-guard-types';
-import { isPlainRecord } from '../../core/records';
+import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
+import {
+    createReviewAttemptArtifactIndex,
+    type ReviewAttemptArtifactIndex
+} from '../review-attempts/review-attempt-artifact-index';
 
 type ReviewCycleGuardConfig = ReturnType<typeof normalizeReviewCycleGuardConfig>;
 
@@ -122,53 +125,12 @@ function normalizeReviewCycleSha256(value: unknown): string | null {
     return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
 }
 
-function resolveReviewCycleArtifactPath(repoRoot: string, artifactPathText: string): string | null {
-    const resolvedArtifactPath = path.isAbsolute(artifactPathText)
-        ? path.resolve(artifactPathText)
-        : path.resolve(repoRoot, artifactPathText);
-    const resolvedRepoRoot = path.resolve(repoRoot);
-    const relativeToRepo = path.relative(resolvedRepoRoot, resolvedArtifactPath);
-    if (relativeToRepo.startsWith('..') || path.isAbsolute(relativeToRepo)) {
-        return null;
-    }
-    if (!fs.existsSync(resolvedArtifactPath) || !fs.statSync(resolvedArtifactPath).isFile()) {
-        return null;
-    }
-    return resolvedArtifactPath;
-}
-
 function resolveReviewCycleReviewsRoot(repoRoot: string): string {
     return path.resolve(joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews')));
 }
 
-function resolveCanonicalReviewCycleSnapshotPath(
-    repoRoot: string,
-    candidatePath: unknown,
-    expectedFileName: string
-): string | null {
-    const normalizedCandidate = String(candidatePath || '').trim();
-    if (!normalizedCandidate) {
-        return null;
-    }
-    const resolvedPath = resolveReviewCycleArtifactPath(repoRoot, normalizedCandidate);
-    if (!resolvedPath) {
-        return null;
-    }
-    const expectedPath = path.resolve(resolveReviewCycleReviewsRoot(repoRoot), expectedFileName);
-    return path.resolve(resolvedPath) === expectedPath ? resolvedPath : null;
-}
-
-function readReviewCycleJsonRecord(filePath: string): Record<string, unknown> | null {
-    try {
-        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
-        return isPlainRecord(parsed) ? parsed : null;
-    } catch {
-        return null;
-    }
-}
-
 function validateReviewCycleReceiptSnapshotBinding(
-    repoRoot: string,
+    artifactIndex: ReviewAttemptArtifactIndex,
     taskId: string,
     reviewType: string,
     details: Record<string, unknown> | null,
@@ -183,15 +145,12 @@ function validateReviewCycleReceiptSnapshotBinding(
     if (!receiptSnapshotSha256) {
         return false;
     }
-    const resolvedReceiptPath = resolveCanonicalReviewCycleSnapshotPath(
-        repoRoot,
+    const receiptResult = artifactIndex.readJsonSnapshot(
         receiptSnapshotPath,
-        `${taskId}-${reviewType}-receipt-${receiptSnapshotSha256}.json`
+        `${taskId}-${reviewType}-receipt-${receiptSnapshotSha256}.json`,
+        receiptSnapshotSha256
     );
-    if (!resolvedReceiptPath || fileSha256(resolvedReceiptPath) !== receiptSnapshotSha256) {
-        return false;
-    }
-    const receipt = readReviewCycleJsonRecord(resolvedReceiptPath);
+    const receipt = receiptResult.record;
     if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
         return false;
     }
@@ -199,54 +158,61 @@ function validateReviewCycleReceiptSnapshotBinding(
 }
 
 function resolveValidatedReviewCycleArtifactForVerdict(options: {
+    artifactIndex: ReviewAttemptArtifactIndex;
     repoRoot: string;
     taskId: string;
     reviewType: string;
     details: Record<string, unknown> | null;
-}): { resolvedPath: string | null; invalidSnapshot: boolean } {
+}): { content: string | null; resolvedPath: string | null; invalidSnapshot: boolean } {
     const snapshotPathText = String(
         options.details?.review_artifact_snapshot_path
         || options.details?.reviewArtifactSnapshotPath
         || ''
     ).trim();
     if (!snapshotPathText) {
-        return { resolvedPath: null, invalidSnapshot: false };
+        return { content: null, resolvedPath: null, invalidSnapshot: false };
     }
     const snapshotSha256 = normalizeReviewCycleSha256(
         options.details?.review_artifact_snapshot_sha256
         ?? options.details?.reviewArtifactSnapshotSha256
     );
     if (!snapshotSha256) {
-        return { resolvedPath: null, invalidSnapshot: true };
+        return { content: null, resolvedPath: null, invalidSnapshot: true };
     }
     const recordedArtifactSha256 = normalizeReviewCycleSha256(
         options.details?.review_artifact_sha256
         ?? options.details?.reviewArtifactSha256
     );
     if (recordedArtifactSha256 && recordedArtifactSha256 !== snapshotSha256) {
-        return { resolvedPath: null, invalidSnapshot: true };
+        return { content: null, resolvedPath: null, invalidSnapshot: true };
     }
-    const resolvedSnapshotPath = resolveCanonicalReviewCycleSnapshotPath(
-        options.repoRoot,
+    const expectedFileName = `${options.taskId}-${options.reviewType}-artifact-${snapshotSha256}.md`;
+    const snapshotResult = options.artifactIndex.readTextSnapshot(
         snapshotPathText,
-        `${options.taskId}-${options.reviewType}-artifact-${snapshotSha256}.md`
+        expectedFileName,
+        snapshotSha256
     );
-    if (!resolvedSnapshotPath || fileSha256(resolvedSnapshotPath) !== snapshotSha256) {
-        return { resolvedPath: null, invalidSnapshot: true };
+    if (!snapshotResult.valid || snapshotResult.content === null) {
+        return { content: null, resolvedPath: null, invalidSnapshot: true };
     }
     if (!validateReviewCycleReceiptSnapshotBinding(
-        options.repoRoot,
+        options.artifactIndex,
         options.taskId,
         options.reviewType,
         options.details,
         snapshotSha256
     )) {
-        return { resolvedPath: null, invalidSnapshot: true };
+        return { content: null, resolvedPath: null, invalidSnapshot: true };
     }
-    return { resolvedPath: resolvedSnapshotPath, invalidSnapshot: false };
+    return {
+        content: snapshotResult.content,
+        resolvedPath: path.resolve(resolveReviewCycleReviewsRoot(options.repoRoot), expectedFileName),
+        invalidSnapshot: false
+    };
 }
 
 function readValidatedReviewCycleReceiptSnapshot(options: {
+    artifactIndex: ReviewAttemptArtifactIndex;
     repoRoot: string;
     taskId: string;
     reviewType: string;
@@ -263,15 +229,12 @@ function readValidatedReviewCycleReceiptSnapshot(options: {
     if (!receiptSnapshotSha256) {
         return { receipt: null, invalidSnapshot: true };
     }
-    const resolvedReceiptPath = resolveCanonicalReviewCycleSnapshotPath(
-        options.repoRoot,
+    const receiptResult = options.artifactIndex.readJsonSnapshot(
         receiptSnapshotPath,
-        `${options.taskId}-${options.reviewType}-receipt-${receiptSnapshotSha256}.json`
+        `${options.taskId}-${options.reviewType}-receipt-${receiptSnapshotSha256}.json`,
+        receiptSnapshotSha256
     );
-    if (!resolvedReceiptPath || fileSha256(resolvedReceiptPath) !== receiptSnapshotSha256) {
-        return { receipt: null, invalidSnapshot: true };
-    }
-    const receipt = readReviewCycleJsonRecord(resolvedReceiptPath);
+    const receipt = receiptResult.record;
     if (!receipt || receipt.task_id !== options.taskId || receipt.review_type !== options.reviewType) {
         return { receipt: null, invalidSnapshot: true };
     }
@@ -282,6 +245,7 @@ function readValidatedReviewCycleReceiptSnapshot(options: {
 }
 
 function getReviewCycleValidationArtifactVerdict(options: {
+    artifactIndex: ReviewAttemptArtifactIndex;
     repoRoot: string;
     taskId: string;
     reviewType: string;
@@ -339,25 +303,8 @@ function getReviewCycleValidationArtifactVerdict(options: {
     };
 }
 
-function readReviewCycleArtifactPrefix(resolvedArtifactPath: string): string {
-    const file = fs.openSync(resolvedArtifactPath, 'r');
-    try {
-        const buffer = Buffer.alloc(128 * 1024);
-        const bytesRead = fs.readSync(file, buffer, 0, buffer.length, 0);
-        return buffer.subarray(0, bytesRead).toString('utf8');
-    } finally {
-        fs.closeSync(file);
-    }
-}
-
-function readReviewCycleArtifactContentForVerdict(resolvedArtifactPath: string): string {
-    const prefix = readReviewCycleArtifactPrefix(resolvedArtifactPath);
-    return prefix.trimStart().startsWith('{')
-        ? fs.readFileSync(resolvedArtifactPath, 'utf8')
-        : prefix;
-}
-
 function getReviewCycleArtifactVerdict(
+    artifactIndex: ReviewAttemptArtifactIndex,
     repoRoot: string,
     taskId: string,
     reviewType: string,
@@ -369,29 +316,47 @@ function getReviewCycleArtifactVerdict(
     if (!passToken || !failToken) {
         return { failed: null, invalidSnapshot: false };
     }
+    const cacheKey = JSON.stringify([
+        reviewType,
+        details?.review_artifact_snapshot_path ?? details?.reviewArtifactSnapshotPath ?? null,
+        details?.review_artifact_snapshot_sha256 ?? details?.reviewArtifactSnapshotSha256 ?? null,
+        details?.receipt_snapshot_path ?? details?.receiptSnapshotPath ?? null,
+        details?.receipt_snapshot_sha256 ?? details?.receiptSnapshotSha256 ?? null,
+        details?.review_artifact_path ?? details?.reviewArtifactPath ?? null,
+        details?.review_context_path ?? details?.reviewContextPath ?? null,
+        details?.review_context_sha256 ?? details?.reviewContextSha256 ?? null,
+        details?.preflight_sha256 ?? details?.preflightSha256 ?? null,
+        details?.scope_sha256 ?? details?.scopeSha256 ?? null,
+        details?.review_scope_sha256 ?? details?.reviewScopeSha256 ?? null,
+        details?.code_scope_sha256 ?? details?.codeScopeSha256 ?? null,
+        details?.review_tree_state_sha256 ?? details?.reviewTreeStateSha256 ?? null
+    ]);
+    const cached = verdictCache.get(cacheKey);
+    if (cached !== undefined) {
+        return cached;
+    }
     const artifactResolution = resolveValidatedReviewCycleArtifactForVerdict({
+        artifactIndex,
         repoRoot,
         taskId,
         reviewType,
         details
     });
     if (artifactResolution.invalidSnapshot) {
-        return { failed: null, invalidSnapshot: true };
+        const result = { failed: null, invalidSnapshot: true };
+        verdictCache.set(cacheKey, result);
+        return result;
     }
     const resolvedArtifactPath = artifactResolution.resolvedPath;
     if (!resolvedArtifactPath) {
         return { failed: null, invalidSnapshot: false };
-    }
-    const cacheKey = `${reviewType}|${resolvedArtifactPath}`;
-    const cached = verdictCache.get(cacheKey);
-    if (cached !== undefined) {
-        return cached;
     }
     const snapshotSha256 = normalizeReviewCycleSha256(
         details?.review_artifact_snapshot_sha256 ?? details?.reviewArtifactSnapshotSha256
     );
     if (snapshotSha256) {
         const validationArtifactVerdict = getReviewCycleValidationArtifactVerdict({
+            artifactIndex,
             repoRoot,
             taskId,
             reviewType,
@@ -403,7 +368,7 @@ function getReviewCycleArtifactVerdict(
             return validationArtifactVerdict;
         }
     }
-    const content = readReviewCycleArtifactContentForVerdict(resolvedArtifactPath);
+    const content = artifactResolution.content || '';
     if (content.trimStart().startsWith('{')) {
         const result = { failed: null, invalidSnapshot: false };
         verdictCache.set(cacheKey, result);
@@ -463,12 +428,13 @@ function buildLatestFailedReviewSummary(
     };
 }
 
-export function readReviewCycleGuardAttempts(
+function readReviewCycleGuardAttemptsUnlocked(
     repoRoot: string,
     timelinePath: string,
     taskId: string,
     reviewCycleGuardConfig: ReviewCycleGuardConfig,
-    currentPreflightFingerprints: DomainScopeFingerprints | null
+    currentPreflightFingerprints: DomainScopeFingerprints | null,
+    artifactIndex: ReviewAttemptArtifactIndex
 ): ReviewCycleGuardReadResult {
     const resolvedPath = path.resolve(String(timelinePath || ''));
     if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
@@ -533,7 +499,7 @@ export function readReviewCycleGuardAttempts(
             'reviewArtifactPath'
         ]));
         const artifactVerdict = event.event_type === 'REVIEW_RECORDED' && hasArtifactEvidence
-            ? getReviewCycleArtifactVerdict(repoRoot, taskId, reviewType, event.details, verdictCache)
+            ? getReviewCycleArtifactVerdict(artifactIndex, repoRoot, taskId, reviewType, event.details, verdictCache)
             : { failed: null, invalidSnapshot: false };
         if (artifactVerdict.invalidSnapshot) {
             malformedReviewCycleEvent = true;
@@ -609,4 +575,22 @@ export function readReviewCycleGuardAttempts(
         timelineValid: !malformedReviewCycleEvent,
         latestFailedReview
     };
+}
+
+export function readReviewCycleGuardAttempts(
+    repoRoot: string,
+    timelinePath: string,
+    taskId: string,
+    reviewCycleGuardConfig: ReviewCycleGuardConfig,
+    currentPreflightFingerprints: DomainScopeFingerprints | null
+): ReviewCycleGuardReadResult {
+    const reviewsRoot = resolveReviewCycleReviewsRoot(repoRoot);
+    return withReviewArtifactReadBarrier(reviewsRoot, () => readReviewCycleGuardAttemptsUnlocked(
+        repoRoot,
+        timelinePath,
+        taskId,
+        reviewCycleGuardConfig,
+        currentPreflightFingerprints,
+        createReviewAttemptArtifactIndex(reviewsRoot, taskId)
+    ));
 }

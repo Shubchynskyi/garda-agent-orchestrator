@@ -1,6 +1,3 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { fileSha256 } from '../shared/helpers';
 import {
     buildReviewVerdictTokenSet,
     extractReviewVerdictSectionTokenMatch,
@@ -9,10 +6,8 @@ import {
 import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
 import {
     REVIEW_TRUST_COMPATIBILITY_TYPES,
-    isSafeCanonicalArtifactPath,
     normalizeKnownReviewType,
-    normalizeSha256Text,
-    safeReadJson
+    normalizeSha256Text
 } from './task-audit-summary-review-common';
 import type { ReviewReuseTelemetryEventLike } from '../review-reuse/review-reuse-telemetry';
 import {
@@ -21,6 +16,10 @@ import {
     type DomainScopeFingerprints
 } from '../scope/domain-scope-fingerprints';
 import { isPlainRecord } from '../../core/records';
+import {
+    createReviewAttemptArtifactIndex,
+    type ReviewAttemptArtifactIndex
+} from '../review-attempts/review-attempt-artifact-index';
 
 export interface ReviewAttemptTypeSummary {
     review_type: string;
@@ -86,67 +85,25 @@ function buildCanonicalReviewVerdictToken(reviewType: string, outcome: 'PASSED' 
     return `${reviewType.trim().toUpperCase()} REVIEW ${outcome}`;
 }
 
-function resolveReviewArtifactPath(candidatePath: unknown, reviewsRoot: string): string | null {
-    const normalizedCandidate = String(candidatePath || '').trim();
-    if (!normalizedCandidate) {
-        return null;
-    }
-    const resolvedPath = path.isAbsolute(normalizedCandidate)
-        ? path.resolve(normalizedCandidate)
-        : path.resolve(reviewsRoot, normalizedCandidate);
-    return isSafeCanonicalArtifactPath(resolvedPath, reviewsRoot)
-        ? resolvedPath
-        : null;
-}
-
-function resolveCanonicalReviewSnapshotPath(
-    candidatePath: unknown,
-    reviewsRoot: string,
-    expectedFileName: string
-): string | null {
-    const resolvedPath = resolveReviewArtifactPath(candidatePath, reviewsRoot);
-    const expectedPath = path.resolve(reviewsRoot, expectedFileName);
-    return resolvedPath && resolvedPath === expectedPath
-        ? resolvedPath
-        : null;
-}
-
 function readValidatedTextSnapshotArtifact(
+    artifactIndex: ReviewAttemptArtifactIndex,
     candidatePath: unknown,
-    reviewsRoot: string,
     expectedFileName: string,
     expectedSha256?: unknown
 ): { content: string | null; valid: boolean; sha256: string | null } {
-    const resolvedPath = resolveCanonicalReviewSnapshotPath(candidatePath, reviewsRoot, expectedFileName);
-    const normalizedExpectedSha256 = normalizeSha256Text(expectedSha256);
-    if (!resolvedPath || !fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
-        return { content: null, valid: false, sha256: null };
-    }
-    const actualSha256 = fileSha256(resolvedPath);
-    if (!actualSha256 || (normalizedExpectedSha256 && actualSha256 !== normalizedExpectedSha256)) {
-        return { content: null, valid: false, sha256: actualSha256 };
-    }
-    return { content: fs.readFileSync(resolvedPath, 'utf8'), valid: true, sha256: actualSha256 };
+    return artifactIndex.readTextSnapshot(candidatePath, expectedFileName, expectedSha256);
 }
 
 function readValidatedReviewReceiptSnapshot(
+    artifactIndex: ReviewAttemptArtifactIndex,
     candidatePath: unknown,
-    reviewsRoot: string,
     expectedFileName: string,
     taskId: string,
     reviewType: string,
     expectedSha256?: unknown
 ): { receipt: Record<string, unknown> | null; valid: boolean } {
-    const resolvedPath = resolveCanonicalReviewSnapshotPath(candidatePath, reviewsRoot, expectedFileName);
-    const normalizedExpectedSha256 = normalizeSha256Text(expectedSha256);
-    if (!resolvedPath || !fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
-        return { receipt: null, valid: false };
-    }
-    const actualSha256 = fileSha256(resolvedPath);
-    if (!actualSha256 || (normalizedExpectedSha256 && actualSha256 !== normalizedExpectedSha256)) {
-        return { receipt: null, valid: false };
-    }
-    const receipt = safeReadJson(resolvedPath);
+    const receiptResult = artifactIndex.readJsonSnapshot(candidatePath, expectedFileName, expectedSha256);
+    const receipt = receiptResult.record;
     if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
         return { receipt: null, valid: false };
     }
@@ -440,7 +397,7 @@ function buildReviewAttemptDiagnostics(
 
 function summarizeReviewAttemptFromEvent(
     event: ReviewReuseTelemetryEventLike,
-    reviewsRoot: string,
+    artifactIndex: ReviewAttemptArtifactIndex,
     taskId: string,
     currentPreflightFingerprints: DomainScopeFingerprints | null
 ): {
@@ -512,16 +469,16 @@ function summarizeReviewAttemptFromEvent(
     const receiptSnapshotSha256 = normalizeSha256Text(explicitReceiptSha256);
     const reviewArtifactSnapshotSha256 = normalizeSha256Text(explicitReviewArtifactSha256);
     const receiptResult = readValidatedReviewReceiptSnapshot(
+        artifactIndex,
         explicitReceiptPath,
-        reviewsRoot,
         `${taskId}-${reviewType}-receipt-${receiptSnapshotSha256}.json`,
         taskId,
         reviewType,
         receiptSnapshotSha256
     );
     const reviewArtifactResult = readValidatedTextSnapshotArtifact(
+        artifactIndex,
         explicitReviewArtifactPath,
-        reviewsRoot,
         `${taskId}-${reviewType}-artifact-${reviewArtifactSnapshotSha256}.md`,
         reviewArtifactSnapshotSha256
     );
@@ -545,7 +502,7 @@ function summarizeReviewAttemptFromEvent(
 }
 
 function summarizeReviewAttemptsFromSnapshotArtifacts(
-    reviewsRoot: string,
+    artifactIndex: ReviewAttemptArtifactIndex,
     taskId: string,
     reviewType: string,
     currentPreflightFingerprints: DomainScopeFingerprints | null
@@ -560,19 +517,15 @@ function summarizeReviewAttemptsFromSnapshotArtifacts(
 }[] {
     const receiptFilePrefix = `${taskId}-${reviewType}-receipt-`;
     const receiptFileSuffix = '.json';
-    const receiptSnapshotFiles = fs.existsSync(reviewsRoot) && fs.statSync(reviewsRoot).isDirectory()
-        ? fs.readdirSync(reviewsRoot)
-            .filter((entry) => entry.startsWith(receiptFilePrefix) && entry.endsWith(receiptFileSuffix))
-            .sort()
-        : [];
+    const receiptSnapshotFiles = artifactIndex.listReceiptSnapshotFileNames(reviewType);
     return receiptSnapshotFiles.map((receiptSnapshotFileName) => {
         const receiptSha256 = normalizeSha256Text(receiptSnapshotFileName.slice(
             receiptFilePrefix.length,
             receiptSnapshotFileName.length - receiptFileSuffix.length
         ));
         const receiptResult = readValidatedReviewReceiptSnapshot(
-            path.join(reviewsRoot, receiptSnapshotFileName),
-            reviewsRoot,
+            artifactIndex,
+            receiptSnapshotFileName,
             receiptSnapshotFileName,
             taskId,
             reviewType,
@@ -585,8 +538,8 @@ function summarizeReviewAttemptsFromSnapshotArtifacts(
             : null;
         const reviewArtifactResult = reviewArtifactSnapshotFileName
             ? readValidatedTextSnapshotArtifact(
-                path.join(reviewsRoot, reviewArtifactSnapshotFileName),
-                reviewsRoot,
+                artifactIndex,
+                reviewArtifactSnapshotFileName,
                 reviewArtifactSnapshotFileName,
                 reviewArtifactSha256
             )
@@ -639,6 +592,7 @@ export function buildReviewAttemptSummary(options: {
     excludedReviewTypes?: string[];
 }): ReviewAttemptSummary | null {
     return withReviewArtifactReadBarrier(options.reviewsRoot, () => {
+        const artifactIndex = createReviewAttemptArtifactIndex(options.reviewsRoot, options.taskId);
         const attemptCounts = new Map<string, ReviewAttemptTypeSummary>();
         const seenEvidenceKeysByType = new Map<string, Set<string>>();
         const diagnosticAttempts: ReviewAttemptDiagnosticInput[] = [];
@@ -650,7 +604,7 @@ export function buildReviewAttemptSummary(options: {
         for (const event of options.timelineEvents || []) {
             const eventAttempt = summarizeReviewAttemptFromEvent(
                 event,
-                options.reviewsRoot,
+                artifactIndex,
                 options.taskId,
                 currentPreflightFingerprints
             );
@@ -699,7 +653,7 @@ export function buildReviewAttemptSummary(options: {
 
         for (const reviewType of REVIEW_TRUST_COMPATIBILITY_TYPES) {
             for (const fallbackAttempt of summarizeReviewAttemptsFromSnapshotArtifacts(
-                options.reviewsRoot,
+                artifactIndex,
                 options.taskId,
                 reviewType,
                 currentPreflightFingerprints

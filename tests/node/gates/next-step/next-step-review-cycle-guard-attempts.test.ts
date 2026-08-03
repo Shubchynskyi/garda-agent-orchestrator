@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import type { PathLike, PathOrFileDescriptor } from 'node:fs';
 import * as fx from './next-step-review-cycle-fixtures';
 import {
     normalizeReviewCycleGuardConfig
@@ -722,6 +723,90 @@ describe('gates/next-step review cycle guard attempts', () => {
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
         assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+    });
+
+    it('validates repeated immutable review evidence with one indexed snapshot read per file', () => {
+        const repoRoot = makeTempRepo();
+        const runtimeReviewsRoot = reviewsRoot(repoRoot);
+        const artifactContent = '# security review\n\nSECURITY REVIEW FAILED\n';
+        const artifactSha256 = sha256Text(artifactContent);
+        const artifactPath = path.join(runtimeReviewsRoot, `${TASK_ID}-security.md`);
+        const artifactSnapshotPath = path.join(
+            runtimeReviewsRoot,
+            `${TASK_ID}-security-artifact-${artifactSha256}.md`
+        );
+        fs.writeFileSync(artifactPath, artifactContent, 'utf8');
+        fs.writeFileSync(artifactSnapshotPath, artifactContent, 'utf8');
+        const receipt = {
+            task_id: TASK_ID,
+            review_type: 'security',
+            review_artifact_sha256: artifactSha256
+        };
+        const receiptContent = `${JSON.stringify(receipt, null, 2)}\n`;
+        const receiptSha256 = sha256Text(receiptContent);
+        const receiptSnapshotPath = path.join(
+            runtimeReviewsRoot,
+            `${TASK_ID}-security-receipt-${receiptSha256}.json`
+        );
+        fs.writeFileSync(receiptSnapshotPath, receiptContent, 'utf8');
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+                review_type: 'security',
+                reviewer_identity: `agent:indexed-security-${index}`,
+                review_context_sha256: sha256Text(`indexed-security-context-${index}`),
+                review_artifact_path: artifactPath,
+                review_artifact_snapshot_path: artifactSnapshotPath,
+                review_artifact_snapshot_sha256: artifactSha256,
+                receipt_snapshot_path: receiptSnapshotPath,
+                receipt_snapshot_sha256: receiptSha256
+            });
+        }
+
+        const fsModule = requireFromTest('node:fs') as typeof fs;
+        const originalReaddirSync = fsModule.readdirSync;
+        const originalReadFileSync = fsModule.readFileSync;
+        let reviewDirectoryReads = 0;
+        let immutableSnapshotReads = 0;
+        fsModule.readdirSync = ((targetPath: PathLike, options?: unknown) => {
+            if (path.resolve(String(targetPath)) === path.resolve(runtimeReviewsRoot)) {
+                reviewDirectoryReads += 1;
+            }
+            return originalReaddirSync(targetPath, options as never);
+        }) as typeof fsModule.readdirSync;
+        fsModule.readFileSync = ((targetPath: PathOrFileDescriptor, options?: unknown) => {
+            if (
+                typeof targetPath !== 'number'
+                && [artifactSnapshotPath, receiptSnapshotPath].includes(path.resolve(String(targetPath)))
+            ) {
+                immutableSnapshotReads += 1;
+            }
+            return originalReadFileSync(targetPath, options as never);
+        }) as typeof fsModule.readFileSync;
+
+        try {
+            const result = readReviewCycleGuardAttempts(
+                repoRoot,
+                path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`),
+                TASK_ID,
+                normalizeReviewCycleGuardConfig({
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 3,
+                    max_total_non_test_reviews: 3,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
+                }),
+                null
+            );
+
+            assert.equal(result.timelineValid, true);
+            assert.equal(result.attempts.length, 2);
+            assert.equal(reviewDirectoryReads, 1);
+            assert.equal(immutableSnapshotReads, 2);
+        } finally {
+            fsModule.readdirSync = originalReaddirSync;
+            fsModule.readFileSync = originalReadFileSync;
+        }
     });
 
     it('counts verdict-free JSON review artifact snapshots with active findings as failed attempts', () => {

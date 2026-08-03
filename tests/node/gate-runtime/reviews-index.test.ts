@@ -100,7 +100,7 @@ describe('reviews-index', () => {
     describe('rebuildIndex', () => {
         it('returns empty entries for empty directory', () => {
             const index = rebuildIndex(reviewsDir);
-            assert.equal(index.version, 1);
+            assert.equal(index.version, 2);
             assert.equal(index.entries.length, 0);
             assert.ok(index.directoryMtimeMs > 0);
             assert.ok(index.generatedAtMs > 0);
@@ -138,6 +138,25 @@ describe('reviews-index', () => {
             assert.equal(entry.artifactType, 'review-remediation-cycle.json');
         });
 
+        it('indexes immutable review evidence for multi-segment alphanumeric task ids', () => {
+            const sha256 = 'a'.repeat(64);
+            writeArtifact(reviewsDir, `T-AUDIT-1-code-receipt-${sha256}.json`, '{"task_id":"T-AUDIT-1"}');
+            writeArtifact(reviewsDir, `T-AUDIT-1-code-artifact-${sha256}.md`, '# Review');
+            writeArtifact(reviewsDir, `T-AUDIT-1-code-findings-validation-${sha256}.json`, '{}');
+
+            const index = rebuildIndex(reviewsDir);
+            const immutableEntries = entriesForTask(index, 'T-AUDIT-1');
+
+            assert.deepEqual(
+                immutableEntries.map((entry) => entry.artifactType).sort(),
+                [
+                    `code-artifact-${sha256}.md`,
+                    `code-findings-validation-${sha256}.json`,
+                    `code-receipt-${sha256}.json`
+                ]
+            );
+        });
+
         it('skips non-artifact files', () => {
             writeArtifact(reviewsDir, 'T-001-task-mode.json');
             writeArtifact(reviewsDir, 'some-random-file.json');
@@ -166,7 +185,7 @@ describe('reviews-index', () => {
     describe('writeIndex and resolveIndexPath', () => {
         it('writes index atomically and can be read back', () => {
             const index: ReviewsIndex = {
-                version: 1,
+                version: 2,
                 directoryMtimeMs: 12345,
                 generatedAtMs: Date.now(),
                 entries: [{
@@ -183,7 +202,7 @@ describe('reviews-index', () => {
 
             assert.ok(fs.existsSync(indexPath));
             const raw = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
-            assert.equal(raw.version, 1);
+            assert.equal(raw.version, 2);
             assert.equal(raw.entries.length, 1);
             assert.equal(raw.entries[0].fileName, 'T-001-task-mode.json');
         });
@@ -192,7 +211,7 @@ describe('reviews-index', () => {
             const badPath = path.join(tmpDir, 'non-existent-deep', 'sub', 'sub2', 'index.json');
             // mkdirSync recursive in writeIndex should handle this
             const index: ReviewsIndex = {
-                version: 1,
+                version: 2,
                 directoryMtimeMs: 0,
                 generatedAtMs: Date.now(),
                 entries: []
@@ -205,7 +224,7 @@ describe('reviews-index', () => {
         it('preserves the previous index when final rename fails', () => {
             const indexPath = resolveIndexPath(reviewsDir);
             const previousIndex: ReviewsIndex = {
-                version: 1,
+                version: 2,
                 directoryMtimeMs: 1,
                 directoryCtimeMs: 1,
                 directoryEntryCount: 0,
@@ -213,7 +232,7 @@ describe('reviews-index', () => {
                 entries: []
             };
             const nextIndex: ReviewsIndex = {
-                version: 1,
+                version: 2,
                 directoryMtimeMs: 2,
                 directoryCtimeMs: 2,
                 directoryEntryCount: 1,
@@ -753,6 +772,30 @@ describe('reviews-index', () => {
             const result = loadIndex(reviewsDir);
             assert.equal(result.source, 'rebuilt');
             assert.equal(result.index.entries.length, 1);
+        });
+
+        it('rebuilds indexes whose generated timestamp is missing or cannot expire', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            const indexPath = resolveIndexPath(reviewsDir);
+            const validIndex = rebuildIndex(reviewsDir);
+            writeIndex(indexPath, {
+                ...validIndex,
+                generatedAtMs: Date.now() + 60_000
+            });
+            assert.equal(loadIndex(reviewsDir).source, 'rebuilt');
+
+            const invalidGeneratedAtValues: Array<number | undefined> = [undefined, -1, 1.5];
+
+            for (const generatedAtMs of invalidGeneratedAtValues) {
+                writeIndex(indexPath, {
+                    ...validIndex,
+                    generatedAtMs
+                } as ReviewsIndex);
+
+                const result = loadIndex(reviewsDir);
+                assert.equal(result.source, 'rebuilt');
+                assert.equal(result.index.entries.length, 1);
+            }
         });
 
         it('handles compressed artifact files (.gz) not being indexed', () => {

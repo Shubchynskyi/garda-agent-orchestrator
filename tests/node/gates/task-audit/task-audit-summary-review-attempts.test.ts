@@ -1,5 +1,11 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { buildReviewAttemptSummary } from '../../../../src/gates/task-audit/task-audit-summary-review-attempts';
+import {
+    loadIndex,
+    resolveIndexPath,
+    writeIndex
+} from '../../../../src/gate-runtime/reviews-index';
 
 import {
     fs,
@@ -155,6 +161,101 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.review_attempt_summary?.total_attempts, 2);
             assert.ok(formatTaskAuditSummaryText(result).includes(expectedLine));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(expectedLine));
+        });
+
+        it('indexes receipt snapshots once and caches immutable validation across timeline and fallback discovery', () => {
+            const codePassContent = '# Code Review\n\n## Verdict\nREVIEW PASSED\n';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', codePassContent);
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                review_artifact_sha256: createHash('sha256').update(codePassContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:indexed-code-reviewer',
+                trust_level: 'INDEPENDENT_AUDITED'
+            });
+            const details = buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code');
+            for (let index = 0; index < 500; index += 1) {
+                fs.writeFileSync(
+                    path.join(reviewsDir, `T-UNRELATED-${index}-preflight.json`),
+                    '{"unrelated":true}\n',
+                    'utf8'
+                );
+            }
+
+            const fsModule = require('node:fs') as typeof fs;
+            const originalReaddirSync = fsModule.readdirSync;
+            const originalReadFileSync = fsModule.readFileSync;
+            let reviewDirectoryReads = 0;
+            let immutableSnapshotReads = 0;
+            fsModule.readdirSync = ((targetPath: fs.PathLike, options?: unknown) => {
+                if (path.resolve(String(targetPath)) === path.resolve(reviewsDir)) {
+                    reviewDirectoryReads += 1;
+                }
+                return originalReaddirSync(targetPath, options as never);
+            }) as typeof fsModule.readdirSync;
+            fsModule.readFileSync = ((targetPath: fs.PathOrFileDescriptor, options?: unknown) => {
+                if (
+                    typeof targetPath !== 'number'
+                    && path.resolve(String(targetPath)).startsWith(`${path.resolve(reviewsDir)}${path.sep}`)
+                    && /-(?:receipt|artifact)-[0-9a-f]{64}\.(?:json|md)$/u.test(path.basename(String(targetPath)))
+                ) {
+                    immutableSnapshotReads += 1;
+                }
+                return originalReadFileSync(targetPath, options as never);
+            }) as typeof fsModule.readFileSync;
+
+            try {
+                const summary = buildReviewAttemptSummary({
+                    reviewsRoot: reviewsDir,
+                    taskId: TASK_ID,
+                    timelineEvents: [
+                        { event_type: 'REVIEW_RECORDED', details },
+                        { event_type: 'REVIEW_RECORDED', details }
+                    ]
+                });
+
+                assert.equal(summary?.total_attempts, 1);
+                assert.equal(reviewDirectoryReads, 1);
+                assert.equal(immutableSnapshotReads, 2);
+            } finally {
+                fsModule.readdirSync = originalReaddirSync;
+                fsModule.readFileSync = originalReadFileSync;
+            }
+        });
+
+        it('fails closed when indexed immutable snapshot metadata diverges from canonical evidence', () => {
+            const codePassContent = '# Code Review\n\n## Verdict\nREVIEW PASSED\n';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', codePassContent);
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                review_artifact_sha256: createHash('sha256').update(codePassContent, 'utf8').digest('hex')
+            });
+            const details = buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code');
+            const timelineEvents = [{ event_type: 'REVIEW_RECORDED', details }];
+
+            const initial = buildReviewAttemptSummary({ reviewsRoot: reviewsDir, taskId: TASK_ID, timelineEvents });
+            assert.equal(initial?.review_types[0]?.pass_count, 1);
+
+            const loaded = loadIndex(reviewsDir).index;
+            const receiptSnapshotName = path.basename(String(details.receipt_snapshot_path));
+            const receiptEntry = loaded.entries.find((entry) => entry.fileName === receiptSnapshotName);
+            assert.ok(receiptEntry);
+            receiptEntry.sizeBytes += 1;
+            writeIndex(resolveIndexPath(reviewsDir), loaded);
+
+            const divergent = buildReviewAttemptSummary({ reviewsRoot: reviewsDir, taskId: TASK_ID, timelineEvents });
+            assert.deepEqual(divergent?.review_types, [{
+                review_type: 'code',
+                total_attempts: 1,
+                pass_count: 0,
+                fail_count: 0,
+                reused_count: 0,
+                missing_or_invalid_count: 1
+            }]);
         });
 
         it('classifies findings-json remediation attempts from structured receipt evidence without prose verdicts', () => {
