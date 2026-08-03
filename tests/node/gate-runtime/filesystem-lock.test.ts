@@ -906,6 +906,47 @@ test('releaseFilesystemLock retries transient EPERM and removes lock directory',
     }
 });
 
+test('releaseFilesystemLock retries transient EPERM while publishing release intent', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-release-intent-publish-retry.lock');
+    const intentPath = `${lockPath}.release-intent`;
+    const realFs = require('node:fs');
+    const originalWriteFileSync = realFs.writeFileSync;
+    const originalStderrWrite = process.stderr.write;
+    let interceptedRetries = 0;
+    let stderrOutput = '';
+
+    try {
+        const { handle } = acquireFilesystemLock(lockPath);
+        realFs.writeFileSync = function (...args: unknown[]) {
+            const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+            if (targetPath === path.resolve(intentPath) && interceptedRetries < 2) {
+                interceptedRetries += 1;
+                const error = new Error('EPERM: simulated release-intent publication contention') as NodeJS.ErrnoException;
+                error.code = 'EPERM';
+                throw error;
+            }
+            return originalWriteFileSync.apply(realFs, args as [fs.PathOrFileDescriptor, string | NodeJS.ArrayBufferView, fs.WriteFileOptions?]);
+        };
+        (process.stderr as unknown as { write: (...args: unknown[]) => boolean }).write = function (chunk: unknown): boolean {
+            stderrOutput += String(chunk);
+            return true;
+        };
+
+        assert.doesNotThrow(() => releaseFilesystemLock(handle));
+        assert.equal(interceptedRetries, 2, 'release-intent publication should retry transient contention');
+        assert.ok(!fs.existsSync(lockPath), 'lock directory should be removed after publication retry recovery');
+        assert.ok(!fs.existsSync(intentPath), 'release intent should be removed after release');
+        assert.ok(stderrOutput.includes('kind=filesystem_lock_release_intent'));
+        assert.ok(stderrOutput.includes('LOCK_RELEASE_RETRY_RESOLVED'));
+    } finally {
+        realFs.writeFileSync = originalWriteFileSync;
+        (process.stderr as unknown as { write: typeof process.stderr.write }).write = originalStderrWrite;
+        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(intentPath, { force: true });
+    }
+});
+
 test('releaseFilesystemLock retries transient EPERM while claiming release ownership', () => {
     const tmp = mkTmpDir();
     const lockPath = path.join(tmp, '.test-release-claim-retry.lock');
@@ -923,6 +964,10 @@ test('releaseFilesystemLock retries transient EPERM while claiming release owner
             if (fromPath === path.resolve(lockPath)
                 && toPath.startsWith(path.resolve(`${lockPath}.releasing`))
                 && interceptedRetries < 2) {
+                assert.ok(
+                    fs.existsSync(`${lockPath}.release-intent`),
+                    'owner must publish release intent before retrying the directory rename'
+                );
                 interceptedRetries += 1;
                 const error = new Error('EPERM: simulated transient release claim contention') as NodeJS.ErrnoException;
                 error.code = 'EPERM';
@@ -938,10 +983,309 @@ test('releaseFilesystemLock retries transient EPERM while claiming release owner
         assert.doesNotThrow(() => releaseFilesystemLock(handle));
         assert.equal(interceptedRetries, 2, 'release claim should retry transient rename contention');
         assert.ok(!fs.existsSync(lockPath), 'lock directory should be removed after release claim retry recovery');
+        assert.ok(!fs.existsSync(`${lockPath}.release-intent`), 'release intent should be removed after release');
         assert.ok(stderrOutput.includes('LOCK_RELEASE_RETRY_RESOLVED'));
     } finally {
         realFs.renameSync = originalRenameSync;
         (process.stderr as unknown as { write: typeof process.stderr.write }).write = originalStderrWrite;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('releaseFilesystemLock preserves a completed claim after release-intent cleanup failure', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-release-intent-cleanup-contention.lock');
+    const intentPath = `${lockPath}.release-intent`;
+    const realFs = require('node:fs');
+    const originalRenameSync = realFs.renameSync;
+    const originalStderrWrite = process.stderr.write;
+    let cleanupAttempts = 0;
+    let stderrOutput = '';
+
+    try {
+        const { handle } = acquireFilesystemLock(lockPath);
+        realFs.renameSync = function (...args: unknown[]) {
+            const fromPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+            const toPath = typeof args[1] === 'string' ? path.resolve(args[1]) : '';
+            if (
+                fromPath === path.resolve(intentPath)
+                && toPath.startsWith(path.resolve(`${intentPath}.clearing-`))
+            ) {
+                cleanupAttempts += 1;
+                const error = new Error('EPERM: simulated release-intent cleanup contention') as NodeJS.ErrnoException;
+                error.code = 'EPERM';
+                throw error;
+            }
+            return originalRenameSync.apply(realFs, args as [fs.PathLike, fs.PathLike]);
+        };
+        (process.stderr as unknown as { write: (...args: unknown[]) => boolean }).write = function (chunk: unknown): boolean {
+            stderrOutput += String(chunk);
+            return true;
+        };
+
+        assert.doesNotThrow(() => releaseFilesystemLock(handle));
+        assert.equal(cleanupAttempts, 1);
+        assert.ok(!fs.existsSync(lockPath), 'the successfully claimed lock directory must still be removed');
+        assert.ok(fs.existsSync(intentPath), 'bounded release intent remains available for later recovery');
+        assert.ok(stderrOutput.includes('LOCK_RELEASE_INTENT_CLEANUP_FAILED'));
+    } finally {
+        realFs.renameSync = originalRenameSync;
+        (process.stderr as unknown as { write: typeof process.stderr.write }).write = originalStderrWrite;
+        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(intentPath, { force: true });
+    }
+});
+
+test('active release intent bounds sync and async waiter metadata reads', async () => {
+    const realFs = require('node:fs');
+    const originalReadFileSync = realFs.readFileSync;
+    for (const mode of ['sync', 'async'] as const) {
+        const tmp = mkTmpDir();
+        const lockPath = path.join(tmp, `.test-release-intent-${mode}.lock`);
+        const ownerPath = path.join(lockPath, 'owner.json');
+        let ownerReads = 0;
+        try {
+            fs.mkdirSync(lockPath);
+            fs.writeFileSync(ownerPath, JSON.stringify({
+                lock_id: `dead-owner-${mode}`,
+                pid: 999999999,
+                hostname: os.hostname(),
+                created_at_utc: new Date().toISOString(),
+                heartbeat_at_utc: new Date().toISOString()
+            }, null, 2) + '\n', 'utf8');
+            fs.writeFileSync(`${lockPath}.release-intent`, JSON.stringify({
+                lock_id: `dead-owner-${mode}`,
+                pid: 999999999,
+                created_at_utc: new Date().toISOString()
+            }) + '\n', 'utf8');
+            realFs.readFileSync = function (...args: unknown[]) {
+                const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+                if (targetPath === path.resolve(ownerPath)) ownerReads += 1;
+                return originalReadFileSync.apply(realFs, args as [fs.PathOrFileDescriptor, BufferEncoding?]);
+            };
+
+            if (mode === 'sync') {
+                assert.throws(
+                    () => acquireFilesystemLock(lockPath, { timeoutMs: 80, retryMs: 10 }),
+                    /Timed out acquiring file lock/u
+                );
+            } else {
+                await assert.rejects(
+                    () => acquireFilesystemLockAsync(lockPath, { timeoutMs: 80, retryMs: 10 }),
+                    /Timed out acquiring file lock/u
+                );
+            }
+            assert.equal(ownerReads, 1, `${mode} waiter should inspect owner metadata only once`);
+        } finally {
+            realFs.readFileSync = originalReadFileSync;
+            fs.rmSync(tmp, { recursive: true, force: true });
+            fs.rmSync(`${lockPath}.release-intent`, { force: true });
+        }
+    }
+});
+
+test('missing initial lock inspection still bounds sync and async release-intent owner reads', async () => {
+    const realFs = require('node:fs');
+    const originalMkdirSync = realFs.mkdirSync;
+    const originalReadFileSync = realFs.readFileSync;
+    const observedOwnerReads: Record<'sync' | 'async', number> = { sync: 0, async: 0 };
+    for (const mode of ['sync', 'async'] as const) {
+        const tmp = mkTmpDir();
+        const lockPath = path.join(tmp, `.test-missing-initial-release-intent-${mode}.lock`);
+        const ownerPath = path.join(lockPath, 'owner.json');
+        const releaseIntentPath = `${lockPath}.release-intent`;
+        const lockId = `late-release-owner-${mode}`;
+        let lockInjected = false;
+        let ownerReads = 0;
+        try {
+            realFs.readFileSync = function (...args: unknown[]) {
+                const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+                if (targetPath === path.resolve(ownerPath)) ownerReads += 1;
+                return originalReadFileSync.apply(realFs, args as [fs.PathOrFileDescriptor, BufferEncoding?]);
+            };
+            realFs.mkdirSync = function (...args: unknown[]) {
+                const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+                if (!lockInjected && targetPath === path.resolve(lockPath)) {
+                    lockInjected = true;
+                    originalMkdirSync.call(realFs, lockPath);
+                    fs.writeFileSync(ownerPath, JSON.stringify({
+                        lock_id: lockId,
+                        pid: 999999999,
+                        hostname: os.hostname(),
+                        created_at_utc: new Date().toISOString(),
+                        heartbeat_at_utc: new Date().toISOString()
+                    }, null, 2) + '\n', 'utf8');
+                    fs.writeFileSync(releaseIntentPath, JSON.stringify({
+                        lock_id: lockId,
+                        pid: 999999999,
+                        created_at_utc: new Date().toISOString()
+                    }) + '\n', 'utf8');
+                    const subMillisecondFutureMtime = (Date.now() + 0.5) / 1000;
+                    fs.utimesSync(releaseIntentPath, subMillisecondFutureMtime, subMillisecondFutureMtime);
+                }
+                return originalMkdirSync.apply(realFs, args as [fs.PathLike, fs.MakeDirectoryOptions?]);
+            };
+
+            if (mode === 'sync') {
+                assert.throws(
+                    () => acquireFilesystemLock(lockPath, { timeoutMs: 80, retryMs: 10 }),
+                    /Timed out acquiring file lock/u
+                );
+            } else {
+                await assert.rejects(
+                    () => acquireFilesystemLockAsync(lockPath, { timeoutMs: 80, retryMs: 10 }),
+                    /Timed out acquiring file lock/u
+                );
+            }
+            assert.ok(lockInjected, `${mode} case must create the owner after the initial inspection`);
+            assert.equal(ownerReads, 1, `${mode} waiter should authenticate the late release intent only once`);
+            observedOwnerReads[mode] = ownerReads;
+        } finally {
+            realFs.mkdirSync = originalMkdirSync;
+            realFs.readFileSync = originalReadFileSync;
+            fs.rmSync(tmp, { recursive: true, force: true });
+            fs.rmSync(releaseIntentPath, { force: true });
+        }
+    }
+    assert.deepEqual(
+        observedOwnerReads,
+        { sync: 1, async: 1 },
+        'both waiters must fail closed after one canonical owner authentication'
+    );
+});
+
+test('expired release intent does not prevent stale-owner recovery', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-expired-release-intent.lock');
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            lock_id: 'expired-release-owner',
+            pid: 999999999,
+            hostname: os.hostname(),
+            created_at_utc: new Date(Date.now() - 10_000).toISOString(),
+            heartbeat_at_utc: new Date(Date.now() - 10_000).toISOString()
+        }, null, 2) + '\n', 'utf8');
+        const intentPath = `${lockPath}.release-intent`;
+        fs.writeFileSync(intentPath, JSON.stringify({
+            lock_id: 'expired-release-owner',
+            pid: 999999999,
+            created_at_utc: new Date(Date.now() - 10_000).toISOString()
+        }) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - 10_000);
+        fs.utimesSync(intentPath, oldTime, oldTime);
+
+        const acquired = acquireFilesystemLock(lockPath, { timeoutMs: 500, retryMs: 10 });
+        assert.equal(acquired.telemetry.staleLockRecovered, true);
+        releaseFilesystemLock(acquired.handle);
+        assert.ok(!fs.existsSync(lockPath));
+        assert.ok(!fs.existsSync(intentPath));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(`${lockPath}.release-intent`, { force: true });
+    }
+});
+
+test('future-dated release intent does not suppress stale-owner recovery', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-future-release-intent.lock');
+    const intentPath = `${lockPath}.release-intent`;
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            lock_id: 'future-release-owner',
+            pid: 999999999,
+            hostname: os.hostname(),
+            created_at_utc: new Date(Date.now() - 10_000).toISOString(),
+            heartbeat_at_utc: new Date(Date.now() - 10_000).toISOString()
+        }, null, 2) + '\n', 'utf8');
+        fs.writeFileSync(intentPath, JSON.stringify({
+            lock_id: 'future-release-owner',
+            pid: 999999999,
+            created_at_utc: new Date().toISOString()
+        }) + '\n', 'utf8');
+        const futureTime = new Date(Date.now() + 60_000);
+        fs.utimesSync(intentPath, futureTime, futureTime);
+
+        const acquired = acquireFilesystemLock(lockPath, { timeoutMs: 500, retryMs: 10 });
+        assert.equal(acquired.telemetry.staleLockRecovered, true);
+        releaseFilesystemLock(acquired.handle);
+        assert.ok(!fs.existsSync(lockPath));
+        assert.ok(!fs.existsSync(intentPath));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+for (const markerCase of ['malformed', 'mismatched'] as const) {
+    test(`${markerCase} release intent does not suppress stale-owner recovery`, () => {
+        const tmp = mkTmpDir();
+        const lockPath = path.join(tmp, `.test-${markerCase}-release-intent.lock`);
+        const intentPath = `${lockPath}.release-intent`;
+        try {
+            fs.mkdirSync(lockPath);
+            fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+                lock_id: `${markerCase}-canonical-owner`,
+                pid: 999999999,
+                hostname: os.hostname(),
+                created_at_utc: new Date(Date.now() - 10_000).toISOString(),
+                heartbeat_at_utc: new Date(Date.now() - 10_000).toISOString()
+            }, null, 2) + '\n', 'utf8');
+            fs.writeFileSync(intentPath, markerCase === 'malformed'
+                ? '{not-json\n'
+                : JSON.stringify({
+                    lock_id: 'foreign-release-owner',
+                    pid: 999999998,
+                    created_at_utc: new Date().toISOString()
+                }) + '\n', 'utf8');
+
+            const acquired = acquireFilesystemLock(lockPath, { timeoutMs: 500, retryMs: 10 });
+            assert.equal(acquired.telemetry.staleLockRecovered, true);
+            releaseFilesystemLock(acquired.handle);
+            assert.ok(!fs.existsSync(lockPath));
+            assert.ok(!fs.existsSync(intentPath));
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    });
+}
+
+test('unreadable release intent does not suppress stale-owner recovery', () => {
+    const realFs = require('node:fs');
+    const originalLstatSync = realFs.lstatSync;
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-unreadable-release-intent.lock');
+    const intentPath = `${lockPath}.release-intent`;
+    let acquired: ReturnType<typeof acquireFilesystemLock> | null = null;
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            lock_id: 'unreadable-canonical-owner',
+            pid: 999999999,
+            hostname: os.hostname(),
+            created_at_utc: new Date(Date.now() - 10_000).toISOString(),
+            heartbeat_at_utc: new Date(Date.now() - 10_000).toISOString()
+        }, null, 2) + '\n', 'utf8');
+        fs.writeFileSync(intentPath, JSON.stringify({
+            lock_id: 'unreadable-canonical-owner',
+            pid: 999999999,
+            created_at_utc: new Date().toISOString()
+        }) + '\n', 'utf8');
+        realFs.lstatSync = function (...args: unknown[]) {
+            const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+            if (targetPath === path.resolve(intentPath)) {
+                const error = new Error('EACCES: simulated unreadable release intent') as NodeJS.ErrnoException;
+                error.code = 'EACCES';
+                throw error;
+            }
+            return originalLstatSync.apply(realFs, args as [fs.PathLike, fs.StatSyncOptions?]);
+        };
+
+        acquired = acquireFilesystemLock(lockPath, { timeoutMs: 500, retryMs: 10 });
+        assert.equal(acquired.telemetry.staleLockRecovered, true);
+    } finally {
+        realFs.lstatSync = originalLstatSync;
+        if (acquired) releaseFilesystemLock(acquired.handle);
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });

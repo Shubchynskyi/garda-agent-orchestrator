@@ -6,7 +6,7 @@ import { DEFAULT_LOCK_RETRY_MS, DEFAULT_LOCK_STALE_MS, DEFAULT_LOCK_TIMEOUT_MS, 
 import type { AcquireLockTelemetry, LockHandle, LockInspectionResult, LockOptions } from './task-events-locking-types';
 import { classifyLockContention, createLockId, redactLockPath, resolveMaxLockRetries, sleepMsAsync, sleepMsSync, toPositiveInteger } from './task-events-locking-support';
 import { allowForeignHostStaleRecovery, isCurrentHostOwner, requiresExplicitAgeRecovery, startLockHeartbeat, writeLockMetadata } from './task-events-locking-metadata';
-import { claimOwnedLockForRelease, isRetryableLockAcquireError, removeLockPath, removeLockPathWithRetry } from './task-events-locking-release';
+import { claimOwnedLockForRelease, isRetryableLockAcquireError, removeLockPath, removeLockPathWithRetry, resolveActiveLockReleaseIntentLockId } from './task-events-locking-release';
 import { formatLockDiagnostic, inspectLock, tryRemoveStaleLock } from './task-events-locking-inspection';
 
 export function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { handle: LockHandle; telemetry: AcquireLockTelemetry } {
@@ -17,6 +17,7 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
     const startedAt = Date.now();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
+    let releaseIntentLockId = lastInspection.metadata.lock_id;
     let retries = 0;
     let contentionWarned = false;
     let staleLockRecovered = false;
@@ -53,15 +54,25 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
             }
 
             if (errCode === 'EEXIST') {
-                const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
-                lastInspection = staleAttempt.inspection;
-                if (staleAttempt.removed) {
-                    staleLockRecovered = true;
-                    staleLockReason = staleAttempt.inspection.staleReason;
-                    continue;
+                const activeReleaseIntentLockId = resolveActiveLockReleaseIntentLockId(
+                    lockPath,
+                    releaseIntentLockId || lastInspection.metadata.lock_id
+                );
+                if (activeReleaseIntentLockId) {
+                    releaseIntentLockId = activeReleaseIntentLockId;
+                } else {
+                    const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
+                    lastInspection = staleAttempt.inspection;
+                    releaseIntentLockId = lastInspection.metadata.lock_id;
+                    if (staleAttempt.removed) {
+                        staleLockRecovered = true;
+                        staleLockReason = staleAttempt.inspection.staleReason;
+                        continue;
+                    }
                 }
             } else {
                 lastInspection = inspectLock(lockPath, staleMs);
+                releaseIntentLockId = lastInspection.metadata.lock_id;
             }
 
             const ownerHostMatchesCurrent = isCurrentHostOwner(lastInspection.metadata.hostname);
@@ -123,6 +134,7 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
     const startedAt = Date.now();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
+    let releaseIntentLockId = lastInspection.metadata.lock_id;
     let retries = 0;
     let contentionWarned = false;
     let staleLockRecovered = false;
@@ -166,15 +178,25 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
             }
 
             if (errCode === 'EEXIST') {
-                const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
-                lastInspection = staleAttempt.inspection;
-                if (staleAttempt.removed) {
-                    staleLockRecovered = true;
-                    staleLockReason = staleAttempt.inspection.staleReason;
-                    continue;
+                const activeReleaseIntentLockId = resolveActiveLockReleaseIntentLockId(
+                    lockPath,
+                    releaseIntentLockId || lastInspection.metadata.lock_id
+                );
+                if (activeReleaseIntentLockId) {
+                    releaseIntentLockId = activeReleaseIntentLockId;
+                } else {
+                    const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
+                    lastInspection = staleAttempt.inspection;
+                    releaseIntentLockId = lastInspection.metadata.lock_id;
+                    if (staleAttempt.removed) {
+                        staleLockRecovered = true;
+                        staleLockReason = staleAttempt.inspection.staleReason;
+                        continue;
+                    }
                 }
             } else {
                 lastInspection = inspectLock(lockPath, staleMs);
+                releaseIntentLockId = lastInspection.metadata.lock_id;
             }
 
             const ownerHostMatchesCurrent = isCurrentHostOwner(lastInspection.metadata.hostname);
