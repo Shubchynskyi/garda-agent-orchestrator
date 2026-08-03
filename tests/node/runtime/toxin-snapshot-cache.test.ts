@@ -197,6 +197,28 @@ test('low-noise runtime writes still reuse the rebuildable toxin snapshot cache'
     }
 });
 
+test('cache opt-out always performs a fresh recursive toxin scan', () => {
+    const orchestratorRoot = createRuntimeRoot('garda-toxin-cache-opt-out-');
+    const backupsRoot = path.join(orchestratorRoot, 'runtime', 'backups');
+    try {
+        writeJournaledFile(orchestratorRoot, 'runtime/backups/seed/artifact.txt', 'canonical\n');
+        collectToxinSnapshot(orchestratorRoot);
+
+        const first = countTrackedDirectoryReads(backupsRoot, () => collectToxinSnapshot(orchestratorRoot, {
+            useCache: false
+        }));
+        const second = countTrackedDirectoryReads(backupsRoot, () => collectToxinSnapshot(orchestratorRoot, {
+            useCache: false
+        }));
+
+        assert.ok(first.reads > 0);
+        assert.ok(second.reads > 0);
+        assert.equal(second.result.runtime_total_bytes, first.result.runtime_total_bytes);
+    } finally {
+        fs.rmSync(orchestratorRoot, { recursive: true, force: true });
+    }
+});
+
 test('concurrent cold processes share one recursive cache build', async () => {
     const orchestratorRoot = createRuntimeRoot('garda-toxin-cache-concurrent-');
     const backupsRoot = path.join(orchestratorRoot, 'runtime', 'backups');
