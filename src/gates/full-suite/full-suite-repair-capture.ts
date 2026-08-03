@@ -1,4 +1,3 @@
-import * as childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -6,8 +5,10 @@ import * as path from 'node:path';
 import {
     runGit,
     runGitBinary,
+    readGitTreeEntriesForPaths,
     splitNulList
 } from '../../core/git-helpers';
+import type { GitTreeEntry } from '../../core/git-helpers';
 import { isPlainRecord } from '../../core/records';
 import {
     safeReadJson
@@ -45,21 +46,6 @@ import {
     sameFileSnapshot,
     validatePhysicalRepoContainment
 } from './full-suite-repair-manifest';
-
-function pathExistsInHead(repoRoot: string, relativePath: string): boolean {
-    const normalized = normalizeGitPath(relativePath);
-    const result = childProcess.spawnSync('git', ['-C', repoRoot, 'cat-file', '-e', `HEAD:${normalized}`], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe']
-    });
-    return result.status === 0;
-}
-
-function headBlobSha(repoRoot: string, relativePath: string): string | null {
-    const normalized = normalizeGitPath(relativePath);
-    const output = runGit(repoRoot, ['rev-parse', `HEAD:${normalized}`], { allowFailure: true }).trim();
-    return output || null;
-}
 
 export function collectTrackedChangeFiles(repoRoot: string): TrackedChangeFiles {
     const staged = new Set(
@@ -501,21 +487,34 @@ function removeFileIfExists(filePath: string): void {
     fs.unlinkSync(filePath);
 }
 
-function suspendTrackedChanges(repoRoot: string, changedFiles: string[]): void {
+function assertRepositoryHead(repoRoot: string, expectedBaseCommit: string): void {
+    const currentHead = getHeadCommit(repoRoot);
+    if (currentHead !== expectedBaseCommit) {
+        throw new Error(
+            `repository HEAD changed during full-suite repair WIP suspension: expected ${expectedBaseCommit}; found ${currentHead}`
+        );
+    }
+}
+
+function suspendTrackedChanges(
+    repoRoot: string,
+    changedFiles: string[],
+    baseCommit: string,
+    baseEntries: ReadonlyMap<string, GitTreeEntry>
+): void {
+    assertRepositoryHead(repoRoot, baseCommit);
     if (changedFiles.length === 0) {
         return;
     }
-    const trackedAtHead = new Map(changedFiles.map((relativePath) => [
-        relativePath,
-        pathExistsInHead(repoRoot, relativePath)
-    ]));
-    runGit(repoRoot, ['reset', '--quiet', 'HEAD', '--', ...changedFiles]);
-    const headTrackedFiles = changedFiles.filter((relativePath) => trackedAtHead.get(relativePath));
+    runGit(repoRoot, ['reset', '--quiet', baseCommit, '--', ...changedFiles]);
+    assertRepositoryHead(repoRoot, baseCommit);
+    const headTrackedFiles = changedFiles.filter((relativePath) => baseEntries.has(relativePath));
     if (headTrackedFiles.length > 0) {
-        runGit(repoRoot, ['checkout', '--quiet', '--', ...headTrackedFiles]);
+        runGit(repoRoot, ['checkout', '--quiet', baseCommit, '--', ...headTrackedFiles]);
+        assertRepositoryHead(repoRoot, baseCommit);
     }
     for (const relativePath of changedFiles) {
-        if (trackedAtHead.get(relativePath)) {
+        if (baseEntries.has(relativePath)) {
             continue;
         }
         removeFileIfExists(resolveRepoPath(repoRoot, relativePath));
@@ -536,6 +535,7 @@ export interface PreparedWipCapture {
         entry: CapturedUntrackedFileEvidence;
         snapshot: CaptureFileSnapshot;
     }>;
+    baseEntries: ReadonlyMap<string, GitTreeEntry>;
 }
 
 export function prepareWipCapture(params: {
@@ -555,6 +555,12 @@ export function prepareWipCapture(params: {
     const captureRoot = params.captureRoot;
     let captureRootCreated = false;
     try {
+        const baseCommit = getHeadCommit(params.repoRoot);
+        const baseEntries = readGitTreeEntriesForPaths(
+            params.repoRoot,
+            baseCommit,
+            params.trackedChanges.all
+        );
         const captureRootIdentity = createExclusiveCaptureRoot(params.repoRoot, captureRoot);
         captureRootCreated = true;
 
@@ -583,7 +589,7 @@ export function prepareWipCapture(params: {
             const absolutePath = resolveRepoPath(params.repoRoot, relativePath);
             return {
                 path: relativePath,
-                head_sha256: headBlobSha(params.repoRoot, relativePath),
+                head_sha256: baseEntries.get(relativePath)?.objectId || null,
                 worktree_sha256: fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile()
                     ? sha256FileRequired(absolutePath)
                     : null,
@@ -603,7 +609,7 @@ export function prepareWipCapture(params: {
                 paths: [...scope.paths]
             })),
             created_at_utc: timestampUtc,
-            base_commit: getHeadCommit(params.repoRoot),
+            base_commit: baseCommit,
             preflight_path: normalizePath(params.preflightPath),
             preflight_sha256: fileSha256(params.preflightPath) || '',
             full_suite_artifact_path: normalizePath(params.fullSuiteArtifactPath),
@@ -633,7 +639,8 @@ export function prepareWipCapture(params: {
                 staged: stagedPatch.snapshot,
                 unstaged: unstagedPatch.snapshot
             },
-            untrackedSnapshots: []
+            untrackedSnapshots: [],
+            baseEntries
         };
         return verifyPreparedWipCapture(params.repoRoot, preparedCapture);
     } catch (error: unknown) {
@@ -801,7 +808,12 @@ export function rollbackPreparedWipSuspension(
 ): string[] {
     const violations: string[] = [];
     try {
-        suspendTrackedChanges(repoRoot, trackedChanges.all);
+        suspendTrackedChanges(
+            repoRoot,
+            trackedChanges.all,
+            preparedCapture.manifest.base_commit,
+            preparedCapture.baseEntries
+        );
         if (hasPatchContent(preparedCapture.manifest.patches.staged)) {
             runGitWithInput(
                 repoRoot,
@@ -858,7 +870,12 @@ export function suspendPreparedWip(
     trackedChanges: TrackedChangeFiles,
     preparedCapture: PreparedWipCapture
 ): void {
-    suspendTrackedChanges(repoRoot, trackedChanges.all);
+    suspendTrackedChanges(
+        repoRoot,
+        trackedChanges.all,
+        preparedCapture.manifest.base_commit,
+        preparedCapture.baseEntries
+    );
     for (const relativePath of preparedCapture.capturedUntrackedFiles) {
         removeFileIfExists(resolveRepoPath(repoRoot, relativePath));
     }

@@ -5,10 +5,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { readGitTreeEntriesForPaths } from '../../../../src/core/git-helpers';
 import {
     captureAndSuspendSplitRequiredWip,
     restoreSplitRequiredWip
 } from '../../../../src/gates/split-required/split-required-wip';
+import { traceGitCommands } from '../git-command-trace';
 
 const TASK_ID = 'T-CAPTURE';
 
@@ -107,6 +109,54 @@ function captureDirectories(repoRoot: string): string[] {
 }
 
 describe('split-required WIP capture boundary', () => {
+    it('sizes missing-tree metadata batches from UTF-8 request bytes', (context) => {
+        const repoRoot = makeRepo();
+        context.after(() => removeTempRoot(repoRoot));
+        const deepPrefix = Array.from(
+            { length: 14 },
+            (_, index) => `segment-${index}-${'x'.repeat(80)}`
+        ).join('/');
+        const missingPaths = Array.from(
+            { length: 1024 },
+            (_, index) => `${deepPrefix}/missing-${index}/file.ts`
+        );
+
+        assert.deepEqual(readGitTreeEntriesForPaths(repoRoot, 'HEAD', missingPaths), new Map());
+    });
+
+    it('keeps Git subprocess count constant as the tracked capture grows', (context) => {
+        const measure = (count: number) => {
+            const repoRoot = makeRepo();
+            context.after(() => removeTempRoot(repoRoot));
+            const changedFiles = Array.from({ length: count }, (_, index) => `src/batch file ${index}.ts`);
+            for (const [index, relativePath] of changedFiles.entries()) {
+                writeFile(repoRoot, relativePath, `export const batch${index} = 1;\n`);
+            }
+            runGit(repoRoot, ['add', '.']);
+            runGit(repoRoot, ['commit', '-m', `seed ${count} batch files`]);
+            for (const [index, relativePath] of changedFiles.entries()) {
+                writeFile(repoRoot, relativePath, `export const batch${index} = 2;\n`);
+            }
+
+            const traced = traceGitCommands(() => capture(repoRoot, changedFiles));
+            assert.equal(traced.value.status, 'CAPTURED', traced.value.violations.join('\n'));
+            return traced.commands;
+        };
+
+        const singleFileCommands = measure(1);
+        const multiFileCommands = measure(12);
+        assert.equal(multiFileCommands.length, singleFileCommands.length);
+        assert.equal(multiFileCommands.some((args) => args[0] === 'ls-tree'), false);
+        const treeBatchCommands = multiFileCommands.filter((args) => args[0] === 'cat-file');
+        assert.equal(treeBatchCommands.length, 2);
+        assert.ok(treeBatchCommands.some((args) => args.some((arg) => arg.startsWith('--batch-check='))));
+        assert.ok(treeBatchCommands.some((args) => args.includes('--batch')));
+        assert.equal(
+            multiFileCommands.some((args) => args[0] === 'rev-parse' && args.some((arg) => arg.includes(':src/'))),
+            false
+        );
+    });
+
     it('captures and restores exact staged unstaged and authorized untracked WIP', (context) => {
         const repoRoot = makeRepo();
         context.after(() => removeTempRoot(repoRoot));

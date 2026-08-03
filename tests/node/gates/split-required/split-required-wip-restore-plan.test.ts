@@ -24,6 +24,7 @@ import type {
     SplitRequiredWipTrackedFileEvidence,
     SplitRequiredWipUntrackedFileEvidence
 } from '../../../../src/gates/split-required/split-required-wip-contracts';
+import { traceGitCommands } from '../git-command-trace';
 
 const TASK_ID = 'T-WIP-RESTORE-PLAN';
 
@@ -90,6 +91,109 @@ function writePreflight(repoRoot: string, changedFiles: string[]): string {
 }
 
 describe('split-required WIP restore planning', () => {
+    it('keeps advanced restore Git subprocess count constant as the selected set grows', (context) => {
+        const measure = (count: number) => {
+            const repoRoot = makeRepo((callback) => context.after(callback));
+            const changedFiles = Array.from({ length: count }, (_, index) => `src/batch file ${index}.ts`);
+            for (const [index, relativePath] of changedFiles.entries()) {
+                writeFile(repoRoot, relativePath, `export const batch${index} = 1;\n`);
+            }
+            runGit(repoRoot, ['add', '.']);
+            runGit(repoRoot, ['commit', '-m', `seed ${count} restore files`]);
+            for (const [index, relativePath] of changedFiles.entries()) {
+                writeFile(repoRoot, relativePath, `export const batch${index} = 2;\n`);
+            }
+            runGit(repoRoot, ['add', '--', ...changedFiles]);
+            const captured = captureAndSuspendSplitRequiredWip({
+                repoRoot,
+                taskId: TASK_ID,
+                preflightPath: writePreflight(repoRoot, changedFiles),
+                guardKind: 'scope_budget',
+                guardReason: 'advanced restore batch benchmark'
+            });
+            assert.equal(captured.status, 'CAPTURED', captured.violations.join('\n'));
+            assert.ok(captured.manifest_path);
+            writeFile(repoRoot, `src/child-${count}.ts`, `export const child${count} = true;\n`);
+            runGit(repoRoot, ['add', '.']);
+            runGit(repoRoot, ['commit', '-m', `advance after ${count} captured files`]);
+
+            const traced = traceGitCommands(() => restoreSplitRequiredWip({
+                repoRoot,
+                taskId: TASK_ID,
+                manifestPath: captured.manifest_path!,
+                includePaths: changedFiles,
+                dryRun: true
+            }));
+            assert.equal(traced.value.status, 'DRY_RUN_OK', traced.value.violations.join('\n'));
+            return traced.commands;
+        };
+
+        const singleFileCommands = measure(1);
+        const multiFileCommands = measure(12);
+        assert.equal(multiFileCommands.length, singleFileCommands.length);
+        assert.equal(multiFileCommands.filter((args) => args[0] === 'checkout-index').length, 1);
+        assert.equal(multiFileCommands.some((args) => args[0] === 'ls-tree'), false);
+        const catFileCommands = multiFileCommands.filter((args) => args[0] === 'cat-file');
+        assert.ok(catFileCommands.length >= 5);
+        assert.ok(catFileCommands.every((args) => (
+            args.includes('--batch') || args.some((arg) => arg.startsWith('--batch-check='))
+        )));
+        assert.equal(multiFileCommands.some((args) => args[0] === 'ls-files'), false);
+        assert.equal(
+            multiFileCommands.some((args) => args[0] === 'diff' && args.includes('--name-only')),
+            false
+        );
+    });
+
+    it('restores selected paths while preserving unrelated unmerged index stages', (context) => {
+        const repoRoot = makeRepo((callback) => context.after(callback));
+        writeFile(repoRoot, 'src/a.ts', 'export const a = 2;\n');
+        runGit(repoRoot, ['add', 'src/a.ts']);
+        const captured = captureAndSuspendSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath: writePreflight(repoRoot, ['src/a.ts']),
+            guardKind: 'scope_budget',
+            guardReason: 'unrelated conflict stage preservation'
+        });
+        assert.equal(captured.status, 'CAPTURED', captured.violations.join('\n'));
+        assert.ok(captured.manifest_path);
+
+        writeFile(repoRoot, 'src/child.ts', 'export const child = true;\n');
+        runGit(repoRoot, ['add', 'src/child.ts']);
+        runGit(repoRoot, ['commit', '-m', 'advance after capture']);
+        const conflictObjectId = runGit(repoRoot, ['rev-parse', 'HEAD:src/b.ts']).trim();
+        const zeroObjectId = '0'.repeat(conflictObjectId.length);
+        childProcess.execFileSync(
+            'git',
+            ['-C', repoRoot, 'update-index', '-z', '--index-info'],
+            {
+                input: Buffer.from([
+                    `0 ${zeroObjectId}\tsrc/b.ts\0`,
+                    `100644 ${conflictObjectId} 1\tsrc/b.ts\0`,
+                    `100644 ${conflictObjectId} 2\tsrc/b.ts\0`,
+                    `100644 ${conflictObjectId} 3\tsrc/b.ts\0`
+                ].join(''), 'utf8'),
+                stdio: ['pipe', 'pipe', 'pipe']
+            }
+        );
+        const conflictStagesBefore = runGit(repoRoot, ['ls-files', '--unmerged', '--stage', '--', 'src/b.ts']);
+
+        const restored = restoreSplitRequiredWip({
+            repoRoot,
+            taskId: TASK_ID,
+            manifestPath: captured.manifest_path,
+            includePaths: ['src/a.ts']
+        });
+
+        assert.equal(restored.status, 'RESTORED', restored.violations.join('\n'));
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'src', 'a.ts'), 'utf8'), 'export const a = 2;\n');
+        assert.equal(
+            runGit(repoRoot, ['ls-files', '--unmerged', '--stage', '--', 'src/b.ts']),
+            conflictStagesBefore
+        );
+    });
+
     it('rejects an unstaged candidate index entry that changes a tracked file into a symlink', (context) => {
         const repoRoot = makeRepo((callback) => context.after(callback));
         const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-wip-plan-symlink-'));

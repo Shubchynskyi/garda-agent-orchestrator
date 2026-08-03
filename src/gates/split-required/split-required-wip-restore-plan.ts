@@ -3,7 +3,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { runGit } from '../../core/git-helpers';
+import {
+    readGitTreeEntriesForPaths,
+    runGit
+} from '../../core/git-helpers';
+import type { GitTreeEntry } from '../../core/git-helpers';
 import { isPlainRecord } from '../../core/records';
 import { normalizePath } from '../shared/helpers';
 import {
@@ -28,6 +32,8 @@ export interface AdvancedRestorePlan {
     currentIndexSha256: string;
     targetSha256: Map<string, string | null>;
 }
+
+const GIT_RESTORE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 function removeFileIfExists(filePath: string): void {
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
@@ -65,7 +71,8 @@ export function buildGitApplyIncludeArgs(selectedPaths: Set<string>): string[] {
 export function runGitStatus(
     repoRoot: string,
     args: string[],
-    environment: NodeJS.ProcessEnv = process.env
+    environment: NodeJS.ProcessEnv = process.env,
+    input?: string | Buffer
 ): {
     status: number;
     stdout: string;
@@ -74,7 +81,9 @@ export function runGitStatus(
     const result = childProcess.spawnSync('git', ['-C', repoRoot, ...args], {
         encoding: 'utf8',
         env: environment,
-        stdio: ['ignore', 'pipe', 'pipe']
+        input,
+        maxBuffer: GIT_RESTORE_MAX_BUFFER_BYTES,
+        stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe']
     });
     return {
         status: result.status ?? -1,
@@ -103,27 +112,128 @@ function currentIndexPath(repoRoot: string): string {
     return path.isAbsolute(gitPath) ? path.resolve(gitPath) : path.resolve(repoRoot, gitPath);
 }
 
-function indexEntriesByPath(repoRoot: string, indexPath: string): Map<string, string[]> {
-    const args = ['ls-files', '--stage', '-z'];
+function writeIndexTree(repoRoot: string, indexPath: string): string {
+    const args = ['write-tree'];
     const result = runGitStatus(repoRoot, args, gitEnvironment(indexPath));
     if (result.status !== 0) {
         throw new Error(gitFailureMessage(args, result));
     }
-    const entries = new Map<string, string[]>();
+    const treeObjectId = result.stdout.trim();
+    if (!/^[0-9a-f]{40,64}$/iu.test(treeObjectId)) {
+        throw new Error('git write-tree returned malformed tree evidence.');
+    }
+    return treeObjectId;
+}
+
+interface UnmergedIndexEntry {
+    mode: string;
+    objectId: string;
+    stage: 1 | 2 | 3;
+}
+
+interface IndexSnapshot {
+    treeObjectId: string;
+    unmergedEntries: Map<string, UnmergedIndexEntry[]>;
+}
+
+interface SelectedIndexState {
+    entries: Map<string, GitTreeEntry>;
+    unmergedPaths: Set<string>;
+}
+
+function readUnmergedIndexEntries(repoRoot: string, indexPath: string): Map<string, UnmergedIndexEntry[]> {
+    const args = ['ls-files', '--unmerged', '--stage', '-z'];
+    const result = runGitStatus(repoRoot, args, gitEnvironment(indexPath));
+    if (result.status !== 0) {
+        throw new Error(gitFailureMessage(args, result));
+    }
+    const entries = new Map<string, UnmergedIndexEntry[]>();
     for (const record of result.stdout.split('\0')) {
-        if (!record) {
-            continue;
+        if (!record) continue;
+        const separatorIndex = record.indexOf('\t');
+        const metadata = separatorIndex >= 0 ? record.slice(0, separatorIndex).split(' ') : [];
+        const relativePath = separatorIndex >= 0 ? normalizeGitPath(record.slice(separatorIndex + 1)) : '';
+        const [mode, objectId, stageText] = metadata;
+        if (!/^[0-7]{6}$/u.test(mode || '')
+            || !/^[0-9a-f]{40,64}$/iu.test(objectId || '')
+            || !/^[123]$/u.test(stageText || '')
+            || !relativePath) {
+            throw new Error('git ls-files returned malformed unmerged index evidence.');
         }
-        const separator = record.indexOf('\t');
-        if (separator < 0) {
-            throw new Error('git ls-files returned malformed index evidence.');
-        }
-        const filePath = normalizeGitPath(record.slice(separator + 1));
-        const pathEntries = entries.get(filePath) || [];
-        pathEntries.push(record.slice(0, separator));
-        entries.set(filePath, pathEntries);
+        const pathEntries = entries.get(relativePath) || [];
+        pathEntries.push({
+            mode,
+            objectId,
+            stage: Number(stageText) as 1 | 2 | 3
+        });
+        entries.set(relativePath, pathEntries);
+    }
+    for (const pathEntries of entries.values()) {
+        pathEntries.sort((left, right) => left.stage - right.stage);
     }
     return entries;
+}
+
+function snapshotIndex(repoRoot: string, indexPath: string): IndexSnapshot {
+    try {
+        return {
+            treeObjectId: writeIndexTree(repoRoot, indexPath),
+            unmergedEntries: new Map()
+        };
+    } catch (writeTreeError: unknown) {
+        const unmergedEntries = readUnmergedIndexEntries(repoRoot, indexPath);
+        if (unmergedEntries.size === 0) {
+            throw writeTreeError;
+        }
+        const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-index-snapshot-'));
+        const snapshotIndexPath = path.join(tempRoot, 'index');
+        try {
+            fs.copyFileSync(indexPath, snapshotIndexPath);
+            const objectIdLength = [...unmergedEntries.values()][0][0].objectId.length;
+            const zeroObjectId = '0'.repeat(objectIdLength);
+            const removalInput = [...unmergedEntries.keys()]
+                .sort()
+                .map((relativePath) => `0 ${zeroObjectId}\t${relativePath}\0`)
+                .join('');
+            const removeArgs = ['update-index', '-z', '--index-info'];
+            const removed = runGitStatus(
+                repoRoot,
+                removeArgs,
+                gitEnvironment(snapshotIndexPath),
+                Buffer.from(removalInput, 'utf8')
+            );
+            if (removed.status !== 0) {
+                throw new Error(gitFailureMessage(removeArgs, removed));
+            }
+            return {
+                treeObjectId: writeIndexTree(repoRoot, snapshotIndexPath),
+                unmergedEntries
+            };
+        } finally {
+            fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        }
+    }
+}
+
+function selectedIndexState(
+    repoRoot: string,
+    indexPath: string,
+    selectedPaths: Iterable<string>
+): SelectedIndexState {
+    const normalizedPaths = [...new Set([...selectedPaths].map(normalizeGitPath).filter(Boolean))];
+    const snapshot = snapshotIndex(repoRoot, indexPath);
+    return {
+        entries: readGitTreeEntriesForPaths(repoRoot, snapshot.treeObjectId, normalizedPaths),
+        unmergedPaths: new Set(normalizedPaths.filter((relativePath) => snapshot.unmergedEntries.has(relativePath)))
+    };
+}
+
+function selectedIndexEntries(
+    repoRoot: string,
+    indexPath: string,
+    selectedPaths: Iterable<string>
+): Map<string, GitTreeEntry> {
+    return selectedIndexState(repoRoot, indexPath, selectedPaths).entries;
 }
 
 function fileStateSha256(filePath: string): string | null {
@@ -155,11 +265,14 @@ export function validateTrackedTargetObstructions(
     selectedTrackedFiles: SplitRequiredWipTrackedFileEvidence[]
 ): string[] {
     try {
-        const currentIndexEntries = indexEntriesByPath(repoRoot, currentIndexPath(repoRoot));
-        return selectedTrackedFiles
-            .map((entry) => normalizeGitPath(entry.path))
+        const selectedPaths = selectedTrackedFiles.map((entry) => normalizeGitPath(entry.path));
+        const currentIndexState = selectedIndexState(repoRoot, currentIndexPath(repoRoot), selectedPaths);
+        return selectedPaths
             .filter((relativePath) => fileStateSha256(resolveRepoPath(repoRoot, relativePath)) !== null)
-            .filter((relativePath) => !currentIndexEntries.has(relativePath))
+            .filter((relativePath) => (
+                !currentIndexState.entries.has(relativePath)
+                && !currentIndexState.unmergedPaths.has(relativePath)
+            ))
             .sort()
             .map((relativePath) => `selected tracked restore target has an untracked obstruction: ${relativePath}`);
     } catch (error: unknown) {
@@ -174,13 +287,42 @@ function unauthorizedIndexChanges(
     afterIndexPath: string,
     selectedPaths: Set<string>
 ): string[] {
-    const before = indexEntriesByPath(repoRoot, beforeIndexPath);
-    const after = indexEntriesByPath(repoRoot, afterIndexPath);
-    const allPaths = new Set([...before.keys(), ...after.keys()]);
-    return [...allPaths]
-        .filter((entry) => JSON.stringify(before.get(entry) || []) !== JSON.stringify(after.get(entry) || []))
-        .filter((entry) => !selectedPaths.has(entry))
-        .sort();
+    const beforeSnapshot = snapshotIndex(repoRoot, beforeIndexPath);
+    const afterSnapshot = snapshotIndex(repoRoot, afterIndexPath);
+    const unauthorized = new Set<string>();
+    const unmergedPaths = new Set([
+        ...beforeSnapshot.unmergedEntries.keys(),
+        ...afterSnapshot.unmergedEntries.keys()
+    ]);
+    for (const relativePath of unmergedPaths) {
+        const beforeEntries = beforeSnapshot.unmergedEntries.get(relativePath) || [];
+        const afterEntries = afterSnapshot.unmergedEntries.get(relativePath) || [];
+        if (!selectedPaths.has(relativePath)
+            && JSON.stringify(beforeEntries) !== JSON.stringify(afterEntries)) {
+            unauthorized.add(relativePath);
+        }
+    }
+    const args = [
+        'diff-tree',
+        '--no-commit-id',
+        '--name-only',
+        '--no-renames',
+        '-r',
+        '-z',
+        beforeSnapshot.treeObjectId,
+        afterSnapshot.treeObjectId
+    ];
+    const result = runGitStatus(repoRoot, args);
+    if (result.status !== 0) {
+        throw new Error(gitFailureMessage(args, result));
+    }
+    for (const relativePath of result.stdout.split('\0')
+        .map(normalizeGitPath)
+        .filter(Boolean)
+        .filter((entry) => !selectedPaths.has(entry))) {
+        unauthorized.add(relativePath);
+    }
+    return [...unauthorized].sort();
 }
 
 export function ensureCleanTrackedWorkspace(repoRoot: string): string[] {
@@ -197,51 +339,115 @@ export function ensureCleanTrackedWorkspace(repoRoot: string): string[] {
 }
 
 export function validateSelectedTargetsClean(repoRoot: string, selectedPaths: Set<string>): string[] {
+    if (selectedPaths.size === 0) {
+        return [];
+    }
     const violations: string[] = [];
-    for (const relativePath of [...selectedPaths].sort()) {
-        for (const args of [
-            ['diff', '--quiet', '--', relativePath],
-            ['diff', '--cached', '--quiet', '--', relativePath]
-        ]) {
-            const result = runGitStatus(repoRoot, args);
-            if (result.status === 1) {
-                violations.push(`selected restore target is dirty: ${relativePath}`);
-                break;
+    const dirtyPaths = new Set<string>();
+    const normalizedPaths = new Set([...selectedPaths].map(normalizeGitPath));
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-selected-index-'));
+    const selectedIndexPath = path.join(tempRoot, 'index');
+    try {
+        const currentIndexState = selectedIndexState(repoRoot, currentIndexPath(repoRoot), normalizedPaths);
+        const currentEntries = currentIndexState.entries;
+        const headEntries = readGitTreeEntriesForPaths(repoRoot, getHeadCommit(repoRoot), normalizedPaths);
+        for (const relativePath of normalizedPaths) {
+            if (currentIndexState.unmergedPaths.has(relativePath)
+                || JSON.stringify(currentEntries.get(relativePath) || null) !== JSON.stringify(headEntries.get(relativePath) || null)) {
+                dirtyPaths.add(relativePath);
             }
-            if (result.status !== 0) {
-                violations.push(gitFailureMessage(args, result));
-                break;
+        }
+
+        const emptyArgs = ['read-tree', '--empty'];
+        const emptyIndex = runGitStatus(repoRoot, emptyArgs, gitEnvironment(selectedIndexPath));
+        if (emptyIndex.status !== 0) {
+            throw new Error(gitFailureMessage(emptyArgs, emptyIndex));
+        }
+        if (currentEntries.size > 0) {
+            const indexInfo = [...currentEntries]
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([relativePath, entry]) => `${entry.mode} ${entry.objectId}\t${relativePath}\0`)
+                .join('');
+            const updateArgs = ['update-index', '-z', '--index-info'];
+            const updated = runGitStatus(
+                repoRoot,
+                updateArgs,
+                gitEnvironment(selectedIndexPath),
+                Buffer.from(indexInfo, 'utf8')
+            );
+            if (updated.status !== 0) {
+                throw new Error(gitFailureMessage(updateArgs, updated));
             }
+        }
+        const refreshArgs = ['update-index', '--refresh'];
+        const refreshed = runGitStatus(repoRoot, refreshArgs, gitEnvironment(selectedIndexPath));
+        if (refreshed.status !== 0 && refreshed.status !== 1) {
+            throw new Error(gitFailureMessage(refreshArgs, refreshed));
+        }
+        const diffArgs = ['diff-files', '--name-only', '--no-renames', '-z'];
+        const diff = runGitStatus(repoRoot, diffArgs, gitEnvironment(selectedIndexPath));
+        if (diff.status !== 0) {
+            throw new Error(gitFailureMessage(diffArgs, diff));
+        }
+        for (const entry of diff.stdout.split('\0')) {
+            if (entry) dirtyPaths.add(normalizeGitPath(entry));
+        }
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        violations.push(`failed to inspect selected restore targets: ${message}`);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+    for (const relativePath of [...normalizedPaths].sort()) {
+        if (dirtyPaths.has(relativePath)) {
+            violations.push(`selected restore target is dirty: ${relativePath}`);
+        }
+    }
+    return violations;
+}
+
+export function validateNoSymlinkPaths(repoRoot: string, relativePaths: Iterable<string>): string[] {
+    const violations: string[] = [];
+    const root = path.resolve(repoRoot);
+    const normalizedPaths = [...new Set([...relativePaths].map(normalizeGitPath))].sort();
+    for (const relativePath of normalizedPaths) {
+        const target = resolveRepoPath(root, relativePath);
+        let cursor = target;
+        while (cursor !== root) {
+            try {
+                if (fs.lstatSync(cursor).isSymbolicLink()) {
+                    violations.push(`selected restore path contains a symbolic link: ${relativePath}`);
+                    break;
+                }
+            } catch (error: unknown) {
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                    throw error;
+                }
+            }
+            cursor = path.dirname(cursor);
+        }
+    }
+    if (normalizedPaths.length === 0) {
+        return violations;
+    }
+    let headEntries: ReadonlyMap<string, GitTreeEntry>;
+    try {
+        headEntries = readGitTreeEntriesForPaths(repoRoot, 'HEAD', normalizedPaths);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        violations.push(`failed to inspect selected restore targets in HEAD: ${message}`);
+        return violations;
+    }
+    for (const relativePath of normalizedPaths) {
+        if (headEntries.get(relativePath)?.mode === '120000') {
+            violations.push(`selected restore target is a symbolic link in HEAD: ${relativePath}`);
         }
     }
     return violations;
 }
 
 export function validateNoSymlinkPath(repoRoot: string, relativePath: string): string[] {
-    const violations: string[] = [];
-    const root = path.resolve(repoRoot);
-    const target = resolveRepoPath(root, relativePath);
-    let cursor = target;
-    while (cursor !== root) {
-        try {
-            if (fs.lstatSync(cursor).isSymbolicLink()) {
-                violations.push(`selected restore path contains a symbolic link: ${relativePath}`);
-                break;
-            }
-        } catch (error: unknown) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-                throw error;
-            }
-        }
-        cursor = path.dirname(cursor);
-    }
-    const tree = runGitStatus(repoRoot, ['ls-tree', '-z', 'HEAD', '--', normalizeGitPath(relativePath)]);
-    if (tree.status !== 0) {
-        violations.push(gitFailureMessage(['ls-tree', 'HEAD', '--', relativePath], tree));
-    } else if (tree.stdout.startsWith('120000 ')) {
-        violations.push(`selected restore target is a symbolic link in HEAD: ${relativePath}`);
-    }
-    return violations;
+    return validateNoSymlinkPaths(repoRoot, [relativePath]);
 }
 
 export function validateAdvancedManifestBlobs(
@@ -250,25 +456,63 @@ export function validateAdvancedManifestBlobs(
     selectedTrackedFiles: SplitRequiredWipTrackedFileEvidence[]
 ): string[] {
     const violations: string[] = [];
-    const commitCheck = runGitStatus(repoRoot, ['cat-file', '-e', `${manifest.base_commit}^{commit}`]);
-    if (commitCheck.status !== 0) {
+    if (selectedTrackedFiles.length === 0) {
+        const commitCheck = runGitStatus(repoRoot, ['cat-file', '-e', `${manifest.base_commit}^{commit}`]);
+        return commitCheck.status === 0
+            ? []
+            : [`manifest base commit is missing or invalid: ${manifest.base_commit}`];
+    }
+
+    let baseEntries: ReadonlyMap<string, GitTreeEntry>;
+    try {
+        baseEntries = readGitTreeEntriesForPaths(
+            repoRoot,
+            manifest.base_commit,
+            selectedTrackedFiles.map((entry) => entry.path)
+        );
+    } catch {
         return [`manifest base commit is missing or invalid: ${manifest.base_commit}`];
     }
+
+    const expectedObjectIds = [...new Set(
+        selectedTrackedFiles
+            .map((entry) => entry.head_sha256)
+            .filter((objectId): objectId is string => Boolean(objectId))
+    )].sort();
+    const objectTypes = new Map<string, string>();
+    if (expectedObjectIds.length > 0) {
+        const args = ['cat-file', '--batch-check=%(objectname) %(objecttype)'];
+        const checked = runGitStatus(
+            repoRoot,
+            args,
+            process.env,
+            `${expectedObjectIds.join('\n')}\n`
+        );
+        if (checked.status !== 0) {
+            return [gitFailureMessage(args, checked)];
+        }
+        for (const line of checked.stdout.split(/\r?\n/gu)) {
+            const [objectId, objectType] = line.trim().split(/\s+/u);
+            if (objectId && objectType) {
+                objectTypes.set(objectId, objectType);
+            }
+        }
+    }
+
     for (const entry of selectedTrackedFiles) {
+        const normalizedPath = normalizeGitPath(entry.path);
+        const baseEntry = baseEntries.get(normalizedPath);
         if (!entry.head_sha256) {
-            const absent = runGitStatus(repoRoot, ['cat-file', '-e', `${manifest.base_commit}:${entry.path}`]);
-            if (absent.status === 0) {
+            if (baseEntry) {
                 violations.push(`manifest base blob evidence is missing for tracked path: ${entry.path}`);
             }
             continue;
         }
-        const blobCheck = runGitStatus(repoRoot, ['cat-file', '-e', `${entry.head_sha256}^{blob}`]);
-        if (blobCheck.status !== 0) {
+        if (objectTypes.get(entry.head_sha256) !== 'blob') {
             violations.push(`manifest base blob is missing: path=${entry.path}; blob=${entry.head_sha256}`);
             continue;
         }
-        const baseBlob = runGitStatus(repoRoot, ['rev-parse', `${manifest.base_commit}:${entry.path}`]);
-        if (baseBlob.status !== 0 || baseBlob.stdout.trim() !== entry.head_sha256) {
+        if (baseEntry?.type !== 'blob' || baseEntry.objectId !== entry.head_sha256) {
             violations.push(`manifest base blob does not match base commit: path=${entry.path}; blob=${entry.head_sha256}`);
         }
     }
@@ -360,16 +604,47 @@ function materializeCandidateWorktree(
     selectedTrackedFiles: SplitRequiredWipTrackedFileEvidence[]
 ): string | null {
     const environment = gitEnvironment(workspace.unstagedIndexPath);
+    let indexEntries: Map<string, GitTreeEntry>;
+    try {
+        indexEntries = selectedIndexEntries(
+            repoRoot,
+            workspace.unstagedIndexPath,
+            selectedTrackedFiles.map((entry) => normalizeGitPath(entry.path))
+        );
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return `failed to inspect candidate index targets: ${message}`;
+    }
+    const checkoutPaths: string[] = [];
     for (const entry of selectedTrackedFiles) {
+        const relativePath = normalizeGitPath(entry.path);
+        const stageZeroEntry = indexEntries.get(relativePath);
+        if (!stageZeroEntry) {
+            continue;
+        }
+        if (stageZeroEntry.mode === '120000') {
+            return `candidate index target is a symbolic link: ${entry.path}`;
+        }
+        if (!stageZeroEntry.mode.startsWith('100')) {
+            return `candidate index target is not a regular file: ${entry.path}`;
+        }
+        checkoutPaths.push(relativePath);
+    }
+    if (checkoutPaths.length > 0) {
         const args = [
             'checkout-index',
             '--force',
             `--prefix=${normalizePath(workspace.candidateWorktreeRoot)}/`,
-            '--',
-            entry.path
+            '-z',
+            '--stdin'
         ];
-        const checkedOut = runGitStatus(repoRoot, args, environment);
-        if (checkedOut.status !== 0 && !checkedOut.stderr.includes('is not in the cache')) {
+        const checkedOut = runGitStatus(
+            repoRoot,
+            args,
+            environment,
+            Buffer.from(`${checkoutPaths.join('\0')}\0`, 'utf8')
+        );
+        if (checkedOut.status !== 0) {
             return gitFailureMessage(args, checkedOut);
         }
     }
@@ -377,11 +652,9 @@ function materializeCandidateWorktree(
 }
 
 function validateCandidateTrackedFiles(
-    repoRoot: string,
     workspace: RestorePlanWorkspace,
     selectedTrackedFiles: SplitRequiredWipTrackedFileEvidence[]
 ): string | null {
-    const environment = gitEnvironment(workspace.unstagedIndexPath);
     for (const entry of selectedTrackedFiles) {
         const candidatePath = resolveRepoPath(workspace.candidateWorktreeRoot, entry.path);
         try {
@@ -392,14 +665,6 @@ function validateCandidateTrackedFiles(
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
                 throw error;
             }
-        }
-        const args = ['ls-files', '--stage', '--', entry.path];
-        const stage = runGitStatus(repoRoot, args, environment);
-        if (stage.status !== 0) {
-            return gitFailureMessage(args, stage);
-        }
-        if (stage.stdout.startsWith('120000 ')) {
-            return `candidate index target is a symbolic link: ${entry.path}`;
         }
     }
     return null;
@@ -420,7 +685,7 @@ export function planAdvancedRestore(
         fs.mkdirSync(workspace.candidateWorktreeRoot, { recursive: true });
         const failure = buildCandidateIndexes(repoRoot, workspace, manifest, selectedPaths)
             || materializeCandidateWorktree(repoRoot, workspace, selectedTrackedFiles)
-            || validateCandidateTrackedFiles(repoRoot, workspace, selectedTrackedFiles);
+            || validateCandidateTrackedFiles(workspace, selectedTrackedFiles);
         if (failure) {
             return fail(failure);
         }

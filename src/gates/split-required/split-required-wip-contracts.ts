@@ -193,21 +193,6 @@ export function getHeadCommit(repoRoot: string): string {
     return runGit(repoRoot, ['rev-parse', 'HEAD']).trim();
 }
 
-export function pathExistsInHead(repoRoot: string, relativePath: string): boolean {
-    const normalized = normalizeGitPath(relativePath);
-    const result = childProcess.spawnSync('git', ['-C', repoRoot, 'cat-file', '-e', `HEAD:${normalized}`], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe']
-    });
-    return result.status === 0;
-}
-
-export function headBlobSha(repoRoot: string, relativePath: string): string | null {
-    const normalized = normalizeGitPath(relativePath);
-    const output = runGit(repoRoot, ['rev-parse', `HEAD:${normalized}`], { allowFailure: true }).trim();
-    return output || null;
-}
-
 export function buildRestoreCommands(taskId: string, manifestPath: string): SplitRequiredWipManifest['restore_commands'] {
     const displayManifestPath = normalizePath(manifestPath);
     return {

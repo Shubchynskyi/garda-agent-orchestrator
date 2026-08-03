@@ -42,7 +42,7 @@ import {
     selectedFiles,
     validateAdvancedManifestBlobs,
     validateManifestFileReferences,
-    validateNoSymlinkPath,
+    validateNoSymlinkPaths,
     validateSelectedTargetsClean,
     validateTrackedTargetObstructions
 } from './split-required-wip-restore-plan';
@@ -142,9 +142,7 @@ export function restoreSplitRequiredWip(params: {
             [...selectedTrackedFiles, ...selectedUntrackedFiles]
                 .map((entry) => normalizeGitPath(entry.path))
         );
-        for (const selectedPath of effectiveSelectedPaths) {
-            violations.push(...validateNoSymlinkPath(repoRoot, selectedPath));
-        }
+        violations.push(...validateNoSymlinkPaths(repoRoot, effectiveSelectedPaths));
         if (advancedHead) {
             if (selectedPaths.size === 0) {
                 violations.push('advanced restore requires at least one explicit include-path authorization.');

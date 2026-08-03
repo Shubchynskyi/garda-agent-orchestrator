@@ -5,10 +5,12 @@ import * as path from 'node:path';
 
 import { TASK_QUEUE_FILENAME } from '../../core/orchestration-constants';
 import {
+    readGitTreeEntriesForPaths,
     runGit,
     runGitBinary,
     splitNulList
 } from '../../core/git-helpers';
+import type { GitTreeEntry } from '../../core/git-helpers';
 import { isPlainRecord } from '../../core/records';
 import {
     appendMandatoryTaskEvent
@@ -25,9 +27,7 @@ import {
     canCaptureSplitRequiredWip,
     findCurrentCapturedManifest,
     getHeadCommit,
-    headBlobSha,
     normalizeGitPath,
-    pathExistsInHead,
     planCaptureLocation,
     resolveInputPathInsideRepo,
     resolveRepoPath,
@@ -79,6 +79,7 @@ interface PreparedSplitRequiredWipCapture {
     unstagedPatch: CaptureFileSnapshot;
     manifestSnapshot: CaptureFileSnapshot;
     untracked: CapturedUntrackedSnapshot[];
+    baseEntries: ReadonlyMap<string, GitTreeEntry>;
 }
 
 function sha256Buffer(content: Buffer): string {
@@ -350,25 +351,22 @@ function assertRepositoryHead(repoRoot: string, expectedBaseCommit: string): voi
 function suspendTrackedChanges(
     repoRoot: string,
     changedFiles: string[],
-    expectedBaseCommit: string
+    expectedBaseCommit: string,
+    baseEntries: ReadonlyMap<string, GitTreeEntry>
 ): void {
     assertRepositoryHead(repoRoot, expectedBaseCommit);
     if (changedFiles.length === 0) {
         return;
     }
-    const trackedAtHead = new Map(changedFiles.map((relativePath) => [
-        relativePath,
-        pathExistsInHead(repoRoot, relativePath)
-    ]));
     runGit(repoRoot, ['reset', '--quiet', expectedBaseCommit, '--', ...changedFiles]);
     assertRepositoryHead(repoRoot, expectedBaseCommit);
-    const headTrackedFiles = changedFiles.filter((relativePath) => trackedAtHead.get(relativePath));
+    const headTrackedFiles = changedFiles.filter((relativePath) => baseEntries.has(relativePath));
     if (headTrackedFiles.length > 0) {
         runGit(repoRoot, ['checkout', '--quiet', expectedBaseCommit, '--', ...headTrackedFiles]);
         assertRepositoryHead(repoRoot, expectedBaseCommit);
     }
     for (const relativePath of changedFiles) {
-        if (!trackedAtHead.get(relativePath)) {
+        if (!baseEntries.has(relativePath)) {
             removeFileIfExists(resolveRepoPath(repoRoot, relativePath));
         }
     }
@@ -531,6 +529,11 @@ function prepareCapture(params: {
         const untracked = params.capturedUntrackedFiles.map((relativePath) => (
             copyUntrackedTaskFile(params.repoRoot, params.captureRoot, relativePath)
         ));
+        const baseEntries = readGitTreeEntriesForPaths(
+            params.repoRoot,
+            params.baseCommit,
+            params.trackedChanges.all
+        );
         const trackedFiles: SplitRequiredWipTrackedFileEvidence[] = params.trackedChanges.all.map(
             (relativePath) => {
                 let worktreeSha256: string | null = null;
@@ -552,7 +555,7 @@ function prepareCapture(params: {
                 }
                 return {
                     path: relativePath,
-                    head_sha256: headBlobSha(params.repoRoot, relativePath),
+                    head_sha256: baseEntries.get(relativePath)?.objectId || null,
                     worktree_sha256: worktreeSha256,
                     staged: params.trackedChanges.staged.has(relativePath),
                     unstaged: params.trackedChanges.unstaged.has(relativePath)
@@ -607,7 +610,8 @@ function prepareCapture(params: {
             stagedPatch,
             unstagedPatch,
             manifestSnapshot,
-            untracked
+            untracked,
+            baseEntries
         };
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -765,7 +769,12 @@ function rollbackSuspension(
 ): string[] {
     const violations: string[] = [];
     try {
-        suspendTrackedChanges(repoRoot, prepared.trackedChanges.all, prepared.baseCommit);
+        suspendTrackedChanges(
+            repoRoot,
+            prepared.trackedChanges.all,
+            prepared.baseCommit,
+            prepared.baseEntries
+        );
         if (prepared.stagedPatch.content.byteLength > 0) {
             runGitWithInput(repoRoot, ['apply', '--check', '--index', '-'], prepared.stagedPatch.content);
             runGitWithInput(repoRoot, ['apply', '--index', '-'], prepared.stagedPatch.content);
@@ -971,7 +980,12 @@ export function captureAndSuspendSplitRequiredWip(params: {
     try {
         assertRepositoryHead(repoRoot, prepared.baseCommit);
         suspensionStarted = true;
-        suspendTrackedChanges(repoRoot, trackedChanges.all, prepared.baseCommit);
+        suspendTrackedChanges(
+            repoRoot,
+            trackedChanges.all,
+            prepared.baseCommit,
+            prepared.baseEntries
+        );
         for (const snapshot of prepared.untracked) {
             suspendUntrackedSnapshot(repoRoot, prepared, snapshot);
         }
