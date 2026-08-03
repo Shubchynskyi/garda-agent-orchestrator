@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { withLifecycleRuntimeMutationGenerationForPath } from '../runtime-mutation-generation';
 import type { UpdatePipelineStageResult } from './update-execution';
 import type { ResolvedUpdateSources } from './update-source';
 import type { UpdateAnnouncements } from './update-announcements';
@@ -142,9 +143,15 @@ export function buildUpdateReportLines(data: UpdateReportData): string[] {
 }
 
 export function writeUpdateReport(updateReportPath: string, data: UpdateReportData): void {
-    fs.mkdirSync(path.dirname(updateReportPath), { recursive: true });
-    const reportLines = buildUpdateReportLines(data);
-    fs.writeFileSync(updateReportPath, reportLines.join('\r\n'), 'utf8');
+    withLifecycleRuntimeMutationGenerationForPath(
+        updateReportPath,
+        'lifecycle-update-report-write',
+        () => {
+            fs.mkdirSync(path.dirname(updateReportPath), { recursive: true });
+            const reportLines = buildUpdateReportLines(data);
+            fs.writeFileSync(updateReportPath, reportLines.join('\r\n'), 'utf8');
+        }
+    );
 }
 
 export interface UpdateResultInput {

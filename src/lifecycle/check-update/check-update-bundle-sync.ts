@@ -17,6 +17,7 @@ import {
     withLifecycleOperationLockAsync
 } from '../common';
 import { assertNoRuntimeLocksBeforeUpdateApply } from '../lock/runtime-lock-preflight';
+import { withLifecycleRuntimeMutationGenerationAsync } from '../runtime-mutation-generation';
 import { createLifecycleDiagnosticError } from '../update/update-diagnostics';
 import { getAgentInitializationReadinessSnapshot } from '../../validators/status';
 import { buildAgentInitializationRecoveryGuidance } from '../../validators/status/status-recommendations';
@@ -521,7 +522,7 @@ export function applyUpdateAvailabilitySnapshot(
     result.checkUpdateResult = snapshot.checkUpdateResult;
 }
 
-export async function applyAvailableUpdate(options: ApplyAvailableUpdateOptions): Promise<void> {
+async function applyAvailableUpdateUnjournaled(options: ApplyAvailableUpdateOptions): Promise<void> {
     const {
         normalizedTarget,
         deployedBundleRoot,
@@ -735,4 +736,15 @@ export async function applyAvailableUpdate(options: ApplyAvailableUpdateOptions)
             throw new Error(`Update apply failed. Error: ${originalError}`);
         }
     });
+}
+
+export async function applyAvailableUpdate(options: ApplyAvailableUpdateOptions): Promise<void> {
+    if (options.dryRun) {
+        return applyAvailableUpdateUnjournaled(options);
+    }
+    return withLifecycleRuntimeMutationGenerationAsync(
+        options.deployedBundleRoot,
+        'lifecycle-bundle-update-apply',
+        () => applyAvailableUpdateUnjournaled(options)
+    );
 }

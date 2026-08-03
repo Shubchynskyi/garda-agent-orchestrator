@@ -8,6 +8,7 @@ import {
     readdirRecursiveFiles,
     removePathRecursive
 } from './generic-utils';
+import { withLifecycleRuntimeMutationGenerationForPath } from './runtime-mutation-generation';
 
 type JsonObject = Record<string, unknown>;
 
@@ -67,7 +68,7 @@ export const BUNDLE_SYNC_ITEMS = Object.freeze([
     'VERSION'
 ]);
 
-export function createRollbackSnapshot(
+function createRollbackSnapshotUnjournaled(
     rootPath: string,
     snapshotRoot: string,
     relativePaths: readonly string[]
@@ -97,15 +98,33 @@ export function createRollbackSnapshot(
     return records;
 }
 
+export function createRollbackSnapshot(
+    rootPath: string,
+    snapshotRoot: string,
+    relativePaths: readonly string[]
+): RollbackRecord[] {
+    return withLifecycleRuntimeMutationGenerationForPath(
+        snapshotRoot,
+        'lifecycle-rollback-snapshot-create',
+        () => createRollbackSnapshotUnjournaled(rootPath, snapshotRoot, relativePaths)
+    );
+}
+
 export function getRollbackRecordsPath(snapshotRoot: string): string {
     return path.join(snapshotRoot, ROLLBACK_RECORDS_FILE_NAME);
 }
 
 export function writeRollbackRecords(snapshotRoot: string, records: readonly RollbackRecord[]): string {
-    const recordsPath = getRollbackRecordsPath(snapshotRoot);
-    fs.mkdirSync(snapshotRoot, { recursive: true });
-    fs.writeFileSync(recordsPath, JSON.stringify(records, null, 2), 'utf8');
-    return recordsPath;
+    return withLifecycleRuntimeMutationGenerationForPath(
+        snapshotRoot,
+        'lifecycle-rollback-records-write',
+        () => {
+            const recordsPath = getRollbackRecordsPath(snapshotRoot);
+            fs.mkdirSync(snapshotRoot, { recursive: true });
+            fs.writeFileSync(recordsPath, JSON.stringify(records, null, 2), 'utf8');
+            return recordsPath;
+        }
+    );
 }
 
 export function readRollbackRecords(snapshotRoot: string): RollbackRecord[] {
@@ -150,10 +169,16 @@ export function getSyncBackupMetadataPath(backupRoot: string): string {
 }
 
 export function writeSyncBackupMetadata(backupRoot: string, metadata: SyncBackupMetadata): string {
-    const metadataPath = getSyncBackupMetadataPath(backupRoot);
-    fs.mkdirSync(backupRoot, { recursive: true });
-    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
-    return metadataPath;
+    return withLifecycleRuntimeMutationGenerationForPath(
+        backupRoot,
+        'lifecycle-bundle-backup-metadata-write',
+        () => {
+            const metadataPath = getSyncBackupMetadataPath(backupRoot);
+            fs.mkdirSync(backupRoot, { recursive: true });
+            fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
+            return metadataPath;
+        }
+    );
 }
 
 export function readSyncBackupMetadata(backupRoot: string): SyncBackupMetadata {

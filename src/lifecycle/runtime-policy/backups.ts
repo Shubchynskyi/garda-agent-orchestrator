@@ -13,6 +13,7 @@ import {
 import { getUpdateRollbackItems } from '../update/update';
 import { processCleanupCandidates } from '../cleanup/cleanup-removal';
 import type { CleanupItem } from '../cleanup/cleanup-types';
+import { withLifecycleRuntimeMutationGenerationForPath } from '../runtime-mutation-generation';
 
 export const DEFAULT_BACKUP_KEEP_LATEST = 10;
 
@@ -311,17 +312,23 @@ export function createBackupSnapshot(options: CreateBackupSnapshotOptions): Back
         : path.resolve(normalizedTarget, initAnswersPath);
     ensureWithinRoot(normalizedTarget, initAnswersResolvedPath, 'Init answers path');
 
-    const rollbackItems = getUpdateRollbackItems(normalizedTarget, initAnswersResolvedPath);
-    const records = createRollbackSnapshot(normalizedTarget, snapshotPath, rollbackItems);
-    writeRollbackRecords(snapshotPath, records);
-    writeBackupMetadata(snapshotPath, {
-        schemaVersion: 1,
-        reason,
-        createdAt: parseCreatedAtFromId(path.basename(snapshotPath)) ?? new Date().toISOString(),
-        source: 'backup-backend'
-    });
+    return withLifecycleRuntimeMutationGenerationForPath(
+        snapshotPath,
+        'lifecycle-backup-snapshot-create',
+        () => {
+            const rollbackItems = getUpdateRollbackItems(normalizedTarget, initAnswersResolvedPath);
+            const records = createRollbackSnapshot(normalizedTarget, snapshotPath, rollbackItems);
+            writeRollbackRecords(snapshotPath, records);
+            writeBackupMetadata(snapshotPath, {
+                schemaVersion: 1,
+                reason,
+                createdAt: parseCreatedAtFromId(path.basename(snapshotPath)) ?? new Date().toISOString(),
+                source: 'backup-backend'
+            });
 
-    return buildBackupSummary(normalizedTarget, snapshotPath);
+            return buildBackupSummary(normalizedTarget, snapshotPath);
+        }
+    );
 }
 
 export function pruneBackups(options: BackupRetentionOptions): BackupRetentionResult {
@@ -345,7 +352,14 @@ export function pruneBackups(options: BackupRetentionOptions): BackupRetentionRe
             reason: 'count',
             sizeBytes: backup.sizeBytes
         }));
-    const { removed, skipped, errors, totalFreedBytes } = processCleanupCandidates(candidates, dryRun, runtimeRoot);
+    const executePrune = () => processCleanupCandidates(candidates, dryRun, runtimeRoot);
+    const { removed, skipped, errors, totalFreedBytes } = !dryRun && candidates.length > 0
+        ? withLifecycleRuntimeMutationGenerationForPath(
+            candidates[0].path,
+            'lifecycle-backup-retention-prune',
+            executePrune
+        )
+        : executePrune();
     return {
         targetRoot: normalizedTarget,
         keepLatest,

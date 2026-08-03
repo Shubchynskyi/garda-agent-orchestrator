@@ -28,6 +28,10 @@ import {
 } from '../common';
 import { getUpdateRollbackItems } from '../update/update';
 import { acquireUpdateSource, DEFAULT_PACKAGE_NAME } from '../check-update';
+import {
+    withLifecycleRuntimeMutationGeneration,
+    withLifecycleRuntimeMutationGenerationAsync
+} from '../runtime-mutation-generation';
 
 interface RollbackLifecycleOptions {
     targetRoot: string;
@@ -148,7 +152,7 @@ export function findSnapshotByVersion(targetRoot: string, targetVersion: string)
     return null;
 }
 
-export async function runRollbackToVersion(options: RunRollbackToVersionOptions) {
+async function runRollbackToVersionUnjournaled(options: RunRollbackToVersionOptions) {
     const {
         targetRoot,
         bundleRoot,
@@ -521,7 +525,7 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     };
 }
 
-export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
+function runSnapshotRollbackUnjournaled(options: RunSnapshotRollbackOptions) {
     const {
         targetRoot,
         bundleRoot,
@@ -693,6 +697,30 @@ export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
             ? rollbackRecords.map((record) => record.relativePath)
             : []
     };
+}
+
+export async function runRollbackToVersion(options: RunRollbackToVersionOptions) {
+    validateTargetRoot(options.targetRoot, options.bundleRoot);
+    if (options.dryRun) {
+        return runRollbackToVersionUnjournaled(options);
+    }
+    return withLifecycleRuntimeMutationGenerationAsync(
+        options.bundleRoot,
+        'lifecycle-rollback-to-version',
+        () => runRollbackToVersionUnjournaled(options)
+    );
+}
+
+export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
+    validateTargetRoot(options.targetRoot, options.bundleRoot);
+    if (options.dryRun) {
+        return runSnapshotRollbackUnjournaled(options);
+    }
+    return withLifecycleRuntimeMutationGeneration(
+        options.bundleRoot,
+        'lifecycle-snapshot-rollback',
+        () => runSnapshotRollbackUnjournaled(options)
+    );
 }
 
 export async function runRollback(options: RunRollbackOptions) {

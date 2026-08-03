@@ -34,6 +34,7 @@ import {
     type TaskRuntimePurgeResult
 } from './cleanup-types';
 import { listRuntimeCleanupSideEffectActionsForRemovedCategories } from './runtime-cleanup-ownership';
+import { withLifecycleRuntimeMutationGeneration } from '../runtime-mutation-generation';
 
 const DEFAULT_MAX_AGE_DAYS = 30;
 const DEFAULT_MAX_BACKUPS = 10;
@@ -175,7 +176,7 @@ function buildRuntimeRetentionSelectionOptions(
     };
 }
 
-export function runCleanup(options: CleanupOptions): CleanupResult {
+function runCleanupUnjournaled(options: CleanupOptions): CleanupResult {
     const { targetRoot, bundleRoot, dryRun = false } = options;
     validateTargetRoot(targetRoot, bundleRoot);
 
@@ -243,6 +244,17 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
     };
 }
 
+export function runCleanup(options: CleanupOptions): CleanupResult {
+    validateTargetRoot(options.targetRoot, options.bundleRoot);
+    return options.dryRun === true
+        ? runCleanupUnjournaled(options)
+        : withLifecycleRuntimeMutationGeneration(
+            options.bundleRoot,
+            'lifecycle-runtime-cleanup',
+            () => runCleanupUnjournaled(options)
+        );
+}
+
 export function runCleanupWithLock(options: CleanupOptions): CleanupResult {
     return withLifecycleOperationLock(options.targetRoot, 'cleanup', () => runCleanup(options));
 }
@@ -264,7 +276,7 @@ function findActiveTaskIdMatch(activeTaskIds: ReadonlySet<string>, taskId: strin
     return null;
 }
 
-export function runTaskRuntimePurge(options: TaskRuntimePurgeOptions): TaskRuntimePurgeResult {
+function runTaskRuntimePurgeUnjournaled(options: TaskRuntimePurgeOptions): TaskRuntimePurgeResult {
     const { targetRoot, bundleRoot, confirm = false } = options;
     validateTargetRoot(targetRoot, bundleRoot);
 
@@ -312,6 +324,17 @@ export function runTaskRuntimePurge(options: TaskRuntimePurgeOptions): TaskRunti
     };
 }
 
+export function runTaskRuntimePurge(options: TaskRuntimePurgeOptions): TaskRuntimePurgeResult {
+    validateTargetRoot(options.targetRoot, options.bundleRoot);
+    return options.confirm === true
+        ? withLifecycleRuntimeMutationGeneration(
+            options.bundleRoot,
+            'lifecycle-task-runtime-purge',
+            () => runTaskRuntimePurgeUnjournaled(options)
+        )
+        : runTaskRuntimePurgeUnjournaled(options);
+}
+
 export function runTaskRuntimePurgeWithLock(options: TaskRuntimePurgeOptions): TaskRuntimePurgeResult {
     return withLifecycleOperationLock(options.targetRoot, 'task-runtime-purge', () => runTaskRuntimePurge(options));
 }
@@ -341,7 +364,7 @@ function buildTaskPurgeSharedIndexOperations(removed: readonly CleanupItem[], ex
     return Array.from(effectiveActions).sort();
 }
 
-export function runTaskRuntimeBatchPurge(options: TaskRuntimeBatchPurgeOptions): TaskRuntimeBatchPurgeResult {
+function runTaskRuntimeBatchPurgeUnjournaled(options: TaskRuntimeBatchPurgeOptions): TaskRuntimeBatchPurgeResult {
     const { targetRoot, bundleRoot, confirm = false } = options;
     validateTargetRoot(targetRoot, bundleRoot);
 
@@ -403,6 +426,17 @@ export function runTaskRuntimeBatchPurge(options: TaskRuntimeBatchPurgeOptions):
     };
 }
 
+export function runTaskRuntimeBatchPurge(options: TaskRuntimeBatchPurgeOptions): TaskRuntimeBatchPurgeResult {
+    validateTargetRoot(options.targetRoot, options.bundleRoot);
+    return options.confirm === true
+        ? withLifecycleRuntimeMutationGeneration(
+            options.bundleRoot,
+            'lifecycle-task-runtime-batch-purge',
+            () => runTaskRuntimeBatchPurgeUnjournaled(options)
+        )
+        : runTaskRuntimeBatchPurgeUnjournaled(options);
+}
+
 export function runTaskRuntimeBatchPurgeWithLock(options: TaskRuntimeBatchPurgeOptions): TaskRuntimeBatchPurgeResult {
     return withLifecycleOperationLock(options.targetRoot, 'task-runtime-batch-purge', () => runTaskRuntimeBatchPurge(options));
 }
@@ -429,7 +463,7 @@ export function validateGcCategories(categories: string[]): void {
     }
 }
 
-export function runGc(options: GcOptions): GcResult {
+function runGcUnjournaled(options: GcOptions): GcResult {
     const { targetRoot, bundleRoot, confirm = false, runtimeRetentionOnly = false } = options;
     validateTargetRoot(targetRoot, bundleRoot);
 
@@ -602,6 +636,17 @@ export function runGc(options: GcOptions): GcResult {
         metricsRetention,
         runtimeRetentionPreview
     };
+}
+
+export function runGc(options: GcOptions): GcResult {
+    validateTargetRoot(options.targetRoot, options.bundleRoot);
+    return options.confirm === true
+        ? withLifecycleRuntimeMutationGeneration(
+            options.bundleRoot,
+            'lifecycle-runtime-gc',
+            () => runGcUnjournaled(options)
+        )
+        : runGcUnjournaled(options);
 }
 
 export function runGcWithLock(options: GcOptions): GcResult {

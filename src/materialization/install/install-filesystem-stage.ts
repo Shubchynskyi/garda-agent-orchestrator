@@ -16,6 +16,7 @@ import {
     createRemoveFileStage,
     createWriteTextFileStage
 } from '../staged-side-effects';
+import { withLifecycleRuntimeMutationGenerationForPath } from '../../lifecycle/runtime-mutation-generation';
 import type {
     InstallFilesystemStage,
     InstallStageMetrics
@@ -78,19 +79,34 @@ export function createInstallFilesystemStage(
             return;
         }
         const manifestPath = path.join(backupRoot, '_install-backup.manifest.json');
-        ensureDirectory(path.dirname(manifestPath));
-        writeJsonFile(manifestPath, {
-            Version: 1,
-            CreatedAt: timestamp,
-            PreExistingFiles: preExistingPaths
-        });
+        withLifecycleRuntimeMutationGenerationForPath(
+            manifestPath,
+            'lifecycle-install-backup-manifest-write',
+            () => {
+                ensureDirectory(path.dirname(manifestPath));
+                writeJsonFile(manifestPath, {
+                    Version: 1,
+                    CreatedAt: timestamp,
+                    PreExistingFiles: preExistingPaths
+                });
+            }
+        );
     }
 
     function backupFile(destPath: string, relativePath: string): void {
         if (skipBackups || !pathExists(destPath)) return;
         const key = relativePath.toLowerCase().replace(/\\/g, '/');
         if (backedUpSet.has(key)) return;
-        copyFile(destPath, path.join(backupRoot, relativePath));
+        const backupPath = path.join(backupRoot, relativePath);
+        if (dryRun) {
+            copyFile(destPath, backupPath);
+        } else {
+            withLifecycleRuntimeMutationGenerationForPath(
+                backupPath,
+                'lifecycle-install-backup-file-write',
+                () => copyFile(destPath, backupPath)
+            );
+        }
         metrics.backedUp++;
         backedUpSet.add(key);
     }
