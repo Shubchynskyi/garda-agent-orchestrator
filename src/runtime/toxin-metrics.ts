@@ -8,6 +8,11 @@ import {
     resolveBundleNameForTarget
 } from '../core/constants';
 import { isLowNoiseRuntimeWritesEnabled } from '../gate-runtime/derived-runtime-writes';
+import {
+    collectRuntimeToxinScanWithCache,
+    RUNTIME_TOXIN_SCAN_DIRECTORIES as RUNTIME_SUBDIRS,
+    type RuntimeToxinScanCacheValue
+} from './toxin-snapshot-cache';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -60,6 +65,9 @@ export interface ToxinStatusSummary {
 export interface CollectToxinSnapshotOptions {
     bundleRoot?: string;
     metricsPath?: string;
+    useCache?: boolean;
+    cleanupMaxAgeDays?: number;
+    nowMs?: number;
 }
 
 export interface RecordToxinMetricsSnapshotOptions extends CollectToxinSnapshotOptions {
@@ -70,14 +78,8 @@ export interface ToxinMetricsSnapshotDueOptions {
     minIntervalMs?: number;
 }
 
-interface RuntimeToxinScanSummary {
+interface RuntimeToxinScanSummary extends RuntimeToxinScanCacheValue {
     diskSummaries: DiskArtifactSummary[];
-    runtimeTotalBytes: number;
-    cleanupCandidateCount: number;
-    cleanupCandidateBytes: number;
-    noisyArtifactCount: number;
-    noisyArtifactBytes: number;
-    gateEventCount: number;
 }
 
 interface DirectoryTally {
@@ -111,15 +113,6 @@ const CLEANUP_CANDIDATE_SUBDIRS = new Set([
     'bundle-backups',
     'update-rollbacks',
     'update-reports'
-]);
-
-const RUNTIME_SUBDIRS: readonly string[] = Object.freeze([
-    'reviews',
-    'task-events',
-    'backups',
-    'bundle-backups',
-    'update-reports',
-    'update-rollbacks'
 ]);
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -368,9 +361,11 @@ function resolveToxinPaths(
 
 function scanRuntimeTreeForToxins(
     runtimeRoot: string,
-    maxAgeDays: number = 30
+    maxAgeDays: number = 30,
+    nowMs: number = Date.now()
 ): RuntimeToxinScanSummary {
-    const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+    const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+    const cutoffMs = nowMs - maxAgeMs;
     const diskSummaries: DiskArtifactSummary[] = [];
     let runtimeTotalBytes = 0;
     let cleanupCandidateCount = 0;
@@ -378,6 +373,19 @@ function scanRuntimeTreeForToxins(
     let noisyArtifactCount = 0;
     let noisyArtifactBytes = 0;
     let gateEventCount = 0;
+    let nextRetentionTransitionAtMs: number | null = null;
+
+    const recordRetentionState = (mtimeMs: number, bytes: number): void => {
+        if (mtimeMs < cutoffMs) {
+            cleanupCandidateCount++;
+            cleanupCandidateBytes += bytes;
+            return;
+        }
+        const eligibleAtMs = Math.floor(mtimeMs + maxAgeMs) + 1;
+        nextRetentionTransitionAtMs = nextRetentionTransitionAtMs === null
+            ? eligibleAtMs
+            : Math.min(nextRetentionTransitionAtMs, eligibleAtMs);
+    };
 
     const walkDirectory = (
         currentDir: string,
@@ -414,10 +422,7 @@ function scanRuntimeTreeForToxins(
                 if (options.topLevelOnlyCleanupCandidates && options.depth === 0) {
                     try {
                         const stat = fs.statSync(fullPath);
-                        if (stat.mtimeMs < cutoffMs) {
-                            cleanupCandidateCount++;
-                            cleanupCandidateBytes += child.bytes;
-                        }
+                        recordRetentionState(stat.mtimeMs, child.bytes);
                     } catch {
                         // skip unreadable top-level entry
                     }
@@ -447,8 +452,9 @@ function scanRuntimeTreeForToxins(
                 }
 
                 if (options.topLevelOnlyCleanupCandidates && options.depth === 0 && stat.mtimeMs < cutoffMs) {
-                    cleanupCandidateCount++;
-                    cleanupCandidateBytes += stat.size;
+                    recordRetentionState(stat.mtimeMs, stat.size);
+                } else if (options.topLevelOnlyCleanupCandidates && options.depth === 0) {
+                    recordRetentionState(stat.mtimeMs, stat.size);
                 }
             } catch {
                 // skip unreadable file
@@ -483,7 +489,8 @@ function scanRuntimeTreeForToxins(
         cleanupCandidateBytes,
         noisyArtifactCount,
         noisyArtifactBytes,
-        gateEventCount
+        gateEventCount,
+        nextRetentionTransitionAtMs
     };
 }
 
@@ -589,13 +596,21 @@ export function countCleanupCandidates(runtimeRoot: string, maxAgeDays: number =
 
 export function collectToxinSnapshot(repoRoot: string, options: CollectToxinSnapshotOptions = {}): ToxinSnapshot {
     const { orchestratorRoot, runtimeRoot, metricsPath } = resolveToxinPaths(repoRoot, options);
-
-    const runtimeScan = scanRuntimeTreeForToxins(runtimeRoot);
+    const cleanupMaxAgeDays = options.cleanupMaxAgeDays ?? 30;
+    const nowMs = options.nowMs ?? Date.now();
+    const runtimeScan = collectRuntimeToxinScanWithCache({
+        orchestratorRoot,
+        runtimeRoot,
+        cleanupMaxAgeDays,
+        nowMs,
+        cacheEnabled: options.useCache !== false,
+        collectFresh: () => scanRuntimeTreeForToxins(runtimeRoot, cleanupMaxAgeDays, nowMs)
+    });
     const staleLocks = countStaleLocks(orchestratorRoot);
     const metricsLines = countFileLinesStreaming(metricsPath);
 
     return {
-        timestamp_utc: nowUtc(),
+        timestamp_utc: new Date(nowMs).toISOString(),
         runtime_disk: runtimeScan.diskSummaries,
         runtime_total_bytes: runtimeScan.runtimeTotalBytes,
         stale_lock_count: staleLocks,
