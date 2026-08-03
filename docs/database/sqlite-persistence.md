@@ -65,6 +65,35 @@ tables. Every imported row must retain enough provenance to identify its
 canonical source, ordering position where applicable, timestamp, and content
 hash.
 
+### Derived Catalog Schema v1
+
+T-1000-2 implements the internal adapter under
+`src/runtime/sqlite-catalog/`. Schema version 1 contains:
+
+- `canonical_sources` for workspace-relative source identity, observation time,
+  and whole-source content hashes;
+- `task_queue_rows`, `lifecycle_events`, `review_attempts`,
+  `review_receipts`, `artifacts`, `task_ledgers`, `retention_state`, and
+  `metric_samples` for the normalized orchestration projection;
+- `metric_labels` for normalized metric dimensions;
+- `catalog_state` for disposable projection generation and snapshot identity;
+- `schema_migrations` for immutable migration checksums and application-version
+  provenance.
+
+Every domain row references `canonical_sources` and separately retains its
+record hash plus source sequence, byte offset, and source timestamp where those
+values exist. The adapter replaces a complete projection inside one bounded
+`BEGIN IMMEDIATE` transaction only when the normalized projection contains at
+most 10,000 rows, including source and metric-label rows. Larger inputs return
+`rebuild_required` before a writer transaction starts. T-1000-3 must handle that
+result as an explicit, progress-reported rebuild outside the interactive write
+path. Failed or contended bounded writes roll back and return a deferred result.
+Initial schema migration also holds the workspace catalog maintenance lock and
+uses the contract's five-second maximum maintenance wait. This stage does not
+scan canonical files, change any command's read path, or make SQLite
+authoritative. Ingestion, reconciliation, health, repair, and rebuild
+orchestration remain T-1000-3 responsibilities.
+
 ## Canonical-First Write And Read Ordering
 
 1. Validate and write the canonical file using its existing atomicity and
@@ -105,7 +134,10 @@ floor. In particular:
 
 Long scans, rebuilds, and maintenance work must be explicit operations with
 progress reporting. Ordinary navigator and report queries must stay bounded;
-synchronous database work must not become an unbounded pause in the CLI.
+synchronous database work must not become an unbounded pause in the CLI. The
+adapter therefore refuses to start an in-place projection transaction above its
+10,000-row limit; the caller must route that projection to explicit rebuild
+orchestration rather than retrying the same synchronous write.
 
 ## Database Identity And Schema Versioning
 
@@ -162,8 +194,17 @@ WAL is required for the derived catalog so readers do not block a normal writer.
 The returned journal mode must be `wal`; silently falling back to another mode
 is not accepted. The database, `-wal`, and `-shm` files are one recovery unit.
 The catalog is enabled only on a local filesystem whose resolved path remains
-inside the workspace runtime root. Known network shares or filesystems without
-safe shared-memory locking disable SQLite and use file fallback.
+inside the workspace runtime root. UNC paths, Windows mapped network drives,
+and known network, clustered, shared-folder, or userspace filesystem types
+disable SQLite and use file fallback. If Windows drive locality or filesystem
+type cannot be inspected, the adapter also fails closed to file fallback.
+The initial path check probes the nearest existing directory; after
+`runtime/catalog` is created, the open path resolves and probes that actual
+directory again before SQLite creates or opens the database. Windows drive
+mapping is queried afresh for every catalog open; the two checks within one
+open may reuse only that operation-scoped classification.
+The post-create check also verifies realpath containment so a symlink or
+junction cannot redirect the database or WAL companions outside the workspace.
 
 Normal projection writes use short transactions. Interactive commands wait at
 most 250 ms; there is no unbounded retry loop. `BUSY` or `LOCKED` means
