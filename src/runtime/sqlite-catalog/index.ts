@@ -8,6 +8,7 @@ export type {
     CatalogReviewReceipt,
     CatalogRowProvenance,
     CatalogTaskLedger,
+    CatalogTaskActivitySummary,
     CatalogTaskRow,
     DerivedCatalogProjection,
     DerivedSqliteCatalog,
@@ -31,6 +32,7 @@ export {
 } from './sqlite-catalog-migration';
 export {
     openDerivedSqliteCatalog,
+    openDerivedSqliteCatalogReadOnly,
     resolveDerivedSqliteCatalogPath
 } from './sqlite-catalog';
 export { SQLITE_CATALOG_MAX_SYNC_PROJECTION_ROWS } from './sqlite-catalog-projection';
@@ -53,6 +55,23 @@ export {
     repairDerivedSqliteCatalog,
     scheduleDerivedSqliteCatalogReconciliation
 } from './sqlite-catalog-reconciliation';
+export {
+    queryCurrentArtifacts,
+    queryCurrentLifecycleEvents,
+    queryCurrentMetricSamples,
+    queryCurrentRetentionStates,
+    queryCurrentReviewAttempts,
+    queryCurrentReviewReceipts,
+    queryCurrentTaskLedgers,
+    queryCurrentTaskActivitySummaries,
+    queryPerformanceQualifiedTaskActivitySummaries,
+    queryCurrentTasks
+} from './sqlite-query-repository';
+export type {
+    SqliteQueryFallbackReason,
+    SqliteQueryResult
+} from './sqlite-query-repository';
+export { SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES } from './sqlite-query-repository';
 export type {
     CanonicalFirstCatalogWriteResult,
     CatalogHealthStatus,

@@ -18,6 +18,10 @@ import {
     taskIdsEqualCaseInsensitive
 } from '../../core/task-ids';
 import { validateManagedConfigByName } from '../../schemas/config-artifacts';
+import {
+    queryPerformanceQualifiedTaskActivitySummaries,
+    SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES
+} from '../../runtime/sqlite-catalog';
 import { isTaskScopedRuntimeCandidateCategory } from '../cleanup/runtime-cleanup-ownership';
 
 export type RuntimeRetentionTier =
@@ -113,6 +117,10 @@ export interface RuntimeRetentionPreviewSummary {
     health_states: Record<RuntimeRetentionHealthState, number>;
     ledger_statuses: Record<TaskHistoryLedgerScanStatus, number>;
     tasks: RuntimeRetentionTaskPreview[];
+}
+
+export interface RuntimeRetentionPreviewOptions {
+    queryTaskActivitySummaries?: typeof queryPerformanceQualifiedTaskActivitySummaries;
 }
 
 interface CandidateGroup {
@@ -433,28 +441,14 @@ export function contributesToRetentionAge(category: string): boolean {
 }
 
 function classifyTaskPreview(
-    targetRoot: string,
     bundleRoot: string,
     taskId: string,
     candidateGroup: CandidateGroup,
     policy: RuntimeRetentionPolicy,
-    runtimeState: ReturnType<typeof collectRuntimeTaskState>
+    runtimeState: ReturnType<typeof collectRuntimeTaskState>,
+    queueStatuses: ReadonlyMap<string, string>
 ): RuntimeRetentionTaskPreview {
-    const taskPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
-    let queueStatus: string | null = null;
-    if (fs.existsSync(taskPath)) {
-        try {
-            const content = fs.readFileSync(taskPath, 'utf8');
-            for (const row of parseCanonicalActiveTaskQueue(content).rows) {
-                if (row.taskId === taskId) {
-                    queueStatus = readTaskQueueStatusToken(row.status);
-                    break;
-                }
-            }
-        } catch {
-            // Best-effort queue hint only.
-        }
-    }
+    const queueStatus = queueStatuses.get(taskId) ?? null;
 
     const activeByRuntime = runtimeState.activeTaskIds.has(taskId);
     const ambiguousByRuntime = runtimeState.ambiguousTaskIds.has(taskId);
@@ -559,10 +553,42 @@ function classifyTaskPreview(
     };
 }
 
+function readRetentionQueueStatuses(
+    targetRoot: string,
+    candidateTaskCount: number,
+    queryTaskActivitySummaries: typeof queryPerformanceQualifiedTaskActivitySummaries
+): Map<string, string> {
+    const statuses = new Map<string, string>();
+    if (candidateTaskCount >= SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES) {
+        const activityQuery = queryTaskActivitySummaries(targetRoot);
+        if (activityQuery.source === 'sqlite') {
+            for (const summary of activityQuery.value) {
+                const status = readTaskQueueStatusToken(summary.status || '');
+                if (status) statuses.set(summary.taskId, status);
+            }
+            return statuses;
+        }
+    }
+
+    const taskPath = path.join(targetRoot, TASK_QUEUE_FILENAME);
+    if (!fs.existsSync(taskPath)) return statuses;
+    try {
+        const content = fs.readFileSync(taskPath, 'utf8');
+        for (const row of parseCanonicalActiveTaskQueue(content).rows) {
+            const status = readTaskQueueStatusToken(row.status);
+            if (status) statuses.set(row.taskId, status);
+        }
+    } catch {
+        // Best-effort queue hints only; deletion safety still comes from canonical runtime evidence.
+    }
+    return statuses;
+}
+
 export function buildRuntimeRetentionPreview(
     targetRoot: string,
     bundleRoot: string,
-    candidates: ReadonlyArray<{ path: string; category: string }>
+    candidates: ReadonlyArray<{ path: string; category: string }>,
+    options: RuntimeRetentionPreviewOptions = {}
 ): RuntimeRetentionPreviewSummary {
     const policy = loadRuntimeRetentionPolicy(bundleRoot);
     const candidateGroups = new Map<string, CandidateGroup>();
@@ -590,8 +616,20 @@ export function buildRuntimeRetentionPreview(
     }
 
     const runtimeState = collectRuntimeTaskState(bundleRoot);
+    const queueStatuses = readRetentionQueueStatuses(
+        targetRoot,
+        candidateGroups.size,
+        options.queryTaskActivitySummaries ?? queryPerformanceQualifiedTaskActivitySummaries
+    );
     const tasks = Array.from(candidateGroups.entries())
-        .map(([taskId, group]) => classifyTaskPreview(targetRoot, bundleRoot, taskId, group, policy, runtimeState))
+        .map(([taskId, group]) => classifyTaskPreview(
+            bundleRoot,
+            taskId,
+            group,
+            policy,
+            runtimeState,
+            queueStatuses
+        ))
         .sort((left, right) => left.task_id.localeCompare(right.task_id));
 
     const tiers: Record<RuntimeRetentionTier, number> = {

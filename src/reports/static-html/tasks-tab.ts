@@ -3,6 +3,9 @@ import type { ReportTaskRow } from '../report-data-contract';
 
 export function renderTaskRow(task: ReportTaskRow, index: number): string {
     const stats = task.detail.stats;
+    const eventCount = task.detail.detail_status === 'skipped'
+        ? task.activity_summary?.lifecycle_event_count
+        : stats?.events_count;
     return [
         `<tr data-task-index="${index}" tabindex="0">`,
         `<td><span class="task-id">${escapeHtml(task.task_id)}</span></td>`,
@@ -11,7 +14,7 @@ export function renderTaskRow(task: ReportTaskRow, index: number): string {
         `<td>${escapeHtml(task.area)}</td>`,
         `<td>${escapeHtml(task.title)}</td>`,
         `<td>${escapeHtml(task.profile)}</td>`,
-        `<td>${task.detail.detail_status === 'skipped' ? 'skipped' : formatNumber(stats?.events_count)}</td>`,
+        `<td>${eventCount === undefined || eventCount === null ? 'skipped' : formatNumber(eventCount)}</td>`,
         `<td>${task.detail.detail_status === 'skipped' ? 'skipped' : formatDuration(stats?.wall_clock_seconds)}</td>`,
         '</tr>'
     ].join('');

@@ -130,6 +130,24 @@ export interface CatalogMetricSample {
     readonly provenance: CatalogRowProvenance;
 }
 
+export interface CatalogTaskActivitySummary {
+    readonly taskId: string;
+    readonly queuePosition: number;
+    readonly status: string | null;
+    readonly lifecycleEventCount: number;
+    readonly firstLifecycleEventUtc: string | null;
+    readonly lastLifecycleEventUtc: string | null;
+    readonly reviewAttemptCount: number;
+    readonly reviewReceiptCount: number;
+    readonly artifactCount: number;
+    readonly metricSampleCount: number;
+    readonly auditStatus: string | null;
+    readonly verificationStatus: string | null;
+    readonly healthState: string | null;
+    readonly retentionState: string | null;
+    readonly retentionTier: string | null;
+}
+
 export interface CatalogCanonicalSource {
     readonly sourceKind: string;
     readonly sourcePath: string;
@@ -236,6 +254,15 @@ export interface DerivedSqliteCatalog {
     inspect(): SqliteCatalogInspection;
     inspectSources(): readonly SqliteCatalogSourceInspection[];
     inspectParity(projection: DerivedCatalogProjection): SqliteCatalogParityInspection;
+    queryTasks(taskId?: string): readonly CatalogTaskRow[];
+    queryLifecycleEvents(taskId?: string): readonly CatalogLifecycleEvent[];
+    queryReviewAttempts(taskId?: string): readonly CatalogReviewAttempt[];
+    queryReviewReceipts(taskId?: string): readonly CatalogReviewReceipt[];
+    queryArtifacts(taskId?: string): readonly CatalogArtifact[];
+    queryTaskLedgers(taskId?: string): readonly CatalogTaskLedger[];
+    queryRetentionStates(taskId?: string): readonly CatalogRetentionState[];
+    queryMetricSamples(taskId?: string): readonly CatalogMetricSample[];
+    queryTaskActivitySummaries(taskId?: string): readonly CatalogTaskActivitySummary[];
     close(): void;
 }
 

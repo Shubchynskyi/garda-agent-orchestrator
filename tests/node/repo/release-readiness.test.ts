@@ -113,6 +113,8 @@ function buildPackageJson(): string {
             'docs/compatibility-matrix.md',
             'docs/configuration.md',
             'docs/control-plane-isolation.md',
+            'docs/database/sqlite-persistence.md',
+            'docs/database/sqlite-query-adoption-evidence.md',
             'docs/findings-contracts.md',
             'docs/node-runtime-contract.md',
             'docs/node-platform-foundation.md',
@@ -439,6 +441,8 @@ function createReadinessFixture(openChecklistItem?: string): string {
             '- docs/compatibility-matrix.md',
             '- docs/configuration.md',
             '- docs/control-plane-isolation.md',
+            '- docs/database/sqlite-persistence.md',
+            '- docs/database/sqlite-query-adoption-evidence.md',
             '- docs/findings-contracts.md',
             '- docs/node-platform-foundation.md',
             '- docs/node-runtime-contract.md',
@@ -462,6 +466,8 @@ function createReadinessFixture(openChecklistItem?: string): string {
     writeFile(path.join(repoRoot, 'docs', 'compatibility-matrix.md'), '# Compatibility Matrix\n');
     writeFile(path.join(repoRoot, 'docs', 'configuration.md'), '# Configuration\n');
     writeFile(path.join(repoRoot, 'docs', 'control-plane-isolation.md'), '# Control Plane Isolation\n');
+    writeFile(path.join(repoRoot, 'docs', 'database', 'sqlite-persistence.md'), '# SQLite Persistence\n');
+    writeFile(path.join(repoRoot, 'docs', 'database', 'sqlite-query-adoption-evidence.md'), '# SQLite Query Adoption Evidence\n');
     writeFile(path.join(repoRoot, 'docs', 'findings-contracts.md'), '# Findings Contracts\n');
     writeFile(path.join(repoRoot, 'docs', 'node-runtime-contract.md'), '# Node Runtime Contract\n');
     writeFile(path.join(repoRoot, 'docs', 'orchestrator-work-and-isolation.md'), '# Orchestrator Work And Isolation\n');

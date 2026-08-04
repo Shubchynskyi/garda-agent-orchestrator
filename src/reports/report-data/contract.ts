@@ -19,6 +19,7 @@ import type { BuildReportDataContractOptions, ReportDataContract } from './types
 import { REPORT_DATA_CONTRACT_SCHEMA_VERSION } from './types';
 import { buildWorkflowConfigTab } from './workflow-config-tab';
 import { resolveWorkspaceSnapshotRequest } from '../../gates/workspace/workspace-snapshot-cache';
+import { queryPerformanceQualifiedTaskActivitySummaries } from '../../runtime/sqlite-catalog';
 
 export function buildReportDataContract(options: BuildReportDataContractOptions): ReportDataContract {
     const repoRoot = path.resolve(options.repoRoot);
@@ -34,10 +35,32 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
         options.workspaceSnapshotRequest
     );
     const queue = readCanonicalActiveQueueRows(repoRoot);
+    const activityQuery = queryPerformanceQualifiedTaskActivitySummaries(repoRoot);
+    const activityByTaskId = new Map(
+        activityQuery.source === 'sqlite'
+            ? activityQuery.value.map((summary) => [summary.taskId, summary] as const)
+            : []
+    );
     const maxDetailedTasks = normalizeMaxDetailedTasks(options.maxDetailedTasks);
     const detailedTaskIds = selectDetailedTaskIds(queue.rows, maxDetailedTasks);
     const tasks = queue.rows.map((row) => ({
         ...row,
+        activity_summary: (() => {
+            const summary = activityByTaskId.get(row.task_id);
+            return summary ? {
+                lifecycle_event_count: summary.lifecycleEventCount,
+                first_lifecycle_event_utc: summary.firstLifecycleEventUtc,
+                last_lifecycle_event_utc: summary.lastLifecycleEventUtc,
+                review_attempt_count: summary.reviewAttemptCount,
+                review_receipt_count: summary.reviewReceiptCount,
+                artifact_count: summary.artifactCount,
+                metric_sample_count: summary.metricSampleCount,
+                verification_status: summary.verificationStatus,
+                health_state: summary.healthState,
+                retention_state: summary.retentionState,
+                retention_tier: summary.retentionTier
+            } : null;
+        })(),
         detail: detailedTaskIds.has(row.task_id)
             ? buildReportTaskDetail({
                 taskId: row.task_id,

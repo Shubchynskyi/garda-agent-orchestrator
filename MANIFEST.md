@@ -111,6 +111,7 @@ Kept inside bundle:
 - docs/configuration.md
 - docs/control-plane-isolation.md
 - docs/database/sqlite-persistence.md
+- docs/database/sqlite-query-adoption-evidence.md
 - docs/findings-contracts.md
 - docs/node-platform-foundation.md
 - docs/node-runtime-contract.md

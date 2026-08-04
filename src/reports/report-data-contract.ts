@@ -5,6 +5,7 @@ export {
 export type {
     ReportDataUnavailableEntry,
     ReportTaskQueueRow,
+    ReportTaskActivitySummary,
     ReportArtifactLink,
     ReportFullSuiteState,
     ReportFullSuiteFreshness,

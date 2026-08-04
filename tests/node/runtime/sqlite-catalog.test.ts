@@ -620,6 +620,55 @@ test('replaceProjection persists all normalized domains and canonical provenance
     }
 });
 
+test('typed catalog queries preserve normalized projection parity and task filtering', () => {
+    const workspaceRoot = createWorkspace('garda-sqlite-query-parity-');
+    let catalog: DerivedSqliteCatalog | null = null;
+    try {
+        const projection = buildFullProjection();
+        catalog = requireCatalog(workspaceRoot);
+        assert.equal(catalog.replaceProjection(projection).status, 'applied');
+
+        assert.deepEqual(catalog.queryTasks(), projection.tasks);
+        assert.deepEqual(catalog.queryLifecycleEvents('T-1000-2'), projection.lifecycleEvents);
+        assert.deepEqual(catalog.queryReviewAttempts('T-1000-2'), projection.reviewAttempts);
+        assert.deepEqual(catalog.queryReviewReceipts('T-1000-2'), projection.reviewReceipts);
+        assert.deepEqual(catalog.queryArtifacts('T-1000-2'), projection.artifacts);
+        assert.deepEqual(catalog.queryTaskLedgers('T-1000-2'), projection.taskLedgers);
+        assert.deepEqual(catalog.queryRetentionStates('T-1000-2'), projection.retentionStates);
+        assert.deepEqual(catalog.queryMetricSamples('T-1000-2'), projection.metricSamples);
+        assert.deepEqual(catalog.queryTaskActivitySummaries('T-1000-2'), [{
+            taskId: 'T-1000-2',
+            queuePosition: 0,
+            status: 'IN_PROGRESS',
+            lifecycleEventCount: 1,
+            firstLifecycleEventUtc: EVENT_AT_UTC,
+            lastLifecycleEventUtc: EVENT_AT_UTC,
+            reviewAttemptCount: 1,
+            reviewReceiptCount: 1,
+            artifactCount: 1,
+            metricSampleCount: 1,
+            auditStatus: 'PASS',
+            verificationStatus: 'VERIFIED',
+            healthState: 'healthy',
+            retentionState: 'retained',
+            retentionTier: 'terminal'
+        }]);
+
+        assert.deepEqual(catalog.queryTasks('T-9999-1'), []);
+        assert.deepEqual(catalog.queryLifecycleEvents('T-9999-1'), []);
+        assert.deepEqual(catalog.queryReviewAttempts('T-9999-1'), []);
+        assert.deepEqual(catalog.queryReviewReceipts('T-9999-1'), []);
+        assert.deepEqual(catalog.queryArtifacts('T-9999-1'), []);
+        assert.deepEqual(catalog.queryTaskLedgers('T-9999-1'), []);
+        assert.deepEqual(catalog.queryRetentionStates('T-9999-1'), []);
+        assert.deepEqual(catalog.queryMetricSamples('T-9999-1'), []);
+        assert.deepEqual(catalog.queryTaskActivitySummaries('T-9999-1'), []);
+    } finally {
+        catalog?.close();
+        removeWorkspace(workspaceRoot);
+    }
+});
+
 test('replacement removes stale rows and advances generation atomically', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-replace-');
     let catalog: DerivedSqliteCatalog | null = null;

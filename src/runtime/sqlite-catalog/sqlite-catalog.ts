@@ -13,6 +13,15 @@ import {
     type LockHandle
 } from '../../gate-runtime/timeline/task-events-locking';
 import type {
+    CatalogArtifact,
+    CatalogLifecycleEvent,
+    CatalogMetricSample,
+    CatalogRetentionState,
+    CatalogReviewAttempt,
+    CatalogReviewReceipt,
+    CatalogTaskLedger,
+    CatalogTaskActivitySummary,
+    CatalogTaskRow,
     DerivedCatalogProjection,
     DerivedSqliteCatalog,
     OpenDerivedSqliteCatalogOptions,
@@ -46,6 +55,17 @@ import {
     rebuildCatalogProjection,
     replaceCatalogProjection
 } from './sqlite-catalog-projection';
+import {
+    queryCatalogArtifacts,
+    queryCatalogLifecycleEvents,
+    queryCatalogMetricSamples,
+    queryCatalogRetentionStates,
+    queryCatalogReviewAttempts,
+    queryCatalogReviewReceipts,
+    queryCatalogTaskLedgers,
+    queryCatalogTaskActivitySummaries,
+    queryCatalogTasks
+} from './sqlite-catalog-query';
 import {
     assessSqliteWalFilesystem,
     createSqliteWalFilesystemAssessmentSession,
@@ -919,6 +939,69 @@ class OpenCatalog implements DerivedSqliteCatalog {
         const inspection = inspectCatalogProjectionParity(this.database, projection);
         this.assertFileIdentity();
         return inspection;
+    }
+
+    queryTasks(taskId?: string): readonly CatalogTaskRow[] {
+        this.assertOpen();
+        const rows = queryCatalogTasks(this.database, taskId);
+        this.assertFileIdentity();
+        return rows;
+    }
+
+    queryLifecycleEvents(taskId?: string): readonly CatalogLifecycleEvent[] {
+        this.assertOpen();
+        const rows = queryCatalogLifecycleEvents(this.database, taskId);
+        this.assertFileIdentity();
+        return rows;
+    }
+
+    queryReviewAttempts(taskId?: string): readonly CatalogReviewAttempt[] {
+        this.assertOpen();
+        const rows = queryCatalogReviewAttempts(this.database, taskId);
+        this.assertFileIdentity();
+        return rows;
+    }
+
+    queryReviewReceipts(taskId?: string): readonly CatalogReviewReceipt[] {
+        this.assertOpen();
+        const rows = queryCatalogReviewReceipts(this.database, taskId);
+        this.assertFileIdentity();
+        return rows;
+    }
+
+    queryArtifacts(taskId?: string): readonly CatalogArtifact[] {
+        this.assertOpen();
+        const rows = queryCatalogArtifacts(this.database, taskId);
+        this.assertFileIdentity();
+        return rows;
+    }
+
+    queryTaskLedgers(taskId?: string): readonly CatalogTaskLedger[] {
+        this.assertOpen();
+        const rows = queryCatalogTaskLedgers(this.database, taskId);
+        this.assertFileIdentity();
+        return rows;
+    }
+
+    queryRetentionStates(taskId?: string): readonly CatalogRetentionState[] {
+        this.assertOpen();
+        const rows = queryCatalogRetentionStates(this.database, taskId);
+        this.assertFileIdentity();
+        return rows;
+    }
+
+    queryMetricSamples(taskId?: string): readonly CatalogMetricSample[] {
+        this.assertOpen();
+        const rows = queryCatalogMetricSamples(this.database, taskId);
+        this.assertFileIdentity();
+        return rows;
+    }
+
+    queryTaskActivitySummaries(taskId?: string): readonly CatalogTaskActivitySummary[] {
+        this.assertOpen();
+        const rows = queryCatalogTaskActivitySummaries(this.database, taskId);
+        this.assertFileIdentity();
+        return rows;
     }
 
     close(): void {

@@ -12,6 +12,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
 import { writeReviewArtifactText } from '../../../src/gate-runtime/review-artifacts';
 import { withRuntimeMutationGeneration } from '../../../src/gate-runtime/runtime-mutation-generation';
+import { buildRuntimeRetentionPreview } from '../../../src/lifecycle/runtime-policy/runtime-retention-policy';
+import { buildReportDataContract } from '../../../src/reports/report-data-contract';
+import { renderTaskRow } from '../../../src/reports/static-html/tasks-tab';
 import {
     buildCanonicalCatalogProjection,
     CanonicalCatalogInputError,
@@ -19,15 +22,27 @@ import {
     flushScheduledDerivedSqliteCatalogReconciliation,
     inspectDerivedCatalogHealth,
     openDerivedSqliteCatalog,
+    queryCurrentArtifacts,
+    queryCurrentLifecycleEvents,
+    queryCurrentMetricSamples,
+    queryCurrentReviewAttempts,
+    queryCurrentReviewReceipts,
+    queryCurrentRetentionStates,
+    queryCurrentTaskActivitySummaries,
+    queryCurrentTaskLedgers,
+    queryCurrentTasks,
+    queryPerformanceQualifiedTaskActivitySummaries,
     reconcileDerivedSqliteCatalog,
     rebuildDerivedSqliteCatalog,
     repairDerivedSqliteCatalog,
     resolveDerivedSqliteCatalogPath,
+    SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES,
     SQLITE_CATALOG_APPLICATION_ID
 } from '../../../src/runtime/sqlite-catalog';
 import { SQLITE_CATALOG_MIGRATIONS } from '../../../src/runtime/sqlite-catalog/sqlite-catalog-migration';
 
 const TASK_ID = 'T-2000-1';
+const SECOND_TASK_ID = 'T-2000-2';
 
 function createWorkspace(prefix: string): string {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -91,6 +106,76 @@ function createWorkspace(prefix: string): string {
 
 function removeWorkspace(workspaceRoot: string): void {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
+}
+
+function appendReviewFixture(options: {
+    workspaceRoot: string;
+    taskId: string;
+    reviewType: string;
+    attemptId: string;
+    reviewerIdentity: string;
+}): { artifactPath: string; artifactSha256: string } {
+    const artifactPath = path.join(
+        options.workspaceRoot,
+        'runtime',
+        'reviews',
+        `${options.taskId}-${options.reviewType}-${options.attemptId}.md`
+    );
+    const artifactContent = `# ${options.reviewType} review\n\nNo findings for ${options.taskId}.\n`;
+    const artifactSha256 = createHash('sha256').update(artifactContent).digest('hex');
+    fs.writeFileSync(artifactPath, artifactContent, 'utf8');
+    const sharedDetails = {
+        review_type: options.reviewType,
+        reviewer_launch_attempt_id: options.attemptId,
+        reviewer_identity: options.reviewerIdentity,
+        reviewer_execution_mode: 'delegated_subagent'
+    };
+    appendTaskEvent(options.workspaceRoot, options.taskId, 'REVIEWER_LAUNCH_PREPARED', 'INFO', 'Prepared.', {
+        ...sharedDetails
+    }, { passThru: true, lowNoiseRuntimeWrites: true });
+    appendTaskEvent(options.workspaceRoot, options.taskId, 'REVIEWER_DELEGATION_STARTED', 'INFO', 'Started.', {
+        ...sharedDetails
+    }, { passThru: true, lowNoiseRuntimeWrites: true });
+    appendTaskEvent(options.workspaceRoot, options.taskId, 'REVIEW_RECORDED', 'PASS', 'Recorded.', {
+        ...sharedDetails,
+        trust_level: 'INDEPENDENT_AUDITED',
+        review_artifact_path: artifactPath,
+        review_artifact_sha256: artifactSha256
+    }, { passThru: true, lowNoiseRuntimeWrites: true });
+    return { artifactPath, artifactSha256 };
+}
+
+function createBulkFallbackWorkspace(prefix: string): {
+    workspaceRoot: string;
+    sourcePaths: Record<'task_queue' | 'task_events' | 'review_artifact' | 'task_ledger' | 'metrics', string>;
+} {
+    const workspaceRoot = createWorkspace(prefix);
+    const review = appendReviewFixture({
+        workspaceRoot,
+        taskId: TASK_ID,
+        reviewType: 'code',
+        attemptId: 'attempt-fallback-code-1',
+        reviewerIdentity: 'agent:fallback-reviewer'
+    });
+    const eventsRoot = path.join(workspaceRoot, 'runtime', 'task-events');
+    for (let index = 1; index <= SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES; index += 1) {
+        fs.writeFileSync(
+            path.join(eventsRoot, `T-28${String(index).padStart(3, '0')}-1.jsonl`),
+            '',
+            'utf8'
+        );
+    }
+    assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
+    return {
+        workspaceRoot,
+        sourcePaths: {
+            task_queue: path.join(workspaceRoot, 'TASK.md'),
+            task_events: path.join(eventsRoot, `${TASK_ID}.jsonl`),
+            review_artifact: review.artifactPath,
+            task_ledger: path.join(workspaceRoot, 'runtime', 'task-ledger', `${TASK_ID}.json`),
+            metrics: path.join(workspaceRoot, 'runtime', 'metrics.jsonl')
+        }
+    };
 }
 
 function waitForChildOutput(child: ReturnType<typeof spawn>, expected: string): Promise<void> {
@@ -193,6 +278,739 @@ test('canonical scanner normalizes task, event, ledger, retention, and metric re
             )
         );
     } finally {
+        removeWorkspace(workspaceRoot);
+    }
+});
+
+test('current query repository uses SQLite and fails closed to files after canonical drift', () => {
+    const workspaceRoot = createWorkspace('garda-sqlite-current-query-');
+    try {
+        const taskQueuePath = path.join(workspaceRoot, 'TASK.md');
+        const taskQueueContent = fs.readFileSync(taskQueuePath, 'utf8').trimEnd();
+        fs.writeFileSync(taskQueuePath, [
+            taskQueueContent,
+            `| ${SECOND_TASK_ID} | 🟦 TODO | P2 | runtime/catalog | Query catalog | agent | 2026-08-03 | balanced | Canonical first. |`,
+            ''
+        ].join('\n'), 'utf8');
+        appendTaskEvent(
+            workspaceRoot,
+            SECOND_TASK_ID,
+            'TASK_MODE_ENTERED',
+            'PASS',
+            'Second task entered.',
+            {},
+            { passThru: true, lowNoiseRuntimeWrites: true }
+        );
+        const reviewArtifactPath = path.join(workspaceRoot, 'runtime', 'reviews', `${TASK_ID}-code.md`);
+        const reviewArtifactContent = '# Code review\n\nNo findings.\n';
+        fs.writeFileSync(reviewArtifactPath, reviewArtifactContent, 'utf8');
+        const reviewArtifactSha256 = createHash('sha256').update(reviewArtifactContent).digest('hex');
+        const attemptId = 'attempt-current-query-code-1';
+        appendTaskEvent(workspaceRoot, TASK_ID, 'REVIEWER_LAUNCH_PREPARED', 'INFO', 'Prepared.', {
+            review_type: 'code',
+            reviewer_launch_attempt_id: attemptId,
+            reviewer_identity: 'agent:query-reviewer',
+            reviewer_execution_mode: 'delegated_subagent'
+        }, { passThru: true, lowNoiseRuntimeWrites: true });
+        appendTaskEvent(workspaceRoot, TASK_ID, 'REVIEWER_DELEGATION_STARTED', 'INFO', 'Started.', {
+            review_type: 'code',
+            reviewer_launch_attempt_id: attemptId,
+            reviewer_identity: 'agent:query-reviewer',
+            reviewer_execution_mode: 'delegated_subagent'
+        }, { passThru: true, lowNoiseRuntimeWrites: true });
+        appendTaskEvent(workspaceRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', 'Recorded.', {
+            review_type: 'code',
+            reviewer_launch_attempt_id: attemptId,
+            reviewer_identity: 'agent:query-reviewer',
+            reviewer_execution_mode: 'delegated_subagent',
+            trust_level: 'INDEPENDENT_AUDITED',
+            review_artifact_path: reviewArtifactPath,
+            review_artifact_sha256: reviewArtifactSha256
+        }, { passThru: true, lowNoiseRuntimeWrites: true });
+        appendReviewFixture({
+            workspaceRoot,
+            taskId: SECOND_TASK_ID,
+            reviewType: 'test',
+            attemptId: 'attempt-zeta-test-2',
+            reviewerIdentity: 'agent:second-test-reviewer'
+        });
+        appendReviewFixture({
+            workspaceRoot,
+            taskId: SECOND_TASK_ID,
+            reviewType: 'api',
+            attemptId: 'attempt-alpha-api-1',
+            reviewerIdentity: 'agent:second-api-reviewer'
+        });
+        const firstLedgerPath = path.join(workspaceRoot, 'runtime', 'task-ledger', `${TASK_ID}.json`);
+        const secondLedger = JSON.parse(fs.readFileSync(firstLedgerPath, 'utf8')) as Record<string, unknown>;
+        secondLedger.task_id = SECOND_TASK_ID;
+        secondLedger.generated_utc = '2026-08-03T12:05:00.000Z';
+        secondLedger.audit_status = 'WARN';
+        secondLedger.lifecycle = {
+            ...(secondLedger.lifecycle as Record<string, unknown>),
+            queue_status: 'DONE',
+            health_state: 'blocked',
+            retention_tier: 'compressed_forensic_candidate',
+            blocker_count: 2
+        };
+        secondLedger.scope = { changed_files_count: 3, changed_lines_total: 21 };
+        fs.writeFileSync(
+            path.join(workspaceRoot, 'runtime', 'task-ledger', `${SECOND_TASK_ID}.json`),
+            `${JSON.stringify(secondLedger, null, 2)}\n`,
+            'utf8'
+        );
+        fs.appendFileSync(path.join(workspaceRoot, 'runtime', 'metrics.jsonl'), [
+            JSON.stringify({
+                timestamp_utc: '2026-08-03T12:02:00.000Z',
+                metric_type: 'review_duration',
+                value: 4.5,
+                unit: 'seconds',
+                task_id: SECOND_TASK_ID,
+                metadata: { review_type: 'api' }
+            }),
+            JSON.stringify({
+                timestamp_utc: '2026-08-03T12:01:00.000Z',
+                metric_type: 'navigator_duration',
+                value: 1.1,
+                unit: 'seconds',
+                task_id: SECOND_TASK_ID,
+                metadata: { command: 'next-step' }
+            }),
+            ''
+        ].join('\n'), 'utf8');
+
+        const projectionTimestamp = new Date(Date.now() + 60_000).toISOString();
+        const projectionClock = () => projectionTimestamp;
+        const canonicalProjection = buildCanonicalCatalogProjection(workspaceRoot, { clock: projectionClock });
+        assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot, { clock: projectionClock }).status, 'applied');
+
+        const tasks = queryCurrentTasks(workspaceRoot);
+        const events = queryCurrentLifecycleEvents(workspaceRoot, TASK_ID);
+        const reviewAttempts = queryCurrentReviewAttempts(workspaceRoot, TASK_ID);
+        const reviewReceipts = queryCurrentReviewReceipts(workspaceRoot, TASK_ID);
+        const artifacts = queryCurrentArtifacts(workspaceRoot, TASK_ID);
+        const ledgers = queryCurrentTaskLedgers(workspaceRoot, TASK_ID);
+        const retention = queryCurrentRetentionStates(workspaceRoot, TASK_ID);
+        const metrics = queryCurrentMetricSamples(workspaceRoot, TASK_ID);
+        const activitySummaries = queryCurrentTaskActivitySummaries(workspaceRoot);
+        const projection = canonicalProjection.projection;
+        const expectedActivitySummaries = projection.tasks.map((task) => {
+            const taskEvents = projection.lifecycleEvents.filter((row) => row.taskId === task.taskId);
+            const eventTimestamps = taskEvents
+                .map((row) => row.provenance.sourceTimestampUtc)
+                .filter((value): value is string => value !== null)
+                .sort((left, right) => left.localeCompare(right));
+            const ledger = projection.taskLedgers.find((row) => row.taskId === task.taskId);
+            const retentionRow = projection.retentionStates.find((row) => (
+                row.taskId === task.taskId && row.artifactId === null
+            ));
+            return {
+                taskId: task.taskId,
+                queuePosition: task.queuePosition,
+                status: task.status,
+                lifecycleEventCount: taskEvents.length,
+                firstLifecycleEventUtc: eventTimestamps[0] ?? null,
+                lastLifecycleEventUtc: eventTimestamps.at(-1) ?? null,
+                reviewAttemptCount: projection.reviewAttempts.filter((row) => row.taskId === task.taskId).length,
+                reviewReceiptCount: projection.reviewReceipts.filter((row) => row.taskId === task.taskId).length,
+                artifactCount: projection.artifacts.filter((row) => row.taskId === task.taskId).length,
+                metricSampleCount: projection.metricSamples.filter((row) => row.taskId === task.taskId).length,
+                auditStatus: ledger?.auditStatus ?? null,
+                verificationStatus: ledger?.verificationStatus ?? null,
+                healthState: ledger?.healthState ?? null,
+                retentionState: retentionRow?.state ?? null,
+                retentionTier: retentionRow?.tier ?? null
+            };
+        });
+        const expectedGlobalRows = {
+            tasks: projection.tasks,
+            events: projection.lifecycleEvents,
+            reviewAttempts: projection.reviewAttempts,
+            reviewReceipts: projection.reviewReceipts,
+            artifacts: projection.artifacts,
+            ledgers: projection.taskLedgers,
+            retention: projection.retentionStates,
+            metrics: [...projection.metricSamples].sort((left, right) => left.metricId.localeCompare(right.metricId)),
+            activitySummaries: expectedActivitySummaries
+        };
+        const globalRows = {
+            tasks: queryCurrentTasks(workspaceRoot),
+            events: queryCurrentLifecycleEvents(workspaceRoot),
+            reviewAttempts: queryCurrentReviewAttempts(workspaceRoot),
+            reviewReceipts: queryCurrentReviewReceipts(workspaceRoot),
+            artifacts: queryCurrentArtifacts(workspaceRoot),
+            ledgers: queryCurrentTaskLedgers(workspaceRoot),
+            retention: queryCurrentRetentionStates(workspaceRoot),
+            metrics: queryCurrentMetricSamples(workspaceRoot),
+            activitySummaries: queryCurrentTaskActivitySummaries(workspaceRoot)
+        };
+        for (const [queryName, result] of Object.entries(globalRows)) {
+            assert.equal(result.source, 'sqlite', `${queryName} should use SQLite`);
+            if (result.source === 'sqlite') {
+                assert.deepEqual(result.value, expectedGlobalRows[queryName as keyof typeof expectedGlobalRows]);
+            }
+        }
+        const secondTaskRows = {
+            tasks: queryCurrentTasks(workspaceRoot, SECOND_TASK_ID),
+            events: queryCurrentLifecycleEvents(workspaceRoot, SECOND_TASK_ID),
+            reviewAttempts: queryCurrentReviewAttempts(workspaceRoot, SECOND_TASK_ID),
+            reviewReceipts: queryCurrentReviewReceipts(workspaceRoot, SECOND_TASK_ID),
+            artifacts: queryCurrentArtifacts(workspaceRoot, SECOND_TASK_ID),
+            ledgers: queryCurrentTaskLedgers(workspaceRoot, SECOND_TASK_ID),
+            retention: queryCurrentRetentionStates(workspaceRoot, SECOND_TASK_ID),
+            metrics: queryCurrentMetricSamples(workspaceRoot, SECOND_TASK_ID),
+            activitySummaries: queryCurrentTaskActivitySummaries(workspaceRoot, SECOND_TASK_ID)
+        };
+        for (const [queryName, result] of Object.entries(secondTaskRows)) {
+            assert.equal(result.source, 'sqlite', `${queryName} should use SQLite for ${SECOND_TASK_ID}`);
+            if (result.source === 'sqlite') {
+                const expected = expectedGlobalRows[queryName as keyof typeof expectedGlobalRows]
+                    .filter((row) => row.taskId === SECOND_TASK_ID);
+                assert.deepEqual(result.value, expected);
+                assert.ok(result.value.every((row) => row.taskId === SECOND_TASK_ID));
+            }
+        }
+        assert.equal(tasks.source, 'sqlite');
+        assert.equal(events.source, 'sqlite');
+        assert.equal(reviewAttempts.source, 'sqlite');
+        assert.equal(reviewReceipts.source, 'sqlite');
+        assert.equal(artifacts.source, 'sqlite');
+        assert.equal(ledgers.source, 'sqlite');
+        assert.equal(retention.source, 'sqlite');
+        assert.equal(metrics.source, 'sqlite');
+        assert.equal(activitySummaries.source, 'sqlite');
+        if (tasks.source === 'sqlite') {
+            assert.deepEqual(tasks.value.map((row) => [row.taskId, row.queuePosition, row.status]), [
+                [TASK_ID, 0, '🟨 IN_PROGRESS'],
+                [SECOND_TASK_ID, 1, '🟦 TODO']
+            ]);
+        }
+        if (events.source === 'sqlite') {
+            assert.equal(events.value.length, 4);
+            assert.ok(events.value.every((row) => row.taskId === TASK_ID));
+            assert.deepEqual(events.value.map((row) => row.eventType), [
+                'TASK_MODE_ENTERED',
+                'REVIEWER_LAUNCH_PREPARED',
+                'REVIEWER_DELEGATION_STARTED',
+                'REVIEW_RECORDED'
+            ]);
+        }
+        if (reviewAttempts.source === 'sqlite') {
+            assert.deepEqual(reviewAttempts.value.map((row) => ({
+                attemptId: row.attemptId,
+                taskId: row.taskId,
+                reviewType: row.reviewType,
+                status: row.status,
+                verdict: row.verdict,
+                reviewerIdentity: row.reviewerIdentity
+            })), [{
+                attemptId,
+                taskId: TASK_ID,
+                reviewType: 'code',
+                status: 'completed',
+                verdict: 'PASS',
+                reviewerIdentity: 'agent:query-reviewer'
+            }]);
+        }
+        if (reviewReceipts.source === 'sqlite') {
+            assert.equal(reviewReceipts.value.length, 1);
+            assert.equal(reviewReceipts.value[0]?.attemptId, attemptId);
+            assert.equal(reviewReceipts.value[0]?.taskId, TASK_ID);
+            assert.equal(reviewReceipts.value[0]?.reviewType, 'code');
+            assert.equal(reviewReceipts.value[0]?.verdict, 'PASS');
+            assert.equal(reviewReceipts.value[0]?.trustLevel, 'INDEPENDENT_AUDITED');
+        }
+        if (artifacts.source === 'sqlite') {
+            assert.deepEqual(artifacts.value.map((row) => ({
+                taskId: row.taskId,
+                reviewAttemptId: row.reviewAttemptId,
+                kind: row.kind,
+                path: row.path,
+                contentSha256: row.contentSha256
+            })), [{
+                taskId: TASK_ID,
+                reviewAttemptId: attemptId,
+                kind: 'review_artifact',
+                path: `runtime/reviews/${TASK_ID}-code.md`,
+                contentSha256: reviewArtifactSha256
+            }]);
+        }
+        if (ledgers.source === 'sqlite') assert.equal(ledgers.value[0]?.verificationStatus, 'VERIFIED');
+        if (retention.source === 'sqlite') assert.equal(retention.value[0]?.taskId, TASK_ID);
+        if (metrics.source === 'sqlite') assert.equal(metrics.value[0]?.name, 'navigator_duration');
+        if (activitySummaries.source === 'sqlite') {
+            assert.deepEqual(activitySummaries.value.map((row) => ({
+                taskId: row.taskId,
+                queuePosition: row.queuePosition,
+                status: row.status,
+                lifecycleEventCount: row.lifecycleEventCount,
+                reviewAttemptCount: row.reviewAttemptCount,
+                reviewReceiptCount: row.reviewReceiptCount,
+                artifactCount: row.artifactCount,
+                metricSampleCount: row.metricSampleCount,
+                auditStatus: row.auditStatus,
+                verificationStatus: row.verificationStatus,
+                healthState: row.healthState,
+                retentionState: row.retentionState,
+                retentionTier: row.retentionTier
+            })), [{
+                taskId: TASK_ID,
+                queuePosition: 0,
+                status: '🟨 IN_PROGRESS',
+                lifecycleEventCount: 4,
+                reviewAttemptCount: 1,
+                reviewReceiptCount: 1,
+                artifactCount: 1,
+                metricSampleCount: 1,
+                auditStatus: 'PASS',
+                verificationStatus: 'VERIFIED',
+                healthState: 'healthy',
+                retentionState: 'active',
+                retentionTier: 'active_evidence'
+            }, {
+                taskId: SECOND_TASK_ID,
+                queuePosition: 1,
+                status: '🟦 TODO',
+                lifecycleEventCount: 7,
+                reviewAttemptCount: 2,
+                reviewReceiptCount: 2,
+                artifactCount: 2,
+                metricSampleCount: 2,
+                auditStatus: 'WARN',
+                verificationStatus: 'VERIFIED',
+                healthState: 'blocked',
+                retentionState: 'retained',
+                retentionTier: 'compressed_forensic_candidate'
+            }]);
+        }
+
+        const unindexedTaskId = 'T-29999-1';
+        fs.writeFileSync(
+            path.join(workspaceRoot, 'runtime', 'task-events', `${unindexedTaskId}.jsonl`),
+            '',
+            'utf8'
+        );
+        const unindexedEvents = queryCurrentLifecycleEvents(workspaceRoot, unindexedTaskId);
+        assert.equal(unindexedEvents.source, 'files');
+        if (unindexedEvents.source === 'files') assert.equal(unindexedEvents.reason, 'source_changed');
+        fs.rmSync(path.join(workspaceRoot, 'runtime', 'task-events', `${unindexedTaskId}.jsonl`));
+
+        const smallWorkload = queryPerformanceQualifiedTaskActivitySummaries(workspaceRoot);
+        assert.equal(smallWorkload.source, 'files');
+        if (smallWorkload.source === 'files') {
+            assert.equal(smallWorkload.reason, 'not_performance_qualified');
+        }
+
+        const eventsRoot = path.join(workspaceRoot, 'runtime', 'task-events');
+        fs.writeFileSync(path.join(eventsRoot, 'all-tasks.jsonl'), '', 'utf8');
+        assert.equal(fs.existsSync(path.join(eventsRoot, 'all-tasks.jsonl')), true);
+        for (let index = 1; index < 198; index += 1) {
+            fs.writeFileSync(
+                path.join(eventsRoot, `T-29${String(index).padStart(3, '0')}-1.jsonl`),
+                '',
+                'utf8'
+            );
+        }
+        assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
+        const belowThresholdWorkload = queryPerformanceQualifiedTaskActivitySummaries(workspaceRoot);
+        assert.equal(belowThresholdWorkload.source, 'files');
+        if (belowThresholdWorkload.source === 'files') {
+            assert.equal(belowThresholdWorkload.reason, 'not_performance_qualified');
+        }
+
+        fs.writeFileSync(path.join(eventsRoot, 'T-29198-1.jsonl'), '', 'utf8');
+        const catalogPath = resolveDerivedSqliteCatalogPath(workspaceRoot);
+        for (const candidatePath of [catalogPath, `${catalogPath}-wal`, `${catalogPath}-shm`]) {
+            fs.rmSync(candidatePath, { force: true });
+        }
+        const missingCatalogWorkload = queryPerformanceQualifiedTaskActivitySummaries(workspaceRoot);
+        assert.equal(missingCatalogWorkload.source, 'files');
+        if (missingCatalogWorkload.source === 'files') {
+            assert.equal(missingCatalogWorkload.reason, 'catalog_unavailable');
+        }
+        const missingCatalogReport = buildReportDataContract({
+            repoRoot: workspaceRoot,
+            generatedAtUtc: '2026-08-03T12:15:00.000Z',
+            maxDetailedTasks: 0
+        });
+        assert.deepEqual(
+            missingCatalogReport.tasks_tab.rows.map((row) => row.activity_summary),
+            [null, null]
+        );
+        assert.match(
+            renderTaskRow(missingCatalogReport.tasks_tab.rows[0], 0),
+            /<td>skipped<\/td><td>skipped<\/td>/u
+        );
+
+        assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
+        const bulkWorkload = queryPerformanceQualifiedTaskActivitySummaries(workspaceRoot);
+        assert.equal(
+            bulkWorkload.source,
+            'sqlite',
+            bulkWorkload.source === 'files' ? bulkWorkload.diagnostic : undefined
+        );
+        if (bulkWorkload.source === 'sqlite') {
+            assert.deepEqual(bulkWorkload.value.map((row) => ({
+                taskId: row.taskId,
+                queuePosition: row.queuePosition,
+                lifecycleEventCount: row.lifecycleEventCount,
+                reviewAttemptCount: row.reviewAttemptCount,
+                reviewReceiptCount: row.reviewReceiptCount,
+                artifactCount: row.artifactCount,
+                metricSampleCount: row.metricSampleCount
+            })), [{
+                taskId: TASK_ID,
+                queuePosition: 0,
+                lifecycleEventCount: 4,
+                reviewAttemptCount: 1,
+                reviewReceiptCount: 1,
+                artifactCount: 1,
+                metricSampleCount: 1
+            }, {
+                taskId: SECOND_TASK_ID,
+                queuePosition: 1,
+                lifecycleEventCount: 7,
+                reviewAttemptCount: 2,
+                reviewReceiptCount: 2,
+                artifactCount: 2,
+                metricSampleCount: 2
+            }]);
+        }
+
+        const sqliteReport = buildReportDataContract({
+            repoRoot: workspaceRoot,
+            generatedAtUtc: '2026-08-03T12:30:00.000Z',
+            maxDetailedTasks: 0
+        });
+        assert.deepEqual(sqliteReport.tasks_tab.rows.map((row) => ({
+            taskId: row.task_id,
+            detailStatus: row.detail.detail_status
+        })), [{ taskId: TASK_ID, detailStatus: 'skipped' }, {
+            taskId: SECOND_TASK_ID,
+            detailStatus: 'skipped'
+        }]);
+        assert.deepEqual(
+            sqliteReport.tasks_tab.rows.map((row) => row.activity_summary),
+            expectedGlobalRows.activitySummaries.map((summary) => ({
+                lifecycle_event_count: summary.lifecycleEventCount,
+                first_lifecycle_event_utc: summary.firstLifecycleEventUtc,
+                last_lifecycle_event_utc: summary.lastLifecycleEventUtc,
+                review_attempt_count: summary.reviewAttemptCount,
+                review_receipt_count: summary.reviewReceiptCount,
+                artifact_count: summary.artifactCount,
+                metric_sample_count: summary.metricSampleCount,
+                verification_status: summary.verificationStatus,
+                health_state: summary.healthState,
+                retention_state: summary.retentionState,
+                retention_tier: summary.retentionTier
+            }))
+        );
+        assert.match(renderTaskRow(sqliteReport.tasks_tab.rows[0], 0), /<td>4<\/td><td>skipped<\/td>/u);
+
+        const retentionCandidates = fs.readdirSync(eventsRoot, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name !== 'all-tasks.jsonl' && entry.name.endsWith('.jsonl'))
+            .map((entry) => ({
+                path: path.join(eventsRoot, entry.name),
+                category: 'task-events'
+        }));
+        assert.equal(SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES, 200);
+        assert.equal(retentionCandidates.length, SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES);
+        // Make the derived status observably different so the preview result proves
+        // that small candidate sets never enter the aggregate query while the
+        // threshold-sized preview does.
+        const probeDatabase = new DatabaseSync(catalogPath);
+        try {
+            probeDatabase.prepare('UPDATE task_queue_rows SET status = ? WHERE task_id = ?')
+                .run('DONE', TASK_ID);
+        } finally {
+            probeDatabase.close();
+        }
+
+        let retentionAggregateCallCount = 0;
+        const retentionAggregateSources: string[] = [];
+        const observedRetentionAggregateQuery: typeof queryPerformanceQualifiedTaskActivitySummaries = (repoRoot) => {
+            retentionAggregateCallCount += 1;
+            const result = queryPerformanceQualifiedTaskActivitySummaries(repoRoot);
+            retentionAggregateSources.push(result.source);
+            return result;
+        };
+        const retentionOptions = { queryTaskActivitySummaries: observedRetentionAggregateQuery };
+        const emptyRetentionPreview = buildRuntimeRetentionPreview(
+            workspaceRoot,
+            workspaceRoot,
+            [],
+            retentionOptions
+        );
+        assert.equal(emptyRetentionPreview.task_count, 0);
+        assert.equal(retentionAggregateCallCount, 0);
+        const smallRetentionPreview = buildRuntimeRetentionPreview(
+            workspaceRoot,
+            workspaceRoot,
+            [{ path: path.join(eventsRoot, `${TASK_ID}.jsonl`), category: 'task-events' }],
+            retentionOptions
+        );
+        assert.equal(smallRetentionPreview.tasks[0]?.queue_status, 'IN_PROGRESS');
+        assert.equal(retentionAggregateCallCount, 0);
+        const belowThresholdRetentionPreview = buildRuntimeRetentionPreview(
+            workspaceRoot,
+            workspaceRoot,
+            retentionCandidates.slice(0, SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES - 1),
+            retentionOptions
+        );
+        assert.equal(
+            belowThresholdRetentionPreview.task_count,
+            SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES - 1
+        );
+        assert.equal(retentionAggregateCallCount, 0);
+        const largeRetentionPreview = buildRuntimeRetentionPreview(
+            workspaceRoot,
+            workspaceRoot,
+            retentionCandidates,
+            retentionOptions
+        );
+        assert.equal(retentionAggregateCallCount, 1);
+        assert.deepEqual(retentionAggregateSources, ['sqlite']);
+        assert.equal(
+            largeRetentionPreview.tasks.find((task) => task.task_id === TASK_ID)?.queue_status,
+            'DONE'
+        );
+
+        const restoreDatabase = new DatabaseSync(catalogPath);
+        try {
+            restoreDatabase.prepare('UPDATE task_queue_rows SET status = ? WHERE task_id = ?')
+                .run('🟨 IN_PROGRESS', TASK_ID);
+        } finally {
+            restoreDatabase.close();
+        }
+
+        const projectedReviewArtifactStat = fs.statSync(reviewArtifactPath);
+        fs.appendFileSync(reviewArtifactPath, '\nTampered after projection.\n', 'utf8');
+        fs.utimesSync(
+            reviewArtifactPath,
+            projectedReviewArtifactStat.atime,
+            new Date(projectedReviewArtifactStat.mtimeMs - 60_000)
+        );
+        const driftedBulkWorkload = queryPerformanceQualifiedTaskActivitySummaries(workspaceRoot);
+        assert.equal(driftedBulkWorkload.source, 'files');
+        if (driftedBulkWorkload.source === 'files') {
+            assert.equal(driftedBulkWorkload.reason, 'source_changed');
+        }
+        const driftedArtifacts = queryCurrentArtifacts(workspaceRoot, TASK_ID);
+        assert.equal(driftedArtifacts.source, 'files');
+        if (driftedArtifacts.source === 'files') assert.equal(driftedArtifacts.reason, 'source_changed');
+
+        const driftedReport = buildReportDataContract({
+            repoRoot: workspaceRoot,
+            generatedAtUtc: '2026-08-03T12:45:00.000Z',
+            maxDetailedTasks: 0
+        });
+        assert.deepEqual(
+            driftedReport.tasks_tab.rows.map((row) => row.activity_summary),
+            [null, null]
+        );
+        assert.match(
+            renderTaskRow(driftedReport.tasks_tab.rows[0], 0),
+            /<td>skipped<\/td><td>skipped<\/td>/u
+        );
+        const driftedRetentionPreview = buildRuntimeRetentionPreview(
+            workspaceRoot,
+            workspaceRoot,
+            retentionCandidates,
+            retentionOptions
+        );
+        assert.equal(retentionAggregateCallCount, 2);
+        assert.deepEqual(retentionAggregateSources, ['sqlite', 'files']);
+        assert.equal(
+            driftedRetentionPreview.tasks.find((task) => task.task_id === TASK_ID)?.queue_status,
+            'IN_PROGRESS'
+        );
+
+    } finally {
+        removeWorkspace(workspaceRoot);
+    }
+});
+
+test('current query repository isolates changed and deleted fallback by canonical source kind', () => {
+    const sourceCases = [{
+        sourceKind: 'task_queue' as const,
+        query: (repoRoot: string) => queryCurrentTasks(repoRoot)
+    }, {
+        sourceKind: 'task_events' as const,
+        query: (repoRoot: string) => queryCurrentLifecycleEvents(repoRoot, TASK_ID)
+    }, {
+        sourceKind: 'review_artifact' as const,
+        query: (repoRoot: string) => queryCurrentArtifacts(repoRoot, TASK_ID)
+    }, {
+        sourceKind: 'task_ledger' as const,
+        query: (repoRoot: string) => queryCurrentTaskLedgers(repoRoot, TASK_ID)
+    }, {
+        sourceKind: 'metrics' as const,
+        query: (repoRoot: string) => queryCurrentMetricSamples(repoRoot, TASK_ID)
+    }];
+
+    for (const mode of ['changed', 'deleted'] as const) {
+        for (const sourceCase of sourceCases) {
+            const fixture = createBulkFallbackWorkspace(
+                `garda-sqlite-current-query-${sourceCase.sourceKind}-${mode}-`
+            );
+            try {
+                const sourcePath = fixture.sourcePaths[sourceCase.sourceKind];
+                if (mode === 'changed') {
+                    const projectedStat = fs.statSync(sourcePath);
+                    fs.appendFileSync(sourcePath, '\n', 'utf8');
+                    fs.utimesSync(
+                        sourcePath,
+                        projectedStat.atime,
+                        new Date(projectedStat.mtimeMs - 60_000)
+                    );
+                } else {
+                    fs.rmSync(sourcePath);
+                }
+
+                const focusedResult = sourceCase.query(fixture.workspaceRoot);
+                assert.equal(
+                    focusedResult.source,
+                    'files',
+                    `${sourceCase.sourceKind} ${mode} focused query should fail closed`
+                );
+                if (focusedResult.source === 'files') {
+                    if (mode === 'changed') {
+                        assert.equal(focusedResult.reason, 'source_changed');
+                    } else {
+                        assert.match(focusedResult.reason, /^source_(?:missing|changed)$/u);
+                    }
+                }
+
+                const aggregateResult = queryCurrentTaskActivitySummaries(fixture.workspaceRoot);
+                const performanceResult = queryPerformanceQualifiedTaskActivitySummaries(fixture.workspaceRoot);
+                for (const result of [aggregateResult, performanceResult]) {
+                    assert.equal(
+                        result.source,
+                        'files',
+                        `${sourceCase.sourceKind} ${mode} aggregate query should fail closed`
+                    );
+                    if (result.source === 'files') {
+                        if (mode === 'changed') {
+                            assert.equal(result.reason, 'source_changed');
+                        } else {
+                            assert.match(result.reason, /^source_(?:missing|changed)$/u);
+                        }
+                    }
+                }
+
+                const report = buildReportDataContract({
+                    repoRoot: fixture.workspaceRoot,
+                    generatedAtUtc: '2026-08-03T13:00:00.000Z',
+                    maxDetailedTasks: 0
+                });
+                if (sourceCase.sourceKind === 'task_queue' && mode === 'deleted') {
+                    assert.deepEqual(report.tasks_tab.rows, []);
+                } else {
+                    assert.equal(report.tasks_tab.rows[0]?.activity_summary, null);
+                    assert.match(
+                        renderTaskRow(report.tasks_tab.rows[0], 0),
+                        /<td>skipped<\/td><td>skipped<\/td>/u
+                    );
+                }
+            } finally {
+                removeWorkspace(fixture.workspaceRoot);
+            }
+        }
+    }
+});
+
+test('current query repository discards a result when canonical generation advances during the query', () => {
+    const workspaceRoot = createWorkspace('garda-sqlite-current-query-generation-race-');
+    const eventPath = path.join(workspaceRoot, 'runtime', 'task-events', `${TASK_ID}.jsonl`);
+    const originalReadFileSync = fsModule.readFileSync;
+    let generationAdvanced = false;
+    try {
+        assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
+        fsModule.readFileSync = (function patchedReadFileSync(...args: Parameters<typeof fsModule.readFileSync>) {
+            const value = originalReadFileSync.apply(fsModule, args);
+            if (!generationAdvanced && path.resolve(String(args[0])) === eventPath) {
+                generationAdvanced = true;
+                withRuntimeMutationGeneration(workspaceRoot, 'test-query-generation-race', () => undefined);
+            }
+            return value;
+        }) as typeof fsModule.readFileSync;
+
+        const result = queryCurrentLifecycleEvents(workspaceRoot, TASK_ID);
+        assert.equal(generationAdvanced, true);
+        assert.equal(result.source, 'files');
+        if (result.source === 'files') assert.equal(result.reason, 'generation_mismatch');
+    } finally {
+        fsModule.readFileSync = originalReadFileSync;
+        removeWorkspace(workspaceRoot);
+    }
+});
+
+test('current query repository discards a result when a source changes during the query', () => {
+    const workspaceRoot = createWorkspace('garda-sqlite-current-query-source-race-');
+    const eventPath = path.join(workspaceRoot, 'runtime', 'task-events', `${TASK_ID}.jsonl`);
+    const originalReadFileSync = fsModule.readFileSync;
+    let sourceChanged = false;
+    try {
+        assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
+        const projectedEventStat = fs.statSync(eventPath);
+        fsModule.readFileSync = (function patchedReadFileSync(...args: Parameters<typeof fsModule.readFileSync>) {
+            const value = originalReadFileSync.apply(fsModule, args);
+            if (!sourceChanged && path.resolve(String(args[0])) === eventPath) {
+                sourceChanged = true;
+                fs.appendFileSync(eventPath, '\n', 'utf8');
+                fs.utimesSync(eventPath, projectedEventStat.atime, new Date(projectedEventStat.mtimeMs - 60_000));
+            }
+            return value;
+        }) as typeof fsModule.readFileSync;
+
+        const result = queryCurrentLifecycleEvents(workspaceRoot, TASK_ID);
+        assert.equal(sourceChanged, true);
+        assert.equal(result.source, 'files');
+        if (result.source === 'files') assert.equal(result.reason, 'source_changed');
+    } finally {
+        fsModule.readFileSync = originalReadFileSync;
+        removeWorkspace(workspaceRoot);
+    }
+});
+
+test('current query repository rejects a post-projection symlink source before reading its target', () => {
+    const workspaceRoot = createWorkspace('garda-sqlite-current-query-source-link-');
+    const eventPath = path.join(workspaceRoot, 'runtime', 'task-events', `${TASK_ID}.jsonl`);
+    const mutableFsModule = fsModule as {
+        lstatSync: typeof fsModule.lstatSync;
+        readFileSync: typeof fsModule.readFileSync;
+    };
+    const originalLstatSync = fsModule.lstatSync;
+    const originalReadFileSync = fsModule.readFileSync;
+    let linkedSourceObserved = false;
+    let linkedTargetRead = false;
+    try {
+        assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
+        mutableFsModule.lstatSync = (function patchedLstatSync(...args: Parameters<typeof fsModule.lstatSync>) {
+            const stat = originalLstatSync.apply(fsModule, args);
+            if (path.resolve(String(args[0])) === eventPath) {
+                linkedSourceObserved = true;
+                return {
+                    ...stat,
+                    isFile: () => false,
+                    isSymbolicLink: () => true
+                } as fs.Stats;
+            }
+            return stat;
+        }) as typeof fsModule.lstatSync;
+        fsModule.readFileSync = (function patchedReadFileSync(...args: Parameters<typeof fsModule.readFileSync>) {
+            if (path.resolve(String(args[0])) === eventPath) linkedTargetRead = true;
+            return originalReadFileSync.apply(fsModule, args);
+        }) as typeof fsModule.readFileSync;
+
+        const result = queryCurrentLifecycleEvents(workspaceRoot, TASK_ID);
+        assert.equal(linkedSourceObserved, true);
+        assert.equal(linkedTargetRead, false);
+        assert.equal(result.source, 'files');
+        if (result.source === 'files') assert.equal(result.reason, 'source_changed');
+    } finally {
+        mutableFsModule.lstatSync = originalLstatSync;
+        fsModule.readFileSync = originalReadFileSync;
         removeWorkspace(workspaceRoot);
     }
 });

@@ -46,6 +46,20 @@ export interface ReportTaskQueueRow {
     notes: string;
 }
 
+export interface ReportTaskActivitySummary {
+    lifecycle_event_count: number;
+    first_lifecycle_event_utc: string | null;
+    last_lifecycle_event_utc: string | null;
+    review_attempt_count: number;
+    review_receipt_count: number;
+    artifact_count: number;
+    metric_sample_count: number;
+    verification_status: string | null;
+    health_state: string | null;
+    retention_state: string | null;
+    retention_tier: string | null;
+}
+
 export interface ReportArtifactLink {
     kind: string;
     path: string;
@@ -137,6 +151,7 @@ export interface ReportTaskDetail {
 }
 
 export interface ReportTaskRow extends ReportTaskQueueRow {
+    activity_summary: ReportTaskActivitySummary | null;
     detail: ReportTaskDetail;
 }
 

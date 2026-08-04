@@ -422,6 +422,9 @@ Any path that misses its gate remains on the canonical reader. T-1000-4 records
 the before/after evidence; T-1000-6 may consider authority only after sustained
 reliability plus tested export, backup, restore, downgrade, and rollback paths.
 
+The T-1000-4 local benchmark and the resulting adaptive adoption boundary are
+recorded in [SQLite Query Adoption Evidence](./sqlite-query-adoption-evidence.md).
+
 ## Staged Rollout
 
 1. T-1000-2 builds the derived catalog without changing read authority.
