@@ -151,9 +151,9 @@ Direct `npm pack` and `npm pack --dry-run` run the package `prepack` lifecycle, 
 
 The primary npm release path is now tag-driven through `.github/workflows/publish.yml`, not a local `npm publish`.
 
-Before pushing `v1.2.0`, complete these repository and registry checks:
+Before pushing `v1.3.0`, complete these repository and registry checks:
 
-1. Run `npm run release:preflight` from a clean local worktree.
+1. Run `npm run release:preflight` from a clean local worktree before creating the release tag. Local readiness fails if the target version tag already exists.
 2. Configure the GitHub repository Environment `npm-release` for release tags. Use selected deployment branches/tags so only tags matching `v*` can deploy to this environment. GitHub required reviewers are optional for the solo-maintainer flow and must not be treated as the release approval control when no second reviewer exists.
 3. On npmjs.com, open the `garda-agent-orchestrator` package settings and configure Trusted Publisher:
    - Publisher: GitHub Actions.
@@ -166,14 +166,26 @@ Before pushing `v1.2.0`, complete these repository and registry checks:
 5. Keep old automation tokens disabled or unused during the first OIDC staged publish attempt, but do not remove the rollback path until the Trusted Publishing staging run succeeds.
 6. Push the matching tag only after package metadata, `VERSION`, changelog, and `docs/release-readiness.md` all name the same version.
 
+The tag-triggered workflow checks out full tag history and first validates the
+GitHub tag against all version metadata. It then removes only the ephemeral
+local tag ref from its disposable checkout before rerunning the unchanged
+`release:preflight`. The preflight compares the complete released changelog
+tail with the prior release tag. There is no environment-variable bypass in
+release readiness: every invocation rejects an existing target tag. Before
+removing the local ref, the validate job uses read-only GitHub Actions API
+access to reject any different historical `publish.yml` run for the same tag;
+both jobs also reject `github.run_attempt` values above `1`. A rerun or a new
+run after deleting and recreating a consumed release tag therefore fails
+closed. Prepare a new version and tag instead.
+
 After the GitHub Actions publish job completes, inspect the staged package on npm and approve it with maintainer 2FA. Do not claim the package is public until npm staged approval completes.
 
 After npm staged approval completes, verify:
 
 ```text
 npm view garda-agent-orchestrator@latest version dist.integrity
-npm view garda-agent-orchestrator@1.2.0 version dist.integrity
-npx --yes garda-agent-orchestrator@1.2.0 --version
+npm view garda-agent-orchestrator@1.3.0 version dist.integrity
+npx --yes garda-agent-orchestrator@1.3.0 --version
 ```
 
 Also verify the package page or npm metadata shows provenance/attestation for the public package before claiming provenance in release notes. After that verification, set npm Publishing access to `Require two-factor authentication and disallow tokens`, then remove obsolete long-lived publish tokens from npm and GitHub secrets.

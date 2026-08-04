@@ -2,22 +2,22 @@
   "schemaVersion": 1,
   "package": {
     "name": "garda-agent-orchestrator",
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
   "metrics": {
-    "fileCount": 1319,
-    "unpackedSizeBytes": 14829814,
+    "fileCount": 1333,
+    "unpackedSizeBytes": 15157215,
     "lifecycleScripts": {
       "postpack": "node scripts/package-legacy-entrypoint-compat.cjs remove",
       "prepack": "npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create"
     },
     "riskSignals": {
-      "child_process": 18,
-      "exec": 93,
+      "child_process": 22,
+      "exec": 138,
       "fetch": 34,
-      "fs": 2700,
-      "readFile": 382,
-      "writeFile": 108
+      "fs": 2811,
+      "readFile": 387,
+      "writeFile": 111
     }
   },
   "allowedGrowth": {
@@ -32,5 +32,5 @@
       "writeFile": 0
     }
   },
-  "rationale": "Account for reviewed filesystem reads added by the T-1001 orchestration caches and runtime-generation journal, plus the published SQLite contract; no new process or network capability."
+  "rationale": "Reviewed deterministic baseline for Garda 1.3.0 after the provider-backed tag-history guard and final release-readiness remediation."
 }

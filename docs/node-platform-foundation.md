@@ -134,7 +134,7 @@ The lifecycle smoke installs from a `file://` clone of the current workflow bran
 
 ### Node 22 Compatibility Contract
 
-Node 22.13+ is an official Garda 1.2.x compatibility runtime line. Node 24 remains the primary baseline, but the public runtime contract now requires every official support surface to include both Node 22.13+ and Node 24:
+Node 22.13+ is an official Garda 1.3.x compatibility runtime line. Node 24 remains the primary baseline, but the public runtime contract now requires every official support surface to include both Node 22.13+ and Node 24:
 
 1. `package.json` engines allow `^22.13.0 || >=24.0.0`.
 2. CI runs typecheck, full tests, release validation, and smoke coverage on Node 22.13+ and Node 24.

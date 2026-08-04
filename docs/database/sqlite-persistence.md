@@ -1,11 +1,11 @@
 # SQLite Persistence Contract
 
-Status: Accepted for the staged T-1000 implementation sequence.
+Status: Accepted derived-projection contract after the staged T-1000 sequence.
 
 This ADR defines the ownership, compatibility, migration, recovery, and
 measurement contract for Garda's SQLite work. It does not make SQLite an
-authoritative store. Until a later evidence-based cutover decision, canonical
-files remain authoritative and SQLite is a disposable, rebuildable projection.
+authoritative store. The T-1000-6 cutover review retained canonical-file
+authority, so SQLite remains a disposable, rebuildable projection.
 
 ## Decision
 
@@ -40,7 +40,8 @@ does not:
   sentinels, or recovery archives into SQLite;
 - permit SQLite-only completion, security, or review decisions;
 - introduce a networked or machine-global database;
-- authorize the authoritative-state cutover reserved for T-1000-6.
+- authorize an authoritative-state cutover; T-1000-6 completed with canonical
+  files retained as the trust and recovery boundary.
 
 ## Source-Of-Truth Matrix
 
@@ -421,8 +422,9 @@ Query adoption requires all of the following:
 - bounded lock behavior and a working canonical-file fallback.
 
 Any path that misses its gate remains on the canonical reader. T-1000-4 records
-the before/after evidence; T-1000-6 may consider authority only after sustained
-reliability plus tested export, backup, restore, downgrade, and rollback paths.
+the before/after evidence; T-1000-6 considered authority and rejected the
+cutover because sustained reliability plus tested export, backup, restore,
+downgrade, and rollback paths were not available.
 
 The T-1000-4 local benchmark and the resulting adaptive adoption boundary are
 recorded in [SQLite Query Adoption Evidence](./sqlite-query-adoption-evidence.md).

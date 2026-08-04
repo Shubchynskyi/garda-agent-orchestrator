@@ -59,6 +59,17 @@ function copyPackFixture(repoRoot: string, fixtureRoot: string): void {
         if (!fs.existsSync(src)) continue;
         fs.cpSync(src, path.join(fixtureRoot, relativePath), { recursive: true });
     }
+    const legacyClaudeRelativePath = 'template/CLAUDE.md';
+    const trackedLegacyTemplate = spawnGit(['ls-files', '--', legacyClaudeRelativePath], repoRoot);
+    if (trackedLegacyTemplate.status !== 0) {
+        throw new Error(formatSpawnFailure('git ls-files template/CLAUDE.md', trackedLegacyTemplate));
+    }
+    assert.equal(
+        trackedLegacyTemplate.stdout.trim(),
+        '',
+        'source tree must not store template/CLAUDE.md in Git'
+    );
+    fs.rmSync(path.join(fixtureRoot, ...legacyClaudeRelativePath.split('/')), { force: true });
     // Symlink node_modules so tsc is available for the publish-runtime build
     const realNodeModules = path.join(repoRoot, 'node_modules');
     const fixtureNodeModules = path.join(fixtureRoot, 'node_modules');

@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 env:
@@ -24,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -35,6 +38,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [[ "${{ github.run_attempt }}" != "1" ]]; then
+            echo "Release workflow reruns are rejected; prepare a new version and tag instead." >&2
+            exit 1
+          fi
           if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != v* ]]; then
             echo "Publish workflow must run from a v* tag." >&2
             exit 1
@@ -53,6 +60,36 @@ jobs:
           fi
 
           echo "Release tag v${TAG_VERSION} matches package.json, package-lock.json, package-lock root, and VERSION."
+
+      - name: Reject previously used release tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUN_HISTORY_PATH="${RUNNER_TEMP}/publish-workflow-runs.json"
+          GH_TOKEN="${{ github.token }}" gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/publish.yml/runs" \
+            -f event=push \
+            -f branch="${GITHUB_REF_NAME}" \
+            -f per_page=100 \
+            --paginate \
+            --slurp > "${RUN_HISTORY_PATH}"
+          node -e '
+            const fs = require("node:fs");
+            const pages = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const currentRunId = process.env.GITHUB_RUN_ID;
+            if (!Array.isArray(pages) || !currentRunId) {
+              throw new Error("GitHub workflow-run history is unavailable.");
+            }
+            const priorRuns = pages
+              .flatMap((page) => Array.isArray(page.workflow_runs) ? page.workflow_runs : [])
+              .filter((run) => String(run.id) !== currentRunId);
+            if (priorRuns.length > 0) {
+              console.error(`Release tag ${process.env.GITHUB_REF_NAME} already triggered workflow run(s): ${priorRuns.map((run) => run.id).join(", ")}`);
+              process.exit(1);
+            }
+          ' "${RUN_HISTORY_PATH}"
+          git update-ref -d "refs/tags/${GITHUB_REF_NAME}"
 
       - name: Install dependencies
         run: npm ci --no-fund --no-audit
@@ -82,6 +119,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -100,6 +139,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [[ "${{ github.run_attempt }}" != "1" ]]; then
+            echo "Release workflow reruns are rejected; prepare a new version and tag instead." >&2
+            exit 1
+          fi
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PACKAGE_NAME="$(node -p "require('./package.json').name")"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
@@ -124,6 +167,7 @@ jobs:
           NPM_VERSION="$(npm --version)"
           echo "npm ${NPM_VERSION}"
           node -e "const version = process.argv[1]; const [major, minor] = version.split('.').map(Number); if (!Number.isFinite(major) || !Number.isFinite(minor) || major < 11 || (major === 11 && minor < 15)) { throw new Error('npm CLI 11.15.0+ is required for npm staged publishing.'); }" "${NPM_VERSION}"
+          git update-ref -d "refs/tags/${GITHUB_REF_NAME}"
 
       - name: Re-run release proof before staging
         run: npm run release:preflight

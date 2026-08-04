@@ -22,6 +22,36 @@ The current crowded source areas are:
 is not part of this layout block except for tiny import fixes caused by a moved
 facade.
 
+## Release 1.3.0 Code-Health Audit
+
+The 2026-08-04 release audit scanned the maintained `src`, `tests`, `scripts`,
+and `bin` trees with Garda's report-only large-module diagnostic and separately
+measured TypeScript declarations with the compiler AST.
+
+- The repository scan covered 1,541 files and 575,471 lines. The largest source
+  file was `src/gates/next-step/next-step.ts` at 4,442 lines; the largest test
+  file was 3,798 lines.
+- The maintained `src` and `scripts` trees contain 18 classes. The largest is
+  the internal SQLite `OpenCatalog` resource owner at 238 lines; the next is the
+  96-line `CommandPhaseTracker`. There are no oversized class hierarchies or
+  release-blocking god classes.
+- Large functional coordinators do remain. The largest measured bodies are
+  `resolveNextStepDecisionRoute` (2,148 lines), reviewer-launch preparation
+  (1,419 lines), review-skill evidence validation (830 lines), and compile
+  classification (818 lines).
+- The dedicated next-step budget remains report-only: the 4,442-line public
+  coordinator is within its 4,500-line compatibility budget, while nine helper
+  modules exceed the 700-line helper signal. The largest are reviewer-launch
+  evidence (1,318 lines) and review-artifact readers (1,220 lines).
+
+These functional hotspots are real refactor debt, but they are not release
+metadata or packaging defects. Splitting them during release preparation would
+cross review, recovery, task-state, and evidence-trust boundaries and would
+materially increase regression risk. Release 1.3.0 therefore keeps their public
+facades stable. Future extractions should follow the validation map below,
+split one responsibility at a time, and preserve byte-compatible CLI, artifact,
+and reviewer-trust contracts.
+
 ## Compatibility Boundaries
 
 Keep these imports stable unless a child task explicitly changes the public API:

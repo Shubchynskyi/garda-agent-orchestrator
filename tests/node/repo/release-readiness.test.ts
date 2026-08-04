@@ -55,6 +55,12 @@ function initializeGitIndex(repoRoot: string): void {
     runGit(repoRoot, ['add', '.']);
 }
 
+function commitFixture(repoRoot: string, message: string): void {
+    runGit(repoRoot, ['config', 'user.name', 'Garda Release Fixture']);
+    runGit(repoRoot, ['config', 'user.email', 'garda-release-fixture@example.invalid']);
+    runGit(repoRoot, ['commit', '--no-gpg-sign', '-m', message]);
+}
+
 function buildPackageJson(): string {
     return JSON.stringify({
         name: 'garda-agent-orchestrator',
@@ -319,6 +325,7 @@ function buildPublishWorkflow(): string {
         '    tags:',
         "      - 'v*'",
         'permissions:',
+        '  actions: read',
         '  contents: read',
         'env:',
         "  NODE_VERSION: '24'",
@@ -327,12 +334,17 @@ function buildPublishWorkflow(): string {
         '    runs-on: ubuntu-latest',
         '    steps:',
         '      - uses: actions/checkout@v7.0.0',
+        '        with:',
+        '          fetch-depth: 0',
         '      - uses: actions/setup-node@v6',
         '        with:',
         '          node-version: ${{ env.NODE_VERSION }}',
         '          package-manager-cache: false',
         '      - run: |',
         '          set -euo pipefail',
+        '          if [[ "${{ github.run_attempt }}" != "1" ]]; then',
+        '            exit 1',
+        '          fi',
         '          if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != v* ]]; then',
         '            exit 1',
         '          fi',
@@ -344,6 +356,35 @@ function buildPublishWorkflow(): string {
         '          if [[ "${TAG_VERSION}" != "${PACKAGE_VERSION}" || "${TAG_VERSION}" != "${LOCK_VERSION}" || "${TAG_VERSION}" != "${LOCK_ROOT_VERSION}" || "${TAG_VERSION}" != "${VERSION_FILE}" ]]; then',
         '            exit 1',
         '          fi',
+        '      - name: Reject previously used release tags',
+        '        shell: bash',
+        '        run: |',
+        '          set -euo pipefail',
+        '',
+        '          RUN_HISTORY_PATH="${RUNNER_TEMP}/publish-workflow-runs.json"',
+        '          GH_TOKEN="${{ github.token }}" gh api --method GET \\',
+        '            "repos/${GITHUB_REPOSITORY}/actions/workflows/publish.yml/runs" \\',
+        '            -f event=push \\',
+        '            -f branch="${GITHUB_REF_NAME}" \\',
+        '            -f per_page=100 \\',
+        '            --paginate \\',
+        '            --slurp > "${RUN_HISTORY_PATH}"',
+        '          node -e \'',
+        '            const fs = require("node:fs");',
+        '            const pages = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));',
+        '            const currentRunId = process.env.GITHUB_RUN_ID;',
+        '            if (!Array.isArray(pages) || !currentRunId) {',
+        '              throw new Error("GitHub workflow-run history is unavailable.");',
+        '            }',
+        '            const priorRuns = pages',
+        '              .flatMap((page) => Array.isArray(page.workflow_runs) ? page.workflow_runs : [])',
+        '              .filter((run) => String(run.id) !== currentRunId);',
+        '            if (priorRuns.length > 0) {',
+        '              console.error(`Release tag ${process.env.GITHUB_REF_NAME} already triggered workflow run(s): ${priorRuns.map((run) => run.id).join(", ")}`);',
+        '              process.exit(1);',
+        '            }',
+        '          \' "${RUN_HISTORY_PATH}"',
+        '          git update-ref -d "refs/tags/${GITHUB_REF_NAME}"',
         '      - run: npm ci --no-fund --no-audit',
         '      - run: npm run release:preflight',
         '      - run: |',
@@ -362,6 +403,8 @@ function buildPublishWorkflow(): string {
         '      id-token: write',
         '    steps:',
         '      - uses: actions/checkout@v7.0.0',
+        '        with:',
+        '          fetch-depth: 0',
         '      - uses: actions/setup-node@v6',
         '        with:',
         '          node-version: ${{ env.NODE_VERSION }}',
@@ -371,6 +414,9 @@ function buildPublishWorkflow(): string {
         '      - run: npm install -g npm@^11.15.0',
         '      - run: |',
         '          set -euo pipefail',
+        '          if [[ "${{ github.run_attempt }}" != "1" ]]; then',
+        '            exit 1',
+        '          fi',
         '          TAG_VERSION="${GITHUB_REF_NAME#v}"',
         '          PACKAGE_NAME="$(node -p "require(\'./package.json\').name")"',
         '          PACKAGE_VERSION="$(node -p "require(\'./package.json\').version")"',
@@ -388,6 +434,7 @@ function buildPublishWorkflow(): string {
         '          fi',
         '          NPM_VERSION="$(npm --version)"',
         '          node -e "const version = process.argv[1]; const [major, minor] = version.split(\'.\').map(Number); if (!Number.isFinite(major) || !Number.isFinite(minor) || major < 11 || (major === 11 && minor < 15)) { throw new Error(\'npm CLI 11.15.0+ is required for npm staged publishing.\'); }" "${NPM_VERSION}"',
+        '          git update-ref -d "refs/tags/${GITHUB_REF_NAME}"',
         '      - run: npm run release:preflight',
         '      - run: npm stage publish'
     ].join('\n');
@@ -459,7 +506,10 @@ function createReadinessFixture(openChecklistItem?: string): string {
     writeFile(path.join(repoRoot, 'VERSION'), '1.1.0\n');
     writeFile(path.join(repoRoot, 'README.md'), '# Readme\n');
     writeFile(path.join(repoRoot, 'HOW_TO.md'), '# How To\n');
-    writeFile(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n');
+    writeFile(
+        path.join(repoRoot, 'CHANGELOG.md'),
+        '# Changelog\n\n## 1.1.0\n\n- Fixture release notes.\n'
+    );
     writeFile(path.join(repoRoot, 'docs', 'assets', 'garda-github-social-preview.png'), 'fixture image\n');
     writeFile(path.join(repoRoot, 'docs', 'architecture.md'), '# Architecture\n');
     writeFile(path.join(repoRoot, 'docs', 'branch-protection.md'), buildBranchProtectionDoc());
@@ -559,6 +609,232 @@ test('release readiness passes when package, CI, docs, security, and checklist c
     }
 });
 
+test('release readiness rejects the target tag even when it points at HEAD', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        commitFixture(repoRoot, 'fixture release candidate');
+        runGit(repoRoot, ['tag', 'v1.1.0']);
+
+        const localPreTagResult = validateReleaseReadiness(repoRoot);
+        const localPreTagOutput = formatReleaseReadinessResult(localPreTagResult);
+        assert.equal(localPreTagResult.passed, false);
+        assert.match(localPreTagOutput, /release readiness requires an unassigned version/u);
+
+        writeFile(path.join(repoRoot, 'README.md'), '# Readme\n\nLater release candidate commit.\n');
+        runGit(repoRoot, ['add', 'README.md']);
+        commitFixture(repoRoot, 'later release candidate');
+
+        const reusedVersionResult = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(reusedVersionResult);
+        assert.equal(reusedVersionResult.passed, false);
+        assert.match(output, /release-tag: the target version is not assigned to another local Git commit/u);
+        assert.match(output, /Local release tag v1\.1\.0 already points at/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when CHANGELOG does not start with the target version', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, 'CHANGELOG.md'),
+            '# Changelog\n\n## 1.2.0\n\n- Notes for a different version.\n\n## 1.1.0\n\n- Fixture release notes.\n'
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+        assert.equal(result.passed, false);
+        assert.match(output, /changelog: CHANGELOG starts with one populated target section and preserves released history/u);
+        assert.match(output, /first release heading=1\.2\.0/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects rewritten history from the prior release tag', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const releasedHistory = '## 1.0.0\n\n- Released history.\n';
+        writeFile(path.join(repoRoot, 'CHANGELOG.md'), `# Changelog\n\n${releasedHistory}`);
+        runGit(repoRoot, ['add', 'CHANGELOG.md']);
+        commitFixture(repoRoot, 'fixture prior release');
+        runGit(repoRoot, ['tag', 'v1.0.0']);
+
+        writeFile(
+            path.join(repoRoot, 'CHANGELOG.md'),
+            `# Changelog\n\n## 1.1.0\n\n- Fixture release notes.\n\n${releasedHistory}`
+        );
+        runGit(repoRoot, ['add', 'CHANGELOG.md']);
+        const preservedResult = validateReleaseReadiness(repoRoot);
+        assert.equal(preservedResult.passed, true, formatReleaseReadinessResult(preservedResult));
+
+        writeFile(
+            path.join(repoRoot, 'CHANGELOG.md'),
+            '# Changelog\n\n## 1.1.0\n\n- Fixture release notes.\n\n## 1.0.0\n\n- Rewritten history.\n'
+        );
+        const rewrittenResult = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(rewrittenResult);
+        assert.equal(rewrittenResult.passed, false);
+        assert.match(output, /released history baseline=v1\.0\.0; preserved=false/u);
+
+        writeFile(
+            path.join(repoRoot, 'CHANGELOG.md'),
+            '# Changelog\n\n## 1.1.0\n\n- Fixture release notes.\n'
+        );
+        const deletedHistoryResult = validateReleaseReadiness(repoRoot);
+        const deletedHistoryOutput = formatReleaseReadinessResult(deletedHistoryResult);
+        assert.equal(deletedHistoryResult.passed, false);
+        assert.match(deletedHistoryOutput, /released history baseline=v1\.0\.0; preserved=false/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails on broken links in tracked Markdown documents', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(path.join(repoRoot, 'docs', 'broken-link.md'), '[missing](./not-present.md)\n');
+        runGit(repoRoot, ['add', 'docs/broken-link.md']);
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+        assert.equal(result.passed, false);
+        assert.match(output, /documentation-links: tracked Markdown documents contain no broken repository-relative links/u);
+        assert.match(output, /docs\/broken-link\.md -> \.\/not-present\.md \(missing target\)/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects Markdown destinations that escape through directory links', () => {
+    const repoRoot = createReadinessFixture();
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-release-link-outside-'));
+    try {
+        writeFile(path.join(outsideRoot, 'README.md'), '# Outside repository\n');
+        fs.symlinkSync(
+            outsideRoot,
+            path.join(repoRoot, 'docs', 'external-target'),
+            process.platform === 'win32' ? 'junction' : 'dir'
+        );
+        writeFile(
+            path.join(repoRoot, 'docs', 'external-link.md'),
+            '[external](./external-target/README.md)\n'
+        );
+        runGit(repoRoot, ['add', 'docs/external-link.md']);
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+        assert.equal(result.passed, false);
+        assert.match(output, /docs\/external-link\.md -> \.\/external-target\/README\.md \(outside repository\)/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness checks reference-style Markdown destinations', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, 'docs', 'broken-reference.md'),
+            '[missing guide][guide]\n\n[guide]: ./not-present.md\n'
+        );
+        runGit(repoRoot, ['add', 'docs/broken-reference.md']);
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+        assert.equal(result.passed, false);
+        assert.match(output, /docs\/broken-reference\.md -> \.\/not-present\.md \(missing target\)/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects undefined shortcut references', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(path.join(repoRoot, 'docs', 'broken-shortcut.md'), '[missing guide]\n');
+        runGit(repoRoot, ['add', 'docs/broken-shortcut.md']);
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+        assert.equal(result.passed, false);
+        assert.match(output, /docs\/broken-shortcut\.md -> \[missing guide\] \(undefined reference\)/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects missing Markdown heading anchors', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(path.join(repoRoot, 'docs', 'anchor-target.md'), '# Present Heading\n');
+        writeFile(
+            path.join(repoRoot, 'docs', 'broken-anchor.md'),
+            '[missing heading](./anchor-target.md#missing-heading)\n'
+        );
+        runGit(repoRoot, ['add', 'docs/anchor-target.md', 'docs/broken-anchor.md']);
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+        assert.equal(result.passed, false);
+        assert.match(output, /docs\/broken-anchor\.md -> \.\/anchor-target\.md#missing-heading \(missing anchor\)/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness accepts spaced destinations, duplicate heading anchors, and explicit anchors', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, 'docs', 'space target.md'),
+            '# Present Heading\n\n## Duplicate\n\n## Duplicate\n\n## `command` name\n\n<a id="manual-anchor"></a>\n'
+        );
+        writeFile(
+            path.join(repoRoot, 'docs', 'valid-link-forms.md'),
+            [
+                '[angle destination](<./space target.md#present-heading>)',
+                '[duplicate heading](<./space target.md#duplicate-1>)',
+                '[explicit anchor][manual]',
+                '<a href="./space%20target.md#present-heading">HTML link</a>',
+                '`[non-link example](./not-present.md)`',
+                '[inline code heading](./space%20target.md#command-name)',
+                '',
+                '[manual]: <./space target.md#manual-anchor>',
+                ''
+            ].join('\n')
+        );
+        runGit(repoRoot, ['add', 'docs/space target.md', 'docs/valid-link-forms.md']);
+
+        const result = validateReleaseReadiness(repoRoot);
+        assert.equal(result.passed, true, formatReleaseReadinessResult(result));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when the package-surface baseline belongs to another version', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const baselinePath = path.join(repoRoot, 'config', 'release-package-surface-baseline.json');
+        const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8')) as {
+            package: { version: string };
+        };
+        baseline.package.version = '1.0.0';
+        writeFile(baselinePath, JSON.stringify(baseline, null, 2));
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+        assert.equal(result.passed, false);
+        assert.match(output, /package-surface: release preflight scores the deterministic packed surface/u);
+        assert.match(output, /baselineIdentityAligned=false/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('release readiness fails closed when the package-surface baseline is missing', () => {
     const repoRoot = createReadinessFixture();
     try {
@@ -621,6 +897,162 @@ test('release readiness fails when trusted publish workflow is missing', () => {
         assert.equal(result.passed, false);
         assert.match(output, /publish\.yml present=false/);
         assert.ok(result.violations.some(v => v.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when tagged publish jobs keep the local release tag ref', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replaceAll(
+                '          git update-ref -d "refs/tags/${GITHUB_REF_NAME}"\n',
+                ''
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /validate job removes its ephemeral local tag ref before release uniqueness proof=false/u);
+        assert.match(output, /publish job removes its ephemeral local tag ref before release uniqueness proof=false/u);
+        assert.ok(result.violations.some((violation) => violation.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when tagged publish jobs allow workflow reruns', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replaceAll(
+                [
+                    '          if [[ "${{ github.run_attempt }}" != "1" ]]; then',
+                    '            exit 1',
+                    '          fi',
+                    ''
+                ].join('\n'),
+                ''
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /validate job rejects repeated workflow attempts=false/u);
+        assert.match(output, /publish job rejects repeated workflow attempts=false/u);
+        assert.ok(result.violations.some((violation) => violation.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when tagged publish validation omits prior-run history', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                '          GH_TOKEN="${{ github.token }}" gh api --method GET \\\n',
+                '          echo "workflow history omitted"\n'
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /validate job rejects release tags with a prior workflow run=false/u);
+        assert.ok(result.violations.some((violation) => violation.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects inert text containing every prior-run history marker', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                /[ ]{6}- name: Reject previously used release tags\n[\s\S]+?(?=[ ]{6}- run: npm ci --no-fund --no-audit)/u,
+                [
+                    '      - name: Reject previously used release tags',
+                    '        shell: bash',
+                    '        run: |',
+                    '          : \'GH_TOKEN="${{ github.token }}" gh api --method GET\'',
+                    '          : \'actions/workflows/publish.yml/runs\'',
+                    '          : \'-f event=push\'',
+                    '          : \'-f branch="${GITHUB_REF_NAME}"\'',
+                    '          : \'--paginate\'',
+                    '          : \'--slurp\'',
+                    '          : \'GITHUB_RUN_ID\'',
+                    '          : \'process.exit(1)\'',
+                    '          git update-ref -d "refs/tags/${GITHUB_REF_NAME}"',
+                    ''
+                ].join('\n')
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /validate job rejects release tags with a prior workflow run=false/u);
+        assert.ok(result.violations.some((violation) => violation.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when workflow-run history permission is missing', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace('  actions: read\n', '')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish workflow has read-only access to provider workflow-run history=false/u);
+        assert.ok(result.violations.some((violation) => violation.startsWith('trusted-publish-workflow:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when tagged publish jobs omit release-tag history', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replaceAll(
+                '        with:\n          fetch-depth: 0\n',
+                ''
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /publish jobs fetch release-tag history for changelog preservation checks=false/u);
+        assert.ok(result.violations.some((violation) => violation.startsWith('trusted-publish-workflow:')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -746,14 +1178,14 @@ test('release readiness fails when trusted publish validate job only echoes vers
         writeFile(
             workflowPath,
             fs.readFileSync(workflowPath, 'utf8').replace(
-                /[ ]{6}- run: \|\n(?:[ ]{10}.+\n)+?[ ]{6}- run: npm ci --no-fund --no-audit/u,
+                /[ ]{6}- run: \|\n[\s\S]+?(?=[ ]{6}- name: Reject previously used release tags)/u,
                 [
                     '      - run: |',
                     '          echo "${GITHUB_REF_NAME}"',
                     '          node -p "require(\'./package.json\').version"',
                     '          node -p "require(\'./package-lock.json\').version"',
                     '          cat VERSION',
-                    '      - run: npm ci --no-fund --no-audit'
+                    ''
                 ].join('\n')
             )
         );
@@ -776,7 +1208,7 @@ test('release readiness fails when trusted publish validate guard markers are on
         writeFile(
             workflowPath,
             fs.readFileSync(workflowPath, 'utf8').replace(
-                /[ ]{6}- run: \|\n(?:[ ]{10}.+\n)+?[ ]{6}- run: npm ci --no-fund --no-audit/u,
+                /[ ]{6}- run: \|\n[\s\S]+?(?=[ ]{6}- name: Reject previously used release tags)/u,
                 [
                     '      - run: |',
                     '          # set -euo pipefail',
@@ -792,7 +1224,7 @@ test('release readiness fails when trusted publish validate guard markers are on
                     '          # ${TAG_VERSION}" != "${LOCK_ROOT_VERSION}',
                     '          # ${TAG_VERSION}" != "${VERSION_FILE}',
                     '          # exit 1',
-                    '      - run: npm ci --no-fund --no-audit'
+                    ''
                 ].join('\n')
             )
         );

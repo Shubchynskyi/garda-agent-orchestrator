@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 
 import { getRepoRoot } from '../build';
@@ -24,6 +25,13 @@ import {
 } from './shared';
 import { PACKAGE_SURFACE_BASELINE_PATH } from './package-surface-types';
 import { parsePackageSurfaceBaseline } from './package-surface-baseline';
+import {
+    validateChangelogReleaseSection,
+    validateReleaseTagAssignment,
+    validateTrackedMarkdownLinks
+} from './release-metadata';
+
+const TRUSTED_RELEASE_TAG_HISTORY_STEP_SHA256 = 'dd86883aee9e6eef46c76a284d9a90431073efaecdd74adcce97f4e53223b470';
 
 function extractReleaseChecklistItems(checklistMarkdown: string, version: string): {
     releaseChecklistItems: string[];
@@ -110,6 +118,43 @@ function getWorkflowJobBlock(workflowText: string, jobId: string): string | null
     const nextJobPattern = new RegExp(`^\\s{${jobIndent}}[A-Za-z0-9_-]+:\\s*$`, 'u');
     const nextJob = lines.findIndex((line, index) => index > jobStart && nextJobPattern.test(line));
     return lines.slice(jobStart, nextJob === -1 ? undefined : nextJob).join('\n');
+}
+
+function getWorkflowNamedStepBlock(workflowText: string, stepName: string): string | null {
+    const lines = workflowText.split(/\r?\n/u);
+    const stepStart = lines.findIndex((line) => {
+        const match = /^(\s*)-\s+name:\s*(.+?)\s*$/u.exec(line);
+        return match !== null && stripYamlQuotes(match[2].trim()) === stepName;
+    });
+    if (stepStart === -1) {
+        return null;
+    }
+
+    const stepIndent = lines[stepStart].match(/^\s*/u)![0].length;
+    let stepEnd = lines.length;
+    for (let index = stepStart + 1; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) {
+            continue;
+        }
+        const lineIndent = line.match(/^\s*/u)![0].length;
+        if (lineIndent < stepIndent || (lineIndent === stepIndent && /^\s*-\s+/u.test(line))) {
+            stepEnd = index;
+            break;
+        }
+    }
+    return lines.slice(stepStart, stepEnd).join('\n');
+}
+
+function workflowStepContractSha256(stepBlock: string | null): string | null {
+    if (stepBlock === null) {
+        return null;
+    }
+    const normalized = stepBlock.split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter((line) => line !== '' && !line.startsWith('#'))
+        .join('\n');
+    return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
 function extractYamlListAfterKey(block: string | null, key: string): string[] {
@@ -509,9 +554,14 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
     const onBlock = getYamlKeyBlock(publishWorkflow, 'on');
     const pushTriggerBlock = getYamlDirectChildBlock(onBlock, 'push');
     const workflowEnv = getYamlKeyBlock(publishWorkflow, 'env');
+    const workflowPermissions = getYamlKeyBlock(publishWorkflow, 'permissions');
     const tagTriggers = extractYamlListAfterKey(pushTriggerBlock, 'tags');
+    const validateCheckout = getWorkflowUseStepBlock(validateJob || '', 'actions/checkout@v7.0.0');
+    const publishCheckout = getWorkflowUseStepBlock(publishJob || '', 'actions/checkout@v7.0.0');
     const validateSetupNode = getWorkflowUseStepBlock(validateJob || '', 'actions/setup-node@v6');
     const publishSetupNode = getWorkflowUseStepBlock(publishJob || '', 'actions/setup-node@v6');
+    const validateCheckoutWith = getYamlKeyBlock(validateCheckout, 'with');
+    const publishCheckoutWith = getYamlKeyBlock(publishCheckout, 'with');
     const validateSetupWith = getYamlKeyBlock(validateSetupNode, 'with');
     const publishSetupWith = getYamlKeyBlock(publishSetupNode, 'with');
     const publishPermissions = getYamlKeyBlock(publishJob, 'permissions');
@@ -555,6 +605,31 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
         'major < 11',
         'minor < 15'
     ]);
+    const validateDropsEphemeralTagRef = workflowRunScriptsIncludeAll(validateRunScripts, [
+        'git update-ref -d "refs/tags/${GITHUB_REF_NAME}"'
+    ]);
+    const publishDropsEphemeralTagRef = workflowRunScriptsIncludeAll(publishRunScripts, [
+        'git update-ref -d "refs/tags/${GITHUB_REF_NAME}"'
+    ]);
+    const validateRejectsWorkflowReruns = workflowRunScriptsIncludeAll(validateRunScripts, [
+        'github.run_attempt',
+        '!= "1"',
+        'exit 1'
+    ]);
+    const publishRejectsWorkflowReruns = workflowRunScriptsIncludeAll(publishRunScripts, [
+        'github.run_attempt',
+        '!= "1"',
+        'exit 1'
+    ]);
+    const actionsHistoryReadable = blockHasNonCommentLine(workflowPermissions, 'actions: read');
+    const historicalTagReuseStep = getWorkflowNamedStepBlock(
+        validateJob || '',
+        'Reject previously used release tags'
+    );
+    const validateRejectsHistoricalTagReuse = workflowStepContractSha256(historicalTagReuseStep)
+        === TRUSTED_RELEASE_TAG_HISTORY_STEP_SHA256;
+    const fullTagHistoryAvailable = blockHasNonCommentLine(validateCheckoutWith, 'fetch-depth: 0')
+        && blockHasNonCommentLine(publishCheckoutWith, 'fetch-depth: 0');
     const tagDrivenOnly = tagTriggers.includes('v*') && !publishWorkflow.includes('workflow_dispatch:');
     const nodeVersionPinned = yamlBlockHasScalarValue(workflowEnv, 'NODE_VERSION', ['24', '24.x']);
     const packDryRunArtifactOutsideCheckout = workflowRunScriptsIncludeExecutableMarkers(validateRunScripts, [
@@ -565,11 +640,16 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
     const validateJobContract = validateJob !== null
         && blockHasNonCommentLine(validateJob, 'runs-on: ubuntu-latest')
         && workflowHasUseStep(validateJob, 'actions/checkout@v7.0.0')
+        && fullTagHistoryAvailable
         && validateSetupNode !== null
         && nodeVersionPinned
         && blockHasNonCommentLine(validateSetupWith, "node-version: ${{ env.NODE_VERSION }}")
         && blockHasNonCommentLine(validateSetupWith, 'package-manager-cache: false')
+        && validateRejectsWorkflowReruns
+        && actionsHistoryReadable
+        && validateRejectsHistoricalTagReuse
         && tagVersionGuard
+        && validateDropsEphemeralTagRef
         && workflowJobHasRunStep(validateJob, 'npm ci --no-fund --no-audit')
         && workflowJobHasRunStep(validateJob, 'npm run release:preflight')
         && packDryRunArtifactOutsideCheckout
@@ -583,6 +663,7 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
         && blockHasNonCommentLine(publishPermissions, 'contents: read')
         && blockHasNonCommentLine(publishPermissions, 'id-token: write')
         && workflowHasUseStep(publishJob, 'actions/checkout@v7.0.0')
+        && fullTagHistoryAvailable
         && publishSetupNode !== null
         && nodeVersionPinned
         && blockHasNonCommentLine(publishSetupWith, "node-version: ${{ env.NODE_VERSION }}")
@@ -590,7 +671,9 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
         && blockHasNonCommentLine(publishSetupWith, 'package-manager-cache: false')
         && workflowJobHasRunStep(publishJob, 'npm ci --no-fund --no-audit')
         && workflowJobHasRunStep(publishJob, 'npm install -g npm@^11.15.0')
+        && publishRejectsWorkflowReruns
         && publishSanityGuard
+        && publishDropsEphemeralTagRef
         && workflowJobHasRunStep(publishJob, 'npm run release:preflight')
         && workflowJobHasExactRunLine(publishJob, 'npm stage publish')
         && !workflowJobHasExactRunLine(publishJob, 'npm publish');
@@ -603,10 +686,17 @@ function validateTrustedPublishWorkflowContract(repoRoot: string): { passed: boo
         { passed: publishWorkflow !== '', detail: 'publish.yml present' },
         { passed: tagDrivenOnly, detail: 'publish.yml is v*-tag driven without manual dispatch' },
         { passed: nodeVersionPinned, detail: 'publish workflow pins Node 24 for Trusted Publishing' },
+        { passed: actionsHistoryReadable, detail: 'publish workflow has read-only access to provider workflow-run history' },
+        { passed: fullTagHistoryAvailable, detail: 'publish jobs fetch release-tag history for changelog preservation checks' },
         { passed: tagVersionGuard, detail: 'validate job has fail-closed tag/version guard' },
+        { passed: validateRejectsWorkflowReruns, detail: 'validate job rejects repeated workflow attempts' },
+        { passed: validateRejectsHistoricalTagReuse, detail: 'validate job rejects release tags with a prior workflow run' },
+        { passed: validateDropsEphemeralTagRef, detail: 'validate job removes its ephemeral local tag ref before release uniqueness proof' },
         { passed: packDryRunArtifactOutsideCheckout, detail: 'validate job records npm pack dry-run output outside the checkout' },
         { passed: validateJobContract, detail: 'validate job checks tag/version metadata, release proof, and npm pack dry-run' },
         { passed: publishSanityGuard, detail: 'publish job has fail-closed package and npm CLI sanity guard' },
+        { passed: publishRejectsWorkflowReruns, detail: 'publish job rejects repeated workflow attempts' },
+        { passed: publishDropsEphemeralTagRef, detail: 'publish job removes its ephemeral local tag ref before release uniqueness proof' },
         { passed: publishJobContract, detail: 'publish job is npm-release environment bound and uses id-token OIDC npm stage publish' },
         { passed: tokenlessOidc, detail: 'publish workflow avoids npm tokens, --provenance override, and self-hosted runners' }
     ];
@@ -715,12 +805,15 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
     const packageSurfaceTests = scripts['test:packaging'] || '';
     const baselinePath = path.join(normalizedRoot, PACKAGE_SURFACE_BASELINE_PATH);
     let baselineValid = false;
+    let baselineIdentityAligned = false;
     let baselineDetail = `missing ${PACKAGE_SURFACE_BASELINE_PATH}`;
     const baselineText = readTextFileIfExists(baselinePath);
     if (baselineText !== null) {
         try {
             const baseline = parsePackageSurfaceBaseline(JSON.parse(baselineText), baselinePath);
             baselineValid = true;
+            baselineIdentityAligned = baseline.package.name === packageJson?.name
+                && baseline.package.version === version;
             baselineDetail = `${baseline.package.name}@${baseline.package.version}: ${baseline.rationale}`;
         } catch (error: unknown) {
             baselineDetail = error instanceof Error ? error.message : String(error);
@@ -751,13 +844,45 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
             releasePreflight.endsWith('&& npm run validate:package-surface') &&
             packageSurfaceTests.includes('tests/node/packaging/package-surface.test.ts') &&
             baselineValid &&
+            baselineIdentityAligned &&
             isGitTracked(normalizedRoot, PACKAGE_SURFACE_BASELINE_PATH),
         [
             `validate:package-surface=${validatePackageSurface || 'missing'}`,
             `test:packaging=${packageSurfaceTests || 'missing'}`,
             `baseline=${baselineDetail}`,
+            `baselineIdentityAligned=${baselineIdentityAligned}`,
             `baselineTracked=${isGitTracked(normalizedRoot, PACKAGE_SURFACE_BASELINE_PATH)}`
         ]
+    );
+
+    const releaseTagAssignment = validateReleaseTagAssignment(normalizedRoot, version);
+    pushCheck(
+        checks,
+        violations,
+        'release-tag',
+        'the target version is not assigned to another local Git commit',
+        releaseTagAssignment.passed,
+        releaseTagAssignment.details
+    );
+
+    const changelogReleaseSection = validateChangelogReleaseSection(normalizedRoot, version);
+    pushCheck(
+        checks,
+        violations,
+        'changelog',
+        'CHANGELOG starts with one populated target section and preserves released history',
+        changelogReleaseSection.passed,
+        changelogReleaseSection.details
+    );
+
+    const markdownLinks = validateTrackedMarkdownLinks(normalizedRoot);
+    pushCheck(
+        checks,
+        violations,
+        'documentation-links',
+        'tracked Markdown documents contain no broken repository-relative links',
+        markdownLinks.passed,
+        markdownLinks.details
     );
 
     pushCheck(

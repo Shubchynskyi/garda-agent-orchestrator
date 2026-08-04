@@ -4,6 +4,29 @@ This tracked checklist is the release-cut source of truth for static readiness.
 Local `TASK.md` and `TASK_DONE.md` files are intentionally gitignored operator
 queues and must not be treated as publish blockers by release validation.
 
+## 1.3.0
+
+- [x] Package metadata is aligned to `1.3.0` in `package.json`, `package-lock.json`, `VERSION`, and the tracked package-surface baseline.
+- [x] `CHANGELOG.md` starts with a populated `1.3.0` section, while release readiness verifies that the complete released tail beginning at `1.2.0` remains content-identical to the `v1.2.0` tag.
+- [x] Release readiness rejects any existing `v1.3.0` tag. Before removing only the ephemeral local tag ref, the publish workflow validates tag/version parity and rejects both reruns and any distinct prior `publish.yml` run for the same tag through read-only GitHub Actions history.
+- [x] README, CLI, Node runtime, Node platform, and release-runbook compatibility references name the `1.3.x` line and preserve the Node 22.13+/24 support matrix.
+- [x] All tracked Markdown documents have been scanned for broken repository-relative links, and package smoke separately validates links in the installed public-document surface.
+- [x] The SQLite documentation records the final no-cutover decision: each database is workspace-local and disposable, canonical files remain authoritative, and only benchmark-qualified bulk aggregation plus derived project-memory search use the catalog.
+- [x] The release code-health audit records no oversized classes; the remaining large functional coordinators are known refactor debt and are not mechanically split during release preparation.
+- [x] Published tarballs retain the compiled-only CLI contract and omit `src/**`, `tests/**`, `.node-build/**`, and `.scripts-build/**`.
+- [x] The deterministic offline package-surface baseline is refreshed from the final `1.3.0` packed surface with a release-audit rationale.
+- [x] `.github/workflows/publish.yml` remains the primary Trusted Publishing workflow for `v*` tags, and its `npm-release` GitHub Environment is release-tag restricted.
+- [x] npm Trusted Publisher settings remain GitHub Actions publisher `Shubchynskyi` / `garda-agent-orchestrator` / `publish.yml`, with allowed action `npm stage publish`.
+- [x] The public package still requires npm-side staged approval with maintainer 2FA; after verification, Publishing access can remain `Require two-factor authentication and disallow tokens`.
+- [x] Post-publish verification includes npm `latest`, package integrity/provenance visibility, and `npx --yes garda-agent-orchestrator@1.3.0 --version`.
+- [x] The final local handoff requires a clean-tree `npm run release:preflight`; creating or pushing the tag and approving the staged npm release remain explicit operator actions.
+
+The local proof intentionally runs before `v1.3.0` exists. After the operator
+pushes the tag, the workflow verifies that tag against `package.json`, both
+lockfile version fields, and `VERSION`. It then deletes only the checkout's
+ephemeral `refs/tags/v1.3.0` ref before running the unchanged preflight. No
+environment variable can make an assigned version pass readiness.
+
 ## 1.2.0
 
 - [x] Package metadata is aligned to `1.2.0` in `package.json`, `package-lock.json`, and `VERSION`.

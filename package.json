@@ -1,6 +1,6 @@
 {
   "name": "garda-agent-orchestrator",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Governed local runtime for AI coding agents with task lifecycle, mandatory gates, reviews, and auditable completion.",
   "repository": {
     "type": "git",

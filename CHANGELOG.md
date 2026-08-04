@@ -1,14 +1,33 @@
 # Changelog
 
+## 1.3.0
+
+### Workflow And Reviews
+
+- Strengthened delegated review provenance from launch through receipt: clean-context identities, immutable launch inputs, serialized lane transitions, output hashes, findings validation, and failure recovery now remain bound to the current task cycle.
+- Added deterministic reviewer coverage ledgers and exhaustive findings contracts. Reviewers must cover every assigned file, behavior boundary, and applicable category, continue after finding defects, and report distinct evidence-supported findings without an artificial quota.
+- Added profile-level finding policies, guarded preview/apply flows, future-task-only policy snapshots, selective remediation evidence, and safer reuse rules for accepted review results.
+- Hardened coherent-cycle, dirty-baseline, split-WIP, protected-manifest, full-suite-repair, and post-completion recovery so interrupted work resumes through explicit scoped evidence instead of synthetic state.
+
+### Performance And Test Reliability
+
+- Reduced repeated `next-step` work by batching Git status, diff, index, tree, and object probes; sharing request-scoped workspace snapshots; caching immutable task-queue, review-history, runtime-metric, and toxin evidence; and avoiding full global status construction on ordinary navigator routes.
+- Partitioned the largest review and gate test suites, bounded subprocess cleanup, improved Windows lock handling, and retained deterministic timeout and failure telemetry for focused and sharded runs.
+
+### SQLite Projection
+
+- Added a workspace-local SQLite catalog with canonical-first ingestion, generation-bound reconciliation, integrity checks, repair/rebuild commands, connection leases, bounded recovery, and deterministic fallback to canonical files.
+- Adopted SQLite only for benchmark-qualified stress-tier bulk task-activity aggregation and added a hash-bound project-memory search index. Small and trust-sensitive paths remain on canonical readers; SQLite is still a disposable projection and never authorizes lifecycle, review, security, cleanup, configuration, or completion decisions.
+
+### Architecture, Security, And Release
+
+- Split several gate, recovery, materialization, lifecycle, CLI, and report coordinators behind stable facades, added dependency-boundary enforcement, and tightened realpath containment and reviewer diagnostic redaction.
+- Reduced the npm tarball to the compiled runtime and required assets, with clean install/invoke smoke coverage that does not require TypeScript, devDependencies, or a consumer build.
+- Added deterministic offline package-surface scoring for file count, unpacked size, lifecycle scripts, and executable risk signals, including explicit rationale-bound baseline updates.
+- Release readiness now rejects every pre-existing target tag, while the tag-triggered workflow rejects reruns and prior workflow runs for the same tag, verifies tag/version parity, and removes only its ephemeral local tag ref before running the same uniqueness proof; readiness also requires the changelog head and package-surface baseline to match the target version, preserves the released changelog tail against the prior version tag, and validates repository-relative links across all tracked Markdown documents.
+
 ## 1.2.0
 
-- Reduced the published npm surface to the compiled runtime and required assets: tarballs omit `src/**`, `tests/**`, and local build trees, while package smoke proves clean install and CLI invocation without TypeScript, devDependencies, or a consumer build.
-- Added deterministic offline package-surface release scoring for file count, unpacked size, lifecycle scripts, and executable lexical risk signals, with a tracked baseline, actionable growth diagnostics, explicit rationale-bound baseline updates, and optional prior-artifact comparison without a Socket token or network dependency.
-- Added guarded `garda profile policy` preview/apply flows with normalized policy planning, stale-preview hashes, shared profile-config locking, crash-recoverable mutation audits, and future-task-only policy effects.
-- Added deterministic reviewer coverage ledgers for every changed file, behavior boundary, and applicable review category; incomplete or generic coverage and unresolved finding links now fail before receipt recording, while final audit exposes omitted obligations without imposing a finding quota.
-- Added evidence-only focused-test remediation: the canonical reviewer marker now binds the exact changed test to current task-owned command, artifact, output hash/size, chronology, scope, and in-root path evidence before restarting review without a fake source edit.
-- Required every delegated reviewer and remediation reviewer to finish the complete assigned scope before verdict, continue after findings at any severity, report all distinct evidence-supported findings, deduplicate shared root causes, and name the files, boundaries, tests, and checklist categories actually reviewed.
-- Added operator-confirmed protected-manifest recovery for failed task-mode entry, with read-only inspection guidance, immutable failure attempts, byte-identical current-pointer and integrity-checked failure/recovery event binding, inspected-state SHA-256/TOCTOU checks, and a canonically reconstructed `enter-task-mode` handoff after repair.
 - Added the new optional quality checklist gate: before review, the agent can run a separate checklist-based quality pass and receive concrete follow-up items.
 - Added configurable quality rules: they can be enabled, disabled, and edited through the UI (`garda ui --actions`).
 - Improved `next-step` navigation: reduced the number of cases where the navigator could send the agent through an unnecessary extra review cycle.
