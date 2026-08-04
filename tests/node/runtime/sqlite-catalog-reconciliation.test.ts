@@ -99,6 +99,28 @@ function removeWorkspace(workspaceRoot: string): void {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
 }
 
+function readCanonicalLifecycleRange(
+    workspaceRoot: string,
+    taskId: string
+): { count: number; firstUtc: string; lastUtc: string } {
+    const eventLines = fs.readFileSync(
+        path.join(workspaceRoot, 'runtime', 'task-events', `${taskId}.jsonl`),
+        'utf8'
+    ).split(/\r?\n/u).filter((line) => line.trim().length > 0);
+    const timestamps = eventLines.map((line) => {
+        const event = JSON.parse(line) as { task_id?: unknown; timestamp_utc?: unknown };
+        assert.equal(event.task_id, taskId);
+        assert.equal(typeof event.timestamp_utc, 'string');
+        return event.timestamp_utc as string;
+    }).sort();
+    assert.ok(timestamps.length > 0);
+    return {
+        count: timestamps.length,
+        firstUtc: timestamps[0],
+        lastUtc: timestamps[timestamps.length - 1]
+    };
+}
+
 function appendReviewFixture(options: {
     workspaceRoot: string;
     taskId: string;
@@ -429,32 +451,44 @@ test('performance-qualified query uses SQLite and fails closed to files after ca
         assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
         const bulkWorkload = queryPerformanceQualifiedTaskActivitySummaries(workspaceRoot);
         if (bulkWorkload.source !== 'sqlite') assert.fail(bulkWorkload.diagnostic);
-        const expectedActivitySummaries = bulkWorkload.value;
-        assert.deepEqual(expectedActivitySummaries.map((row) => ({
-            taskId: row.taskId,
-            queuePosition: row.queuePosition,
-            lifecycleEventCount: row.lifecycleEventCount,
-            reviewAttemptCount: row.reviewAttemptCount,
-            reviewReceiptCount: row.reviewReceiptCount,
-            artifactCount: row.artifactCount,
-            metricSampleCount: row.metricSampleCount
-        })), [{
+        const firstTaskEvents = readCanonicalLifecycleRange(workspaceRoot, TASK_ID);
+        const secondTaskEvents = readCanonicalLifecycleRange(workspaceRoot, SECOND_TASK_ID);
+        assert.equal(firstTaskEvents.count, 4);
+        assert.equal(secondTaskEvents.count, 7);
+        const expectedActivitySummaries = [{
             taskId: TASK_ID,
             queuePosition: 0,
-            lifecycleEventCount: 4,
+            status: '🟨 IN_PROGRESS',
+            lifecycleEventCount: firstTaskEvents.count,
+            firstLifecycleEventUtc: firstTaskEvents.firstUtc,
+            lastLifecycleEventUtc: firstTaskEvents.lastUtc,
             reviewAttemptCount: 1,
             reviewReceiptCount: 1,
             artifactCount: 1,
-            metricSampleCount: 1
+            metricSampleCount: 1,
+            auditStatus: 'PASS',
+            verificationStatus: 'VERIFIED',
+            healthState: 'healthy',
+            retentionState: 'active',
+            retentionTier: 'active_evidence'
         }, {
             taskId: SECOND_TASK_ID,
             queuePosition: 1,
-            lifecycleEventCount: 7,
+            status: '🟦 TODO',
+            lifecycleEventCount: secondTaskEvents.count,
+            firstLifecycleEventUtc: secondTaskEvents.firstUtc,
+            lastLifecycleEventUtc: secondTaskEvents.lastUtc,
             reviewAttemptCount: 2,
             reviewReceiptCount: 2,
             artifactCount: 2,
-            metricSampleCount: 2
-        }]);
+            metricSampleCount: 2,
+            auditStatus: 'WARN',
+            verificationStatus: 'VERIFIED',
+            healthState: 'blocked',
+            retentionState: 'retained',
+            retentionTier: 'compressed_forensic_candidate'
+        }];
+        assert.deepEqual(bulkWorkload.value, expectedActivitySummaries);
 
         const sqliteReport = buildReportDataContract({
             repoRoot: workspaceRoot,
