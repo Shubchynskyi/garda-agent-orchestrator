@@ -11,15 +11,7 @@ import {
     type RuntimeMutationGenerationSnapshot
 } from '../../gate-runtime/runtime-mutation-generation';
 import type {
-    CatalogArtifact,
-    CatalogLifecycleEvent,
-    CatalogMetricSample,
-    CatalogRetentionState,
-    CatalogReviewAttempt,
-    CatalogReviewReceipt,
-    CatalogTaskLedger,
     CatalogTaskActivitySummary,
-    CatalogTaskRow,
     DerivedSqliteCatalog,
     SqliteCatalogInspection,
     SqliteCatalogSourceInspection
@@ -36,7 +28,7 @@ export type SqliteQueryFallbackReason =
     | 'not_performance_qualified'
     | 'query_failed';
 
-export const SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES = 200;
+export const SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES = 1_000;
 
 export type SqliteQueryResult<T> =
     | {
@@ -54,7 +46,6 @@ type SqliteQueryFallback = Extract<SqliteQueryResult<never>, { readonly source: 
 
 interface QuerySpec<T> {
     readonly sourceKinds: readonly string[];
-    readonly taskId?: string;
     readonly query: (catalog: DerivedSqliteCatalog) => T;
 }
 
@@ -66,31 +57,19 @@ function sha256File(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
-function taskScopedSourceMatches(source: SqliteCatalogSourceInspection, taskId: string): boolean {
-    const normalizedPath = source.sourcePath.replace(/\\/gu, '/');
-    return normalizedPath.endsWith(`/${taskId}.jsonl`)
-        || normalizedPath.endsWith(`/${taskId}.json`)
-        || normalizedPath.includes(`/${taskId}-`);
-}
-
 function relevantSources(
     sources: readonly SqliteCatalogSourceInspection[],
-    sourceKinds: readonly string[],
-    taskId?: string
+    sourceKinds: readonly string[]
 ): readonly SqliteCatalogSourceInspection[] {
     const allowedKinds = new Set(sourceKinds);
-    return sources.filter((source) => (
-        allowedKinds.has(source.sourceKind)
-        && (
-            taskId === undefined
-            || source.sourceKind === 'task_queue'
-            || source.sourceKind === 'metrics'
-            || taskScopedSourceMatches(source, taskId)
-        )
-    ));
+    return sources.filter((source) => allowedKinds.has(source.sourceKind));
 }
 
-const DIRECT_CANONICAL_SOURCE_KINDS = new Set(['task_queue', 'task_events', 'task_ledger', 'metrics']);
+// Review artifacts are indirect canonical sources: their ownership and integrity
+// declarations live in task events. A new canonical artifact therefore changes
+// a task-event source first, while an unreferenced file under runtime/reviews is
+// not part of the canonical artifact universe and must not invalidate the catalog.
+const SOURCE_UNIVERSE_DRIVER_KINDS = new Set(['task_queue', 'task_events', 'task_ledger', 'metrics']);
 
 function portableSourcePath(repoRoot: string, sourcePath: string): string {
     return path.relative(repoRoot, sourcePath).replace(/\\/gu, '/');
@@ -102,8 +81,7 @@ function sameSourceUniverse(left: readonly string[], right: readonly string[]): 
 
 function discoverCanonicalSourceUniverse(
     repoRoot: string,
-    sourceKinds: readonly string[],
-    taskId?: string
+    sourceKinds: readonly string[]
 ): readonly string[] | SqliteQueryFallback {
     const allowedKinds = new Set(sourceKinds);
     const discovered: string[] = [];
@@ -135,7 +113,7 @@ function discoverCanonicalSourceUniverse(
             const entries = fs.readdirSync(directory, { withFileTypes: true });
             for (const entry of entries) {
                 const entryTaskId = parseTaskId(entry.name);
-                if (entryTaskId === null || (taskId !== undefined && entryTaskId !== taskId)) continue;
+                if (entryTaskId === null) continue;
                 if (entry.isSymbolicLink() || !entry.isFile()) {
                     return fallback(
                         'source_changed',
@@ -200,13 +178,12 @@ function discoverCanonicalSourceUniverse(
 function verifySourceUniverse(
     repoRoot: string,
     sources: readonly SqliteCatalogSourceInspection[],
-    sourceKinds: readonly string[],
-    taskId?: string
+    sourceKinds: readonly string[]
 ): SqliteQueryFallback | null {
-    const discovered = discoverCanonicalSourceUniverse(repoRoot, sourceKinds, taskId);
+    const discovered = discoverCanonicalSourceUniverse(repoRoot, sourceKinds);
     if ('source' in discovered) return discovered;
     const projected = sources
-        .filter((source) => DIRECT_CANONICAL_SOURCE_KINDS.has(source.sourceKind))
+        .filter((source) => SOURCE_UNIVERSE_DRIVER_KINDS.has(source.sourceKind))
         .map((source) => source.sourcePath.replace(/\\/gu, '/'))
         .sort((left, right) => left.localeCompare(right));
     if (sameSourceUniverse(discovered, projected)) return null;
@@ -297,12 +274,11 @@ function queryCurrentCatalog<T>(repoRoot: string, spec: QuerySpec<T>): SqliteQue
                 `Catalog generation ${inspection.canonicalGeneration} does not match canonical generation ${runtimeGenerationBefore.generation}.`
             );
         }
-        const sources = relevantSources(opened.catalog.inspectSources(), spec.sourceKinds, spec.taskId);
+        const sources = relevantSources(opened.catalog.inspectSources(), spec.sourceKinds);
         const sourceUniverseFailure = verifySourceUniverse(
             resolvedRepoRoot,
             sources,
-            spec.sourceKinds,
-            spec.taskId
+            spec.sourceKinds
         );
         if (sourceUniverseFailure) return sourceUniverseFailure;
         const metadataFailure = verifySourceMetadata(resolvedRepoRoot, sources);
@@ -316,8 +292,7 @@ function queryCurrentCatalog<T>(repoRoot: string, spec: QuerySpec<T>): SqliteQue
         const postQuerySourceUniverseFailure = verifySourceUniverse(
             resolvedRepoRoot,
             sources,
-            spec.sourceKinds,
-            spec.taskId
+            spec.sourceKinds
         );
         if (postQuerySourceUniverseFailure) return postQuerySourceUniverseFailure;
         const postQueryMetadataFailure = verifySourceMetadata(resolvedRepoRoot, sources);
@@ -334,99 +309,12 @@ function queryCurrentCatalog<T>(repoRoot: string, spec: QuerySpec<T>): SqliteQue
     }
 }
 
-export function queryCurrentTasks(repoRoot: string, taskId?: string): SqliteQueryResult<readonly CatalogTaskRow[]> {
-    return queryCurrentCatalog(repoRoot, {
-        sourceKinds: ['task_queue'],
-        taskId,
-        query: (catalog) => catalog.queryTasks(taskId)
-    });
-}
-
-export function queryCurrentLifecycleEvents(
-    repoRoot: string,
-    taskId?: string
-): SqliteQueryResult<readonly CatalogLifecycleEvent[]> {
-    return queryCurrentCatalog(repoRoot, {
-        sourceKinds: ['task_events'],
-        taskId,
-        query: (catalog) => catalog.queryLifecycleEvents(taskId)
-    });
-}
-
-export function queryCurrentReviewAttempts(
-    repoRoot: string,
-    taskId?: string
-): SqliteQueryResult<readonly CatalogReviewAttempt[]> {
-    return queryCurrentCatalog(repoRoot, {
-        sourceKinds: ['task_events'],
-        taskId,
-        query: (catalog) => catalog.queryReviewAttempts(taskId)
-    });
-}
-
-export function queryCurrentReviewReceipts(
-    repoRoot: string,
-    taskId?: string
-): SqliteQueryResult<readonly CatalogReviewReceipt[]> {
-    return queryCurrentCatalog(repoRoot, {
-        sourceKinds: ['task_events'],
-        taskId,
-        query: (catalog) => catalog.queryReviewReceipts(taskId)
-    });
-}
-
-export function queryCurrentArtifacts(
-    repoRoot: string,
-    taskId?: string
-): SqliteQueryResult<readonly CatalogArtifact[]> {
-    return queryCurrentCatalog(repoRoot, {
-        sourceKinds: ['task_events', 'review_artifact'],
-        taskId,
-        query: (catalog) => catalog.queryArtifacts(taskId)
-    });
-}
-
-export function queryCurrentTaskLedgers(
-    repoRoot: string,
-    taskId?: string
-): SqliteQueryResult<readonly CatalogTaskLedger[]> {
-    return queryCurrentCatalog(repoRoot, {
-        sourceKinds: ['task_ledger'],
-        taskId,
-        query: (catalog) => catalog.queryTaskLedgers(taskId)
-    });
-}
-
-export function queryCurrentRetentionStates(
-    repoRoot: string,
-    taskId?: string
-): SqliteQueryResult<readonly CatalogRetentionState[]> {
-    return queryCurrentCatalog(repoRoot, {
-        sourceKinds: ['task_ledger'],
-        taskId,
-        query: (catalog) => catalog.queryRetentionStates(taskId)
-    });
-}
-
-export function queryCurrentMetricSamples(
-    repoRoot: string,
-    taskId?: string
-): SqliteQueryResult<readonly CatalogMetricSample[]> {
-    return queryCurrentCatalog(repoRoot, {
-        sourceKinds: ['metrics'],
-        taskId,
-        query: (catalog) => catalog.queryMetricSamples(taskId)
-    });
-}
-
-export function queryCurrentTaskActivitySummaries(
-    repoRoot: string,
-    taskId?: string
+function queryQualifiedTaskActivityCatalog(
+    repoRoot: string
 ): SqliteQueryResult<readonly CatalogTaskActivitySummary[]> {
     return queryCurrentCatalog(repoRoot, {
         sourceKinds: ['task_queue', 'task_events', 'review_artifact', 'task_ledger', 'metrics'],
-        taskId,
-        query: (catalog) => catalog.queryTaskActivitySummaries(taskId)
+        query: (catalog) => catalog.queryTaskActivitySummaries()
     });
 }
 
@@ -455,5 +343,5 @@ export function queryPerformanceQualifiedTaskActivitySummaries(
             `Bulk SQLite summaries require at least ${SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES} task event files.`
         );
     }
-    return queryCurrentTaskActivitySummaries(repoRoot);
+    return queryQualifiedTaskActivityCatalog(repoRoot);
 }

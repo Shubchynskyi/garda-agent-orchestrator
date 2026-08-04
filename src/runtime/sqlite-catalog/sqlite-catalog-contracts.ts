@@ -315,15 +315,7 @@ export interface DerivedSqliteCatalog {
     inspect(): SqliteCatalogInspection;
     inspectSources(): readonly SqliteCatalogSourceInspection[];
     inspectParity(projection: DerivedCatalogProjection): SqliteCatalogParityInspection;
-    queryTasks(taskId?: string): readonly CatalogTaskRow[];
-    queryLifecycleEvents(taskId?: string): readonly CatalogLifecycleEvent[];
-    queryReviewAttempts(taskId?: string): readonly CatalogReviewAttempt[];
-    queryReviewReceipts(taskId?: string): readonly CatalogReviewReceipt[];
-    queryArtifacts(taskId?: string): readonly CatalogArtifact[];
-    queryTaskLedgers(taskId?: string): readonly CatalogTaskLedger[];
-    queryRetentionStates(taskId?: string): readonly CatalogRetentionState[];
-    queryMetricSamples(taskId?: string): readonly CatalogMetricSample[];
-    queryTaskActivitySummaries(taskId?: string): readonly CatalogTaskActivitySummary[];
+    queryTaskActivitySummaries(): readonly CatalogTaskActivitySummary[];
     refreshProjectMemoryIndex(options?: ProjectMemoryIndexRefreshOptions): ProjectMemoryIndexRefreshResult;
     inspectProjectMemoryIndex(): ProjectMemoryIndexInspection;
     searchProjectMemory(query: string, options?: ProjectMemorySearchOptions): ProjectMemorySearchResult;

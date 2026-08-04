@@ -65,16 +65,7 @@ export {
     scheduleDerivedSqliteCatalogReconciliation
 } from './sqlite-catalog-reconciliation';
 export {
-    queryCurrentArtifacts,
-    queryCurrentLifecycleEvents,
-    queryCurrentMetricSamples,
-    queryCurrentRetentionStates,
-    queryCurrentReviewAttempts,
-    queryCurrentReviewReceipts,
-    queryCurrentTaskLedgers,
-    queryCurrentTaskActivitySummaries,
-    queryPerformanceQualifiedTaskActivitySummaries,
-    queryCurrentTasks
+    queryPerformanceQualifiedTaskActivitySummaries
 } from './sqlite-query-repository';
 export type {
     SqliteQueryFallbackReason,

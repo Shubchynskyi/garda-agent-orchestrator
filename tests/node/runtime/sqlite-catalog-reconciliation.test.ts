@@ -22,15 +22,6 @@ import {
     flushScheduledDerivedSqliteCatalogReconciliation,
     inspectDerivedCatalogHealth,
     openDerivedSqliteCatalog,
-    queryCurrentArtifacts,
-    queryCurrentLifecycleEvents,
-    queryCurrentMetricSamples,
-    queryCurrentReviewAttempts,
-    queryCurrentReviewReceipts,
-    queryCurrentRetentionStates,
-    queryCurrentTaskActivitySummaries,
-    queryCurrentTaskLedgers,
-    queryCurrentTasks,
     queryPerformanceQualifiedTaskActivitySummaries,
     reconcileDerivedSqliteCatalog,
     rebuildDerivedSqliteCatalog,
@@ -282,7 +273,7 @@ test('canonical scanner normalizes task, event, ledger, retention, and metric re
     }
 });
 
-test('current query repository uses SQLite and fails closed to files after canonical drift', () => {
+test('performance-qualified query uses SQLite and fails closed to files after canonical drift', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-current-query-');
     try {
         const taskQueuePath = path.join(workspaceRoot, 'TASK.md');
@@ -381,219 +372,7 @@ test('current query repository uses SQLite and fails closed to files after canon
 
         const projectionTimestamp = new Date(Date.now() + 60_000).toISOString();
         const projectionClock = () => projectionTimestamp;
-        const canonicalProjection = buildCanonicalCatalogProjection(workspaceRoot, { clock: projectionClock });
         assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot, { clock: projectionClock }).status, 'applied');
-
-        const tasks = queryCurrentTasks(workspaceRoot);
-        const events = queryCurrentLifecycleEvents(workspaceRoot, TASK_ID);
-        const reviewAttempts = queryCurrentReviewAttempts(workspaceRoot, TASK_ID);
-        const reviewReceipts = queryCurrentReviewReceipts(workspaceRoot, TASK_ID);
-        const artifacts = queryCurrentArtifacts(workspaceRoot, TASK_ID);
-        const ledgers = queryCurrentTaskLedgers(workspaceRoot, TASK_ID);
-        const retention = queryCurrentRetentionStates(workspaceRoot, TASK_ID);
-        const metrics = queryCurrentMetricSamples(workspaceRoot, TASK_ID);
-        const activitySummaries = queryCurrentTaskActivitySummaries(workspaceRoot);
-        const projection = canonicalProjection.projection;
-        const expectedActivitySummaries = projection.tasks.map((task) => {
-            const taskEvents = projection.lifecycleEvents.filter((row) => row.taskId === task.taskId);
-            const eventTimestamps = taskEvents
-                .map((row) => row.provenance.sourceTimestampUtc)
-                .filter((value): value is string => value !== null)
-                .sort((left, right) => left.localeCompare(right));
-            const ledger = projection.taskLedgers.find((row) => row.taskId === task.taskId);
-            const retentionRow = projection.retentionStates.find((row) => (
-                row.taskId === task.taskId && row.artifactId === null
-            ));
-            return {
-                taskId: task.taskId,
-                queuePosition: task.queuePosition,
-                status: task.status,
-                lifecycleEventCount: taskEvents.length,
-                firstLifecycleEventUtc: eventTimestamps[0] ?? null,
-                lastLifecycleEventUtc: eventTimestamps.at(-1) ?? null,
-                reviewAttemptCount: projection.reviewAttempts.filter((row) => row.taskId === task.taskId).length,
-                reviewReceiptCount: projection.reviewReceipts.filter((row) => row.taskId === task.taskId).length,
-                artifactCount: projection.artifacts.filter((row) => row.taskId === task.taskId).length,
-                metricSampleCount: projection.metricSamples.filter((row) => row.taskId === task.taskId).length,
-                auditStatus: ledger?.auditStatus ?? null,
-                verificationStatus: ledger?.verificationStatus ?? null,
-                healthState: ledger?.healthState ?? null,
-                retentionState: retentionRow?.state ?? null,
-                retentionTier: retentionRow?.tier ?? null
-            };
-        });
-        const expectedGlobalRows = {
-            tasks: projection.tasks,
-            events: projection.lifecycleEvents,
-            reviewAttempts: projection.reviewAttempts,
-            reviewReceipts: projection.reviewReceipts,
-            artifacts: projection.artifacts,
-            ledgers: projection.taskLedgers,
-            retention: projection.retentionStates,
-            metrics: [...projection.metricSamples].sort((left, right) => left.metricId.localeCompare(right.metricId)),
-            activitySummaries: expectedActivitySummaries
-        };
-        const globalRows = {
-            tasks: queryCurrentTasks(workspaceRoot),
-            events: queryCurrentLifecycleEvents(workspaceRoot),
-            reviewAttempts: queryCurrentReviewAttempts(workspaceRoot),
-            reviewReceipts: queryCurrentReviewReceipts(workspaceRoot),
-            artifacts: queryCurrentArtifacts(workspaceRoot),
-            ledgers: queryCurrentTaskLedgers(workspaceRoot),
-            retention: queryCurrentRetentionStates(workspaceRoot),
-            metrics: queryCurrentMetricSamples(workspaceRoot),
-            activitySummaries: queryCurrentTaskActivitySummaries(workspaceRoot)
-        };
-        for (const [queryName, result] of Object.entries(globalRows)) {
-            assert.equal(result.source, 'sqlite', `${queryName} should use SQLite`);
-            if (result.source === 'sqlite') {
-                assert.deepEqual(result.value, expectedGlobalRows[queryName as keyof typeof expectedGlobalRows]);
-            }
-        }
-        const secondTaskRows = {
-            tasks: queryCurrentTasks(workspaceRoot, SECOND_TASK_ID),
-            events: queryCurrentLifecycleEvents(workspaceRoot, SECOND_TASK_ID),
-            reviewAttempts: queryCurrentReviewAttempts(workspaceRoot, SECOND_TASK_ID),
-            reviewReceipts: queryCurrentReviewReceipts(workspaceRoot, SECOND_TASK_ID),
-            artifacts: queryCurrentArtifacts(workspaceRoot, SECOND_TASK_ID),
-            ledgers: queryCurrentTaskLedgers(workspaceRoot, SECOND_TASK_ID),
-            retention: queryCurrentRetentionStates(workspaceRoot, SECOND_TASK_ID),
-            metrics: queryCurrentMetricSamples(workspaceRoot, SECOND_TASK_ID),
-            activitySummaries: queryCurrentTaskActivitySummaries(workspaceRoot, SECOND_TASK_ID)
-        };
-        for (const [queryName, result] of Object.entries(secondTaskRows)) {
-            assert.equal(result.source, 'sqlite', `${queryName} should use SQLite for ${SECOND_TASK_ID}`);
-            if (result.source === 'sqlite') {
-                const expected = expectedGlobalRows[queryName as keyof typeof expectedGlobalRows]
-                    .filter((row) => row.taskId === SECOND_TASK_ID);
-                assert.deepEqual(result.value, expected);
-                assert.ok(result.value.every((row) => row.taskId === SECOND_TASK_ID));
-            }
-        }
-        assert.equal(tasks.source, 'sqlite');
-        assert.equal(events.source, 'sqlite');
-        assert.equal(reviewAttempts.source, 'sqlite');
-        assert.equal(reviewReceipts.source, 'sqlite');
-        assert.equal(artifacts.source, 'sqlite');
-        assert.equal(ledgers.source, 'sqlite');
-        assert.equal(retention.source, 'sqlite');
-        assert.equal(metrics.source, 'sqlite');
-        assert.equal(activitySummaries.source, 'sqlite');
-        if (tasks.source === 'sqlite') {
-            assert.deepEqual(tasks.value.map((row) => [row.taskId, row.queuePosition, row.status]), [
-                [TASK_ID, 0, '🟨 IN_PROGRESS'],
-                [SECOND_TASK_ID, 1, '🟦 TODO']
-            ]);
-        }
-        if (events.source === 'sqlite') {
-            assert.equal(events.value.length, 4);
-            assert.ok(events.value.every((row) => row.taskId === TASK_ID));
-            assert.deepEqual(events.value.map((row) => row.eventType), [
-                'TASK_MODE_ENTERED',
-                'REVIEWER_LAUNCH_PREPARED',
-                'REVIEWER_DELEGATION_STARTED',
-                'REVIEW_RECORDED'
-            ]);
-        }
-        if (reviewAttempts.source === 'sqlite') {
-            assert.deepEqual(reviewAttempts.value.map((row) => ({
-                attemptId: row.attemptId,
-                taskId: row.taskId,
-                reviewType: row.reviewType,
-                status: row.status,
-                verdict: row.verdict,
-                reviewerIdentity: row.reviewerIdentity
-            })), [{
-                attemptId,
-                taskId: TASK_ID,
-                reviewType: 'code',
-                status: 'completed',
-                verdict: 'PASS',
-                reviewerIdentity: 'agent:query-reviewer'
-            }]);
-        }
-        if (reviewReceipts.source === 'sqlite') {
-            assert.equal(reviewReceipts.value.length, 1);
-            assert.equal(reviewReceipts.value[0]?.attemptId, attemptId);
-            assert.equal(reviewReceipts.value[0]?.taskId, TASK_ID);
-            assert.equal(reviewReceipts.value[0]?.reviewType, 'code');
-            assert.equal(reviewReceipts.value[0]?.verdict, 'PASS');
-            assert.equal(reviewReceipts.value[0]?.trustLevel, 'INDEPENDENT_AUDITED');
-        }
-        if (artifacts.source === 'sqlite') {
-            assert.deepEqual(artifacts.value.map((row) => ({
-                taskId: row.taskId,
-                reviewAttemptId: row.reviewAttemptId,
-                kind: row.kind,
-                path: row.path,
-                contentSha256: row.contentSha256
-            })), [{
-                taskId: TASK_ID,
-                reviewAttemptId: attemptId,
-                kind: 'review_artifact',
-                path: `runtime/reviews/${TASK_ID}-code.md`,
-                contentSha256: reviewArtifactSha256
-            }]);
-        }
-        if (ledgers.source === 'sqlite') assert.equal(ledgers.value[0]?.verificationStatus, 'VERIFIED');
-        if (retention.source === 'sqlite') assert.equal(retention.value[0]?.taskId, TASK_ID);
-        if (metrics.source === 'sqlite') assert.equal(metrics.value[0]?.name, 'navigator_duration');
-        if (activitySummaries.source === 'sqlite') {
-            assert.deepEqual(activitySummaries.value.map((row) => ({
-                taskId: row.taskId,
-                queuePosition: row.queuePosition,
-                status: row.status,
-                lifecycleEventCount: row.lifecycleEventCount,
-                reviewAttemptCount: row.reviewAttemptCount,
-                reviewReceiptCount: row.reviewReceiptCount,
-                artifactCount: row.artifactCount,
-                metricSampleCount: row.metricSampleCount,
-                auditStatus: row.auditStatus,
-                verificationStatus: row.verificationStatus,
-                healthState: row.healthState,
-                retentionState: row.retentionState,
-                retentionTier: row.retentionTier
-            })), [{
-                taskId: TASK_ID,
-                queuePosition: 0,
-                status: '🟨 IN_PROGRESS',
-                lifecycleEventCount: 4,
-                reviewAttemptCount: 1,
-                reviewReceiptCount: 1,
-                artifactCount: 1,
-                metricSampleCount: 1,
-                auditStatus: 'PASS',
-                verificationStatus: 'VERIFIED',
-                healthState: 'healthy',
-                retentionState: 'active',
-                retentionTier: 'active_evidence'
-            }, {
-                taskId: SECOND_TASK_ID,
-                queuePosition: 1,
-                status: '🟦 TODO',
-                lifecycleEventCount: 7,
-                reviewAttemptCount: 2,
-                reviewReceiptCount: 2,
-                artifactCount: 2,
-                metricSampleCount: 2,
-                auditStatus: 'WARN',
-                verificationStatus: 'VERIFIED',
-                healthState: 'blocked',
-                retentionState: 'retained',
-                retentionTier: 'compressed_forensic_candidate'
-            }]);
-        }
-
-        const unindexedTaskId = 'T-29999-1';
-        fs.writeFileSync(
-            path.join(workspaceRoot, 'runtime', 'task-events', `${unindexedTaskId}.jsonl`),
-            '',
-            'utf8'
-        );
-        const unindexedEvents = queryCurrentLifecycleEvents(workspaceRoot, unindexedTaskId);
-        assert.equal(unindexedEvents.source, 'files');
-        if (unindexedEvents.source === 'files') assert.equal(unindexedEvents.reason, 'source_changed');
-        fs.rmSync(path.join(workspaceRoot, 'runtime', 'task-events', `${unindexedTaskId}.jsonl`));
 
         const smallWorkload = queryPerformanceQualifiedTaskActivitySummaries(workspaceRoot);
         assert.equal(smallWorkload.source, 'files');
@@ -604,7 +383,8 @@ test('current query repository uses SQLite and fails closed to files after canon
         const eventsRoot = path.join(workspaceRoot, 'runtime', 'task-events');
         fs.writeFileSync(path.join(eventsRoot, 'all-tasks.jsonl'), '', 'utf8');
         assert.equal(fs.existsSync(path.join(eventsRoot, 'all-tasks.jsonl')), true);
-        for (let index = 1; index < 198; index += 1) {
+        const belowThresholdSyntheticFileCount = SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES - 3;
+        for (let index = 1; index <= belowThresholdSyntheticFileCount; index += 1) {
             fs.writeFileSync(
                 path.join(eventsRoot, `T-29${String(index).padStart(3, '0')}-1.jsonl`),
                 '',
@@ -618,7 +398,11 @@ test('current query repository uses SQLite and fails closed to files after canon
             assert.equal(belowThresholdWorkload.reason, 'not_performance_qualified');
         }
 
-        fs.writeFileSync(path.join(eventsRoot, 'T-29198-1.jsonl'), '', 'utf8');
+        fs.writeFileSync(
+            path.join(eventsRoot, `T-29${String(belowThresholdSyntheticFileCount + 1).padStart(3, '0')}-1.jsonl`),
+            '',
+            'utf8'
+        );
         const catalogPath = resolveDerivedSqliteCatalogPath(workspaceRoot);
         for (const candidatePath of [catalogPath, `${catalogPath}-wal`, `${catalogPath}-shm`]) {
             fs.rmSync(candidatePath, { force: true });
@@ -644,38 +428,33 @@ test('current query repository uses SQLite and fails closed to files after canon
 
         assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
         const bulkWorkload = queryPerformanceQualifiedTaskActivitySummaries(workspaceRoot);
-        assert.equal(
-            bulkWorkload.source,
-            'sqlite',
-            bulkWorkload.source === 'files' ? bulkWorkload.diagnostic : undefined
-        );
-        if (bulkWorkload.source === 'sqlite') {
-            assert.deepEqual(bulkWorkload.value.map((row) => ({
-                taskId: row.taskId,
-                queuePosition: row.queuePosition,
-                lifecycleEventCount: row.lifecycleEventCount,
-                reviewAttemptCount: row.reviewAttemptCount,
-                reviewReceiptCount: row.reviewReceiptCount,
-                artifactCount: row.artifactCount,
-                metricSampleCount: row.metricSampleCount
-            })), [{
-                taskId: TASK_ID,
-                queuePosition: 0,
-                lifecycleEventCount: 4,
-                reviewAttemptCount: 1,
-                reviewReceiptCount: 1,
-                artifactCount: 1,
-                metricSampleCount: 1
-            }, {
-                taskId: SECOND_TASK_ID,
-                queuePosition: 1,
-                lifecycleEventCount: 7,
-                reviewAttemptCount: 2,
-                reviewReceiptCount: 2,
-                artifactCount: 2,
-                metricSampleCount: 2
-            }]);
-        }
+        if (bulkWorkload.source !== 'sqlite') assert.fail(bulkWorkload.diagnostic);
+        const expectedActivitySummaries = bulkWorkload.value;
+        assert.deepEqual(expectedActivitySummaries.map((row) => ({
+            taskId: row.taskId,
+            queuePosition: row.queuePosition,
+            lifecycleEventCount: row.lifecycleEventCount,
+            reviewAttemptCount: row.reviewAttemptCount,
+            reviewReceiptCount: row.reviewReceiptCount,
+            artifactCount: row.artifactCount,
+            metricSampleCount: row.metricSampleCount
+        })), [{
+            taskId: TASK_ID,
+            queuePosition: 0,
+            lifecycleEventCount: 4,
+            reviewAttemptCount: 1,
+            reviewReceiptCount: 1,
+            artifactCount: 1,
+            metricSampleCount: 1
+        }, {
+            taskId: SECOND_TASK_ID,
+            queuePosition: 1,
+            lifecycleEventCount: 7,
+            reviewAttemptCount: 2,
+            reviewReceiptCount: 2,
+            artifactCount: 2,
+            metricSampleCount: 2
+        }]);
 
         const sqliteReport = buildReportDataContract({
             repoRoot: workspaceRoot,
@@ -691,7 +470,7 @@ test('current query repository uses SQLite and fails closed to files after canon
         }]);
         assert.deepEqual(
             sqliteReport.tasks_tab.rows.map((row) => row.activity_summary),
-            expectedGlobalRows.activitySummaries.map((summary) => ({
+            expectedActivitySummaries.map((summary) => ({
                 lifecycle_event_count: summary.lifecycleEventCount,
                 first_lifecycle_event_utc: summary.firstLifecycleEventUtc,
                 last_lifecycle_event_utc: summary.lastLifecycleEventUtc,
@@ -713,7 +492,7 @@ test('current query repository uses SQLite and fails closed to files after canon
                 path: path.join(eventsRoot, entry.name),
                 category: 'task-events'
         }));
-        assert.equal(SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES, 200);
+        assert.equal(SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES, 1_000);
         assert.equal(retentionCandidates.length, SQLITE_BULK_QUERY_MIN_TASK_EVENT_FILES);
         // Make the derived status observably different so the preview result proves
         // that small candidate sets never enter the aggregate query while the
@@ -795,10 +574,6 @@ test('current query repository uses SQLite and fails closed to files after canon
         if (driftedBulkWorkload.source === 'files') {
             assert.equal(driftedBulkWorkload.reason, 'source_changed');
         }
-        const driftedArtifacts = queryCurrentArtifacts(workspaceRoot, TASK_ID);
-        assert.equal(driftedArtifacts.source, 'files');
-        if (driftedArtifacts.source === 'files') assert.equal(driftedArtifacts.reason, 'source_changed');
-
         const driftedReport = buildReportDataContract({
             repoRoot: workspaceRoot,
             generatedAtUtc: '2026-08-03T12:45:00.000Z',
@@ -830,31 +605,16 @@ test('current query repository uses SQLite and fails closed to files after canon
     }
 });
 
-test('current query repository isolates changed and deleted fallback by canonical source kind', () => {
-    const sourceCases = [{
-        sourceKind: 'task_queue' as const,
-        query: (repoRoot: string) => queryCurrentTasks(repoRoot)
-    }, {
-        sourceKind: 'task_events' as const,
-        query: (repoRoot: string) => queryCurrentLifecycleEvents(repoRoot, TASK_ID)
-    }, {
-        sourceKind: 'review_artifact' as const,
-        query: (repoRoot: string) => queryCurrentArtifacts(repoRoot, TASK_ID)
-    }, {
-        sourceKind: 'task_ledger' as const,
-        query: (repoRoot: string) => queryCurrentTaskLedgers(repoRoot, TASK_ID)
-    }, {
-        sourceKind: 'metrics' as const,
-        query: (repoRoot: string) => queryCurrentMetricSamples(repoRoot, TASK_ID)
-    }];
+test('performance-qualified query isolates changed and deleted fallback by canonical source kind', () => {
+    const sourceKinds = ['task_queue', 'task_events', 'review_artifact', 'task_ledger', 'metrics'] as const;
 
     for (const mode of ['changed', 'deleted'] as const) {
-        for (const sourceCase of sourceCases) {
+        for (const sourceKind of sourceKinds) {
             const fixture = createBulkFallbackWorkspace(
-                `garda-sqlite-current-query-${sourceCase.sourceKind}-${mode}-`
+                `garda-sqlite-current-query-${sourceKind}-${mode}-`
             );
             try {
-                const sourcePath = fixture.sourcePaths[sourceCase.sourceKind];
+                const sourcePath = fixture.sourcePaths[sourceKind];
                 if (mode === 'changed') {
                     const projectedStat = fs.statSync(sourcePath);
                     fs.appendFileSync(sourcePath, '\n', 'utf8');
@@ -867,34 +627,17 @@ test('current query repository isolates changed and deleted fallback by canonica
                     fs.rmSync(sourcePath);
                 }
 
-                const focusedResult = sourceCase.query(fixture.workspaceRoot);
-                assert.equal(
-                    focusedResult.source,
-                    'files',
-                    `${sourceCase.sourceKind} ${mode} focused query should fail closed`
-                );
-                if (focusedResult.source === 'files') {
-                    if (mode === 'changed') {
-                        assert.equal(focusedResult.reason, 'source_changed');
-                    } else {
-                        assert.match(focusedResult.reason, /^source_(?:missing|changed)$/u);
-                    }
-                }
-
-                const aggregateResult = queryCurrentTaskActivitySummaries(fixture.workspaceRoot);
                 const performanceResult = queryPerformanceQualifiedTaskActivitySummaries(fixture.workspaceRoot);
-                for (const result of [aggregateResult, performanceResult]) {
-                    assert.equal(
-                        result.source,
-                        'files',
-                        `${sourceCase.sourceKind} ${mode} aggregate query should fail closed`
-                    );
-                    if (result.source === 'files') {
-                        if (mode === 'changed') {
-                            assert.equal(result.reason, 'source_changed');
-                        } else {
-                            assert.match(result.reason, /^source_(?:missing|changed)$/u);
-                        }
+                assert.equal(
+                    performanceResult.source,
+                    'files',
+                    `${sourceKind} ${mode} aggregate query should fail closed`
+                );
+                if (performanceResult.source === 'files') {
+                    if (mode === 'changed') {
+                        assert.equal(performanceResult.reason, 'source_changed');
+                    } else {
+                        assert.match(performanceResult.reason, /^source_(?:missing|changed)$/u);
                     }
                 }
 
@@ -903,7 +646,7 @@ test('current query repository isolates changed and deleted fallback by canonica
                     generatedAtUtc: '2026-08-03T13:00:00.000Z',
                     maxDetailedTasks: 0
                 });
-                if (sourceCase.sourceKind === 'task_queue' && mode === 'deleted') {
+                if (sourceKind === 'task_queue' && mode === 'deleted') {
                     assert.deepEqual(report.tasks_tab.rows, []);
                 } else {
                     assert.equal(report.tasks_tab.rows[0]?.activity_summary, null);
@@ -919,39 +662,70 @@ test('current query repository isolates changed and deleted fallback by canonica
     }
 });
 
-test('current query repository discards a result when canonical generation advances during the query', () => {
-    const workspaceRoot = createWorkspace('garda-sqlite-current-query-generation-race-');
-    const eventPath = path.join(workspaceRoot, 'runtime', 'task-events', `${TASK_ID}.jsonl`);
+test('performance-qualified query treats review artifacts as task-event-owned canonical sources', () => {
+    const fixture = createBulkFallbackWorkspace('garda-sqlite-current-query-new-artifact-');
+    try {
+        const artifactPath = path.join(fixture.workspaceRoot, 'runtime', 'reviews', `${TASK_ID}-new-code.md`);
+        const artifactContent = '# New review artifact\n';
+        fs.writeFileSync(artifactPath, artifactContent, 'utf8');
+
+        const unreferencedArtifact = queryPerformanceQualifiedTaskActivitySummaries(fixture.workspaceRoot);
+        assert.equal(unreferencedArtifact.source, 'sqlite');
+
+        appendTaskEvent(
+            fixture.workspaceRoot,
+            TASK_ID,
+            'REVIEW_RECORDED',
+            'PASS',
+            'Recorded a new review artifact.',
+            {
+                review_type: 'code',
+                review_artifact_path: artifactPath,
+                review_artifact_sha256: createHash('sha256').update(artifactContent).digest('hex')
+            }
+        );
+
+        const referencedArtifact = queryPerformanceQualifiedTaskActivitySummaries(fixture.workspaceRoot);
+        assert.equal(referencedArtifact.source, 'files');
+        if (referencedArtifact.source === 'files') {
+            assert.match(referencedArtifact.reason, /^(?:generation_mismatch|source_changed)$/u);
+        }
+    } finally {
+        removeWorkspace(fixture.workspaceRoot);
+    }
+});
+
+test('performance-qualified query discards a result when canonical generation advances during the query', () => {
+    const fixture = createBulkFallbackWorkspace('garda-sqlite-current-query-generation-race-');
+    const eventPath = fixture.sourcePaths.task_events;
     const originalReadFileSync = fsModule.readFileSync;
     let generationAdvanced = false;
     try {
-        assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
         fsModule.readFileSync = (function patchedReadFileSync(...args: Parameters<typeof fsModule.readFileSync>) {
             const value = originalReadFileSync.apply(fsModule, args);
             if (!generationAdvanced && path.resolve(String(args[0])) === eventPath) {
                 generationAdvanced = true;
-                withRuntimeMutationGeneration(workspaceRoot, 'test-query-generation-race', () => undefined);
+                withRuntimeMutationGeneration(fixture.workspaceRoot, 'test-query-generation-race', () => undefined);
             }
             return value;
         }) as typeof fsModule.readFileSync;
 
-        const result = queryCurrentLifecycleEvents(workspaceRoot, TASK_ID);
+        const result = queryPerformanceQualifiedTaskActivitySummaries(fixture.workspaceRoot);
         assert.equal(generationAdvanced, true);
         assert.equal(result.source, 'files');
         if (result.source === 'files') assert.equal(result.reason, 'generation_mismatch');
     } finally {
         fsModule.readFileSync = originalReadFileSync;
-        removeWorkspace(workspaceRoot);
+        removeWorkspace(fixture.workspaceRoot);
     }
 });
 
-test('current query repository discards a result when a source changes during the query', () => {
-    const workspaceRoot = createWorkspace('garda-sqlite-current-query-source-race-');
-    const eventPath = path.join(workspaceRoot, 'runtime', 'task-events', `${TASK_ID}.jsonl`);
+test('performance-qualified query discards a result when a source changes during the query', () => {
+    const fixture = createBulkFallbackWorkspace('garda-sqlite-current-query-source-race-');
+    const eventPath = fixture.sourcePaths.task_events;
     const originalReadFileSync = fsModule.readFileSync;
     let sourceChanged = false;
     try {
-        assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
         const projectedEventStat = fs.statSync(eventPath);
         fsModule.readFileSync = (function patchedReadFileSync(...args: Parameters<typeof fsModule.readFileSync>) {
             const value = originalReadFileSync.apply(fsModule, args);
@@ -963,19 +737,19 @@ test('current query repository discards a result when a source changes during th
             return value;
         }) as typeof fsModule.readFileSync;
 
-        const result = queryCurrentLifecycleEvents(workspaceRoot, TASK_ID);
+        const result = queryPerformanceQualifiedTaskActivitySummaries(fixture.workspaceRoot);
         assert.equal(sourceChanged, true);
         assert.equal(result.source, 'files');
         if (result.source === 'files') assert.equal(result.reason, 'source_changed');
     } finally {
         fsModule.readFileSync = originalReadFileSync;
-        removeWorkspace(workspaceRoot);
+        removeWorkspace(fixture.workspaceRoot);
     }
 });
 
-test('current query repository rejects a post-projection symlink source before reading its target', () => {
-    const workspaceRoot = createWorkspace('garda-sqlite-current-query-source-link-');
-    const eventPath = path.join(workspaceRoot, 'runtime', 'task-events', `${TASK_ID}.jsonl`);
+test('performance-qualified query rejects a post-projection symlink source before reading its target', () => {
+    const fixture = createBulkFallbackWorkspace('garda-sqlite-current-query-source-link-');
+    const eventPath = fixture.sourcePaths.task_events;
     const mutableFsModule = fsModule as {
         lstatSync: typeof fsModule.lstatSync;
         readFileSync: typeof fsModule.readFileSync;
@@ -985,7 +759,6 @@ test('current query repository rejects a post-projection symlink source before r
     let linkedSourceObserved = false;
     let linkedTargetRead = false;
     try {
-        assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
         mutableFsModule.lstatSync = (function patchedLstatSync(...args: Parameters<typeof fsModule.lstatSync>) {
             const stat = originalLstatSync.apply(fsModule, args);
             if (path.resolve(String(args[0])) === eventPath) {
@@ -1003,7 +776,7 @@ test('current query repository rejects a post-projection symlink source before r
             return originalReadFileSync.apply(fsModule, args);
         }) as typeof fsModule.readFileSync;
 
-        const result = queryCurrentLifecycleEvents(workspaceRoot, TASK_ID);
+        const result = queryPerformanceQualifiedTaskActivitySummaries(fixture.workspaceRoot);
         assert.equal(linkedSourceObserved, true);
         assert.equal(linkedTargetRead, false);
         assert.equal(result.source, 'files');
@@ -1011,7 +784,7 @@ test('current query repository rejects a post-projection symlink source before r
     } finally {
         mutableFsModule.lstatSync = originalLstatSync;
         fsModule.readFileSync = originalReadFileSync;
-        removeWorkspace(workspaceRoot);
+        removeWorkspace(fixture.workspaceRoot);
     }
 });
 

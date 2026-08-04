@@ -405,7 +405,9 @@ Measurements cover:
 - forced file fallback for every adopted query.
 
 Warm measurements use at least 10 discarded warmups and 30 recorded samples and
-report median and p95. Cold-process and rebuild samples are reported separately.
+report p95, which is the acceptance metric below. Median is retained as an
+additional diagnostic when the benchmark capture records it. Cold-process and
+rebuild samples are reported separately.
 No cross-machine absolute latency claim is valid.
 
 Query adoption requires all of the following:
@@ -425,13 +427,40 @@ reliability plus tested export, backup, restore, downgrade, and rollback paths.
 The T-1000-4 local benchmark and the resulting adaptive adoption boundary are
 recorded in [SQLite Query Adoption Evidence](./sqlite-query-adoption-evidence.md).
 
+## Authority Cutover Decision
+
+SQLite remains a derived, workspace-local projection. No queue, lifecycle,
+review-metadata, or project-memory domain moves to SQLite authority.
+
+The pilot evidence does not justify a cutover:
+
+- only the stress-tier bulk task-activity aggregate qualified for SQLite, with
+  49.0 percent lower p95; task-queue lookup was materially slower through the
+  routed SQLite path at both fixture tiers and stays on the file reader;
+- current evidence covers focused validation and a local benchmark, not
+  sustained reliability across releases, interrupted upgrades, and real
+  workspace recovery cycles;
+- rebuild promotion has an internal recovery copy and rollback path for the
+  disposable projection, but there is no supported authoritative export,
+  operator restore, downgrade, or authority rollback workflow;
+- file fallback remains necessary for unavailable, stale, locked,
+  incompatible, corrupt, or performance-unqualified catalog states.
+
+The cutover may be reconsidered only after each proposed authoritative domain
+has workload-specific parity and latency evidence, sustained operational
+reliability, and deterministic export, backup, restore, downgrade, and rollback
+tests. Until then, canonical files remain the recovery and trust boundary, and
+SQLite-only completion, security, review, cleanup, or configuration decisions
+remain prohibited.
+
 ## Staged Rollout
 
 1. T-1000-2 builds the derived catalog without changing read authority.
 2. T-1000-3 adds canonical-first ingestion, parity, repair, and rebuild.
 3. T-1000-4 adopts only benchmark-qualified hot queries with file fallback.
 4. T-1000-5 adds hash-bound project-memory search indexing.
-5. T-1000-6 makes a separate, evidence-based authority decision.
+5. T-1000-6 retains canonical-file authority because the cutover prerequisites
+   are not satisfied.
 
 ## Primary References
 
