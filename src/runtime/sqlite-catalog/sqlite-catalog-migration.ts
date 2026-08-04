@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 // Immutable database identity and migration contract for the derived catalog.
 export const SQLITE_CATALOG_APPLICATION_ID = 0x47415231;
-export const SQLITE_CATALOG_SCHEMA_VERSION = 2;
+export const SQLITE_CATALOG_SCHEMA_VERSION = 3;
 export const SQLITE_CATALOG_BUSY_TIMEOUT_MS = 250;
 
 export interface SqliteCatalogMigration {
@@ -309,6 +309,78 @@ const MIGRATION_V2_SQL = `
         CHECK (canonical_generation IS NULL OR canonical_generation >= 0);
 `;
 
+const MIGRATION_V3_NAME = 'project-memory-search-and-relationship-index';
+const MIGRATION_V3_SQL = [
+    `CREATE TABLE project_memory_index_state (
+        singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+        index_status TEXT NOT NULL CHECK (index_status IN ('empty', 'ready', 'stale')),
+        snapshot_sha256 TEXT NULL CHECK (
+            snapshot_sha256 IS NULL OR
+            (length(snapshot_sha256) = 64 AND snapshot_sha256 NOT GLOB '*[^0-9a-f]*')
+        ),
+        indexed_at_utc TEXT NULL,
+        source_count INTEGER NOT NULL CHECK (source_count >= 0),
+        entity_count INTEGER NOT NULL CHECK (entity_count >= 0),
+        relationship_count INTEGER NOT NULL CHECK (relationship_count >= 0)
+    );`,
+    `INSERT INTO project_memory_index_state (
+        singleton_id, index_status, snapshot_sha256, indexed_at_utc,
+        source_count, entity_count, relationship_count
+    ) VALUES (1, 'empty', NULL, NULL, 0, 0, 0);`,
+    `CREATE TABLE project_memory_documents (
+        document_id TEXT PRIMARY KEY,
+        source_path TEXT NOT NULL UNIQUE,
+        file_name TEXT NOT NULL UNIQUE,
+        read_role TEXT NOT NULL CHECK (read_role IN ('read_first', 'focused')),
+        title TEXT NOT NULL,
+        content_sha256 TEXT NOT NULL CHECK (
+            length(content_sha256) = 64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'
+        ),
+        indexed_content_sha256 TEXT NOT NULL CHECK (
+            length(indexed_content_sha256) = 64 AND indexed_content_sha256 NOT GLOB '*[^0-9a-f]*'
+        ),
+        redaction_applied INTEGER NOT NULL CHECK (redaction_applied IN (0, 1)),
+        indexed_at_utc TEXT NOT NULL
+    );`,
+    `CREATE TABLE project_memory_entities (
+        entity_id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL REFERENCES project_memory_documents(document_id) ON DELETE CASCADE,
+        entity_kind TEXT NOT NULL CHECK (entity_kind IN ('document', 'section')),
+        label TEXT NOT NULL,
+        normalized_label TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        source_line INTEGER NOT NULL CHECK (source_line > 0),
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        content_sha256 TEXT NOT NULL CHECK (
+            length(content_sha256) = 64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'
+        ),
+        UNIQUE (document_id, ordinal)
+    );`,
+    `CREATE TABLE project_memory_relationships (
+        relationship_id TEXT PRIMARY KEY,
+        source_entity_id TEXT NOT NULL REFERENCES project_memory_entities(entity_id) ON DELETE CASCADE,
+        target_entity_id TEXT NOT NULL REFERENCES project_memory_entities(entity_id) ON DELETE CASCADE,
+        relationship_kind TEXT NOT NULL CHECK (relationship_kind IN ('contains', 'links_to')),
+        source_path TEXT NOT NULL,
+        source_line INTEGER NOT NULL CHECK (source_line > 0),
+        UNIQUE (source_entity_id, target_entity_id, relationship_kind)
+    );`,
+    `CREATE VIRTUAL TABLE project_memory_fts USING fts5(
+        entity_id UNINDEXED,
+        document_id UNINDEXED,
+        source_path UNINDEXED,
+        source_line UNINDEXED,
+        title,
+        heading,
+        body,
+        tokenize = 'unicode61 remove_diacritics 2'
+    );`,
+    'CREATE INDEX project_memory_entities_document_idx ON project_memory_entities(document_id, ordinal);',
+    'CREATE INDEX project_memory_entities_path_line_idx ON project_memory_entities(source_path, source_line);',
+    'CREATE INDEX project_memory_relationships_source_idx ON project_memory_relationships(source_entity_id, relationship_kind);',
+    'CREATE INDEX project_memory_relationships_target_idx ON project_memory_relationships(target_entity_id, relationship_kind);'
+].join('\n');
+
 function migrationChecksum(version: number, name: string, sql: string): string {
     return createHash('sha256')
         .update(`${version}:${name}\n${sql}`, 'utf8')
@@ -327,6 +399,12 @@ export const SQLITE_CATALOG_MIGRATIONS: readonly SqliteCatalogMigration[] = Obje
         name: MIGRATION_V2_NAME,
         sql: MIGRATION_V2_SQL,
         checksum: migrationChecksum(2, MIGRATION_V2_NAME, MIGRATION_V2_SQL)
+    }),
+    Object.freeze({
+        version: 3,
+        name: MIGRATION_V3_NAME,
+        sql: MIGRATION_V3_SQL,
+        checksum: migrationChecksum(3, MIGRATION_V3_NAME, MIGRATION_V3_SQL)
     })
 ]);
 
@@ -350,7 +428,55 @@ export const SQLITE_CATALOG_REQUIRED_COLUMNS: Readonly<Record<string, readonly s
     task_ledgers: Object.freeze(['task_id', 'audit_status', 'verification_status', 'generated_at_utc', 'source_id', 'source_sequence', 'source_offset', 'source_timestamp_utc', 'record_content_sha256']),
     retention_state: Object.freeze(['retention_id', 'task_id', 'artifact_id', 'retention_state', 'source_id', 'source_sequence', 'source_offset', 'source_timestamp_utc', 'record_content_sha256']),
     metric_samples: Object.freeze(['metric_id', 'task_id', 'metric_name', 'recorded_at_utc', 'source_id', 'source_sequence', 'source_offset', 'source_timestamp_utc', 'record_content_sha256']),
-    metric_labels: Object.freeze(['metric_id', 'label_key', 'label_value'])
+    metric_labels: Object.freeze(['metric_id', 'label_key', 'label_value']),
+    project_memory_index_state: Object.freeze([
+        'singleton_id',
+        'index_status',
+        'snapshot_sha256',
+        'indexed_at_utc',
+        'source_count',
+        'entity_count',
+        'relationship_count'
+    ]),
+    project_memory_documents: Object.freeze([
+        'document_id',
+        'source_path',
+        'file_name',
+        'read_role',
+        'title',
+        'content_sha256',
+        'indexed_content_sha256',
+        'redaction_applied',
+        'indexed_at_utc'
+    ]),
+    project_memory_entities: Object.freeze([
+        'entity_id',
+        'document_id',
+        'entity_kind',
+        'label',
+        'normalized_label',
+        'source_path',
+        'source_line',
+        'ordinal',
+        'content_sha256'
+    ]),
+    project_memory_relationships: Object.freeze([
+        'relationship_id',
+        'source_entity_id',
+        'target_entity_id',
+        'relationship_kind',
+        'source_path',
+        'source_line'
+    ]),
+    project_memory_fts: Object.freeze([
+        'entity_id',
+        'document_id',
+        'source_path',
+        'source_line',
+        'title',
+        'heading',
+        'body'
+    ])
 });
 
 export const SQLITE_CATALOG_PROJECTION_TABLES_DELETE_ORDER = Object.freeze([

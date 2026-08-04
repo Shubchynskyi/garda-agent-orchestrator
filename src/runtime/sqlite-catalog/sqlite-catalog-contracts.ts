@@ -216,6 +216,67 @@ export interface SqliteCatalogRebuildProgress {
     readonly totalRows: number;
 }
 
+export type ProjectMemoryIndexStatus = 'empty' | 'ready' | 'stale' | 'unavailable';
+
+export interface ProjectMemoryIndexInspection {
+    readonly status: ProjectMemoryIndexStatus;
+    readonly snapshotSha256: string | null;
+    readonly indexedAtUtc: string | null;
+    readonly sourceCount: number;
+    readonly entityCount: number;
+    readonly relationshipCount: number;
+    readonly changedSources: readonly string[];
+    readonly diagnostic: string;
+}
+
+export interface ProjectMemoryIndexRefreshResult extends ProjectMemoryIndexInspection {
+    readonly outcome: 'applied' | 'current' | 'deferred';
+}
+
+export interface ProjectMemorySearchHit {
+    readonly entityId: string;
+    readonly sourcePath: string;
+    readonly sourceLine: number;
+    readonly title: string;
+    readonly heading: string;
+    readonly snippet: string;
+    readonly rank: number;
+}
+
+export interface ProjectMemorySearchResult {
+    readonly status: ProjectMemoryIndexStatus | 'invalid_query';
+    readonly snapshotSha256: string | null;
+    readonly hits: readonly ProjectMemorySearchHit[];
+    readonly changedSources: readonly string[];
+    readonly diagnostic: string;
+}
+
+export interface ProjectMemoryRelationship {
+    readonly relationshipId: string;
+    readonly sourceEntityId: string;
+    readonly targetEntityId: string;
+    readonly kind: 'contains' | 'links_to';
+    readonly sourcePath: string;
+    readonly targetSourcePath: string;
+    readonly sourceLine: number;
+}
+
+export interface ProjectMemoryRelationshipResult {
+    readonly status: ProjectMemoryIndexStatus;
+    readonly snapshotSha256: string | null;
+    readonly relationships: readonly ProjectMemoryRelationship[];
+    readonly changedSources: readonly string[];
+    readonly diagnostic: string;
+}
+
+export interface ProjectMemoryIndexRefreshOptions {
+    readonly clock?: () => string;
+}
+
+export interface ProjectMemorySearchOptions {
+    readonly limit?: number;
+}
+
 export interface SqliteCatalogRebuildOptions {
     readonly batchSize?: number;
     readonly onProgress?: (event: SqliteCatalogRebuildProgress) => void;
@@ -263,6 +324,10 @@ export interface DerivedSqliteCatalog {
     queryRetentionStates(taskId?: string): readonly CatalogRetentionState[];
     queryMetricSamples(taskId?: string): readonly CatalogMetricSample[];
     queryTaskActivitySummaries(taskId?: string): readonly CatalogTaskActivitySummary[];
+    refreshProjectMemoryIndex(options?: ProjectMemoryIndexRefreshOptions): ProjectMemoryIndexRefreshResult;
+    inspectProjectMemoryIndex(): ProjectMemoryIndexInspection;
+    searchProjectMemory(query: string, options?: ProjectMemorySearchOptions): ProjectMemorySearchResult;
+    queryProjectMemoryRelationships(sourcePath?: string): ProjectMemoryRelationshipResult;
     close(): void;
 }
 
@@ -296,6 +361,7 @@ export type OpenDerivedSqliteCatalogResult =
 export interface SqliteCatalogCapability {
     readonly available: boolean;
     readonly sqliteVersion: string | null;
+    readonly fts5Available: boolean;
     readonly diagnostic: string;
 }
 

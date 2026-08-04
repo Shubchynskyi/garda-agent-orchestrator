@@ -73,15 +73,27 @@ function executeCapabilityProbe(DatabaseSync: CatalogDatabaseConstructor): Sqlit
         if (!sqliteVersion) {
             throw new Error('SQLite version probe returned no value.');
         }
+        database.exec(`CREATE VIRTUAL TABLE capability_fts_probe USING fts5(probe_text);`);
+        database.prepare('INSERT INTO capability_fts_probe (probe_text) VALUES (?)').run('garda capability');
+        const ftsRow = database.prepare(`
+            SELECT count(*) AS match_count
+            FROM capability_fts_probe
+            WHERE capability_fts_probe MATCH 'garda'
+        `).get() as Record<string, unknown> | undefined;
+        if (Number(ftsRow?.match_count) !== 1) {
+            throw new Error('FTS5 capability probe returned an unexpected value.');
+        }
         return Object.freeze({
             available: true,
             sqliteVersion,
-            diagnostic: `node:sqlite DatabaseSync ${sqliteVersion} passed prepare and transaction probes.`
+            fts5Available: true,
+            diagnostic: `node:sqlite DatabaseSync ${sqliteVersion} passed prepare, transaction, and FTS5 probes.`
         });
     } catch (error: unknown) {
         return Object.freeze({
             available: false,
             sqliteVersion: null,
+            fts5Available: false,
             diagnostic: `node:sqlite capability probe failed: ${errorMessage(error)}`
         });
     } finally {
@@ -99,6 +111,7 @@ export function probeSqliteCatalogCapability(): SqliteCatalogCapability {
         : Object.freeze({
             available: false,
             sqliteVersion: null,
+            fts5Available: false,
             diagnostic: 'node:sqlite DatabaseSync is unavailable on this Node runtime.'
         });
     return cachedCapability;

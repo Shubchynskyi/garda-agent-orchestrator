@@ -267,9 +267,10 @@ function requireCatalog(workspaceRoot: string): DerivedSqliteCatalog {
     return opened.catalog;
 }
 
-test('node:sqlite capability probe covers prepared statements and transactions', () => {
+test('node:sqlite capability probe covers prepared statements, transactions, and FTS5', () => {
     const capability = probeSqliteCatalogCapability();
     assert.equal(capability.available, true, capability.diagnostic);
+    assert.equal(capability.fts5Available, true, capability.diagnostic);
     assert.match(capability.sqliteVersion || '', /^\d+\.\d+\.\d+$/u);
 });
 
@@ -523,7 +524,7 @@ test('open upgrades an existing schema-v1 catalog through the immutable migratio
     try {
         catalog = requireCatalog(workspaceRoot);
         const inspection = catalog.inspect();
-        assert.equal(inspection.schemaVersion, 2);
+        assert.equal(inspection.schemaVersion, SQLITE_CATALOG_SCHEMA_VERSION);
         assert.equal(inspection.canonicalGeneration, null);
         catalog.close();
         catalog = null;
@@ -533,7 +534,7 @@ test('open upgrades an existing schema-v1 catalog through the immutable migratio
             const versions = migrated.prepare('SELECT version FROM schema_migrations ORDER BY version')
                 .all()
                 .map((row) => Number((row as Record<string, unknown>).version));
-            assert.deepEqual(versions, [1, 2]);
+            assert.deepEqual(versions, [1, 2, 3]);
         } finally {
             migrated.close();
         }

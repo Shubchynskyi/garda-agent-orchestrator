@@ -26,6 +26,12 @@ import type {
     DerivedSqliteCatalog,
     OpenDerivedSqliteCatalogOptions,
     OpenDerivedSqliteCatalogResult,
+    ProjectMemoryIndexInspection,
+    ProjectMemoryIndexRefreshOptions,
+    ProjectMemoryIndexRefreshResult,
+    ProjectMemoryRelationshipResult,
+    ProjectMemorySearchOptions,
+    ProjectMemorySearchResult,
     SqliteCatalogInspection,
     SqliteCatalogParityInspection,
     SqliteCatalogRebuildOptions,
@@ -66,6 +72,12 @@ import {
     queryCatalogTaskActivitySummaries,
     queryCatalogTasks
 } from './sqlite-catalog-query';
+import {
+    inspectSqliteProjectMemoryIndex,
+    querySqliteProjectMemoryRelationships,
+    refreshSqliteProjectMemoryIndex,
+    searchSqliteProjectMemoryIndex
+} from './sqlite-project-memory-index';
 import {
     assessSqliteWalFilesystem,
     createSqliteWalFilesystemAssessmentSession,
@@ -768,6 +780,7 @@ function classifyUnexpectedOpenFailure(error: unknown): SqliteCatalogUnavailable
 class OpenCatalog implements DerivedSqliteCatalog {
     readonly catalogPath: string;
     readonly schemaVersion = SQLITE_CATALOG_SCHEMA_VERSION;
+    private readonly repoRoot: string;
     private readonly database: CatalogDatabase;
     private readonly readOnly: boolean;
     private readonly expectedFileIdentity: CatalogFileIdentity | null;
@@ -775,12 +788,14 @@ class OpenCatalog implements DerivedSqliteCatalog {
     private connectionLease: LockHandle | null;
 
     constructor(
+        repoRoot: string,
         catalogPath: string,
         database: CatalogDatabase,
         connectionLease: LockHandle | null,
         readOnly: boolean = false,
         expectedFileIdentity: CatalogFileIdentity | null = null
     ) {
+        this.repoRoot = path.resolve(repoRoot);
         this.catalogPath = catalogPath;
         this.database = database;
         this.connectionLease = connectionLease;
@@ -1004,6 +1019,46 @@ class OpenCatalog implements DerivedSqliteCatalog {
         return rows;
     }
 
+    refreshProjectMemoryIndex(
+        options: ProjectMemoryIndexRefreshOptions = {}
+    ): ProjectMemoryIndexRefreshResult {
+        this.assertOpen();
+        this.assertWritable();
+        return refreshSqliteProjectMemoryIndex(
+            this.database,
+            this.repoRoot,
+            (options.clock || (() => new Date().toISOString()))()
+        );
+    }
+
+    inspectProjectMemoryIndex(): ProjectMemoryIndexInspection {
+        this.assertOpen();
+        const inspection = inspectSqliteProjectMemoryIndex(this.database, this.repoRoot);
+        this.assertFileIdentity();
+        return inspection;
+    }
+
+    searchProjectMemory(
+        query: string,
+        options: ProjectMemorySearchOptions = {}
+    ): ProjectMemorySearchResult {
+        this.assertOpen();
+        const result = searchSqliteProjectMemoryIndex(this.database, this.repoRoot, query, options);
+        this.assertFileIdentity();
+        return result;
+    }
+
+    queryProjectMemoryRelationships(sourcePath?: string): ProjectMemoryRelationshipResult {
+        this.assertOpen();
+        const result = querySqliteProjectMemoryRelationships(
+            this.database,
+            this.repoRoot,
+            sourcePath
+        );
+        this.assertFileIdentity();
+        return result;
+    }
+
     close(): void {
         if (!this.closed) {
             this.database.close();
@@ -1071,7 +1126,7 @@ function openDerivedSqliteCatalogInternal(
                 throw new CatalogOpenError('open_failed', 'SQLite catalog connection initialization was incomplete.');
             }
             ACTIVE_CATALOG_PATHS.add(catalogPath);
-            const catalog = new OpenCatalog(catalogPath, database, connectionLease);
+            const catalog = new OpenCatalog(repoRoot, catalogPath, database, connectionLease);
             database = null;
             connectionLease = null;
             return { status: 'available', catalog };
@@ -1179,6 +1234,7 @@ export function openDerivedSqliteCatalogReadOnly(repoRoot: string): OpenDerivedS
         }
         ACTIVE_CATALOG_PATHS.add(catalogPath);
         const catalog = new OpenCatalog(
+            repoRoot,
             catalogPath,
             database,
             connectionLease,
