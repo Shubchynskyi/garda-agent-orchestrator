@@ -704,7 +704,23 @@ function settleRuntimeMutationGeneration(
 export function commitRuntimeMutationGeneration(
     ticket: RuntimeMutationGenerationTicket
 ): RuntimeMutationGenerationSnapshot {
-    return settleRuntimeMutationGeneration(ticket, 'COMMIT');
+    const snapshot = settleRuntimeMutationGeneration(ticket, 'COMMIT');
+    try {
+        const scheduler = require('../runtime/sqlite-catalog/sqlite-catalog-reconciliation') as {
+            scheduleDerivedSqliteCatalogReconciliation(repoRoot: string): void;
+        };
+        scheduler.scheduleDerivedSqliteCatalogReconciliation(ticket.orchestrator_root);
+    } catch (error: unknown) {
+        const diagnostic = (error instanceof Error ? error.message : String(error))
+            .replace(/\s+/gu, ' ')
+            .trim()
+            .slice(0, 512);
+        process.stderr.write(
+            `WARNING: Canonical mutation committed but derived SQLite catalog scheduling failed: `
+            + `${diagnostic || 'unknown projection error'}\n`
+        );
+    }
+    return snapshot;
 }
 
 export function abortRuntimeMutationGeneration(

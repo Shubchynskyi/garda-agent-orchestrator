@@ -65,7 +65,7 @@ tables. Every imported row must retain enough provenance to identify its
 canonical source, ordering position where applicable, timestamp, and content
 hash.
 
-### Derived Catalog Schema v1
+### Derived Catalog Schema v2
 
 T-1000-2 implements the internal adapter under
 `src/runtime/sqlite-catalog/`. Schema version 1 contains:
@@ -80,19 +80,26 @@ T-1000-2 implements the internal adapter under
 - `schema_migrations` for immutable migration checksums and application-version
   provenance.
 
+T-1000-3 adds schema version 2, which stores the last reconciled canonical
+runtime mutation generation in `catalog_state`. Existing canonical writers
+advance the integrity-checked generation journal only after their file write
+commits. They do not need to open SQLite. If a projection refresh is skipped or
+fails, the generation mismatch makes the catalog ineligible for trusted reads
+and preserves canonical file fallback until reconciliation catches up.
+
 Every domain row references `canonical_sources` and separately retains its
 record hash plus source sequence, byte offset, and source timestamp where those
 values exist. The adapter replaces a complete projection inside one bounded
 `BEGIN IMMEDIATE` transaction only when the normalized projection contains at
 most 10,000 rows, including source and metric-label rows. Larger inputs return
 `rebuild_required` before a writer transaction starts. T-1000-3 must handle that
-result as an explicit, progress-reported rebuild outside the interactive write
-path. Failed or contended bounded writes roll back and return a deferred result.
+result through the explicit, progress-reported rebuild outside the interactive
+write path. Failed or contended bounded writes roll back and return a deferred result.
 Initial schema migration also holds the workspace catalog maintenance lock and
 uses the contract's five-second maximum maintenance wait. This stage does not
 scan canonical files, change any command's read path, or make SQLite
-authoritative. Ingestion, reconciliation, health, repair, and rebuild
-orchestration remain T-1000-3 responsibilities.
+authoritative. T-1000-3 adds the scanner and maintenance orchestration without
+changing query authority; hot read-path adoption remains T-1000-4.
 
 ## Canonical-First Write And Read Ordering
 
@@ -103,11 +110,77 @@ orchestration remain T-1000-3 responsibilities.
    diagnostic, mark the projection stale, and continue through file fallback.
 4. A later incremental reconciliation or full rebuild catches the projection up.
 
+Production canonical writers converge through the existing runtime mutation
+generation commit boundary. After that boundary releases its generation lock, a
+successful commit schedules one coalesced best-effort reconciliation per
+workspace and event-loop turn. Before scanning canonical inputs, the automatic
+path performs a constant-time recovery-unit size check, a metadata-only bounded
+inventory of the canonical source areas, and a direct inspection of existing
+connection leases without opening another catalog connection. It runs the
+synchronous scanner only while both the main database plus WAL and the complete
+canonical workload are at most 512 KiB, the workload contains no more than 512
+filesystem entries, and no live connection lease exists. Exceeding either
+bound, a live connection, or unsafe metadata returns `deferred` before file
+content is read and leaves the generation stale for explicit reconciliation or
+rebuild. This bound keeps a full-history or large-artifact scan out of
+established-project write latency while T-1000-4 owns benchmark-qualified
+incremental query adoption. Scheduling never changes the canonical result: an
+unavailable SQLite runtime or malformed input inside the bounded envelope emits
+a bounded diagnostic. Normal writes do not create a missing catalog implicitly;
+an explicit repair or rebuild bootstraps it before write-through reconciliation
+is active.
+
 Reads go through a repository/query boundary. It may use SQLite only when the
 catalog is compatible, healthy, and current for the sources needed by that
 query. Otherwise it uses the existing file reader. Recovery and rebuild read
 canonical files into a new projection; they never write recovered projection
 values back to canonical files.
+
+### Reconciliation And Maintenance Commands
+
+T-1000-3 projects the canonical active task table, integrity-checked per-task
+event streams, task ledgers, retention state, bounded review metadata referenced
+by those streams, and runtime metrics. A stable snapshot hash covers the sorted
+canonical source identities and content hashes. Normal reconciliation validates
+the complete next projection but replaces only sources whose hashes changed;
+unchanged SQLite rows remain in place. The interactive transaction limit applies
+to the changed source set, including deleted rows. A larger change returns
+`rebuild_required` instead of starting a long writer transaction.
+
+Review-artifact ingestion fails closed above 4,096 unique referenced artifacts,
+8 MiB for one artifact, or 128 MiB across one canonical snapshot. Size checks run
+before reading artifact content so health and recovery paths cannot allocate an
+unbounded buffer from a hash-declared review artifact.
+
+The public maintenance surface is:
+
+```text
+garda repair catalog health [--json]
+garda repair catalog drift [--json]
+garda repair catalog repair [--confirm] [--json]
+garda repair catalog rebuild [--confirm] [--json]
+```
+
+`health` and `drift` are read-only. They validate canonical input, catalog
+compatibility, snapshot hashes, row-level parity, and source-level drift. Their
+SQLite open uses read-only mode and never migrates schema, changes journal
+policy, or writes catalog rows. It briefly registers ephemeral coordination
+metadata while holding the maintenance lock so catalog promotion cannot race an
+inspection, then releases that connection lease after the SQLite handle closes.
+Inspection fails closed when the lease cannot be registered safely. A missing
+or older catalog is reported for fallback or writable repair without catalog mutation.
+`repair` and `rebuild` are preview-only unless `--confirm` is supplied.
+Confirmed rebuilds populate bounded batches in a workspace-confined staging
+database, checkpoint and seal its WAL, require both `quick_check` and the full
+`integrity_check` to return `ok`, run foreign-key and exact row-parity
+validation, then hold the catalog maintenance lock only for backup
+and atomic promotion. Promotion fails closed while any live process owns a
+catalog connection lease. An interrupted staging build leaves the previous
+live catalog untouched. Confirmed corruption repair uses the same exclusive
+maintenance check before moving the main database, WAL, and SHM files together
+into quarantine. Projection failures are returned as deferred diagnostics
+after the canonical operation has already succeeded; they never roll back
+canonical files.
 
 ## Driver And Runtime Compatibility
 
@@ -175,8 +248,14 @@ back canonical evidence.
 ## Connection, WAL, And Contention Policy
 
 Each CLI process owns at most one catalog connection and closes it in `finally`.
-Connections are never inherited by child processes. On every connection the
-adapter applies and verifies the relevant settings:
+Connections are never inherited by child processes. Every open registers a
+process-owned connection lease while briefly holding the maintenance lock, and
+close releases the lease only after the SQLite handle closes. Multiple normal
+processes may hold separate leases concurrently; exclusive promotion and
+quarantine defer until no live lease remains. Dead same-host leases are
+reclaimed through the filesystem-lock owner check, while an unverifiable lease
+fails closed. Lease files are ephemeral coordination metadata, not catalog-data
+mutation. On every connection the adapter applies and verifies the relevant settings:
 
 ```sql
 PRAGMA foreign_keys = ON;
@@ -248,11 +327,14 @@ readers. Never delete forensic files as part of an automatic failed rebuild.
 
 Atomic replacement applies to one self-contained main database file, not to a
 live three-file WAL unit. Before rebuild or restore promotion, the adapter holds
-the maintenance lock, prevents new connections, runs
+the maintenance lock, prevents new lease registration, proves that no live
+connection lease remains, runs
 `PRAGMA wal_checkpoint(TRUNCATE)`, and requires a non-busy result with every WAL
 frame checkpointed. It then closes all handles and verifies that no non-empty
 `-wal` remains. Only after that proof may the transient `-shm` be discarded and
-the main file be flushed to durable storage and atomically renamed into place.
+the main file be flushed to durable storage and copied to the recovery backup;
+the sealed staging main is then atomically renamed over the still-present live
+main, so there is no promotion interval with a missing live catalog.
 The containing directory is synchronized where the platform supports directory
 flushes.
 

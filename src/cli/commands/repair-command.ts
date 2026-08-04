@@ -44,8 +44,14 @@ import {
 } from './workspace-helpers';
 import { parseTaskIdJsonlFileName } from '../../core/task-ids';
 import { RESERVED_TASK_EVENT_TIMELINE_NAMES } from '../../core/task-ids';
+import {
+    inspectDerivedCatalogHealth,
+    rebuildDerivedSqliteCatalog,
+    repairDerivedSqliteCatalog
+} from '../../runtime/sqlite-catalog';
 
-type RepairAction = 'inspect' | 'rebuild-indexes' | 'protected-manifest' | 'locks';
+type RepairAction = 'inspect' | 'rebuild-indexes' | 'protected-manifest' | 'locks' | 'catalog';
+type CatalogRepairAction = 'health' | 'drift' | 'repair' | 'rebuild';
 
 export interface RepairInspectResult {
     targetRoot: string;
@@ -444,14 +450,82 @@ function printLocksResult(result: RepairLocksResult): void {
     }
 }
 
+function runCatalogRepairAction(
+    targetRoot: string,
+    action: CatalogRepairAction,
+    confirm: boolean
+): unknown {
+    if (action === 'health' || action === 'drift') {
+        return inspectDerivedCatalogHealth(targetRoot);
+    }
+    if (action === 'repair') {
+        return repairDerivedSqliteCatalog(targetRoot, { apply: confirm });
+    }
+    if (!confirm) {
+        const health = inspectDerivedCatalogHealth(targetRoot);
+        return {
+            status: 'dry_run',
+            canonicalReadable: health.canonicalReadable,
+            catalogPath: health.catalogPath,
+            canonicalSnapshotSha256: health.canonicalSnapshotSha256,
+            generation: health.generation,
+            diagnostic: `Rebuild preview: catalog status is ${health.status}; no files were changed.`
+        };
+    }
+    return rebuildDerivedSqliteCatalog(targetRoot, {
+        onProgress: (event) => {
+            if (process.stdout.isTTY) {
+                process.stderr.write(
+                    `Catalog rebuild ${event.phase}: ${event.completedRows}/${event.totalRows}\n`
+                );
+            }
+        }
+    });
+}
+
+function printCatalogResult(action: CatalogRepairAction, result: unknown): void {
+    console.log(`GARDA_CATALOG_${action.toUpperCase()}`);
+    const record = result as Record<string, unknown>;
+    if (record.status === 'dry_run') {
+        console.log(yellow('Dry run (default) - no catalog files were changed. Pass --confirm to apply.'));
+    }
+    formatKeyValueOutput(record, [
+        'status',
+        'canonicalReadable',
+        'parity',
+        'generation',
+        'catalogPath',
+        'canonicalSnapshotSha256',
+        'catalogSnapshotSha256',
+        'quarantinePath',
+        'diagnostic'
+    ]);
+    const changedSources = Array.isArray(record.changedSources) ? record.changedSources : [];
+    if (changedSources.length > 0) {
+        console.log(yellow(`Changed canonical sources: ${changedSources.length}`));
+        for (const sourcePath of changedSources) console.log(`  - ${String(sourcePath)}`);
+    }
+}
+
 export function handleRepair(commandArgv: string[], packageJson: PackageJsonLike): void {
     const firstArg = String(commandArgv[0] || '').trim();
     const hasExplicitAction = firstArg.length > 0 && !firstArg.startsWith('-') && firstArg !== 'help';
     const action = (hasExplicitAction ? firstArg : 'inspect') as RepairAction;
-    const actionArgv = hasExplicitAction ? commandArgv.slice(1) : commandArgv;
-    if (!['inspect', 'rebuild-indexes', 'protected-manifest', 'locks'].includes(action)) {
-        throw new Error(`Unknown repair action: ${action}. Allowed values: inspect, rebuild-indexes, protected-manifest, locks.`);
+    let actionArgv = hasExplicitAction ? commandArgv.slice(1) : commandArgv;
+    if (!['inspect', 'rebuild-indexes', 'protected-manifest', 'locks', 'catalog'].includes(action)) {
+        throw new Error(`Unknown repair action: ${action}. Allowed values: inspect, rebuild-indexes, protected-manifest, locks, catalog.`);
     }
+
+    const catalogActionText = action === 'catalog'
+        ? String(actionArgv[0] || 'health').trim().toLowerCase()
+        : 'health';
+    if (action === 'catalog') actionArgv = actionArgv.slice(actionArgv.length > 0 ? 1 : 0);
+    if (action === 'catalog' && !['health', 'drift', 'repair', 'rebuild'].includes(catalogActionText)) {
+        throw new Error(
+            `Unknown repair catalog action: ${catalogActionText}. Allowed values: health, drift, repair, rebuild.`
+        );
+    }
+    const catalogAction = catalogActionText as CatalogRepairAction;
 
     const definitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
@@ -488,6 +562,12 @@ export function handleRepair(commandArgv: string[], packageJson: PackageJsonLike
     if (action === 'protected-manifest') {
         const result = runRepairProtectedManifest(targetRoot, options.confirm === true);
         json ? printJson(result) : printProtectedManifestResult(result);
+        return;
+    }
+
+    if (action === 'catalog') {
+        const result = runCatalogRepairAction(targetRoot, catalogAction, options.confirm === true);
+        json ? printJson(result) : printCatalogResult(catalogAction, result);
         return;
     }
 

@@ -501,6 +501,12 @@ garda repair protected-manifest --target-root "." --confirm
 garda repair locks --target-root "."
 garda repair locks --target-root "." --cleanup-stale
 garda repair locks --target-root "." --cleanup-stale --confirm
+garda repair catalog health --target-root "."
+garda repair catalog drift --target-root "."
+garda repair catalog repair --target-root "."
+garda repair catalog repair --target-root "." --confirm
+garda repair catalog rebuild --target-root "."
+garda repair catalog rebuild --target-root "." --confirm
 ```
 
 Notes:
@@ -509,6 +515,9 @@ Notes:
 - `repair protected-manifest` is dry-run by default. With `--confirm`, it refreshes the trusted protected control-plane manifest from the current workspace snapshot.
 - `repair locks` inspects task-event, review-artifact, and completion-finalization lock classes. Cleanup is dry-run unless both `--cleanup-stale` and `--confirm` are provided.
 - Completion-finalization locks are inspected only; they are not deleted by `repair locks` because they protect task finalization.
+- `repair catalog health` validates canonical inputs, SQLite compatibility, and exact snapshot parity without changing canonical files.
+- `repair catalog drift` reports the canonical sources whose hashes differ from the current derived catalog.
+- `repair catalog repair` and `repair catalog rebuild` are dry-run by default. `--confirm` repairs drift or performs an explicit batched rebuild; confirmed corruption repair quarantines the database, WAL, and SHM recovery unit before rebuilding from canonical files.
 
 ### `garda gc`
 

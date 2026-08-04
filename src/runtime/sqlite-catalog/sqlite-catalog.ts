@@ -1,15 +1,26 @@
+import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { joinOrchestratorPath } from '../../core/orchestrator-paths';
 import { isPathRealpathInsideRoot, resolvePathInsideRoot } from '../../core/paths';
-import { withFilesystemLock } from '../../gate-runtime/timeline/task-events-locking';
+import {
+    acquireFilesystemLock,
+    inspectFilesystemLock,
+    reclaimStaleFilesystemLock,
+    releaseFilesystemLock,
+    withFilesystemLock,
+    type LockHandle
+} from '../../gate-runtime/timeline/task-events-locking';
 import type {
     DerivedCatalogProjection,
     DerivedSqliteCatalog,
     OpenDerivedSqliteCatalogOptions,
     OpenDerivedSqliteCatalogResult,
     SqliteCatalogInspection,
+    SqliteCatalogParityInspection,
+    SqliteCatalogRebuildOptions,
+    SqliteCatalogSourceInspection,
     SqliteCatalogUnavailableReason,
     SqliteCatalogWriteDeferredReason,
     SqliteCatalogWriteResult
@@ -30,6 +41,9 @@ import {
 import {
     CatalogProjectionRebuildRequiredError,
     readCatalogCounts,
+    inspectCatalogProjectionParity,
+    reconcileCatalogProjection,
+    rebuildCatalogProjection,
     replaceCatalogProjection
 } from './sqlite-catalog-projection';
 import {
@@ -41,7 +55,15 @@ import { CatalogProjectionValidationError } from './sqlite-catalog-validation';
 
 const ACTIVE_CATALOG_PATHS = new Set<string>();
 const SQLITE_CATALOG_MAINTENANCE_TIMEOUT_MS = 5_000;
+const SQLITE_CATALOG_CONNECTION_LEASE_DIRECTORY = '.connection-leases';
+const MAX_INSPECTED_CATALOG_CONNECTION_LEASES = 512;
 let expectedCatalogSchemaSignatures: readonly string[] | null = null;
+
+interface CatalogFileIdentity {
+    readonly device: number;
+    readonly inode: number;
+    readonly birthtimeMs: number;
+}
 
 class CatalogOpenError extends Error {
     readonly reason: SqliteCatalogUnavailableReason;
@@ -96,6 +118,31 @@ function closeQuietly(database: CatalogDatabase | null): void {
     } catch {
         // Preserve the primary open or validation failure.
     }
+}
+
+function readCatalogFileIdentity(catalogPath: string): CatalogFileIdentity {
+    try {
+        const state = fs.statSync(catalogPath);
+        if (!state.isFile()) {
+            throw new Error('catalog path is not a regular file');
+        }
+        return {
+            device: state.dev,
+            inode: state.ino,
+            birthtimeMs: state.birthtimeMs
+        };
+    } catch (error: unknown) {
+        throw new CatalogOpenError(
+            'path_unavailable',
+            `SQLite catalog file identity is unavailable: ${errorMessage(error)}`
+        );
+    }
+}
+
+function catalogFileIdentityMatches(left: CatalogFileIdentity, right: CatalogFileIdentity): boolean {
+    return left.device === right.device
+        && left.inode === right.inode
+        && left.birthtimeMs === right.birthtimeMs;
 }
 
 function resolveOrchestratorRoot(repoRoot: string): string {
@@ -158,6 +205,150 @@ function ensureCatalogDirectory(catalogPath: string): void {
             `SQLite catalog directory is unavailable: ${errorMessage(error)}`
         );
     }
+}
+
+function resolveCatalogMaintenanceLockPath(catalogPath: string): string {
+    return path.join(path.dirname(catalogPath), '.maintenance.lock');
+}
+
+function resolveCatalogConnectionLeaseRoot(catalogPath: string): string {
+    try {
+        return resolvePathInsideRoot(
+            path.dirname(catalogPath),
+            SQLITE_CATALOG_CONNECTION_LEASE_DIRECTORY
+        );
+    } catch (error: unknown) {
+        throw new CatalogOpenError(
+            'unsafe_path',
+            `SQLite catalog connection-lease path is unsafe: ${errorMessage(error)}`
+        );
+    }
+}
+
+function assertCatalogConnectionLeaseRootSafe(catalogPath: string, leaseRoot: string): void {
+    let leaseRootState: fs.Stats;
+    try {
+        leaseRootState = fs.lstatSync(leaseRoot);
+    } catch (error: unknown) {
+        throw new CatalogOpenError(
+            'path_unavailable',
+            `SQLite catalog connection-lease directory cannot be inspected: ${errorMessage(error)}`
+        );
+    }
+    if (
+        leaseRootState.isSymbolicLink()
+        || !leaseRootState.isDirectory()
+        || !isPathRealpathInsideRoot(path.dirname(catalogPath), leaseRoot)
+    ) {
+        throw new CatalogOpenError(
+            'unsafe_path',
+            'SQLite catalog connection-lease directory escapes the catalog through a filesystem link.'
+        );
+    }
+}
+
+function ensureCatalogConnectionLeaseRoot(catalogPath: string): string {
+    const leaseRoot = resolveCatalogConnectionLeaseRoot(catalogPath);
+    try {
+        fs.mkdirSync(leaseRoot, { recursive: true, mode: 0o700 });
+        if (process.platform !== 'win32') fs.chmodSync(leaseRoot, 0o700);
+    } catch (error: unknown) {
+        throw new CatalogOpenError(
+            'path_unavailable',
+            `SQLite catalog connection-lease directory is unavailable: ${errorMessage(error)}`
+        );
+    }
+    assertCatalogConnectionLeaseRootSafe(catalogPath, leaseRoot);
+    return leaseRoot;
+}
+
+function acquireCatalogConnectionLease(catalogPath: string): LockHandle {
+    const leaseRoot = ensureCatalogConnectionLeaseRoot(catalogPath);
+    return acquireFilesystemLock(path.join(leaseRoot, `${randomUUID()}.lock`), {
+        timeoutMs: SQLITE_CATALOG_MAINTENANCE_TIMEOUT_MS,
+        retryMs: 25,
+        ownerLabel: 'sqlite-catalog-connection'
+    }).handle;
+}
+
+function releaseCatalogConnectionLeaseQuietly(connectionLease: LockHandle | null): void {
+    if (!connectionLease) return;
+    try {
+        releaseFilesystemLock(connectionLease);
+    } catch {
+        // Preserve the primary open failure. A live-process lease fails closed for maintenance.
+    }
+}
+
+function assertNoActiveCatalogConnectionLeases(catalogPath: string): void {
+    const leaseRoot = resolveCatalogConnectionLeaseRoot(catalogPath);
+    if (!fs.existsSync(leaseRoot)) return;
+    assertCatalogConnectionLeaseRootSafe(catalogPath, leaseRoot);
+    const blockingLeases: string[] = [];
+    const leaseDirectory = fs.opendirSync(leaseRoot);
+    let inspectedLeaseCount = 0;
+    try {
+        let entry = leaseDirectory.readSync();
+        while (entry !== null) {
+            inspectedLeaseCount += 1;
+            if (inspectedLeaseCount > MAX_INSPECTED_CATALOG_CONNECTION_LEASES) {
+                blockingLeases.push(`bounded-inspection-limit:${MAX_INSPECTED_CATALOG_CONNECTION_LEASES}`);
+                break;
+            }
+            const leasePath = path.join(leaseRoot, entry.name);
+            if (entry.isSymbolicLink() || !entry.isDirectory()) {
+                blockingLeases.push(`${entry.name}:invalid`);
+                entry = leaseDirectory.readSync();
+                continue;
+            }
+            const inspection = inspectFilesystemLock(leasePath);
+            if (inspection.exists) {
+                if (inspection.staleReason) {
+                    const reclaimed = reclaimStaleFilesystemLock(leasePath);
+                    if (reclaimed.removed) {
+                        entry = leaseDirectory.readSync();
+                        continue;
+                    }
+                }
+                blockingLeases.push(
+                    `${entry.name}:owner_pid=${inspection.metadata.pid === null ? 'unknown' : inspection.metadata.pid}`
+                );
+            }
+            entry = leaseDirectory.readSync();
+        }
+    } finally {
+        leaseDirectory.closeSync();
+    }
+    if (blockingLeases.length > 0) {
+        throw new Error(
+            'Live SQLite catalog connection lease prevents exclusive maintenance: '
+            + blockingLeases.join(', ')
+        );
+    }
+}
+
+/**
+ * Internal metadata-only preflight for automatic reconciliation. It observes
+ * peer leases without registering another catalog connection of its own.
+ */
+export function assertNoActiveDerivedSqliteCatalogConnectionLeases(catalogPath: string): void {
+    assertNoActiveCatalogConnectionLeases(catalogPath);
+}
+
+export function withExclusiveDerivedSqliteCatalogMaintenance<T>(
+    catalogPath: string,
+    ownerLabel: string,
+    callback: () => T
+): T {
+    const { result } = withFilesystemLock(resolveCatalogMaintenanceLockPath(catalogPath), {
+        timeoutMs: SQLITE_CATALOG_MAINTENANCE_TIMEOUT_MS,
+        retryMs: 25,
+        ownerLabel
+    }, () => {
+        assertNoActiveCatalogConnectionLeases(catalogPath);
+        return callback();
+    });
+    return result;
 }
 
 function assertCatalogDirectoryInsideWorkspace(repoRoot: string, catalogPath: string): void {
@@ -283,20 +474,14 @@ function applyMigration(
     }
 }
 
-function migrateUnderMaintenanceLock(
+function migrateWithMaintenancePolicy(
     database: CatalogDatabase,
-    catalogPath: string,
     appVersion: string,
     appliedAtUtc: string
 ): void {
-    const lockPath = path.join(path.dirname(catalogPath), '.maintenance.lock');
     database.exec(`PRAGMA busy_timeout = ${SQLITE_CATALOG_MAINTENANCE_TIMEOUT_MS};`);
     try {
-        withFilesystemLock(lockPath, {
-            timeoutMs: SQLITE_CATALOG_MAINTENANCE_TIMEOUT_MS,
-            retryMs: 25,
-            ownerLabel: 'sqlite-catalog-migration'
-        }, () => migrateOrValidateCatalog(database, appVersion, appliedAtUtc));
+        migrateOrValidateCatalog(database, appVersion, appliedAtUtc);
     } catch (error: unknown) {
         if (error instanceof CatalogOpenError) throw error;
         throw new CatalogOpenError(
@@ -310,13 +495,12 @@ function migrateUnderMaintenanceLock(
 
 function initializeOrValidateCatalog(
     database: CatalogDatabase,
-    catalogPath: string,
     appVersion: string,
     appliedAtUtc: string
 ): void {
     const schemaVersion = readPragmaNumber(database, 'PRAGMA user_version', 'PRAGMA user_version');
     if (schemaVersion < SQLITE_CATALOG_SCHEMA_VERSION) {
-        migrateUnderMaintenanceLock(database, catalogPath, appVersion, appliedAtUtc);
+        migrateWithMaintenancePolicy(database, appVersion, appliedAtUtc);
         return;
     }
     migrateOrValidateCatalog(database, appVersion, appliedAtUtc);
@@ -500,6 +684,38 @@ function migrateOrValidateCatalog(
     if (migrated) verifyQuickCheck(database);
 }
 
+function validateExistingCatalogReadOnly(database: CatalogDatabase): void {
+    const applicationId = readPragmaNumber(database, 'PRAGMA application_id', 'PRAGMA application_id');
+    const schemaVersion = readPragmaNumber(database, 'PRAGMA user_version', 'PRAGMA user_version');
+    const userSchemaObjects = readUserSchemaObjectNames(database);
+    if (applicationId !== 0 && applicationId !== SQLITE_CATALOG_APPLICATION_ID) {
+        throw new CatalogOpenError('foreign_database', 'Database application_id does not belong to Garda.');
+    }
+    if (applicationId === 0 && userSchemaObjects.length > 0) {
+        throw new CatalogOpenError('foreign_database', 'Non-empty database has no Garda application identity.');
+    }
+    if (schemaVersion > SQLITE_CATALOG_SCHEMA_VERSION) {
+        throw new CatalogOpenError(
+            'newer_schema',
+            `Catalog schema ${schemaVersion} is newer than supported schema ${SQLITE_CATALOG_SCHEMA_VERSION}.`
+        );
+    }
+    if (
+        applicationId !== SQLITE_CATALOG_APPLICATION_ID
+        || schemaVersion < SQLITE_CATALOG_SCHEMA_VERSION
+    ) {
+        throw new CatalogOpenError(
+            'migration_failed',
+            `Catalog schema ${schemaVersion} requires writable migration before read-only inspection.`
+        );
+    }
+    verifyCatalogSchema(database);
+    const journalMode = readPragmaString(database, 'PRAGMA journal_mode', 'PRAGMA journal_mode');
+    if (journalMode.toLowerCase() !== 'wal') {
+        throw new CatalogOpenError('wal_unavailable', `SQLite returned journal_mode '${journalMode}', not WAL.`);
+    }
+}
+
 function enableNormalConnectionPolicy(database: CatalogDatabase): void {
     const journalMode = readPragmaString(database, 'PRAGMA journal_mode = WAL', 'PRAGMA journal_mode');
     if (journalMode.toLowerCase() !== 'wal') {
@@ -533,19 +749,49 @@ class OpenCatalog implements DerivedSqliteCatalog {
     readonly catalogPath: string;
     readonly schemaVersion = SQLITE_CATALOG_SCHEMA_VERSION;
     private readonly database: CatalogDatabase;
+    private readonly readOnly: boolean;
+    private readonly expectedFileIdentity: CatalogFileIdentity | null;
     private closed = false;
+    private connectionLease: LockHandle | null;
 
-    constructor(catalogPath: string, database: CatalogDatabase) {
+    constructor(
+        catalogPath: string,
+        database: CatalogDatabase,
+        connectionLease: LockHandle | null,
+        readOnly: boolean = false,
+        expectedFileIdentity: CatalogFileIdentity | null = null
+    ) {
         this.catalogPath = catalogPath;
         this.database = database;
+        this.connectionLease = connectionLease;
+        this.readOnly = readOnly;
+        this.expectedFileIdentity = expectedFileIdentity;
     }
 
     private assertOpen(): void {
         if (this.closed) throw new Error('SQLite catalog connection is closed.');
+        this.assertFileIdentity();
+    }
+
+    private assertFileIdentity(): void {
+        if (
+            this.expectedFileIdentity
+            && !catalogFileIdentityMatches(
+                this.expectedFileIdentity,
+                readCatalogFileIdentity(this.catalogPath)
+            )
+        ) {
+            throw new Error('SQLite catalog file changed during read-only inspection.');
+        }
+    }
+
+    private assertWritable(): void {
+        if (this.readOnly) throw new Error('SQLite catalog connection is read-only.');
     }
 
     replaceProjection(projection: DerivedCatalogProjection): SqliteCatalogWriteResult {
         this.assertOpen();
+        this.assertWritable();
         try {
             const result = replaceCatalogProjection(this.database, projection);
             return { status: 'applied', generation: result.generation, counts: result.counts };
@@ -570,10 +816,56 @@ class OpenCatalog implements DerivedSqliteCatalog {
         }
     }
 
+    reconcileProjection(projection: DerivedCatalogProjection): SqliteCatalogWriteResult {
+        this.assertOpen();
+        this.assertWritable();
+        try {
+            const result = reconcileCatalogProjection(this.database, projection);
+            return { status: 'applied', generation: result.generation, counts: result.counts };
+        } catch (error: unknown) {
+            if (error instanceof CatalogProjectionValidationError) throw error;
+            if (error instanceof CatalogProjectionRebuildRequiredError) {
+                return {
+                    status: 'rebuild_required',
+                    reason: 'projection_too_large',
+                    minimumRows: error.minimumRows,
+                    maximumTransactionRows: error.maximumTransactionRows,
+                    diagnostic: error.message
+                };
+            }
+            return {
+                status: 'deferred',
+                reason: classifyWriteFailure(error),
+                diagnostic: errorMessage(error)
+            };
+        }
+    }
+
+    rebuildProjection(
+        projection: DerivedCatalogProjection,
+        options: SqliteCatalogRebuildOptions = {}
+    ): SqliteCatalogWriteResult {
+        this.assertOpen();
+        this.assertWritable();
+        try {
+            const result = rebuildCatalogProjection(this.database, projection, options);
+            return { status: 'applied', generation: result.generation, counts: result.counts };
+        } catch (error: unknown) {
+            if (error instanceof CatalogProjectionValidationError) {
+                throw error;
+            }
+            return {
+                status: 'deferred',
+                reason: classifyWriteFailure(error),
+                diagnostic: errorMessage(error)
+            };
+        }
+    }
+
     inspect(): SqliteCatalogInspection {
         this.assertOpen();
         const state = this.database.prepare(`
-            SELECT generation, projection_status, snapshot_sha256, refreshed_at_utc
+            SELECT generation, canonical_generation, projection_status, snapshot_sha256, refreshed_at_utc
             FROM catalog_state WHERE singleton_id = 1
         `).get() as Record<string, unknown> | undefined;
         const projectionStatus = String(state?.projection_status || '');
@@ -584,7 +876,7 @@ class OpenCatalog implements DerivedSqliteCatalog {
         if (!Number.isSafeInteger(generation) || generation < 0) {
             throw new Error('SQLite catalog state has an invalid generation.');
         }
-        return {
+        const inspection: SqliteCatalogInspection = {
             catalogPath: this.catalogPath,
             applicationId: readPragmaNumber(this.database, 'PRAGMA application_id', 'PRAGMA application_id'),
             schemaVersion: readPragmaNumber(this.database, 'PRAGMA user_version', 'PRAGMA user_version'),
@@ -592,18 +884,53 @@ class OpenCatalog implements DerivedSqliteCatalog {
             foreignKeysEnabled: readPragmaNumber(this.database, 'PRAGMA foreign_keys', 'PRAGMA foreign_keys') === 1,
             busyTimeoutMs: readPragmaNumber(this.database, 'PRAGMA busy_timeout', 'PRAGMA busy_timeout'),
             generation,
+            canonicalGeneration: Number.isSafeInteger(Number(state?.canonical_generation))
+                && state?.canonical_generation !== null
+                ? Number(state?.canonical_generation)
+                : null,
             projectionStatus: projectionStatus as SqliteCatalogInspection['projectionStatus'],
             snapshotSha256: typeof state?.snapshot_sha256 === 'string' ? state.snapshot_sha256 : null,
             refreshedAtUtc: typeof state?.refreshed_at_utc === 'string' ? state.refreshed_at_utc : null,
             counts: readCatalogCounts(this.database)
         };
+        this.assertFileIdentity();
+        return inspection;
+    }
+
+    inspectSources(): readonly SqliteCatalogSourceInspection[] {
+        this.assertOpen();
+        const rows = this.database.prepare(`
+            SELECT source_kind, source_path, content_sha256, observed_at_utc
+            FROM canonical_sources
+            ORDER BY source_path, source_kind
+        `).all() as Record<string, unknown>[];
+        const sources = rows.map((row) => ({
+            sourceKind: String(row.source_kind || ''),
+            sourcePath: String(row.source_path || ''),
+            contentSha256: String(row.content_sha256 || ''),
+            observedAtUtc: String(row.observed_at_utc || '')
+        }));
+        this.assertFileIdentity();
+        return sources;
+    }
+
+    inspectParity(projection: DerivedCatalogProjection): SqliteCatalogParityInspection {
+        this.assertOpen();
+        const inspection = inspectCatalogProjectionParity(this.database, projection);
+        this.assertFileIdentity();
+        return inspection;
     }
 
     close(): void {
-        if (this.closed) return;
-        this.database.close();
-        this.closed = true;
-        ACTIVE_CATALOG_PATHS.delete(this.catalogPath);
+        if (!this.closed) {
+            this.database.close();
+            this.closed = true;
+            ACTIVE_CATALOG_PATHS.delete(this.catalogPath);
+        }
+        if (this.connectionLease) {
+            releaseFilesystemLock(this.connectionLease);
+            this.connectionLease = null;
+        }
     }
 }
 
@@ -615,12 +942,14 @@ function unavailableResult(
     return { status: 'unavailable', catalogPath, reason, diagnostic };
 }
 
-export function openDerivedSqliteCatalog(
+function openDerivedSqliteCatalogInternal(
     repoRoot: string,
-    options: OpenDerivedSqliteCatalogOptions = {}
+    options: OpenDerivedSqliteCatalogOptions,
+    maintenanceLockHeld: boolean
 ): OpenDerivedSqliteCatalogResult {
     let catalogPath: string | null = null;
     let database: CatalogDatabase | null = null;
+    let connectionLease: LockHandle | null = null;
     const assessFilesystem = createSqliteWalFilesystemAssessmentSession();
     try {
         catalogPath = resolveDerivedSqliteCatalogPathWithAssessment(repoRoot, assessFilesystem);
@@ -639,27 +968,157 @@ export function openDerivedSqliteCatalog(
         catalogPath = resolveDerivedSqliteCatalogPathWithAssessment(repoRoot, assessFilesystem);
         assertCatalogDirectoryInsideWorkspace(repoRoot, catalogPath);
         assertCatalogFilesInsideWorkspace(repoRoot, catalogPath);
-        database = new DatabaseSync(catalogPath);
-        applyConnectionSafetyPragmas(database);
-        const appliedAtUtc = (options.clock || (() => new Date().toISOString()))();
-        initializeOrValidateCatalog(
-            database,
-            catalogPath,
-            readAppVersion(repoRoot, options.appVersion),
-            appliedAtUtc
-        );
-        enforceCatalogFilePermissions(catalogPath);
-        enableNormalConnectionPolicy(database);
-        enforceCatalogFilePermissions(catalogPath);
-        ACTIVE_CATALOG_PATHS.add(catalogPath);
-        const catalog = new OpenCatalog(catalogPath, database);
-        database = null;
-        return { status: 'available', catalog };
+        const openConnection = (): void => {
+            if (!catalogPath) throw new CatalogOpenError('open_failed', 'SQLite catalog path is unavailable.');
+            database = new DatabaseSync(catalogPath);
+            applyConnectionSafetyPragmas(database);
+            const appliedAtUtc = (options.clock || (() => new Date().toISOString()))();
+            initializeOrValidateCatalog(
+                database,
+                readAppVersion(repoRoot, options.appVersion),
+                appliedAtUtc
+            );
+            enforceCatalogFilePermissions(catalogPath);
+            enableNormalConnectionPolicy(database);
+            enforceCatalogFilePermissions(catalogPath);
+            if (!maintenanceLockHeld) connectionLease = acquireCatalogConnectionLease(catalogPath);
+        };
+        const finalizeConnection = (): OpenDerivedSqliteCatalogResult => {
+            if (!catalogPath || !database) {
+                throw new CatalogOpenError('open_failed', 'SQLite catalog connection initialization was incomplete.');
+            }
+            ACTIVE_CATALOG_PATHS.add(catalogPath);
+            const catalog = new OpenCatalog(catalogPath, database, connectionLease);
+            database = null;
+            connectionLease = null;
+            return { status: 'available', catalog };
+        };
+        if (maintenanceLockHeld) {
+            openConnection();
+            return finalizeConnection();
+        }
+
+        let lockCallbackEntered = false;
+        try {
+            withFilesystemLock(resolveCatalogMaintenanceLockPath(catalogPath), {
+                timeoutMs: SQLITE_CATALOG_MAINTENANCE_TIMEOUT_MS,
+                retryMs: 25,
+                ownerLabel: 'sqlite-catalog-open-registration'
+            }, () => {
+                lockCallbackEntered = true;
+                openConnection();
+            });
+            return finalizeConnection();
+        } catch (error: unknown) {
+            if (!lockCallbackEntered) {
+                throw new CatalogOpenError(
+                    'locked',
+                    `SQLite catalog maintenance lock is unavailable: ${errorMessage(error)}`
+                );
+            }
+            throw error;
+        }
     } catch (error: unknown) {
         closeQuietly(database);
+        releaseCatalogConnectionLeaseQuietly(connectionLease);
         if (error instanceof CatalogOpenError) {
             return unavailableResult(error.reason, error.message, catalogPath);
         }
         return unavailableResult(classifyUnexpectedOpenFailure(error), errorMessage(error), catalogPath);
     }
+}
+
+export function openDerivedSqliteCatalog(
+    repoRoot: string,
+    options: OpenDerivedSqliteCatalogOptions = {}
+): OpenDerivedSqliteCatalogResult {
+    return openDerivedSqliteCatalogInternal(repoRoot, options, false);
+}
+
+export function openDerivedSqliteCatalogReadOnly(repoRoot: string): OpenDerivedSqliteCatalogResult {
+    let catalogPath: string | null = null;
+    let database: CatalogDatabase | null = null;
+    let connectionLease: LockHandle | null = null;
+    const assessFilesystem = createSqliteWalFilesystemAssessmentSession();
+    try {
+        catalogPath = resolveDerivedSqliteCatalogPathWithAssessment(repoRoot, assessFilesystem);
+        const capability = probeSqliteCatalogCapability();
+        if (!capability.available) {
+            return unavailableResult('capability_unavailable', capability.diagnostic, catalogPath);
+        }
+        if (!fs.existsSync(catalogPath)) {
+            return unavailableResult('path_unavailable', 'Derived SQLite catalog does not exist.', catalogPath);
+        }
+        if (ACTIVE_CATALOG_PATHS.has(catalogPath)) {
+            return unavailableResult('already_open', 'This process already owns the workspace catalog connection.', catalogPath);
+        }
+        const DatabaseSync = loadSqliteDatabaseConstructor();
+        if (!DatabaseSync) {
+            return unavailableResult('capability_unavailable', 'node:sqlite DatabaseSync became unavailable.', catalogPath);
+        }
+        assertCatalogDirectoryInsideWorkspace(repoRoot, catalogPath);
+        assertCatalogFilesInsideWorkspace(repoRoot, catalogPath);
+        let expectedFileIdentity: CatalogFileIdentity | null = null;
+        let lockCallbackEntered = false;
+        try {
+            withFilesystemLock(resolveCatalogMaintenanceLockPath(catalogPath), {
+                timeoutMs: SQLITE_CATALOG_MAINTENANCE_TIMEOUT_MS,
+                retryMs: 25,
+                ownerLabel: 'sqlite-catalog-read-only-open-registration'
+            }, () => {
+                lockCallbackEntered = true;
+                if (!catalogPath) {
+                    throw new CatalogOpenError('open_failed', 'SQLite catalog path is unavailable.');
+                }
+                expectedFileIdentity = readCatalogFileIdentity(catalogPath);
+                database = new DatabaseSync(catalogPath, { readOnly: true });
+                applyConnectionSafetyPragmas(database);
+                validateExistingCatalogReadOnly(database);
+                if (!catalogFileIdentityMatches(expectedFileIdentity, readCatalogFileIdentity(catalogPath))) {
+                    throw new CatalogOpenError(
+                        'locked',
+                        'SQLite catalog file changed while the read-only connection was opening.'
+                    );
+                }
+                connectionLease = acquireCatalogConnectionLease(catalogPath);
+            });
+        } catch (error: unknown) {
+            if (!lockCallbackEntered) {
+                throw new CatalogOpenError(
+                    'locked',
+                    `SQLite catalog maintenance lock is unavailable: ${errorMessage(error)}`
+                );
+            }
+            throw error;
+        }
+        if (!database || !expectedFileIdentity) {
+            throw new CatalogOpenError('open_failed', 'Read-only catalog initialization was incomplete.');
+        }
+        ACTIVE_CATALOG_PATHS.add(catalogPath);
+        const catalog = new OpenCatalog(
+            catalogPath,
+            database,
+            connectionLease,
+            true,
+            expectedFileIdentity
+        );
+        database = null;
+        connectionLease = null;
+        return { status: 'available', catalog };
+    } catch (error: unknown) {
+        closeQuietly(database);
+        releaseCatalogConnectionLeaseQuietly(connectionLease);
+        if (error instanceof CatalogOpenError) {
+            return unavailableResult(error.reason, error.message, catalogPath);
+        }
+        return unavailableResult(classifyUnexpectedOpenFailure(error), errorMessage(error), catalogPath);
+    }
+}
+
+/** Internal verification open. The caller must already hold exclusive catalog maintenance. */
+export function openDerivedSqliteCatalogDuringMaintenance(
+    repoRoot: string,
+    options: OpenDerivedSqliteCatalogOptions = {}
+): OpenDerivedSqliteCatalogResult {
+    return openDerivedSqliteCatalogInternal(repoRoot, options, true);
 }

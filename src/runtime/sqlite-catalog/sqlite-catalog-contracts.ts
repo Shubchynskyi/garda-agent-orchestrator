@@ -130,9 +130,18 @@ export interface CatalogMetricSample {
     readonly provenance: CatalogRowProvenance;
 }
 
+export interface CatalogCanonicalSource {
+    readonly sourceKind: string;
+    readonly sourcePath: string;
+    readonly contentSha256: string;
+    readonly observedAtUtc: string;
+}
+
 export interface DerivedCatalogProjection {
     readonly generatedAtUtc: string;
     readonly snapshotSha256: string;
+    readonly canonicalGeneration?: number | null;
+    readonly canonicalSources: readonly CatalogCanonicalSource[];
     readonly tasks: readonly CatalogTaskRow[];
     readonly lifecycleEvents: readonly CatalogLifecycleEvent[];
     readonly reviewAttempts: readonly CatalogReviewAttempt[];
@@ -164,10 +173,34 @@ export interface SqliteCatalogInspection {
     readonly foreignKeysEnabled: boolean;
     readonly busyTimeoutMs: number;
     readonly generation: number;
+    readonly canonicalGeneration: number | null;
     readonly projectionStatus: 'empty' | 'ready' | 'stale';
     readonly snapshotSha256: string | null;
     readonly refreshedAtUtc: string | null;
     readonly counts: SqliteCatalogCounts;
+}
+
+export interface SqliteCatalogSourceInspection {
+    readonly sourceKind: string;
+    readonly sourcePath: string;
+    readonly contentSha256: string;
+    readonly observedAtUtc: string;
+}
+
+export interface SqliteCatalogParityInspection {
+    readonly parity: boolean;
+    readonly mismatchedTables: readonly string[];
+}
+
+export interface SqliteCatalogRebuildProgress {
+    readonly phase: string;
+    readonly completedRows: number;
+    readonly totalRows: number;
+}
+
+export interface SqliteCatalogRebuildOptions {
+    readonly batchSize?: number;
+    readonly onProgress?: (event: SqliteCatalogRebuildProgress) => void;
 }
 
 export type SqliteCatalogWriteDeferredReason = 'busy' | 'locked' | 'write_error';
@@ -195,7 +228,14 @@ export interface DerivedSqliteCatalog {
     readonly catalogPath: string;
     readonly schemaVersion: number;
     replaceProjection(projection: DerivedCatalogProjection): SqliteCatalogWriteResult;
+    reconcileProjection(projection: DerivedCatalogProjection): SqliteCatalogWriteResult;
+    rebuildProjection(
+        projection: DerivedCatalogProjection,
+        options?: SqliteCatalogRebuildOptions
+    ): SqliteCatalogWriteResult;
     inspect(): SqliteCatalogInspection;
+    inspectSources(): readonly SqliteCatalogSourceInspection[];
+    inspectParity(projection: DerivedCatalogProjection): SqliteCatalogParityInspection;
     close(): void;
 }
 

@@ -390,19 +390,28 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
             `${PRIMARY_CLI_NAME} repair [inspect] [--target-root PATH] [--json]`,
             `${PRIMARY_CLI_NAME} repair rebuild-indexes [--target-root PATH] [--confirm] [--json]`,
             `${PRIMARY_CLI_NAME} repair protected-manifest [--target-root PATH] [--confirm] [--json]`,
-            `${PRIMARY_CLI_NAME} repair locks [--target-root PATH] [--cleanup-stale] [--confirm] [--json]`
+            `${PRIMARY_CLI_NAME} repair locks [--target-root PATH] [--cleanup-stale] [--confirm] [--json]`,
+            `${PRIMARY_CLI_NAME} repair catalog health [--target-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} repair catalog drift [--target-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} repair catalog repair [--target-root PATH] [--confirm] [--json]`,
+            `${PRIMARY_CLI_NAME} repair catalog rebuild [--target-root PATH] [--confirm] [--json]`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} repair inspect`,
             `${PRIMARY_CLI_NAME} repair rebuild-indexes`,
             `${PRIMARY_CLI_NAME} repair rebuild-indexes --confirm`,
             `${PRIMARY_CLI_NAME} repair locks --cleanup-stale`,
-            `${PRIMARY_CLI_NAME} repair protected-manifest --confirm`
+            `${PRIMARY_CLI_NAME} repair protected-manifest --confirm`,
+            `${PRIMARY_CLI_NAME} repair catalog health`,
+            `${PRIMARY_CLI_NAME} repair catalog drift`,
+            `${PRIMARY_CLI_NAME} repair catalog repair --confirm`,
+            `${PRIMARY_CLI_NAME} repair catalog rebuild --confirm`
         ]),
         hints: Object.freeze([
             'inspect is read-only and names canonical versus derived runtime state.',
             'rebuild-indexes and protected-manifest are dry-run by default; pass --confirm to write.',
-            'locks reports task-event, review-artifact, and completion-finalization locks; cleanup only removes proven-stale task-event/review-artifact locks after --cleanup-stale --confirm.'
+            'locks reports task-event, review-artifact, and completion-finalization locks; cleanup only removes proven-stale task-event/review-artifact locks after --cleanup-stale --confirm.',
+            'catalog health and drift are read-only; catalog repair and rebuild are preview-first and require --confirm to write.'
         ])
     }),
     gc: Object.freeze({
@@ -460,7 +469,7 @@ function styleHelpToken(token: string): string {
             'update', 'rollback', 'backup', 'uninstall', 'cleanup', 'repair', 'gc', 'clean', 'verify', 'check-update', 'skills',
             'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
             'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset',
-            'inspect', 'rebuild-indexes', 'protected-manifest', 'locks',
+            'inspect', 'rebuild-indexes', 'protected-manifest', 'locks', 'catalog', 'health', 'drift', 'rebuild',
             'events'
         ].includes(normalized)
     ) {

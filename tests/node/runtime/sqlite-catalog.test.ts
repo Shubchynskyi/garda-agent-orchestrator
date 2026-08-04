@@ -25,6 +25,7 @@ import {
     createSqliteWalFilesystemAssessmentSession,
     probeWindowsDriveMapping
 } from '../../../src/runtime/sqlite-catalog/sqlite-catalog-filesystem';
+import { SQLITE_CATALOG_MIGRATIONS } from '../../../src/runtime/sqlite-catalog/sqlite-catalog-migration';
 
 const OBSERVED_AT_UTC = '2026-08-03T10:00:00.000Z';
 const EVENT_AT_UTC = '2026-08-03T10:01:00.000Z';
@@ -67,8 +68,33 @@ function provenance(
     };
 }
 
+function withCanonicalSources(
+    projection: Omit<DerivedCatalogProjection, 'canonicalSources'>
+): DerivedCatalogProjection {
+    const rows = [
+        ...projection.tasks,
+        ...projection.lifecycleEvents,
+        ...projection.reviewAttempts,
+        ...projection.reviewReceipts,
+        ...projection.artifacts,
+        ...projection.taskLedgers,
+        ...projection.retentionStates,
+        ...projection.metricSamples
+    ];
+    const sources = new Map(rows.map((row) => {
+        const source = row.provenance;
+        return [`${source.sourceKind}\0${source.sourcePath}`, {
+            sourceKind: source.sourceKind,
+            sourcePath: source.sourcePath,
+            contentSha256: source.sourceContentSha256,
+            observedAtUtc: source.sourceObservedAtUtc
+        }] as const;
+    }));
+    return { ...projection, canonicalSources: [...sources.values()] };
+}
+
 function buildFullProjection(snapshotSeed = 'full'): DerivedCatalogProjection {
-    return {
+    return withCanonicalSources({
         generatedAtUtc: '2026-08-03T10:10:00.000Z',
         snapshotSha256: sha256(`snapshot:${snapshotSeed}`),
         tasks: [{
@@ -212,11 +238,11 @@ function buildFullProjection(snapshotSeed = 'full'): DerivedCatalogProjection {
                 { offset: 42, timestampUtc: '2026-08-03T10:08:00.000Z' }
             )
         }]
-    };
+    });
 }
 
 function buildEmptyProjection(snapshotSeed = 'empty'): DerivedCatalogProjection {
-    return {
+    return withCanonicalSources({
         generatedAtUtc: '2026-08-03T11:00:00.000Z',
         snapshotSha256: sha256(`snapshot:${snapshotSeed}`),
         tasks: [],
@@ -227,7 +253,7 @@ function buildEmptyProjection(snapshotSeed = 'empty'): DerivedCatalogProjection 
         taskLedgers: [],
         retentionStates: [],
         metricSamples: []
-    };
+    });
 }
 
 function requireCatalog(workspaceRoot: string): DerivedSqliteCatalog {
@@ -454,6 +480,7 @@ test('open initializes identity, migration ledger, WAL, and bounded connection p
         assert.equal(inspection.foreignKeysEnabled, true);
         assert.equal(inspection.busyTimeoutMs, SQLITE_CATALOG_BUSY_TIMEOUT_MS);
         assert.equal(inspection.generation, 0);
+        assert.equal(inspection.canonicalGeneration, null);
         assert.equal(inspection.projectionStatus, 'empty');
         assert.deepEqual(Object.values(inspection.counts), Array(10).fill(0));
         if (process.platform !== 'win32') {
@@ -468,6 +495,48 @@ test('open initializes identity, migration ledger, WAL, and bounded connection p
         const duplicateOpen = openDerivedSqliteCatalog(workspaceRoot);
         assert.equal(duplicateOpen.status, 'unavailable');
         if (duplicateOpen.status === 'unavailable') assert.equal(duplicateOpen.reason, 'already_open');
+    } finally {
+        catalog?.close();
+        removeWorkspace(workspaceRoot);
+    }
+});
+
+test('open upgrades an existing schema-v1 catalog through the immutable migration ledger', () => {
+    const workspaceRoot = createWorkspace('garda-sqlite-migrate-v1-');
+    const catalogPath = resolveDerivedSqliteCatalogPath(workspaceRoot);
+    fs.mkdirSync(path.dirname(catalogPath), { recursive: true });
+    const migrationV1 = SQLITE_CATALOG_MIGRATIONS[0];
+    const database = new DatabaseSync(catalogPath);
+    try {
+        database.exec(`PRAGMA application_id = ${SQLITE_CATALOG_APPLICATION_ID};`);
+        database.exec(migrationV1.sql);
+        database.prepare(`
+            INSERT INTO schema_migrations (version, name, checksum, applied_at_utc, app_version)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(1, migrationV1.name, migrationV1.checksum, '2026-08-03T10:00:00.000Z', '1.1.0-test');
+        database.exec('PRAGMA user_version = 1;');
+    } finally {
+        database.close();
+    }
+
+    let catalog: DerivedSqliteCatalog | null = null;
+    try {
+        catalog = requireCatalog(workspaceRoot);
+        const inspection = catalog.inspect();
+        assert.equal(inspection.schemaVersion, 2);
+        assert.equal(inspection.canonicalGeneration, null);
+        catalog.close();
+        catalog = null;
+
+        const migrated = new DatabaseSync(catalogPath, { readOnly: true });
+        try {
+            const versions = migrated.prepare('SELECT version FROM schema_migrations ORDER BY version')
+                .all()
+                .map((row) => Number((row as Record<string, unknown>).version));
+            assert.deepEqual(versions, [1, 2]);
+        } finally {
+            migrated.close();
+        }
     } finally {
         catalog?.close();
         removeWorkspace(workspaceRoot);

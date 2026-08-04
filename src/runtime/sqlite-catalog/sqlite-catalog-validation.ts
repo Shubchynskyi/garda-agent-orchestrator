@@ -3,6 +3,7 @@ import * as path from 'node:path';
 
 import { assertCanonicalTaskId } from '../../core/task-ids';
 import type {
+    CatalogCanonicalSource,
     CatalogArtifact,
     CatalogLifecycleEvent,
     CatalogMetricSample,
@@ -404,6 +405,15 @@ function allProvenance(projection: DerivedCatalogProjection): CatalogRowProvenan
     ].map((row) => row.provenance);
 }
 
+function assertCanonicalSource(source: CatalogCanonicalSource, index: number): void {
+    const label = `canonicalSources[${index}]`;
+    assertRowObject(source, label);
+    assertText(source.sourceKind, `${label}.sourceKind`);
+    assertRelativePortablePath(source.sourcePath, `${label}.sourcePath`);
+    assertSha256(source.contentSha256, `${label}.contentSha256`);
+    assertUtcTimestamp(source.observedAtUtc, `${label}.observedAtUtc`);
+}
+
 export function sourceIdForProvenance(provenance: CatalogRowProvenance): string {
     return createHash('sha256')
         .update(`${provenance.sourceKind}\0${provenance.sourcePath}`, 'utf8')
@@ -416,7 +426,11 @@ export function validateCatalogProjection(projection: DerivedCatalogProjection):
     }
     assertUtcTimestamp(projection.generatedAtUtc, 'projection.generatedAtUtc');
     assertSha256(projection.snapshotSha256, 'projection.snapshotSha256');
+    if (projection.canonicalGeneration !== undefined && projection.canonicalGeneration !== null) {
+        assertInteger(projection.canonicalGeneration, 'projection.canonicalGeneration', 0);
+    }
     const collections = [
+        projection.canonicalSources,
         projection.tasks,
         projection.lifecycleEvents,
         projection.reviewAttempts,
@@ -429,6 +443,7 @@ export function validateCatalogProjection(projection: DerivedCatalogProjection):
     if (collections.some((collection) => !Array.isArray(collection))) {
         fail('projection', 'must provide every catalog collection as an array.');
     }
+    projection.canonicalSources.forEach(assertCanonicalSource);
     projection.tasks.forEach(assertTaskRow);
     projection.lifecycleEvents.forEach(assertLifecycleEvent);
     projection.reviewAttempts.forEach(assertReviewAttempt);
@@ -442,25 +457,40 @@ export function validateCatalogProjection(projection: DerivedCatalogProjection):
     projection.metricSamples.forEach(assertMetricSample);
 
     const sourcesByKey = new Map<string, CanonicalSourceRow>();
-    for (const provenance of allProvenance(projection)) {
-        const sourceId = sourceIdForProvenance(provenance);
-        const existing = sourcesByKey.get(sourceId);
-        if (
-            existing
-            && (
-                existing.contentSha256 !== provenance.sourceContentSha256
-                || existing.observedAtUtc !== provenance.sourceObservedAtUtc
-            )
-        ) {
-            fail(`source ${provenance.sourcePath}`, 'has inconsistent snapshot provenance.');
+    for (const source of projection.canonicalSources) {
+        const sourceId = sourceIdForProvenance({
+            sourceKind: source.sourceKind,
+            sourcePath: source.sourcePath,
+            sourceContentSha256: source.contentSha256,
+            sourceObservedAtUtc: source.observedAtUtc,
+            sourceSequence: null,
+            sourceOffset: null,
+            sourceTimestampUtc: null,
+            recordContentSha256: source.contentSha256
+        });
+        if (sourcesByKey.has(sourceId)) {
+            fail(`source ${source.sourcePath}`, 'is duplicated in the canonical source inventory.');
         }
         sourcesByKey.set(sourceId, {
             sourceId,
-            sourceKind: provenance.sourceKind,
-            sourcePath: provenance.sourcePath,
-            contentSha256: provenance.sourceContentSha256,
-            observedAtUtc: provenance.sourceObservedAtUtc
+            sourceKind: source.sourceKind,
+            sourcePath: source.sourcePath,
+            contentSha256: source.contentSha256,
+            observedAtUtc: source.observedAtUtc
         });
+    }
+    for (const provenance of allProvenance(projection)) {
+        const sourceId = sourceIdForProvenance(provenance);
+        const existing = sourcesByKey.get(sourceId);
+        if (!existing) {
+            fail(`source ${provenance.sourcePath}`, 'is absent from the canonical source inventory.');
+        }
+        if (
+            existing.contentSha256 !== provenance.sourceContentSha256
+            || existing.observedAtUtc !== provenance.sourceObservedAtUtc
+        ) {
+            fail(`source ${provenance.sourcePath}`, 'has inconsistent snapshot provenance.');
+        }
     }
     return [...sourcesByKey.values()].sort((left, right) => left.sourceId.localeCompare(right.sourceId));
 }

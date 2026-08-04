@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 // Immutable database identity and migration contract for the derived catalog.
 export const SQLITE_CATALOG_APPLICATION_ID = 0x47415231;
-export const SQLITE_CATALOG_SCHEMA_VERSION = 1;
+export const SQLITE_CATALOG_SCHEMA_VERSION = 2;
 export const SQLITE_CATALOG_BUSY_TIMEOUT_MS = 250;
 
 export interface SqliteCatalogMigration {
@@ -302,6 +302,13 @@ const MIGRATION_V1_SQL = [
     'CREATE INDEX metric_samples_task_time_idx ON metric_samples(task_id, recorded_at_utc);'
 ].join('\n');
 
+const MIGRATION_V2_NAME = 'canonical-mutation-generation-checkpoint';
+const MIGRATION_V2_SQL = `
+    ALTER TABLE catalog_state
+    ADD COLUMN canonical_generation INTEGER NULL
+        CHECK (canonical_generation IS NULL OR canonical_generation >= 0);
+`;
+
 function migrationChecksum(version: number, name: string, sql: string): string {
     return createHash('sha256')
         .update(`${version}:${name}\n${sql}`, 'utf8')
@@ -314,12 +321,26 @@ export const SQLITE_CATALOG_MIGRATIONS: readonly SqliteCatalogMigration[] = Obje
         name: MIGRATION_V1_NAME,
         sql: MIGRATION_V1_SQL,
         checksum: migrationChecksum(1, MIGRATION_V1_NAME, MIGRATION_V1_SQL)
+    }),
+    Object.freeze({
+        version: 2,
+        name: MIGRATION_V2_NAME,
+        sql: MIGRATION_V2_SQL,
+        checksum: migrationChecksum(2, MIGRATION_V2_NAME, MIGRATION_V2_SQL)
     })
 ]);
 
 export const SQLITE_CATALOG_REQUIRED_COLUMNS: Readonly<Record<string, readonly string[]>> = Object.freeze({
     schema_migrations: Object.freeze(['version', 'name', 'checksum', 'applied_at_utc', 'app_version']),
-    catalog_state: Object.freeze(['singleton_id', 'generation', 'projection_status', 'snapshot_sha256', 'refreshed_at_utc', 'stale_reason']),
+    catalog_state: Object.freeze([
+        'singleton_id',
+        'generation',
+        'projection_status',
+        'snapshot_sha256',
+        'refreshed_at_utc',
+        'stale_reason',
+        'canonical_generation'
+    ]),
     canonical_sources: Object.freeze(['source_id', 'source_kind', 'source_path', 'content_sha256', 'observed_at_utc']),
     task_queue_rows: Object.freeze(['task_id', 'queue_position', 'source_id', 'source_sequence', 'source_offset', 'source_timestamp_utc', 'record_content_sha256']),
     lifecycle_events: Object.freeze(['task_id', 'task_sequence', 'event_type', 'event_sha256', 'source_id', 'source_sequence', 'source_offset', 'source_timestamp_utc', 'record_content_sha256']),
