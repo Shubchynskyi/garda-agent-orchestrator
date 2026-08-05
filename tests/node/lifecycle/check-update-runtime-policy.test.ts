@@ -638,8 +638,13 @@ describe('runCheckUpdate', () => {
                 assert.equal(result.checkUpdateResult, 'UPDATED');
                 assert.equal(result.updateApplied, true);
 
-                const updatedSource = fs.readFileSync(path.join(bundleRoot, 'src', 'lifecycle', 'update.ts'), 'utf8');
-                assert.match(updatedSource, /hasLegacyOuterUpdateLock/);
+                // The 1.0.0 caller executes from its source tree during this in-flight update,
+                // while current packages intentionally install a compiled-only runtime.
+                const updatedRuntime = fs.readFileSync(
+                    path.join(bundleRoot, 'dist', 'src', 'lifecycle', 'update', 'update.js'),
+                    'utf8'
+                );
+                assert.match(updatedRuntime, /hasLegacyOuterUpdateLock/);
                 assert.equal(
                     fs.readFileSync(
                         path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-command-reference.md'),
