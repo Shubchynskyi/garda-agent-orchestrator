@@ -127,7 +127,7 @@ describe('gates command human commit', () => {
         );
     });
 
-    it('pins human-commit operator confirmation command surfaces', () => {
+    it('rejects human-commit surfaces missing operator confirmation evidence', () => {
         const legacyBundleName = getLegacyBundleNameFixture();
         const guardBlock = buildCommitGuardManagedBlock();
         const helpOutput = stripAnsi(buildGateHelpText('human-commit', path.resolve('.')));
@@ -135,7 +135,9 @@ describe('gates command human commit', () => {
         const templateCommands = fs.readFileSync(path.resolve('template/docs/agent-rules/40-commands.md'), 'utf8');
         const liveCommandsPath = path.resolve('garda-agent-orchestrator/live/docs/agent-rules/40-commands.md');
         const assertHumanCommitSurface = (surface: string, label: string): void => {
-            const commandLine = surface.split(/\r?\n/).find((line) => line.includes('human-commit'));
+            const commandLine = surface.split(/\r?\n/).find((line) => (
+                line.includes('human-commit') && line.includes('--operator-confirmed')
+            ));
             assert.ok(commandLine, `${label} must document human-commit`);
             assert.ok(commandLine.includes('--operator-confirmed yes'), `${label} must require operator confirmation`);
             assert.ok(commandLine.includes('--operator-confirmed-at-utc'), `${label} must require a fresh confirmation timestamp`);
@@ -145,6 +147,9 @@ describe('gates command human commit', () => {
         assertHumanCommitSurface(getNodeHumanCommitCommand(), 'materialized command');
         assertHumanCommitSurface(guardBlock, 'commit guard');
         assert.ok(!guardBlock.includes(legacyBundleName));
+        assert.ok(helpOutput.includes('--operator-confirmed yes'));
+        assert.ok(helpOutput.includes('--operator-confirmed-at-utc'));
+        assert.ok(helpOutput.includes('--message'));
         assertHumanCommitSurface(helpOutput, 'CLI help');
         assertHumanCommitSurface(cliReference, 'CLI reference');
         assertHumanCommitSurface(templateCommands, 'command template');

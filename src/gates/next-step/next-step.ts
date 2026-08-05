@@ -252,9 +252,6 @@ import {
     mergeTaskOwnedMetadataRefreshFiles
 } from './next-step-task-owned-metadata';
 import {
-    isDependencyManifestLockfileRelatedToAny
-} from '../scope/dependency-manifest-lockfile-scope';
-import {
     readPostDoneWorkspaceDriftDecision,
     readReadyFinalReportSummary,
     type NextStepFinalReportSummary
@@ -1968,7 +1965,6 @@ function getPreflightRefreshCommandChangedFiles(params: {
         const currentTaskScopeChangedFiles = currentChangedFiles.filter((changedFile) => (
             plannedSet.has(changedFile)
                 || !unchangedDirtyBaselineSet.has(changedFile)
-                || isRelatedToPlannedScope(changedFile, plannedChangedFiles)
         ));
         const currentChangedSet = new Set(currentChangedFiles);
         const taskScopedRefreshChangedFiles = taskScopedChangedFiles.filter((changedFile) => (
@@ -2051,45 +2047,6 @@ function sameChangedFileSet(left: readonly string[], right: readonly string[]): 
     const normalizedRight = normalizeChangedFileSet(right);
     return normalizedLeft.length === normalizedRight.length
         && normalizedLeft.every((entry, index) => entry === normalizedRight[index]);
-}
-
-function isDistRuntimeOutputRelatedToPlannedSource(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
-    const normalizedChangedFile = normalizePath(changedFile);
-    if (!normalizedChangedFile.startsWith('dist/src/') || !normalizedChangedFile.endsWith('.js')) {
-        return false;
-    }
-    const sourceCandidate = `src/${normalizedChangedFile.slice('dist/src/'.length).replace(/\.js$/u, '.ts')}`;
-    return plannedChangedFiles.some((plannedFile) => normalizePath(plannedFile) === sourceCandidate);
-}
-
-function isRelatedToPlannedScope(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
-    if (isDependencyManifestLockfileRelatedToAny(changedFile, plannedChangedFiles)) {
-        return true;
-    }
-    if (isDistRuntimeOutputRelatedToPlannedSource(changedFile, plannedChangedFiles)) {
-        return true;
-    }
-    const normalizedChangedFile = normalizePath(changedFile);
-    const [changedTopLevel] = normalizedChangedFile.split('/');
-    if (!changedTopLevel || normalizedChangedFile === changedTopLevel) {
-        return false;
-    }
-    return plannedChangedFiles.some((plannedFile) => {
-        const normalizedPlannedFile = normalizePath(plannedFile);
-        const [plannedTopLevel] = normalizedPlannedFile.split('/');
-        const plannedDirectory = normalizedPlannedFile.split('/').slice(1, -1).join('/');
-        if (
-            changedTopLevel === 'tests'
-            && plannedTopLevel === 'src'
-            && plannedDirectory
-            && normalizedChangedFile.includes(`/${plannedDirectory}/`)
-        ) {
-            return true;
-        }
-        return Boolean(plannedTopLevel)
-            && normalizedPlannedFile !== plannedTopLevel
-            && plannedTopLevel === changedTopLevel;
-    });
 }
 
 function dirtyBaselineFileMatchesCurrent(

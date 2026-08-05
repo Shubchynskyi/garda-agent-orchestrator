@@ -397,8 +397,7 @@ export function readPreflightWorkspaceReadiness(
                     && (!includeFullFailedReviewRemediationScope || !unchangedDirtyBaselineSet.has(entry))
                     && (!compareOnlyPlannedScope
                         || plannedSet.has(entry)
-                        || !unchangedDirtyBaselineSet.has(entry)
-                        || isRelatedToPlannedScope(entry, plannedChangedFiles))
+                        || !unchangedDirtyBaselineSet.has(entry))
             ));
             const currentGitChangedSet = new Set(currentGitChangedFiles);
             const comparablePlannedChangedFiles = plannedChangedFiles.filter((entry) => (

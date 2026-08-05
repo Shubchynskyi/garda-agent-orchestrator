@@ -1358,7 +1358,7 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(!result.reason.includes('CHANGELOG.md'));
     });
 
-    it('refreshes planned-scope preflight through classify-change after the planned files are materialized', () => {
+    it('rejects planned-scope preflight missing post-entry drift after planned files materialize', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
@@ -1385,7 +1385,7 @@ describe('gates/next-step preflight routing', () => {
         assert.equal(result.next_gate, 'classify-change');
         assert.ok(result.reason.includes('Refresh classify-change for the current scope first'));
         assert.ok(command.includes('--changed-file "src/app.ts"'));
-        assert.ok(!command.includes('CHANGELOG.md'));
+        assert.ok(command.includes('--changed-file "CHANGELOG.md"'));
         assert.ok(!command.includes('<path>'));
     });
 
@@ -1417,10 +1417,10 @@ describe('gates/next-step preflight routing', () => {
         const command = result.commands[0].command;
 
         assert.equal(result.next_gate, 'classify-change');
-        assert.match(result.reason, /missing from preflight: \[package-lock\.json\]/);
+        assert.match(result.reason, /missing from preflight: \[CHANGELOG\.md, package-lock\.json\]/);
         assert.ok(command.includes('--changed-file "package.json"'));
         assert.ok(command.includes('--changed-file "package-lock.json"'));
-        assert.ok(!command.includes('CHANGELOG.md'));
+        assert.ok(command.includes('--changed-file "CHANGELOG.md"'));
     });
 
     it('refreshes planned dependency lockfile scope with changed manifest siblings', () => {
@@ -1450,10 +1450,10 @@ describe('gates/next-step preflight routing', () => {
         const command = result.commands[0].command;
 
         assert.equal(result.next_gate, 'classify-change');
-        assert.match(result.reason, /missing from preflight: \[package\.json\]/);
+        assert.match(result.reason, /missing from preflight: \[CHANGELOG\.md, package\.json\]/);
         assert.ok(command.includes('--changed-file "package-lock.json"'));
         assert.ok(command.includes('--changed-file "package.json"'));
-        assert.ok(!command.includes('CHANGELOG.md'));
+        assert.ok(command.includes('--changed-file "CHANGELOG.md"'));
     });
 
     it('includes related test changes when refreshing planned source scope', () => {
@@ -1825,7 +1825,7 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(!command.includes('docs/older-task.md'));
     });
 
-    it('keeps unchanged same-domain baseline files out of planned preflight refresh scope', () => {
+    it('rejects stale same-domain baseline files from planned preflight refresh scope', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
         const unrelatedBaselinePath = 'src/older-task.ts';
