@@ -22,6 +22,7 @@ import {
     flushScheduledDerivedSqliteCatalogReconciliation,
     inspectDerivedCatalogHealth,
     openDerivedSqliteCatalog,
+    probeSqliteCatalogCapability,
     queryPerformanceQualifiedTaskActivitySummaries,
     reconcileDerivedSqliteCatalog,
     rebuildDerivedSqliteCatalog,
@@ -34,6 +35,8 @@ import { SQLITE_CATALOG_MIGRATIONS } from '../../../src/runtime/sqlite-catalog/s
 
 const TASK_ID = 'T-2000-1';
 const SECOND_TASK_ID = 'T-2000-2';
+const SQLITE_CATALOG_CAPABILITY = probeSqliteCatalogCapability();
+const sqliteCatalogTest = SQLITE_CATALOG_CAPABILITY.available ? test : test.skip;
 
 function createWorkspace(prefix: string): string {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -295,7 +298,7 @@ test('canonical scanner normalizes task, event, ledger, retention, and metric re
     }
 });
 
-test('performance-qualified query uses SQLite and fails closed to files after canonical drift', () => {
+sqliteCatalogTest('performance-qualified query uses SQLite and fails closed to files after canonical drift', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-current-query-');
     try {
         const taskQueuePath = path.join(workspaceRoot, 'TASK.md');
@@ -639,7 +642,7 @@ test('performance-qualified query uses SQLite and fails closed to files after ca
     }
 });
 
-test('performance-qualified query isolates changed and deleted fallback by canonical source kind', () => {
+sqliteCatalogTest('performance-qualified query isolates changed and deleted fallback by canonical source kind', () => {
     const sourceKinds = ['task_queue', 'task_events', 'review_artifact', 'task_ledger', 'metrics'] as const;
 
     for (const mode of ['changed', 'deleted'] as const) {
@@ -696,7 +699,7 @@ test('performance-qualified query isolates changed and deleted fallback by canon
     }
 });
 
-test('performance-qualified query treats review artifacts as task-event-owned canonical sources', () => {
+sqliteCatalogTest('performance-qualified query treats review artifacts as task-event-owned canonical sources', () => {
     const fixture = createBulkFallbackWorkspace('garda-sqlite-current-query-new-artifact-');
     try {
         const artifactPath = path.join(fixture.workspaceRoot, 'runtime', 'reviews', `${TASK_ID}-new-code.md`);
@@ -729,7 +732,7 @@ test('performance-qualified query treats review artifacts as task-event-owned ca
     }
 });
 
-test('performance-qualified query discards a result when canonical generation advances during the query', () => {
+sqliteCatalogTest('performance-qualified query discards a result when canonical generation advances during the query', () => {
     const fixture = createBulkFallbackWorkspace('garda-sqlite-current-query-generation-race-');
     const eventPath = fixture.sourcePaths.task_events;
     const originalReadFileSync = fsModule.readFileSync;
@@ -754,7 +757,7 @@ test('performance-qualified query discards a result when canonical generation ad
     }
 });
 
-test('performance-qualified query discards a result when a source changes during the query', () => {
+sqliteCatalogTest('performance-qualified query discards a result when a source changes during the query', () => {
     const fixture = createBulkFallbackWorkspace('garda-sqlite-current-query-source-race-');
     const eventPath = fixture.sourcePaths.task_events;
     const originalReadFileSync = fsModule.readFileSync;
@@ -781,7 +784,7 @@ test('performance-qualified query discards a result when a source changes during
     }
 });
 
-test('performance-qualified query rejects a post-projection symlink source before reading its target', () => {
+sqliteCatalogTest('performance-qualified query rejects a post-projection symlink source before reading its target', () => {
     const fixture = createBulkFallbackWorkspace('garda-sqlite-current-query-source-link-');
     const eventPath = fixture.sourcePaths.task_events;
     const mutableFsModule = fsModule as {
@@ -903,7 +906,7 @@ test('canonical scanner rejects cross-stream artifact ownership collisions', () 
     }
 });
 
-test('incremental reconciliation is a no-op when current and advances after one canonical append', () => {
+sqliteCatalogTest('incremental reconciliation is a no-op when current and advances after one canonical append', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-incremental-');
     try {
         const first = reconcileDerivedSqliteCatalog(workspaceRoot, {
@@ -958,7 +961,7 @@ test('incremental reconciliation is a no-op when current and advances after one 
     }
 });
 
-test('zero-row canonical sources persist and converge in health and reconciliation', () => {
+sqliteCatalogTest('zero-row canonical sources persist and converge in health and reconciliation', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-zero-row-source-');
     try {
         fs.writeFileSync(path.join(workspaceRoot, 'runtime', 'metrics.jsonl'), '', 'utf8');
@@ -994,7 +997,7 @@ test('zero-row canonical sources persist and converge in health and reconciliati
     }
 });
 
-test('incremental event reconciliation refreshes attempts together with unchanged pinned artifacts', () => {
+sqliteCatalogTest('incremental event reconciliation refreshes attempts together with unchanged pinned artifacts', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-artifact-dependency-');
     try {
         const artifactPath = path.join(workspaceRoot, 'runtime', 'reviews', `${TASK_ID}-code.md`);
@@ -1048,7 +1051,7 @@ test('incremental event reconciliation refreshes attempts together with unchange
     }
 });
 
-test('runtime generation invalidates an otherwise unchanged snapshot without opening SQLite in the writer', () => {
+sqliteCatalogTest('runtime generation invalidates an otherwise unchanged snapshot without opening SQLite in the writer', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-generation-');
     try {
         const initial = reconcileDerivedSqliteCatalog(workspaceRoot);
@@ -1174,7 +1177,7 @@ test('canonical scanner rejects a matching symlinked source file instead of omit
     }
 });
 
-test('malformed canonical input fails closed without mutating the last healthy projection', () => {
+sqliteCatalogTest('malformed canonical input fails closed without mutating the last healthy projection', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-malformed-');
     try {
         const applied = reconcileDerivedSqliteCatalog(workspaceRoot);
@@ -1200,7 +1203,7 @@ test('malformed canonical input fails closed without mutating the last healthy p
     }
 });
 
-test('health inspection does not migrate an older catalog or write coordination artifacts', () => {
+sqliteCatalogTest('health inspection does not migrate an older catalog or write coordination artifacts', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-read-only-health-');
     const catalogPath = resolveDerivedSqliteCatalogPath(workspaceRoot);
     fs.mkdirSync(path.dirname(catalogPath), { recursive: true });
@@ -1241,7 +1244,7 @@ test('health inspection does not migrate an older catalog or write coordination 
     }
 });
 
-test('health detects drift and repair stays preview-first until apply is explicit', () => {
+sqliteCatalogTest('health detects drift and repair stays preview-first until apply is explicit', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-repair-');
     try {
         const initial = reconcileDerivedSqliteCatalog(workspaceRoot);
@@ -1269,7 +1272,7 @@ test('health detects drift and repair stays preview-first until apply is explici
     }
 });
 
-test('parity validation detects catalog-row tampering even when the snapshot hash is unchanged', () => {
+sqliteCatalogTest('parity validation detects catalog-row tampering even when the snapshot hash is unchanged', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-parity-');
     try {
         assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
@@ -1289,7 +1292,7 @@ test('parity validation detects catalog-row tampering even when the snapshot has
     }
 });
 
-test('projection contention defers without blocking canonical reads or writes', () => {
+sqliteCatalogTest('projection contention defers without blocking canonical reads or writes', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-busy-');
     try {
         assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
@@ -1316,7 +1319,7 @@ test('projection contention defers without blocking canonical reads or writes', 
     }
 });
 
-test('confirmed repair quarantines a corrupt catalog and rebuilds from canonical files', () => {
+sqliteCatalogTest('confirmed repair quarantines a corrupt catalog and rebuilds from canonical files', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-corrupt-');
     try {
         assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
@@ -1360,7 +1363,7 @@ test('canonical-first wrapper preserves a successful canonical write when projec
     }
 });
 
-test('production canonical mutation commits reconcile an existing catalog without weakening canonical durability', async () => {
+sqliteCatalogTest('production canonical mutation commits reconcile an existing catalog without weakening canonical durability', async () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-production-write-');
     try {
         const initial = reconcileDerivedSqliteCatalog(workspaceRoot);
@@ -1400,7 +1403,7 @@ test('production canonical mutation commits reconcile an existing catalog withou
     }
 });
 
-test('production scheduling defers before canonical scanning once the catalog exceeds its bounded envelope', async () => {
+sqliteCatalogTest('production scheduling defers before canonical scanning once the catalog exceeds its bounded envelope', async () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-production-bound-');
     try {
         const metricsPath = path.join(workspaceRoot, 'runtime', 'metrics.jsonl');
@@ -1439,7 +1442,7 @@ test('production scheduling defers before canonical scanning once the catalog ex
     }
 });
 
-test('production scheduling defers before reading a large referenced review artifact', async () => {
+sqliteCatalogTest('production scheduling defers before reading a large referenced review artifact', async () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-production-artifact-bound-');
     try {
         const initial = reconcileDerivedSqliteCatalog(workspaceRoot);
@@ -1489,7 +1492,7 @@ test('production scheduling defers before reading a large referenced review arti
     }
 });
 
-test('production scheduling defers before canonical scanning while a peer owns a read-only connection', async () => {
+sqliteCatalogTest('production scheduling defers before canonical scanning while a peer owns a read-only connection', async () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-production-peer-read-only-');
     let peer: ReturnType<typeof spawn> | null = null;
     try {
@@ -1533,7 +1536,7 @@ test('production scheduling defers before canonical scanning while a peer owns a
     }
 });
 
-test('explicit rebuild rejects a staging catalog that fails the full integrity check', () => {
+sqliteCatalogTest('explicit rebuild rejects a staging catalog that fails the full integrity check', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-integrity-');
     const originalPrepare = DatabaseSync.prototype.prepare;
     let preparePatched = false;
@@ -1564,7 +1567,7 @@ test('explicit rebuild rejects a staging catalog that fails the full integrity c
     }
 });
 
-test('explicit rebuild leaves the live catalog untouched when its WAL checkpoint cannot be proven', () => {
+sqliteCatalogTest('explicit rebuild leaves the live catalog untouched when its WAL checkpoint cannot be proven', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-live-checkpoint-');
     const originalPrepare = DatabaseSync.prototype.prepare;
     let preparePatched = false;
@@ -1605,7 +1608,7 @@ test('explicit rebuild leaves the live catalog untouched when its WAL checkpoint
     }
 });
 
-test('explicit rebuild keeps the live main in place until atomic staged replacement', () => {
+sqliteCatalogTest('explicit rebuild keeps the live main in place until atomic staged replacement', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-atomic-replace-');
     const originalRenameSync = fsModule.renameSync;
     let renamePatched = false;
@@ -1650,7 +1653,7 @@ test('explicit rebuild keeps the live main in place until atomic staged replacem
     }
 });
 
-test('explicit rebuild rejects a catalog-directory link before staging writes', (context) => {
+sqliteCatalogTest('explicit rebuild rejects a catalog-directory link before staging writes', (context) => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-linked-catalog-');
     const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-sqlite-rebuild-outside-'));
     const catalogDirectory = path.join(workspaceRoot, 'runtime', 'catalog');
@@ -1681,7 +1684,7 @@ test('explicit rebuild rejects a catalog-directory link before staging writes', 
     }
 });
 
-test('explicit rebuild rejects a linked backup directory without writing outside the catalog', (context) => {
+sqliteCatalogTest('explicit rebuild rejects a linked backup directory without writing outside the catalog', (context) => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-backup-link-');
     const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-sqlite-reconcile-backup-outside-'));
     try {
@@ -1710,7 +1713,7 @@ test('explicit rebuild rejects a linked backup directory without writing outside
     }
 });
 
-test('confirmed repair rejects a linked quarantine directory without moving the corrupt catalog', (context) => {
+sqliteCatalogTest('confirmed repair rejects a linked quarantine directory without moving the corrupt catalog', (context) => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-quarantine-link-');
     const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-sqlite-reconcile-quarantine-outside-'));
     try {
@@ -1740,7 +1743,7 @@ test('confirmed repair rejects a linked quarantine directory without moving the 
     }
 });
 
-test('explicit rebuild validates staged parity before replacing the live catalog', () => {
+sqliteCatalogTest('explicit rebuild validates staged parity before replacing the live catalog', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-pre-promotion-parity-');
     const originalPrepare = DatabaseSync.prototype.prepare;
     const originalRenameSync = fsModule.renameSync;
@@ -1802,7 +1805,7 @@ test('explicit rebuild validates staged parity before replacing the live catalog
     }
 });
 
-test('interrupted explicit rebuild preserves the prior live catalog for fallback and repair', () => {
+sqliteCatalogTest('interrupted explicit rebuild preserves the prior live catalog for fallback and repair', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-crash-');
     try {
         const initial = reconcileDerivedSqliteCatalog(workspaceRoot);
@@ -1838,7 +1841,7 @@ test('interrupted explicit rebuild preserves the prior live catalog for fallback
     }
 });
 
-test('explicit rebuild defers while this process owns the live catalog connection', () => {
+sqliteCatalogTest('explicit rebuild defers while this process owns the live catalog connection', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-rebuild-open-');
     try {
         assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
@@ -1858,7 +1861,7 @@ test('explicit rebuild defers while this process owns the live catalog connectio
     }
 });
 
-test('explicit rebuild defers while a peer process owns the live catalog connection', async () => {
+sqliteCatalogTest('explicit rebuild defers while a peer process owns the live catalog connection', async () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-rebuild-peer-open-');
     let peer: ReturnType<typeof spawn> | null = null;
     try {
@@ -1903,7 +1906,7 @@ test('explicit rebuild defers while a peer process owns the live catalog connect
     }
 });
 
-test('explicit rebuild defers while a peer process owns a read-only catalog connection', async () => {
+sqliteCatalogTest('explicit rebuild defers while a peer process owns a read-only catalog connection', async () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-rebuild-peer-read-only-');
     let peer: ReturnType<typeof spawn> | null = null;
     try {
@@ -1948,7 +1951,7 @@ test('explicit rebuild defers while a peer process owns a read-only catalog conn
     }
 });
 
-test('explicit rebuild rolls back when canonical data changes in the promotion window', () => {
+sqliteCatalogTest('explicit rebuild rolls back when canonical data changes in the promotion window', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-promotion-race-');
     const originalRenameSync = fsModule.renameSync;
     let renamePatched = false;
@@ -1998,7 +2001,7 @@ test('explicit rebuild rolls back when canonical data changes in the promotion w
     }
 });
 
-test('explicit rebuild rolls back when a pinned review artifact changes in the promotion window', () => {
+sqliteCatalogTest('explicit rebuild rolls back when a pinned review artifact changes in the promotion window', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-artifact-promotion-race-');
     const originalRenameSync = fsModule.renameSync;
     let renamePatched = false;
@@ -2064,7 +2067,7 @@ test('explicit rebuild rolls back when a pinned review artifact changes in the p
     }
 });
 
-test('incremental reconciliation bounds combined deleted and inserted rows', () => {
+sqliteCatalogTest('incremental reconciliation bounds combined deleted and inserted rows', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-combined-limit-');
     try {
         const metricsPath = path.join(workspaceRoot, 'runtime', 'metrics.jsonl');
@@ -2097,7 +2100,7 @@ test('incremental reconciliation bounds combined deleted and inserted rows', () 
     }
 });
 
-test('explicit rebuild accepts a projection larger than the interactive transaction limit', () => {
+sqliteCatalogTest('explicit rebuild accepts a projection larger than the interactive transaction limit', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-large-');
     try {
         const metricsPath = path.join(workspaceRoot, 'runtime', 'metrics.jsonl');
@@ -2126,7 +2129,7 @@ test('explicit rebuild accepts a projection larger than the interactive transact
     }
 });
 
-test('explicit rebuild bounds metric-label fan-out by inserted rows', () => {
+sqliteCatalogTest('explicit rebuild bounds metric-label fan-out by inserted rows', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-reconcile-label-batches-');
     try {
         const metricsPath = path.join(workspaceRoot, 'runtime', 'metrics.jsonl');

@@ -33,6 +33,18 @@ export interface ProfileDirectoryIdentity {
     ino: number;
 }
 
+export function profileFileIdentityMatches(
+    left: ProfileDirectoryIdentity,
+    right: ProfileDirectoryIdentity
+): boolean {
+    // Node 22 on Windows can report dev=0 from lstat while fstat returns the
+    // volume device id for the same file. The inode still provides the stable
+    // identity needed by the guarded open/claim paths.
+    const deviceMatches = left.dev === right.dev
+        || (process.platform === 'win32' && (left.dev === 0 || right.dev === 0));
+    return deviceMatches && left.ino === right.ino;
+}
+
 export interface ProfileBundleRootOwnership {
     repoRoot: string;
     bundleRoot: string;
@@ -95,7 +107,7 @@ function assertDirectoryIdentity(
     label: string
 ): void {
     const current = readRealDirectoryIdentity(directoryPath, label);
-    if (current.dev !== expected.dev || current.ino !== expected.ino) {
+    if (!profileFileIdentityMatches(current, expected)) {
         throw new Error(`${label} changed after profile policy ownership validation.`);
     }
 }
@@ -233,8 +245,7 @@ function assertCurrentProfilesConfigState(
         || pathIdentity.isSymbolicLink()
         || openedIdentity.nlink !== 1
         || pathIdentity.nlink !== 1
-        || openedIdentity.dev !== pathIdentity.dev
-        || openedIdentity.ino !== pathIdentity.ino
+        || !profileFileIdentityMatches(openedIdentity, pathIdentity)
     ) {
         throw new Error('Profiles config changed after profile policy validation.');
     }
@@ -267,7 +278,7 @@ function assertClaimedProfilesConfigState(
     const claimedFd = openExistingProfilesConfig(claimedPath, ownership, true);
     try {
         const claimedIdentity = fs.fstatSync(claimedFd);
-        if (claimedIdentity.dev !== expectedIdentity.dev || claimedIdentity.ino !== expectedIdentity.ino) {
+        if (!profileFileIdentityMatches(claimedIdentity, expectedIdentity)) {
             throw new Error('Profiles config changed before profile policy commit could claim it.');
         }
         if (hashProfilesConfigData(readProfilesDataFromDescriptor(claimedFd)) !== expectedConfigSha256) {
@@ -287,14 +298,13 @@ function restoreClaimedProfilesConfig(
     if (
         !currentClaimedIdentity.isFile()
         || currentClaimedIdentity.isSymbolicLink()
-        || currentClaimedIdentity.dev !== claimedIdentity.dev
-        || currentClaimedIdentity.ino !== claimedIdentity.ino
+        || !profileFileIdentityMatches(currentClaimedIdentity, claimedIdentity)
     ) {
         throw new Error('Claimed profiles config changed before it could be restored.');
     }
     fs.linkSync(claimedPath, profilesPath);
     const restoredIdentity = fs.lstatSync(profilesPath);
-    if (restoredIdentity.dev !== claimedIdentity.dev || restoredIdentity.ino !== claimedIdentity.ino) {
+    if (!profileFileIdentityMatches(restoredIdentity, claimedIdentity)) {
         throw new Error('Claimed profiles config could not be restored safely.');
     }
     if (!unlinkObservedPath(claimedPath, claimedIdentity)) {
@@ -345,7 +355,7 @@ function resolveRecoverableLinkedProfilesRead(profilesPath: string): ReadablePro
     }
     const currentIdentity = fs.lstatSync(profilesPath);
     const claimIdentity = fs.lstatSync(claims[0].path);
-    const restorationPending = currentIdentity.dev === claimIdentity.dev && currentIdentity.ino === claimIdentity.ino;
+    const restorationPending = profileFileIdentityMatches(currentIdentity, claimIdentity);
     return {
         path: profilesPath,
         expectedConfigSha256: restorationPending
@@ -365,8 +375,7 @@ function removePublishedProfilesTempLink(profilesPath: string, publishedIdentity
                 const identity = fs.lstatSync(candidatePath);
                 return identity.isFile()
                     && !identity.isSymbolicLink()
-                    && identity.dev === publishedIdentity.dev
-                    && identity.ino === publishedIdentity.ino;
+                    && profileFileIdentityMatches(identity, publishedIdentity);
             } catch (error: unknown) {
                 if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
                 throw error;
@@ -380,8 +389,7 @@ function removePublishedProfilesTempLink(profilesPath: string, publishedIdentity
     }
     const settledIdentity = fs.lstatSync(profilesPath);
     if (
-        settledIdentity.dev !== publishedIdentity.dev
-        || settledIdentity.ino !== publishedIdentity.ino
+        !profileFileIdentityMatches(settledIdentity, publishedIdentity)
         || settledIdentity.nlink !== 1
     ) {
         throw new Error('Published profiles config did not settle to one authenticated link.');
@@ -425,8 +433,7 @@ function recoverPendingProfilesClaim(
     } finally {
         fs.closeSync(currentFd);
     }
-    const restorationPending = currentIdentity.dev === claimedIdentity.dev
-        && currentIdentity.ino === claimedIdentity.ino;
+    const restorationPending = profileFileIdentityMatches(currentIdentity, claimedIdentity);
     if (restorationPending) {
         if (currentConfigSha256 !== claim.beforeConfigSha256) {
             throw new Error('Restored profiles config diverges from the pending claim before hash.');
@@ -641,13 +648,12 @@ function releaseProfilesLock(lockPath: string, lockFd: number, operationComplete
         if (cleanupFd === null) {
             markProfilesLockReleased(lockFd);
         } else {
-            const ownedIdentity = fs.fstatSync(lockFd);
-            const currentIdentity = fs.lstatSync(lockPath);
-            fs.closeSync(lockFd);
+            releaseFailure = releaseOwnedProfilesLockPath(
+                lockPath,
+                lockFd,
+                'Profiles config lock path changed before release.'
+            );
             lockClosed = true;
-            if (currentIdentity.dev === ownedIdentity.dev && currentIdentity.ino === ownedIdentity.ino) {
-                fs.unlinkSync(lockPath);
-            }
         }
     } catch (error: unknown) {
         releaseFailure = error;
@@ -671,34 +677,54 @@ function releaseProfilesLock(lockPath: string, lockFd: number, operationComplete
 }
 
 function releaseOwnedCleanupGuard(cleanupPath: string, cleanupFd: number): unknown | null {
+    return releaseOwnedProfilesLockPath(
+        cleanupPath,
+        cleanupFd,
+        'Profiles cleanup lock path changed before release.'
+    );
+}
+
+function releaseOwnedProfilesLockPath(
+    lockPath: string,
+    lockFd: number,
+    changedPathMessage: string
+): unknown | null {
     let identity: fs.Stats | null = null;
+    let lockId: string | null = null;
     let failure: unknown | null = null;
-    try { identity = fs.fstatSync(cleanupFd); } catch (error: unknown) { failure = error; }
-    if (identity) {
-        try { markProfilesLockReleased(cleanupFd); } catch (error: unknown) { failure ||= error; }
+    try {
+        lockId = markProfilesLockReleased(lockFd);
+        identity = fs.fstatSync(lockFd);
+    } catch (error: unknown) {
+        failure = error;
     }
-    try { fs.closeSync(cleanupFd); } catch (error: unknown) { failure ||= error; }
-    if (identity) {
+    try { fs.closeSync(lockFd); } catch (error: unknown) { failure ||= error; }
+    if (identity && lockId && failure === null) {
         try {
-            if (!unlinkObservedPath(cleanupPath, identity)) {
-                failure ||= new Error('Profiles cleanup lock path changed before release.');
+            if (!claimAndUnlinkOwnedProfilesLockPath(lockPath, identity, lockId)) {
+                failure = new Error(changedPathMessage);
             }
         } catch (error: unknown) {
-            failure ||= error;
+            failure = error;
         }
     }
     return failure;
 }
 
-function markProfilesLockReleased(lockFd: number): void {
+function markProfilesLockReleased(lockFd: number): string {
+    const owner = readProfilesLockOwner(lockFd);
+    const lockId = typeof owner.lock_id === 'string' ? owner.lock_id.trim() : '';
+    if (!lockId) {
+        throw new Error('Profiles config lock owner id is missing before release.');
+    }
     fs.ftruncateSync(lockFd, 0);
     fs.writeSync(lockFd, JSON.stringify({
-        pid: process.pid,
-        created_at_utc: new Date().toISOString(),
+        ...owner,
         released: true,
         released_at_utc: new Date().toISOString()
     }), 0, 'utf8');
     fs.fsyncSync(lockFd);
+    return lockId;
 }
 
 function waitForProfilesLockRetry(): void {
@@ -737,10 +763,8 @@ function openExistingProfilesConfig(
             throw new ProfilesConfigAdditionalLinksError();
         }
         if (
-            openedIdentity.dev !== initialIdentity.dev
-            || openedIdentity.ino !== initialIdentity.ino
-            || openedIdentity.dev !== pathIdentity.dev
-            || openedIdentity.ino !== pathIdentity.ino
+            !profileFileIdentityMatches(openedIdentity, initialIdentity)
+            || !profileFileIdentityMatches(openedIdentity, pathIdentity)
         ) {
             throw new Error('Profiles config path changed while it was opened.');
         }
@@ -758,12 +782,10 @@ function assertOpenedPathIdentity(filePath: string, fd: number, expectedIdentity
     if (!openedIdentity.isFile() || !pathIdentity.isFile() || pathIdentity.isSymbolicLink()) {
         throw new Error('Profiles config lock must be a regular file.');
     }
-    if (openedIdentity.dev !== pathIdentity.dev || openedIdentity.ino !== pathIdentity.ino) {
+    if (!profileFileIdentityMatches(openedIdentity, pathIdentity)) {
         throw new Error('Profiles config lock path changed while it was opened.');
     }
-    if (expectedIdentity && (
-        openedIdentity.dev !== expectedIdentity.dev || openedIdentity.ino !== expectedIdentity.ino
-    )) {
+    if (expectedIdentity && !profileFileIdentityMatches(openedIdentity, expectedIdentity)) {
         throw new Error('Profiles config lock does not match the prepared owner file.');
     }
     return openedIdentity;
@@ -783,6 +805,7 @@ function openExistingProfilesLock(filePath: string, flags: number): number {
 
 function createProfilesLock(lockPath: string): number {
     return createOwnedProfilesLock(lockPath, {
+        lock_id: randomUUID(),
         pid: process.pid,
         created_at_utc: new Date().toISOString()
     });
@@ -874,9 +897,70 @@ function acquireProfilesCleanupLock(cleanupPath: string): number | null {
 
 function createProfilesCleanupLock(cleanupPath: string): number {
     return createOwnedProfilesLock(cleanupPath, {
+        lock_id: randomUUID(),
         pid: process.pid,
         created_at_utc: new Date().toISOString()
     });
+}
+
+function restoreMismatchedProfilesLockClaim(claimedPath: string, originalPath: string): void {
+    if (fs.existsSync(originalPath)) {
+        throw new Error('Profiles config lock replacement could not be restored because the original path is occupied.');
+    }
+    fs.renameSync(claimedPath, originalPath);
+}
+
+function claimAndUnlinkOwnedProfilesLockPath(
+    lockPath: string,
+    observedIdentity: fs.Stats,
+    expectedLockId: string
+): boolean {
+    const currentIdentity = fs.lstatSync(lockPath);
+    if (!currentIdentity.isFile() || currentIdentity.isSymbolicLink()) return false;
+    if (!profileFileIdentityMatches(currentIdentity, observedIdentity)) return false;
+
+    const claimedPath = `${lockPath}.garda-release-${process.pid}-${randomUUID()}`;
+    fs.renameSync(lockPath, claimedPath);
+    let restoreClaim = true;
+    try {
+        const claimedFd = openExistingProfilesLock(claimedPath, fs.constants.O_RDONLY);
+        let claimedIdentity: fs.Stats;
+        let claimedOwner: Record<string, unknown>;
+        try {
+            claimedIdentity = fs.fstatSync(claimedFd);
+            claimedOwner = readProfilesLockOwner(claimedFd);
+        } finally {
+            fs.closeSync(claimedFd);
+        }
+        const claimedLockId = typeof claimedOwner.lock_id === 'string'
+            ? claimedOwner.lock_id.trim()
+            : '';
+        if (
+            !profileFileIdentityMatches(claimedIdentity, observedIdentity)
+            || claimedLockId !== expectedLockId
+            || claimedOwner.released !== true
+        ) {
+            restoreMismatchedProfilesLockClaim(claimedPath, lockPath);
+            restoreClaim = false;
+            return false;
+        }
+        if (!unlinkObservedPath(claimedPath, claimedIdentity)) {
+            throw new Error('Profiles config lock release claim changed before cleanup.');
+        }
+        restoreClaim = false;
+        return true;
+    } catch (error: unknown) {
+        if (!restoreClaim) throw error;
+        try {
+            restoreMismatchedProfilesLockClaim(claimedPath, lockPath);
+        } catch (restoreError: unknown) {
+            throw new AggregateError(
+                [error, restoreError],
+                'Profiles config lock release claim failed and could not be restored safely.'
+            );
+        }
+        throw error;
+    }
 }
 
 function removeDeadCleanupLock(cleanupPath: string): boolean {
@@ -907,7 +991,10 @@ function removeDeadCleanupLock(cleanupPath: string): boolean {
 }
 
 function readProfilesLockOwner(lockFd: number): Record<string, unknown> {
-    const parsed = JSON.parse(fs.readFileSync(lockFd, 'utf8')) as unknown;
+    const size = fs.fstatSync(lockFd).size;
+    const raw = Buffer.alloc(size);
+    if (size > 0) fs.readSync(lockFd, raw, 0, size, 0);
+    const parsed = JSON.parse(raw.toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw new Error('Profiles config lock owner metadata must be an object.');
     }
@@ -922,7 +1009,7 @@ function removeAgedMalformedLock(lockPath: string, identity: fs.Stats, minimumAg
 function unlinkObservedPath(filePath: string, observedIdentity: fs.Stats): boolean {
     const currentIdentity = fs.lstatSync(filePath);
     if (!currentIdentity.isFile() || currentIdentity.isSymbolicLink()) return false;
-    if (currentIdentity.dev !== observedIdentity.dev || currentIdentity.ino !== observedIdentity.ino) return false;
+    if (!profileFileIdentityMatches(currentIdentity, observedIdentity)) return false;
     fs.unlinkSync(filePath);
     return true;
 }

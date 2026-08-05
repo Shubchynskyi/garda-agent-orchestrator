@@ -19,6 +19,7 @@
 
 - Added a workspace-local SQLite catalog with canonical-first ingestion, generation-bound reconciliation, integrity checks, repair/rebuild commands, connection leases, bounded recovery, and deterministic fallback to canonical files.
 - Adopted SQLite only for benchmark-qualified stress-tier bulk task-activity aggregation and added a hash-bound project-memory search index. Small and trust-sensitive paths remain on canonical readers; SQLite is still a disposable projection and never authorizes lifecycle, review, security, cleanup, configuration, or completion decisions.
+- Kept Node 22 runtimes without embedded FTS5 fully supported: the capability probe now selects canonical-file fallback, while FTS5-dependent integration coverage runs only when the runtime provides that capability.
 
 ### Architecture, Security, And Release
 
@@ -27,6 +28,8 @@
 - Added deterministic offline package-surface scoring for file count, unpacked size, lifecycle scripts, and executable risk signals, including explicit rationale-bound baseline updates.
 - Release readiness now rejects every pre-existing target tag, while the tag-triggered workflow rejects reruns and prior workflow runs for the same tag, verifies tag/version parity, and removes only its ephemeral local tag ref before running the same uniqueness proof; readiness also requires the changelog head and package-surface baseline to match the target version, preserves the released changelog tail against the prior version tag, and validates repository-relative links across all tracked Markdown documents.
 - Preserved post-DONE audited content fingerprints after an exact task diff is committed, aligned every human-commit command surface with fresh timestamp confirmation, and synchronized release-preflight contract coverage with package-surface validation.
+- Fixed POSIX absolute-path containment on Linux, hardened profile-lock release against replacement cleanup guards, preserved guarded file identity checks on Node 22 for Windows, and refreshed the vulnerable `brace-expansion` override.
+- Removed the unreferenced legacy stack walkthrough set; current setup, run-method, workflow, CLI, and configuration guidance remains in the canonical documentation.
 
 ## 1.2.0
 

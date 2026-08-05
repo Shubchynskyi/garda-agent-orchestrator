@@ -160,7 +160,12 @@ function assertRealParentDirectories(repoRoot: string, fullPath: string, sourceP
 }
 
 function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
-    return left.dev === right.dev
+    // Node 22 on Windows can report dev=0 from lstat while fstat returns the
+    // volume device id for the same file. Keep inode and creation-time checks
+    // authoritative when only that platform-specific device value is absent.
+    const sameDevice = left.dev === right.dev
+        || (process.platform === 'win32' && (left.dev === 0 || right.dev === 0));
+    return sameDevice
         && left.ino === right.ino
         && left.birthtimeMs === right.birthtimeMs;
 }

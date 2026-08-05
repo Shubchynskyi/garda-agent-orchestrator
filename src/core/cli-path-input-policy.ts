@@ -208,7 +208,9 @@ function validateContainedValue(flagName: string, rawValue: string, workspaceRoo
     if (value.includes('\0')) {
         throw new Error(`${flagName} contains an invalid null byte.`);
     }
-    if (path.win32.isAbsolute(value) && process.platform !== 'win32') {
+    const isWindowsOnlyAbsolutePath = path.win32.isAbsolute(value)
+        && !path.posix.isAbsolute(value);
+    if (isWindowsOnlyAbsolutePath && process.platform !== 'win32') {
         throw buildContainmentError(flagName, value, workspaceRoot);
     }
     const resolvedPath = path.isAbsolute(value)

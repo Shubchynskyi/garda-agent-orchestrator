@@ -11,12 +11,15 @@ import {
     type DerivedSqliteCatalog,
     openDerivedSqliteCatalog,
     openDerivedSqliteCatalogReadOnly,
+    probeSqliteCatalogCapability,
     resolveDerivedSqliteCatalogPath
 } from '../../../src/runtime/sqlite-catalog';
 
 const INDEXED_AT_UTC = '2026-08-04T10:00:00.000Z';
 const LOAD_TEST_SOURCE_BYTES = 768 * 1024;
 const LOAD_TEST_REFRESH_BUDGET_MS = 20_000;
+const SQLITE_CATALOG_CAPABILITY = probeSqliteCatalogCapability();
+const sqliteCatalogTest = SQLITE_CATALOG_CAPABILITY.available ? test : test.skip;
 
 function createWorkspace(prefix: string): string {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -71,7 +74,7 @@ function requireCatalog(workspaceRoot: string): DerivedSqliteCatalog {
     return opened.catalog;
 }
 
-test('bounded multi-megabyte project-memory refresh stays within the runtime latency budget', {
+sqliteCatalogTest('bounded multi-megabyte project-memory refresh stays within the runtime latency budget', {
     timeout: LOAD_TEST_REFRESH_BUDGET_MS + 10_000
 }, () => {
     const workspaceRoot = createWorkspace('garda-project-memory-load-');
@@ -113,7 +116,7 @@ test('bounded multi-megabyte project-memory refresh stays within the runtime lat
     }
 });
 
-test('project-memory refresh rejects an approved source above the per-file size limit', () => {
+sqliteCatalogTest('project-memory refresh rejects an approved source above the per-file size limit', () => {
     const workspaceRoot = createWorkspace('garda-project-memory-oversized-');
     const oversizedSourcePath = 'live/docs/project-memory/architecture.md';
     let catalog: DerivedSqliteCatalog | null = null;
@@ -146,7 +149,7 @@ for (const boundary of [
         diagnostic: /exceeds 256 approved links/u
     }
 ]) {
-    test(`project-memory refresh rejects an approved source above the ${boundary.name} limit`, () => {
+    sqliteCatalogTest(`project-memory refresh rejects an approved source above the ${boundary.name} limit`, () => {
         const workspaceRoot = createWorkspace(`garda-project-memory-${boundary.name}-overflow-`);
         const sourcePath = 'live/docs/project-memory/architecture.md';
         let catalog: DerivedSqliteCatalog | null = null;
@@ -165,7 +168,7 @@ for (const boundary of [
     });
 }
 
-test('project-memory search enforces query token, character, and result limits', () => {
+sqliteCatalogTest('project-memory search enforces query token, character, and result limits', () => {
     const workspaceRoot = createWorkspace('garda-project-memory-query-bounds-');
     const memoryRoot = path.join(workspaceRoot, 'live', 'docs', 'project-memory');
     const tokenMarker = Array.from({ length: 12 }, (_, index) => `querytoken${index}`).join(' ');
@@ -192,7 +195,7 @@ test('project-memory search enforces query token, character, and result limits',
     }
 });
 
-test('project-memory refresh indexes only approved Markdown with redacted FTS content and bounded relationships', (context) => {
+sqliteCatalogTest('project-memory refresh indexes only approved Markdown with redacted FTS content and bounded relationships', (context) => {
     const workspaceRoot = createWorkspace('garda-project-memory-index-');
     const memoryRoot = path.join(workspaceRoot, 'live', 'docs', 'project-memory');
     fs.writeFileSync(path.join(memoryRoot, 'unapproved.md'), '# Unapproved\nforbidden-index-marker\n', 'utf8');
@@ -291,7 +294,7 @@ test('project-memory refresh indexes only approved Markdown with redacted FTS co
     }
 });
 
-test('project-memory refresh stays bound to the catalog workspace when unknown options name another root', () => {
+sqliteCatalogTest('project-memory refresh stays bound to the catalog workspace when unknown options name another root', () => {
     const workspaceRoot = createWorkspace('garda-project-memory-bound-root-');
     const foreignRoot = createWorkspace('garda-project-memory-foreign-root-');
     fs.appendFileSync(
@@ -317,7 +320,7 @@ test('project-memory refresh stays bound to the catalog workspace when unknown o
     }
 });
 
-test('project-memory refresh rejects a pathname replacement after opening the approved source', (context) => {
+sqliteCatalogTest('project-memory refresh rejects a pathname replacement after opening the approved source', (context) => {
     const workspaceRoot = createWorkspace('garda-project-memory-replaced-source-');
     const architecturePath = path.join(
         workspaceRoot,
@@ -370,7 +373,7 @@ test('project-memory refresh rejects a pathname replacement after opening the ap
     }
 });
 
-test('project-memory refresh rejects a symlink or junction in the canonical directory path', (context) => {
+sqliteCatalogTest('project-memory refresh rejects a symlink or junction in the canonical directory path', (context) => {
     const workspaceRoot = createWorkspace('garda-project-memory-linked-root-');
     const memoryRoot = path.join(workspaceRoot, 'live', 'docs', 'project-memory');
     const redirectedRoot = path.join(workspaceRoot, 'runtime', 'redirected-project-memory');
@@ -397,7 +400,7 @@ test('project-memory refresh rejects a symlink or junction in the canonical dire
     }
 });
 
-test('project-memory search fails closed on stale source hashes until an explicit refresh', () => {
+sqliteCatalogTest('project-memory search fails closed on stale source hashes until an explicit refresh', () => {
     const workspaceRoot = createWorkspace('garda-project-memory-stale-');
     const architecturePath = path.join(
         workspaceRoot,
@@ -431,7 +434,7 @@ test('project-memory search fails closed on stale source hashes until an explici
     }
 });
 
-test('project-memory search fails closed when persisted FTS content drifts without changing row counts', () => {
+sqliteCatalogTest('project-memory search fails closed when persisted FTS content drifts without changing row counts', () => {
     const workspaceRoot = createWorkspace('garda-project-memory-fts-drift-');
     let catalog: DerivedSqliteCatalog | null = null;
     try {
@@ -462,7 +465,7 @@ test('project-memory search fails closed when persisted FTS content drifts witho
     }
 });
 
-test('project-memory refresh does not report ready when canonical sources change during refresh', (context) => {
+sqliteCatalogTest('project-memory refresh does not report ready when canonical sources change during refresh', (context) => {
     const workspaceRoot = createWorkspace('garda-project-memory-refresh-race-');
     const architecturePath = path.join(
         workspaceRoot,
@@ -514,7 +517,7 @@ test('project-memory refresh does not report ready when canonical sources change
     }
 });
 
-test('read-only project-memory queries preserve stale diagnostics and reject index mutation', () => {
+sqliteCatalogTest('read-only project-memory queries preserve stale diagnostics and reject index mutation', () => {
     const workspaceRoot = createWorkspace('garda-project-memory-read-only-');
     try {
         const writable = requireCatalog(workspaceRoot);
@@ -539,7 +542,7 @@ test('read-only project-memory queries preserve stale diagnostics and reject ind
     }
 });
 
-test('project-memory refresh reports missing approved files without replacing a healthy index', () => {
+sqliteCatalogTest('project-memory refresh reports missing approved files without replacing a healthy index', () => {
     const workspaceRoot = createWorkspace('garda-project-memory-missing-');
     const missingPath = path.join(workspaceRoot, 'live', 'docs', 'project-memory', 'risks.md');
     let catalog: DerivedSqliteCatalog | null = null;

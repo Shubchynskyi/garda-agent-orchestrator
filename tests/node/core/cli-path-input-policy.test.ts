@@ -108,6 +108,41 @@ test('workspace-contained inputs allow an in-root existing path and missing desc
     }
 });
 
+test('workspace-contained inputs allow an absolute in-root POSIX path on POSIX', {
+    skip: process.platform === 'win32'
+}, () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-cli-path-root-'));
+    const artifactPath = path.join(repoRoot, 'runtime', 'artifact.json');
+    try {
+        assert.doesNotThrow(() => validateParsedCliPathInputs({
+            '--repo-root': { key: 'repoRoot', type: 'string' },
+            '--artifact-path': { key: 'artifactPath', type: 'string' }
+        }, {
+            repoRoot,
+            artifactPath
+        }));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('workspace-contained inputs reject Windows-only absolute paths on POSIX', {
+    skip: process.platform === 'win32'
+}, () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-cli-path-root-'));
+    try {
+        assert.throws(() => validateParsedCliPathInputs({
+            '--repo-root': { key: 'repoRoot', type: 'string' },
+            '--artifact-path': { key: 'artifactPath', type: 'string' }
+        }, {
+            repoRoot,
+            artifactPath: 'C:\\outside\\artifact.json'
+        }), /must resolve inside workspace root/u);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('foreign workspace-contained inputs reject relative traversal and absolute outside paths', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-cli-path-root-'));
     const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-cli-path-outside-'));

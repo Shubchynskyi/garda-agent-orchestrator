@@ -29,6 +29,8 @@ import { SQLITE_CATALOG_MIGRATIONS } from '../../../src/runtime/sqlite-catalog/s
 
 const OBSERVED_AT_UTC = '2026-08-03T10:00:00.000Z';
 const EVENT_AT_UTC = '2026-08-03T10:01:00.000Z';
+const SQLITE_CATALOG_CAPABILITY = probeSqliteCatalogCapability();
+const sqliteCatalogTest = SQLITE_CATALOG_CAPABILITY.available ? test : test.skip;
 
 function sha256(seed: string): string {
     return createHash('sha256').update(seed, 'utf8').digest('hex');
@@ -267,9 +269,25 @@ function requireCatalog(workspaceRoot: string): DerivedSqliteCatalog {
     return opened.catalog;
 }
 
-test('node:sqlite capability probe covers prepared statements, transactions, and FTS5', () => {
-    const capability = probeSqliteCatalogCapability();
-    assert.equal(capability.available, true, capability.diagnostic);
+test('node:sqlite capability probe enables FTS5 or selects the canonical fallback', () => {
+    const capability = SQLITE_CATALOG_CAPABILITY;
+    if (!capability.available) {
+        assert.equal(capability.fts5Available, false);
+        assert.match(capability.diagnostic, /\bfts5\b/iu);
+        const workspaceRoot = createWorkspace('garda-sqlite-capability-fallback-');
+        try {
+            const opened = openDerivedSqliteCatalog(workspaceRoot);
+            assert.equal(opened.status, 'unavailable');
+            if (opened.status === 'unavailable') {
+                assert.equal(opened.reason, 'capability_unavailable');
+                assert.equal(opened.diagnostic, capability.diagnostic);
+            }
+            assert.equal(fs.existsSync(resolveDerivedSqliteCatalogPath(workspaceRoot)), false);
+        } finally {
+            removeWorkspace(workspaceRoot);
+        }
+        return;
+    }
     assert.equal(capability.fts5Available, true, capability.diagnostic);
     assert.match(capability.sqliteVersion || '', /^\d+\.\d+\.\d+$/u);
 });
@@ -469,7 +487,7 @@ test('WAL filesystem guard probes the nearest existing catalog-directory ancesto
     assert.deepEqual(probedPaths, ['/workspace/runtime']);
 });
 
-test('open initializes identity, migration ledger, WAL, and bounded connection policy', () => {
+sqliteCatalogTest('open initializes identity, migration ledger, WAL, and bounded connection policy', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-open-');
     let catalog: DerivedSqliteCatalog | null = null;
     try {
@@ -502,7 +520,7 @@ test('open initializes identity, migration ledger, WAL, and bounded connection p
     }
 });
 
-test('open upgrades an existing schema-v1 catalog through the immutable migration ledger', () => {
+sqliteCatalogTest('open upgrades an existing schema-v1 catalog through the immutable migration ledger', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-migrate-v1-');
     const catalogPath = resolveDerivedSqliteCatalogPath(workspaceRoot);
     fs.mkdirSync(path.dirname(catalogPath), { recursive: true });
@@ -544,7 +562,7 @@ test('open upgrades an existing schema-v1 catalog through the immutable migratio
     }
 });
 
-test('initial migration requires the workspace catalog maintenance lock', () => {
+sqliteCatalogTest('initial migration requires the workspace catalog maintenance lock', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-maintenance-lock-');
     const lockPath = path.join(workspaceRoot, 'runtime', 'catalog', '.maintenance.lock');
     try {
@@ -560,7 +578,7 @@ test('initial migration requires the workspace catalog maintenance lock', () => 
     }
 });
 
-test('replaceProjection persists all normalized domains and canonical provenance', () => {
+sqliteCatalogTest('replaceProjection persists all normalized domains and canonical provenance', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-project-');
     const catalogPath = resolveDerivedSqliteCatalogPath(workspaceRoot);
     let catalog: DerivedSqliteCatalog | null = null;
@@ -621,7 +639,7 @@ test('replaceProjection persists all normalized domains and canonical provenance
     }
 });
 
-test('task activity aggregate preserves normalized projection parity', () => {
+sqliteCatalogTest('task activity aggregate preserves normalized projection parity', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-query-parity-');
     let catalog: DerivedSqliteCatalog | null = null;
     try {
@@ -653,7 +671,7 @@ test('task activity aggregate preserves normalized projection parity', () => {
     }
 });
 
-test('replacement removes stale rows and advances generation atomically', () => {
+sqliteCatalogTest('replacement removes stale rows and advances generation atomically', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-replace-');
     let catalog: DerivedSqliteCatalog | null = null;
     try {
@@ -672,7 +690,7 @@ test('replacement removes stale rows and advances generation atomically', () => 
     }
 });
 
-test('oversized projection requires explicit rebuild before opening a writer transaction', () => {
+sqliteCatalogTest('oversized projection requires explicit rebuild before opening a writer transaction', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-rebuild-boundary-');
     let catalog: DerivedSqliteCatalog | null = null;
     try {
@@ -701,7 +719,7 @@ test('oversized projection requires explicit rebuild before opening a writer tra
     }
 });
 
-test('failed projection transaction rolls back the previous generation', () => {
+sqliteCatalogTest('failed projection transaction rolls back the previous generation', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-rollback-');
     let catalog: DerivedSqliteCatalog | null = null;
     try {
@@ -728,7 +746,7 @@ test('failed projection transaction rolls back the previous generation', () => {
     }
 });
 
-test('contention is bounded and leaves the projection eligible for retry', () => {
+sqliteCatalogTest('contention is bounded and leaves the projection eligible for retry', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-busy-');
     let catalog: DerivedSqliteCatalog | null = null;
     let blocker: DatabaseSync | null = null;
@@ -756,7 +774,7 @@ test('contention is bounded and leaves the projection eligible for retry', () =>
     }
 });
 
-test('foreign database identity is rejected without modifying its schema or version', () => {
+sqliteCatalogTest('foreign database identity is rejected without modifying its schema or version', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-foreign-');
     const catalogPath = resolveDerivedSqliteCatalogPath(workspaceRoot);
     fs.mkdirSync(path.dirname(catalogPath), { recursive: true });
@@ -788,7 +806,7 @@ test('foreign database identity is rejected without modifying its schema or vers
     }
 });
 
-test('view-only foreign database is rejected without claiming or modifying it', () => {
+sqliteCatalogTest('view-only foreign database is rejected without claiming or modifying it', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-foreign-view-');
     const catalogPath = resolveDerivedSqliteCatalogPath(workspaceRoot);
     fs.mkdirSync(path.dirname(catalogPath), { recursive: true });
@@ -815,7 +833,7 @@ test('view-only foreign database is rejected without claiming or modifying it', 
     }
 });
 
-test('corrupt catalog content selects fallback without rewriting the file', () => {
+sqliteCatalogTest('corrupt catalog content selects fallback without rewriting the file', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-corrupt-');
     const catalogPath = resolveDerivedSqliteCatalogPath(workspaceRoot);
     const originalContent = 'this is not a SQLite database\n';
@@ -831,7 +849,7 @@ test('corrupt catalog content selects fallback without rewriting the file', () =
     }
 });
 
-test('newer schema and migration checksum drift fail closed', () => {
+sqliteCatalogTest('newer schema and migration checksum drift fail closed', () => {
     const newerRoot = createWorkspace('garda-sqlite-newer-');
     const checksumRoot = createWorkspace('garda-sqlite-checksum-');
     try {
@@ -861,7 +879,7 @@ test('newer schema and migration checksum drift fail closed', () => {
     }
 });
 
-test('tampered immutable schema definitions fail closed without repair', () => {
+sqliteCatalogTest('tampered immutable schema definitions fail closed without repair', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-schema-drift-');
     const catalog = requireCatalog(workspaceRoot);
     const catalogPath = catalog.catalogPath;
@@ -888,7 +906,7 @@ test('tampered immutable schema definitions fail closed without repair', () => {
     }
 });
 
-test('review receipts must match the task and type of their referenced attempt', () => {
+sqliteCatalogTest('review receipts must match the task and type of their referenced attempt', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-receipt-link-');
     let catalog: DerivedSqliteCatalog | null = null;
     try {
@@ -932,7 +950,7 @@ test('review receipts must match the task and type of their referenced attempt',
     }
 });
 
-test('artifacts and retention state must match their linked task entities', () => {
+sqliteCatalogTest('artifacts and retention state must match their linked task entities', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-artifact-link-');
     let catalog: DerivedSqliteCatalog | null = null;
     try {
@@ -980,7 +998,7 @@ test('artifacts and retention state must match their linked task entities', () =
     }
 });
 
-test('invalid provenance is rejected before any catalog mutation', () => {
+sqliteCatalogTest('invalid provenance is rejected before any catalog mutation', () => {
     const workspaceRoot = createWorkspace('garda-sqlite-validation-');
     let catalog: DerivedSqliteCatalog | null = null;
     try {

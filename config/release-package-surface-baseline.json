@@ -6,7 +6,7 @@
   },
   "metrics": {
     "fileCount": 1333,
-    "unpackedSizeBytes": 15157215,
+    "unpackedSizeBytes": 15160503,
     "lifecycleScripts": {
       "postpack": "node scripts/package-legacy-entrypoint-compat.cjs remove",
       "prepack": "npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create"
@@ -15,8 +15,8 @@
       "child_process": 22,
       "exec": 138,
       "fetch": 34,
-      "fs": 2811,
-      "readFile": 387,
+      "fs": 2815,
+      "readFile": 386,
       "writeFile": 111
     }
   },
@@ -32,5 +32,5 @@
       "writeFile": 0
     }
   },
-  "rationale": "Reviewed deterministic baseline for Garda 1.3.0 after the provider-backed tag-history guard and final release-readiness remediation."
+  "rationale": "Profile lock release now atomically claims and authenticates owned lock files before unlinking replacement-sensitive cleanup guards."
 }

@@ -123,6 +123,10 @@ function captureConsole(fn: () => unknown): { lines: string[]; result: unknown }
     }
 }
 
+function stripAnsi(value: string): string {
+    return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/gu, '');
+}
+
 function captureJsonProfileCommand(argv: string[]): Record<string, unknown> {
     const { lines } = captureConsole(() => handleProfile(argv, PACKAGE_JSON));
     return JSON.parse(lines.join('\n')) as Record<string, unknown>;
@@ -227,7 +231,7 @@ test('profile command without subcommand shows current profile', () => {
 test('profile help documents guarded finding-policy preview and apply flow', () => {
     const bundleRoot = createTempBundleWithProfiles();
     const { lines } = captureConsole(() => handleProfile(['--help', '--bundle-root', bundleRoot], PACKAGE_JSON));
-    const output = lines.join('\n');
+    const output = stripAnsi(lines.join('\n'));
     assert.match(output, /profile policy preview <name>/u);
     assert.match(output, /profile policy apply <name>/u);
     assert.match(output, /--expected-policy-sha256/u);
@@ -237,10 +241,10 @@ test('profile help documents guarded finding-policy preview and apply flow', () 
     assert.match(output, /future task snapshots only/u);
 
     for (const argv of [['policy', '--help'], ['policy', 'preview', '--help']]) {
-        const nested = captureConsole(() => handleProfile(argv, PACKAGE_JSON)).lines.join('\n');
+        const nested = stripAnsi(captureConsole(() => handleProfile(argv, PACKAGE_JSON)).lines.join('\n'));
         assert.match(nested, /profile policy preview <name>/u);
     }
-    assert.match(buildHelpText(PACKAGE_JSON), /profile\s+.*finding policy/iu);
+    assert.match(stripAnsi(buildHelpText(PACKAGE_JSON)), /profile\s+.*finding policy/iu);
 });
 
 test('profile policy rejects unrelated explicit target and bundle roots', () => {
@@ -1746,7 +1750,10 @@ test('dead-owner cleanup release failure is surfaced and remains recoverable', (
     const originalUnlinkSync = fsModule.unlinkSync;
     let failureInjected = false;
     fsModule.unlinkSync = (targetPath: fs.PathLike) => {
-        if (!failureInjected && path.resolve(String(targetPath)) === path.resolve(cleanupPath)) {
+        if (
+            !failureInjected
+            && path.resolve(String(targetPath)).startsWith(`${path.resolve(cleanupPath)}.garda-release-`)
+        ) {
             failureInjected = true;
             throw new Error('injected cleanup release failure');
         }

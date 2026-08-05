@@ -13,6 +13,7 @@ import {
     assertProfileBundleRootOwnershipCurrent,
     fsyncProfilesDirectoryBestEffort,
     getCompletedProfilesOperationResult,
+    profileFileIdentityMatches,
     readProfilesData,
     resolveProfilesPath,
     type ProfileBundleRootOwnership,
@@ -188,7 +189,7 @@ function assertOpenedAuditIdentity(
     if (openedIdentity.nlink !== 1 || pathIdentity.nlink !== 1) {
         throw new Error('Profile policy audit must not have additional hard links.');
     }
-    if (openedIdentity.dev !== pathIdentity.dev || openedIdentity.ino !== pathIdentity.ino) {
+    if (!profileFileIdentityMatches(openedIdentity, pathIdentity)) {
         throw new Error('Profile policy audit path changed while it was opened.');
     }
     assertAuditDirectoryBoundary(auditPath, ownership);

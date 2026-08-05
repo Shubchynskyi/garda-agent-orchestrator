@@ -196,6 +196,13 @@ must not leak outside the adapter. Startup must probe `node:sqlite`,
 SQLite features used by the schema. A failed probe disables the projection and
 selects file fallback with a diagnostic.
 
+Module availability does not guarantee that the embedded SQLite library was
+built with FTS5. Missing FTS5 is a supported capability limitation, including
+on the Node 22.13 compatibility floor: Garda does not create or open the
+workspace catalog in that case and continues through the canonical-file
+readers. FTS5-dependent integration tests run only when the same runtime probe
+succeeds; the unavailable and canonical-fallback paths remain mandatory tests.
+
 The implementation must not rely on newer conveniences absent from the support
 floor. In particular:
 

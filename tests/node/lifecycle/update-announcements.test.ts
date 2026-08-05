@@ -100,6 +100,35 @@ test('release 1.1.0 registry announces project memory refresh', () => {
     }
 });
 
+test('release 1.3.0 registry announces review actions and F-task policy checks', () => {
+    const repoRoot = process.cwd();
+    const bundleRoot = makeTempBundleRoot();
+    const liveConfigDir = path.join(bundleRoot, 'live', 'config');
+    try {
+        fs.copyFileSync(
+            path.join(repoRoot, 'template', 'config', 'update-messages.json'),
+            path.join(liveConfigDir, 'update-messages.json')
+        );
+        fs.writeFileSync(
+            path.join(bundleRoot, 'CHANGELOG.md'),
+            ['# Changelog', '', '## 1.3.0', '- release note'].join('\n'),
+            'utf8'
+        );
+
+        const result = collectUpdateAnnouncements(bundleRoot, '1.2.0', '1.3.0');
+        const message = result.updateMessages.find((entry) => entry.version === '1.3.0');
+        assert.equal(message?.title, 'Review finding actions, F-task policies, and faster navigation');
+        assert.ok(message?.body.some((line) => line.includes('fix_now')));
+        assert.ok(message?.body.some((line) => line.includes('grouped_by_parent')));
+        assert.ok(message?.body.some((line) => line.includes('per_finding')));
+        assert.ok(message?.body.some((line) => line.includes('garda ui --actions')));
+        assert.ok(message?.body.some((line) => line.includes('garda profile current')));
+        assert.equal(message?.body.some((line) => line.includes('run garda doctor')), false);
+    } finally {
+        cleanupBundleRoot(bundleRoot);
+    }
+});
+
 test('buildUpdateResult and buildUpdateReportLines include announcement payload', () => {
     const announcements = {
         updateMessages: [
