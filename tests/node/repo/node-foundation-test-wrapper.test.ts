@@ -362,11 +362,19 @@ test('runNodeFoundationTests runs contention-sensitive tests after parallel shar
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
     const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
     const originalSpawn = mutableChildProcess.spawn;
-    const serialTestPath = addCompiledTestFile(
-        buildResult,
+    const serialTestArgs = [
+        'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-prepared-1.test.js',
+        'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-prepared-2.test.js',
+        'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-prepared-3.test.js',
+        'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-prepared-4.test.js',
+        'tests/node/cli/commands/gates/review-launch/gates-command-review-launch-prepared-5.test.js',
+        'tests/node/cli/commands/gates/task-mode/gates-workflow-config-policy.test.js',
+        'tests/node/cli/commands/profile.test.js',
         'tests/node/gate-runtime/task-events-locks.test.js'
-    );
-    const serialTestArg = toNodeTestFileArg(buildResult, serialTestPath);
+    ].map((relativePath) => toNodeTestFileArg(
+        buildResult,
+        addCompiledTestFile(buildResult, relativePath)
+    ));
     const observedShardArgs: string[][] = [];
     let activeShards = 0;
     let maxActiveShards = 0;
@@ -385,7 +393,8 @@ test('runNodeFoundationTests runs contention-sensitive tests after parallel shar
             observedShardArgs.push(observedArgs);
             activeShards += 1;
             maxActiveShards = Math.max(maxActiveShards, activeShards);
-            if (observedArgs.includes(serialTestArg)) {
+            const isSerialTest = serialTestArgs.some((testArg) => observedArgs.includes(testArg));
+            if (isSerialTest) {
                 assert.equal(activeShards, 1, 'serial test must not overlap active parallel shards');
             }
             const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
@@ -398,18 +407,22 @@ test('runNodeFoundationTests runs contention-sensitive tests after parallel shar
                 activeShards -= 1;
                 events.emit('exit', 0);
                 events.emit('close', 0);
-            }, observedArgs.includes(serialTestArg) ? 1 : 20);
+            }, isSerialTest ? 1 : 20);
             return events;
         }) as typeof childProcess.spawn;
 
         const exitCode = await testModule.runNodeFoundationTests();
 
         assert.equal(exitCode, 0);
-        assert.equal(observedShardArgs.length, 3);
+        assert.equal(observedShardArgs.length, 2 + serialTestArgs.length);
         assert.equal(maxActiveShards, 2);
-        assert.equal(observedShardArgs[0].includes(serialTestArg), false);
-        assert.equal(observedShardArgs[1].includes(serialTestArg), false);
-        assert.deepEqual(observedShardArgs[2], [...DEFAULT_SHARDED_NODE_TEST_ARGS, serialTestArg]);
+        assert.ok(observedShardArgs.slice(0, 2).every((args) => (
+            serialTestArgs.every((testArg) => !args.includes(testArg))
+        )));
+        assert.deepEqual(
+            observedShardArgs.slice(2),
+            serialTestArgs.map((testArg) => [...DEFAULT_SHARDED_NODE_TEST_ARGS, testArg])
+        );
     } finally {
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
