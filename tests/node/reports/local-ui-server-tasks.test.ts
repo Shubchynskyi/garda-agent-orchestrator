@@ -418,6 +418,7 @@ class BrowserSmokeCdpClient {
 }
 
 const BROWSER_SMOKE_READY_ATTEMPTS = 160;
+const BROWSER_SMOKE_GRACEFUL_CLOSE_TIMEOUT_MS = 3000;
 const BROWSER_SMOKE_USER_DATA_DIR_REMOVE_ATTEMPTS = 20;
 const BROWSER_SMOKE_USER_DATA_DIR_REMOVE_MAX_RETRIES = 5;
 const BROWSER_SMOKE_USER_DATA_DIR_REMOVE_RETRY_DELAY_MS = 100;
@@ -480,6 +481,22 @@ function isBrowserSmokeStartupUnavailable(error: unknown): boolean {
     }
     return /Browser exited before debug target was available|Timed out waiting for browser debug target|CDP socket open failed/u
         .test(error.message);
+}
+
+async function closeBrowserSmokeCdp(cdp: BrowserSmokeCdpClient | null): Promise<void> {
+    if (!cdp) {
+        return;
+    }
+    try {
+        await Promise.race([
+            cdp.send('Browser.close').then(() => undefined),
+            sleep(BROWSER_SMOKE_GRACEFUL_CLOSE_TIMEOUT_MS)
+        ]);
+    } catch {
+        // Forced process-tree termination remains the fallback when graceful CDP shutdown is unavailable.
+    } finally {
+        cdp.close();
+    }
 }
 
 async function terminateBrowserSmokeProcess(browser: ChildProcess | null): Promise<void> {
@@ -652,7 +669,7 @@ test('local UI browser smoke opens checks cycle tab with compact forecast and se
         );
         assert.doesNotMatch(settingsHtml, /data-validation-action-id=/u);
     } finally {
-        cdp?.close();
+        await closeBrowserSmokeCdp(cdp);
         await terminateBrowserSmokeProcess(browser);
         await removeBrowserSmokeUserDataDir(userDataDir);
         await cleanupLocalUiTestResources({ repoRoot, server });

@@ -17,6 +17,19 @@ import { getCurrentWorkflowConfigFileHashes } from '../../../../src/gates/workfl
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
 import { GARDA_NO_DELEGATE_ENV } from '../../../../src/core/review-delegation-policy';
 import { initializeGitRepo, writeCleanReviewArtifact } from '../../cli/commands/gate-test-helpers';
+
+const COMPLETION_WORKSPACE_REMOVE_MAX_RETRIES = 10;
+const COMPLETION_WORKSPACE_REMOVE_RETRY_DELAY_MS = 100;
+
+function removeCompletionWorkspace(repoRoot: string): void {
+    fs.rmSync(repoRoot, {
+        recursive: true,
+        force: true,
+        maxRetries: COMPLETION_WORKSPACE_REMOVE_MAX_RETRIES,
+        retryDelay: COMPLETION_WORKSPACE_REMOVE_RETRY_DELAY_MS
+    });
+}
+
 describe('gates/completion — protected control-plane', () => {
     describe('runCompletionGate protected control-plane diff gate', () => {
         function writeJson(filePath: string, value: unknown): void {
@@ -271,7 +284,7 @@ describe('gates/completion — protected control-plane', () => {
                     result.violations.some((entry) => String(entry).includes('Control-plane files were modified in a non-orchestrator task'))
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -361,7 +374,7 @@ describe('gates/completion — protected control-plane', () => {
                     /changed after compile-gate evidence was recorded/u
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -394,7 +407,7 @@ describe('gates/completion — protected control-plane', () => {
                     false
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -458,7 +471,7 @@ describe('gates/completion — protected control-plane', () => {
                 assert.equal(result.status, 'PASSED');
                 assert.equal(result.outcome, 'PASS');
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -532,7 +545,7 @@ describe('gates/completion — protected control-plane', () => {
 
                 assert.equal(result.status, 'PASSED', result.violations.join('\n'));
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -561,7 +574,7 @@ describe('gates/completion — protected control-plane', () => {
                     result.violations.some((entry) => String(entry).includes('garda-agent-orchestrator/src/cli/main.ts'))
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -606,7 +619,7 @@ describe('gates/completion — protected control-plane', () => {
                     result.violations.some((entry) => String(entry).includes('Trusted protected control-plane manifest was already drifted before task start'))
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -663,7 +676,7 @@ describe('gates/completion — protected control-plane', () => {
                     false
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -731,7 +744,7 @@ describe('gates/completion — protected control-plane', () => {
                     false
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -798,7 +811,7 @@ describe('gates/completion — protected control-plane', () => {
                     result.violations.some((entry) => String(entry).includes('REVIEW_GATE_PASSED'))
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -866,7 +879,7 @@ describe('gates/completion — protected control-plane', () => {
 
                 assert.equal(result.status, 'PASSED');
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -921,7 +934,7 @@ describe('gates/completion — protected control-plane', () => {
                     false
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -974,7 +987,7 @@ describe('gates/completion — protected control-plane', () => {
                     false
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -1007,7 +1020,7 @@ describe('gates/completion — protected control-plane', () => {
                     false
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -1060,7 +1073,7 @@ describe('gates/completion — protected control-plane', () => {
                     true
                 );
             } finally {
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
 
@@ -1149,7 +1162,7 @@ describe('gates/completion — protected control-plane', () => {
                 } else {
                     process.env[GARDA_NO_DELEGATE_ENV] = previousNoDelegate;
                 }
-                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+                removeCompletionWorkspace(workspace.repoRoot);
             }
         });
     });
