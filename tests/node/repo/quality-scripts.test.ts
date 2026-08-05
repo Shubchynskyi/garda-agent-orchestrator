@@ -104,7 +104,10 @@ test('package quality scripts expose lint, coverage, audit, and composed release
         scripts['test:release-smoke'],
         'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core/task-ids.test.ts tests/node/gate-runtime/task-events-append.test.ts tests/node/gates/next-step/next-step-startup-routing.test.ts tests/node/validators/status.test.ts tests/node/validators/why-blocked.test.ts tests/node/validators/doctor-formatting.test.ts'
     );
-    assert.equal(scripts['release:preflight'], 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release');
+    assert.equal(
+        scripts['release:preflight'],
+        'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release && npm run validate:package-surface'
+    );
     assert.equal(scripts['archive:source'], 'node scripts/node-foundation/build-scripts.cjs archive-release.js source');
     assert.equal(scripts['archive:evidence'], 'node scripts/node-foundation/build-scripts.cjs archive-release.js evidence');
     assert.match(scripts.prepack, /^npm run validate:clean-worktree && npm run build:publish-runtime/);

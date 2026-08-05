@@ -455,18 +455,10 @@ export function buildPostDoneAuditedScopeFingerprint(
     auditedFiles: string[],
     workspaceSnapshotRequest?: WorkspaceSnapshotRequest
 ): PostDoneAuditedScopeFingerprint {
-    const authenticatedWorkspaceSnapshotRequest = workspaceSnapshotRequest
-        ? resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest)
-        : undefined;
-    const changedFiles = [...new Set(auditedFiles.map((entry) => toPosix(entry)).filter(Boolean))].sort();
-    if (authenticatedWorkspaceSnapshotRequest) {
-        const snapshot = authenticatedWorkspaceSnapshotRequest.read('explicit_changed_files', true, changedFiles);
-        return {
-            changed_files: snapshot.changed_files,
-            changed_files_sha256: snapshot.changed_files_sha256,
-            scope_content_sha256: snapshot.scope_content_sha256
-        };
+    if (workspaceSnapshotRequest) {
+        resolveWorkspaceSnapshotRequest(repoRoot, workspaceSnapshotRequest);
     }
+    const changedFiles = [...new Set(auditedFiles.map((entry) => toPosix(entry)).filter(Boolean))].sort();
     return {
         changed_files: changedFiles,
         changed_files_sha256: stringSha256(changedFiles.join('\n')),

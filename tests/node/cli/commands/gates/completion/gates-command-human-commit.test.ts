@@ -128,24 +128,30 @@ describe('gates command human commit', () => {
     });
 
     it('pins human-commit operator confirmation command surfaces', () => {
-        const expectedCommand = 'human-commit --operator-confirmed yes --message';
         const legacyBundleName = getLegacyBundleNameFixture();
         const guardBlock = buildCommitGuardManagedBlock();
         const helpOutput = stripAnsi(buildGateHelpText('human-commit', path.resolve('.')));
         const cliReference = fs.readFileSync(path.resolve('docs/cli-reference.md'), 'utf8');
         const templateCommands = fs.readFileSync(path.resolve('template/docs/agent-rules/40-commands.md'), 'utf8');
         const liveCommandsPath = path.resolve('garda-agent-orchestrator/live/docs/agent-rules/40-commands.md');
+        const assertHumanCommitSurface = (surface: string, label: string): void => {
+            const commandLine = surface.split(/\r?\n/).find((line) => line.includes('human-commit'));
+            assert.ok(commandLine, `${label} must document human-commit`);
+            assert.ok(commandLine.includes('--operator-confirmed yes'), `${label} must require operator confirmation`);
+            assert.ok(commandLine.includes('--operator-confirmed-at-utc'), `${label} must require a fresh confirmation timestamp`);
+            assert.ok(commandLine.includes('--message'), `${label} must include the commit message`);
+        };
 
-        assert.ok(getNodeHumanCommitCommand().includes('human-commit --operator-confirmed yes --message "<message>"'));
-        assert.ok(guardBlock.includes('node garda-agent-orchestrator/bin/garda.js gate human-commit --operator-confirmed yes'));
+        assertHumanCommitSurface(getNodeHumanCommitCommand(), 'materialized command');
+        assertHumanCommitSurface(guardBlock, 'commit guard');
         assert.ok(!guardBlock.includes(legacyBundleName));
-        assert.ok(helpOutput.includes('gate human-commit --operator-confirmed yes --message "<commit message>"'));
-        assert.ok(cliReference.includes('garda gate human-commit --operator-confirmed yes --message "<message>"'));
-        assert.ok(templateCommands.includes(`gate ${expectedCommand} "<message>"`));
+        assertHumanCommitSurface(helpOutput, 'CLI help');
+        assertHumanCommitSurface(cliReference, 'CLI reference');
+        assertHumanCommitSurface(templateCommands, 'command template');
         assert.ok(templateCommands.includes('operator answers `Do you want me to commit now? (yes/no)` with yes'));
         if (fs.existsSync(liveCommandsPath)) {
             const liveCommands = fs.readFileSync(liveCommandsPath, 'utf8');
-            assert.ok(liveCommands.includes(`gate ${expectedCommand} "<message>"`));
+            assertHumanCommitSurface(liveCommands, 'materialized live commands');
             assert.ok(liveCommands.includes('operator answers `Do you want me to commit now? (yes/no)` with yes'));
         }
     });

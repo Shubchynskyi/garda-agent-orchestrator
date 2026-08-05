@@ -13,6 +13,7 @@
 
 - Reduced repeated `next-step` work by batching Git status, diff, index, tree, and object probes; sharing request-scoped workspace snapshots; caching immutable task-queue, review-history, runtime-metric, and toxin evidence; and avoiding full global status construction on ordinary navigator routes.
 - Partitioned the largest review and gate test suites, bounded subprocess cleanup, improved Windows lock handling, and retained deterministic timeout and failure telemetry for focused and sharded runs.
+- Kept runtime-mutation journal files out of task scope without suppressing user-owned lookalikes, and widened only test-harness observation deadlines so reviewer lock tests remain reliable under full-suite load.
 
 ### SQLite Projection
 
@@ -25,6 +26,7 @@
 - Reduced the npm tarball to the compiled runtime and required assets, with clean install/invoke smoke coverage that does not require TypeScript, devDependencies, or a consumer build.
 - Added deterministic offline package-surface scoring for file count, unpacked size, lifecycle scripts, and executable risk signals, including explicit rationale-bound baseline updates.
 - Release readiness now rejects every pre-existing target tag, while the tag-triggered workflow rejects reruns and prior workflow runs for the same tag, verifies tag/version parity, and removes only its ephemeral local tag ref before running the same uniqueness proof; readiness also requires the changelog head and package-surface baseline to match the target version, preserves the released changelog tail against the prior version tag, and validates repository-relative links across all tracked Markdown documents.
+- Preserved post-DONE audited content fingerprints after an exact task diff is committed, aligned every human-commit command surface with fresh timestamp confirmation, and synchronized release-preflight contract coverage with package-surface validation.
 
 ## 1.2.0
 

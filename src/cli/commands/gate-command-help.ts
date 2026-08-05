@@ -518,7 +518,7 @@ function buildLifecycleGateHelpEntries(
         'human-commit': {
             ...createSingleUsageEntry(
                 'Run a commit through the guarded helper path only after explicit operator yes/no confirmation.',
-                `${cliPrefix} gate human-commit --operator-confirmed yes --message "<commit message>" --repo-root "."`,
+                `${cliPrefix} gate human-commit --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --message "<commit message>" --repo-root "."`,
                 false
             )
         },

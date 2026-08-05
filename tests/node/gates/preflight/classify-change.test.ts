@@ -1129,14 +1129,22 @@ describe('gates/classify-change', () => {
         });
 
         it('ignores generated runtime artifacts while keeping test-only review routing', () => {
+            const generatedRuntimeFiles = [
+                'garda-agent-orchestrator/runtime/plans/T-559-3.md',
+                'garda-agent-orchestrator/runtime/reports/garda-report.html',
+                'garda-agent-orchestrator/runtime/task-events/T-504.jsonl',
+                'garda-agent-orchestrator/runtime/.runtime-mutation-generation.anchor.json',
+                'garda-agent-orchestrator/runtime/.runtime-mutation-generation/head.json',
+                'garda-agent-orchestrator/runtime/.runtime-mutation-generation/state-a.json',
+                'garda-agent-orchestrator/runtime/.runtime-mutation-generation/state-b.json',
+                'garda-agent-orchestrator/runtime/.runtime-mutation-generation.lock/owner.json',
+                'Z:/missing/root/runtime/task-events/all-tasks.jsonl',
+                'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl'
+            ];
             const result = classifyChange({
                 normalizedFiles: [
                     'tests/node/cli/commands/gates-preflight.test.ts',
-                    'garda-agent-orchestrator/runtime/plans/T-559-3.md',
-                    'garda-agent-orchestrator/runtime/reports/garda-report.html',
-                    'garda-agent-orchestrator/runtime/task-events/T-504.jsonl',
-                    'Z:/missing/root/runtime/task-events/all-tasks.jsonl',
-                    'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl'
+                    ...generatedRuntimeFiles
                 ],
                 taskIntent: 'Keep generated task events out of review routing',
                 changedLinesTotal: 30,
@@ -1153,15 +1161,9 @@ describe('gates/classify-change', () => {
             assert.equal(result.triggers.test, true);
             assert.equal(result.required_reviews.code, false);
             assert.equal(result.required_reviews.test, true);
-            assert.deepEqual(result.triggers.ignored_generated_runtime_files, [
-                'garda-agent-orchestrator/runtime/plans/T-559-3.md',
-                'garda-agent-orchestrator/runtime/reports/garda-report.html',
-                'garda-agent-orchestrator/runtime/task-events/T-504.jsonl',
-                'Z:/missing/root/runtime/task-events/all-tasks.jsonl',
-                'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl'
-            ]);
-            assert.equal(result.metrics.ignored_generated_runtime_files_count, 5);
-            assert.match(result.workspace_hygiene_warnings[0], /Ignored 5 generated runtime\/control-plane artifact/);
+            assert.deepEqual(result.triggers.ignored_generated_runtime_files, generatedRuntimeFiles);
+            assert.equal(result.metrics.ignored_generated_runtime_files_count, generatedRuntimeFiles.length);
+            assert.match(result.workspace_hygiene_warnings[0], /Ignored 10 generated runtime\/control-plane artifact/);
         });
 
         it('keeps real code changes as code review even with generated review artifacts', () => {

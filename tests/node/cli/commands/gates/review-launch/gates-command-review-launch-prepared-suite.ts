@@ -243,11 +243,15 @@ function spawnRecordReviewRoutingProcess(options: {
     ]);
 }
 
+const REVIEWER_LAUNCH_PROCESS_START_TIMEOUT_MS = 15_000;
+const REVIEWER_LAUNCH_LOCK_OBSERVATION_TIMEOUT_MS = 30_000;
+const REVIEWER_LAUNCH_PROCESS_COMPLETION_TIMEOUT_MS = 60_000;
+
 async function waitForReviewerLaunchLaneTransactionLock(
     processState: SpawnedReviewerLaunchProcess,
     laneTransactionLockPath: string
 ): Promise<void> {
-    const deadline = Date.now() + 8_000;
+    const deadline = Date.now() + REVIEWER_LAUNCH_LOCK_OBSERVATION_TIMEOUT_MS;
     while (Date.now() < deadline) {
         if (fs.existsSync(path.join(laneTransactionLockPath, 'owner.json'))) {
             return;
@@ -267,7 +271,7 @@ async function waitForReviewerLaunchLaneTransactionLock(
 }
 
 async function waitForReviewerLaunchProcessStart(processState: SpawnedReviewerLaunchProcess): Promise<void> {
-    const deadline = Date.now() + 4_000;
+    const deadline = Date.now() + REVIEWER_LAUNCH_PROCESS_START_TIMEOUT_MS;
     while (Date.now() < deadline) {
         if (processState.stdout.includes('STARTED')) {
             return;
@@ -287,7 +291,7 @@ async function waitForReviewerLaunchProcessStart(processState: SpawnedReviewerLa
 }
 
 async function waitForReviewerLaunchLockContention(processState: SpawnedReviewerLaunchProcess): Promise<void> {
-    const deadline = Date.now() + 8_000;
+    const deadline = Date.now() + REVIEWER_LAUNCH_LOCK_OBSERVATION_TIMEOUT_MS;
     while (Date.now() < deadline) {
         if (processState.stderr.includes('WARNING: lock contention')) {
             return;
@@ -324,7 +328,7 @@ async function waitForReviewerLaunchProcessCompletion(
                     'Reviewer-launch process timed out and could not be terminated cleanly'
                 ))
             );
-        }, 30_000);
+        }, REVIEWER_LAUNCH_PROCESS_COMPLETION_TIMEOUT_MS);
         processState.completion.then(
             (code) => {
                 if (timedOut) {

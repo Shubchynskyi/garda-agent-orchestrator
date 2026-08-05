@@ -647,28 +647,39 @@ describe('gates/workspace-snapshot-cache', () => {
         });
 
         it('ignores generated runtime artifacts from git-auto untracked scope', () => {
-            const generatedPath = path.join(
-                repoRoot,
-                'mnt',
-                'wsl',
-                'projects',
-                'missing',
-                'runtime',
-                'task-events',
-                'T-504.jsonl'
-            );
-            fs.mkdirSync(path.dirname(generatedPath), { recursive: true });
-            fs.writeFileSync(generatedPath, '{"event_type":"GENERATED"}\n', 'utf8');
+            const generatedRelativePaths = [
+                'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl',
+                'runtime/.runtime-mutation-generation.anchor.json',
+                'runtime/.runtime-mutation-generation/head.json',
+                'runtime/.runtime-mutation-generation/state-a.json',
+                'runtime/.runtime-mutation-generation/state-b.json',
+                'runtime/.runtime-mutation-generation.lock/owner.json'
+            ];
+            for (const generatedRelativePath of generatedRelativePaths) {
+                const generatedPath = path.join(repoRoot, generatedRelativePath);
+                fs.mkdirSync(path.dirname(generatedPath), { recursive: true });
+                fs.writeFileSync(generatedPath, '{"generated":true}\n', 'utf8');
+            }
             fs.writeFileSync(path.join(repoRoot, 'untracked.ts'), 'export const u = 1;\n', 'utf8');
 
             const result = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
 
             assert.deepEqual(result.changed_files, ['untracked.ts']);
             assert.equal(result.changed_files_count, 1);
-            assert.deepEqual(result.ignored_generated_runtime_files, [
-                'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl'
-            ]);
-            assert.equal(result.ignored_generated_runtime_files_count, 1);
+            assert.deepEqual(result.ignored_generated_runtime_files, generatedRelativePaths.sort());
+            assert.equal(result.ignored_generated_runtime_files_count, generatedRelativePaths.length);
+        });
+
+        it('prevents generated runtime filtering from hiding user-owned lookalikes', () => {
+            const userOwnedRelativePath = 'src/runtime/.runtime-mutation-generation/state-a.json';
+            const userOwnedPath = path.join(repoRoot, userOwnedRelativePath);
+            fs.mkdirSync(path.dirname(userOwnedPath), { recursive: true });
+            fs.writeFileSync(userOwnedPath, '{"userOwned":true}\n', 'utf8');
+
+            const result = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
+
+            assert.ok(result.changed_files.includes(userOwnedRelativePath));
+            assert.ok(!result.ignored_generated_runtime_files.includes(userOwnedRelativePath));
         });
 
         it('invalidates cache when untracked file content changes and includeUntracked=true', () => {

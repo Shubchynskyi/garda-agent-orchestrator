@@ -66,6 +66,18 @@ export function isGeneratedRuntimeControlPlaneArtifactPath(pathValue: string | n
         return true;
     }
 
+    if (hasRuntimeSegment(normalizedPath, 'runtime/.runtime-mutation-generation/')) {
+        return true;
+    }
+
+    if (hasRuntimeSegment(normalizedPath, 'runtime/.runtime-mutation-generation.lock/')) {
+        return true;
+    }
+
+    if (/(^|\/)runtime\/\.runtime-mutation-generation\.anchor\.json$/i.test(normalizedPath)) {
+        return true;
+    }
+
     return /(^|\/)runtime\/(metrics|task-index|review-index|task-audit-summary)\.(jsonl?|md)$/i.test(normalizedPath);
 }
 
