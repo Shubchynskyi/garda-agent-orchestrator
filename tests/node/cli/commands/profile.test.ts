@@ -1244,7 +1244,12 @@ test('profile policy apply serializes config writers and fails before config wri
     assert.equal(fs.existsSync(`${profilesPath}.garda-write.lock`), false);
 
     fs.rmSync(auditPath, { recursive: true });
-    fs.writeFileSync(`${profilesPath}.garda-write.lock`, 'contended', 'utf8');
+    const contendedLockPath = `${profilesPath}.garda-write.lock`;
+    fs.writeFileSync(contendedLockPath, JSON.stringify({
+        lock_id: randomUUID(),
+        pid: process.pid,
+        created_at_utc: new Date().toISOString()
+    }), 'utf8');
     assert.throws(
         () => handleProfile([
             'policy', 'apply', 'balanced',
@@ -1258,6 +1263,7 @@ test('profile policy apply serializes config writers and fails before config wri
         /profiles config lock/iu
     );
     assert.deepEqual(JSON.parse(fs.readFileSync(profilesPath, 'utf8')), before);
+    assert.equal(fs.existsSync(contendedLockPath), true);
 });
 
 test('profile policy apply rejects linked audit and lock artifacts without changing their targets', () => {
