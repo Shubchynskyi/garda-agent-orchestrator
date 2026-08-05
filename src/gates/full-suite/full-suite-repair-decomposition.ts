@@ -130,7 +130,22 @@ export function isRepairQualifiedFullSuiteArtifact(
     artifact: unknown,
     parentTaskId: string
 ): boolean {
-    if (!isPlainRecord(artifact) || artifact.task_id !== parentTaskId || artifact.timed_out !== true) {
+    if (!isPlainRecord(artifact) || artifact.timed_out !== true) {
+        return false;
+    }
+    const cycleBinding = isPlainRecord(artifact.cycle_binding)
+        ? artifact.cycle_binding
+        : null;
+    const hasTopLevelTaskId = Object.prototype.hasOwnProperty.call(artifact, 'task_id');
+    const hasCycleBindingTaskId = Boolean(
+        cycleBinding
+        && Object.prototype.hasOwnProperty.call(cycleBinding, 'task_id')
+    );
+    if (
+        (hasTopLevelTaskId && artifact.task_id !== parentTaskId)
+        || (hasCycleBindingTaskId && cycleBinding?.task_id !== parentTaskId)
+        || (!hasTopLevelTaskId && !hasCycleBindingTaskId)
+    ) {
         return false;
     }
     const timeoutPolicy = isPlainRecord(artifact.timeout_policy)
