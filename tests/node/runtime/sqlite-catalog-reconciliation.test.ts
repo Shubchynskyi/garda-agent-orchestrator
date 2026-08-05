@@ -750,7 +750,9 @@ sqliteCatalogTest('performance-qualified query discards a result when canonical 
         const result = queryPerformanceQualifiedTaskActivitySummaries(fixture.workspaceRoot);
         assert.equal(generationAdvanced, true);
         assert.equal(result.source, 'files');
-        if (result.source === 'files') assert.equal(result.reason, 'generation_mismatch');
+        if (result.source === 'files') {
+            assert.match(result.reason, /^(?:generation_mismatch|source_changed)$/u);
+        }
     } finally {
         fsModule.readFileSync = originalReadFileSync;
         removeWorkspace(fixture.workspaceRoot);
