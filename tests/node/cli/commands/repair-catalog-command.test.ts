@@ -6,6 +6,7 @@ import * as path from 'node:path';
 
 import { handleRepair } from '../../../../src/cli/commands/repair-command';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import { probeSqliteCatalogCapability } from '../../../../src/runtime/sqlite-catalog';
 
 const PACKAGE_JSON = { name: 'garda-agent-orchestrator', version: '1.2.0-test' };
 const TASK_ID = 'T-2100-1';
@@ -56,9 +57,18 @@ function invokeJson(workspaceRoot: string, action: string, confirm = false): Rec
 test('repair catalog commands expose read-only diagnostics and preview-first mutations', { concurrency: false }, () => {
     const workspaceRoot = createWorkspace();
     try {
+        const capability = probeSqliteCatalogCapability();
         assert.equal(invokeJson(workspaceRoot, 'health').status, 'missing');
         assert.equal(invokeJson(workspaceRoot, 'repair').status, 'dry_run');
-        assert.equal(invokeJson(workspaceRoot, 'repair', true).status, 'repaired');
+        const repaired = invokeJson(workspaceRoot, 'repair', true);
+        if (!capability.available) {
+            assert.equal(repaired.status, 'deferred');
+            assert.equal(repaired.canonicalReadable, true);
+            assert.match(String(repaired.diagnostic), /capability probe failed|unavailable/iu);
+            assert.equal(invokeJson(workspaceRoot, 'health').status, 'missing');
+            return;
+        }
+        assert.equal(repaired.status, 'repaired');
         assert.equal(invokeJson(workspaceRoot, 'health').status, 'healthy');
 
         const taskPath = path.join(workspaceRoot, 'TASK.md');

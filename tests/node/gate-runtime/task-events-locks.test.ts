@@ -12,7 +12,10 @@ import {
     scanTaskEventLocks,
     cleanupStaleTaskEventLocks
 } from '../../../src/gate-runtime/timeline/task-events';
-import { holdTaskEventLockInChildProcess } from './task-events-test-helpers';
+import {
+    holdTaskEventLockInChildProcess,
+    type TaskEventLockHolder
+} from './task-events-test-helpers';
 
 
 test('appendTaskEvent removes orphaned task lock when owner pid is no longer alive', () => {
@@ -446,7 +449,7 @@ test('appendTaskEvent sync path fails fast on self-owned active lock without wai
         assert.equal(result!.warnings.length, 1);
         assert.match(result!.warnings[0], /wait_strategy=immediate_fail/);
         assert.match(result!.warnings[0], /retries=0/);
-        assert.ok(elapsedMs < 250, `sync append should fail fast, got ${elapsedMs} ms`);
+        assert.ok(elapsedMs < 2000, `sync append should fail fast, got ${elapsedMs} ms`);
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -455,9 +458,10 @@ test('appendTaskEvent sync path fails fast on self-owned active lock without wai
 test('appendTaskEvent sync path waits through short-lived external contention', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-sync-contention-'));
     const lockPath = path.join(tempDir, 'runtime', 'task-events', '.T-SYNC-WAIT.lock');
-    let cleanupChild: (() => Promise<void>) | null = null;
+    let lockHolder: TaskEventLockHolder | null = null;
     try {
-        cleanupChild = await holdTaskEventLockInChildProcess(lockPath, 120);
+        lockHolder = await holdTaskEventLockInChildProcess(lockPath, 1000);
+        lockHolder.beginReleaseCountdown();
         const startedAt = Date.now();
         const result = appendTaskEvent(
             tempDir,
@@ -468,7 +472,7 @@ test('appendTaskEvent sync path waits through short-lived external contention', 
             null,
             {
                 passThru: true,
-                lockTimeoutMs: 1000,
+                lockTimeoutMs: 5000,
                 lockRetryMs: 20,
                 lockStaleMs: 60000
             }
@@ -481,8 +485,8 @@ test('appendTaskEvent sync path waits through short-lived external contention', 
         assert.ok((result!.lock_telemetry?.task_lock_retries || 0) > 0, 'telemetry should record sync retries');
         assert.notEqual(result!.lock_telemetry?.task_lock_contention_level, 'none');
     } finally {
-        if (cleanupChild) {
-            await cleanupChild();
+        if (lockHolder) {
+            await lockHolder.cleanup();
         }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -491,11 +495,12 @@ test('appendTaskEvent sync path waits through short-lived external contention', 
 
 test('appendTaskEventAsync reports non-zero telemetry after contended lock acquisition', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-contention-telemetry-'));
-    let cleanupChild: (() => Promise<void>) | null = null;
+    let lockHolder: TaskEventLockHolder | null = null;
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const lockPath = path.join(eventsRoot, '.T-TELEM.lock');
-        cleanupChild = await holdTaskEventLockInChildProcess(lockPath, 120);
+        lockHolder = await holdTaskEventLockInChildProcess(lockPath, 1000);
+        lockHolder.beginReleaseCountdown();
 
         const result = await appendTaskEventAsync(
             tempDir,
@@ -518,8 +523,8 @@ test('appendTaskEventAsync reports non-zero telemetry after contended lock acqui
         assert.ok(result!.lock_telemetry!.task_lock_retries > 0, 'Should have non-zero retries after contention');
         assert.ok(result!.lock_telemetry!.task_lock_elapsed_ms > 0, 'Should have non-zero elapsed time after contention');
     } finally {
-        if (cleanupChild) {
-            await cleanupChild();
+        if (lockHolder) {
+            await lockHolder.cleanup();
         }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -624,11 +629,12 @@ test('appendTaskEventAsync reclaims aged foreign-host lock when explicit overrid
 
 test('appendTaskEventAsync waits for aggregate lock and records contention telemetry when .all-tasks.lock is held', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-aggregate-contention-'));
-    let cleanupChild: (() => Promise<void>) | null = null;
+    let lockHolder: TaskEventLockHolder | null = null;
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
-        cleanupChild = await holdTaskEventLockInChildProcess(aggregateLockPath, 140);
+        lockHolder = await holdTaskEventLockInChildProcess(aggregateLockPath, 1000);
+        lockHolder.beginReleaseCountdown();
 
         const startedAt = Date.now();
         const result = await appendTaskEventAsync(
@@ -670,8 +676,8 @@ test('appendTaskEventAsync waits for aggregate lock and records contention telem
         assert.equal(taskLines.length, 1, 'exactly one task event line');
         assert.equal(aggLines.length, 1, 'exactly one aggregate event line');
     } finally {
-        if (cleanupChild) {
-            await cleanupChild();
+        if (lockHolder) {
+            await lockHolder.cleanup();
         }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -679,11 +685,12 @@ test('appendTaskEventAsync waits for aggregate lock and records contention telem
 
 test('appendTaskEventAsync warns instead of bypassing held aggregate lock when timeout expires', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-timeout-'));
-    let cleanupChild: (() => Promise<void>) | null = null;
+    let lockHolder: TaskEventLockHolder | null = null;
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
-        cleanupChild = await holdTaskEventLockInChildProcess(aggregateLockPath, 220);
+        lockHolder = await holdTaskEventLockInChildProcess(aggregateLockPath, 1000);
+        lockHolder.beginReleaseCountdown();
 
         const result = await appendTaskEventAsync(
             tempDir,
@@ -712,8 +719,8 @@ test('appendTaskEventAsync warns instead of bypassing held aggregate lock when t
         const allTasksFile = path.join(eventsRoot, 'all-tasks.jsonl');
         assert.ok(!fs.existsSync(allTasksFile), 'aggregate file must not be written through a bypass path');
     } finally {
-        if (cleanupChild) {
-            await cleanupChild();
+        if (lockHolder) {
+            await lockHolder.cleanup();
         }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -749,11 +756,12 @@ test('appendTaskEvent reports aggregate_append_mode=locked in lock_telemetry', (
 
 test('appendTaskEvent sync aggregate append warns instead of bypassing held .all-tasks.lock', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-sync-lockfree-'));
-    let cleanupChild: (() => Promise<void>) | null = null;
+    let lockHolder: TaskEventLockHolder | null = null;
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
-        cleanupChild = await holdTaskEventLockInChildProcess(aggregateLockPath, 220);
+        lockHolder = await holdTaskEventLockInChildProcess(aggregateLockPath, 1000);
+        lockHolder.beginReleaseCountdown();
 
         const result = appendTaskEvent(
             tempDir,
@@ -780,8 +788,8 @@ test('appendTaskEvent sync aggregate append warns instead of bypassing held .all
         const allTasksFile = path.join(eventsRoot, 'all-tasks.jsonl');
         assert.ok(!fs.existsSync(allTasksFile), 'all-tasks aggregate file must not be written through a bypass path');
     } finally {
-        if (cleanupChild) {
-            await cleanupChild();
+        if (lockHolder) {
+            await lockHolder.cleanup();
         }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

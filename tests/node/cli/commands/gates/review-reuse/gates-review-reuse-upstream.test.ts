@@ -87,7 +87,7 @@ function seedBalancedTaskQueue(repoRoot: string, taskId: string): void {
     const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
     fs.mkdirSync(configDir, { recursive: true });
     fs.copyFileSync(
-        path.resolve('garda-agent-orchestrator/live/config/profiles.json'),
+        path.resolve('template/config/profiles.json'),
         path.join(configDir, 'profiles.json')
     );
 }

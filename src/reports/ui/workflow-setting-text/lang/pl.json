@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Interwał kadencji kontroli jakości",
+    "label": "Nieudane przeglądy między kontrolami jakości",
     "description": "Liczba zapisanych nieudanych prób review między wymaganymi seriami odpowiedzi quality-checklist. Licznik rośnie tylko po zapisanych wynikach review FAIL; powtarzane next-step lub odświeżenia preflight go nie zwiększają."
   },
   "optional-skill-selection-mode": {

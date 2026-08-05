@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "গুণমান-পরীক্ষার cadence interval",
+    "label": "গুণমান পরীক্ষার মাঝে ব্যর্থ রিভিউ",
     "description": "প্রয়োজনীয় quality-checklist উত্তর চালানোর মাঝে কতটি নথিভুক্ত review failure attempt থাকবে। কাউন্টার শুধু নথিভুক্ত review FAIL ফলাফলে বাড়ে; পুনরাবৃত্ত next-step বা preflight refresh এতে বাড়ে না।"
   },
   "optional-skill-selection-mode": {

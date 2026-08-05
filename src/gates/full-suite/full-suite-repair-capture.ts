@@ -91,6 +91,15 @@ export function readPreflightChangedFileScope(repoRoot: string, preflightPath: s
                 violations.push('Preflight changed_files contains an invalid empty path.');
                 continue;
             }
+            const containmentViolations = validatePhysicalRepoContainment(
+                repoRoot,
+                resolved,
+                `Preflight changed_files path ${relativePath}`
+            );
+            if (containmentViolations.length > 0) {
+                violations.push(...containmentViolations);
+                continue;
+            }
             allowed.add(relativePath);
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
@@ -162,7 +171,7 @@ export function validateUntrackedCaptureSource(repoRoot: string, relativePath: s
     try {
         const identity = fs.lstatSync(sourcePath);
         if (identity.isSymbolicLink() || !identity.isFile()) {
-            return [`${label} must be a regular file without symbolic links or junctions.`];
+            return [`${label} must be a regular file and must not be a symbolic-link or junction.`];
         }
         if (identity.nlink !== 1) {
             return [`${label} must not have additional hard links.`];

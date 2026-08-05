@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Інтервал періодичності перевірки якості",
+    "label": "Невдалі рев’ю між перевірками якості",
     "description": "Кількість зафіксованих невдалих review спроб між обов’язковими запусками відповідей quality-checklist. Лічильник збільшується лише за записаними результатами review FAIL; повторні next-step або оновлення preflight його не рухають."
   },
   "optional-skill-selection-mode": {

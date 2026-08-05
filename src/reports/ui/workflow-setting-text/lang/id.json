@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Interval cadence pemeriksaan kualitas",
+    "label": "Kegagalan ulasan di antara pemeriksaan kualitas",
     "description": "Jumlah upaya review gagal yang tercatat di antara putaran jawaban quality-checklist wajib. Counter hanya bertambah pada hasil review FAIL yang tercatat; next-step atau refresh preflight berulang tidak menambahnya."
   },
   "optional-skill-selection-mode": {

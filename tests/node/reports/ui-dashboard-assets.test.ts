@@ -1018,7 +1018,7 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
 });
 
 test('profiles tab renders required auto disabled policy controls without trigger editors', () => {
-    const html = renderProfilesHtml({
+    const profilesTab = {
         status: 'present',
         config_path: 'garda-agent-orchestrator/live/config/profiles.json',
         active_profile: 'custom-review',
@@ -1028,7 +1028,7 @@ test('profiles tab renders required auto disabled policy controls without trigge
             soft: {
                 schema_version: 1,
                 policy_id: 'soft',
-                findings: { critical: 'fix_now', high: 'create_follow_up', medium: 'create_follow_up', low: 'ignore' },
+                findings: { critical: 'fix_now', high: 'create_follow_up', medium: 'ignore', low: 'ignore' },
                 residual_risk: 'ignore'
             },
             balanced: {
@@ -1089,7 +1089,9 @@ test('profiles tab renders required auto disabled policy controls without trigge
                 }
             }
         ]
-    }, true);
+    };
+    const html = renderProfilesHtml(profilesTab, true);
+    const russianHtml = renderProfilesHtml(profilesTab, true, 'ru');
 
     const addProfileIndex = html.indexOf('class="profile-add-row"');
     const userProfileTabIndex = html.indexOf('data-profile-tab="custom-review"');
@@ -1122,14 +1124,53 @@ test('profiles tab renders required auto disabled policy controls without trigge
     assert.match(html, /<span>Low<\/span><select[^>]*aria-label="Low"/u);
     assert.match(html, /<span>Residual risk<\/span><select[^>]*aria-label="Residual risk"/u);
     assert.doesNotMatch(html, /<span>policy_id<\/span>|aria-label="(?:critical|high|medium|low|residual_risk)"/u);
-    assert.match(html, /id="profile-custom-review-finding-critical"[^>]* disabled[^>]*>[\s\S]*<option value="fix_now" selected>/u);
-    assert.match(html, /id="profile-custom-review-finding-preset"[\s\S]*<option value="custom" selected>/u);
+    assert.match(html, /id="profile-custom-review-finding-critical"[^>]* disabled[^>]*>[\s\S]*<option value="fix_now" selected>Fix now<\/option>/u);
+    assert.match(html, /<option value="create_follow_up">Create follow-up task<\/option>/u);
+    assert.match(html, /<option value="ignore">Accept without follow-up<\/option>/u);
+    assert.match(html, /id="profile-custom-review-finding-preset"[\s\S]*<option value="soft">Lenient<\/option>[\s\S]*<option value="balanced">Balanced<\/option>[\s\S]*<option value="strict">Strict<\/option>[\s\S]*<option value="custom" selected>Custom<\/option>/u);
+    assert.doesNotMatch(html, />(?:fix_now|create_follow_up|ignore)<\/option>/u);
+    assert.match(russianHtml, /<option value="fix_now" selected>Исправить сейчас<\/option>/u);
+    assert.match(russianHtml, /<option value="create_follow_up">Создать отдельную задачу<\/option>/u);
+    assert.match(russianHtml, /<option value="ignore">Принять без отдельной задачи<\/option>/u);
+    assert.match(russianHtml, /<option value="custom" selected>Пользовательский<\/option>/u);
+    assert.match(russianHtml, /Замечание сохраняется, но не блокирует задачу/u);
     assert.match(html, /data-profile-policy-action="copy" data-profile-name="custom-review"/u);
     assert.match(html, /data-profile-policy-action="reset" data-profile-name="custom-review"/u);
     assert.match(html, /data-profile-policy-action="apply" data-profile-name="custom-review"/u);
     assert.match(UI_DASHBOARD_CLIENT_PROFILES, /presetInput\.value = 'custom'/u);
     assert.match(UI_DASHBOARD_STYLES, /\.profile-finding-policy-grid \.profile-finding-critical/u);
     assert.doesNotMatch(html, /data-profile-trigger|profileTrigger|review_trigger/u);
+});
+
+test('task detail renders skipped quality-check cadence as a neutral localized state', () => {
+    const detail = {
+        task_id: 'T-909',
+        stats: {},
+        audit: {},
+        full_suite_validation: {},
+        quality_checklist: {
+            latest: {
+                evidence_status: 'current',
+                checklist_status: 'SKIPPED_CADENCE',
+                effect: 'skipped_cadence',
+                summary_key: 'skipped_cadence',
+                answer_count: 0,
+                action_taken_count: 0,
+                action_required_count: 0,
+                stale_reason_codes: [],
+                stale_reasons: []
+            },
+            action_required_history: []
+        },
+        latest_cycle_events: {},
+        artifact_links: []
+    };
+
+    const englishHtml = renderTaskDetailHtml(detail, 'en');
+    const russianHtml = renderTaskDetailHtml(detail, 'ru');
+    assert.match(englishHtml, /Skipped — not due yet/u);
+    assert.doesNotMatch(englishHtml, />Passed</u);
+    assert.match(russianHtml, /Пропущено — пока не требуется/u);
 });
 
 test('profile finding policy handlers apply presets and submit copy reset and custom payloads', () => {

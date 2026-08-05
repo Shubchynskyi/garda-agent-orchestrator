@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Intervalle de cadence du contrôle qualité",
+    "label": "Échecs de revue entre les contrôles qualité",
     "description": "Nombre d’échecs de review enregistrés entre deux séries obligatoires de réponses quality-checklist. Le compteur n’avance que sur les résultats review FAIL enregistrés ; les relances next-step ou preflight ne l’avancent pas."
   },
   "optional-skill-selection-mode": {

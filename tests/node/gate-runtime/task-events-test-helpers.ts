@@ -129,7 +129,12 @@ export function runConcurrentPruneWorker(
     });
 }
 
-export async function holdTaskEventLockInChildProcess(lockPath: string, holdMs: number): Promise<() => Promise<void>> {
+export type TaskEventLockHolder = {
+    beginReleaseCountdown(): void;
+    cleanup(): Promise<void>;
+};
+
+export async function holdTaskEventLockInChildProcess(lockPath: string, holdMs: number): Promise<TaskEventLockHolder> {
     const workerScript = [
         "const fs = require('node:fs');",
         "const os = require('node:os');",
@@ -142,10 +147,14 @@ export async function holdTaskEventLockInChildProcess(lockPath: string, holdMs: 
         "  hostname: os.hostname(),",
         "  created_at_utc: new Date().toISOString()",
         "}, null, 2) + '\\n', 'utf8');",
-        "setTimeout(() => {",
-        "  try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}",
-        "  process.exit(0);",
-        "}, holdMs);"
+        "let releaseTimer = null;",
+        "process.on('message', (message) => {",
+        "  if (message !== 'begin-release-countdown' || releaseTimer !== null) return;",
+        "  releaseTimer = setTimeout(() => {",
+        "    try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}",
+        "    process.exit(0);",
+        "  }, holdMs);",
+        "});"
     ].join('\n');
 
     const child = spawn(process.execPath, [
@@ -155,11 +164,15 @@ export async function holdTaskEventLockInChildProcess(lockPath: string, holdMs: 
         lockPath,
         String(holdMs)
     ], {
-        stdio: ['ignore', 'ignore', 'pipe']
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc']
     });
 
     let stderr = '';
-    child.stderr.on('data', (chunk) => {
+    const stderrStream = child.stderr;
+    if (!stderrStream) {
+        throw new Error('Task-event lock holder stderr pipe is unavailable');
+    }
+    stderrStream.on('data', (chunk) => {
         stderr += String(chunk);
     });
 
@@ -189,13 +202,23 @@ export async function holdTaskEventLockInChildProcess(lockPath: string, holdMs: 
         });
     });
 
-    return async function cleanup(): Promise<void> {
-        if (!child.killed && child.exitCode === null) {
-            child.kill();
+    let releaseCountdownStarted = false;
+    return {
+        beginReleaseCountdown(): void {
+            if (releaseCountdownStarted) {
+                return;
+            }
+            releaseCountdownStarted = true;
+            child.send('begin-release-countdown');
+        },
+        async cleanup(): Promise<void> {
+            if (!child.killed && child.exitCode === null) {
+                child.kill();
+            }
+            await new Promise<void>((resolve) => {
+                child.once('close', () => resolve());
+                setTimeout(resolve, 250);
+            });
         }
-        await new Promise<void>((resolve) => {
-            child.once('close', () => resolve());
-            setTimeout(resolve, 250);
-        });
     };
 }

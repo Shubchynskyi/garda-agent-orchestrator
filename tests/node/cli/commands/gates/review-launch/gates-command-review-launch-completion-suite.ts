@@ -454,6 +454,7 @@ describe('cli/commands/gates review launch completion', () => {
     });
 
     it('record-review-result handoff command single-quotes shell-substitution metacharacters', () => {
+        const escapedApostrophe = process.platform === 'win32' ? "''" : "'\\''";
         const command = buildRecordReviewResultCommand({
             repoRoot: 'D:/repo',
             taskId: 'T-716',
@@ -465,8 +466,8 @@ describe('cli/commands/gates review launch completion', () => {
             reviewOutputPath: 'D:/repo/garda-agent-orchestrator/runtime/tmp/reviews/T-716/security/review-output-$(whoami)`x`"q";touch pwn;\'tail.md'
         });
 
-        assert.ok(command.includes("--review-output-path 'garda-agent-orchestrator/runtime/tmp/reviews/T-716/security/review-output-$(whoami)`x`\"q\";touch pwn;''tail.md'"));
-        assert.ok(command.includes("--reviewer-identity 'agent:reviewer-$(whoami)`x`\"q\";echo pwn;''tail'"));
+        assert.ok(command.includes(`--review-output-path 'garda-agent-orchestrator/runtime/tmp/reviews/T-716/security/review-output-$(whoami)\`x\`"q";touch pwn;${escapedApostrophe}tail.md'`));
+        assert.ok(command.includes(`--reviewer-identity 'agent:reviewer-$(whoami)\`x\`"q";echo pwn;${escapedApostrophe}tail'`));
         assert.ok(!command.includes('--review-output-path "'));
         assert.ok(!command.includes('--reviewer-identity "'));
     });
@@ -1461,6 +1462,7 @@ describe('cli/commands/gates review launch completion', () => {
     });
 
     it('complete-reviewer-launch handoff command single-quotes shell-substitution metacharacters', () => {
+        const escapedApostrophe = process.platform === 'win32' ? "''" : "'\\''";
         const command = buildCompleteReviewerLaunchCommand({
             repoRoot: 'D:/repo',
             taskId: 'T-693',
@@ -1477,9 +1479,9 @@ describe('cli/commands/gates review launch completion', () => {
             recordInvocation: true
         });
 
-        assert.ok(command.includes("--reviewer-identity 'agent:reviewer-$(whoami)`x`\"q\";echo pwn;''tail'"));
-        assert.ok(command.includes("--provider-invocation-id 'provider-$(whoami)`x`\"q\";echo pwn;''tail'"));
-        assert.ok(command.includes("--attestation-source 'codex_$(whoami)`x`\"q\";echo pwn;''tail'"));
+        assert.ok(command.includes(`--reviewer-identity 'agent:reviewer-$(whoami)\`x\`"q";echo pwn;${escapedApostrophe}tail'`));
+        assert.ok(command.includes(`--provider-invocation-id 'provider-$(whoami)\`x\`"q";echo pwn;${escapedApostrophe}tail'`));
+        assert.ok(command.includes(`--attestation-source 'codex_$(whoami)\`x\`"q";echo pwn;${escapedApostrophe}tail'`));
         assert.ok(command.includes("--launch-input-mode 'copy_paste_prompt'"));
         assert.equal(command.includes('--launch-input-artifact-path'), false);
         assert.ok(!command.includes('--reviewer-identity "'));

@@ -9,7 +9,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { after, afterEach, type TestContext } from 'node:test';
+import { after, type TestContext } from 'node:test';
 
 const TRANSIENT_CLEANUP_ERROR_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY']);
 const DEFAULT_CLEANUP_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800, 1_600];
@@ -290,10 +290,6 @@ export class CliTestTempManager {
 }
 
 const sharedCliTestTempManager = new CliTestTempManager();
-
-afterEach(() => {
-    sharedCliTestTempManager.cleanupTrackedDirectories();
-});
 
 after(() => {
     sharedCliTestTempManager.cleanupRunRoot();

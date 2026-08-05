@@ -76,10 +76,18 @@ function resolveAnswersPath(pathValue: unknown, repoRoot: string): string {
     if (!rawPath) {
         throw new Error('AnswersPath must not be empty.');
     }
-    return requireResolvedPath(
-        gateHelpers.resolvePathInsideRepo(rawPath, repoRoot, { allowMissing: false, enforceInside: true }),
-        'AnswersPath'
-    );
+    try {
+        return requireResolvedPath(
+            gateHelpers.resolvePathInsideRepo(rawPath, repoRoot, { allowMissing: false, enforceInside: true }),
+            'AnswersPath'
+        );
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.startsWith('Path must resolve inside repo root')) {
+            throw new Error(`AnswersPath must resolve inside repo root: ${gateHelpers.normalizePath(rawPath)}`);
+        }
+        throw error;
+    }
 }
 
 function realpathSync(pathValue: string): string {

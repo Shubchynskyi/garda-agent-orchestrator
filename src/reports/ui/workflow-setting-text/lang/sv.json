@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Intervall för kvalitetskontrollens kadens",
+    "label": "Misslyckade granskningar mellan kvalitetskontroller",
     "description": "Antal registrerade misslyckade review-försök mellan obligatoriska quality-checklist-svar. Räknaren ökar bara vid registrerade review FAIL-resultat; upprepade next-step eller preflight refresh ökar den inte."
   },
   "optional-skill-selection-mode": {

@@ -169,8 +169,21 @@ function isPlainDirectoryPlaceholder(repoRoot: string, relativePath: string): bo
     return fileStatus.isDirectory() && !fileStatus.isSymbolicLink();
 }
 
+function isPhysicallyContainedCommandPath(repoRoot: string, relativePath: string): boolean {
+    if (!isSafeRepoRelativePath(relativePath)) {
+        return false;
+    }
+    return isPathRealpathInsideRoot(
+        path.resolve(repoRoot, relativePath),
+        repoRoot,
+        { allowMissing: true }
+    );
+}
+
 function expandDirectoryPlaceholdersForCommand(repoRoot: string, scopeFiles: string[]): string[] {
-    const normalizedScopeFiles = [...new Set(scopeFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
+    const normalizedScopeFiles = [...new Set(scopeFiles.map((entry) => normalizePath(entry)).filter(Boolean))]
+        .filter((entry) => isPhysicallyContainedCommandPath(repoRoot, entry))
+        .sort();
     if (normalizedScopeFiles.length === 0) {
         return [];
     }
@@ -188,11 +201,17 @@ function expandDirectoryPlaceholdersForCommand(repoRoot: string, scopeFiles: str
 
     const expanded = new Set<string>();
     for (const scopeFile of atomicScopeFiles) {
-        if (currentChangedFiles.includes(scopeFile)) {
+        if (
+            currentChangedFiles.includes(scopeFile)
+            && isPhysicallyContainedCommandPath(repoRoot, scopeFile)
+        ) {
             expanded.add(scopeFile);
         }
         const prefix = `${scopeFile.replace(/\/+$/, '')}/`;
-        const matchingCurrentFiles = currentChangedFiles.filter((changedFile) => changedFile.startsWith(prefix));
+        const matchingCurrentFiles = currentChangedFiles.filter((changedFile) => (
+            changedFile.startsWith(prefix)
+            && isPhysicallyContainedCommandPath(repoRoot, changedFile)
+        ));
         if (matchingCurrentFiles.length > 0) {
             for (const matchingFile of matchingCurrentFiles) {
                 expanded.add(matchingFile);
@@ -203,7 +222,9 @@ function expandDirectoryPlaceholdersForCommand(repoRoot: string, scopeFiles: str
         if (isPlainDirectoryPlaceholder(repoRoot, scopeFile)) {
             continue;
         }
-        expanded.add(scopeFile);
+        if (isPhysicallyContainedCommandPath(repoRoot, scopeFile)) {
+            expanded.add(scopeFile);
+        }
     }
     return [...expanded].sort();
 }
@@ -596,13 +617,18 @@ export function buildQualityChecklistCommand(
     const absoluteAnswersPath = answersTemplatePath
         ? path.resolve(repoRoot, answersTemplatePath)
         : resolveDefaultQualityChecklistAnswersTemplatePath(repoRoot, taskId);
-    const answersAssessment = assessQualityChecklistAnswersTemplateFile({
-        repoRoot,
-        taskId,
-        preflightPath: preflightCommandPath,
-        answersPath: absoluteAnswersPath
-    });
-    if (answersAssessment.status !== 'current') {
+    let answersTemplateIsCurrent = false;
+    try {
+        answersTemplateIsCurrent = assessQualityChecklistAnswersTemplateFile({
+            repoRoot,
+            taskId,
+            preflightPath: preflightCommandPath,
+            answersPath: absoluteAnswersPath
+        }).status === 'current';
+    } catch {
+        return '';
+    }
+    if (!answersTemplateIsCurrent) {
         return '';
     }
     const answersPath = toRepoDisplayPath(repoRoot, absoluteAnswersPath);

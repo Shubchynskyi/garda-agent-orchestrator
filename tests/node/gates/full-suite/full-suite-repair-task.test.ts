@@ -1869,21 +1869,35 @@ describe('full-suite repair task materialization', () => {
             fullSuiteArtifactPath: fullSuitePath
         });
         assert.equal(materialized.status, 'MATERIALIZED', materialized.output_lines.join('\n'));
-        fs.rmSync(path.dirname(helperPath), { recursive: true, force: true });
-        fs.writeFileSync(path.dirname(helperPath), 'restore obstruction\n', 'utf8');
         markRepairChildDone(repoRoot);
 
-        const restored = restoreMaterializedWip({
-            repoRoot,
-            fullSuitePath,
-            manifestPath: materialized.wip_manifest_path || ''
-        });
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalOpenSync = fsModule.openSync;
+        let injectedFailure = false;
+        fsModule.openSync = ((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+            if (!injectedFailure && path.resolve(String(filePath)) === path.resolve(helperPath)) {
+                injectedFailure = true;
+                throw Object.assign(new Error('exclusive restore obstruction'), { code: 'EEXIST' });
+            }
+            return originalOpenSync(filePath, flags, mode);
+        }) as typeof fsModule.openSync;
+        let restored: ReturnType<typeof restoreMaterializedWip> | null = null;
+        try {
+            restored = restoreMaterializedWip({
+                repoRoot,
+                fullSuitePath,
+                manifestPath: materialized.wip_manifest_path || ''
+            });
+        } finally {
+            fsModule.openSync = originalOpenSync;
+        }
 
-        assert.equal(restored.status, 'BLOCKED');
-        assert.ok(restored.violations.some((violation) => violation.includes('restore transaction failed')));
+        assert.equal(injectedFailure, true);
+        assert.equal(restored?.status, 'BLOCKED');
+        assert.ok(restored?.violations.some((violation) => violation.includes('restore transaction failed')));
         assert.equal(fs.readFileSync(appPath, 'utf8'), 'export const value = 1;\n');
         assert.equal(runGit(repoRoot, ['diff', '--cached', '--name-only']).trim(), '');
-        assert.equal(fs.readFileSync(path.dirname(helperPath), 'utf8'), 'restore obstruction\n');
+        assert.equal(fs.existsSync(helperPath), false);
     });
 
     it('rolls back applied WIP when parent status synchronization fails after mutation', () => {

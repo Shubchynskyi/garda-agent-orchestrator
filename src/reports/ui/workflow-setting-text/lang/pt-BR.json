@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Intervalo de cadência da checagem de qualidade",
+    "label": "Falhas de revisão entre verificações de qualidade",
     "description": "Número de tentativas de review com falha registradas entre execuções obrigatórias das respostas da quality-checklist. O contador só avança com resultados review FAIL registrados; next-step ou atualizações de preflight repetidas não avançam."
   },
   "optional-skill-selection-mode": {

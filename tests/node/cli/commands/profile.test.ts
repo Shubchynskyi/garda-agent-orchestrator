@@ -1690,7 +1690,11 @@ test('profile use, create, and delete acquire the shared lock before reading pro
         ['create', 'locked-profile', '--bundle-root', bundleRoot],
         ['delete', 'locked-profile', '--bundle-root', bundleRoot]
     ]) {
-        fs.writeFileSync(lockPath, 'contended', 'utf8');
+        fs.writeFileSync(lockPath, JSON.stringify({
+            lock_id: `contended-${argv[0]}`,
+            pid: process.pid,
+            created_at_utc: new Date().toISOString()
+        }), 'utf8');
         assert.throws(
             () => handleProfile(argv, PACKAGE_JSON),
             /profiles config lock/iu,

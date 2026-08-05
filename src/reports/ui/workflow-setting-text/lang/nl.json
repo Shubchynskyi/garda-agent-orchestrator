@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Interval voor kwaliteitscontrolecadans",
+    "label": "Mislukte reviews tussen kwaliteitscontroles",
     "description": "Aantal geregistreerde mislukte reviews tussen verplichte quality-checklist antwoordrondes. De teller loopt alleen op bij geregistreerde review FAIL resultaten; herhaalde next-step of preflight refresh verhoogt hem niet."
   },
   "optional-skill-selection-mode": {

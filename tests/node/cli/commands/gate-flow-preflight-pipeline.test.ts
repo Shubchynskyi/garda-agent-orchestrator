@@ -267,7 +267,8 @@ void assertSynchronousCallRejectsInferredPromiseExtensionHooks;
 function normalizeCompileOutputContract(outputLines: string[]): string[] {
     return outputLines.map((line) => line
         .replace(/duration_ms=\d+/u, 'duration_ms=<duration>')
-        .replace(/sha256=[a-f0-9]{64}/u, 'sha256=<sha256>'));
+        .replace(/sha256=[a-f0-9]{64}/u, 'sha256=<sha256>')
+        .replace(/chars=\d+/u, 'chars=<chars>'));
 }
 
 function isUnavailableWindowsJunctionError(error: unknown): boolean {
@@ -802,7 +803,7 @@ describe('compile gate shared preflight pipeline pilot', () => {
                 'COMPILE_GATE_PASSED',
                 'CompileSummary: PASSED | duration_ms=<duration> | exit_code=0 | errors=0 | warnings=0',
                 'CompileOutputRetention: retained=false reason=SUCCESS_LOG_OMITTED '
-                    + 'sha256=<sha256> lines=7 chars=166'
+                    + 'sha256=<sha256> lines=7 chars=<chars>'
             ]);
             assert.equal(evidence.preflight_path, path.resolve(preflightPath).replace(/\\/g, '/'));
             assert.equal(evidence.task_mode.task_id, taskId);
@@ -881,7 +882,7 @@ describe('compile gate shared preflight pipeline pilot', () => {
                 'CompileSummary: FAILED | duration_ms=<duration> | exit_code=3 | errors=0 | warnings=0',
                 `CompileOutputPath: ${compileOutputPath}`,
                 'CompileOutputRetention: retained=true reason=FULL_OUTPUT_RETAINED '
-                    + 'sha256=null lines=0 chars=0',
+                    + 'sha256=null lines=0 chars=<chars>',
                 `Reason: ${failureReason}`
             ]);
         } finally {

@@ -107,8 +107,10 @@ describe('compile-flow scope guards', () => {
             assert.ok(transition);
             const preflightSha256 = fileSha256(preflightPath);
             const generatedArtifactSha256 = fileSha256(artifactPath);
+            const staleSnapshotSha256 = before['dist/publish-runtime-manifest.json'];
             assert.ok(preflightSha256);
             assert.ok(generatedArtifactSha256);
+            assert.ok(staleSnapshotSha256);
 
             const compileEvidence = {
                 task_id: 'T-1',
@@ -125,7 +127,7 @@ describe('compile-flow scope guards', () => {
                 preflightPath,
                 preflightSha256,
                 currentProtectedSnapshot: {
-                    'dist/publish-runtime-manifest.json': generatedArtifactSha256
+                    'dist/publish-runtime-manifest.json': staleSnapshotSha256
                 }
             });
             assert.deepEqual(accepted.violations, []);
@@ -141,7 +143,7 @@ describe('compile-flow scope guards', () => {
                 preflightPath,
                 preflightSha256,
                 currentProtectedSnapshot: {
-                    'dist/publish-runtime-manifest.json': tamperedArtifactSha256
+                    'dist/publish-runtime-manifest.json': generatedArtifactSha256
                 }
             });
             assert.deepEqual(rejected.allowed_changed_files, []);

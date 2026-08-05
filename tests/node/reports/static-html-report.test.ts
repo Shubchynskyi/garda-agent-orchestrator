@@ -428,6 +428,8 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(answerRenderedDetail.innerHTML.includes('<th>Forecast exclusion reasons</th><td>timed-out runs=1</td>'));
     assert.ok(answerRenderedDetail.innerHTML.includes('full-suite timeout warning is visible in static task detail'));
     assert.ok(answerRenderedDetail.innerHTML.includes('Quality checklist required rework (1 action item).'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('Required rework'));
+    assert.ok(!answerRenderedDetail.innerHTML.includes('required_rework'));
     assert.ok(answerRenderedDetail.innerHTML.includes('Keep quality details in task history.'));
     assert.ok(answerRenderedDetail.innerHTML.includes('artifact_evidence_binding'));
     assert.ok(answerRenderedDetail.innerHTML.includes('T-100-quality-checklist.json'));

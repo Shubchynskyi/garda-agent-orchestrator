@@ -252,7 +252,7 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
     {
         id: 'optional-checks-review-failure-cadence-interval',
         key: 'optional_quality_checks.review_failure_cadence_interval',
-        label: 'Quality-check cadence interval',
+        label: 'Review failures between quality checks',
         description: 'Number of recorded review-failure attempts between required quality-checklist answer runs. The counter still advances only on recorded review FAIL results; repeated next-step or preflight refreshes do not advance it.',
         flag: '--optional-checks-review-failure-cadence-interval',
         value_type: 'integer',

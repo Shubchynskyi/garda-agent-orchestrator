@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Kalite kontrol kadansı aralığı",
+    "label": "Kalite kontrolleri arasındaki başarısız incelemeler",
     "description": "Zorunlu quality-checklist yanıt çalıştırmaları arasındaki kaydedilmiş başarısız review denemesi sayısı. Sayaç yalnızca kaydedilmiş review FAIL sonuçlarında artar; tekrarlanan next-step veya preflight yenilemeleri artırmaz."
   },
   "optional-skill-selection-mode": {

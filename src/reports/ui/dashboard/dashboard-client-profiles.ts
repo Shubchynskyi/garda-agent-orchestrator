@@ -90,12 +90,29 @@ function findingPolicyFieldLabel(key) {
   };
   return t(translationKeys[key] || key);
 }
+function findingPolicyActionLabel(action) {
+  const translationKeys = {
+    fix_now: 'profileFindingActionFixNow',
+    create_follow_up: 'profileFindingActionCreateFollowUp',
+    ignore: 'profileFindingActionIgnore'
+  };
+  return t(translationKeys[action] || action);
+}
+function findingPolicyPresetLabel(presetId) {
+  const translationKeys = {
+    soft: 'profileFindingPresetSoft',
+    balanced: 'profileFindingPresetBalanced',
+    strict: 'profileFindingPresetStrict',
+    custom: 'profileFindingPresetCustom'
+  };
+  return t(translationKeys[presetId] || presetId);
+}
 function renderFindingActionSelect(profileName, key, value, disabled, locked) {
   const options = findingPolicyActions();
   const values = options.includes(value) ? options : [value, ...options];
   return '<select id="' + safe(profileFindingInputId(profileName, key)) + '" data-profile-finding-action="' + safe(key) + '"'
     + (disabled || locked ? ' disabled' : '') + ' aria-label="' + safe(findingPolicyFieldLabel(key)) + '">'
-    + values.map(action => '<option value="' + safe(action) + '"' + (action === value ? ' selected' : '') + '>' + safe(action) + '</option>').join('')
+    + values.map(action => '<option value="' + safe(action) + '"' + (action === value ? ' selected' : '') + '>' + safe(findingPolicyActionLabel(action)) + '</option>').join('')
     + '</select>';
 }
 function renderFindingPolicySection(profile, disabled) {
@@ -108,10 +125,10 @@ function renderFindingPolicySection(profile, disabled) {
     : [];
   const copySources = profiles.filter(candidate => candidate.name !== profile.name);
   return '<fieldset class="profile-finding-policy"><legend>' + safe(t('profileFindingDispositionTitle')) + '</legend>'
-    + '<p class="empty profile-finding-policy-help">' + safe(t('profileFindingDispositionHelp')) + '</p>'
+    + '<p class="empty profile-finding-policy-help">' + safe(t('profileFindingDispositionHelp')) + ' ' + safe(t('profileFindingActionIgnoreHelp')) + '</p>'
     + '<div class="profile-finding-policy-toolbar">'
     + '<label><span>' + safe(t('profileFindingPolicyPreset')) + '</span><select id="' + safe(profileFindingInputId(profile.name, 'preset')) + '"' + (disabled ? ' disabled' : '') + '>'
-    + presetIds.map(presetId => '<option value="' + safe(presetId) + '"' + (presetId === policy.policy_id ? ' selected' : '') + '>' + safe(presetId) + '</option>').join('')
+    + presetIds.map(presetId => '<option value="' + safe(presetId) + '"' + (presetId === policy.policy_id ? ' selected' : '') + '>' + safe(findingPolicyPresetLabel(presetId)) + '</option>').join('')
     + '</select></label>'
     + '<label><span>' + safe(t('profileCopyFrom')) + '</span><select id="' + safe(profileFindingInputId(profile.name, 'copy-from')) + '"' + (disabled || copySources.length === 0 ? ' disabled' : '') + '>'
     + copySources.map(candidate => '<option value="' + safe(candidate.name) + '">' + safe(candidate.name) + '</option>').join('')

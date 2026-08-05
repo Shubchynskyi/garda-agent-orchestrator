@@ -158,7 +158,10 @@ export function validateCompileGeneratedProtectedArtifactEvidence(options: {
             continue;
         }
         seenPaths.add(relativePath);
-        if (normalizeSha256(options.currentProtectedSnapshot[relativePath]) !== afterSha256) {
+        const currentArtifactSha256 = normalizeSha256(fileSha256(
+            resolveCompileGeneratedProtectedArtifactPath(options.repoRoot, relativePath)
+        ));
+        if (currentArtifactSha256 !== afterSha256) {
             violations.push(
                 `Compile-generated protected artifact '${relativePath}' changed after compile-gate evidence was recorded.`
             );

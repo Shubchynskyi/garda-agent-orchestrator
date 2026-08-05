@@ -533,7 +533,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal(invalidCadencePreviewResponse.status, 400);
         assert.match(
             ((await invalidCadencePreviewResponse.json()) as { error: string }).error,
-            /Quality-check cadence interval must be an integer from 1 to 100/u
+            /Review failures between quality checks must be an integer from 1 to 100/u
         );
 
         const previewResponse = await fetch(`${server.url}api/settings`, {

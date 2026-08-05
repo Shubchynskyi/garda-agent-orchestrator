@@ -7,6 +7,7 @@
 - Strengthened delegated review provenance from launch through receipt: clean-context identities, immutable launch inputs, serialized lane transitions, output hashes, findings validation, and failure recovery now remain bound to the current task cycle.
 - Added deterministic reviewer coverage ledgers and exhaustive findings contracts. Reviewers must cover every assigned file, behavior boundary, and applicable category, continue after finding defects, and report distinct evidence-supported findings without an artificial quota.
 - Added profile-level finding policies, guarded preview/apply flows, future-task-only policy snapshots, selective remediation evidence, and safer reuse rules for accepted review results.
+- Replaced internal finding-policy and preset identifiers in the local UI with user-facing labels across all 20 language packs, clarified the review-failure cadence setting, and localized the not-due-yet quality-check state.
 - Hardened coherent-cycle, dirty-baseline, split-WIP, protected-manifest, full-suite-repair, and post-completion recovery so interrupted work resumes through explicit scoped evidence instead of synthetic state.
 
 ### Performance And Test Reliability

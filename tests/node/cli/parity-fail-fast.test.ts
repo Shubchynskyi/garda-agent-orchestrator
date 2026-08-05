@@ -36,7 +36,8 @@ function findRepoRoot(startDir: string): string {
 const REPO_ROOT = findRepoRoot(__dirname);
 const CLI_PATH = path.join(REPO_ROOT, 'bin', 'garda.js');
 const TEST_PACKAGE_JSON = { name: 'garda-agent-orchestrator-test', version: '1.0.0' };
-const WORKFLOW_CLI_REGRESSION_TIMEOUT_MS = process.platform === 'win32' ? 60000 : 30000;
+const CLI_CHILD_TIMEOUT_MS = process.platform === 'win32' ? 60_000 : 30_000;
+const WORKFLOW_CLI_REGRESSION_TIMEOUT_MS = CLI_CHILD_TIMEOUT_MS;
 
 function cliChildEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
     const env = { ...process.env, ...overrides };
@@ -237,7 +238,7 @@ test('CLI blocks task execution commands when bundle is stale', () => {
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'gate', '--help'],
-            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -256,7 +257,7 @@ test('CLI blocks task execution commands when bundle is stale', () => {
         const statusResult = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'status'],
-            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
         
         const statusCombined = (statusResult.stdout || '') + (statusResult.stderr || '');
@@ -276,7 +277,7 @@ test('read-only target-root commands warn on target parity drift without blockin
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'status', '--target-root', targetDir, '--json'],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -302,7 +303,7 @@ test('mutating target-root lifecycle commands block on target parity drift', () 
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'update', '--target-root', targetDir, '--dry-run'],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -328,7 +329,7 @@ test('local bundle refresh commands warn on parity drift so setup recovery remai
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'setup', '--target-root', targetDir, '--help'],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -355,7 +356,7 @@ test('remote-source setup remains blocked on target parity drift', () => {
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'setup', '--target-root', targetDir, '--branch', 'dev', '--help'],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -381,7 +382,7 @@ test('offline network-sensitive commands fail before target parity drift', () =>
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, '--offline', 'update', '--target-root', targetDir, '--help-not-real-flag'],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -405,7 +406,7 @@ test('read-only check-update help warns on target parity drift and stays discove
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'check-update', '--target-root', targetDir, '--help'],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -432,7 +433,7 @@ test('repair dry-run subcommands warn while confirmed repair mutations block on 
         const dryRunResult = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'repair', 'rebuild-indexes', '--target-root', targetDir, '--json'],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const dryRunCombined = (dryRunResult.stdout || '') + (dryRunResult.stderr || '');
@@ -446,7 +447,7 @@ test('repair dry-run subcommands warn while confirmed repair mutations block on 
         const confirmedResult = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'repair', 'rebuild-indexes', '--target-root', targetDir, '--confirm'],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const confirmedCombined = (confirmedResult.stdout || '') + (confirmedResult.stderr || '');
@@ -485,7 +486,7 @@ test('workflow command resolves parity against --target-root instead of the call
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'workflow', 'show', '--target-root', targetDir],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -523,7 +524,7 @@ test('review-capabilities show resolves parity against --target-root instead of 
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'review-capabilities', 'show', '--target-root', targetDir],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -559,7 +560,7 @@ test('workflow help remains discoverable when parity blocks the caller workspace
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'workflow', '--help'],
-            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -597,7 +598,7 @@ test('review-capabilities help remains discoverable when parity blocks the calle
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'review-capabilities', '--help'],
-            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -635,7 +636,7 @@ test('next-step help remains discoverable when parity blocks the caller workspac
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'next-step', 'T-250', '--repo-root', '.'],
-            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -688,7 +689,7 @@ test('review-capabilities enable routes through the CLI dispatcher for --target-
                 '--json',
                 'api'
             ],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -734,7 +735,7 @@ test('gate subcommand help remains discoverable when parity blocks the caller wo
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'gate', 'enter-task-mode', '--help'],
-            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -782,7 +783,7 @@ test('workflow set routes through the CLI dispatcher for --target-root and prese
                 '--operator-confirmed-at-utc', new Date().toISOString(),
                 '--json'
             ],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -1044,7 +1045,7 @@ test('workflow set routes legacy materialized target roots through the CLI dispa
                 '--operator-confirmed-at-utc', new Date().toISOString(),
                 '--json'
             ],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');
@@ -1109,7 +1110,7 @@ test('profile command resolves parity against --target-root instead of the calle
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'profile', '--target-root', targetDir, '--json'],
-            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: CLI_CHILD_TIMEOUT_MS }
         );
 
         const combined = (result.stdout || '') + (result.stderr || '');

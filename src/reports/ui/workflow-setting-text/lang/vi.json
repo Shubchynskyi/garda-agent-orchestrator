@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Khoảng nhịp kiểm tra chất lượng",
+    "label": "Số lần đánh giá thất bại giữa các lần kiểm tra chất lượng",
     "description": "Số lần review thất bại đã ghi nhận giữa các lượt trả lời quality-checklist bắt buộc. Bộ đếm chỉ tăng với kết quả review FAIL đã ghi; gọi next-step hoặc refresh preflight lặp lại không làm tăng."
   },
   "optional-skill-selection-mode": {

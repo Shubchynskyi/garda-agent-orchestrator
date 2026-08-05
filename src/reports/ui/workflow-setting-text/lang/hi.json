@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "गुणवत्ता-जांच कैडेंस अंतराल",
+    "label": "गुणवत्ता जाँचों के बीच असफल रिव्यू",
     "description": "आवश्यक quality-checklist उत्तर चलाने के बीच दर्ज review failure attempts की संख्या। काउंटर केवल दर्ज review FAIL परिणामों पर बढ़ता है; दोहराए गए next-step या preflight refresh इसे नहीं बढ़ाते।"
   },
   "optional-skill-selection-mode": {

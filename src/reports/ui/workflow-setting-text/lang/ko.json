@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "품질 점검 주기 간격",
+    "label": "품질 점검 사이의 리뷰 실패 횟수",
     "description": "필수 quality-checklist 답변 실행 사이에 허용되는 기록된 review 실패 시도 수입니다. 카운터는 기록된 review FAIL 결과에서만 증가하며 반복 next-step 또는 preflight refresh 로는 증가하지 않습니다."
   },
   "optional-skill-selection-mode": {

@@ -205,6 +205,20 @@ function qualityChecklistAnswers(answers) {
   if (!Array.isArray(answers) || answers.length === 0) return '';
   return '<h4>Rule answers</h4><ul>' + answers.map(answer => '<li><code>' + safe(answer.rule_id) + '</code> <strong>' + safe(answer.status) + '</strong><p class="meta">' + safe(answer.answer) + '</p></li>').join('') + '</ul>';
 }
+function qualityChecklistEffectLabel(effect) {
+  const labels = {
+    passed: 'Passed',
+    helped: 'Helped',
+    warned: 'Warned',
+    required_rework: 'Required rework',
+    disabled: 'Disabled',
+    skipped_cadence: 'Skipped — not due yet',
+    missing: 'Not checked',
+    invalid: 'Invalid',
+    stale: 'Stale'
+  };
+  return labels[effect] || effect;
+}
 function qualityChecklistRows(checklist) {
   const latest = checklist && checklist.latest ? checklist.latest : null;
   const history = checklist && Array.isArray(checklist.action_required_history) ? checklist.action_required_history : [];
@@ -212,7 +226,7 @@ function qualityChecklistRows(checklist) {
   const latestRows = latest ? [
     ['Status', latest.checklist_status],
     ['Evidence', latest.evidence_status],
-    ['Effect', latest.effect],
+    ['Effect', qualityChecklistEffectLabel(latest.effect)],
     ['Summary', latest.summary],
     ['Actions taken', latest.action_taken_count],
     ['Actions required', latest.action_required_count],

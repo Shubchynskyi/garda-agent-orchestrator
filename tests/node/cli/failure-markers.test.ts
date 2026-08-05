@@ -347,6 +347,7 @@ test('gate with invalid gate name produces GARDA_CLI_FAILED with EXIT_USAGE_ERRO
 });
 
 test('preflight containment failures preserve gate-specific markers and candidate diagnostics', async () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-preflight-workspace-'));
     const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-preflight-containment-'));
     try {
         const outsidePreflightPath = path.join(outsideRoot, 'T-path-containment-preflight.json');
@@ -371,7 +372,7 @@ test('preflight containment failures preserve gate-specific markers and candidat
                     gateName,
                     '--task-id', 'T-path-containment',
                     '--preflight-path', outsidePreflightPath,
-                    '--repo-root', REPO_ROOT
+                    '--repo-root', repoRoot
                 ], REPO_ROOT);
                 exitCode = process.exitCode;
             } finally {
@@ -391,6 +392,7 @@ test('preflight containment failures preserve gate-specific markers and candidat
             assert.equal(lines[markerIndex + 1], expectedDiagnostic);
         }
     } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
         fs.rmSync(outsideRoot, { recursive: true, force: true });
     }
 });

@@ -26,6 +26,10 @@ const REVIEW_TYPE = 'code';
 
 const tempRoots: string[] = [];
 
+function stripAnsi(value: string): string {
+    return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/gu, '');
+}
+
 interface SeededReviewArtifacts {
     dispositionArtifactPath: string;
     receiptSha256: string;
@@ -294,13 +298,13 @@ describe('materialize-review-follow-up-tasks CLI gate surface', () => {
     });
 
     it('exports help and shim registry entries for source and bundle command paths', () => {
-        const sourceHelp = buildGateHelpText('materialize-review-follow-up-tasks', process.cwd());
+        const sourceHelp = stripAnsi(buildGateHelpText('materialize-review-follow-up-tasks', process.cwd()));
         assert.match(sourceHelp, /node bin\/garda\.js gate materialize-review-follow-up-tasks/u);
         assert.match(sourceHelp, /--disposition-artifact-path/u);
         assert.ok(getAllShimmedGateNames().includes('materialize-review-follow-up-tasks'));
 
         const repoRoot = makeRepo();
-        const bundleHelp = buildGateHelpText('materialize-review-follow-up-tasks', repoRoot);
+        const bundleHelp = stripAnsi(buildGateHelpText('materialize-review-follow-up-tasks', repoRoot));
         assert.match(bundleHelp, /node garda-agent-orchestrator\/bin\/garda\.js gate materialize-review-follow-up-tasks/u);
         assert.match(bundleHelp, /garda-agent-orchestrator\/runtime\/reviews\/<task-id>-<review-type>-findings-follow-ups\.json/u);
     });

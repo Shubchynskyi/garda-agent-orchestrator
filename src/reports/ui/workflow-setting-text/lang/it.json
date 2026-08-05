@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Intervallo di cadenza del controllo qualità",
+    "label": "Revisioni non riuscite tra i controlli qualità",
     "description": "Numero di tentativi di review falliti registrati tra le esecuzioni obbligatorie delle risposte quality-checklist. Il contatore avanza solo con risultati review FAIL registrati; next-step o refresh preflight ripetuti non lo avanzano."
   },
   "optional-skill-selection-mode": {

@@ -670,7 +670,7 @@ export function readQualityChecklistReadiness(options: {
                     .slice(0, 12)
                     .map((rule) => `${rule.id}: ${String(rule.prompt || '').trim().slice(0, 160)}`)
                     .join(' | ')}. ` +
-                `Complete active-question reference: ${toRepoDisplayPath(options.repoRoot, activeQuestionReferencePath)}.` +
+                `Complete active-question reference: ${normalizePath(path.relative(options.repoRoot, activeQuestionReferencePath))}.` +
                 ruleSetDiagnosticSuffix,
             artifactPath,
             changedFilesCount,

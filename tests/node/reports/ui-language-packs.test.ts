@@ -81,6 +81,11 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.match(getLocalUiText('ru').profileFindingDispositionHelp, /только для будущих задач/u);
     assert.equal(getLocalUiText('ru').profileFindingPolicyPreset, 'Предустановка политики');
     assert.equal(getLocalUiText('ru').profileFindingResidualRisk, 'Остаточный риск');
+    assert.equal(getLocalUiText('ru').profileFindingActionFixNow, 'Исправить сейчас');
+    assert.equal(getLocalUiText('ru').profileFindingActionCreateFollowUp, 'Создать отдельную задачу');
+    assert.equal(getLocalUiText('ru').profileFindingActionIgnore, 'Принять без отдельной задачи');
+    assert.equal(getLocalUiText('ru').profileFindingPresetCustom, 'Пользовательский');
+    assert.equal(getLocalUiText('ru').qualityGateEffectSkippedCadence, 'Пропущено — пока не требуется');
     assert.equal(getLocalUiText('ru').fullSuiteTimeoutBlocker, 'Таймаут блокирует задачу');
     assert.equal(getLocalUiText('ru').fullSuiteForecastExclusionReasons, 'Причины исключения из прогноза');
     assert.equal(getLocalUiText('uk').tasksTab, 'Задачі');
@@ -107,6 +112,31 @@ test('every registered UI language pack matches the English key set', () => {
     const englishKeys = Object.keys(LOCAL_UI_TEXT.en).sort();
     for (const language of LOCAL_UI_LANGUAGES) {
         assert.deepEqual(Object.keys(LOCAL_UI_TEXT[language.id]).sort(), englishKeys);
+    }
+});
+
+test('finding policy translations never expose canonical enum ids as user-facing labels', () => {
+    const labelKeys = [
+        'profileFindingActionFixNow',
+        'profileFindingActionCreateFollowUp',
+        'profileFindingActionIgnore',
+        'profileFindingPresetSoft',
+        'profileFindingPresetBalanced',
+        'profileFindingPresetStrict',
+        'profileFindingPresetCustom'
+    ] as const;
+    for (const language of LOCAL_UI_LANGUAGES) {
+        const text = LOCAL_UI_TEXT[language.id];
+        for (const key of labelKeys) {
+            assert.notEqual(text[key].trim(), '', `${language.id}:${key}`);
+            assert.doesNotMatch(text[key], /_/u, `${language.id}:${key} must be a user-facing label`);
+        }
+        assert.doesNotMatch(text.profileFindingDispositionHelp, /\b(?:fix_now|create_follow_up)\b/u, `${language.id}:profileFindingDispositionHelp`);
+        if (language.id !== 'en') {
+            assert.doesNotMatch(text.profileFindingDispositionHelp, /\bCritical\b/u, `${language.id}:profileFindingDispositionHelp`);
+        }
+        assert.notEqual(text.profileFindingActionIgnoreHelp.trim(), '', `${language.id}:profileFindingActionIgnoreHelp`);
+        assert.notEqual(text.qualityGateEffectSkippedCadence.trim(), '', `${language.id}:qualityGateEffectSkippedCadence`);
     }
 });
 

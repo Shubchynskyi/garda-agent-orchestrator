@@ -9,6 +9,7 @@ import {
     CLI_TEST_TEMP_OWNER_FILE,
     CliTestTempManager,
     createManagedTestTempDirectory,
+    removeManagedTestTempDirectory,
     removeTempRepoWithRetry
 } from './gate-test-temp-manager';
 
@@ -181,13 +182,15 @@ describe('CLI test temp manager', { concurrency: false }, () => {
 let previousSharedDirectory = '';
 
 describe('shared CLI test temp lifecycle hooks', { concurrency: false }, () => {
-    it('tracks a helper-created directory for automatic afterEach cleanup', () => {
+    it('keeps a helper-created directory alive until explicit or final cleanup', () => {
         previousSharedDirectory = createManagedTestTempDirectory('hook-');
         assert.ok(fs.existsSync(previousSharedDirectory));
     });
 
-    it('has removed the directory left by the preceding test body', () => {
+    it('does not let a sibling test delete an active temporary directory', () => {
         assert.notEqual(previousSharedDirectory, '');
+        assert.equal(fs.existsSync(previousSharedDirectory), true);
+        removeManagedTestTempDirectory(previousSharedDirectory);
         assert.equal(fs.existsSync(previousSharedDirectory), false);
     });
 });

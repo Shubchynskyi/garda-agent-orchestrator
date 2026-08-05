@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Intervall der Qualitätsprüfungs-Kadenz",
+    "label": "Fehlgeschlagene Reviews zwischen Qualitätsprüfungen",
     "description": "Anzahl aufgezeichneter Review-Fehlschläge zwischen verpflichtenden Quality-Checklist-Antwortläufen. Der Zähler steigt nur bei aufgezeichneten review FAIL Ergebnissen; wiederholtes next-step oder Preflight-Refresh erhöht ihn nicht."
   },
   "optional-skill-selection-mode": {

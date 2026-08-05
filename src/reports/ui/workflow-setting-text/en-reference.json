@@ -35,7 +35,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Quality-check cadence interval",
+    "label": "Review failures between quality checks",
     "description": "Number of recorded review-failure attempts between required quality-checklist answer runs. The counter still advances only on recorded review FAIL results; repeated next-step or preflight refreshes do not advance it."
   },
   "full-suite-command": {

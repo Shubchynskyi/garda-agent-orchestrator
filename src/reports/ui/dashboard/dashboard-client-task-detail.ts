@@ -135,6 +135,7 @@ function taskQualityChecklistEffectLabel(effect) {
   if (effect === 'warned') return t('qualityGateEffectWarned');
   if (effect === 'required_rework') return t('qualityGateEffectRequiredRework');
   if (effect === 'disabled') return t('qualityGateEffectDisabled');
+  if (effect === 'skipped_cadence') return t('qualityGateEffectSkippedCadence');
   if (effect === 'missing') return t('qualityGateEffectMissing');
   if (effect === 'invalid') return t('qualityGateEffectInvalid');
   if (effect === 'stale') return t('qualityGateEffectStale');
@@ -154,6 +155,7 @@ function taskQualityChecklistSummaryText(latest) {
   if (key === 'warned') return t('qualityGateEffectWarned');
   if (key === 'helped') return t('qualityGateEffectHelped') + ' (' + (latest.action_taken_count || 0) + ')';
   if (key === 'disabled') return t('qualityGateEffectDisabled');
+  if (key === 'skipped_cadence') return t('qualityGateEffectSkippedCadence');
   return t('qualityGateEffectPassed');
 }
 function taskQualityChecklistDiagnosticLabel(code) {

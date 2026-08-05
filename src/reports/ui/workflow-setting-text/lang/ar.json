@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "فاصل إيقاع فحص الجودة",
+    "label": "إخفاقات المراجعة بين فحوصات الجودة",
     "description": "عدد محاولات فشل المراجعة المسجلة بين مرات إجابة قائمة فحص الجودة المطلوبة. يزيد العداد فقط عند نتائج review FAIL المسجلة؛ ولا تزيده نداءات next-step أو تحديثات preflight المتكررة."
   },
   "optional-skill-selection-mode": {

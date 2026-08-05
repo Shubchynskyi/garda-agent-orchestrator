@@ -386,7 +386,7 @@
     }
   },
   "optional-checks-review-failure-cadence-interval": {
-    "label": "Интервал периодичности проверки качества",
+    "label": "Неудачные ревью между проверками качества",
     "description": "Количество зафиксированных неуспешных review попыток между обязательными запусками ответов quality-checklist. Счётчик увеличивается только по записанным результатам review FAIL; повторные next-step или обновления preflight его не двигают."
   },
   "optional-skill-selection-mode": {

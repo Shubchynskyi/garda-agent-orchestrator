@@ -109,7 +109,7 @@ tr.selected { background: #eef8f6; }
 .quality-gate-items li { margin: 2px 0; overflow-wrap: anywhere; }
 .quality-gate-evidence-current, .quality-gate-effect-passed, .quality-gate-effect-helped { background: #eaf7ee; color: #176333; }
 .quality-gate-evidence-stale, .quality-gate-effect-stale, .quality-gate-effect-warned { background: #fff4d6; color: #7c4d00; }
-.quality-gate-evidence-missing, .quality-gate-effect-missing, .quality-gate-effect-disabled { background: #f3f5f7; color: #4b5563; }
+.quality-gate-evidence-missing, .quality-gate-effect-missing, .quality-gate-effect-disabled, .quality-gate-effect-skipped_cadence { background: #f3f5f7; color: #4b5563; }
 .quality-gate-evidence-invalid, .quality-gate-effect-invalid, .quality-gate-effect-required_rework { background: #fee7e7; color: #8a1f1f; }
 .profiles-detail { display: grid; gap: 14px; }
 .profile-add-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr) minmax(180px, 1.5fr) minmax(90px, .5fr) minmax(104px, auto); gap: 8px; align-items: end; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #f7fbfa; }
