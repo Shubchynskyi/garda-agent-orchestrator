@@ -181,7 +181,10 @@ function createBulkFallbackWorkspace(prefix: string): {
             'utf8'
         );
     }
-    assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot).status, 'applied');
+    const projectionTimestamp = new Date(Date.now() + 60_000).toISOString();
+    assert.equal(reconcileDerivedSqliteCatalog(workspaceRoot, {
+        clock: () => projectionTimestamp
+    }).status, 'applied');
     return {
         workspaceRoot,
         sourcePaths: {
@@ -707,7 +710,7 @@ sqliteCatalogTest('performance-qualified query treats review artifacts as task-e
         fs.writeFileSync(artifactPath, artifactContent, 'utf8');
 
         const unreferencedArtifact = queryPerformanceQualifiedTaskActivitySummaries(fixture.workspaceRoot);
-        assert.equal(unreferencedArtifact.source, 'sqlite');
+        if (unreferencedArtifact.source !== 'sqlite') assert.fail(unreferencedArtifact.diagnostic);
 
         appendTaskEvent(
             fixture.workspaceRoot,
