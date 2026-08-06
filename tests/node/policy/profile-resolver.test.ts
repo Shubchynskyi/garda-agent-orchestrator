@@ -32,6 +32,7 @@ import {
 
 function makeTempBundle(configs: {
     profiles?: Record<string, unknown>;
+    reviewCatalog?: Record<string, unknown>;
     reviewCapabilities?: Record<string, unknown>;
     tokenEconomy?: Record<string, unknown>;
     skillPacks?: Record<string, unknown>;
@@ -191,6 +192,10 @@ function makeTempBundle(configs: {
     };
 
     fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify(configs.profiles || defaultProfiles, null, 2), 'utf8');
+    fs.writeFileSync(path.join(configDir, 'review-catalog.json'), JSON.stringify(configs.reviewCatalog || {
+        version: 1,
+        custom_review_types: []
+    }, null, 2), 'utf8');
     fs.writeFileSync(path.join(configDir, 'review-capabilities.json'), JSON.stringify(configs.reviewCapabilities || defaultCapabilities, null, 2), 'utf8');
     fs.writeFileSync(path.join(configDir, 'token-economy.json'), JSON.stringify(configs.tokenEconomy || defaultTokenEconomy, null, 2), 'utf8');
     fs.writeFileSync(path.join(configDir, 'skill-packs.json'), JSON.stringify(configs.skillPacks || defaultSkillPacks, null, 2), 'utf8');
@@ -203,10 +208,26 @@ function cleanUp(bundleRoot: string): void {
     fs.rmSync(bundleRoot, { recursive: true, force: true });
 }
 
+function customReviewCatalog(): Record<string, unknown> {
+    return {
+        version: 1,
+        custom_review_types: [{
+            id: 'architecture-boundary',
+            display_label: 'Architecture boundary review',
+            enabled_by_default: false,
+            skill_id: 'code-review',
+            trigger: { mode: 'signals', signal_ids: ['paths.config'] },
+            coverage_category_ids: ['maintainability'],
+            reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['boundaries'] }
+        }]
+    };
+}
+
 
 test('resolveConfigPaths returns correct paths', () => {
     const paths = resolveConfigPaths('/fake/bundle');
     assert.ok(paths.profiles.endsWith(path.join('live', 'config', 'profiles.json')));
+    assert.ok(paths.reviewCatalog.endsWith(path.join('live', 'config', 'review-catalog.json')));
     assert.ok(paths.reviewCapabilities.endsWith(path.join('live', 'config', 'review-capabilities.json')));
     assert.ok(paths.tokenEconomy.endsWith(path.join('live', 'config', 'token-economy.json')));
     assert.ok(paths.skillPacks.endsWith(path.join('live', 'config', 'skill-packs.json')));
@@ -506,6 +527,99 @@ test('mergeReviewPolicy: safety floor does not fire when all floor keys already 
     const caps: ReviewCapabilities = { code: true, db: true, security: true, refactor: true, api: false, test: false, performance: false, infra: false, dependency: false };
     const { floorsApplied } = mergeReviewPolicy(profile, caps, true);
     assert.equal(floorsApplied.length, 0);
+});
+
+test('resolveEffectivePolicy keeps an omitted custom catalog lane inactive', () => {
+    const bundleRoot = makeTempBundle({
+        reviewCatalog: customReviewCatalog(),
+        reviewCapabilities: { 'architecture-boundary': true }
+    });
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false });
+        const catalogPolicy = policy.review_catalog_policy;
+        assert.ok(catalogPolicy);
+        const lane = catalogPolicy.lanes.find(({ id }) => id === 'architecture-boundary');
+        assert.ok(lane);
+        assert.equal(lane.state, 'disabled');
+        assert.equal(lane.state_source, 'custom_disabled_default');
+        assert.equal(lane.capability_enabled, true);
+        assert.equal(lane.active, false);
+        assert.equal(lane.inactive_reason, 'profile_disabled');
+        assert.equal(policy.review_policy['architecture-boundary'], false);
+        assert.match(catalogPolicy.catalog_sha256, /^[a-f0-9]{64}$/u);
+        assert.match(catalogPolicy.policy_sha256, /^[a-f0-9]{64}$/u);
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy activates auto custom profile intent without selecting the lane early', () => {
+    const bundleRoot = makeTempBundle({
+        reviewCatalog: customReviewCatalog(),
+        reviewCapabilities: { 'architecture-boundary': true }
+    });
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+        };
+        profiles.built_in_profiles.balanced.review_policy['architecture-boundary'] = 'auto';
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        const policy = resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false });
+        const catalogPolicy = policy.review_catalog_policy;
+        assert.ok(catalogPolicy);
+        const lane = catalogPolicy.lanes.find(({ id }) => id === 'architecture-boundary');
+        assert.ok(lane);
+        assert.equal(lane.state, 'auto');
+        assert.equal(lane.state_source, 'profile');
+        assert.equal(lane.active, true);
+        assert.equal(lane.inactive_reason, null);
+        assert.equal(policy.review_policy['architecture-boundary'], false);
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy rejects unknown catalog review ids', () => {
+    const bundleRoot = makeTempBundle({ reviewCatalog: customReviewCatalog() });
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+        };
+        profiles.built_in_profiles.balanced.review_policy.ghost = true;
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        assert.throws(
+            () => resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false }),
+            /unknown catalog review id 'ghost'/u
+        );
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy rejects a required lane with a disabled capability', () => {
+    const bundleRoot = makeTempBundle({
+        reviewCatalog: customReviewCatalog(),
+        reviewCapabilities: { 'architecture-boundary': false }
+    });
+    try {
+        const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+        const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as {
+            built_in_profiles: Record<string, { review_policy: Record<string, boolean | 'auto'> }>;
+        };
+        profiles.built_in_profiles.balanced.review_policy['architecture-boundary'] = true;
+        fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2), 'utf8');
+
+        assert.throws(
+            () => resolveEffectivePolicy(bundleRoot, { isCodeChangingTask: false }),
+            /architecture-boundary.*required.*capability.*disabled/iu
+        );
+    } finally {
+        cleanUp(bundleRoot);
+    }
 });
 
 

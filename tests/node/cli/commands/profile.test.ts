@@ -111,6 +111,47 @@ function createTempBundleWithProfiles(profiles?: Record<string, unknown>): strin
     return bundleRoot;
 }
 
+function writeCustomReviewConfig(bundleRoot: string, capabilityEnabled: boolean): void {
+    const configDir = path.join(bundleRoot, 'live', 'config');
+    fs.writeFileSync(path.join(configDir, 'review-catalog.json'), JSON.stringify({
+        version: 1,
+        custom_review_types: [{
+            id: 'architecture-boundary',
+            display_label: 'Architecture boundary review',
+            enabled_by_default: false,
+            skill_id: 'code-review',
+            trigger: { mode: 'signals', signal_ids: ['paths.config'] },
+            coverage_category_ids: ['maintainability'],
+            reviewer_role: { role_id: 'architecture-reviewer', focus_tags: ['boundaries'] }
+        }]
+    }, null, 2), 'utf8');
+    fs.writeFileSync(path.join(configDir, 'review-capabilities.json'), JSON.stringify({
+        code: true,
+        db: true,
+        security: true,
+        refactor: true,
+        api: true,
+        test: true,
+        performance: true,
+        infra: true,
+        dependency: true,
+        'architecture-boundary': capabilityEnabled
+    }, null, 2), 'utf8');
+}
+
+function addInvalidInactiveProfile(bundleRoot: string): void {
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.user_profiles.invalid_inactive = {
+        ...data.built_in_profiles.balanced,
+        review_policy: {
+            ...data.built_in_profiles.balanced.review_policy,
+            ghost: 'auto'
+        }
+    };
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
+}
+
 function captureConsole(fn: () => unknown): { lines: string[]; result: unknown } {
     const originalLog = console.log;
     const lines: string[] = [];
@@ -216,6 +257,27 @@ test('profile list shows all profiles with active marker', () => {
     assert.ok(output.includes('fast'));
     assert.ok(output.includes('strict'));
     assert.ok(output.includes('docs-only'));
+    assert.ok(output.includes('Review Catalog Lanes'));
+});
+
+test('profile list explains a new custom catalog lane as inactive until the profile enables it', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    const { lines } = captureConsole(() => handleProfile(['list', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const output = lines.join('\n');
+    assert.match(output, /architecture-boundary\(disabled:profile_disabled\)/u);
+});
+
+test('profile list reports invalid inactive profile policy without blocking recovery', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    addInvalidInactiveProfile(bundleRoot);
+
+    const parsed = captureJsonProfileCommand(['list', '--bundle-root', bundleRoot, '--json']);
+    const policies = parsed.profile_review_catalog_policies as Record<string, Record<string, unknown>>;
+    assert.equal(policies.balanced.validation_issues, undefined);
+    assert.deepEqual(policies.invalid_inactive.validation_issues, [
+        "Profile 'invalid_inactive' review_policy contains unknown catalog review id 'ghost'."
+    ]);
 });
 
 test('profile command without subcommand shows current profile', () => {
@@ -296,6 +358,38 @@ test('profile current --json returns valid JSON', () => {
     assert.equal(parsed.review_trigger_policy.schema_version, 1);
     assert.equal(parsed.review_trigger_policy.test_refactor_changed_lines_threshold, 20);
     assert.ok(parsed.review_trigger_policy.refactor_path_regexes.length > 0);
+});
+
+test('profile current ignores invalid inactive profile catalog policy', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    addInvalidInactiveProfile(bundleRoot);
+
+    const { lines } = captureConsole(() => handleProfile([
+        'current',
+        '--bundle-root', bundleRoot,
+        '--json'
+    ], PACKAGE_JSON));
+    const parsed = JSON.parse(lines.join('\n'));
+    assert.equal(parsed.active_profile, 'balanced');
+    assert.equal(parsed.review_catalog_policy.profile_name, 'balanced');
+});
+
+test('profile current exposes catalog lane states and activation reasons', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, true);
+    const parsed = captureJsonProfileCommand(['current', '--bundle-root', bundleRoot, '--json']);
+    const catalogPolicy = parsed.review_catalog_policy as {
+        catalog_sha256: string;
+        policy_sha256: string;
+        lanes: Array<Record<string, unknown>>;
+    };
+    const customLane = catalogPolicy.lanes.find((lane) => lane.id === 'architecture-boundary');
+    assert.ok(customLane);
+    assert.equal(customLane.state, 'disabled');
+    assert.equal(customLane.active, false);
+    assert.equal(customLane.inactive_reason, 'profile_disabled');
+    assert.match(catalogPolicy.catalog_sha256, /^[a-f0-9]{64}$/u);
+    assert.match(catalogPolicy.policy_sha256, /^[a-f0-9]{64}$/u);
 });
 
 test('profile use switches the active profile', () => {
@@ -631,6 +725,33 @@ test('profile validate passes for legacy missing review finding policy', () => {
     const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
     assert.ok(result && typeof result === 'object');
     assert.equal((result as { passed: boolean }).passed, true);
+});
+
+test('profile validate rejects review ids that are absent from the catalog', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.built_in_profiles.balanced.review_policy.ghost = 'auto';
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
+
+    const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const validation = result as { passed: boolean; issues: string[] };
+    assert.equal(validation.passed, false);
+    assert.match(validation.issues.join('\n'), /unknown catalog review id 'ghost'/u);
+});
+
+test('profile validate rejects a required custom lane whose capability is disabled', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    writeCustomReviewConfig(bundleRoot, false);
+    const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
+    const data = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    data.built_in_profiles.balanced.review_policy['architecture-boundary'] = true;
+    fs.writeFileSync(profilesPath, JSON.stringify(data, null, 2), 'utf8');
+
+    const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
+    const validation = result as { passed: boolean; issues: string[] };
+    assert.equal(validation.passed, false);
+    assert.match(validation.issues.join('\n'), /architecture-boundary.*required.*capability.*disabled/iu);
 });
 
 test('ProfileEntry critical finding action type is fixed to fix_now', () => {

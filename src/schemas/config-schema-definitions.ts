@@ -714,10 +714,11 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
 });
 
 const REVIEW_POLICY_VALUE = {
-    description: 'Review toggle: true = always, false = never, "auto" = trigger-based.',
+    description: 'Catalog review state: true = required, false = disabled, "auto" = optional and trigger-based.',
     oneOf: [
-        { type: 'boolean' },
-        { type: 'string', enum: ['auto'] }
+        { const: true, description: 'Required whenever the capability is enabled; built-in safety floors still apply.' },
+        { const: false, description: 'Disabled by profile unless a mandatory built-in safety floor applies.' },
+        { type: 'string', enum: ['auto'], description: 'Optional lane selected only by deterministic triggers.' }
     ]
 } as const;
 
@@ -814,7 +815,7 @@ const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
         depth: { type: 'integer', minimum: 1, maximum: 3, description: 'Default task depth (1–3).' },
         review_policy: {
             type: 'object',
-            description: 'Review type overrides.',
+            description: 'Catalog review states keyed by canonical review id. Unknown ids are rejected against review-catalog.json by profile validation.',
             properties: {
                 code:     REVIEW_POLICY_VALUE,
                 db:       REVIEW_POLICY_VALUE,

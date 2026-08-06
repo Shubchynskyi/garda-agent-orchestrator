@@ -1,4 +1,7 @@
 import { PRIMARY_CLI_NAME } from '../../../core/constants';
+import { readReviewCapabilitiesConfigFile } from '../../../core/review-capabilities';
+import { readReviewCatalogConfigFile } from '../../../core/review-catalog';
+import { resolveConfigPaths } from '../../../policy/profile-resolver';
 import {
     buildGuardedCommandHelpText,
     parseOptions,
@@ -238,7 +241,16 @@ function handleValidate(options: ParsedOptionsRecord, bundleRoot: string): Profi
         console.log(buildProfileValidateOutput(emptyData, issues, profilesPath, options.json === true));
         return { passed: false, issues };
     }
-    const issues = validateProfilesIntegrity(data);
+    const configPaths = resolveConfigPaths(bundleRoot);
+    let issues: string[];
+    try {
+        issues = validateProfilesIntegrity(data, {
+            reviewCatalog: readReviewCatalogConfigFile(configPaths.reviewCatalog),
+            reviewCapabilities: readReviewCapabilitiesConfigFile(configPaths.reviewCapabilities)
+        });
+    } catch (error: unknown) {
+        issues = [error instanceof Error ? error.message : String(error)];
+    }
     console.log(buildProfileValidateOutput(data, issues, profilesPath, options.json === true));
     return { passed: issues.length === 0, issues };
 }

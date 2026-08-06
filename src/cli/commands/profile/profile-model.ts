@@ -6,6 +6,11 @@ import {
     DEFAULT_REVIEW_FOLLOW_UP_POLICY,
     REVIEW_FINDING_POLICY_PRESETS
 } from '../../../policy/profile-resolver';
+import {
+    analyzeProfileReviewCatalogPolicy
+} from '../../../policy/profile-review-catalog-policy';
+import type { ReviewCapabilitiesConfigMap } from '../../../core/review-capabilities';
+import type { NormalizedReviewCatalog } from '../../../core/review-catalog';
 
 export const KNOWN_REVIEW_TYPES = Object.freeze([
     'code',
@@ -30,7 +35,15 @@ export const TOKEN_ECONOMY_FIELDS = Object.freeze([
 const PROFILE_NAME_PATTERN = /^\p{L}(?:[\p{L}\p{Nd}-]*[\p{L}\p{Nd}])?$/u;
 const PROFILE_NAME_UPPERCASE_PATTERN = /[\p{Lu}\p{Lt}]/u;
 
-export function validateProfilesIntegrity(data: ProfilesData): string[] {
+export interface ProfileIntegrityValidationOptions {
+    reviewCatalog: NormalizedReviewCatalog;
+    reviewCapabilities: ReviewCapabilitiesConfigMap;
+}
+
+export function validateProfilesIntegrity(
+    data: ProfilesData,
+    options?: ProfileIntegrityValidationOptions
+): string[] {
     const issues: string[] = [];
     const allNames = getAllProfileNames(data);
     if (allNames.length === 0) {
@@ -65,6 +78,15 @@ export function validateProfilesIntegrity(data: ProfilesData): string[] {
         const followUpResolution = resolveReviewFollowUpPolicy(entry.review_follow_up_policy, name);
         if (followUpResolution.diagnostics.some((diagnostic) => /invalid|malformed/u.test(diagnostic))) {
             issues.push(...followUpResolution.diagnostics);
+        }
+        if (options) {
+            const catalogPolicy = analyzeProfileReviewCatalogPolicy(
+                name,
+                entry.review_policy,
+                options.reviewCapabilities,
+                options.reviewCatalog
+            );
+            issues.push(...catalogPolicy.issues);
         }
     }
     return issues;

@@ -5,10 +5,26 @@ import {
     readReviewCapabilitiesConfigFile,
     type ReviewCapabilitiesConfigMap
 } from '../core/review-capabilities';
+import { readReviewCatalogConfigFile } from '../core/review-catalog';
+import {
+    resolveProfileReviewCatalogPolicy,
+    type ResolvedProfileReviewCatalogPolicy
+} from './profile-review-catalog-policy';
 import {
     loadReviewTriggerPolicy,
     type ReviewTriggerPolicy
 } from './review-trigger-policy';
+
+export {
+    analyzeProfileReviewCatalogPolicy,
+    resolveProfileReviewCatalogPolicy
+} from './profile-review-catalog-policy';
+export type {
+    ProfileReviewCatalogLane,
+    ProfileReviewCatalogPolicyAnalysis,
+    ProfileReviewCatalogState,
+    ResolvedProfileReviewCatalogPolicy
+} from './profile-review-catalog-policy';
 
 export interface ProfileReviewPolicy {
     code: boolean | 'auto';
@@ -126,6 +142,7 @@ export interface EffectivePolicy {
     profile_source: 'built_in' | 'user';
     depth: number;
     review_policy: EffectiveReviewPolicy;
+    review_catalog_policy?: ResolvedProfileReviewCatalogPolicy;
     review_finding_policy: ReviewFindingPolicy;
     review_finding_policy_diagnostics: string[];
     review_follow_up_policy: ReviewFollowUpPolicy;
@@ -140,6 +157,7 @@ export interface EffectivePolicy {
     guardrail_diagnostics: ProfileGuardrailResult | null;
     resolution_sources: {
         profiles: string;
+        review_catalog?: string;
         review_capabilities: string;
         token_economy: string;
         skill_packs: string;
@@ -932,6 +950,7 @@ export function mergeSkills(
 
 export function resolveConfigPaths(bundleRoot: string): {
     profiles: string;
+    reviewCatalog: string;
     reviewCapabilities: string;
     tokenEconomy: string;
     skillPacks: string;
@@ -940,6 +959,7 @@ export function resolveConfigPaths(bundleRoot: string): {
     const configDir = path.join(bundleRoot, 'live', 'config');
     return {
         profiles: path.join(configDir, 'profiles.json'),
+        reviewCatalog: path.join(configDir, 'review-catalog.json'),
         reviewCapabilities: path.join(configDir, 'review-capabilities.json'),
         tokenEconomy: path.join(configDir, 'token-economy.json'),
         skillPacks: path.join(configDir, 'skill-packs.json'),
@@ -993,6 +1013,13 @@ export function resolveEffectivePolicy(
     const isCodeChangingTask = zeroDiffNoReviewableScope ? false : scopeIsCodeChangingTask;
 
     const capabilities = loadReviewCapabilities(configPaths.reviewCapabilities);
+    const reviewCatalog = readReviewCatalogConfigFile(configPaths.reviewCatalog);
+    const reviewCatalogPolicy = resolveProfileReviewCatalogPolicy(
+        profileName,
+        entry.review_policy,
+        capabilities,
+        reviewCatalog
+    );
     const tokenEconomyConfig = loadTokenEconomyConfig(configPaths.tokenEconomy);
     const skillPacksConfig = loadSkillPacksConfig(configPaths.skillPacks);
 
@@ -1001,6 +1028,16 @@ export function resolveEffectivePolicy(
         capabilities,
         isCodeChangingTask
     );
+    for (const lane of reviewCatalogPolicy.lanes) {
+        if (lane.built_in) {
+            continue;
+        }
+        // T-729-2 records custom-lane profile intent in review_catalog_policy.
+        // Task/scope selection and immutable lifecycle snapshots are owned by
+        // T-729-3, so the compatibility effective policy must not expose a
+        // custom lane as selected before that boundary exists.
+        reviewPolicy[lane.id] = false;
+    }
     const reviewFindingPolicyResolution = resolveReviewFindingPolicy(
         entry.review_finding_policy,
         profileName
@@ -1047,6 +1084,7 @@ export function resolveEffectivePolicy(
         profile_source: profileSource,
         depth: entry.depth,
         review_policy: reviewPolicy,
+        review_catalog_policy: reviewCatalogPolicy,
         review_finding_policy: reviewFindingPolicyResolution.policy,
         review_finding_policy_diagnostics: reviewFindingPolicyResolution.diagnostics,
         review_follow_up_policy: reviewFollowUpPolicyResolution.policy,
@@ -1061,6 +1099,7 @@ export function resolveEffectivePolicy(
         guardrail_diagnostics: guardrailDiagnostics,
         resolution_sources: {
             profiles: configPaths.profiles,
+            review_catalog: configPaths.reviewCatalog,
             review_capabilities: configPaths.reviewCapabilities,
             token_economy: configPaths.tokenEconomy,
             skill_packs: configPaths.skillPacks,
@@ -1084,6 +1123,17 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
         lines.push(`  ${key}: ${String(value)}`);
     }
     lines.push('');
+
+    if (policy.review_catalog_policy) {
+        lines.push('ReviewCatalogPolicy:');
+        lines.push(`  catalog_sha256: ${policy.review_catalog_policy.catalog_sha256}`);
+        lines.push(`  policy_sha256: ${policy.review_catalog_policy.policy_sha256}`);
+        for (const lane of policy.review_catalog_policy.lanes) {
+            const activity = lane.active ? 'active' : `inactive:${lane.inactive_reason}`;
+            lines.push(`  ${lane.id}: ${lane.state} (${activity})`);
+        }
+        lines.push('');
+    }
 
     lines.push('ReviewTriggerPolicy:');
     lines.push(`  refactor_path_regexes: ${policy.review_trigger_policy.refactor_path_regexes.length}`);

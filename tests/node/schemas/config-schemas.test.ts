@@ -296,6 +296,20 @@ test('template profiles.json validates against schema', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('profiles schema preserves boolean and auto catalog review state encoding', () => {
+    const data = readTemplateConfig('profiles.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const builtInProfiles = clone.built_in_profiles as Record<string, Record<string, unknown>>;
+    const reviewPolicy = builtInProfiles.balanced.review_policy as Record<string, unknown>;
+    reviewPolicy['architecture-boundary'] = false;
+    assert.equal(validateAgainstSchema(clone, profilesSchema).valid, true);
+
+    reviewPolicy['architecture-boundary'] = 'required';
+    const invalid = validateAgainstSchema(clone, profilesSchema);
+    assert.equal(invalid.valid, false);
+    assert.ok(invalid.errors.some((error) => error.path.includes('architecture-boundary')));
+});
+
 test('profiles schema rejects named review_finding_policy preset mismatches', () => {
     const data = readTemplateConfig('profiles.json') as Record<string, unknown>;
     const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
