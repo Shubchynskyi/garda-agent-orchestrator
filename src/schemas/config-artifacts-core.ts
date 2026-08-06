@@ -8,6 +8,7 @@ import {
     normalizeStringArray
 } from './shared';
 import { REVIEW_CAPABILITY_KEYS } from '../core/review-capabilities';
+import { normalizeReviewCatalog } from '../core/review-catalog';
 import {
     ORDINARY_DOC_PATHS_CONFIG_KEY,
     normalizeOrdinaryDocPathPatterns
@@ -34,6 +35,10 @@ export function validateReviewCapabilitiesConfig(input: unknown): Record<string,
     }
 
     return normalized;
+}
+
+export function validateReviewCatalogConfig(input: unknown): Record<string, unknown> {
+    return normalizeReviewCatalog(input) as unknown as Record<string, unknown>;
 }
 
 export function validatePathsConfig(input: unknown): Record<string, unknown> {

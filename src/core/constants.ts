@@ -231,6 +231,7 @@ export const ALL_AGENT_ENTRYPOINT_FILES = Object.freeze([...getProviderEntrypoin
 
 export const MANAGED_CONFIG_NAMES: readonly string[] = Object.freeze([
     'review-capabilities',
+    'review-catalog',
     'paths',
     'token-economy',
     'output-filters',

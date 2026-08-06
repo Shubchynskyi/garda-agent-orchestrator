@@ -16,6 +16,7 @@ import {
     validateTokenEconomyConfig,
     validateProfilesConfig,
     validateReviewArtifactStorageConfig,
+    validateReviewCatalogConfig,
     validateRuntimeRetentionConfig,
     validateWorkflowConfig
 } from '../../../src/schemas/config-artifacts';
@@ -146,6 +147,25 @@ test('tracked template managed configs validate successfully', () => {
         const validated = validateManagedConfigByName(configName, readTemplateConfig(configName));
         assert.ok(validated);
     }
+});
+
+test('managed review catalog validator compiles the built-in compatibility catalog', () => {
+    const result = validateReviewCatalogConfig(readTemplateConfig('review-catalog'));
+    const reviewTypes = result.review_types as Array<Record<string, unknown>>;
+
+    assert.equal(reviewTypes.length, 9);
+    assert.deepEqual(reviewTypes.map((definition) => definition.id), [
+        'code',
+        'db',
+        'security',
+        'refactor',
+        'api',
+        'test',
+        'performance',
+        'infra',
+        'dependency'
+    ]);
+    assert.match(String(result.catalog_sha256), /^[a-f0-9]{64}$/u);
 });
 
 test('tracked workflow template ships current optional quality baseline', () => {

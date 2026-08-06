@@ -25,6 +25,7 @@ import type { InitProjectDiscovery } from './init-contracts';
 
 export const MANAGED_CONFIG_NAMES = [
     'review-capabilities',
+    'review-catalog',
     'paths',
     'token-economy',
     'output-filters',
