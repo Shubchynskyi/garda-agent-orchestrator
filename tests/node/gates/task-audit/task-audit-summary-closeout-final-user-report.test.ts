@@ -232,6 +232,14 @@ describe('gates/task-audit-summary', () => {
             assert.ok(noFindingsReport.includes('FollowUpTasksCreated: none'));
             assert.equal(noFindingsReport.includes('ReviewDiagnostics:'), false);
 
+            const noAuditReport = formatFinalUserReport({
+                ...closeout,
+                review_findings_audit: null
+            });
+            assert.ok(noAuditReport.includes('Summary: none'));
+            assert.ok(noAuditReport.includes('FollowUpTasksCreated: none'));
+            assert.ok(noAuditReport.includes('AuditDetails: runtime/reviews/T-149-final-closeout.json'));
+
             const incompleteDispositionReport = formatFinalUserReport({
                 ...closeout,
                 review_findings_audit: {
