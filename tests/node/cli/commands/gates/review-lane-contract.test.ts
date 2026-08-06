@@ -587,6 +587,7 @@ describe('authenticated review lane contract', () => {
         const artifactPath = path.join(repoRoot, 'reviewer-launch.json');
         const originalArtifactText = '{"attestation_state":"delegation_started"}\n';
         fs.writeFileSync(artifactPath, originalArtifactText, 'utf8');
+        let failedEventEmissionCount = 0;
 
         await assert.rejects(
             persistReviewerLaunchFailedTransition({
@@ -598,12 +599,15 @@ describe('authenticated review lane contract', () => {
                 },
                 recoveringPersistedFailure: false,
                 reviewType: 'code',
-                emitFailedEvent: async () => undefined,
+                emitFailedEvent: async () => {
+                    failedEventEmissionCount += 1;
+                },
                 getMatchingFailedEventCount: () => 0
             } as unknown as Parameters<typeof persistReviewerLaunchFailedTransition>[0]),
             /requires authenticated post-append timeline integrity validation/iu
         );
         assert.equal(fs.readFileSync(artifactPath, 'utf8'), originalArtifactText);
+        assert.equal(failedEventEmissionCount, 0);
     });
 
     it('rejects a matching failed event when post-append timeline integrity is invalid', async (t) => {

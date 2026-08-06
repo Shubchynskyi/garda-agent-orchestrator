@@ -1333,14 +1333,11 @@ describe('cli/commands/gates review launch completion', () => {
             '--failure-reason', failureReason
         ];
 
-        fs.writeFileSync(
-            fixture.launchArtifactPath,
-            `${JSON.stringify({
-                ...persistedFailedArtifact,
-                launch_failure_recorded_by: 'forged-recovery-writer'
-            }, null, 2)}\n`,
-            'utf8'
-        );
+        const forgedRecoveryArtifactText = `${JSON.stringify({
+            ...persistedFailedArtifact,
+            launch_failure_recorded_by: 'forged-recovery-writer'
+        }, null, 2)}\n`;
+        fs.writeFileSync(fixture.launchArtifactPath, forgedRecoveryArtifactText, 'utf8');
         const forgedRecoveryProvenance = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
         assert.notEqual(forgedRecoveryProvenance.exitCode, 0);
         assert.ok(
@@ -1355,6 +1352,7 @@ describe('cli/commands/gates review launch completion', () => {
                 .length,
             0
         );
+        assert.equal(fs.readFileSync(fixture.launchArtifactPath, 'utf8'), forgedRecoveryArtifactText);
 
         fs.writeFileSync(
             fixture.launchArtifactPath,
