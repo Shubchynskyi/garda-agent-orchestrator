@@ -304,7 +304,7 @@ describe('cli/commands/gates review launch completion', () => {
                     recoveringPersistedFailure: false,
                     reviewType: 'code',
                     emitFailedEvent: async () => false,
-                    hasMatchingFailedEvent: () => false
+                    getMatchingFailedEventCount: () => 0
                 }),
                 /delegation-started artifact was restored/i
             );

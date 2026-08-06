@@ -14,6 +14,7 @@ import {
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
 import { type ParsedOptionsRecord } from '../../shared-command-utils';
 import { writeFileAtomically } from '../../../../core/filesystem';
+import { sha256RedactedJsonPayload } from '../../../../core/redaction';
 import { inspectTaskEventFile } from '../../../../gate-runtime/task-events-integrity';
 import { buildOperatorNextActionBlock } from '../../../../gates/shared/operator-action-output';
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
@@ -45,7 +46,7 @@ function getEventStringField(
     return String(record?.[snakeCaseKey] ?? record?.[camelCaseKey] ?? '').trim();
 }
 
-function hasMatchingReviewerLaunchFailedEvent(options: {
+function countMatchingReviewerLaunchFailedEvents(options: {
     timelineEvents: ReturnType<typeof readDependencyTimelineEvents>;
     taskId: string;
     reviewType: string;
@@ -59,8 +60,8 @@ function hasMatchingReviewerLaunchFailedEvent(options: {
     delegationStartedAtUtc: string;
     launchFailedAtUtc: string;
     failureReason: string;
-}): boolean {
-    return options.timelineEvents.some((event) => {
+}): number {
+    return options.timelineEvents.filter((event) => {
         const details = event.details;
         const eventIdentity = getEventStringField(details, 'reviewer_identity', 'reviewerIdentity')
             || getEventStringField(details, 'reviewer_session_id', 'reviewerSessionId');
@@ -112,7 +113,7 @@ function hasMatchingReviewerLaunchFailedEvent(options: {
                 'launch_failure_reason',
                 'launchFailureReason'
             ) === options.failureReason;
-    });
+    }).length;
 }
 
 export async function persistReviewerLaunchFailedTransition(options: {
@@ -121,9 +122,29 @@ export async function persistReviewerLaunchFailedTransition(options: {
     failedArtifact: Record<string, unknown>;
     recoveringPersistedFailure: boolean;
     reviewType: string;
-    emitFailedEvent: (failedArtifactSha256: string) => Promise<boolean>;
-    hasMatchingFailedEvent: (failedArtifactSha256: string) => boolean;
+    emitFailedEvent: (failedArtifactSha256: string) => Promise<unknown>;
+    validatePostAppendFailedEventEvidence?: () => void;
+    getMatchingFailedEventCount: (failedArtifactSha256: string) => number;
 }): Promise<string> {
+    const reviewType = options.reviewType;
+    if (typeof options.getMatchingFailedEventCount !== 'function') {
+        throw new Error(
+            `Reviewer launch failure requires an authenticated failed-event count callback for ` +
+            `'${reviewType}'.`
+        );
+    }
+    const getMatchingFailedEventCount = options.getMatchingFailedEventCount;
+    const throwAfterFreshArtifactRollback = (failureMessage: string, restoredMessage: string): never => {
+        try {
+            writeFileAtomically(options.artifactPath, options.originalArtifactText, { encoding: 'utf8' });
+        } catch (rollbackError) {
+            throw new Error(
+                `${failureMessage} The delegation-started artifact rollback also failed: ` +
+                `${getErrorMessage(rollbackError)}.`
+            );
+        }
+        throw new Error(`${failureMessage} ${restoredMessage}`);
+    };
     if (!options.recoveringPersistedFailure) {
         writeReviewArtifactJson(options.artifactPath, options.failedArtifact);
     }
@@ -136,18 +157,46 @@ export async function persistReviewerLaunchFailedTransition(options: {
             `Reviewer launch failure requires a hashable failed launch artifact for '${options.reviewType}'.`
         );
     }
-    if (options.hasMatchingFailedEvent(failedArtifactSha256)) {
+    const initialMatchingEventCount = getMatchingFailedEventCount(failedArtifactSha256);
+    if (initialMatchingEventCount > 1) {
+        throw new Error(
+            `Reviewer launch failure requires exactly one REVIEWER_LAUNCH_FAILED event for '${options.reviewType}'.`
+        );
+    }
+    if (initialMatchingEventCount === 1) {
         return failedArtifactSha256;
     }
 
     let appendFailure: unknown = null;
-    let appendCommitted = false;
     try {
-        appendCommitted = await options.emitFailedEvent(failedArtifactSha256);
+        await options.emitFailedEvent(failedArtifactSha256);
     } catch (error) {
         appendFailure = error;
     }
-    if (appendCommitted || options.hasMatchingFailedEvent(failedArtifactSha256)) {
+    try {
+        options.validatePostAppendFailedEventEvidence?.();
+    } catch (error) {
+        const integrityFailureMessage =
+            `Reviewer launch failure cannot authenticate post-append task timeline integrity for ` +
+            `'${options.reviewType}'. Cause: ${getErrorMessage(error)}.`;
+        if (options.recoveringPersistedFailure) {
+            throw new Error(
+                `${integrityFailureMessage} The recoverable failed artifact was retained so the same ` +
+                'terminal transition can be retried.'
+            );
+        }
+        return throwAfterFreshArtifactRollback(
+            integrityFailureMessage,
+            'The original delegation-started artifact was restored.'
+        );
+    }
+    const matchingEventCount = getMatchingFailedEventCount(failedArtifactSha256);
+    if (matchingEventCount > 1) {
+        throw new Error(
+            `Reviewer launch failure requires exactly one REVIEWER_LAUNCH_FAILED event for '${options.reviewType}'.`
+        );
+    }
+    if (matchingEventCount === 1) {
         return failedArtifactSha256;
     }
 
@@ -161,20 +210,10 @@ export async function persistReviewerLaunchFailedTransition(options: {
             appendFailureSuffix
         );
     }
-    try {
-        writeFileAtomically(options.artifactPath, options.originalArtifactText, { encoding: 'utf8' });
-    } catch (rollbackError) {
-        throw new Error(
-            `Reviewer launch failure requires REVIEWER_LAUNCH_FAILED telemetry for '${options.reviewType}'. ` +
-            `Telemetry persistence failed and the delegation-started artifact rollback also failed: ` +
-            `${getErrorMessage(rollbackError)}.` +
-            appendFailureSuffix
-        );
-    }
-    throw new Error(
+    return throwAfterFreshArtifactRollback(
         `Reviewer launch failure requires REVIEWER_LAUNCH_FAILED telemetry for '${options.reviewType}'. ` +
-        'The original delegation-started artifact was restored because telemetry could not be persisted.' +
-        appendFailureSuffix
+        `Telemetry persistence failed.${appendFailureSuffix}`,
+        'The original delegation-started artifact was restored because telemetry could not be persisted.'
     );
 }
 
@@ -374,6 +413,19 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                 'Recoverable failed launch artifact is missing a valid immutable launch_failed_at_utc.'
             );
         }
+        const persistedFailureRecorder = getStringField(
+            artifact,
+            'launch_failure_recorded_by',
+            'launchFailureRecordedBy'
+        );
+        if (
+            recoveringPersistedFailure
+            && persistedFailureRecorder !== 'record-reviewer-launch-failed'
+        ) {
+            throw new Error(
+                'Recoverable failed launch artifact has an invalid immutable launch_failure_recorded_by.'
+            );
+        }
         const launchFailedAtUtc = recoveringPersistedFailure
             ? persistedLaunchFailedAtUtc
             : new Date().toISOString();
@@ -407,16 +459,19 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
             repoRoot,
             path.join('runtime', 'task-events', `${taskId}.jsonl`)
         );
-        const timelineIntegrity = inspectTaskEventFile(timelinePath, taskId);
-        if (!timelineIntegrity.status.startsWith('PASS')) {
-            throw new Error(
-                `Reviewer launch failure cannot authenticate task timeline integrity for '${reviewType}': ` +
-                `${timelineIntegrity.status}.`
-            );
-        }
+        const assertTaskTimelineIntegrity = (): void => {
+            const timelineIntegrity = inspectTaskEventFile(timelinePath, taskId);
+            if (!timelineIntegrity.status.startsWith('PASS')) {
+                throw new Error(
+                    `Reviewer launch failure cannot authenticate task timeline integrity for '${reviewType}': ` +
+                    `${timelineIntegrity.status}.`
+                );
+            }
+        };
+        assertTaskTimelineIntegrity();
         let timelineEvents = readDependencyTimelineEvents(timelinePath);
-        const failedEventMatchesArtifact = (artifactSha256: string): boolean =>
-            hasMatchingReviewerLaunchFailedEvent({
+        const matchingFailedEventCount = (artifactSha256: string): number =>
+            countMatchingReviewerLaunchFailedEvents({
                 timelineEvents,
                 taskId,
                 reviewType,
@@ -432,11 +487,6 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                 failureReason
             });
         const currentArtifactSha256 = fileSha256(launchArtifactPath) || '';
-        if (recoveringPersistedFailure && !failedEventMatchesArtifact(currentArtifactSha256)) {
-            throw new Error(
-                `Reviewer launch failure cannot authenticate the recoverable failed attempt for '${reviewType}'.`
-            );
-        }
         const startedEvent = findMatchingReviewerDelegationStartedEvent(
             timelineEvents,
             {
@@ -470,6 +520,43 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                 `Reviewer launch failure cannot authenticate integrity-bearing start telemetry for '${reviewType}'.`
             );
         }
+        if (recoveringPersistedFailure) {
+            const reconstructedStartedArtifactBase: Record<string, unknown> = { ...artifact };
+            delete reconstructedStartedArtifactBase.launch_failure_reason;
+            delete reconstructedStartedArtifactBase.launchFailureReason;
+            delete reconstructedStartedArtifactBase.launch_failed_at_utc;
+            delete reconstructedStartedArtifactBase.launchFailedAtUtc;
+            delete reconstructedStartedArtifactBase.launch_failure_recorded_by;
+            delete reconstructedStartedArtifactBase.launchFailureRecordedBy;
+            const reconstructedStartedArtifacts: Record<string, unknown>[] = [{
+                ...reconstructedStartedArtifactBase,
+                attestation_state: 'delegation_started'
+            }];
+            if (Object.hasOwn(reconstructedStartedArtifactBase, 'attestationState')) {
+                const camelCaseStartedArtifact: Record<string, unknown> = {
+                    ...reconstructedStartedArtifactBase,
+                    attestationState: 'delegation_started'
+                };
+                delete camelCaseStartedArtifact.attestation_state;
+                reconstructedStartedArtifacts.push(camelCaseStartedArtifact);
+            }
+            const authenticatedStartedArtifactSha256 = getEventStringField(
+                startedEvent?.details ?? null,
+                'reviewer_launch_artifact_sha256',
+                'reviewerLaunchArtifactSha256'
+            ).toLowerCase();
+            if (
+                !/^[0-9a-f]{64}$/.test(authenticatedStartedArtifactSha256)
+                || !reconstructedStartedArtifacts.some((candidate) => (
+                    sha256RedactedJsonPayload(candidate) === authenticatedStartedArtifactSha256
+                ))
+            ) {
+                throw new Error(
+                    `Recoverable failed launch artifact does not reconstruct the authenticated ` +
+                    `delegation-started artifact for '${reviewType}'.`
+                );
+            }
+        }
         if (!reviewLaneContract) {
             assertArtifactReviewLaneEvidenceMatchesAuthority(
                 artifact,
@@ -482,7 +569,7 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                 'Reviewer launch lane reservation'
             );
         }
-        const existingFailedEventForAttempt = timelineEvents.find((event) => (
+        const existingFailedEventsForAttempt = timelineEvents.filter((event) => (
             event.event_type === 'REVIEWER_LAUNCH_FAILED'
             && getEventStringField(
                 event.details,
@@ -490,9 +577,14 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                 'reviewerLaunchAttemptId'
             ).toLowerCase() === reviewerLaunchAttemptId.toLowerCase()
         ));
-        if (existingFailedEventForAttempt) {
+        if (existingFailedEventsForAttempt.length > 1) {
+            throw new Error(
+                'Failed-launch recovery found duplicate REVIEWER_LAUNCH_FAILED telemetry for the same immutable launch attempt.'
+            );
+        }
+        if (existingFailedEventsForAttempt.length === 1) {
             const existingArtifactSha256 = fileSha256(launchArtifactPath) || '';
-            if (!recoveringPersistedFailure || !failedEventMatchesArtifact(existingArtifactSha256)) {
+            if (!recoveringPersistedFailure || matchingFailedEventCount(existingArtifactSha256) !== 1) {
                 throw new Error(
                     'Failed-launch recovery found conflicting REVIEWER_LAUNCH_FAILED telemetry for the same immutable launch attempt.'
                 );
@@ -504,38 +596,38 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
             failedArtifact,
             recoveringPersistedFailure,
             reviewType,
-            hasMatchingFailedEvent: failedEventMatchesArtifact,
+            getMatchingFailedEventCount: matchingFailedEventCount,
+            validatePostAppendFailedEventEvidence: () => {
+                assertTaskTimelineIntegrity();
+                timelineEvents = readDependencyTimelineEvents(timelinePath);
+            },
             emitFailedEvent: async (artifactSha256) => {
-                try {
-                    const failedEvent = await emitReviewerLaunchFailedEventAsync(
-                        gateHelpers.joinOrchestratorPath(repoRoot, ''),
-                        taskId,
-                        reviewType,
-                        reviewerExecutionMode,
-                        reviewerIdentity,
-                        launchContextSha256,
-                        getStringField(artifact, 'routing_event_sha256', 'routingEventSha256'),
-                        {
-                            launchDetails: {
-                                reviewer_launch_attempt_id: reviewerLaunchAttemptId,
-                                reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
-                                reviewer_launch_artifact_sha256: artifactSha256,
-                                provider_invocation_id: providerInvocationId || null,
-                                controller_invocation_id: controllerInvocationId || null,
-                                delegation_started_at_utc: delegationStartedAtUtc,
-                                launch_failed_at_utc: launchFailedAtUtc,
-                                launch_failure_reason: failureReason,
-                                failure_reason: failureReason
-                            }
+                const failedEvent = await emitReviewerLaunchFailedEventAsync(
+                    gateHelpers.joinOrchestratorPath(repoRoot, ''),
+                    taskId,
+                    reviewType,
+                    reviewerExecutionMode,
+                    reviewerIdentity,
+                    launchContextSha256,
+                    getStringField(artifact, 'routing_event_sha256', 'routingEventSha256'),
+                    {
+                        launchDetails: {
+                            reviewer_launch_attempt_id: reviewerLaunchAttemptId,
+                            reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
+                            reviewer_launch_artifact_sha256: artifactSha256,
+                            provider_invocation_id: providerInvocationId || null,
+                            controller_invocation_id: controllerInvocationId || null,
+                            delegation_started_at_utc: delegationStartedAtUtc,
+                            launch_failed_at_utc: launchFailedAtUtc,
+                            launch_failure_reason: failureReason,
+                            failure_reason: failureReason
                         }
-                    );
-                    return Boolean(
-                        failedEvent
-                        && !taskEventAppendHasBlockingFailure(failedEvent, false)
-                    );
-                } finally {
-                    timelineEvents = readDependencyTimelineEvents(timelinePath);
-                }
+                    }
+                );
+                return Boolean(
+                    failedEvent
+                    && !taskEventAppendHasBlockingFailure(failedEvent, false)
+                );
             }
         });
 

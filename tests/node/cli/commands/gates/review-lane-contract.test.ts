@@ -16,6 +16,12 @@ import {
     resolveAuthenticatedReviewLaneContract
 } from '../../../../../src/cli/commands/gate-review-handlers/review-lane-contract';
 import {
+    persistReviewerLaunchFailedTransition
+} from '../../../../../src/cli/commands/gate-review-handlers/launch/review-launch-failed-handler';
+import {
+    resolveTaskOwnedReviewerScratchArtifactPath
+} from '../../../../../src/cli/commands/gate-review-handlers/launch/review-artifact-path-support';
+import {
     createTempRepo,
     getOrchestratorRoot,
     getReviewsRoot,
@@ -516,6 +522,232 @@ describe('authenticated review lane contract', () => {
         }
     });
 
+    it('accepts a failed event that becomes durable before its emitter reports failure', async (t) => {
+        const repoRoot = createTempRepo(t);
+        const artifactPath = path.join(repoRoot, 'reviewer-launch.json');
+        const failedArtifact = {
+            schema_version: 1,
+            attestation_state: 'launch_failed'
+        };
+        const failedArtifactText = `${JSON.stringify(failedArtifact, null, 2)}\n`;
+        fs.writeFileSync(artifactPath, failedArtifactText, 'utf8');
+        let durableMatchingEventCount = 0;
+        let cachedMatchingEventCount = 0;
+        let postAppendValidationCount = 0;
+
+        const artifactSha256 = await persistReviewerLaunchFailedTransition({
+            artifactPath,
+            originalArtifactText: failedArtifactText,
+            failedArtifact,
+            recoveringPersistedFailure: true,
+            reviewType: 'code',
+            emitFailedEvent: async () => {
+                durableMatchingEventCount = 1;
+                throw new Error('simulated ambiguous append result');
+            },
+            getMatchingFailedEventCount: () => cachedMatchingEventCount,
+            validatePostAppendFailedEventEvidence: () => {
+                postAppendValidationCount += 1;
+                cachedMatchingEventCount = durableMatchingEventCount;
+            }
+        });
+
+        assert.equal(artifactSha256, fileSha256(artifactPath));
+        assert.equal(fs.readFileSync(artifactPath, 'utf8'), failedArtifactText);
+        assert.equal(durableMatchingEventCount, 1);
+        assert.equal(cachedMatchingEventCount, 1);
+        assert.equal(postAppendValidationCount, 1);
+    });
+
+    it('rejects a failed transition without authenticated event evidence callbacks', async (t) => {
+        const repoRoot = createTempRepo(t);
+        const artifactPath = path.join(repoRoot, 'reviewer-launch.json');
+        const originalArtifactText = '{"attestation_state":"delegation_started"}\n';
+        fs.writeFileSync(artifactPath, originalArtifactText, 'utf8');
+
+        await assert.rejects(
+            persistReviewerLaunchFailedTransition({
+                artifactPath,
+                originalArtifactText,
+                failedArtifact: {
+                    schema_version: 1,
+                    attestation_state: 'launch_failed'
+                },
+                recoveringPersistedFailure: false,
+                reviewType: 'code',
+                emitFailedEvent: async () => true
+            } as unknown as Parameters<typeof persistReviewerLaunchFailedTransition>[0]),
+            /requires an authenticated failed-event count callback/iu
+        );
+        assert.equal(fs.readFileSync(artifactPath, 'utf8'), originalArtifactText);
+    });
+
+    it('rejects a matching failed event when post-append timeline integrity is invalid', async (t) => {
+        const repoRoot = createTempRepo(t);
+        const artifactPath = path.join(repoRoot, 'reviewer-launch.json');
+        const failedArtifact = {
+            schema_version: 1,
+            attestation_state: 'launch_failed'
+        };
+        const failedArtifactText = `${JSON.stringify(failedArtifact, null, 2)}\n`;
+        fs.writeFileSync(artifactPath, failedArtifactText, 'utf8');
+        let matchingEventCount = 0;
+
+        await assert.rejects(
+            persistReviewerLaunchFailedTransition({
+                artifactPath,
+                originalArtifactText: failedArtifactText,
+                failedArtifact,
+                recoveringPersistedFailure: true,
+                reviewType: 'code',
+                emitFailedEvent: async () => {
+                    matchingEventCount = 1;
+                    throw new Error('simulated ambiguous append result');
+                },
+                getMatchingFailedEventCount: () => matchingEventCount,
+                validatePostAppendFailedEventEvidence: () => {
+                    throw new Error('FAILED_HASH_CHAIN');
+                }
+            }),
+            /cannot authenticate post-append task timeline integrity.*FAILED_HASH_CHAIN/iu
+        );
+        assert.equal(fs.readFileSync(artifactPath, 'utf8'), failedArtifactText);
+        assert.equal(matchingEventCount, 1);
+    });
+
+    it('restores a fresh delegation-started artifact when post-append timeline integrity is invalid', async (t) => {
+        const repoRoot = createTempRepo(t);
+        const artifactPath = path.join(repoRoot, 'reviewer-launch.json');
+        const originalArtifactText = `${JSON.stringify({
+            schema_version: 1,
+            attestation_state: 'delegation_started'
+        }, null, 2)}\n`;
+        const failedArtifact = {
+            schema_version: 1,
+            attestation_state: 'launch_failed'
+        };
+        fs.writeFileSync(artifactPath, originalArtifactText, 'utf8');
+        let matchingEventCount = 0;
+
+        await assert.rejects(
+            persistReviewerLaunchFailedTransition({
+                artifactPath,
+                originalArtifactText,
+                failedArtifact,
+                recoveringPersistedFailure: false,
+                reviewType: 'code',
+                emitFailedEvent: async () => {
+                    matchingEventCount = 1;
+                },
+                getMatchingFailedEventCount: () => matchingEventCount,
+                validatePostAppendFailedEventEvidence: () => {
+                    throw new Error('FAILED_HASH_CHAIN');
+                }
+            }),
+            /cannot authenticate post-append task timeline integrity.*FAILED_HASH_CHAIN.*original delegation-started artifact was restored/iu
+        );
+        assert.equal(fs.readFileSync(artifactPath, 'utf8'), originalArtifactText);
+        assert.equal(matchingEventCount, 1);
+    });
+
+    it('restores a fresh delegation-started artifact when failed telemetry is not durable', async (t) => {
+        const repoRoot = createTempRepo(t);
+        const artifactPath = path.join(repoRoot, 'reviewer-launch.json');
+        const originalArtifactText = `${JSON.stringify({
+            schema_version: 1,
+            attestation_state: 'delegation_started'
+        }, null, 2)}\n`;
+        const failedArtifact = {
+            schema_version: 1,
+            attestation_state: 'launch_failed'
+        };
+        fs.writeFileSync(artifactPath, originalArtifactText, 'utf8');
+
+        await assert.rejects(
+            persistReviewerLaunchFailedTransition({
+                artifactPath,
+                originalArtifactText,
+                failedArtifact,
+                recoveringPersistedFailure: false,
+                reviewType: 'code',
+                emitFailedEvent: async () => false,
+                getMatchingFailedEventCount: () => 0,
+                validatePostAppendFailedEventEvidence: () => undefined
+            }),
+            /original delegation-started artifact was restored/iu
+        );
+        assert.equal(fs.readFileSync(artifactPath, 'utf8'), originalArtifactText);
+    });
+
+    it('records a fresh failed-launch transition through the public CLI', async (t) => {
+        const fixture = await seedCustomReviewCliFixture(
+            t,
+            'T-729-4B-custom-fresh-launch-failed',
+            'fresh-launch-failed'
+        );
+        const {
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewerIdentity,
+            orchestratorRoot,
+            reviewContextPath,
+            launchArtifactPath
+        } = fixture;
+        const prepare = await runCliWithCapturedOutput([
+            'gate', 'prepare-reviewer-launch', '--task-id', taskId,
+            '--review-type', reviewType, '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
+        const preparedArtifact = readJsonObject(launchArtifactPath);
+        const launchInputArtifactPath = String(preparedArtifact.reviewer_launch_input_artifact_path);
+        const providerInvocationId = `${taskId}-invocation`;
+        const started = await runCliWithCapturedOutput([
+            'gate', 'record-reviewer-delegation-started', '--task-id', taskId,
+            '--review-type', reviewType, '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', providerInvocationId,
+            '--attestation-source', 'test_provider_controller',
+            '--launch-input-mode', 'launch_artifact_path',
+            '--launch-input-artifact-path', launchInputArtifactPath,
+            '--launch-input-sha256', fileSha256(launchInputArtifactPath),
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+        assert.equal(started.exitCode, 0, started.errors.join('\n'));
+        assert.equal(readJsonObject(launchArtifactPath).attestation_state, 'delegation_started');
+
+        const failed = await runCliWithCapturedOutput([
+            'gate', 'record-reviewer-launch-failed', '--task-id', taskId,
+            '--review-type', reviewType, '--review-context-path', reviewContextPath,
+            '--repo-root', repoRoot, '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', providerInvocationId,
+            '--failure-reason', 'Provider transport failed before review output'
+        ], { cwd: repoRoot });
+        assert.equal(failed.exitCode, 0, failed.errors.join('\n'));
+
+        const failedArtifact = readJsonObject(launchArtifactPath);
+        assert.equal(failedArtifact.attestation_state, 'launch_failed');
+        assert.equal(failedArtifact.launch_failure_recorded_by, 'record-reviewer-launch-failed');
+        const failedEvents = fs.readFileSync(
+            path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`),
+            'utf8'
+        )
+            .split('\n')
+            .filter((line) => line.trim().length > 0)
+            .map((line) => JSON.parse(line) as Record<string, unknown>)
+            .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
+        assert.equal(failedEvents.length, 1);
+        const failedEventDetails = failedEvents[0].details as Record<string, unknown>;
+        assert.equal(failedEventDetails.reviewer_launch_artifact_sha256, fileSha256(launchArtifactPath));
+    });
+
     it('authenticates custom lane evidence while recording and retrying a failed launch', async (t) => {
         const fixture = await seedCustomReviewCliFixture(
             t,
@@ -645,35 +877,60 @@ describe('authenticated review lane contract', () => {
             fs.writeFileSync(artifactPath, original, 'utf8');
         }
 
-        const originalLaunchInputArtifact = fs.readFileSync(launchInputArtifactPath, 'utf8');
-        const escapedLaunchInputPath = path.join(
-            orchestratorRoot,
-            'runtime',
-            'tmp',
-            `${taskId}-escaped-launch-input.json`
-        );
-        fs.mkdirSync(path.dirname(escapedLaunchInputPath), { recursive: true });
-        fs.writeFileSync(escapedLaunchInputPath, originalLaunchInputArtifact, 'utf8');
-        fs.unlinkSync(launchInputArtifactPath);
-        try {
-            fs.symlinkSync(escapedLaunchInputPath, launchInputArtifactPath, 'file');
-            const escapedLaunchInput = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
-            assertCliFailure(
-                escapedLaunchInput,
-                /Reviewer launch input artifact must resolve to task-owned reviewer scratch storage/u,
-                'fallback launch input symlink escape'
+        for (const [label, supportingArtifactPath, escapedFileName] of [
+            ['Reviewer launch input artifact', launchInputArtifactPath, 'escaped-launch-input.json'],
+            ['Reviewer launch lane reservation', reservationPath, 'escaped-lane-reservation.json']
+        ] as const) {
+            const originalSupportingArtifact = fs.readFileSync(supportingArtifactPath, 'utf8');
+            const escapedSupportingArtifactPath = path.join(
+                orchestratorRoot,
+                'runtime',
+                'tmp',
+                `${taskId}-${escapedFileName}`
             );
-        } catch (error) {
-            const code = (error as NodeJS.ErrnoException).code;
-            if (code !== 'EPERM' && code !== 'EACCES') {
-                throw error;
+            fs.mkdirSync(path.dirname(escapedSupportingArtifactPath), { recursive: true });
+            fs.writeFileSync(escapedSupportingArtifactPath, originalSupportingArtifact, 'utf8');
+            fs.unlinkSync(supportingArtifactPath);
+            try {
+                fs.symlinkSync(escapedSupportingArtifactPath, supportingArtifactPath, 'file');
+                const escapedSupportingArtifact = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+                assertCliFailure(
+                    escapedSupportingArtifact,
+                    new RegExp(`${label} must resolve to task-owned reviewer scratch storage`, 'u'),
+                    `fallback ${label} symlink escape`
+                );
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException).code;
+                if (code !== 'EPERM' && code !== 'EACCES') {
+                    throw error;
+                }
+                const junctionPath = path.join(
+                    path.dirname(supportingArtifactPath),
+                    `${escapedFileName}.junction`
+                );
+                fs.symlinkSync(path.dirname(escapedSupportingArtifactPath), junctionPath, 'junction');
+                try {
+                    assert.throws(
+                        () => resolveTaskOwnedReviewerScratchArtifactPath({
+                            repoRoot,
+                            taskId,
+                            artifactPath: path.join(junctionPath, path.basename(escapedSupportingArtifactPath)),
+                            label
+                        }),
+                        new RegExp(`${label} must resolve to task-owned reviewer scratch storage`, 'u')
+                    );
+                    t.diagnostic(
+                        `filesystem file symlinks unavailable for ${label}: ${code}; junction escape exercised`
+                    );
+                } finally {
+                    fs.unlinkSync(junctionPath);
+                }
+            } finally {
+                if (fs.existsSync(supportingArtifactPath)) {
+                    fs.unlinkSync(supportingArtifactPath);
+                }
+                fs.writeFileSync(supportingArtifactPath, originalSupportingArtifact, 'utf8');
             }
-            t.diagnostic(`filesystem file symlinks unavailable: ${code}`);
-        } finally {
-            if (fs.existsSync(launchInputArtifactPath)) {
-                fs.unlinkSync(launchInputArtifactPath);
-            }
-            fs.writeFileSync(launchInputArtifactPath, originalLaunchInputArtifact, 'utf8');
         }
 
         const timelineWithoutStartedIntegrity = originalTimeline
@@ -698,8 +955,62 @@ describe('authenticated review lane contract', () => {
         );
         fs.writeFileSync(timelinePath, originalTimeline, 'utf8');
 
-        const failed = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
-        assert.equal(failed.exitCode, 0, failed.errors.join('\n'));
+        const camelCaseStartedArtifact = readJsonObject(launchArtifactPath);
+        camelCaseStartedArtifact.attestationState = camelCaseStartedArtifact.attestation_state;
+        delete camelCaseStartedArtifact.attestation_state;
+        fs.writeFileSync(
+            launchArtifactPath,
+            `${JSON.stringify(camelCaseStartedArtifact, null, 2)}\n`,
+            'utf8'
+        );
+        const camelCaseStartedArtifactSha256 = fileSha256(launchArtifactPath);
+        const camelCaseTimelineEvents = originalTimeline
+            .split('\n')
+            .filter((line) => line.trim().length > 0)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        let camelCasePreviousEventSha256: string | null = null;
+        for (const event of camelCaseTimelineEvents) {
+            if (event.event_type === 'REVIEWER_DELEGATION_STARTED') {
+                const details = event.details as Record<string, unknown>;
+                details.reviewer_launch_artifact_sha256 = camelCaseStartedArtifactSha256;
+            }
+            const integrity = event.integrity as Record<string, unknown>;
+            integrity.prev_event_sha256 = camelCasePreviousEventSha256;
+            integrity.event_sha256 = buildEventIntegrityHash(event);
+            camelCasePreviousEventSha256 = String(integrity.event_sha256);
+        }
+        fs.writeFileSync(
+            timelinePath,
+            `${camelCaseTimelineEvents.map((event) => JSON.stringify(event)).join('\n')}\n`,
+            'utf8'
+        );
+
+        const interruptedFailedArtifact = readJsonObject(launchArtifactPath);
+        interruptedFailedArtifact.attestation_state = 'launch_failed';
+        interruptedFailedArtifact.launchFailureReason = 'Provider transport failed before review output';
+        interruptedFailedArtifact.launchFailedAtUtc = new Date().toISOString();
+        interruptedFailedArtifact.launchFailureRecordedBy = 'record-reviewer-launch-failed';
+        const authenticatedLaunchBindingSha256 = interruptedFailedArtifact.launch_binding_sha256;
+        interruptedFailedArtifact.launch_binding_sha256 = 'f'.repeat(64);
+        fs.writeFileSync(
+            launchArtifactPath,
+            `${JSON.stringify(interruptedFailedArtifact, null, 2)}\n`,
+            'utf8'
+        );
+        const corruptedInterruptedFailure = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+        assertCliFailure(
+            corruptedInterruptedFailure,
+            /does not reconstruct the authenticated delegation-started artifact/u,
+            'corrupted interrupted failed-launch artifact'
+        );
+        interruptedFailedArtifact.launch_binding_sha256 = authenticatedLaunchBindingSha256;
+        fs.writeFileSync(
+            launchArtifactPath,
+            `${JSON.stringify(interruptedFailedArtifact, null, 2)}\n`,
+            'utf8'
+        );
+        const recoveredInterruptedFailure = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+        assert.equal(recoveredInterruptedFailure.exitCode, 0, recoveredInterruptedFailure.errors.join('\n'));
         const failedArtifact = readJsonObject(launchArtifactPath);
         const failedArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
         const failedArtifactSha256 = fileSha256(launchArtifactPath);
@@ -728,6 +1039,33 @@ describe('authenticated review lane contract', () => {
         assert.equal(fs.readFileSync(launchArtifactPath, 'utf8'), failedArtifactText);
         assert.equal(fileSha256(launchArtifactPath), failedArtifactSha256);
         assert.equal(countFailedEventsForAttempt(), 1);
+
+        const timelineEvents = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim().length > 0)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        const failedEvent = [...timelineEvents]
+            .reverse()
+            .find((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED');
+        const lastEvent = timelineEvents.at(-1);
+        assert.ok(failedEvent);
+        assert.ok(lastEvent);
+        const duplicateFailedEvent = structuredClone(failedEvent);
+        const duplicateIntegrity = duplicateFailedEvent.integrity as Record<string, unknown>;
+        const lastIntegrity = lastEvent.integrity as Record<string, unknown>;
+        duplicateIntegrity.task_sequence = Number(lastIntegrity.task_sequence) + 1;
+        duplicateIntegrity.prev_event_sha256 = lastIntegrity.event_sha256;
+        duplicateIntegrity.event_sha256 = null;
+        duplicateIntegrity.event_sha256 = buildEventIntegrityHash(duplicateFailedEvent);
+        fs.appendFileSync(timelinePath, `${JSON.stringify(duplicateFailedEvent)}\n`, 'utf8');
+
+        const duplicateRetry = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+        assertCliFailure(
+            duplicateRetry,
+            /duplicate REVIEWER_LAUNCH_FAILED telemetry/u,
+            'duplicate terminal failed-launch telemetry'
+        );
+        assert.equal(countFailedEventsForAttempt(), 2);
     });
 
     it('fails closed through public CLI boundaries for forged custom-lane and reviewer evidence', async (t) => {
