@@ -26,6 +26,7 @@ import {
 import type {
     ReviewContextTrustBoundaryAnalysis
 } from './review-context-trust-boundary-analysis';
+import type { ReviewContextLaneBinding } from './review-context-lane';
 
 export interface ReviewSkillBinding {
     skill_id: string;
@@ -182,6 +183,7 @@ function buildReviewerRolePromptMarkdown(options: {
     outputTemplateArtifactPath: string;
     evidenceManifestArtifactPath: string;
     coverageContract: ReviewCoverageContract;
+    reviewLaneBinding?: ReviewContextLaneBinding | null;
 }): string {
     const reviewType = options.reviewType;
     const reviewLabel = reviewType ? `${reviewType} review` : 'review';
@@ -192,6 +194,13 @@ function buildReviewerRolePromptMarkdown(options: {
             '- This generated role prompt is the strict test-review contract for this launch.',
             '- It is authoritative even when the selected skill is the advisory testing-strategy fallback.',
             '- Return the generated findings-only JSON object; do not add review verdict tokens or remediation policy decisions.'
+        ]
+        : [];
+    const catalogRoleLines = options.reviewLaneBinding
+        ? [
+            `- Catalog reviewer role id: ${options.reviewLaneBinding.reviewer_role.role_id}`,
+            `- Catalog reviewer focus tags: ${options.reviewLaneBinding.reviewer_role.focus_tags.join(', ') || 'none'}`,
+            `- Immutable lane binding sha256: ${options.reviewLaneBinding.binding_sha256}`
         ]
         : [];
     return [
@@ -207,6 +216,7 @@ function buildReviewerRolePromptMarkdown(options: {
         `- Selected skill sha256: ${options.selectedSkill.skill_sha256 || 'unavailable'}`,
         `- Selected skill entrypoint exists: ${String(options.selectedSkill.skill_entrypoint_exists)}`,
         `- Candidate skill ids: ${options.selectedSkill.candidate_skill_ids.join(', ') || 'none'}`,
+        ...catalogRoleLines,
         '',
         '## Required Read Order',
         `1. RolePromptPath: ${normalizePath(options.rolePromptArtifactPath)}`,
@@ -250,6 +260,7 @@ function buildReviewerPromptTemplateMarkdown(options: {
     outputTemplateArtifactPath: string;
     evidenceManifestArtifactPath: string;
     coverageContract: ReviewCoverageContract;
+    reviewLaneBinding?: ReviewContextLaneBinding | null;
 }): string {
     const reviewType = options.reviewType;
     const reviewLabel = reviewType ? `${reviewType} review` : 'review';
@@ -269,6 +280,13 @@ function buildReviewerPromptTemplateMarkdown(options: {
         '',
         '## Review Type Contract',
         `- Review type: ${reviewType}`,
+        ...(options.reviewLaneBinding
+            ? [
+                `- Catalog reviewer role id: ${options.reviewLaneBinding.reviewer_role.role_id}`,
+                `- Catalog reviewer focus tags: ${options.reviewLaneBinding.reviewer_role.focus_tags.join(', ') || 'none'}`,
+                `- Immutable lane binding sha256: ${options.reviewLaneBinding.binding_sha256}`
+            ]
+            : []),
         '- Output mode: verdict-free findings-only JSON.',
         '- Read the role prompt artifact first; it binds the selected reviewer skill id/path/hash for this launch.',
         '- Fill the output template artifact exactly; return exactly one JSON object and no Markdown or prose wrapper.',
@@ -304,6 +322,7 @@ export function buildReviewContextHandoffArtifacts(options: {
     stripExamplesApplied: boolean;
     stripCodeBlocksApplied: boolean;
     coverageContract: ReviewCoverageContract;
+    reviewLaneBinding?: ReviewContextLaneBinding | null;
 }): {
     promptArtifactText: string;
     rolePromptArtifactText: string;
@@ -324,7 +343,8 @@ export function buildReviewContextHandoffArtifacts(options: {
         promptTemplateArtifactPath: options.paths.promptTemplateArtifactPath,
         outputTemplateArtifactPath: options.paths.outputTemplateArtifactPath,
         evidenceManifestArtifactPath: options.paths.evidenceManifestArtifactPath,
-        coverageContract: options.coverageContract
+        coverageContract: options.coverageContract,
+        reviewLaneBinding: options.reviewLaneBinding
     });
     const promptTemplateArtifactText = buildReviewerPromptTemplateMarkdown({
         reviewType: options.reviewType,
@@ -332,7 +352,8 @@ export function buildReviewContextHandoffArtifacts(options: {
         reviewerPromptArtifactPath: options.paths.ruleContextArtifactPath,
         outputTemplateArtifactPath: options.paths.outputTemplateArtifactPath,
         evidenceManifestArtifactPath: options.paths.evidenceManifestArtifactPath,
-        coverageContract: options.coverageContract
+        coverageContract: options.coverageContract,
+        reviewLaneBinding: options.reviewLaneBinding
     });
     const outputTemplateArtifactText = buildReviewerOutputTemplateMarkdown(options.reviewType, options.coverageContract);
     const promptArtifactSha256 = stringSha256(options.promptArtifactText) || '';
@@ -424,6 +445,7 @@ export function buildReviewEvidenceManifest(options: {
         plan: unknown;
     };
     coverageContract: ReviewCoverageContract;
+    reviewLaneBinding?: ReviewContextLaneBinding | null;
 }): {
     evidenceManifest: Record<string, unknown>;
     evidenceManifestText: string;
@@ -510,6 +532,7 @@ export function buildReviewEvidenceManifest(options: {
             trust_boundary_analysis: options.trustBoundaryAnalysis
         },
         task_evidence: options.taskEvidence,
+        ...(options.reviewLaneBinding ? { review_lane: options.reviewLaneBinding } : {}),
         coverage_contract: options.coverageContract,
         selected_skill: options.selectedSkill
     };

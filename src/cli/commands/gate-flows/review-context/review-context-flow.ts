@@ -281,6 +281,7 @@ export async function runBuildReviewContextCommand(
             preflightPath,
             outputPath: result.output_path,
             ruleContextArtifactPath: result.rule_context.artifact_path,
+            selectedSkill: result.rule_context.selected_skill,
             telemetryLockTimeoutMs: options.telemetryLockTimeoutMs,
             telemetryLockRetryMs: options.telemetryLockRetryMs
         });

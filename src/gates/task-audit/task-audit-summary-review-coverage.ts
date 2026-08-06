@@ -7,6 +7,7 @@ import {
     getReviewCoverageValidationSummaryContractViolations
 } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
+import { resolveReviewCoverageCategoryIdsFromPreflight } from '../review-context/review-context-lane';
 
 export interface ReviewCoverageAuditEntry {
     review_type: string;
@@ -116,7 +117,8 @@ export function buildReviewCoverageAuditSummary(options: {
             : [];
         const authoritativeContract = buildReviewCoverageContract({
             reviewType,
-            changedFiles: authoritativeCoverageChangedFiles
+            changedFiles: authoritativeCoverageChangedFiles,
+            categoryIds: resolveReviewCoverageCategoryIdsFromPreflight(preflight, reviewType)
         });
         const coverage = receipt?.review_coverage && typeof receipt.review_coverage === 'object' && !Array.isArray(receipt.review_coverage)
             ? receipt.review_coverage as Record<string, unknown>
@@ -139,7 +141,8 @@ export function buildReviewCoverageAuditSummary(options: {
         } else {
             violations.push(...getReviewCoverageContractViolations(contract, {
                 reviewType,
-                changedFiles: authoritativeCoverageChangedFiles
+                changedFiles: authoritativeCoverageChangedFiles,
+                categoryIds: resolveReviewCoverageCategoryIdsFromPreflight(preflight, reviewType)
             }));
         }
         if (!context || !Number.isInteger(contextSchemaVersion) || contextSchemaVersion < 3) {

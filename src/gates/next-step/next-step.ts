@@ -62,6 +62,7 @@ import {
     validateRepairChildChangedFiles
 } from '../full-suite/full-suite-repair-child-scope';
 import { buildReviewCoverageContract } from '../review/review-coverage-ledger';
+import { resolveReviewCoverageCategoryIdsFromPreflight } from '../review-context/review-context-lane';
 import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
 import {
     readRecoverableFullSuiteValidationRunMarker,
@@ -3766,7 +3767,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         reviewType,
                         preflight: preflight as Record<string, unknown>,
                         repoRoot
-                    })
+                    }),
+                    categoryIds: resolveReviewCoverageCategoryIdsFromPreflight(
+                        preflight as Record<string, unknown>,
+                        reviewType
+                    )
                 }).contract_sha256
                 : null;
             const focusedIntermediateEvidence = state.failureKind === 'missing-focused-validation-evidence'

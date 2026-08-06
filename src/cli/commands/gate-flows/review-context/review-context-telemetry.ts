@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import * as path from 'node:path';
 import {
     appendMandatoryTaskEventAsync,
     taskEventAppendHasBlockingFailure,
@@ -10,10 +9,7 @@ import {
     emitSkillSelectedEventAsync
 } from '../../../../runtime/skill-telemetry';
 import * as gateHelpers from '../../../../gates/shared/helpers';
-import {
-    resolveReviewSkillId
-} from '../../../../gates/review-context/build-review-context';
-import { resolveGateExecutionPath } from '../../../../gates/isolation/isolation-sandbox';
+import type { ReviewSkillBinding } from '../../../../gates/review-context/review-context-artifacts';
 
 const REVIEW_CONTEXT_TELEMETRY_LOCK_TIMEOUT_MS = 30000;
 const REVIEW_CONTEXT_TELEMETRY_LOCK_RETRY_MS = 10;
@@ -136,12 +132,13 @@ export async function emitGeneratedReviewContextPreparationTelemetry(options: {
     preflightPath: string;
     outputPath: string;
     ruleContextArtifactPath: string;
+    selectedSkill: ReviewSkillBinding;
     telemetryLockTimeoutMs?: unknown;
     telemetryLockRetryMs?: unknown;
 }): Promise<void> {
     const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
-    const skillId = resolveReviewSkillId(options.reviewType, options.repoRoot);
-    const skillPath = resolveGateExecutionPath(options.repoRoot, path.join('live', 'skills', skillId, 'SKILL.md'));
+    const skillId = options.selectedSkill.skill_id;
+    const skillPath = options.selectedSkill.skill_path;
     const telemetryAppendOptions = buildTelemetryAppendOptions(options);
 
     await serializeReviewContextTelemetry(orchestratorRoot, options.taskId, async () => {

@@ -152,6 +152,8 @@ export function computeReviewRuleContextReuseHash(
     const rolePrompt = toRecord(reviewerHandoff.role_prompt);
     const promptTemplate = toRecord(reviewerHandoff.prompt_template);
     const outputTemplate = toRecord(reviewerHandoff.output_template);
+    const reviewLane = toRecord(reviewContext.review_lane);
+    const reviewLaneBindingSha256 = toLowerHash(reviewLane.binding_sha256);
     const selectedSkill = Object.keys(toRecord(ruleContext.selected_skill)).length > 0
         ? toRecord(ruleContext.selected_skill)
         : toRecord(rolePrompt.selected_skill);
@@ -175,7 +177,8 @@ export function computeReviewRuleContextReuseHash(
         prompt_template_sha256: toLowerHash(ruleContext.prompt_template_sha256)
             || toLowerHash(promptTemplate.artifact_sha256),
         output_template_sha256: toLowerHash(ruleContext.output_template_sha256)
-            || toLowerHash(outputTemplate.artifact_sha256)
+            || toLowerHash(outputTemplate.artifact_sha256),
+        ...(reviewLaneBindingSha256 ? { review_lane_binding_sha256: reviewLaneBindingSha256 } : {})
     };
     const hasInstructionBinding = sourceFiles.length > 0
         || !!snapshot.selected_skill.skill_sha256

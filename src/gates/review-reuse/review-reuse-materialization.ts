@@ -37,6 +37,7 @@ import {
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from '../review-context/review-coverage-scope';
+import { resolveReviewCoverageCategoryIdsFromPreflight } from '../review-context/review-context-lane';
 import {
     type JsonReviewFindingsArtifactValidation
 } from '../review/review-findings-artifact-verdict';
@@ -333,7 +334,11 @@ async function materializeReusedReviewEvidenceUnderContextLock(
             currentReviewContext.coverage_contract,
             {
                 reviewType: options.reviewType,
-                changedFiles: authoritativeCoverageChangedFiles
+                changedFiles: authoritativeCoverageChangedFiles,
+                categoryIds: resolveReviewCoverageCategoryIdsFromPreflight(
+                    options.preflightPayload,
+                    options.reviewType
+                )
             }
         );
         if (coverageContractViolations.length > 0) {

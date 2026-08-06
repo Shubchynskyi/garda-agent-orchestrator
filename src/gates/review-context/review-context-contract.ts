@@ -4,6 +4,11 @@ import { fileSha256, normalizePath, parseBool } from '../shared/helpers';
 import { isPlainRecord } from '../../core/records';
 import { getReviewCoverageContractViolations } from '../review/review-coverage-ledger';
 import { resolveReviewCoverageChangedFiles } from './review-coverage-scope';
+import {
+    isCustomReviewLaneInSnapshot,
+    resolveReviewContextLaneBinding,
+    type ReviewContextLaneBinding
+} from './review-context-lane';
 
 const NON_CODE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only', 'empty']);
 const CODE_SCOPE_CATEGORIES = new Set(['code', 'mixed']);
@@ -397,9 +402,10 @@ export function reviewContextScopedDiffRequired(options: {
     expectedScopeCategory?: string | null;
     tokenEconomyActiveForDepth?: boolean | null;
     scopedDiffsEnabled?: boolean | null;
+    customReviewLane?: boolean | null;
 }): boolean {
     const reviewType = normalizeOptionalReviewType(options.reviewType) || '';
-    if (!SCOPED_DIFF_REVIEW_TYPES.has(reviewType)) {
+    if (!SCOPED_DIFF_REVIEW_TYPES.has(reviewType) && options.customReviewLane !== true) {
         return false;
     }
     if (!reviewContextTaskDiffRequired({
@@ -704,6 +710,17 @@ export function getReviewContextContractViolations(
     const actualTaskId = normalizeOptionalString(reviewContext.task_id);
     const actualPreflightPath = normalizeOptionalString(reviewContext.preflight_path);
     const actualPreflightSha256 = normalizeOptionalHash(reviewContext.preflight_sha256);
+    let expectedLaneBinding: ReviewContextLaneBinding | null = null;
+    if (options.expectedPreflightPayload?.effective_review_snapshot !== undefined) {
+        try {
+            expectedLaneBinding = resolveReviewContextLaneBinding(
+                options.expectedPreflightPayload,
+                expectedReviewType
+            );
+        } catch (error: unknown) {
+            violations.push(error instanceof Error ? error.message : String(error));
+        }
+    }
 
     if (actualReviewType) {
         if (actualReviewType !== expectedReviewType) {
@@ -765,6 +782,54 @@ export function getReviewContextContractViolations(
             violations.push(
                 `Review context '${normalizedContextPath}' is missing preflight_sha256. ` +
                 `Expected '${expectedPreflightSha256}'.`
+            );
+        }
+    }
+
+    if (expectedLaneBinding && !expectedLaneBinding.built_in) {
+        if (JSON.stringify(reviewContext.review_lane) !== JSON.stringify(expectedLaneBinding)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom review_lane binding does not match ` +
+                `the immutable effective review snapshot for '${expectedReviewType}'.`
+            );
+        }
+        const ruleContext = isPlainRecord(reviewContext.rule_context) ? reviewContext.rule_context : null;
+        const reviewerHandoff = isPlainRecord(reviewContext.reviewer_handoff)
+            ? reviewContext.reviewer_handoff
+            : null;
+        const rolePrompt = isPlainRecord(reviewerHandoff?.role_prompt)
+            ? reviewerHandoff.role_prompt
+            : null;
+        const ruleSelectedSkill = isPlainRecord(ruleContext?.selected_skill)
+            ? ruleContext.selected_skill
+            : null;
+        const roleSelectedSkill = isPlainRecord(rolePrompt?.selected_skill)
+            ? rolePrompt.selected_skill
+            : null;
+        const selectedSkillId = normalizeOptionalString(ruleSelectedSkill?.skill_id);
+        if (!selectedSkillId || !expectedLaneBinding.skill_ids.includes(selectedSkillId)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill is not bound to ` +
+                `immutable lane skill_ids for '${expectedReviewType}'.`
+            );
+        }
+        if (JSON.stringify(ruleSelectedSkill) !== JSON.stringify(roleSelectedSkill)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill differs between ` +
+                `rule_context and reviewer_handoff.role_prompt.`
+            );
+        }
+        if (JSON.stringify(ruleSelectedSkill?.candidate_skill_ids) !== JSON.stringify(expectedLaneBinding.skill_ids)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill candidates do not match ` +
+                `immutable lane skill_ids for '${expectedReviewType}'.`
+            );
+        }
+        if (ruleSelectedSkill?.skill_entrypoint_exists !== true
+            || !normalizeOptionalHash(ruleSelectedSkill?.skill_sha256)) {
+            violations.push(
+                `Review context '${normalizedContextPath}' custom selected_skill artifact is missing ` +
+                `an authenticated entrypoint hash for '${expectedReviewType}'.`
             );
         }
     }
@@ -833,7 +898,10 @@ export function getReviewContextContractViolations(
         }
         violations.push(...getReviewCoverageContractViolations(reviewContext.coverage_contract, {
             reviewType: expectedReviewType,
-            changedFiles: expectedCoverageChangedFiles
+            changedFiles: expectedCoverageChangedFiles,
+            categoryIds: expectedLaneBinding && !expectedLaneBinding.built_in
+                ? expectedLaneBinding.coverage_category_ids
+                : undefined
         }));
     }
 
@@ -853,7 +921,8 @@ function scopedDiffRequiredByPreflight(options: {
         expectedChangedFiles: options.expectedChangedFiles,
         expectedScopeCategory: options.expectedScopeCategory,
         tokenEconomyActiveForDepth: preflightTokenEconomyActiveForDepth(options.preflight),
-        scopedDiffsEnabled: preflightScopedDiffsEnabled(options.preflight)
+        scopedDiffsEnabled: preflightScopedDiffsEnabled(options.preflight),
+        customReviewLane: isCustomReviewLaneInSnapshot(options.preflight, options.reviewType)
     });
 }
 
