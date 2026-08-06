@@ -303,8 +303,9 @@ describe('cli/commands/gates review launch completion', () => {
                     },
                     recoveringPersistedFailure: false,
                     reviewType: 'code',
-                    emitFailedEvent: async () => false,
-                    getMatchingFailedEventCount: () => 0
+                    emitFailedEvent: async () => undefined,
+                    getMatchingFailedEventCount: () => 0,
+                    validatePostAppendFailedEventEvidence: () => undefined
                 }),
                 /delegation-started artifact was restored/i
             );
@@ -1312,17 +1313,13 @@ describe('cli/commands/gates review launch completion', () => {
         const startedArtifact = JSON.parse(
             fs.readFileSync(fixture.launchArtifactPath, 'utf8')
         ) as Record<string, unknown>;
-        fs.writeFileSync(
-            fixture.launchArtifactPath,
-            `${JSON.stringify({
-                ...startedArtifact,
-                attestation_state: 'launch_failed',
-                launch_failure_reason: failureReason,
-                launch_failed_at_utc: launchFailedAtUtc,
-                launch_failure_recorded_by: 'record-reviewer-launch-failed'
-            }, null, 2)}\n`,
-            'utf8'
-        );
+        const persistedFailedArtifact = {
+            ...startedArtifact,
+            attestation_state: 'launch_failed',
+            launch_failure_reason: failureReason,
+            launch_failed_at_utc: launchFailedAtUtc,
+            launch_failure_recorded_by: 'record-reviewer-launch-failed'
+        };
         const failureArgs = [
             'gate',
             'record-reviewer-launch-failed',
@@ -1335,6 +1332,35 @@ describe('cli/commands/gates review launch completion', () => {
             '--provider-invocation-id', 'test-invocation-failed-transition-recovery',
             '--failure-reason', failureReason
         ];
+
+        fs.writeFileSync(
+            fixture.launchArtifactPath,
+            `${JSON.stringify({
+                ...persistedFailedArtifact,
+                launch_failure_recorded_by: 'forged-recovery-writer'
+            }, null, 2)}\n`,
+            'utf8'
+        );
+        const forgedRecoveryProvenance = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+        assert.notEqual(forgedRecoveryProvenance.exitCode, 0);
+        assert.ok(
+            forgedRecoveryProvenance.errors.some((line) => line.includes(
+                'invalid immutable launch_failure_recorded_by'
+            )),
+            forgedRecoveryProvenance.errors.join('\n')
+        );
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_LAUNCH_FAILED')
+                .length,
+            0
+        );
+
+        fs.writeFileSync(
+            fixture.launchArtifactPath,
+            `${JSON.stringify(persistedFailedArtifact, null, 2)}\n`,
+            'utf8'
+        );
 
         const recovered = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
         assert.equal(recovered.exitCode, 0, recovered.errors.join('\n'));

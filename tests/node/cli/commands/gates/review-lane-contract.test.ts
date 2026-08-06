@@ -575,9 +575,33 @@ describe('authenticated review lane contract', () => {
                 },
                 recoveringPersistedFailure: false,
                 reviewType: 'code',
-                emitFailedEvent: async () => true
+                emitFailedEvent: async () => undefined
             } as unknown as Parameters<typeof persistReviewerLaunchFailedTransition>[0]),
             /requires an authenticated failed-event count callback/iu
+        );
+        assert.equal(fs.readFileSync(artifactPath, 'utf8'), originalArtifactText);
+    });
+
+    it('rejects a failed transition without post-append timeline integrity validation', async (t) => {
+        const repoRoot = createTempRepo(t);
+        const artifactPath = path.join(repoRoot, 'reviewer-launch.json');
+        const originalArtifactText = '{"attestation_state":"delegation_started"}\n';
+        fs.writeFileSync(artifactPath, originalArtifactText, 'utf8');
+
+        await assert.rejects(
+            persistReviewerLaunchFailedTransition({
+                artifactPath,
+                originalArtifactText,
+                failedArtifact: {
+                    schema_version: 1,
+                    attestation_state: 'launch_failed'
+                },
+                recoveringPersistedFailure: false,
+                reviewType: 'code',
+                emitFailedEvent: async () => undefined,
+                getMatchingFailedEventCount: () => 0
+            } as unknown as Parameters<typeof persistReviewerLaunchFailedTransition>[0]),
+            /requires authenticated post-append timeline integrity validation/iu
         );
         assert.equal(fs.readFileSync(artifactPath, 'utf8'), originalArtifactText);
     });
@@ -670,7 +694,7 @@ describe('authenticated review lane contract', () => {
                 failedArtifact,
                 recoveringPersistedFailure: false,
                 reviewType: 'code',
-                emitFailedEvent: async () => false,
+                emitFailedEvent: async () => undefined,
                 getMatchingFailedEventCount: () => 0,
                 validatePostAppendFailedEventEvidence: () => undefined
             }),

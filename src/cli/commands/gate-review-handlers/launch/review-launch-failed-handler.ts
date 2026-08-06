@@ -8,7 +8,6 @@ import {
     gateHelpers,
     normalizePath,
     resolveCanonicalReviewContextPath,
-    taskEventAppendHasBlockingFailure,
     writeReviewArtifactJson
 } from './review-launch-entrypoints';
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
@@ -122,14 +121,20 @@ export async function persistReviewerLaunchFailedTransition(options: {
     failedArtifact: Record<string, unknown>;
     recoveringPersistedFailure: boolean;
     reviewType: string;
-    emitFailedEvent: (failedArtifactSha256: string) => Promise<unknown>;
-    validatePostAppendFailedEventEvidence?: () => void;
+    emitFailedEvent: (failedArtifactSha256: string) => Promise<void>;
+    validatePostAppendFailedEventEvidence: () => void;
     getMatchingFailedEventCount: (failedArtifactSha256: string) => number;
 }): Promise<string> {
     const reviewType = options.reviewType;
     if (typeof options.getMatchingFailedEventCount !== 'function') {
         throw new Error(
             `Reviewer launch failure requires an authenticated failed-event count callback for ` +
+            `'${reviewType}'.`
+        );
+    }
+    if (typeof options.validatePostAppendFailedEventEvidence !== 'function') {
+        throw new Error(
+            `Reviewer launch failure requires authenticated post-append timeline integrity validation for ` +
             `'${reviewType}'.`
         );
     }
@@ -174,7 +179,7 @@ export async function persistReviewerLaunchFailedTransition(options: {
         appendFailure = error;
     }
     try {
-        options.validatePostAppendFailedEventEvidence?.();
+        options.validatePostAppendFailedEventEvidence();
     } catch (error) {
         const integrityFailureMessage =
             `Reviewer launch failure cannot authenticate post-append task timeline integrity for ` +
@@ -602,7 +607,7 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                 timelineEvents = readDependencyTimelineEvents(timelinePath);
             },
             emitFailedEvent: async (artifactSha256) => {
-                const failedEvent = await emitReviewerLaunchFailedEventAsync(
+                await emitReviewerLaunchFailedEventAsync(
                     gateHelpers.joinOrchestratorPath(repoRoot, ''),
                     taskId,
                     reviewType,
@@ -623,10 +628,6 @@ export function createReviewerLaunchFailedHandler(deps: ReviewerLaunchFailedHand
                             failure_reason: failureReason
                         }
                     }
-                );
-                return Boolean(
-                    failedEvent
-                    && !taskEventAppendHasBlockingFailure(failedEvent, false)
                 );
             }
         });
