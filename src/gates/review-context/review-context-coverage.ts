@@ -5,17 +5,20 @@ import {
 import { resolveReviewCoverageChangedFiles } from './review-coverage-scope';
 import { resolveReviewCoverageCategoryIdsFromPreflight } from './review-context-lane';
 
-export interface AuthoritativeReviewCoverageContract {
+export interface AuthoritativeReviewCoverageScope {
     changedFiles: string[];
     categoryIds: readonly string[] | undefined;
+}
+
+export interface AuthoritativeReviewCoverageContract extends AuthoritativeReviewCoverageScope {
     contract: ReviewCoverageContract;
 }
 
-export function buildAuthoritativeReviewCoverageContract(options: {
+export function resolveAuthoritativeReviewCoverageScope(options: {
     reviewType: string;
     preflight: Record<string, unknown>;
     repoRoot: string;
-}): AuthoritativeReviewCoverageContract {
+}): AuthoritativeReviewCoverageScope {
     const changedFiles = resolveReviewCoverageChangedFiles({
         reviewType: options.reviewType,
         preflight: options.preflight,
@@ -27,11 +30,22 @@ export function buildAuthoritativeReviewCoverageContract(options: {
     );
     return {
         changedFiles,
-        categoryIds,
+        categoryIds
+    };
+}
+
+export function buildAuthoritativeReviewCoverageContract(options: {
+    reviewType: string;
+    preflight: Record<string, unknown>;
+    repoRoot: string;
+}): AuthoritativeReviewCoverageContract {
+    const scope = resolveAuthoritativeReviewCoverageScope(options);
+    return {
+        ...scope,
         contract: buildReviewCoverageContract({
             reviewType: options.reviewType,
-            changedFiles,
-            categoryIds
+            changedFiles: scope.changedFiles,
+            categoryIds: scope.categoryIds
         })
     };
 }

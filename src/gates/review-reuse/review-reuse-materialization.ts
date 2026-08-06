@@ -36,7 +36,7 @@ import {
     validateReviewCoverageLedger,
     type ReviewCoverageContract
 } from '../review/review-coverage-ledger';
-import { buildAuthoritativeReviewCoverageContract } from '../review-context/review-context-coverage';
+import { resolveAuthoritativeReviewCoverageScope } from '../review-context/review-context-coverage';
 import {
     type JsonReviewFindingsArtifactValidation
 } from '../review/review-findings-artifact-verdict';
@@ -110,7 +110,7 @@ export function getReusedReviewCoverageContractViolations(options: {
     repoRoot: string;
     coverageContract: unknown;
 }): string[] {
-    const authoritativeCoverage = buildAuthoritativeReviewCoverageContract({
+    const authoritativeCoverage = resolveAuthoritativeReviewCoverageScope({
         reviewType: options.reviewType,
         preflight: options.preflight,
         repoRoot: options.repoRoot

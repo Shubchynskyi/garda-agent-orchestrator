@@ -17,7 +17,10 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../../../../src/gates/review-context/review-context-contract';
-import { buildAuthoritativeReviewCoverageContract } from '../../../../src/gates/review-context/review-context-coverage';
+import {
+    buildAuthoritativeReviewCoverageContract,
+    resolveAuthoritativeReviewCoverageScope
+} from '../../../../src/gates/review-context/review-context-coverage';
 import { buildScopedDiff } from '../../../../src/gates/preflight/build-scoped-diff';
 import { resolveCatalogReviewSkillBinding } from '../../../../src/gates/review-context/build-review-context';
 import { buildReviewCoverageContract } from '../../../../src/gates/review/review-coverage-ledger';
@@ -132,6 +135,14 @@ describe('catalog-backed review context lane binding', () => {
             reviewType: 'architecture-boundary',
             preflight: optionalPreflight,
             repoRoot: process.cwd()
+        });
+        assert.deepEqual(resolveAuthoritativeReviewCoverageScope({
+            reviewType: 'architecture-boundary',
+            preflight: optionalPreflight,
+            repoRoot: process.cwd()
+        }), {
+            changedFiles: ['src/architecture.ts'],
+            categoryIds: ['maintainability']
         });
         assert.ok(authoritativeCoverage.contract.obligations.some(
             (entry) => entry.id === 'CATEGORY-MAINTAINABILITY'
@@ -249,6 +260,31 @@ describe('catalog-backed review context lane binding', () => {
         } finally {
             fs.rmSync(linkedRepoRoot, { recursive: true, force: true });
             fs.rmSync(externalSkillsRoot, { recursive: true, force: true });
+        }
+
+        const linkedSkillRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-context-linked-skill-'));
+        const externalSkillRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-context-external-skill-'));
+        try {
+            const skillsRoot = path.join(
+                linkedSkillRepoRoot,
+                'garda-agent-orchestrator',
+                'live',
+                'skills'
+            );
+            fs.mkdirSync(skillsRoot, { recursive: true });
+            fs.writeFileSync(path.join(externalSkillRoot, 'SKILL.md'), '# External review\n', 'utf8');
+            fs.symlinkSync(
+                externalSkillRoot,
+                path.join(skillsRoot, 'architecture-review'),
+                process.platform === 'win32' ? 'junction' : 'dir'
+            );
+            assert.throws(
+                () => resolveCatalogReviewSkillBinding(['architecture-review'], linkedSkillRepoRoot),
+                /ReviewSkillPath must resolve inside the catalog skills root/u
+            );
+        } finally {
+            fs.rmSync(linkedSkillRepoRoot, { recursive: true, force: true });
+            fs.rmSync(externalSkillRoot, { recursive: true, force: true });
         }
     });
 
@@ -385,6 +421,24 @@ describe('catalog-backed review context lane binding', () => {
             assert.ok(forgedArtifactViolations.some(
                 (violation) => violation.includes('custom selected_skill path or content hash does not match')
             ));
+
+            const selectedSkillPath = result.rule_context.selected_skill.skill_path;
+            const selectedSkillContent = fs.readFileSync(selectedSkillPath, 'utf8');
+            try {
+                fs.writeFileSync(selectedSkillPath, `${selectedSkillContent}\nChanged after context construction.\n`, 'utf8');
+                const staleSkillContentViolations = getReviewContextContractViolations({
+                    contextPath: outputPath,
+                    reviewContext: result as unknown as Record<string, unknown>,
+                    expectedReviewType: 'architecture-boundary',
+                    expectedPreflightPayload: activePreflight,
+                    repoRoot
+                });
+                assert.ok(staleSkillContentViolations.some(
+                    (violation) => violation.includes('custom selected_skill path or content hash does not match')
+                ));
+            } finally {
+                fs.writeFileSync(selectedSkillPath, selectedSkillContent, 'utf8');
+            }
 
             await emitGeneratedReviewContextPreparationTelemetry({
                 repoRoot,
