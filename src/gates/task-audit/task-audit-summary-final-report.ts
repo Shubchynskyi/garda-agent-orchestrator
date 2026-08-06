@@ -123,42 +123,43 @@ function buildFullSuiteTimeoutEvidenceLines(closeout: FinalCloseoutArtifact): st
 function buildReviewFindingsLines(closeout: FinalCloseoutArtifact): string[] {
     const summary = closeout.review_findings_audit;
     if (!summary) {
-        return ['none'];
+        return [
+            'Summary: none',
+            'FollowUpTasksCreated: none',
+            `AuditDetails: ${closeout.artifact_paths.json}`
+        ];
     }
-    const lines = [summary.visible_summary_line];
-    for (const lane of summary.lanes) {
+    const followUpTaskIds = [...new Set(summary.lanes.flatMap((lane) =>
+        lane.findings.map((item) => item.follow_up_task_id).filter((value): value is string => !!value)
+    ))].sort();
+    const blockingFindingIds = [...new Set(summary.lanes.flatMap((lane) =>
+        lane.remaining_blocker_ids.map((id) => `${lane.review_type}/${id}`)
+    ))].sort();
+    const unmaterializedFollowUps = [...new Set(summary.lanes.flatMap((lane) =>
+        lane.findings
+            .filter((item) => item.action === 'create_follow_up' && !item.follow_up_task_id)
+            .map((item) => `${lane.review_type}/${item.id}`)
+    ))].sort();
+    const lines = [
+        `Summary: status=${summary.status}; findings=${summary.finding_count}; ` +
+        `residual_risks=${summary.residual_risk_count}; fix_now=${summary.disposition_counts.fix_now}; ` +
+        `follow_up=${summary.disposition_counts.create_follow_up}; ignored=${summary.disposition_counts.ignore}; ` +
+        `remaining_blockers=${summary.remaining_blocker_count}`,
+        `FollowUpTasksCreated: ${followUpTaskIds.join(', ') || 'none'}`
+    ];
+    if (blockingFindingIds.length > 0) {
+        lines.push(`BlockingFindings: ${blockingFindingIds.join(', ')}`);
+    }
+    if (unmaterializedFollowUps.length > 0) {
+        lines.push(`UnmaterializedFollowUps: ${unmaterializedFollowUps.join(', ')}`);
+    }
+    if (summary.validation_failures.length > 0 || summary.remediation_cycles.length > 0) {
         lines.push(
-            `${lane.review_type}: source=${lane.source_mode}; validation=${lane.validation_status}; ` +
-            `disposition=${lane.disposition_status}; remaining=${lane.remaining_blocker_ids.join(',') || 'none'}`
-        );
-        for (const violation of lane.validation_violations) {
-            lines.push(`${lane.review_type} validation: ${violation}`);
-        }
-        for (const item of lane.findings) {
-            lines.push(
-                `${lane.review_type}/${item.id}: severity=${item.severity}; title=${item.title || 'none'}; ` +
-                `action=${item.action || 'evidence_only'}; ` +
-                `blocking=${item.blocking}; materialization=${item.follow_up_task_id ? `task:${item.follow_up_task_id}` : item.materialization_status || 'none'}; ` +
-                `evidence=${item.evidence_locations.join(',') || 'none'}; ${item.description}`
-            );
-        }
-        for (const violation of lane.disposition_violations) {
-            lines.push(`${lane.review_type} disposition: ${violation}`);
-        }
-    }
-    for (const failure of summary.validation_failures) {
-        lines.push(
-            `${failure.review_type} rejected validation (${failure.timestamp_utc || 'unknown'}): ${failure.violation}`
+            `ReviewDiagnostics: validation_failures=${summary.validation_failures.length}; ` +
+            `remediation_cycles=${summary.remediation_cycles.length}`
         );
     }
-    for (const cycle of summary.remediation_cycles) {
-        lines.push(
-            `remediation cycle (${cycle.timestamp_utc || 'unknown'}): ` +
-            `invalidated=${cycle.invalidated_review_types.join(',') || 'none'}; ` +
-            `launch_required=${cycle.launch_required_review_types.join(',') || 'none'}; ` +
-            `reused=${cycle.reused_review_types.join(',') || 'none'}`
-        );
-    }
+    lines.push(`AuditDetails: ${closeout.artifact_paths.json}`);
     return lines;
 }
 

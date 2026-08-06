@@ -305,7 +305,7 @@ describe('gates/next-step', () => {
 
         assert.equal(text.includes('```'), false);
 
-        assert.ok(text.includes('FinalUserReportInstruction: write a short summary of what you did, then paste CopyPasteFinalUserReport exactly as printed, without code fences, wrappers, paraphrase, interpretation, summarization, or reformatting; after that, present only the commit command and commit permission question listed in FinalReportOrder.'));
+        assert.ok(text.includes('FinalUserReportInstruction: write a short summary of what you did, then paste the compact CopyPasteFinalUserReport exactly as printed; do not expand referenced audit artifacts into chat; after that, present only the commit command and commit permission question listed in FinalReportOrder.'));
 
         assert.ok(text.includes('FinalReportOrder:'));
 
