@@ -10,6 +10,7 @@ import { resolveProfileReviewCatalogPolicy } from '../../../../../src/policy/pro
 import { resolveReviewContextLaneBinding } from '../../../../../src/gates/review-context/review-context-lane';
 import { buildScopedDiff } from '../../../../../src/gates/preflight/build-scoped-diff';
 import { getWorkspaceSnapshot } from '../../../../../src/gates/compile/compile-gate';
+import { buildEventIntegrityHash } from '../../../../../src/gate-runtime/task-events';
 import {
     assertArtifactReviewLaneEvidence,
     resolveAuthenticatedReviewLaneContract
@@ -526,6 +527,7 @@ describe('authenticated review lane contract', () => {
             taskId,
             reviewType,
             reviewerIdentity,
+            orchestratorRoot,
             preflightPath,
             reviewContextPath,
             launchArtifactPath
@@ -569,6 +571,13 @@ describe('authenticated review lane contract', () => {
             '--failure-reason', 'Provider transport failed before review output'
         ];
         const reservationPath = `${launchArtifactPath}.lane-reservation.json`;
+        const timelinePath = path.join(
+            orchestratorRoot,
+            'runtime',
+            'task-events',
+            `${taskId}.jsonl`
+        );
+        const originalTimeline = fs.readFileSync(timelinePath, 'utf8');
         for (const [label, artifactPath] of [
             ['Reviewer launch artifact', launchArtifactPath],
             ['Reviewer launch input artifact', launchInputArtifactPath],
@@ -584,6 +593,35 @@ describe('authenticated review lane contract', () => {
             fs.writeFileSync(artifactPath, original, 'utf8');
         }
 
+        const timelineWithoutStartedEvent = originalTimeline
+            .split('\n')
+            .filter((line) => line.trim().length > 0)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        let previousEventSha256: string | null = null;
+        for (const event of timelineWithoutStartedEvent) {
+            if (event.event_type === 'REVIEWER_DELEGATION_STARTED') {
+                event.event_type = 'FORGED_UNRELATED_EVENT';
+            }
+            const integrity = event.integrity as Record<string, unknown>;
+            integrity.prev_event_sha256 = previousEventSha256;
+            const eventSha256 = buildEventIntegrityHash(event);
+            assert.ok(eventSha256);
+            integrity.event_sha256 = eventSha256;
+            previousEventSha256 = eventSha256;
+        }
+        fs.writeFileSync(
+            timelinePath,
+            `${timelineWithoutStartedEvent.map((event) => JSON.stringify(event)).join('\n')}\n`,
+            'utf8'
+        );
+        const missingStartedEvent = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+        assertCliFailure(
+            missingStartedEvent,
+            /cannot authenticate integrity-bearing start telemetry/u,
+            'current-context start telemetry authentication'
+        );
+        fs.writeFileSync(timelinePath, originalTimeline, 'utf8');
+
         const laneContract = resolveAuthenticatedReviewLaneContract({
             preflight: readJsonObject(preflightPath),
             reviewContext: readJsonObject(reviewContextPath),
@@ -593,10 +631,93 @@ describe('authenticated review lane contract', () => {
         delete supersededContext.review_lane;
         fs.writeFileSync(reviewContextPath, `${JSON.stringify(supersededContext, null, 2)}\n`, 'utf8');
 
+        for (const [label, artifactPath] of [
+            ['Reviewer launch input artifact', launchInputArtifactPath],
+            ['Reviewer launch lane reservation', reservationPath]
+        ] as const) {
+            const original = writeCaseDriftedLaneEvidence(artifactPath);
+            const rejected = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+            assertCliFailure(
+                rejected,
+                new RegExp(`${label} review lane evidence is invalid: review_catalog_sha256`, 'u'),
+                `fallback record-reviewer-launch-failed ${label}`
+            );
+            fs.writeFileSync(artifactPath, original, 'utf8');
+        }
+
+        const originalLaunchInputArtifact = fs.readFileSync(launchInputArtifactPath, 'utf8');
+        const escapedLaunchInputPath = path.join(
+            orchestratorRoot,
+            'runtime',
+            'tmp',
+            `${taskId}-escaped-launch-input.json`
+        );
+        fs.mkdirSync(path.dirname(escapedLaunchInputPath), { recursive: true });
+        fs.writeFileSync(escapedLaunchInputPath, originalLaunchInputArtifact, 'utf8');
+        fs.unlinkSync(launchInputArtifactPath);
+        try {
+            fs.symlinkSync(escapedLaunchInputPath, launchInputArtifactPath, 'file');
+            const escapedLaunchInput = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+            assertCliFailure(
+                escapedLaunchInput,
+                /Reviewer launch input artifact must resolve to task-owned reviewer scratch storage/u,
+                'fallback launch input symlink escape'
+            );
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== 'EPERM' && code !== 'EACCES') {
+                throw error;
+            }
+            t.diagnostic(`filesystem file symlinks unavailable: ${code}`);
+        } finally {
+            if (fs.existsSync(launchInputArtifactPath)) {
+                fs.unlinkSync(launchInputArtifactPath);
+            }
+            fs.writeFileSync(launchInputArtifactPath, originalLaunchInputArtifact, 'utf8');
+        }
+
+        const timelineWithoutStartedIntegrity = originalTimeline
+            .split('\n')
+            .map((line) => {
+                if (!line.trim()) {
+                    return line;
+                }
+                const event = JSON.parse(line) as Record<string, unknown>;
+                if (event.event_type === 'REVIEWER_DELEGATION_STARTED') {
+                    event.integrity = {};
+                }
+                return JSON.stringify(event);
+            })
+            .join('\n');
+        fs.writeFileSync(timelinePath, timelineWithoutStartedIntegrity, 'utf8');
+        const unauthenticatedStartedEvent = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
+        assertCliFailure(
+            unauthenticatedStartedEvent,
+            /cannot authenticate task timeline integrity/u,
+            'fallback start telemetry integrity'
+        );
+        fs.writeFileSync(timelinePath, originalTimeline, 'utf8');
+
         const failed = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
         assert.equal(failed.exitCode, 0, failed.errors.join('\n'));
         const failedArtifact = readJsonObject(launchArtifactPath);
+        const failedArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
+        const failedArtifactSha256 = fileSha256(launchArtifactPath);
+        const reviewerLaunchAttemptId = String(failedArtifact.reviewer_launch_attempt_id);
+        const countFailedEventsForAttempt = (): number => fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim().length > 0)
+            .map((line) => JSON.parse(line) as Record<string, unknown>)
+            .filter((event) => {
+                if (event.event_type !== 'REVIEWER_LAUNCH_FAILED') {
+                    return false;
+                }
+                const details = event.details as Record<string, unknown> | undefined;
+                return String(details?.reviewer_launch_attempt_id) === reviewerLaunchAttemptId;
+            })
+            .length;
         assert.equal(failedArtifact.attestation_state, 'launch_failed');
+        assert.equal(countFailedEventsForAttempt(), 1);
         for (const field of CUSTOM_LANE_EVIDENCE_FIELDS) {
             assert.equal(failedArtifact[field], laneContract.artifactEvidence[field]);
         }
@@ -604,6 +725,9 @@ describe('authenticated review lane contract', () => {
         const retriedFailure = await runCliWithCapturedOutput(failureArgs, { cwd: repoRoot });
         assert.equal(retriedFailure.exitCode, 0, retriedFailure.errors.join('\n'));
         assert.equal(readJsonObject(launchArtifactPath).attestation_state, 'launch_failed');
+        assert.equal(fs.readFileSync(launchArtifactPath, 'utf8'), failedArtifactText);
+        assert.equal(fileSha256(launchArtifactPath), failedArtifactSha256);
+        assert.equal(countFailedEventsForAttempt(), 1);
     });
 
     it('fails closed through public CLI boundaries for forged custom-lane and reviewer evidence', async (t) => {

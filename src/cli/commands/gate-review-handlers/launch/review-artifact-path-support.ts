@@ -142,3 +142,27 @@ export function resolveReviewerLaunchArtifactPathForWrite(options: {
     }
     return canonicalArtifactPath;
 }
+
+export function resolveTaskOwnedReviewerScratchArtifactPath(options: {
+    repoRoot: string;
+    taskId: string;
+    artifactPath: string;
+    label: string;
+}): string {
+    const artifactPath = gateHelpers.resolvePathInsideRepo(
+        options.artifactPath,
+        options.repoRoot,
+        { allowMissing: true }
+    );
+    if (!artifactPath || !fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+        throw new Error(`${options.label} not found: ${normalizePath(options.artifactPath)}.`);
+    }
+    const canonicalArtifactPath = fs.realpathSync.native(artifactPath);
+    if (!isTaskOwnedReviewTempPath(options.repoRoot, options.taskId, canonicalArtifactPath)) {
+        throw new Error(
+            `${options.label} must resolve to task-owned reviewer scratch storage for '${options.taskId}'. ` +
+            `Got ${normalizePath(canonicalArtifactPath)}.`
+        );
+    }
+    return canonicalArtifactPath;
+}
