@@ -466,7 +466,14 @@ export function getEffectiveReviewSnapshotViolations(value: unknown): string[] {
             if (profile.active === false && selection !== 'inactive') {
                 violations.push(`Effective review snapshot inactive profile lane '${id || index}' must be inactive.`);
             }
-            if (profile.active === true && profile.state === 'required' && selection !== 'required') {
+            const zeroDiffRequiredSuppression = isJsonRecord(inputs)
+                && inputs.zero_diff_baseline_only === true
+                && selection === 'inactive'
+                && Array.isArray(rawLane.inactive_reasons)
+                && rawLane.inactive_reasons.length === 1
+                && rawLane.inactive_reasons[0] === 'zero_diff_no_reviewable_scope';
+            if (profile.active === true && profile.state === 'required' && selection !== 'required'
+                && !zeroDiffRequiredSuppression) {
                 violations.push(`Effective review snapshot required profile lane '${id || index}' must be required.`);
             }
         }

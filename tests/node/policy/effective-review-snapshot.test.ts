@@ -238,6 +238,7 @@ test('zero-diff baseline suppresses profile-required built-in and custom lanes',
         snapshot.lanes.find((lane) => lane.id === 'architecture-boundary')?.inactive_reasons,
         ['zero_diff_no_reviewable_scope']
     );
+    assert.deepEqual(getEffectiveReviewSnapshotViolations(snapshot), []);
 });
 
 test('auto custom lane requires an explicitly configured deterministic signal', () => {

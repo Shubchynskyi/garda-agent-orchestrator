@@ -14,6 +14,7 @@ import {
     validateZeroDiffForReviewGate
 } from '../../../../src/gates/required-reviews/required-reviews-check';
 import {
+    hasRequiredSpecializedReviews,
     testReviewArtifacts
 } from '../../../../src/cli/commands/gate-flows/review/review-flow-support';
 import {
@@ -175,6 +176,11 @@ function buildMissingFocusedValidationReport(options: {
 }
 
 describe('gates/required-reviews-check core helpers', () => {
+    it('rejects a forged tiny-change override when a custom review lane is required', () => {
+        assert.equal(hasRequiredSpecializedReviews({ code: true }), false);
+        assert.equal(hasRequiredSpecializedReviews({ code: true, api: false, 'architecture-boundary': true }), true);
+    });
+
     describe('parseSkipReviews', () => {
         it('parses comma-separated list', () => {
             assert.deepEqual(parseSkipReviews('code,db,security'), ['code', 'db', 'security']);
